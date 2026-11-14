@@ -6,7 +6,8 @@
    * fixed order with every catalogue line. Self-loading (cached answer on mount and every 30 s while visible); "Jetzt prüfen" asks for a
    * fresh run (6 per minute: a 429 keeps the last list and says so) and reloads the warning banner. The skeleton has the final row count.
    * The four checks only the browser can run (syscheckBrowser.ts) start once there is an answer to read Live TV from (on mount, and again
-   * after Jetzt prüfen); their lines read "wird geprüft…" until they are back and then replace their placeholders.
+   * after Jetzt prüfen); their lines read "wird geprüft…" until they are back and then replace their placeholders. The upload line depends
+   * on Live TV: it runs again on its own when a later answer knows Live TV differently (a remembered answer said "not known" or the opposite).
    * The last answer of this tab is shown at once and revalidated (stale-while-revalidate); `ready` turns true as soon as there is an
    * answer to show (remembered, loaded or failed), so the page can hold what sits below until the list has its final height.
    */
@@ -22,16 +23,22 @@
   import { toast } from '#lib/ui/toast';
   import { refreshBanner } from './banner';
   import CheckLine from './CheckLine.svelte';
-  import { runBrowserChecks, uploadNotSetUp } from './syscheckBrowser';
+  import { runBrowserChecks, runUploadCheck, uploadNotSetUp } from './syscheckBrowser';
   import {
     CHECK_GROUPS, CHECK_IDS, cachedSystemcheck, checkedAtText, countLines, isNewer, loadSystemcheck, mergeLines, statusIcon, statusTone, summaryOf,
     type CheckGroup, type CheckId, type CheckLine as Line, type CheckStatus, type SystemcheckResult,
   } from './syscheck';
 
-  /** the browser checks' results, and whether they are running ("wird geprüft…" on their lines) */
+  /** the browser checks' results, and the lines still running ("wird geprüft…") */
   let browserLines: Line[] = [];
-  let browserRunning = false;
+  let running = new Set<CheckId>();
   let browserRun = 0;
+  const OTHER_BROWSER: CheckId[] = ['proxy.websocket', 'proxy.buffering', 'proxy.headers'];
+  const setRunning = (ids: CheckId[], on: boolean) => {
+    const next = new Set(running);
+    for (const id of ids) if (on) next.add(id); else next.delete(id);
+    running = next;
+  };
   /** bindable: there is something to show (the list has its final rows); false only during a cold first load */
   export let ready = false;
   const dispatch = createEventDispatcher<{ checked: void }>();
@@ -55,11 +62,26 @@
   /** the browser checks (on mount once an answer is there, and after Jetzt prüfen); a newer run's answer wins */
   async function runBrowser() {
     const mine = ++browserRun;
-    browserRunning = true;
-    const lines = await runBrowserChecks({ livetvInstalled: livetvOf(result) }).catch(() => [] as Line[]);
+    setRunning(OTHER_BROWSER, true);
+    void runUpload(livetvOf(result));
+    const lines = await runBrowserChecks({ livetvInstalled: null }).catch(() => [] as Line[]);
     if (mine !== browserRun) return;
-    browserLines = lines;
-    browserRunning = false;
+    browserLines = [...lines, ...browserLines.filter((l) => l.id === 'proxy.upload')];
+    setRunning(OTHER_BROWSER, false);
+  }
+  /** the Live-TV state the upload line was last decided with (undefined: not yet) */
+  let uploadFor: boolean | null | undefined;
+  let uploadRun = 0;
+  /** the upload line for a Live-TV state: the old result goes at once (it was for another state); a newer run wins */
+  async function runUpload(lt: boolean | null) {
+    const mine = ++uploadRun;
+    uploadFor = lt;
+    browserLines = browserLines.filter((l) => l.id !== 'proxy.upload');
+    setRunning(['proxy.upload'], lt === true);
+    const l = await runUploadCheck(lt).catch(() => null);
+    if (mine !== uploadRun) return;
+    browserLines = [...browserLines.filter((x) => x.id !== 'proxy.upload'), ...(l ? [l] : [])];
+    setRunning(['proxy.upload'], false);
   }
   let browserStarted = false;
   function startBrowser() {
@@ -115,6 +137,9 @@
   /** problems first: the order the counts are read in (all five always, so nothing shifts; a zero is neutral, never red) */
   const COUNT_ORDER: CheckStatus[] = ['problem', 'warning', 'ok', 'not_set_up', 'unknown'];
 
+  // a later answer that knows Live TV differently decides the upload line again (an answer that knows nothing keeps the last result)
+  $: lt = livetvOf(result);
+  $: if (browserStarted && lt !== null && lt !== uploadFor) void runUpload(lt);
   // a failed first load still shows every line ("nicht geprüft"), so the page keeps its shape
   // without Live TV the upload line is decided with the server's answer (nothing is sent), so it never changes height later
   $: uploadOff = livetvOf(result) === false ? [uploadNotSetUp()] : [];
@@ -152,7 +177,7 @@
         <ul class="lines" aria-hidden={lines ? undefined : 'true'}>
           {#each IDS_OF[g] as id (id)}
             {@const l = lines?.get(id) ?? null}
-            <li data-id={id} data-status={l && !l.placeholder ? l.status : undefined}><CheckLine line={l} {id} {browserRunning} on:refresh={checkNow} /></li>
+            <li data-id={id} data-status={l && !l.placeholder ? l.status : undefined}><CheckLine line={l} {id} browserRunning={running.has(id)} on:refresh={checkNow} /></li>
           {/each}
         </ul>
       </div>

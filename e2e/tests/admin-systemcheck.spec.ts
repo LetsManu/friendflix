@@ -73,6 +73,34 @@ test.describe('Systemcheck on Admin → Status', () => {
     expect(api.syscheck.probes.uploads).toBe(0);
   });
 
+  test('a remembered answer that did not know Live TV: once the fresh one says installed, the upload is checked without Jetzt prüfen', async ({ page, api }) => {
+    await page.goto('/admin/status'); // remembers an answer without a Live-TV line
+    await expect(page.locator('#systemcheck li[data-id="proxy.headers"] .pill.ok')).toBeVisible();
+    expect(api.syscheck.probes.uploads).toBe(0);
+    api.syscheck.result = result([...syscheckOk().lines, { id: 'livetv.container', status: 'ok' }]);
+    await page.reload();
+    const up = page.locator('#systemcheck li[data-id="proxy.upload"]');
+    await expect(up.locator('.pill.ok')).toHaveText('In Ordnung');
+    // a pass says what it proved: 2 MB, not the full limit
+    await expect(up).toContainText('Upload-Grenze (nur mit 2 MB geprüft)');
+    expect(api.syscheck.probes.uploads).toBe(1);
+  });
+
+  test('a remembered answer with Live TV that the fresh one no longer has: the upload line ends not set up', async ({ page, api }) => {
+    api.syscheck.result = result([...syscheckOk().lines, { id: 'livetv.container', status: 'ok' }]);
+    await page.goto('/admin/status');
+    const up = page.locator('#systemcheck li[data-id="proxy.upload"]');
+    await expect(up.locator('.pill.ok')).toBeVisible();
+    api.syscheck.result = result([...syscheckOk().lines, { id: 'livetv.container', status: 'not_set_up', cause: 'livetv_not_set', fix: 'livetv_not_set', href: '/admin/livetv' }]);
+    const release = await gateSyscheck(page);
+    await page.reload();
+    await expect(page.locator('#systemcheck li[data-id="core.database"] .pill.ok')).toBeVisible(); // the remembered answer
+    release();
+    await expect(up.locator('.pill.muted')).toHaveText('Nicht eingerichtet');
+    await page.waitForLoadState('networkidle');
+    await expect(up.locator('.pill.muted')).toHaveText('Nicht eingerichtet');
+  });
+
   test.describe('upload limit', () => {
     test.use({ allowedConsole: /status of 413/ });
     test('a mocked 413 on the probe upload shows the upload warning with the Anleitung link', async ({ page, api }) => {

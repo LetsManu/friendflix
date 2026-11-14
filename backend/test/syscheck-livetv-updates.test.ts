@@ -19,11 +19,13 @@ const fake = {
   livetv: 'down' as 'down' | 'up',
   readable: true,
   hwAccel: 'qsv',
+  /** Jellyfin refuses its encoder settings (down, or an error) */
+  jfDown: false,
   /** updater: absent (no answer), 401, or its status with this stack */
   updater: 'up' as 'up' | 'absent' | 'unauthorized',
   stack: 'own' as 'own' | 'foreign' | null,
   portainer: 200,
-  reset() { Object.assign(this, { livetv: 'down', readable: true, hwAccel: 'qsv', updater: 'up', stack: 'own', portainer: 200 }); },
+  reset() { Object.assign(this, { livetv: 'down', readable: true, hwAccel: 'qsv', jfDown: false, updater: 'up', stack: 'own', portainer: 200 }); },
 };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
 const fakeFetch = (async (input: RequestInfo | URL): Promise<Response> => {
@@ -68,7 +70,7 @@ async function addList(o: { refresh?: string; lastOk?: Date | null; lastError?: 
 }
 
 beforeAll(async () => {
-  env = await makeEnv({ 'GET /System/Configuration/encoding': () => ({ json: { HardwareAccelerationType: fake.hwAccel } }) }, { ctxPatch: (c) => { c.fetchImpl = fakeFetch; } });
+  env = await makeEnv({ 'GET /System/Configuration/encoding': () => (fake.jfDown ? { status: 500, json: {} } : { json: { HardwareAccelerationType: fake.hwAccel } }) }, { ctxPatch: (c) => { c.fetchImpl = fakeFetch; } });
   await env.login(ADMIN);
   resetChecksForTests();
   registerChecks([livetvCheck, updatesCheck]);
@@ -149,6 +151,45 @@ describe('Live TV lines', () => {
     expect(get(await run(), 'livetv.encoder')).toMatchObject({
       status: 'warning', cause: 'gpu_needs_render_gid', fix: 'gpu_needs_render_gid', settingKey: 'LIVETV_ENCODER', settingGroup: 'livetv', docs: 'livetv.md#gpu',
     });
+  });
+});
+
+describe('Live TV encoder edge cases', () => {
+  it('Jellyfin not giving its encoder settings → livetv.encoder unknown check_unavailable, never a silent ok', async () => {
+    fake.jfDown = true;
+    await livetvUp();
+    expect(get(await run(), 'livetv.encoder')).toMatchObject({ status: 'unknown', cause: 'check_unavailable' });
+  });
+
+  it('with Plex there is nothing to compare: livetv.encoder ok', async () => {
+    await livetvUp();
+    setCfg({ MEDIA_SERVER: 'plex' });
+    const encoderSettings = env.ctx.jf.admin.encoderSettings;
+    (env.ctx.jf.admin as { encoderSettings?: unknown }).encoderSettings = undefined; // Plex has no such read
+    try {
+      expect(get(await run(), 'livetv.encoder').status).toBe('ok');
+    } finally {
+      (env.ctx.jf.admin as { encoderSettings?: unknown }).encoderSettings = encoderSettings;
+    }
+  });
+
+  it('a stalled database leaves the encoder its own budget: lists and guides unknown, the encoder still answers', async () => {
+    await livetvUp();
+    // on the pool itself (ctx.db is a timing wrapper around it); the own property goes again afterwards
+    const query = env.pool.query.bind(env.pool);
+    env.pool.query = ((text: unknown, ...rest: unknown[]) => (typeof text === 'string' && text.includes('from livetv_sources where enabled')
+      ? new Promise(() => undefined) : (query as (...a: unknown[]) => unknown)(text, ...rest))) as typeof env.pool.query;
+    // the encoder's reads take a while (a slow Jellyfin): more than the 300 ms a serial run would leave it after the stalled read
+    const slow = env.ctx.jf.admin.encoderSettings!.bind(env.ctx.jf.admin);
+    (env.ctx.jf.admin as { encoderSettings?: unknown }).encoderSettings = async () => { await new Promise((r) => setTimeout(r, 800)); return slow(); };
+    try {
+      const r = await run();
+      expect(get(r, 'livetv.encoder').status).toBe('ok');
+      expect(get(r, 'livetv.sources')).toMatchObject({ status: 'unknown', cause: 'check_unavailable' });
+    } finally {
+      delete (env.pool as Partial<typeof env.pool>).query;
+      (env.ctx.jf.admin as { encoderSettings?: unknown }).encoderSettings = slow;
+    }
   });
 });
 

@@ -23,7 +23,7 @@ vi.mock('#lib/offline/manager', () => ({ removeAll: h.removeAll }));
 vi.mock('#lib/ui/confirm', () => ({ confirm: async (o: Record<string, unknown>) => { h.confirmCalls.push(o); return h.confirmAnswer; } }));
 vi.mock('#lib/push', () => ({ disablePush: h.disablePush }));
 vi.mock('#lib/gate', () => ({ clearHint: h.clearHint }));
-vi.mock('#lib/admin/syscheck', () => ({ forgetSystemcheck: h.forgetSystemcheck }));
+vi.mock('#lib/admin/syscheckStore', () => ({ forgetSystemcheck: h.forgetSystemcheck }));
 vi.mock('#lib/native/sessionSync', () => ({ tellAppSession: async (id: string | null) => { h.calls.push(`app ${id}`); await Promise.resolve(); await Promise.resolve(); h.calls.push('app answered'); } }));
 
 const { logout } = await import('./session');

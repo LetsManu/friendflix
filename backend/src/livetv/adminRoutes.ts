@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
+import { bounded } from '../health.js';
 import type { Ctx } from '../ctx.js';
 import { roleExists } from '../rolecat.js';
 import { loadSession, requireAdmin } from '../session.js';
@@ -66,9 +67,10 @@ const orderBody = z.object({ ids: z.array(id).max(5000) }).strict();
 const mergeBody = z.object({ ids: z.array(id).min(1).max(500), into: id }).strict();
 
 type Reply = { code(n: number): { send(b: unknown): unknown } };
-/** what an XMLTV file upload may be sent as (a browser names `.xml` text/xml or application/xml, `.gz` application/gzip or x-gzip) */
-/** upload-limit probes of the Systemcheck a minute, per session */
+/** upload-limit probes of the Systemcheck a minute, per session; how long the count may take before it is skipped */
 const PROBE_PER_MIN = 10;
+const PROBE_KV_MS = 1_000;
+/** what an XMLTV file upload may be sent as (a browser names `.xml` text/xml or application/xml, `.gz` application/gzip or x-gzip) */
 const GUIDE_FILE_TYPES: readonly string[] = ['application/octet-stream', 'application/xml', 'text/xml', 'application/gzip', 'application/x-gzip'];
 /** Zod safeParse with the fixed refusal `{ error: 'invalid', field }` (the input is never echoed) */
 function parse<T>(schema: z.ZodType<T>, body: unknown, reply: Reply): T | undefined {
@@ -635,8 +637,9 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
    * session; the body is read and dropped (never stored, never audited), more than PROBE_MAX_BYTES is refused. 200 `{ probe, bytes }`.
    */
   async function uploadProbe(req: FastifyRequest, reply: FastifyReply) {
-    const n = await ctx.kv.incr(`syscheck:probe:upload:${req.sid}`, 60).catch(() => 0);
-    if (n > PROBE_PER_MIN) return reply.code(429).send({ error: 'rate_limited' });
+    // Redis down or hanging: the limit cannot be counted and is skipped (admin + CSRF, 4 MiB cap), never waited for
+    const n = await bounded(() => ctx.kv.incr(`syscheck:probe:upload:${req.sid}`, 60), PROBE_KV_MS);
+    if (n.ok && n.v > PROBE_PER_MIN) return reply.code(429).send({ error: 'rate_limited' });
     const body = req.body as Readable | undefined;
     if (!(body instanceof Readable)) return reply.code(400).send({ error: 'invalid', field: 'file' });
     // the rest of a refused body is not read: the connection closes after the answer

@@ -19,7 +19,7 @@ const PAGE = '/admin/livetv';
 const DOCS_GPU = 'livetv.md#gpu';
 /** a list whose last good refresh is older than twice its interval, but at least this, is stale (one missed nightly run is fine) */
 const STALE_MIN_MS = 26 * 3600_000;
-/** what the encoder read leaves of the group's limit for the rest */
+/** what is kept back of the group's limit for building the answer */
 const SPARE_MS = 300;
 
 /** the GPU advice that is a warning, as line codes (lower case: the engine drops anything else) */
@@ -80,8 +80,10 @@ async function encoderLine(env: CheckEnv, budgetMs: number): Promise<CheckLine> 
   if (!o.ok) return line(id, 'unknown', { cause: o.timeout ? 'check_timeout' : 'check_failed' });
   const [sys, hw] = o.v;
   if (!sys) return bad(id, 'unknown', 'livetv_no_system', { href: PAGE });
-  // nothing to compare with (Plex, or the media server did not say): livetv itself answers, so it runs
-  if (hw === null) return line(id, 'ok');
+  if (hw === null) {
+    // Plex has nothing to compare with: livetv itself answers, so it runs; Jellyfin that did not say (down, slow) is not checked
+    return env.ctx.jf.admin.encoderSettings ? line(id, 'unknown', { cause: 'check_unavailable' }) : line(id, 'ok');
+  }
   const advice = gpuAdvice(hw, sys);
   const gpu = advice.level === 'warn' ? GPU[advice.key] : undefined;
   return gpu ? line(id, 'warning', { ...gpu, settingKey: 'LIVETV_ENCODER', docs: DOCS_GPU }) : line(id, 'ok');
@@ -111,14 +113,15 @@ export const livetvCheck: GroupCheck = {
   timeoutMs: CHECK_TIMEOUT_MS,
   async run(env) {
     const t0 = performance.now();
+    // the lists and guides are read from the start, alongside: a stalled database leaves them unread, never the encoder or the group
+    const statsP = bounded(() => sourceStats(env), env.timeoutMs - 2 * SPARE_MS);
     // Jetzt prüfen asks livetv now; a page load takes the detection of the last 10 s (the minute tick keeps it current)
-    // a stalled database leaves the lists and guides unread, never the whole group
-    const [det, stats] = await Promise.all([detectLivetv(env.ctx, env.fresh ? 0 : 10_000), bounded(() => sourceStats(env), env.timeoutMs - 2 * SPARE_MS)]);
-    const container = containerLine(env, det);
+    const container = containerLine(env, await detectLivetv(env.ctx, env.fresh ? 0 : 10_000));
     if (container.status === 'not_set_up') return [container, ...DEPENDENT.map((id) => line(id, 'not_set_up', { cause: 'livetv_off', href: PAGE }))];
     if (container.status !== 'ok') return [container, ...DEPENDENT.map((id) => line(id, 'unknown', { cause: 'livetv_needed' }))];
     const left = env.timeoutMs - (performance.now() - t0) - SPARE_MS;
+    const [encoder, stats] = await Promise.all([encoderLine(env, left), statsP]);
     const unread = (id: CheckId) => bad(id, 'unknown', 'check_unavailable');
-    return [container, await encoderLine(env, left), stats.ok ? sourcesLine(stats.v) : unread('livetv.sources'), stats.ok ? guidesLine(stats.v) : unread('livetv.guides')];
+    return [container, encoder, stats.ok ? sourcesLine(stats.v) : unread('livetv.sources'), stats.ok ? guidesLine(stats.v) : unread('livetv.guides')];
   },
 };

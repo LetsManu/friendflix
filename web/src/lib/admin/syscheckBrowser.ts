@@ -17,8 +17,12 @@ const DOCS = 'setup.md#6-nginx-proxy-manager-portal-proxy-host';
 export const BROWSER_LIMIT_MS = 6_000;
 /** the websocket must say hello within this */
 const WS_WAIT_MS = 5_000;
-/** the drip's first KiB arriving later than this came with the rest: the proxy buffers */
+/**
+ * The drip sends 1 KiB, pauses 1.5 s, sends 1 KiB. First bytes before the pause could have ended → streamed; or, on a slow link (latency,
+ * the parallel upload on the same connection), first bytes still well ahead of the last → streamed. First bytes with the last → buffered.
+ */
 const DRIP_FIRST_MS = 1_200;
+const DRIP_GAP_MS = 700;
 const DRIP_BYTES = 2048;
 /** the upload probe: the nil source id (backend guidefiles.ts PROBE_SOURCE_ID) and its size (more than the general 1 MB /api/ limit) */
 export const PROBE_UPLOAD_PATH = '/api/admin/livetv/sources/00000000-0000-0000-0000-000000000000/file';
@@ -29,18 +33,31 @@ const bl = (id: BrowserId, status: CheckStatus, o: Partial<Pick<CheckLine, 'caus
 /** a line that is not ok: its fix sentence is the cause's own; the proxy guide is the place to fix it */
 const badl = (id: BrowserId, status: CheckStatus, cause: string, docs = true): CheckLine => bl(id, status, { cause, fix: cause, ...(docs ? { docs: DOCS } : {}) });
 
-/** the drip: status 200 and the first bytes early → ok; first bytes only at the end → the proxy buffers; anything else → no probe there */
+/** a probe that answered 429: its limit (another tab, a reload too many), not the proxy: "later", never a finding */
+const busy = (id: BrowserId): CheckLine => badl(id, 'unknown', 'probe_busy', false);
+
+/**
+ * the drip: status 200 and the first bytes early, or well ahead of the last → ok; first bytes only with the last → the proxy buffers;
+ * 404 → no probe there; 429 → busy; anything else → not checked
+ */
 export function classifyDrip(firstChunkMs: number, totalMs: number, status: number): CheckLine {
-  if (status !== 200) return badl('proxy.buffering', 'unknown', 'probe_missing', false);
+  if (status === 429) return busy('proxy.buffering');
+  if (status === 404) return badl('proxy.buffering', 'unknown', 'probe_missing', false);
+  if (status !== 200) return badl('proxy.buffering', 'unknown', 'probe_failed', false);
   const ms = Math.round(Math.max(0, firstChunkMs));
-  if (firstChunkMs >= 0 && firstChunkMs < DRIP_FIRST_MS && firstChunkMs <= totalMs) return bl('proxy.buffering', 'ok', { ms });
+  const streamed = firstChunkMs >= 0 && firstChunkMs <= totalMs && (firstChunkMs < DRIP_FIRST_MS || totalMs - firstChunkMs >= DRIP_GAP_MS);
+  if (streamed) return bl('proxy.buffering', 'ok', { ms });
   return { ...badl('proxy.buffering', 'warning', 'proxy_buffers_media'), ms };
 }
 
-/** the upload probe: the backend's own answer → ok; 413 (the proxy's limit, or the backend's) → the limit is too low; else not checked */
+/**
+ * the upload probe: the backend's own answer → ok (its label says that 2 MB were tested, not the full limit); 413 (the proxy's limit, or
+ * the backend's) → the limit is too low; 429 → busy; else not checked
+ */
 export function classifyUpload(status: number, json: unknown, networkError: boolean): CheckLine {
   if (networkError) return badl('proxy.upload', 'unknown', 'probe_failed', false);
   if (status === 413) return badl('proxy.upload', 'warning', 'upload_limit_low');
+  if (status === 429) return busy('proxy.upload');
   if (status === 200 && (json as { probe?: unknown } | null)?.probe === 'ok') return bl('proxy.upload', 'ok');
   // an older backend: the nil id is no source (404) or no probe answer
   if (status === 404 || status === 200) return badl('proxy.upload', 'unknown', 'probe_missing', false);
@@ -68,7 +85,11 @@ async function limited(id: BrowserId, fn: () => Promise<CheckLine>): Promise<Che
   }
 }
 
-/** an upgrade that reaches the backend: its hello, or any close code of the backend's own (4xxx: it answered, only refused) */
+/**
+ * an upgrade that reaches the backend: its hello, or any close code of the backend's own (4xxx: it answered, only refused). A browser
+ * sees a refused upgrade only as close 1006, whoever refused it: a plain GET of the same path then tells the probe's own rate limit (429,
+ * "later") from a proxy that does not pass websockets.
+ */
 function websocket(origin: string, d: BrowserDeps): Promise<CheckLine> {
   return new Promise((resolve) => {
     let ws: WebSocket | null = null;
@@ -81,6 +102,12 @@ function websocket(origin: string, d: BrowserDeps): Promise<CheckLine> {
       resolve(l);
     };
     const blocked = () => done(badl('proxy.websocket', 'problem', 'ws_blocked'));
+    const refused = () => {
+      if (settled) return;
+      d.fetch(`${origin}/ws/syscheck`, { cache: 'no-store', credentials: 'same-origin' })
+        .then((r) => { void r.body?.cancel().catch(() => undefined); return r.status; }, () => 0)
+        .then((status) => (status === 429 ? done(busy('proxy.websocket')) : blocked()));
+    };
     const timer = setTimeout(blocked, WS_WAIT_MS);
     try {
       ws = new d.WebSocket(`${origin.replace(/^http/, 'ws')}/ws/syscheck`);
@@ -93,7 +120,7 @@ function websocket(origin: string, d: BrowserDeps): Promise<CheckLine> {
       try { ok = (JSON.parse(String(e.data)) as { ok?: unknown }).ok === true; } catch { /* not the hello */ }
       if (ok) done(bl('proxy.websocket', 'ok'));
     };
-    ws.onclose = (e) => (e.code >= 4000 && e.code < 5000 ? done(bl('proxy.websocket', 'ok')) : blocked());
+    ws.onclose = (e) => (e.code >= 4000 && e.code < 5000 ? done(bl('proxy.websocket', 'ok')) : refused());
     ws.onerror = () => undefined; // a close follows
   });
 }
@@ -130,6 +157,15 @@ async function headers(origin: string, d: BrowserDeps): Promise<CheckLine> {
   return classifyHeaders(r.headers, origin.startsWith('https:'));
 }
 
+/**
+ * The upload line alone, for a Live-TV state: installed → the 2 MiB probe (under its own limit); not installed → not set up, nothing is
+ * sent; not known → no line (it stays "nicht geprüft"). The Status page reruns it when the server's answer changes the Live-TV state.
+ */
+export function runUploadCheck(livetvInstalled: boolean | null): Promise<CheckLine | null> {
+  if (livetvInstalled === null) return Promise.resolve(null);
+  return livetvInstalled ? limited('proxy.upload', upload) : Promise.resolve(uploadNotSetUp());
+}
+
 const defaultDeps = (): BrowserDeps => ({ fetch: (...a) => fetch(...a), WebSocket, now: () => performance.now() });
 
 /**
@@ -139,12 +175,10 @@ const defaultDeps = (): BrowserDeps => ({ fetch: (...a) => fetch(...a), WebSocke
 export async function runBrowserChecks(o: { livetvInstalled: boolean | null; origin?: string; deps?: BrowserDeps }): Promise<CheckLine[]> {
   const d = o.deps ?? defaultDeps();
   const origin = o.origin ?? location.origin;
-  const up: Promise<CheckLine | null> = o.livetvInstalled === null ? Promise.resolve(null)
-    : o.livetvInstalled ? limited('proxy.upload', upload) : Promise.resolve(uploadNotSetUp());
   const lines = await Promise.all([
     limited('proxy.websocket', () => websocket(origin, d)),
     limited('proxy.buffering', () => drip(origin, d)),
-    up,
+    runUploadCheck(o.livetvInstalled),
     limited('proxy.headers', () => headers(origin, d)),
   ]);
   return lines.filter((l): l is CheckLine => l !== null);

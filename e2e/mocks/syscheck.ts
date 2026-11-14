@@ -8,7 +8,7 @@ import type { BrowserContext, Route } from '@playwright/test';
  *
  * The browser checks' probes (web/src/lib/admin/syscheckBrowser.ts) answer as a healthy proxy by default: `/ws/syscheck` says hello,
  * `/media/probe/drip` sends its 2 KiB (a mock cannot pause inside a body: `dripDelayMs` holds the whole answer, which reads as a proxy that
- * buffers when it is over 1.2 s), and the upload probe answers `{ probe: 'ok' }` or `uploadStatus` (413 → the proxy's HTML page).
+ * buffers once the first bytes come late and with the last), and the upload probe answers `{ probe: 'ok' }` or `uploadStatus` (413 → the proxy's HTML page).
  */
 
 export type Status = 'ok' | 'warning' | 'problem' | 'not_set_up' | 'unknown';

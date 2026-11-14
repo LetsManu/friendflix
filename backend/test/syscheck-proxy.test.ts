@@ -95,6 +95,13 @@ describe('GET /ws/syscheck', () => {
     expect(await connect(null)).toEqual({ msgs: [], code: 4401 });
     expect(await connect(admin, 'https://evil.example.com')).toEqual({ msgs: [], code: 4401 });
   });
+
+  it('a plain GET (how the browser tells a refused upgrade apart) answers 404, and 429 only past 30 a minute', async () => {
+    const codes: number[] = [];
+    for (let i = 0; i < 31; i++) codes.push((await env.app.inject({ method: 'GET', url: '/ws/syscheck', remoteAddress: '198.51.100.20' })).statusCode);
+    expect(codes.slice(0, 30).every((c) => c === 404)).toBe(true);
+    expect(codes[30]).toBe(429);
+  });
 });
 
 describe('upload-limit probe', () => {
@@ -128,9 +135,22 @@ describe('upload-limit probe', () => {
       headers: { cookie: `ff_sid=${admin.cookies.ff_sid}`, 'x-csrf-token': admin.csrf, 'content-type': 'application/octet-stream' },
       body: new ReadableStream({ start(c) { for (let i = 0; i < 6; i++) c.enqueue(new Uint8Array(MiB)); c.close(); } }),
     } as RequestInit).catch(() => null);
-    // the server may answer 413 and close before the client finished sending: either way nothing is accepted
-    if (res) expect(res.status).toBe(413);
+    // the server answers 413 and closes before the client finished sending: undici still delivers that answer
+    expect(res?.status).toBe(413);
     expect(partFiles()).toEqual([]);
+  });
+
+  it('a hanging Redis does not hang the probe: its limit is skipped after 1 s', async () => {
+    // on the store itself (ctx.kv is a timing wrapper around it); the own property goes again afterwards
+    env.kv.incr = () => new Promise<number>(() => undefined);
+    try {
+      const t0 = Date.now();
+      const r = await probe(admin, 1024);
+      expect(r.statusCode).toBe(200);
+      expect(Date.now() - t0).toBeLessThan(2_500);
+    } finally {
+      delete (env.kv as Partial<typeof env.kv>).incr;
+    }
   });
 
   it('at most 10 probes a minute per session → 429 rate_limited', async () => {

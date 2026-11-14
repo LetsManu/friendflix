@@ -9,6 +9,7 @@ import { api } from '#lib/api';
 import { fmtTime, hasKey, tr, trDynamic, type TKey, type TParams } from '#lib/i18n';
 import type { Tone } from '#lib/ui/StatusPill.svelte';
 import { failClassText } from './health';
+import { rememberSystemcheck } from './syscheckStore';
 
 export const CHECK_STATUSES = ['ok', 'warning', 'problem', 'not_set_up', 'unknown'] as const;
 export type CheckStatus = (typeof CHECK_STATUSES)[number];
@@ -47,38 +48,8 @@ export interface CheckLine {
 }
 export interface SystemcheckResult { at: string; lines: CheckLine[]; counts: Record<CheckStatus, number> }
 
-const STORE_KEY = 'ff-syscheck';
-let last: SystemcheckResult | null = null;
-const atOf = (r: SystemcheckResult | null): number => (r ? Date.parse(r.at) : NaN);
-/** a stored or received answer of the right shape, every line with an id and a status (codes only: nothing in it is secret) */
-const validResult = (r: unknown): r is SystemcheckResult =>
-  !!r && typeof r === 'object' && typeof (r as SystemcheckResult).at === 'string' && Array.isArray((r as SystemcheckResult).lines)
-  && (r as SystemcheckResult).lines.every((l) => !!l && typeof l === 'object' && typeof l.id === 'string' && typeof l.status === 'string')
-  && !!(r as SystemcheckResult).counts && typeof (r as SystemcheckResult).counts === 'object';
-
-/** true when `next` may replace `cur`: an answer never gives way to an older one (a slow cached read after a fresh run) */
-export const isNewer = (next: SystemcheckResult, cur: SystemcheckResult | null): boolean => !cur || !(atOf(next) < atOf(cur));
-
-/** Keeps the latest answer for this tab (module + sessionStorage): the next visit renders it at once and revalidates. */
-export function rememberSystemcheck(r: SystemcheckResult): void {
-  if (!validResult(r) || !isNewer(r, last)) return;
-  last = r;
-  try { sessionStorage.setItem(STORE_KEY, JSON.stringify(r)); } catch { /* private mode, quota, no storage */ }
-}
-/** the last answer this tab saw (null on a cold start) */
-export function cachedSystemcheck(): SystemcheckResult | null {
-  if (last) return last;
-  try {
-    const v: unknown = JSON.parse(sessionStorage.getItem(STORE_KEY) ?? 'null');
-    if (validResult(v)) last = v;
-  } catch { /* nothing stored, unreadable, or no storage */ }
-  return last;
-}
-/** Tests: forget the remembered answer. */
-export function forgetSystemcheck(): void {
-  last = null;
-  try { sessionStorage.removeItem(STORE_KEY); } catch { /* no storage */ }
-}
+// the remembered answer lives in a tiny module of its own: the logout path (session.ts) clears it without loading this one
+export { cachedSystemcheck, forgetSystemcheck, isNewer, rememberSystemcheck } from './syscheckStore';
 
 /** The time of the list: "geprüft um 10:05", or "Stand von 10:05 (veraltet)" while reloading it fails and an older answer is shown. */
 export const checkedAtText = (at: string, stale: boolean): string => tr(stale ? 'syscheck.staleAt' : 'syscheck.checkedAt', { time: fmtTime(at) });

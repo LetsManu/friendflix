@@ -11,7 +11,8 @@ import { cleanLine, countLines, getSystemcheck, sortLines } from '../syscheck/en
 import type { SystemcheckResult } from '../syscheck/types.js';
 
 const REFRESH_PER_MIN = 6;
-const WS_PER_MIN = 10;
+/** like the other websocket routes; a refused upgrade reads as close 1006 in the browser, which asks a plain GET (404, or this 429) why */
+const WS_PER_MIN = 30;
 const KV_MS = 1_000;
 const query = z.object({ refresh: z.enum(['1', '0', 'true', 'false']).optional() });
 

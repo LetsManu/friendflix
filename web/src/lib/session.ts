@@ -5,7 +5,7 @@ import { disablePush } from '#lib/push';
 import { getAllDownloads } from '#lib/offline/db';
 import { clearHint } from '#lib/gate';
 import { clearPending } from '#lib/admin/settings/form';
-import { forgetSystemcheck } from '#lib/admin/syscheck';
+import { forgetSystemcheck } from '#lib/admin/syscheckStore';
 import { tr } from '#lib/i18n';
 import { confirm } from '#lib/ui/confirm';
 import { castEngine, castSession } from '#lib/cast/engine';
