@@ -125,9 +125,9 @@ mod tests {
         ] {
             assert!(!allowed(bad, &s), "{bad}");
         }
-        let lan = Origin::parse("http://192.0.2.5:8096").unwrap();
-        assert!(allowed("http://192.0.2.5:8096/x", &lan));
-        assert!(!allowed("http://192.0.2.5/x", &lan));
+        let lan = Origin::parse("http://192.168.1.5:8096").unwrap();
+        assert!(allowed("http://192.168.1.5:8096/x", &lan));
+        assert!(!allowed("http://192.168.1.5/x", &lan));
     }
 
     #[test]

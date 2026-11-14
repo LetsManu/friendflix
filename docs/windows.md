@@ -36,7 +36,7 @@ FriendFlix is then in the Start menu. To uninstall use *Settings → Apps → In
 
 ## First start
 
-1. Enter the address of your FriendFlix server, for example `friend.example.com` (`https://` is added for you). Plain `http://` addresses work too, for a server in your home network as in the Android app, but `https` is strongly recommended: over `http` the session cookie travels unencrypted through the network.
+1. Enter the address of your FriendFlix server, for example `friend.example.com` (`https://` is added for you). Plain `http://` is accepted only for a server in your home network: an IP address in a private range (`192.168.x.x`, `10.x.x.x`, `172.16–31.x.x`, Tailscale's `100.64–127.x.x`, IPv6 `fd…`/`fe80…`, loopback) or a local name (`nas`, `*.local`, `*.lan`, `*.home.arpa`, `*.internal`). Any other address needs `https`, and `https` is recommended at home too: over `http` the session cookie travels unencrypted through the network. A public name that points to a home-network address is refused over `http`; use the IP address or `https`.
 2. The app checks that the address answers like a compatible FriendFlix server (`GET /api/version`). If not, it says why.
 3. Sign in exactly as in the browser, inside the app: the in-app sign-in, or your server's sign-in page at its identity provider (for example Authentik at `auth.example.com`), with a passkey where your provider offers one. If your server approves new devices, the PC shows up as a new device for the admin to approve.
 
@@ -160,7 +160,7 @@ Unit tests and CI cover the logic and that the app builds; these points need a r
 2. Uninstall via *Installed apps* and install again: it works, `friendflix://` still opens the app.
 
 **First start and sign-in**
-3. Setup accepts `friend.example.com`, refuses `http://`, a wrong host and a server with a self-signed certificate with the right message.
+3. Setup accepts `friend.example.com` and `http://<LAN IP>:<port>`, refuses `http://friend.example.com` (plain http to a public host), a wrong host and a server with a self-signed certificate with the right message.
 4. Sign in with the in-app sign-in and with Authentik; sign in with a passkey. External links open in the default browser. The settings page and the tray's server entry show the address.
 
 **Play and sync**

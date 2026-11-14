@@ -342,6 +342,8 @@ impl ServerApi {
 
     /// A small same-origin resource (subtitle, artwork, trickplay sheet) of at most 8 MiB.
     pub fn bytes(&self, url: &str) -> Result<Vec<u8>, ApiError> {
+        // only a URL on exactly the server origin is fetched; that origin is https, or plain http solely for a
+        // home-network host (origin::http_allowed), so no http request ever leaves for a public host
         if !self.origin.matches(url) {
             return Err(ApiError::Malformed);
         }

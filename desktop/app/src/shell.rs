@@ -569,7 +569,17 @@ pub async fn probe_server(app: AppHandle, address: String) -> Result<ProbeOk, St
     if address.len() > 2048 {
         return Err(invalid());
     }
-    let origin = Origin::parse(&address).ok_or_else(invalid)?;
+    let origin = Origin::parse(&address).ok_or_else(|| {
+        // a valid address refused only for its plain http (a public host): say so instead of "not valid"
+        let t = address.trim();
+        let http_public = t.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("http://"))
+            && Origin::parse(&format!("https://{}", &t[7..])).is_some();
+        if http_public {
+            "Plain http:// works only for a server in your home network. Use https:// for this address.".to_string()
+        } else {
+            invalid()
+        }
+    })?;
     let target = origin.clone();
     let answer = tauri::async_runtime::spawn_blocking(move || probe::probe(&target))
         .await
@@ -768,14 +778,14 @@ mod tests {
         assert!(check < banner && banner < js.rfind("})();").unwrap());
         assert!(js.contains(crate::updater::token()));
         assert!(!js.contains(":443"));
-        let lan = init_script(&Origin::parse("http://192.0.2.5:8096").unwrap());
-        assert!(lan.contains(r#""http://192.0.2.5:8096""#));
+        let lan = init_script(&Origin::parse("http://192.168.1.5:8096").unwrap());
+        assert!(lan.contains(r#""http://192.168.1.5:8096""#));
     }
 
     #[test]
     fn remote_capability_scoped_to_server() {
-        let json =
-            remote_capability("main-2", &Origin::parse("http://192.0.2.5:8096").unwrap()).unwrap();
+        let json = remote_capability("main-2", &Origin::parse("http://192.168.1.5:8096").unwrap())
+            .unwrap();
         let CapabilityFile::Capability(c) = json.parse::<CapabilityFile>().unwrap() else {
             panic!()
         };
@@ -797,11 +807,11 @@ mod tests {
             .collect();
         assert_eq!(urls.len(), 1);
         let ok = |u: &str| urls[0].test(&u.parse().unwrap());
-        assert!(ok("http://192.0.2.5:8096/"));
-        assert!(ok("http://192.0.2.5:8096/title/x?y=1"));
-        assert!(!ok("http://192.0.2.5:8097/"));
-        assert!(!ok("http://192.0.2.5/"));
-        assert!(!ok("https://192.0.2.5:8096/"));
+        assert!(ok("http://192.168.1.5:8096/"));
+        assert!(ok("http://192.168.1.5:8096/title/x?y=1"));
+        assert!(!ok("http://192.168.1.5:8097/"));
+        assert!(!ok("http://192.168.1.5/"));
+        assert!(!ok("https://192.168.1.5:8096/"));
         let json = remote_capability("main", &server()).unwrap();
         let CapabilityFile::Capability(c) = json.parse::<CapabilityFile>().unwrap() else {
             panic!()
