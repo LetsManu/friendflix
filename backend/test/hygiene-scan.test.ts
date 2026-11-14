@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import v8 from 'node:v8';
+import vm from 'node:vm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { listErrors } from '../src/errorlog.js';
 import { hygieneDue, hygieneState, hygieneTick, householdLanguages, startHygieneScan, hygieneIdle } from '../src/hygiene/scan.js';
@@ -244,17 +246,28 @@ describe('hygiene scan', () => {
     };
     const admin = await env.login(ADMIN);
     await env.kv.set('health:snap', JSON.stringify({ at: new Date().toISOString(), services: [], disks: [], errors: { level: 'ok', server15: 0, client15: 0, playback60: 0 }, issues: [], worst: 'ok' }), 300);
+    // "bounded heap" is about what the sweep keeps alive, not about garbage the collector has not got to yet: raw heapUsed also counts dead
+    // pages and items until the next major GC, which depends on the young-generation size and the runner (7 MB or 56 MB for the same
+    // code). So each sample collects first. The collection stays out of the timed health request.
+    v8.setFlagsFromString('--expose-gc');
+    const gc = vm.runInNewContext('gc') as () => void;
+    gc();
     const heap0 = process.memoryUsage().heapUsed;
     let peak = heap0;
-    const sampler = setInterval(() => { peak = Math.max(peak, process.memoryUsage().heapUsed); }, 20);
+    let timing = false;
+    const sampler = setInterval(() => { if (timing) return; gc(); peak = Math.max(peak, process.memoryUsage().heapUsed); }, 50);
     const started = Date.now();
     const run = tick();
     while ((await env.pool.query('select count(*)::int n from hygiene_items')).rows[0].n < 5000) await new Promise((r) => setTimeout(r, 20));
+    timing = true;
     const t = performance.now();
     const res = await env.app.inject({ url: '/api/admin/health', cookies: admin.cookies });
     const ms = performance.now() - t;
+    timing = false;
     await run;
     clearInterval(sampler);
+    gc();
+    peak = Math.max(peak, process.memoryUsage().heapUsed);
     expect(res.statusCode).toBe(200);
     expect(ms).toBeLessThan(200);
     expect((await env.pool.query('select count(*)::int n from hygiene_items')).rows[0].n).toBe(MOVIES + EPISODES);

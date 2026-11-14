@@ -157,8 +157,12 @@ describe('hand pins (Task 7)', () => {
     guides.set(GUIDE_URL, guide([['a.de', 'A'], ['b.de', 'B'], ['c.de', 'C'], ['d.de', 'D']]));
     await refreshEpg(env.ctx, await src(g));
     calls.length = 0;
+    // the three pins (HTTP request + DB work each) must all land inside the owner's delay window, or the first import has started and the
+    // later pin rightly schedules a trailing one. The default 60 ms of these tests is shorter than three requests on a slow runner.
+    env.ctx.pinImportDelayMs = 1_000;
     for (const [ch, x] of [[a, 'a.de'], [b, 'b.de'], [c, 'c.de']] as const) expect((await pin(ch, { sourceId: g, xmlId: x })).statusCode).toBe(200);
     await settle(g);
+    env.ctx.pinImportDelayMs = 60;
     expect(xmltvCalls()).toHaveLength(1);
     expect([...(xmltvCalls()[0]!.body as { channels: string[] }).channels].sort()).toEqual(['a.de', 'b.de', 'c.de']);
     // the guide's lock is held (an import running): the pin waits, then one trailing import sees it

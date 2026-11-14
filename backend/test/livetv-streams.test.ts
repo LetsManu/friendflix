@@ -25,7 +25,7 @@ import { liveViewKey } from '../src/livetv/tokens.js';
 import type { Encoder, StreamView } from '../src/livetv/wire.js';
 import { invalidateRights } from '../src/rights.js';
 import { invalidateRoles } from '../src/roles.js';
-import { cfg, ENC_KEY, fakeHttp, makeEnv, type Call, type TestEnv } from './helpers.js';
+import { cfg, driveClock, ENC_KEY, fakeHttp, makeEnv, type Call, type TestEnv } from './helpers.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 const key = keyFromBase64(ENC_KEY);
@@ -116,15 +116,7 @@ const authz = (token: string, ip = '192.0.2.250') => env.app.inject({ method: 'P
 
 const realSleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** drives a promise that waits on (faked) timers: 500-ms steps of the fake clock, with real I/O turns in between */
-async function drive<T>(p: Promise<T>, stepMs = 500, max = 200): Promise<T> {
-  let done = false;
-  void p.then(() => { done = true; }, () => { done = true; });
-  for (let i = 0; i < max && !done; i++) {
-    await vi.advanceTimersByTimeAsync(stepMs);
-    for (let j = 0; j < 5 && !done; j++) await new Promise((r) => setImmediate(r));
-  }
-  return p;
-}
+const drive = <T>(p: Promise<T>, stepMs = 500, max = 200): Promise<T> => driveClock(env.pool, p, stepMs, max, 5);
 
 async function person(id: string, sub: string, name: string, role: string): Promise<Sess> {
   await env.pool.query(
