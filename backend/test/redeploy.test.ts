@@ -164,4 +164,15 @@ describe('Portainer redeploy phases', () => {
     expect(await redeployView(ctx, null, T0 + 3_000, BEFORE)).toMatchObject({ phase: 'pulling', running: true });
     expect(await redeployView(ctx, all('sha-aaaaaaa'), T0 + 4_000, BEFORE)).toMatchObject({ phase: 'unchanged' });
   });
+
+  it('the slot cannot be held (its claim expired, another took it): nothing is recorded, no phantom "pulling", the next claim succeeds', async () => {
+    const kv = new MemoryKV();
+    const ctx = ctxOf(OLD, kv);
+    const id = (await claimRedeploy(ctx))!;
+    await kv.del(REDEPLOY_LOCK); // the 120 s claim ran out before the record
+    expect(await beginRedeploy(ctx, id, 'api', 'latest', true)).toBe(false);
+    expect(await kv.get(REDEPLOY_KEY)).toBeNull();
+    expect(await redeployView(ctx, null)).toBeNull();
+    expect(await claimRedeploy(ctx)).toMatch(/^[0-9a-f]{16}$/);
+  });
 });

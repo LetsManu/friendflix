@@ -129,12 +129,13 @@ const release = (ctx: Ctx, id: string) => ctx.kv.delIfEquals(REDEPLOY_LOCK, id).
  * it could not be recorded (the store or its mutex not available): the caller gives the slot back and sends nothing.
  */
 export async function beginRedeploy(ctx: Ctx, id: string, mode: 'webhook' | 'api', tag: string, updater: boolean, now = Date.now(), waitMs = 3_000): Promise<boolean> {
+  // the slot first: a record must never stay "pending" for a redeploy that was not sent (a phantom "pulling", busy for 15 min)
+  if (!(await ctx.kv.refreshIfEquals(REDEPLOY_LOCK, id, HOLD_S).catch(() => false))) return false;
   const ok = await locked(ctx, () => write(ctx, {
     v: 1, id, mode, startedAt: now, from: ctx.cfg.GIT_SHA, tag, updater, answer: 'pending', answeredAt: null, sync: false, changed: false,
     error: null, step: null, status: null, code: null, final: null, finishedAt: null, at: null,
   }), waitMs);
-  if (!ok) return false;
-  return ctx.kv.refreshIfEquals(REDEPLOY_LOCK, id, HOLD_S).catch(() => false);
+  return ok === true;
 }
 
 /** gives the slot back when nothing was recorded or started (Portainer refused at once is settled instead) */

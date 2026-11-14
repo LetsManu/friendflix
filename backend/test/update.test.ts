@@ -262,6 +262,16 @@ describe('admin update', () => {
     expect(seen.find((s) => s.method === 'PUT')!.body).toMatchObject({ repositoryAuthentication: true, repositoryUsername: 'deploy-bot', repositoryPassword: '' });
   });
 
+  it('api mode, git stack with an empty Authentication (no user name: nothing stored to keep): no authentication fields sent', async () => {
+    stack.GitConfig = { ReferenceName: 'refs/heads/main', Authentication: {} };
+    const { post } = await setup(api);
+    expect((await post()).statusCode).toBe(202);
+    const body = seen.find((s) => s.method === 'PUT')!.body;
+    expect(body).not.toHaveProperty('repositoryAuthentication');
+    expect(body).not.toHaveProperty('repositoryUsername');
+    expect(body).not.toHaveProperty('repositoryPassword');
+  });
+
   it('one redeploy at a time: a second POST while one runs is refused (busy) and nothing is sent', async () => {
     putAnswer = { Id: 7, Status: 3 }; // Portainer from 2.36: answers at once, still deploying
     const { post, admin } = await setup(api);

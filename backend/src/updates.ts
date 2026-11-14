@@ -220,10 +220,11 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api', onLate?: 
     if (stack.GitConfig) {
       // a private repository: Portainer clones with what the redeploy sends; authentication on with the stored user name and an
       // empty password keeps the stored credentials (Portainer 2.30 to 2.36 stackGitRedeploy). The password never leaves Portainer.
-      // (a stored user name may be empty, e.g. a token; credentials kept as a Portainer "git credential" are not covered, see
-      // docs/operations.md)
       const a = stack.GitConfig.Authentication;
-      const auth = a && typeof a === 'object' ? { repositoryAuthentication: true, repositoryUsername: typeof a.Username === 'string' ? a.Username : '', repositoryPassword: '' } : {};
+      const user = a && typeof a === 'object' && typeof a.Username === 'string' ? a.Username : '';
+      // only with a stored user name (Portainer returns the password emptied, so the name is the only sign of stored credentials);
+      // `Authentication: {}` or a Portainer "git credential" (GitCredentialID) sends nothing, see docs/operations.md
+      const auth = user ? { repositoryAuthentication: true, repositoryUsername: user, repositoryPassword: '' } : {};
       r = await send(`${base}/api/stacks/${id}/git/redeploy?${eid}`, {
         method: 'PUT', headers: { ...headers, 'content-type': 'application/json' },
         body: JSON.stringify({ repositoryReferenceName: stack.GitConfig.ReferenceName, ...auth, env, prune: false, pullImage: true, repullImageAndRedeploy: true }),
