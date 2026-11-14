@@ -1,39 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { removedEnvCount, type DiskHealth, type HealthSnapshot, type Level, type Reason, type ServiceHealth, type ServiceId } from '../../health.js';
+import { bounded, removedEnvCount, type DiskHealth, type HealthSnapshot, type ServiceHealth } from '../../health.js';
 import { runProbe } from '../../settings/probes.js';
 import type { CheckEnv, GroupCheck } from '../engine.js';
-import { bad, line, type LineOpts } from '../line.js';
-import { CHECK_TIMEOUT_MS, type CheckId, type CheckLine, type CheckStatus } from '../types.js';
+import { bad, line } from '../line.js';
+import { CHECK_TIMEOUT_MS, type CheckId, type CheckLine } from '../types.js';
+import { levelToStatus, service, timedLine } from './util.js';
+
+export { levelToStatus } from './util.js';
 
 /**
  * Grundlagen: the public URL (the setup probe), the database, Redis and the gateway, the disks and old variable names, all from the health
  * snapshot except the public URL. A line uses the snapshot's own level, so the banner and the Systemcheck never disagree.
  */
 const GiB = 1024 ** 3;
-
-/** the snapshot level as a line status (spec "Status rules"); `off` is not set up only when the reason says so */
-export function levelToStatus(level: Level, reason?: Reason): CheckStatus {
-  switch (level) {
-    case 'err': return 'problem';
-    case 'warn': return 'warning';
-    case 'ok': return 'ok';
-    default: return reason === 'not_set' ? 'not_set_up' : 'unknown';
-  }
-}
-
-export const service = (s: HealthSnapshot, id: ServiceId): ServiceHealth | undefined => s.services.find((x) => x.id === id);
-const msOf = (h: ServiceHealth) => (h.ms !== undefined ? { ms: h.ms } : {});
-
-/** a timed service row (database, Redis, gateway): down → problem, slow → warning, with the cause prefix of the line */
-function timedLine(id: CheckId, h: ServiceHealth | undefined, prefix: string, o: LineOpts = {}): CheckLine {
-  if (!h) return bad(id, 'unknown', 'check_unavailable');
-  const status = levelToStatus(h.level, h.reason);
-  if (status === 'ok') return line(id, 'ok', msOf(h));
-  if (status === 'problem') return bad(id, status, `${prefix}_down`, { ...msOf(h), ...o });
-  if (status === 'warning') return bad(id, status, `${prefix}_slow`, { ...msOf(h), ...o });
-  return bad(id, 'unknown', 'check_unavailable');
-}
 
 async function publicUrlLine(env: CheckEnv): Promise<CheckLine> {
   const id = 'core.publicUrl';
@@ -48,10 +28,12 @@ async function publicUrlLine(env: CheckEnv): Promise<CheckLine> {
 type DiskId = 'downloads' | 'previews' | 'database';
 const DISK_LINE: Record<DiskId, CheckId> = { downloads: 'core.disk.downloads', previews: 'core.disk.previews', database: 'core.disk.database' };
 
-function diskLine(id: DiskId, d: DiskHealth | undefined, shared?: 'downloads' | 'previews'): CheckLine {
+/** `shared`: this line is read from the other volume's entry; `partner`: the entry also covers that volume (both say so in params) */
+function diskLine(id: DiskId, d: DiskHealth | undefined, shared?: 'downloads' | 'previews', partner?: 'downloads' | 'previews'): CheckLine {
   const lid = DISK_LINE[id];
   if (!d) return bad(lid, 'unknown', 'disk_unreadable');
-  const extra = shared ? { sharedWith: shared } : {};
+  const other = shared ?? partner;
+  const extra = other ? { sharedWith: other } : {};
   // the cache limit is the downloads' own bytes: on a shared filesystem it says nothing about the previews
   const status = shared && d.reason === 'cap' ? 'ok' : levelToStatus(d.level, d.reason);
   if (status === 'ok') return line(lid, 'ok', { params: extra });
@@ -69,7 +51,7 @@ function diskLines(env: CheckEnv, s: HealthSnapshot): CheckLine[] {
   const disk = (id: DiskId) => s.disks.find((d) => d.id === id);
   const dl = disk('downloads');
   const downloads = env.ctx.cfg.DOWNLOADS_ENABLED === 'true'
-    ? diskLine('downloads', dl)
+    ? diskLine('downloads', dl, undefined, dl?.sharedWith)
     : bad('core.disk.downloads', 'not_set_up', 'downloads_off', { settingKey: 'DOWNLOADS_ENABLED' });
   // one filesystem for both volumes: the snapshot has one entry (downloads, sharedWith previews), the Systemcheck both lines
   const previews = dl?.sharedWith === 'previews' && env.ctx.cfg.DOWNLOADS_ENABLED === 'true' ? diskLine('previews', dl, 'downloads') : diskLine('previews', disk('previews'));
@@ -81,12 +63,31 @@ function envLine(): CheckLine {
   return n > 0 ? bad('core.env', 'warning', 'removed_env', { params: { n }, docs: 'operations.md' }) : line('core.env', 'ok');
 }
 
+/** a dependency read directly when the snapshot did not come in time (a stalled database holds the snapshot, not this probe) */
+const FALLBACK_MS = 500;
+async function ownProbe(id: 'postgres' | 'redis', fn: () => Promise<unknown>): Promise<ServiceHealth> {
+  const o = await bounded(async () => Boolean(await fn()), FALLBACK_MS);
+  return o.ok && o.v ? { id, level: 'ok', ms: o.ms } : { id, level: 'err', reason: 'down', ms: o.ms };
+}
+
 export const coreCheck: GroupCheck = {
   group: 'core',
   ids: ['core.publicUrl', 'core.database', 'core.redis', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env'],
   timeoutMs: CHECK_TIMEOUT_MS,
   async run(env) {
     const [pub, s] = await Promise.all([publicUrlLine(env), env.snapshot()]);
+    if (!s) {
+      // no snapshot within its limit: the database and Redis are asked directly, the rest is not known this time
+      const [db, redis] = await Promise.all([ownProbe('postgres', async () => (await env.ctx.db.query('select 1'), true)), ownProbe('redis', () => env.ctx.kv.ping())]);
+      const unknown = (id: CheckId) => bad(id, 'unknown', 'check_unavailable');
+      return [
+        pub,
+        timedLine('core.database', db, 'db', { docs: 'operations.md' }),
+        timedLine('core.redis', redis, 'redis'),
+        unknown('core.gateway'), unknown('core.disk.downloads'), unknown('core.disk.previews'), unknown('core.disk.database'),
+        envLine(),
+      ];
+    }
     return [
       pub,
       timedLine('core.database', service(s, 'postgres'), 'db', { docs: 'operations.md' }),

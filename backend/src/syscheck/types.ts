@@ -57,3 +57,8 @@ export interface SystemcheckResult { at: string; lines: CheckLine[]; counts: Rec
 /** the default limit of one group check, and the sign-in group's (its Authentik reads are sequential) */
 export const CHECK_TIMEOUT_MS = 4_000;
 export const SIGNIN_TIMEOUT_MS = 8_000;
+/**
+ * how long a run waits for the health snapshot (its probes are bounded at 3 s): a check that misses it reads what it can without
+ * (core asks the database and Redis directly), so one stalled input never blanks every group
+ */
+export const SNAPSHOT_TIMEOUT_MS = 3_300;

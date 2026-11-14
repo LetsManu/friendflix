@@ -5,10 +5,10 @@ import { checkLoginFlows, type LoginCheck } from '../flowCheck.js';
 import { bounded, getSnapshot, type HealthSnapshot } from '../health.js';
 import { BUILTIN_CHECKS } from './checks/index.js';
 import { cleanLine, line } from './line.js';
-import { CHECK_IDS, CHECK_STATUSES, type CheckGroup, type CheckId, type CheckLine, type CheckStatus, type SystemcheckResult } from './types.js';
+import { CHECK_IDS, CHECK_STATUSES, SNAPSHOT_TIMEOUT_MS, type CheckGroup, type CheckId, type CheckLine, type CheckStatus, type SystemcheckResult } from './types.js';
 
-export { line, safeParams } from './line.js';
-export { CHECK_TIMEOUT_MS, SIGNIN_TIMEOUT_MS } from './types.js';
+export { cleanLine, line, safeParams } from './line.js';
+export { CHECK_TIMEOUT_MS, SIGNIN_TIMEOUT_MS, SNAPSHOT_TIMEOUT_MS } from './types.js';
 
 /**
  * The Systemcheck engine (spec: docs/superpowers/specs/2026-11-14-systemcheck-design.md). Every group check runs in parallel under its own
@@ -18,8 +18,11 @@ export { CHECK_TIMEOUT_MS, SIGNIN_TIMEOUT_MS } from './types.js';
  */
 export interface CheckEnv {
   ctx: Ctx;
-  /** the health snapshot, read once per run (memoised; `fresh` rebuilds it); a check that does not need it never waits for it */
-  snapshot(): Promise<HealthSnapshot>;
+  /**
+   * the health snapshot, read once per run (memoised; `fresh` rebuilds it); a check that does not need it never waits for it. Null when
+   * it did not come within SNAPSHOT_TIMEOUT_MS: the check then answers what it can without it.
+   */
+  snapshot(): Promise<HealthSnapshot | null>;
   /** the sign-in check (checkLoginFlows), memoised per run */
   login(): Promise<LoginCheck>;
   /** Jetzt prüfen: inputs are read fresh, not from their caches */
@@ -81,11 +84,11 @@ async function runCheck(ctx: Ctx, c: GroupCheck, env: Omit<CheckEnv, 'timeoutMs'
 /** One run of every registered check, in parallel, each under its own limit. Never throws. */
 export async function buildSystemcheck(ctx: Ctx, o: { fresh?: boolean } = {}): Promise<SystemcheckResult> {
   const fresh = o.fresh === true;
-  let snap: Promise<HealthSnapshot> | undefined;
+  let snap: Promise<HealthSnapshot | null> | undefined;
   let login: Promise<LoginCheck> | undefined;
   const env = {
     ctx, fresh,
-    snapshot: () => (snap ??= getSnapshot(ctx, { refresh: fresh })),
+    snapshot: () => (snap ??= bounded(() => getSnapshot(ctx, { refresh: fresh }), SNAPSHOT_TIMEOUT_MS).then((r) => (r.ok ? r.v : null))),
     login: () => (login ??= checkLoginFlows(ctx, { fresh })),
   };
   const lines = sortLines((await Promise.all(registry.map((c) => runCheck(ctx, c, env)))).flat());
@@ -100,7 +103,8 @@ function rebuild(ctx: Ctx, fresh: boolean): Promise<SystemcheckResult> {
   if (cur && (cur.fresh || !fresh)) return cur.p;
   const p: Promise<SystemcheckResult> = buildSystemcheck(ctx, { fresh })
     .then((r) => {
-      void ctx.kv.set(RESULT_KEY, JSON.stringify(r), RESULT_TTL_S).catch(() => undefined);
+      // a build that a Jetzt-prüfen build replaced meanwhile does not overwrite the fresher result
+      if (inflight.get(ctx)?.p === p) void ctx.kv.set(RESULT_KEY, JSON.stringify(r), RESULT_TTL_S).catch(() => undefined);
       return r;
     })
     .finally(() => { if (inflight.get(ctx)?.p === p) inflight.delete(ctx); });

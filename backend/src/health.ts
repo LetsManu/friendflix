@@ -238,11 +238,13 @@ function diskEntry(ctx: Ctx, id: 'downloads' | 'previews', v: Vol | null, ownByt
 async function disks(ctx: Ctx, d: DiskDeps, timeoutMs: number): Promise<DiskHealth[]> {
   const downloadsOn = ctx.cfg.DOWNLOADS_ENABLED === 'true';
   const num = async (sql: string) => Number((await ctx.db.query<{ n: string }>(sql).catch(() => ({ rows: [] as Array<{ n: string }> }))).rows[0]?.n ?? 0);
+  // a stalled database must not hold the snapshot: an unanswered byte count reads as 0 (the disk's own usage still comes from statfs)
+  const ownBytes = (sql: string) => bounded(() => num(sql), timeoutMs).then((o) => (o.ok ? o.v : 0));
   const [dlVol, pvVol, dlBytes, pvBytes, dbBytes] = await Promise.all([
     downloadsOn ? volume(ctx.cfg.DOWNLOAD_DIR, d, timeoutMs) : Promise.resolve(null),
     volume(ctx.cfg.PREVIEW_DIR, d, timeoutMs),
-    downloadsOn ? num("select coalesce(sum(bytes),0)::text n from download_jobs where status='ready'") : Promise.resolve(0),
-    num("select coalesce(sum(bytes),0)::text n from preview_clips where status='ok'"),
+    downloadsOn ? ownBytes("select coalesce(sum(bytes),0)::text n from download_jobs where status='ready'") : Promise.resolve(0),
+    ownBytes("select coalesce(sum(bytes),0)::text n from preview_clips where status='ok'"),
     bounded(() => num('select pg_database_size(current_database())::text n'), timeoutMs).then((o) => (o.ok ? o.v : null)),
   ]);
   const out: DiskHealth[] = [];

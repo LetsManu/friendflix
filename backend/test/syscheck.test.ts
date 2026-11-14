@@ -133,6 +133,23 @@ describe('cache and endpoint', () => {
     expect(runs.core).toBe(2);
   });
 
+  it('a plain build that a refresh replaced does not overwrite the refreshed result in kv', async () => {
+    resetChecksForTests();
+    let n = 0;
+    registerChecks([{ group: 'core', ids: ['core.publicUrl'], timeoutMs: 2000, run: async () => {
+      const slow = n++ === 0; // the first (plain) build is the slow one
+      await new Promise((res) => setTimeout(res, slow ? 300 : 10));
+      return [line('core.publicUrl', slow ? 'warning' : 'ok', slow ? { cause: 'public_url_echo' } : {})];
+    } }]);
+    const plain = getSystemcheck(env.ctx);
+    while (n === 0) await new Promise((res) => setTimeout(res, 5)); // the plain build is running
+    const fresh = await getSystemcheck(env.ctx, { refresh: true });
+    await plain;
+    await systemcheckSettled(env.ctx);
+    expect(JSON.parse((await env.kv.get('syscheck:result'))!).lines[0].status).toBe(fresh.lines[0]!.status);
+    expect(fresh.lines[0]!.status).toBe('ok');
+  });
+
   it('an entry older than 60 s is served at once and rebuilt in the background', async () => {
     const first = await getSystemcheck(env.ctx);
     const old = { ...first, at: new Date(Date.now() - 70_000).toISOString() };

@@ -6,7 +6,7 @@ import type { HealthSnapshot } from '../../health.js';
 import type { GroupCheck } from '../engine.js';
 import { bad, line } from '../line.js';
 import { SIGNIN_TIMEOUT_MS, type CheckLine, type CheckStatus } from '../types.js';
-import { levelToStatus, service } from './core.js';
+import { levelToStatus, msOf, service } from './util.js';
 
 /**
  * Anmeldung: OIDC discovery from the health snapshot, everything else from the sign-in status check (flowCheck.ts, the LoginCard's
@@ -26,12 +26,12 @@ const unreachable = (lc: LoginCheck) => lc.serviceToken?.token === 'unreachable'
 /** the flows could not be read: never report them as missing or fine */
 const flowsUnread = (lc: LoginCheck) => tokenBad(lc) || unreachable(lc) || Boolean(lc.serviceToken?.missing.includes('view_flow'));
 
-function oidcLine(s: HealthSnapshot): CheckLine {
+function oidcLine(s: HealthSnapshot | null): CheckLine {
   const id = 'signin.oidc';
   const h = service(s, 'oidc');
   if (!h) return bad(id, 'unknown', 'check_unavailable');
   const status = levelToStatus(h.level, h.reason);
-  const ms = h.ms !== undefined ? { ms: h.ms } : {};
+  const ms = msOf(h);
   if (status === 'ok') return line(id, 'ok', ms);
   if (status === 'problem') return bad(id, status, h.reason === 'issuer_mismatch' ? 'oidc_issuer_mismatch' : 'oidc_down', { ...ms, settingKey: 'OIDC_ISSUER' });
   if (status === 'warning') return bad(id, status, 'oidc_slow', ms);

@@ -5,10 +5,12 @@ import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { requireAdmin } from '../session.js';
 import { requestLines } from '../syscheck/checks/proxy.js';
-import { countLines, getSystemcheck, sortLines } from '../syscheck/engine.js';
+import { bounded } from '../health.js';
+import { cleanLine, countLines, getSystemcheck, sortLines } from '../syscheck/engine.js';
 import type { SystemcheckResult } from '../syscheck/types.js';
 
 const REFRESH_PER_MIN = 6;
+const KV_MS = 1_000;
 const query = z.object({ refresh: z.enum(['1', '0', 'true', 'false']).optional() });
 
 /** The Systemcheck (Admin → Status): cached server lines plus the request-scoped proxy lines; `?refresh=1` is Jetzt prüfen. Admin only. */
@@ -17,12 +19,14 @@ export function systemcheckRoutes(app: FastifyInstance, ctx: Ctx) {
     void reply.header('cache-control', 'no-store');
     const q = query.parse(req.query);
     const refresh = q.refresh === '1' || q.refresh === 'true';
-    // without kv (Redis down) the limit cannot be counted: the run itself is still single flight
-    if (refresh && (await ctx.kv.incr(`syscheck:refresh:${req.sid}`, 60).catch(() => 0)) > REFRESH_PER_MIN) {
-      return reply.code(429).send({ error: 'rate_limited' });
+    // without kv (Redis down or hanging) the limit cannot be counted: the run itself is still single flight
+    if (refresh) {
+      const n = await bounded(() => ctx.kv.incr(`syscheck:refresh:${req.sid}`, 60), KV_MS);
+      if (n.ok && n.v > REFRESH_PER_MIN) return reply.code(429).send({ error: 'rate_limited' });
     }
     const r = await getSystemcheck(ctx, { refresh });
-    const extra = requestLines(req, ctx);
+    // request-scoped lines are cleaned like every other line, and only the proxy group's ids may come from them
+    const extra = requestLines(req, ctx).filter((l) => l?.id?.startsWith('proxy.')).map((l) => cleanLine(ctx, l));
     if (!extra.length) return r;
     const ids = new Set(extra.map((l) => l.id));
     const lines = sortLines([...r.lines.filter((l) => !ids.has(l.id)), ...extra]);

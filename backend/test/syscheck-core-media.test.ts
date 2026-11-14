@@ -176,6 +176,74 @@ describe('media lines', () => {
   });
 });
 
+describe('one hung dependency', () => {
+  // ctx.db is a proxy over the pool: the pool's own query is replaced (and the prototype's restored by deleting it)
+  const pool = () => env.pool as unknown as { query?: unknown };
+  const stallDb = () => { pool().query = () => new Promise(() => undefined); }; // never answers
+  const unstallDb = () => { delete pool().query; };
+  const noTimeouts = (r: SystemcheckResult) => r.lines.filter((l) => l.cause === 'check_timeout').map((l) => l.id);
+
+  it('Postgres stalled (Jetzt prüfen): core.database problem db_down, every other line filled, answer < 8.5 s', async () => {
+    stallDb();
+    try {
+      const t0 = performance.now();
+      const r = await buildSystemcheck(env.ctx, { fresh: true });
+      expect(performance.now() - t0).toBeLessThan(8_500);
+      expect(noTimeouts(r)).toEqual([]);
+      expect(get(r, 'core.database')).toMatchObject({ status: 'problem', cause: 'db_down' });
+      expect(get(r, 'core.redis').status).toBe('ok');
+      expect(get(r, 'media.server').status).toBe('ok');
+      expect(get(r, 'media.playback')).toMatchObject({ status: 'unknown', cause: 'check_unavailable' });
+      expect(r.lines.filter((l) => l.group === 'signin').length).toBe(6);
+    } finally {
+      unstallDb();
+    }
+  }, 15_000);
+
+  it('a snapshot that does not come in time: core asks the database and Redis itself, the rest reads check_unavailable (not check_timeout)', async () => {
+    const kv = env.kv;
+    const orig = kv.get;
+    kv.get = async (key: string) => (key.startsWith('health:') ? new Promise<string | null>(() => undefined) : orig.call(kv, key));
+    try {
+      const t0 = performance.now();
+      const r = await buildSystemcheck(env.ctx);
+      expect(performance.now() - t0).toBeLessThan(4_500);
+      expect(noTimeouts(r)).toEqual([]);
+      expect(get(r, 'core.database').status).toBe('ok');
+      expect(get(r, 'core.redis').status).toBe('ok');
+      expect(get(r, 'core.publicUrl').status).toBe('ok');
+      for (const id of ['core.gateway', 'core.disk.previews', 'media.server', 'media.requests', 'signin.oidc'] as const) expect(get(r, id), id).toMatchObject({ status: 'unknown', cause: 'check_unavailable' });
+      // the database stalled as well: its own probe says so
+      stallDb();
+      try {
+        expect(get(await buildSystemcheck(env.ctx), 'core.database')).toMatchObject({ status: 'problem', cause: 'db_down' });
+      } finally {
+        unstallDb();
+      }
+    } finally {
+      kv.get = orig;
+    }
+  }, 15_000);
+
+  it('request service never answers (Jetzt prüfen): media.requests warning requests_down, the other media lines filled', async () => {
+    const seerr = env.ctx.seerr!;
+    const origCount = seerr.requestCount;
+    seerr.requestCount = () => new Promise(() => undefined);
+    env.ctx.fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      (new URL(String(input)).host === 'requests:5055' ? new Promise<Response>(() => undefined) : http(input, init))) as typeof fetch;
+    try {
+      const t0 = performance.now();
+      const r = await buildSystemcheck(env.ctx, { fresh: true });
+      expect(performance.now() - t0).toBeLessThan(4_500);
+      expect(get(r, 'media.requests')).toMatchObject({ status: 'warning', cause: 'requests_down', settingKey: 'REQUESTS_URL' });
+      for (const id of ['media.server', 'media.tmdb', 'media.omdb', 'media.encoder'] as const) expect(get(r, id).cause, id).not.toBe('check_timeout');
+      expect(noTimeouts(r)).toEqual([]);
+    } finally {
+      seerr.requestCount = origCount;
+    }
+  }, 15_000);
+});
+
 describe('without kv', () => {
   it('Redis down: the endpoint still answers (built in-process), core.redis = problem', async () => {
     const kv = env.kv;
