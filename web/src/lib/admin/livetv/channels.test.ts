@@ -3,16 +3,17 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import {
-  afterOrderSave, channelError, checkLogoFile, factsLine, forOrder, kindChip, mergeSynced, nowLine, ORDER_MAX, orderFilter, overrideHint, queryString, shiftFromLine, syncing, TEST_MAX,
-  type AdminChannel, type ChannelFilter,
+  afterOrderSave, channelError, checkLogoFile, factsLine, forOrder, kindChip, mergeSynced, nowLine, ORDER_MAX, orderFilter, overrideHint, pinGuides, pinLine, queryString, shiftFromLine,
+  startGuide, syncing, TEST_MAX, type AdminChannel, type ChannelFilter,
 } from './channels';
+import type { SourceView } from './api';
 
 afterEach(async () => { await setLocale('de'); });
 
 const F: ChannelFilter = { q: '', source: null, group: null, state: null, epg: null, error: false, sort: 'number', dir: 'asc', offset: 0 };
 const ch = (over: Partial<AdminChannel> = {}): AdminChannel => ({
   id: 'c1', number: 1, name: 'Nordlicht TV', groupId: 'g1', sourceId: 's1', streamKind: 'hls', ingest: 'pull', logoHash: null, hidden: false, missing: false,
-  epg: true, now: null, mode: null, probeError: null, overridden: {}, dupNumber: false, epgShift: { min: 0, from: 'none' }, ...over,
+  epg: true, epgMatch: 'auto', epgPin: null, now: null, mode: null, probeError: null, overridden: {}, dupNumber: false, epgShift: { min: 0, from: 'none' }, ...over,
 });
 
 describe('orderFilter (Kanäle → Reihenfolge)', () => {
@@ -190,5 +191,39 @@ describe('synced (own feeds, "wird übertragen …")', () => {
     expect(out[0]!.name).toBe('Hafenkanal Live');
     expect(out[1]).toBe(rows[1]); // untouched rows keep their identity
     expect(mergeSynced(rows, [])).toEqual(rows);
+  });
+});
+
+describe('Programm zuordnen… (pinGuides / startGuide / pinLine)', () => {
+  const src = (o: Partial<SourceView> & Pick<SourceView, 'id' | 'kind' | 'name'>): SourceView => ({
+    urlHint: null, epgHint: null, userAgent: null, allowLan: false, refresh: '24h', skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0,
+    maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0, guideProvider: null, guideScope: null, servedChannels: 0,
+    state: { lastRefreshAt: null, lastOkAt: null, lastError: null, counts: null, epg: { lastRefreshAt: null, lastOkAt: null, lastError: null, programmes: null } }, ...o,
+  });
+  const sources = [
+    src({ id: 'l1', kind: 'm3u', name: 'Nordlicht Paket', epgHint: 'https://iptv.example.com/…' }),
+    src({ id: 'l2', kind: 'm3u', name: 'Hafen Paket' }), // no guide
+    src({ id: 'f', kind: 'feeds', name: 'Eigene Streams' }),
+    src({ id: 'g2', kind: 'guide', name: 'Zweiter Guide', position: 1 }),
+    src({ id: 'g1', kind: 'guide', name: 'Sternwarte Guide', position: 0 }),
+    src({ id: 'g3', kind: 'guide', name: 'Aus Guide', position: 2, enabled: false }),
+  ];
+  it('lists the lists with a guide, then the enabled guides in their order', () => {
+    expect(pinGuides(sources)).toEqual([{ id: 'l1', name: 'Nordlicht Paket' }, { id: 'g1', name: 'Sternwarte Guide' }, { id: 'g2', name: 'Zweiter Guide' }]);
+    expect(pinGuides([])).toEqual([]);
+  });
+  it('opens on the pinned guide, else the channel\'s own list, else the first', () => {
+    const gs = pinGuides(sources);
+    const pin = { sourceId: 'g2', sourceName: 'Zweiter Guide', xmlId: 'x', name: 'X', guideDisabled: false };
+    expect(startGuide({ sourceId: 'l1', epgPin: pin }, gs)).toBe('g2');
+    expect(startGuide({ sourceId: 'l1', epgPin: null }, gs)).toBe('l1');
+    expect(startGuide({ sourceId: 'l2', epgPin: { ...pin, sourceId: 'g3', guideDisabled: true } }, gs)).toBe('l1'); // a disabled guide is no choice
+    expect(startGuide({ sourceId: 'f', epgPin: null }, [])).toBeNull();
+  });
+  it('says what the channel is mapped to', () => {
+    expect(pinLine(ch())).toBe('Automatisch');
+    expect(pinLine(ch({ epgMatch: 'none', epg: false }))).toBe('Kein Programm');
+    expect(pinLine(ch({ epgMatch: 'manual', epgPin: { sourceId: 'g1', sourceName: 'Sternwarte Guide', xmlId: 'hk.de', name: 'Hafenkanal', guideDisabled: false } })))
+      .toBe('Hafenkanal aus „Sternwarte Guide“');
   });
 });

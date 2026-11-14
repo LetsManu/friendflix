@@ -8,6 +8,7 @@
 import { api, ApiError } from '#lib/api';
 import { fmtTime, tr, type TKey } from '#lib/i18n';
 import { errorText } from '#lib/ui/action';
+import type { SourceView } from './api';
 import { shiftLabel } from './picker';
 
 export type StreamKind = 'hls' | 'ts' | 'srt';
@@ -20,6 +21,10 @@ export interface ProbeFacts {
   audio?: { codec: string; channels: number };
   needs: Needs | null;
 }
+
+export type EpgMatch = 'auto' | 'manual' | 'none';
+/** a hand pin: the guide by id and name, the XMLTV channel and its first display name */
+export interface EpgPin { sourceId: string; sourceName: string; xmlId: string; name: string; guideDisabled: boolean }
 
 /** `AdminChannel` of backend/src/livetv/adminChannels.ts */
 export interface AdminChannel {
@@ -35,6 +40,10 @@ export interface AdminChannel {
   missing: boolean;
   /** an EPG mapping is set */
   epg: boolean;
+  /** how the mapping is made: automatically, by hand (*Programm zuordnen…*), or none (*Kein Programm*) */
+  epgMatch: EpgMatch;
+  /** the hand pin (`epgMatch` 'manual'), else null; `guideDisabled` = its extra guide is switched off (the pin stays, no programme) */
+  epgPin: EpgPin | null;
   /** the programme on now, the offset applied; null without one */
   now: Prog | null;
   /** from the last stream test; null = not tested or the test failed */
@@ -205,6 +214,31 @@ export function checkLogoFile(f: { name: string; type: string; size: number }): 
   return f.size > LOGO_MAX ? 'too_large' : null;
 }
 
+// ---- Programm zuordnen… (extra-guides plan Task 8) ----
+
+/** a guide a channel can be pinned to: a provider list with a guide link, or an enabled extra guide (backend `pinTarget`) */
+export interface PinGuide { id: string; name: string }
+/** the picker's guides in the sources' order: lists with a guide, then the enabled extra guides (a disabled one takes no new pin) */
+export function pinGuides(sources: readonly SourceView[]): PinGuide[] {
+  const lists = sources.filter((s) => s.kind === 'm3u' && s.epgHint !== null);
+  const guides = sources.filter((s) => s.kind === 'guide' && s.enabled).sort((a, b) => a.position - b.position);
+  return [...lists, ...guides].map((s) => ({ id: s.id, name: s.name }));
+}
+/** the guide the picker opens on: the pinned one, else the channel's own list, else the first */
+export function startGuide(c: Pick<AdminChannel, 'epgPin' | 'sourceId'>, guides: readonly PinGuide[]): string | null {
+  const has = (id: string | undefined) => (id && guides.some((g) => g.id === id) ? id : null);
+  return has(c.epgPin?.sourceId) ?? has(c.sourceId) ?? guides[0]?.id ?? null;
+}
+/** the sheet's *Jetzt zugeordnet* line: "Hafenkanal aus „Sternwarte Guide“", "Automatisch", "Kein Programm" */
+export function pinLine(c: Pick<AdminChannel, 'epgMatch' | 'epgPin'>): string {
+  if (c.epgPin) return tr('adminLive.ch.pin.statePin', { name: c.epgPin.name, guide: c.epgPin.sourceName });
+  return tr(c.epgMatch === 'none' ? 'adminLive.ch.pin.stateNone' : 'adminLive.ch.pin.stateAuto');
+}
+/** one XMLTV channel of a guide's index (the search's answer) */
+export interface EpgHit { xmlId: string; names: string[] }
+/** the search box is sent at most this long (backend `q` max 100) */
+export const PIN_Q_MAX = 100;
+
 // ---- the routes (backend adminRoutes.ts) ----
 const B = '/api/admin/livetv/channels';
 const enc = encodeURIComponent;
@@ -216,6 +250,12 @@ export const getChannel = (id: string) => api<AdminChannel>(`${B}/${enc(id)}`);
 /** `channelPatch`: a key that is sent changes it, `null` = back to the import (`epgShiftMin: null` = inherited again) */
 export interface ChannelPatch { name?: string | null; number?: number | null; groupId?: string | null; hidden?: boolean; epg?: boolean | null; epgShiftMin?: number | null }
 export const patchChannel = (id: string, body: ChannelPatch) => api<AdminChannel>(`${B}/${enc(id)}`, { method: 'PATCH', body });
+/** *Programm zuordnen…*: a hand pin, no programme, or `null` = automatic again (matched at once); 400 `invalid` with `sourceId` / `xmlId` */
+export type EpgPinBody = { sourceId: string; xmlId: string } | { none: true } | null;
+export const setEpgPin = (id: string, body: EpgPinBody) => api<AdminChannel>(`${B}/${enc(id)}/epg`, { method: 'PUT', body });
+/** the XMLTV channels of one guide whose name (or id) contains `q`: at most 50 by name, `more` = there are further hits */
+export const searchEpg = (source: string, q: string, signal?: AbortSignal) =>
+  api<{ channels: EpgHit[]; more: boolean }>(`/api/admin/livetv/epg/channels?source=${enc(source)}&q=${enc(q.trim().slice(0, PIN_Q_MAX))}`, { signal });
 
 export type BulkBody =
   | { ids: string[]; action: 'hide' | 'show' | 'reset' }

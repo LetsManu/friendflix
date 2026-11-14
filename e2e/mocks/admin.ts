@@ -210,6 +210,8 @@ export interface LtvChanMock {
   base: { min: number; from: 'list' | 'source' | 'none' }; shiftOv: number | null;
   mode: 'passthrough' | 'remux' | 'transcode' | null; probeError: string | null;
   push?: { port: number; hint: string };
+  /** a hand pin (*Programm zuordnen…*, extra-guides plan Task 8): `epg_match 'manual'` to this guide's XMLTV channel */
+  pin?: { sourceId: string; xmlId: string } | null;
 }
 export const LTV_GROUP_NAMES: Record<string, string> = { 'g-regional': 'Regional', 'g-sport': 'Sport' };
 /** a channel group as `GET /api/admin/livetv/groups` answers it (backend GroupView, Task 18) */
@@ -226,6 +228,8 @@ export interface LivetvAreaMock {
   chPreview: boolean;
   /** the raw logo uploads that reached the server */
   logoPuts: Array<{ id: string; type: string; bytes: number }>;
+  /** each guide's XMLTV channels (`livetv_epg_channels`) by source id: the search of *Programm zuordnen…* */
+  epgIndex: Record<string, Array<{ xmlId: string; names: string[] }>>;
   feeds: LtvFeedMock[];
   /** *Gruppen & Rechte* (Task 25): the groups, and the per-person exceptions by user id (livetv_group_users) */
   groups: LtvGroupMock[];
@@ -336,6 +340,12 @@ export function livetvAreaMock(): LivetvAreaMock {
     chTestBusy: false,
     chPreview: false,
     logoPuts: [],
+    epgIndex: {
+      'src-nordlicht': [
+        { xmlId: 'nordlicht.de', names: ['Nordlicht TV'] }, { xmlId: 'wetter.de', names: ['Wetterkanal Küste'] }, { xmlId: 'bergblick.de', names: ['Bergblick Sport'] },
+        { xmlId: 'sternwarte.de', names: ['Sternwarte 24', 'Sternwarte'] },
+      ],
+    },
     calls: [],
     seq: 0,
   };
@@ -1038,9 +1048,16 @@ function ltvChanView(a: LivetvAreaMock, c: LtvChanMock) {
   if (c.logoOv) overridden.logo = true;
   const shift = c.shiftOv !== null ? { min: c.shiftOv, from: 'channel' } : c.base;
   const number = c.numberOv ?? c.importNumber;
+  const g = c.pin ? a.sources.find((s) => s.id === c.pin!.sourceId) : undefined;
+  const pin = c.pin && g ? {
+    sourceId: g.id, sourceName: g.name, xmlId: c.pin.xmlId, name: a.epgIndex[g.id]?.find((x) => x.xmlId === c.pin!.xmlId)?.names[0] ?? c.pin.xmlId,
+    guideDisabled: g.kind === 'guide' && !g.enabled,
+  } : null;
+  const epg = pin ? true : c.epgOff ? false : c.epg;
   return {
     id: c.id, number, name: c.nameOv ?? c.importName, groupId: c.groupOv ?? c.importGroup, sourceId: c.sourceId, streamKind: c.streamKind, ingest: c.ingest,
-    logoHash: c.logoHash, hidden: c.hidden, missing: c.missing, epg: c.epg, now: c.epg ? ltvNow(c, shift.min) : null, mode: c.probeError ? null : c.mode, probeError: c.probeError,
+    logoHash: c.logoHash, hidden: c.hidden, missing: c.missing, epg, epgMatch: pin ? 'manual' : c.epgOff ? 'none' : 'auto', epgPin: pin,
+    now: epg && !pin?.guideDisabled ? ltvNow(c, shift.min) : null, mode: c.probeError ? null : c.mode, probeError: c.probeError,
     overridden, dupNumber: !c.missing && number !== null && a.channels.some((o) => o !== c && !o.missing && (o.numberOv ?? o.importNumber) === number), epgShift: shift,
     ...(c.push ? { push: { port: c.push.port, hint: c.push.hint, portInRange: a.ports.includes(c.push.port) } } : {}),
   };
@@ -1099,7 +1116,7 @@ function channelsRoute(a: LivetvAreaMock, m: string, p: string, sp: URLSearchPar
       if (body.action === 'hide') c.hidden = true;
       else if (body.action === 'show') c.hidden = false;
       else if (body.action === 'group') c.groupOv = body.groupId;
-      else if (body.action === 'reset') { c.nameOv = c.numberOv = c.groupOv = c.shiftOv = null; c.logoOv = false; c.epgOff = false; }
+      else if (body.action === 'reset') { c.nameOv = c.numberOv = c.groupOv = c.shiftOv = null; c.logoOv = false; c.epgOff = false; c.pin = null; }
     }
     return J({ changed: rows.length });
   }
@@ -1114,7 +1131,18 @@ function channelsRoute(a: LivetvAreaMock, m: string, p: string, sp: URLSearchPar
     (rows as LtvChanMock[]).forEach((c, i) => { c.numberOv = from + i; });
     return J({ from });
   }
-  const mm = p.match(/^\/api\/admin\/livetv\/channels\/([^/]+?)(\/test|\/logo)?$/);
+  /** a pin target (backend `pinTarget`): a list with a guide or an enabled extra guide */
+  const pinTarget = (id: string | null) => a.sources.find((s) => s.id === id && (s.kind === 'guide' ? s.enabled : s.kind === 'm3u' && s.epgHint !== null));
+  // *Programm zuordnen…* (extra-guides plan Task 7): the search over one guide's XMLTV channels, at most 50 by name
+  if (p === '/api/admin/livetv/epg/channels' && m === 'GET') {
+    const g = pinTarget(sp.get('source'));
+    if (!g) return J({ error: 'invalid', field: 'source' }, 400);
+    const q = (sp.get('q') ?? '').trim().toLowerCase();
+    const hits = (a.epgIndex[g.id] ?? []).filter((x) => !q || x.xmlId.toLowerCase().includes(q) || x.names.some((n) => n.toLowerCase().includes(q)))
+      .sort((x, y) => (x.names[0] ?? x.xmlId).localeCompare(y.names[0] ?? y.xmlId));
+    return J({ channels: hits.slice(0, 50), more: hits.length > 50 });
+  }
+  const mm = p.match(/^\/api\/admin\/livetv\/channels\/([^/]+?)(\/test|\/logo|\/epg)?$/);
   const c = mm ? byId(mm[1]) : undefined;
   if (!mm || !c || mm[1] === 'bulk' || mm[1] === 'order') return null;
   if (!mm[2] && m === 'GET') return J(ltvChanView(a, c));
@@ -1129,8 +1157,16 @@ function channelsRoute(a: LivetvAreaMock, m: string, p: string, sp: URLSearchPar
     if ('number' in b) c.numberOv = b.number;
     if ('groupId' in b) c.groupOv = b.groupId;
     if ('hidden' in b) c.hidden = b.hidden;
-    if ('epg' in b) c.epgOff = b.epg === false;
+    if ('epg' in b) { c.epgOff = b.epg === false; c.pin = null; }
     if ('epgShiftMin' in b) c.shiftOv = b.epgShiftMin;
+    return J(ltvChanView(a, c));
+  }
+  if (mm[2] === '/epg' && m === 'PUT') {
+    if (body === null) { c.pin = null; c.epgOff = false; return J(ltvChanView(a, c)); }
+    if (body && body.none === true && Object.keys(body).length === 1) { c.pin = null; c.epgOff = true; return J(ltvChanView(a, c)); }
+    if (!pinTarget(body?.sourceId)) return J({ error: 'invalid', field: 'sourceId' }, 400);
+    if (!(a.epgIndex[body.sourceId] ?? []).some((x) => x.xmlId === body.xmlId)) return J({ error: 'invalid', field: 'xmlId' }, 400);
+    c.pin = { sourceId: body.sourceId, xmlId: body.xmlId }; c.epgOff = false;
     return J(ltvChanView(a, c));
   }
   if (mm[2] === '/test' && m === 'POST') {

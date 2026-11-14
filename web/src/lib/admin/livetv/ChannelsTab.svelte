@@ -6,7 +6,8 @@
    * tvg-id), the filters *Quelle*, *Gruppe*, *Sichtbar / Ausgeblendet / Fehlt*, *Ohne Programm* and *Mit Fehler*, the result count, and
    * per row: checkbox, logo tile (the number when there is none), number, name (inline edit: double click or Enter; Escape cancels; empty =
    * the import's name), group (inline select), source, kind chip, mode chip (from the last test), EPG state, visibility switch and the
-   * menu (*Testen*, *Logo ändern*, *Programm-Zeit verschieben…*, *Umbenennen* for touch, *Zurücksetzen*). A small dot says what the
+   * menu (*Testen*, *Logo ändern*, *Programm-Zeit verschieben…*, *Umbenennen* for touch, *Zurücksetzen*, *Programm zuordnen…* (PinSheet)).
+   * A hand pin shows its guide's name under the EPG state ("Von Hand: …"; "Programmführer ausgeschaltet" when that guide is off). A small dot says what the
    * import had ("geändert (Import: …)", never for own feeds). The selection is kept by id across pages and filters; the bulk bar acts on
    * it. Every write answers the updated channel, which replaces its row; the list is read again after a bulk action. The view toggle *Liste / Reihenfolge*:
    * *Reihenfolge* (OrderView, `PUT /channels/order`) works on one group or one source of at most 500 channels, loaded on their own (by
@@ -36,6 +37,7 @@
   import EpgShiftSheet from './EpgShiftSheet.svelte';
   import LogoSheet from './LogoSheet.svelte';
   import OrderView from './OrderView.svelte';
+  import PinSheet from './PinSheet.svelte';
   import TestSheet from './TestSheet.svelte';
 
   let filter: ChannelFilter = emptyFilter();
@@ -333,6 +335,7 @@
     | { kind: 'test'; channel: AdminChannel; label: string }
     | { kind: 'logo'; channel: AdminChannel; label: string }
     | { kind: 'shift'; channel: AdminChannel; label: string }
+    | { kind: 'pin'; channel: AdminChannel; label: string }
     | { kind: 'bulktest'; ids: string[]; names: Record<string, string> };
   let sheet: Sheet | null = null;
   const menuLabel = (c: AdminChannel) => tr('ui.table.actionsFor', { name: c.name });
@@ -347,6 +350,7 @@
       { id: 'shift', label: $t('adminLive.ch.menu.shift'), icon: 'clock', run: () => { sheet = { kind: 'shift', channel: c, label }; } },
       { id: 'rename', label: $t('adminLive.ch.menu.rename'), icon: 'pencil', run: () => startEdit(c) },
       { id: 'reset', label: $t('adminLive.ch.menu.reset'), icon: 'refresh', disabled: !hasOverrides(c), run: () => resetOne(c) },
+      { id: 'pin', label: $t('adminLive.ch.menu.pin'), icon: 'calendar', run: () => { sheet = { kind: 'pin', channel: c, label }; } },
     ];
   }
   function bulkTest() {
@@ -466,7 +470,11 @@
         {:else if row.mode}<StatusPill tone="ok" label={$t(`adminLive.ch.mode.${row.mode}`)} />
         {:else}<StatusPill tone="muted" icon="" label={$t('adminLive.ch.mode.none')} />{/if}
       {:else if col.key === 'epg'}
-        {#if row.epg}<StatusPill tone="ok" icon="check" label={$t('adminLive.ch.epgOk')} />{:else}<StatusPill tone="muted" icon="" label={$t('adminLive.ch.epgNone')} />{/if}
+        <div class="epgc">
+          {#if row.epgPin?.guideDisabled}<StatusPill tone="warn" label={$t('adminLive.ch.pin.guideOff')} />
+          {:else if row.epg}<StatusPill tone="ok" icon="check" label={$t('adminLive.ch.epgOk')} />{:else}<StatusPill tone="muted" icon="" label={$t('adminLive.ch.epgNone')} />{/if}
+          {#if row.epgPin}<span class="pinned" data-pin>{$t('adminLive.ch.pin.by', { guide: row.epgPin.sourceName })}</span>{/if}
+        </div>
       {:else if col.key === 'visible'}
         <Toggle hideLabel label={$t('adminLive.ch.visibleLabel', { name: row.name })} checked={!row.hidden} pending={$busyKeys.has(busyKey(row))} on:change={(e) => setHidden(row, e.detail)} />
       {/if}
@@ -494,6 +502,8 @@
   <LogoSheet channel={sheet.channel} returnTo={menuButton(sheet.label)} on:changed={(e) => replaceRow(e.detail)} on:close={closeSheet} />
 {:else if sheet?.kind === 'shift'}
   <EpgShiftSheet channel={sheet.channel} returnTo={menuButton(sheet.label)} on:changed={(e) => replaceRow(e.detail)} on:close={closeSheet} />
+{:else if sheet?.kind === 'pin'}
+  <PinSheet channel={sheet.channel} {sources} returnTo={menuButton(sheet.label)} on:changed={(e) => replaceRow(e.detail)} on:close={closeSheet} />
 {/if}
 
 <style>
@@ -543,6 +553,8 @@
   .sync.on { opacity: 1; }
   :global(html.m-still) .sync { transition: none; }
   .gsel { min-width: 9rem; }
+  .epgc { display: flex; flex-direction: column; align-items: flex-start; gap: .2rem; min-width: 0; }
+  .pinned { font-size: .85rem; color: var(--mut); overflow-wrap: anywhere; }
   /* phone: a card per row. The name leads (it is the card's title), the checkbox and the rest follow; the changed hint is text there,
      where there is no hover */
   @media (max-width: 720px) {
