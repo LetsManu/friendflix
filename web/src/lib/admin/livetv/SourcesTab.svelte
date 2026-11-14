@@ -21,14 +21,14 @@
   import { confirm } from '#lib/ui/confirm';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import { toast } from '#lib/ui/toast';
-  import { deleteSource, listSources, refreshSource, updateGuide, updateSource, type PushResult, type Refresh, type SourceView } from './api';
+  import { deleteSource, listSources, refreshSource, updateGuide, uploadGuideFile, updateSource, type PushResult, type Refresh, type SourceView } from './api';
   import GuideCard from './GuideCard.svelte';
   import GuideSheet from './GuideSheet.svelte';
   import OwnFeedsCard from './OwnFeedsCard.svelte';
   import SourceCard from './SourceCard.svelte';
   import SourceSheet from './SourceSheet.svelte';
   import StreamSheet from './StreamSheet.svelte';
-  import { guideMoves, REFRESH_POLL_MS, REFRESH_POLLS, refreshDone, refreshedAt, refreshResult } from './sources';
+  import { fileFailText, GUIDE_FILE_MAX, guideMoves, REFRESH_POLL_MS, REFRESH_POLLS, refreshDone, refreshedAt, refreshResult } from './sources';
 
   let sources: SourceView[] | null = null, failed = false, gone = false;
   let now = new Date();
@@ -150,6 +150,21 @@
     void refreshSummary();
   }
 
+  // ---- Neue Datei hochladen: PUT the file, the card shows its name and size at once; the import runs on the server
+  async function upload(s: SourceView, file: File) {
+    if (file.size > GUIDE_FILE_MAX) { toast.error(tr('adminLive.src.guide.tooLarge')); return; }
+    const r = await runAction({
+      key: `ltv-src-upload:${s.id}`,
+      run: () => uploadGuideFile(s.id, file),
+      error: false,
+    });
+    if (r.skipped) return;
+    if (!r.ok) { toast.error(fileFailText(r.error)); return; }
+    replace({ ...s, fileName: file.name, fileBytes: file.size });
+    toast.success(tr('adminLive.src.guide.uploaded'));
+    void load();
+  }
+
   // ---- the order among the guides: one PATCH with the neighbour's position (the backend swaps the two); shown at once, then the
   // page asks GET /sources for the truth
   async function move(s: SourceView, dir: 1 | -1) {
@@ -190,7 +205,7 @@
     {/each}
     {#each guides as s, i (s.id)}
       <GuideCard source={s} sources={sources} {now} first={i === 0} last={i === guides.length - 1} refreshing={$busyKeys.has(`ltv-src-refresh:${s.id}`)} busy={$busyKeys.has(`ltv-src:${s.id}`)}
-        on:refresh={() => refresh(s)} on:edit={(e) => (guideSheet = { source: s, trigger: e.detail })} on:enable={(e) => (guideSheet = { source: s, trigger: e.detail, enable: true })} on:toggle={() => toggle(s)} on:remove={() => remove(s)}
+        uploading={$busyKeys.has(`ltv-src-upload:${s.id}`)} on:upload={(e) => upload(s, e.detail)} on:refresh={() => refresh(s)} on:edit={(e) => (guideSheet = { source: s, trigger: e.detail })} on:enable={(e) => (guideSheet = { source: s, trigger: e.detail, enable: true })} on:toggle={() => toggle(s)} on:remove={() => remove(s)}
         on:interval={(e) => setInterval_(s, e.detail)} on:move={(e) => move(s, e.detail)} />
     {/each}
     {#if feedsSource}
@@ -205,7 +220,7 @@
   <SourceSheet source={sheet.source} trigger={sheet.trigger} autoTest={sheet.autoTest ?? false} on:close={() => (sheet = null)} on:saved={saved} on:own={() => toOwn(sheet)} on:guide={toGuide} />
 {/if}
 {#if guideSheet}
-  <GuideSheet source={guideSheet.source} sources={sources ?? []} trigger={guideSheet.trigger} enable={guideSheet.enable ?? false} on:close={() => (guideSheet = null)} on:saved={saved} on:list={toList} on:own={() => toOwn(guideSheet)} />
+  <GuideSheet source={guideSheet.source} sources={sources ?? []} trigger={guideSheet.trigger} enable={guideSheet.enable ?? false} on:close={() => (guideSheet = null)} on:saved={saved} on:created={(e) => replace(e.detail)} on:list={toList} on:own={() => toOwn(guideSheet)} />
 {/if}
 {#if stream}
   <StreamSheet result={stream.result} trigger={stream.trigger} on:close={() => (stream = null)} on:created={streamCreated} />
