@@ -327,6 +327,7 @@ const dict: Translation<typeof de> = {
       refreshNoFile: 'Aucun fichier envoyé pour l’instant.',
       xmltvInvalid: 'Ce fichier n’est pas un guide XMLTV (.xml ou .xml.gz).',
     },
+    numFallback: 'Les numéros de la liste se répètent – les chaînes sont numérotées dans l’ordre de la liste.',
   },
   push: {
     add: 'Ajouter un flux',

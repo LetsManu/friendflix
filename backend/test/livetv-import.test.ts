@@ -10,9 +10,10 @@ import { decrypt, encrypt, keyFromBase64 } from '../src/crypto.js';
 import { listErrors } from '../src/errorlog.js';
 import { detectLivetv } from '../src/livetv/detect.js';
 import { listEvents } from '../src/livetv/events.js';
-import { chnoUsable, importNumber, mergeImport } from '../src/livetv/import.js';
+import { channelQuery, listChannels } from '../src/livetv/adminChannels.js';
+import { chnoFallback, chnoStats, fallbackVerdict, importNumber, mergeImport } from '../src/livetv/import.js';
 import { livetvRefreshTick, refreshSource } from '../src/livetv/refresh.js';
-import type { SourceRow } from '../src/livetv/sources.js';
+import { sourceView, type SourceRow } from '../src/livetv/sources.js';
 import type { FetchM3uAnswer, M3uEntry } from '../src/livetv/wire.js';
 import { ENC_KEY, fakeHttp, makeEnv, type Call, type Handler, type TestEnv } from './helpers.js';
 
@@ -32,6 +33,8 @@ const calls: Call[] = [];
 let list: M3uEntry[] = [];
 let m3u: Handler;
 let logo: Handler;
+/** the fake sends the whole list's tvg-chno counts like livetv does; false = an older livetv without them */
+let sendChnos = true;
 /** livetv is installed (detection: healthz api 1) unless a test turns it off */
 let up = true;
 const HEALTH = { ok: true, api: 1, version: '1.0.0', bootId: '0123456789abcdef' };
@@ -49,7 +52,11 @@ const m3uAnswer = (all: M3uEntry[], skip: readonly string[]): FetchM3uAnswer => 
     else if (e.group) groups.push({ name: e.group, channels: 1 });
   }
   const entries = all.filter((e) => !e.group || !skip.includes(e.group));
-  return { entries, groups, listed: all.length, skipped: { vod: 0, invalid: 0, overLimit: 0, groups: all.length - entries.length } };
+  const nums = all.flatMap((e) => (e.chno !== undefined ? [e.chno] : []));
+  return {
+    entries, groups, listed: all.length, skipped: { vod: 0, invalid: 0, overLimit: 0, groups: all.length - entries.length },
+    ...(sendChnos ? { chnos: { count: nums.length, distinct: new Set(nums).size } } : {}),
+  };
 };
 
 /** an entry at list position `pos`; the key stands for livetv's (tvg-id, else name + host + stream id: no credentials, ruling 18) */
@@ -99,6 +106,7 @@ beforeEach(async () => {
   calls.length = 0;
   logs.length = 0;
   list = six();
+  sendChnos = true;
   m3u = (_u, _i, body: { skipGroups?: string[] }) => ({ json: m3uAnswer(list, body?.skipGroups ?? []) });
   logo = () => ({ raw: PNG, type: 'image/png' });
   env.ctx.fetchImpl = livetvFake();
@@ -182,9 +190,33 @@ describe('import merge (spec §10)', () => {
     expect(importNumber({ chno: 7, pos: 0 }, { numbering: 'chno', number_base: 100 })).toBe(7);
     expect(importNumber({ pos: 3 }, { numbering: 'chno', number_base: 100 })).toBe(103);
     expect(importNumber({ chno: 7, pos: 3 }, { numbering: 'order', number_base: 1 })).toBe(4);
-    expect(chnoUsable([{ chno: 1 }, { chno: 2 }, { chno: 3 }, {}])).toBe(true);
-    expect(chnoUsable([{ chno: 1 }, { chno: 1 }, { chno: 1 }, { chno: 1 }])).toBe(false); // every channel tvg-chno="1"
-    expect(chnoUsable([])).toBe(true);
+    expect(chnoStats([{ chno: 1 }, { chno: 2 }, { chno: 2 }, {}])).toEqual({ count: 3, distinct: 2 });
+    const ones = (n: number) => Array.from({ length: n }, () => ({ chno: 1 }));
+    expect(chnoFallback(chnoStats(ones(10)))).toBe(true); // every channel tvg-chno="1"
+    expect(chnoFallback(chnoStats([]))).toBe(false);
+    expect(chnoFallback({ count: 10, distinct: 9 })).toBe(false); // 90 % different: the list's numbers are used
+    expect(chnoFallback({ count: 10, distinct: 8 })).toBe(true);
+    // too few numbers to judge: never the fallback, whatever they repeat (duplicates show as "Nummer doppelt")
+    expect(chnoFallback(chnoStats(ones(9)))).toBe(false);
+    expect(chnoFallback({ count: 9, distinct: 1 }, true)).toBe(false);
+    // hysteresis: 90-95 % different keeps the previous verdict both ways; below 90 % enters, from 95 % leaves
+    for (const prev of [null, false] as const) {
+      expect(chnoFallback({ count: 100, distinct: 89 }, prev)).toBe(true);
+      expect(chnoFallback({ count: 100, distinct: 90 }, prev)).toBe(false);
+      expect(chnoFallback({ count: 100, distinct: 94 }, prev)).toBe(false);
+    }
+    expect(chnoFallback({ count: 100, distinct: 90 }, true)).toBe(true);
+    expect(chnoFallback({ count: 100, distinct: 94 }, true)).toBe(true);
+    expect(chnoFallback({ count: 100, distinct: 95 }, true)).toBe(false);
+    // the whole list decides (on the stored verdict); without it (an older livetv) the stored verdict, only without one the entries
+    const same = ones(10);
+    expect(fallbackVerdict({ count: 20, distinct: 20 }, true, same)).toBe(false);
+    expect(fallbackVerdict({ count: 20, distinct: 2 }, false, [])).toBe(true);
+    expect(fallbackVerdict({ count: 100, distinct: 92 }, true, [])).toBe(true);
+    expect(fallbackVerdict({ count: 100, distinct: 92 }, null, same)).toBe(false);
+    expect(fallbackVerdict(undefined, false, same)).toBe(false);
+    expect(fallbackVerdict(undefined, null, same)).toBe(true);
+    expect(fallbackVerdict(undefined, null, ones(3))).toBe(false);
     list = [entry('Nordlicht TV', 'Nachrichten', 0, { chno: 7 }), entry('Hafenkanal', 'Nachrichten', 1), entry('Kanal Wolkenlos', 'Nachrichten', 2),
       entry('Sternwarte 24', 'Nachrichten', 3)];
     const id = await addSource({ numbering: 'chno', number_base: 100 });
@@ -391,11 +423,11 @@ describe('an admin edit while a refresh runs (1c final review I1)', () => {
   });
 
   it('a list that gives every channel the same tvg-chno is numbered by its order', async () => {
-    list = ['Nordlicht TV', 'Hafenkanal', 'Kanal Wolkenlos', 'Sternwarte 24'].map((n, i) => entry(n, 'Nachrichten', i, { chno: 1 }));
+    list = Array.from({ length: 10 }, (_, i) => entry(`Nordlicht TV ${i}`, 'Nachrichten', i, { chno: 1 }));
     const id = await addSource({ numbering: 'chno', number_base: 1 });
     await refresh(id);
     const ch = await byKey(id);
-    expect(['k0', 'k1', 'k2', 'k3'].map((k) => ch.get(k)!.import_number)).toEqual([1, 2, 3, 4]);
+    expect(['k0', 'k1', 'k2', 'k3', 'k9'].map((k) => ch.get(k)!.import_number)).toEqual([1, 2, 3, 4, 10]);
   });
 
   it('two imports creating the same new groups in different order do not deadlock', async () => {
@@ -414,6 +446,190 @@ describe('an admin edit while a refresh runs (1c final review I1)', () => {
     await mergeImport(env.ctx, await src(a), { entries: [entry('Kanal Z', 'Zeta Kanäle', 0), entry('Kanal A', 'Alpha Kanäle', 1)], listed: 2 });
     const rows = (await env.pool.query<{ name: string }>("select name from livetv_groups where name in ('Zeta Kanäle', 'Alpha Kanäle') order by position")).rows;
     expect(rows.map((r) => r.name)).toEqual(['Zeta Kanäle', 'Alpha Kanäle']);
+  });
+});
+
+describe('numbering fallback over the whole list (ruling 18: a changed group selection never renumbers other channels)', () => {
+  /** the Kanäle list as the admin sees it (number asc nulls last, then name): "number name", missing and duplicate numbers marked */
+  const kanaele = async () => (await listChannels(env.ctx, channelQuery.parse({ limit: 500 }))).channels
+    .map((c) => `${c.number} ${c.name}${c.missing ? ' (fehlt)' : ''}${c.dupNumber ? ' (doppelt)' : ''}`);
+  const numbers = async (id: string) => new Map([...(await byKey(id))].map(([k, c]) => [k, c.import_number as number]));
+  const skip = (id: string, groups: string[]) => setSource(id, 'skip_groups = $2', [groups]);
+
+  it('A: every tvg-chno the same: numbered by list order, the names do not reorder it', async () => {
+    const names = ['Zeta', 'Alpha', 'Mitte', 'Beta', 'Kappa', 'Delta', 'Omega', 'Gamma', 'Iota', 'Epsilon'];
+    list = names.map((n, i) => entry(`Nordlicht ${n}`, 'Nachrichten', i, { chno: 1 }));
+    const id = await addSource({ numbering: 'chno', number_base: 1 });
+    await refresh(id);
+    expect(await kanaele()).toEqual(names.map((n, i) => `${i + 1} Nordlicht ${n}`));
+    expect((await src(id)).chno_fallback).toBe(true);
+    expect((await sourceView(env.ctx, id))!.chnoFallback).toBe(true);
+  });
+
+  it('B: the full list decides at the first import; ticking a group adds its channels and keeps every other number', async () => {
+    // "Neu": 10 channels all tvg-chno 1 (list positions 0-9); "DE": tvg-chno 1..10 (positions 10-19). The whole list: 20 numbers, 10
+    // different (50 %), so the list's own numbers cannot number it, already while "Neu" is unticked
+    const neu = Array.from({ length: 10 }, (_, i) => entry(`Hafenkanal Neu ${i}`, 'Neu', i, { chno: 1 }));
+    const de = Array.from({ length: 10 }, (_, i) => entry(`Sternwarte ${String.fromCharCode(74 - i)}`, 'DE', 10 + i, { chno: i + 1 }));
+    list = [...neu, ...de];
+    const id = await addSource({ numbering: 'chno', number_base: 1, skip_groups: ['Neu'] });
+    await refresh(id);
+    const before = await numbers(id);
+    expect([...before.values()]).toEqual(Array.from({ length: 10 }, (_, i) => 11 + i)); // list order: base 1 + positions 10..19
+    expect((await src(id)).chno_fallback).toBe(true);
+    await skip(id, []);
+    await refresh(id);
+    const after = await numbers(id);
+    for (const [k, n] of before) expect(after.get(k)).toBe(n);
+    expect(neu.map((e) => after.get(e.key))).toEqual(Array.from({ length: 10 }, (_, i) => 1 + i));
+    expect((await kanaele()).some((l) => l.includes('doppelt'))).toBe(false);
+  });
+
+  it('B: a full list whose numbers are mostly different keeps them for every group; the new duplicates show as "Nummer doppelt"', async () => {
+    // "DE": tvg-chno 1..40; "Neu": 3 channels all tvg-chno 1. The whole list: 43 numbers, 40 different (93 %): the list numbers it
+    const de = Array.from({ length: 40 }, (_, i) => entry(`Nordlicht ${i + 1}`, 'DE', i, { chno: i + 1 }));
+    const neu = Array.from({ length: 3 }, (_, i) => entry(`Hafenkanal Neu ${i}`, 'Neu', 40 + i, { chno: 1 }));
+    list = [...de, ...neu];
+    const id = await addSource({ numbering: 'chno', number_base: 1, skip_groups: ['Neu'] });
+    await refresh(id);
+    const before = await numbers(id);
+    expect(de.map((e) => before.get(e.key))).toEqual(Array.from({ length: 40 }, (_, i) => i + 1));
+    expect((await src(id)).chno_fallback).toBe(false);
+    expect((await sourceView(env.ctx, id))!.chnoFallback).toBe(false);
+    await skip(id, []);
+    await refresh(id);
+    const after = await numbers(id);
+    for (const [k, n] of before) expect(after.get(k)).toBe(n);
+    expect(neu.map((e) => after.get(e.key))).toEqual([1, 1, 1]);
+    expect((await kanaele()).slice(0, 4)).toEqual([
+      '1 Hafenkanal Neu 0 (doppelt)', '1 Hafenkanal Neu 1 (doppelt)', '1 Hafenkanal Neu 2 (doppelt)', '1 Nordlicht 1 (doppelt)']);
+    expect((await kanaele())[4]).toBe('2 Nordlicht 2');
+  });
+
+  it('C: no sequence of group selections renumbers a channel', async () => {
+    // three groups whose tvg-chno numbers repeat to different degrees; picked alone, "Sport" (all different) would look usable
+    list = [
+      ...Array.from({ length: 6 }, (_, i) => entry(`Bergblick ${i}`, 'Sport', i, { chno: 100 + i })),
+      ...Array.from({ length: 6 }, (_, i) => entry(`Hafenkanal ${i}`, 'Kinder', 6 + i, { chno: 5 })),
+      ...Array.from({ length: 6 }, (_, i) => entry(`Sternwarte 24 ${i}`, 'Nachrichten', 12 + i, { chno: 7 + (i % 2) })),
+    ];
+    const id = await addSource({ numbering: 'chno', number_base: 1 });
+    await refresh(id);
+    const first = await numbers(id);
+    expect([...first.values()]).toHaveLength(18);
+    for (const sel of [['Kinder'], ['Kinder', 'Nachrichten'], ['Sport'], ['Sport', 'Kinder'], []]) {
+      await skip(id, sel);
+      await refresh(id);
+      expect((await src(id)).last_error).toBeNull();
+      const now = await byKey(id);
+      for (const [k, c] of now) {
+        if (c.missing_since === null) expect([sel, k, c.import_number]).toEqual([sel, k, first.get(k)]);
+      }
+    }
+  });
+
+  it('D: the verdict is kept per source; only a changed provider list changes it', async () => {
+    // "Eins" 10 channels all tvg-chno 1 (positions 0-9), "Zwei" 10 different numbers (positions 10-19)
+    const repeat = () => Array.from({ length: 20 }, (_, i) => entry(`Nordlicht ${i}`, i < 10 ? 'Eins' : 'Zwei', i, { chno: i < 10 ? 1 : 20 + i }));
+    list = repeat(); // 20 numbers, 11 different: list order
+    const id = await addSource({ numbering: 'chno', number_base: 1 });
+    await refresh(id);
+    expect((await src(id)).chno_fallback).toBe(true);
+    const first = await numbers(id);
+    expect(Array.from({ length: 20 }, (_, i) => first.get(`k${i}`))).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+    // an older livetv that does not send the whole list's counts: the stored verdict stands, even when only "Zwei" (all different) is picked
+    sendChnos = false;
+    await skip(id, ['Eins']);
+    await refresh(id);
+    expect((await src(id)).chno_fallback).toBe(true);
+    let ch = await byKey(id);
+    expect(['k10', 'k11', 'k19'].map((k) => ch.get(k)!.import_number)).toEqual([11, 12, 20]);
+    // the provider's list itself changes: every number different now; the whole list's verdict flips, the list's numbers are used
+    sendChnos = true;
+    await skip(id, []);
+    list = Array.from({ length: 20 }, (_, i) => entry(`Nordlicht ${i}`, i < 10 ? 'Eins' : 'Zwei', i, { chno: 50 + i }));
+    await refresh(id);
+    expect((await src(id)).chno_fallback).toBe(false);
+    ch = await byKey(id);
+    expect(['k0', 'k10', 'k19'].map((k) => ch.get(k)!.import_number)).toEqual([50, 60, 69]);
+    // a new URL forgets the verdict; an older livetv then judges the imported entries once and keeps that
+    const r = await env.app.inject({ method: 'PATCH', url: `/api/admin/livetv/sources/${id}`, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf },
+      payload: { url: 'https://anna:neu@iptv.example.com/get.php?username=anna&password=neu' } });
+    expect(r.statusCode).toBe(200);
+    expect((await src(id)).chno_fallback).toBeNull();
+    sendChnos = false;
+    list = repeat();
+    await skip(id, ['Zwei']); // only "Eins": all tvg-chno 1
+    await refresh(id);
+    expect((await src(id)).chno_fallback).toBe(true);
+    await skip(id, ['Eins']); // only "Zwei" (all different): the kept verdict, no renumbering
+    await refresh(id);
+    ch = await byKey(id);
+    expect(['k10', 'k19'].map((k) => ch.get(k)!.import_number)).toEqual([11, 20]);
+  });
+
+  it('hysteresis: a list between 90 and 95 % different keeps the verdict it has, both ways; a new URL still forgets it', async () => {
+    // 100 channels; `distinct` different numbers (the rest repeat number 1)
+    const listOf = (distinct: number) => Array.from({ length: 100 }, (_, i) => entry(`Sternwarte ${i}`, 'Alle', i, { chno: i < distinct ? i + 1 : 1 }));
+    const nums = async (id: string) => { const ch = await byKey(id); return ['k0', 'k50', 'k99'].map((k) => ch.get(k)!.import_number); };
+    // from chno mode: 92 % stays chno
+    list = listOf(100);
+    const a = await addSource({ name: 'A', numbering: 'chno', number_base: 1 });
+    await refresh(a);
+    expect((await src(a)).chno_fallback).toBe(false);
+    list = listOf(92);
+    await refresh(a);
+    expect((await src(a)).chno_fallback).toBe(false);
+    expect(await nums(a)).toEqual([1, 51, 1]);
+    // ... below 90 % enters the fallback
+    list = listOf(89);
+    await refresh(a);
+    expect((await src(a)).chno_fallback).toBe(true);
+    expect(await nums(a)).toEqual([1, 51, 100]);
+    // ... and 92 % (or 94 %) keeps it: no renumbering back
+    for (const d of [92, 94]) {
+      list = listOf(d);
+      await refresh(a);
+      expect((await src(a)).chno_fallback).toBe(true);
+      expect(await nums(a)).toEqual([1, 51, 100]);
+    }
+    // ... until 95 %
+    list = listOf(95);
+    await refresh(a);
+    expect((await src(a)).chno_fallback).toBe(false);
+    expect(await nums(a)).toEqual([1, 51, 1]);
+    // a new source starting at 92 % takes the list's numbers (it enters only below 90 %)
+    list = listOf(92);
+    const b = await addSource({ name: 'B', numbering: 'chno', number_base: 1 });
+    await refresh(b);
+    expect((await src(b)).chno_fallback).toBe(false);
+    // a source in the fallback at 92 % whose URL changes is judged afresh: undecided, then the list's numbers
+    await setSource(a, 'chno_fallback = true');
+    const r = await env.app.inject({ method: 'PATCH', url: `/api/admin/livetv/sources/${a}`, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf },
+      payload: { url: 'https://anna:neu@iptv.example.com/get.php?username=anna&password=neu' } });
+    expect(r.statusCode).toBe(200);
+    expect((await src(a)).chno_fallback).toBeNull();
+    await refresh(a);
+    expect((await src(a)).chno_fallback).toBe(false);
+  });
+
+  it('a list with fewer than 10 tvg-chno numbers keeps them, repeats and all: the repeats show as "Nummer doppelt"', async () => {
+    list = [
+      ...['Nordlicht TV', 'Hafenkanal', 'Sternwarte 24'].map((n, i) => entry(n, 'Nachrichten', i, { chno: 1 })),
+      ...Array.from({ length: 20 }, (_, i) => entry(`Kanal Wolkenlos ${i}`, 'Nachrichten', 3 + i)), // no tvg-chno: number_base + position
+    ];
+    const id = await addSource({ numbering: 'chno', number_base: 100 });
+    await refresh(id);
+    expect((await src(id)).chno_fallback).toBe(false);
+    expect((await kanaele()).slice(0, 4)).toEqual(['1 Hafenkanal (doppelt)', '1 Nordlicht TV (doppelt)', '1 Sternwarte 24 (doppelt)', '103 Kanal Wolkenlos 0']);
+  });
+
+  it('a numbering that is not "chno" ignores the verdict, which is still kept for the sheet', async () => {
+    list = Array.from({ length: 10 }, (_, i) => entry(`Nordlicht TV ${i}`, 'Nachrichten', i, { chno: 3 }));
+    const id = await addSource({ numbering: 'order', number_base: 100 });
+    await refresh(id);
+    expect([...(await numbers(id)).values()]).toEqual(Array.from({ length: 10 }, (_, i) => 100 + i));
+    expect((await src(id)).chno_fallback).toBe(true);
   });
 });
 

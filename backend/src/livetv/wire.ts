@@ -46,6 +46,11 @@ export interface FetchM3uAnswer {
   /** every live entry (skipped groups and entries over the limit included) */
   listed: number;
   skipped: { vod: number; invalid: number; overLimit: number; groups: number };
+  /**
+   * the `tvg-chno` numbers of every live entry (skipped groups included): how many entries carry one, how many different numbers they
+   * are; import.ts decides the whole list's numbering from it (chnoFallback). Absent from an older livetv.
+   */
+  chnos?: { count: number; distinct: number };
 }
 
 /** livetv/src/fetch.ts `FetchErrorCode` */

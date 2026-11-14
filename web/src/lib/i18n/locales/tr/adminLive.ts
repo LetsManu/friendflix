@@ -327,6 +327,7 @@ const dict: Translation<typeof de> = {
       refreshNoFile: 'Henüz dosya yüklenmedi.',
       xmltvInvalid: 'Bu dosya bir XMLTV rehberi değil (.xml veya .xml.gz).',
     },
+    numFallback: 'Listedeki numaralar tekrarlanıyor – kanallar liste sırasına göre numaralandırılır.',
   },
   push: {
     add: 'Yayın ekle',

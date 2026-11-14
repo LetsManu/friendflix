@@ -255,7 +255,8 @@
         </div>
       </details>
 
-      <ImportOptions bind:numbering bind:numberBase bind:logoPref bind:epgShiftMin {baseErr} />
+      <!-- a typed address replaces the saved list: its numbering verdict (the note under Nummern) no longer applies -->
+      <ImportOptions bind:numbering bind:numberBase bind:logoPref bind:epgShiftMin {baseErr} {source} newUrl={Boolean(url.trim())} />
 
       <!-- the Prüfen outcome keeps its box, so the buttons below never move -->
       <div class="result" aria-live="polite">

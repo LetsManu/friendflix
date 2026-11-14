@@ -5,15 +5,18 @@
    * The *Import* section of the source sheet (spec §9.1): how channel numbers are made (*Aus der Liste (tvg-chno)* or *Nach Reihenfolge
    * ab* with the first number, `numbering` / `numberBase`), which logo comes first (`logoPref`) and the programme-time offset in
    * 30-minute steps (`epgShiftMin`, −12…+14 h). Each choice has its help line. The first-number field and its error line keep their
-   * room whatever is chosen, so nothing below moves. The two choices are radio groups (arrow keys move and select), the stepper's
-   * buttons are 44 px targets.
+   * room whatever is chosen, so nothing below moves; while the list's own numbers are chosen for a list whose numbers repeat
+   * (`source.chnoFallback`), that room says that the list order numbers it instead. The two choices are radio groups (arrow keys move
+   * and select), the stepper's buttons are 44 px targets.
    */
+  import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
   import Rich from '#lib/i18n/Rich.svelte';
   import Field from '#lib/ui/Field.svelte';
   import { uid } from '#lib/ui/ids';
-  import type { LogoPref, Numbering } from './api';
+  import type { LogoPref, Numbering, SourceView } from './api';
   import { SHIFT_MAX, SHIFT_MIN, shiftLabel, stepShift } from './picker';
+  import { chnoFallbackShown } from './sources';
 
   export let numbering: Numbering = 'chno';
   /** the field's text; the sheet validates it (1–99 999) */
@@ -21,9 +24,17 @@
   export let logoPref: LogoPref = 'm3u';
   export let epgShiftMin = 0;
   export let baseErr = '';
+  /** the source being edited (null = a new one): its last import's verdict on the list's own numbers */
+  export let source: Pick<SourceView, 'chnoFallback'> | null = null;
+  /**
+   * another address is typed in the sheet: the stored verdict belongs to the saved list (the field starts empty and the saved address
+   * never reaches the browser, so any typed address counts as another one), and the new list is judged afresh, so the note is hidden
+   */
+  export let newUrl = false;
 
   const id = uid('io');
   $: numberings = [{ value: 'chno' as const, label: $t('adminLive.src.numChno') }, { value: 'order' as const, label: $t('adminLive.src.numOrder') }];
+  $: fallbackNote = chnoFallbackShown(numbering, source, newUrl);
   $: logos = [{ value: 'm3u' as const, label: $t('adminLive.src.logoM3u') }, { value: 'xmltv' as const, label: $t('adminLive.src.logoXmltv') }];
 
   /** a radio group: the arrow keys move the choice (and the focus) like native radios */
@@ -49,9 +60,14 @@
           on:click={() => (numbering = o.value)} on:keydown={(e) => segKey(e, numberings.length, i, (k) => (numbering = numberings[k]!.value))}>{o.label}</button>
       {/each}
     </div>
-    <!-- the field keeps its room when the list's own numbers are chosen -->
-    <div class="base" class:gone={numbering !== 'order'}>
-      <Field label={$t('adminLive.src.numBase')} type="number" bind:value={numberBase} min={1} max={99999} step={1} width="8rem" error={baseErr} />
+    <!-- the field keeps its room when the list's own numbers are chosen; a list whose numbers repeat says so in that room -->
+    <div class="base">
+      <div class="slot" class:gone={numbering !== 'order'}>
+        <Field label={$t('adminLive.src.numBase')} type="number" bind:value={numberBase} min={1} max={99999} step={1} width="8rem" error={baseErr} />
+      </div>
+      {#if source?.chnoFallback}
+        <p class="slot note" class:gone={!fallbackNote} data-chno-fallback><Icon name="info" size={18} /><span>{$t('adminLive.src.numFallback')}</span></p>
+      {/if}
     </div>
     <p class="help"><Rich key="adminLive.src.numKeep" /></p>
   </div>
@@ -89,9 +105,12 @@
   .seg button { min-height: 44px; padding: .3rem 1rem; border-radius: 999px; background: transparent; border: 0; color: rgba(255, 255, 255, .8); font-weight: 600; }
   .seg button.on { background: #fff; color: #101418; }
   .seg button:not(.on):hover { color: #fff; }
-  /* hidden, not removed: the first-number field and its error line keep their room */
-  .base { margin-top: .6rem; width: 100%; }
-  .base.gone { visibility: hidden; }
+  /* hidden, not removed: the first-number field and its error line keep their room (the note shares it, one above the other) */
+  .base { margin-top: .6rem; width: 100%; display: grid; }
+  .slot { grid-area: 1 / 1; min-width: 0; }
+  .gone { visibility: hidden; }
+  .note { margin: 0; display: flex; gap: .45rem; align-items: flex-start; font-size: .85rem; color: rgba(255, 255, 255, .85); overflow-wrap: anywhere; }
+  .note :global(svg) { flex: none; margin-top: .1rem; }
   .help { margin: .4rem 0 0; font-size: .85rem; color: rgba(255, 255, 255, .85); overflow-wrap: anywhere; }
   .step { display: inline-flex; align-items: center; gap: .3rem; border: 1px solid rgba(255, 255, 255, .2); border-radius: 22px; padding: 3px; }
   .sb { width: 44px; height: 44px; min-height: 44px; padding: 0; display: grid; place-items: center; border-radius: 50%; background: transparent; border: 0; color: #fff; font-size: 1.4rem; font-weight: 700; line-height: 1; }

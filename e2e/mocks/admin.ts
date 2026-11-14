@@ -183,6 +183,8 @@ export interface LtvSourceMock {
   guideProvider: 'xmltv_url' | 'xmltv_file' | null; guideScope: string[] | null; servedChannels: number;
   /** a file guide (Stage 2): the uploaded file */
   fileName: string | null; fileBytes: number | null;
+  /** a list whose tvg-chno numbers repeat: numbered by list order (the sheet's note under *Nummern*) */
+  chnoFallback: boolean;
   state: {
     lastRefreshAt: string | null; lastOkAt: string | null; lastError: string | null; counts: { channels: number; added: number; removed: number } | null;
     epg: { lastRefreshAt: string | null; lastOkAt: string | null; lastError: string | null; programmes: number | null };
@@ -269,7 +271,7 @@ const ltvState = (o: Partial<LtvSourceMock['state']> = {}): LtvSourceMock['state
 });
 const ltvSource = (o: Partial<LtvSourceMock> & Pick<LtvSourceMock, 'id' | 'kind' | 'name'>): LtvSourceMock => ({
   urlHint: null, epgHint: null, userAgent: null, allowLan: false, refresh: '24h', skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0,
-  maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0, guideProvider: null, guideScope: null, servedChannels: 0, fileName: null, fileBytes: null, state: ltvState(), ...o,
+  maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0, guideProvider: null, guideScope: null, servedChannels: 0, fileName: null, fileBytes: null, chnoFallback: false, state: ltvState(), ...o,
 });
 /** an uploaded guide (`xmltv_file`): no link, the interval is fixed manual */
 export const ltvFileGuideMock = (o: Partial<LtvSourceMock> & Pick<LtvSourceMock, 'id' | 'name' | 'position'>): LtvSourceMock => ltvSource({

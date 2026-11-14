@@ -117,6 +117,25 @@ describe('parseM3u', () => {
     expect(r.groups).toEqual([]);
   });
 
+  it('chnos counts the tvg-chno of every live entry: skipped groups and entries over the limit too, a selection never changes it', async () => {
+    const list = ['#EXTM3U',
+      '#EXTINF:-1 tvg-chno="1" group-title="Neu",Hafenkanal Neu 1', 'http://iptv.example.com/live/1.ts',
+      '#EXTINF:-1 tvg-chno="1" group-title="Neu",Hafenkanal Neu 2', 'http://iptv.example.com/live/2.ts',
+      '#EXTINF:-1 tvg-chno="3" group-title="DE",Nordlicht TV', 'http://iptv.example.com/live/3.ts',
+      '#EXTINF:-1 tvg-chno="4" group-title="DE",Sternwarte 24', 'http://iptv.example.com/live/4.ts',
+      '#EXTINF:-1 tvg-chno="abc" group-title="DE",Kanal Wolkenlos', 'http://iptv.example.com/live/5.ts',
+      '#EXTINF:-1 tvg-chno="9" group-title="DE",Film', 'http://iptv.example.com/movie/6.mp4', // VOD: not a live entry
+    ].join('\n');
+    const all = await parse(list);
+    expect(all.chnos).toEqual({ count: 4, distinct: 3 });
+    expect((await parse(list, { skipGroups: new Set(['Neu']) })).chnos).toEqual({ count: 4, distinct: 3 });
+    expect((await parse(list, { skipGroups: new Set(['DE']) })).chnos).toEqual({ count: 4, distinct: 3 });
+    const capped = await parse(list, { max: 1 });
+    expect(capped.entries).toHaveLength(1);
+    expect(capped.chnos).toEqual({ count: 4, distinct: 3 });
+    expect((await parse('#EXTM3U\n')).chnos).toEqual({ count: 0, distinct: 0 });
+  });
+
   it('credential path segments do not change the key (Review Focus 2)', async () => {
     const alt = fixture('xtream.m3u').toString('utf8');
     const neu = alt.replaceAll('/alt/', '/neu/').replace('anna:alt@', 'anna:neu@').replace('token=abc', 'token=xyz');
