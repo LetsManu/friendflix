@@ -27,9 +27,22 @@ export interface UpdaterStatus {
   projectDir?: string | null;
 }
 export interface AutoUpdate { mode: 'off' | 'nightly-window'; time: string; locked: string[] }
-/** whether Admin → Settings has the Portainer webhook / API: a foreign stack is then updated through Portainer */
-export interface PortainerSetup { configured: boolean; mode: 'webhook' | 'api' | null }
-export type UpdaterView = { autoUpdate?: AutoUpdate; portainer?: PortainerSetup } & ({ present: false } | { present: true; error: 'unauthorized' | 'invalid_answer' } | { present: true; status: UpdaterStatus });
+/**
+ * whether Admin → Settings has the Portainer webhook / API: a foreign stack is then updated through Portainer. missing: the API
+ * settings still missing when it is set up only in part (names only; older backends send none)
+ */
+export interface PortainerSetup { configured: boolean; mode: 'webhook' | 'api' | null; missing?: string[] }
+/**
+ * The last update handed to Portainer (backend redeploy.ts) and its phase, judged from what runs: Portainer reports no progress
+ * and recreates the backend halfway through, so the page polls this like an updater job.
+ */
+export type RedeployPhase = 'pulling' | 'recreating' | 'health' | 'done' | 'unchanged' | 'failed' | 'timeout';
+export interface Redeploy {
+  id: string; mode: 'webhook' | 'api'; tag: string; phase: RedeployPhase; running: boolean; startedAt: string; finishedAt: string | null;
+  services: { updated: number; total: number } | null;
+  error: string | null; status: number | null; step: string | null; code: string | null; at: RedeployPhase | null;
+}
+export type UpdaterView = { autoUpdate?: AutoUpdate; portainer?: PortainerSetup; redeploy?: Redeploy | null } & ({ present: false } | { present: true; error: 'unauthorized' | 'invalid_answer' } | { present: true; status: UpdaterStatus });
 
 /** HH:MM like the backend (config.ts AUTO_UPDATE_TIME) */
 export const TIME_RE = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
@@ -37,6 +50,46 @@ const MAIN_STEPS: readonly StepName[] = ['pull', 'verify', 'restart', 'health'];
 
 export const statusOf = (v: UpdaterView | null): UpdaterStatus | null => (v && v.present && 'status' in v ? v.status : null);
 export const isRunning = (j: UpdaterJob | null | undefined): boolean => j?.state === 'running';
+/** a Portainer redeploy that is still going (the page keeps polling) */
+export const redeployRunning = (v: UpdaterView | null): boolean => Boolean(v?.redeploy?.running);
+
+export type RedeployStep = 'pulling' | 'recreating' | 'health';
+export const REDEPLOY_STEPS: readonly RedeployStep[] = ['pulling', 'recreating', 'health'];
+/**
+ * each step's state for a phase (JobSteps' states): the running one, the ones before it done. unchanged: Portainer pulled but
+ * recreated nothing; failed: refused before anything changed; timeout: the step it hung in failed.
+ */
+export function redeploySteps(r: Pick<Redeploy, 'phase' | 'at'>): Record<RedeployStep, StepState> {
+  const upTo = (i: number, cur: StepState): Record<RedeployStep, StepState> =>
+    Object.fromEntries(REDEPLOY_STEPS.map((s, k) => [s, k < i ? 'ok' : k === i ? cur : cur === 'running' ? 'pending' : 'skipped'])) as Record<RedeployStep, StepState>;
+  switch (r.phase) {
+    case 'pulling': return upTo(0, 'running');
+    case 'recreating': return upTo(1, 'running');
+    case 'health': return upTo(2, 'running');
+    case 'done': return upTo(3, 'ok');
+    case 'unchanged': return { pulling: 'ok', recreating: 'skipped', health: 'skipped' };
+    case 'failed': return upTo(0, 'failed');
+    case 'timeout': return upTo(Math.max(0, REDEPLOY_STEPS.indexOf((r.at ?? 'pulling') as RedeployStep)), 'failed');
+  }
+}
+
+/** the outcome line of a finished redeploy ('' while it runs); the HTTP status and step of a refusal, never more */
+export function redeployResult(r: Redeploy): string {
+  const k = 'admin.update.updater.redeploy';
+  if (r.phase === 'failed') {
+    const detail = r.status !== null ? trDynamic(`${k}.detail`, { status: String(r.status), step: r.step ?? '?' }) : '';
+    return trDynamic(`${k}.result.failed`, { detail });
+  }
+  if (r.phase === 'timeout') return trDynamic(`${k}.result.timeout`, { at: trDynamic(`${k}.step.${(r.at && REDEPLOY_STEPS.includes(r.at as RedeployStep) ? r.at : 'pulling')}`) });
+  if (r.phase === 'done' || r.phase === 'unchanged') return trDynamic(`${k}.result.${r.phase}`, { tag: r.tag });
+  return '';
+}
+
+/** the note when the Portainer API is set up only in part (null when nothing is missing) */
+export function portainerMissing(p: Pick<PortainerSetup, 'missing'> | null | undefined): string | null {
+  const m = (p?.missing ?? []).filter((f) => /^PORTAINER_[A-Z_]{1,30}$/.test(f));
+  return m.length ? trDynamic('admin.update.updater.portainerMissing', { fields: m.join(', ') }) : null;
+}
 
 /** the four steps, plus the rollback once it ran (self-update: no health step) */
 export function visibleSteps(j: UpdaterJob): StepName[] {
@@ -77,7 +130,9 @@ export function foreignMode(v: UpdaterView | null): ForeignMode | null {
   const s = statusOf(v);
   if (!s) return null;
   const portainer = Boolean(v?.portainer?.configured);
-  if (s.stack !== 'foreign' && !(portainer && s.stack !== 'own')) return null;
+  // set up only in part: the backend treats a stack the updater cannot confirm as Portainer's too (and names what is missing)
+  const partial = (v?.portainer?.missing ?? []).length > 0;
+  if (s.stack !== 'foreign' && !((portainer || partial) && s.stack !== 'own')) return null;
   if (portainer) return 'portainer';
   if (s.stackReason === 'working_dir' && s.stackDir && s.projectDir && !/^\/data\/compose\//.test(s.stackDir)) return 'workdir';
   return 'manual';

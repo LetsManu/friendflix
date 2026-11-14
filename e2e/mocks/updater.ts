@@ -27,6 +27,15 @@ export interface UpdaterMock {
   projectDir?: string;
   /** the Portainer webhook / API is set up in Admin → Settings (GET answers portainer.configured) */
   portainer?: boolean;
+  /** the Portainer API set up only in part: the settings still missing (GET portainer.missing) */
+  missing?: string[];
+  /**
+   * the last update handed to Portainer (GET redeploy, backend redeploy.ts). After "update now" on a Portainer stack it advances one
+   * phase per poll: pulling → recreating (1 of 3) → `downPolls` polls answered 502 (Portainer recreates the backend) → health →
+   * `redeployOutcome` (done, or failed with HTTP 500 at the redeploy step).
+   */
+  redeploy?: any;
+  redeployOutcome?: 'done' | 'failed';
 }
 type Reply = (b: unknown, status?: number) => Promise<void>;
 
@@ -35,6 +44,21 @@ export function updaterState(present: UpdaterMock['present'] = false): UpdaterMo
 }
 
 const value = (s: SettingsMock, key: string) => s.groups.flatMap((g) => g.items).find((i) => i.key === key);
+
+function advanceRedeploy(u: UpdaterMock): boolean {
+  const r = u.redeploy;
+  if (!r?.running) return true;
+  const n = u.tick++;
+  if (u.redeployOutcome === 'failed') {
+    if (n >= 1) Object.assign(r, { phase: 'failed', running: false, finishedAt: new Date().toISOString(), error: 'portainer', status: 500, step: 'redeploy' });
+    return true;
+  }
+  if (n === 0) Object.assign(r, { phase: 'recreating', services: { updated: 1, total: 3 } });
+  else if (n < 1 + u.downPolls) return false; // Portainer recreates the backend
+  else if (n === 1 + u.downPolls) Object.assign(r, { phase: 'health', services: { updated: 3, total: 3 } });
+  else Object.assign(r, { phase: 'done', running: false, finishedAt: new Date().toISOString() });
+  return true;
+}
 
 function advance(u: UpdaterMock): boolean {
   const j = u.job;
@@ -65,12 +89,12 @@ export function updaterRoute(u: UpdaterMock | null, settings: SettingsMock, m: s
   const ver = value(settings, 'UPDATE_VERSION')?.value ?? null;
   const target = ch === 'nightly' ? 'nightly' : ch === 'pinned' ? ver : 'latest';
   if (p === '/api/admin/updater' && m === 'GET') {
-    const portainer = { configured: Boolean(u?.portainer), mode: u?.portainer ? 'webhook' : null };
-    if (!u || !u.present) return J({ present: false, autoUpdate: auto, portainer });
-    if (u.present === 'unauthorized') return J({ present: true, error: 'unauthorized', autoUpdate: auto, portainer });
-    if (!advance(u)) return J({ error: 'bad_gateway' }, 502);
+    const portainer = { configured: Boolean(u?.portainer), mode: u?.portainer ? 'webhook' : null, missing: u?.missing ?? [] };
+    if (!u || !u.present) return J({ present: false, autoUpdate: auto, portainer, redeploy: null });
+    if (u.present === 'unauthorized') return J({ present: true, error: 'unauthorized', autoUpdate: auto, portainer, redeploy: null });
+    if (!advance(u) || !advanceRedeploy(u)) return J({ error: 'bad_gateway' }, 502);
     const busy = u.job?.state === 'running';
-    return J({ present: true, autoUpdate: auto, portainer, status: { ...(u.stack ? { stack: u.stack } : {}), ...(u.stackReason ? { stackReason: u.stackReason, stackDir: u.stackDir, projectDir: u.projectDir } : {}),
+    return J({ present: true, autoUpdate: auto, portainer, redeploy: u.redeploy ?? null, status: { ...(u.stack ? { stack: u.stack } : {}), ...(u.stackReason ? { stackReason: u.stackReason, stackDir: u.stackDir, projectDir: u.projectDir } : {}),
       updater: { version: '1.1.0', sha: null }, channel: ch, version: ch === 'pinned' ? ver : null, targetTag: target, current: u.current, previous: u.previous, busy,
       job: u.job, log: u.log.slice(-30), services: [{ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-c0be6c5', version: '1.0.0' }],
     } });
@@ -80,7 +104,13 @@ export function updaterRoute(u: UpdaterMock | null, settings: SettingsMock, m: s
     if (!u || !u.present) return J({ error: 'not_available' }, 409);
     u.posts.push(mm[1]!);
     // Portainer's stack: the backend hands an update to Portainer, refuses everything else (backend/src/updater.ts startJob)
-    if (u.stack === 'foreign' || (u.portainer && u.stack !== 'own')) return mm[1] === 'update' && u.portainer ? J({ portainer: { mode: 'webhook' } }, 202) : J({ error: 'foreign_stack' }, 409);
+    if (u.stack === 'foreign' || ((u.portainer || u.missing?.length) && u.stack !== 'own')) {
+      if (mm[1] !== 'update' || !u.portainer) return J({ error: 'foreign_stack' }, 409);
+      u.tick = 0;
+      u.redeploy = { id: 'abcdef0123456789', mode: 'webhook', tag: target, phase: 'pulling', running: true, startedAt: new Date().toISOString(), finishedAt: null,
+        services: { updated: 0, total: 3 }, error: null, status: null, step: null, code: null, at: null };
+      return J({ portainer: { mode: 'webhook' } }, 202);
+    }
     if (u.job?.state === 'running') return J({ error: 'busy' }, 409);
     if (mm[1] === 'rollback' && !u.previous) return J({ error: 'no_previous' }, 409);
     const to = mm[1] === 'rollback' ? u.previous : target;

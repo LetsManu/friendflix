@@ -4,6 +4,12 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Updates
+- **Update now on a Portainer stack shows its progress and why it did not run.** After *Update now* the updater card follows the redeploy like a job: *Portainer pulls the images* → *Recreate containers* ("2 of 3 services on the new build") → *Health check* → the result, through the backend's restart and after a reload. A refusal from Portainer that comes after "started" (its API answers only once it is done) now shows as failed with the HTTP status and step instead of nothing; "Portainer finished, but nothing was recreated" and "nothing changed within 15 minutes" are said as such.
+- **The page says what is missing for a Portainer stack.** With the Portainer API set up only in part it names the missing setting (e.g. `PORTAINER_STACK_ID`) and where the stack ID is: the number after `id=` in the stack's address in Portainer (`…/docker/stacks/<name>?id=12`). Such a stack is no longer handed to the updater, which could only fail with "compose configuration not readable".
+- **The updater recognises a Portainer stack again** when it cannot read the compose files (on Portainer its project directory is an empty folder on the host): it reads the labels of its own compose project instead, so the card shows the Portainer note and the service versions.
+- **The Portainer API redeploys in the stack's own environment.** The redeploy uses the stack's `EndpointId` from Portainer; `PORTAINER_ENDPOINT_ID` (default 1) is only the fallback. Portainer moves a stack to whatever environment a redeploy names, so a wrong default could fail or deploy elsewhere.
+
 ### Security
 - **Windows app: plain `http://` only for a server in your home network.** Setup and the stored settings accept `http://` only for a private, loopback, link-local or Tailscale (`100.64–127.x.x`) IP address or a local name (`nas`, `*.local`, `*.lan`, `*.home.arpa`, `*.internal`); a public host needs `https`, as the docs already said. Setup says so instead of "not a valid server address". If you had set up the app with `http://` and a public name, it opens setup once: enter the `https` address (or the server's home-network IP).
 - **Live TV relay hardening (code scanning).** The gateway re-checks the stream key and the file name right where it builds the address it fetches from the Live TV service, and reads the playlist's `URI=` attributes in one linear pass instead of a regular expression. Nothing changes for viewers.

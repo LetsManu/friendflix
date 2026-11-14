@@ -7,7 +7,10 @@
    * job and the automatic updates. A job restarts the backend: failed polls show "reconnecting" and the page picks the result up
    * when it answers again (also after a reload: the updater keeps the last job). An admin session is enough to start a job or to
    * change the automatic updates (no second sign-in). A Portainer stack
-   * (status.stack foreign) is never recreated by the updater: a note up front, "Update now" goes through Portainer when it is set up.
+   * (status.stack foreign) is never recreated by the updater: a note up front, "Update now" goes through Portainer when it is set up
+   * (the Portainer API set up only in part: which settings are missing). A redeploy handed to Portainer is followed like a job
+   * (view.redeploy: Portainer pulls → recreate, n of 3 services on the new build → health → the outcome), through the backend's
+   * restart and after a reload.
    */
   import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
@@ -20,10 +23,11 @@
   import Progress from '#lib/ui/Progress.svelte';
   import Select from '#lib/ui/Select.svelte';
   import JobSteps from './JobSteps.svelte';
+  import RedeployProgress from './RedeployProgress.svelte';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import { toast } from '#lib/ui/toast';
   import {
-    TIME_RE, WATCH_MAX_MS, canRollback, failReason, foreignMode, foreignText, isRunning, nextPoll, startError, statusOf,
+    TIME_RE, WATCH_MAX_MS, canRollback, failReason, foreignMode, foreignText, isRunning, nextPoll, portainerMissing, redeployRunning, startError, statusOf,
     type UpdaterAction, type UpdaterJob, type UpdaterView,
   } from './updater';
 
@@ -37,11 +41,17 @@
   $: foreign = foreignMode(view);
   // $t: re-rendered on a language switch
   $: foreignNote = foreign ? (void $t, foreignText(foreign, s)) : '';
+  $: missingNote = (void $t, portainerMissing(view.portainer));
+  /** the last update handed to Portainer; running: followed like a job */
+  $: redeploy = view.redeploy ?? null;
+  $: redeploying = redeployRunning(view);
   let confirming: UpdaterAction | null = null;
   let reconnecting = false, watchTimeout = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let t0 = 0, now = Date.now();
   let watchedId: string | null = null;
+  /** a redeploy this page started or found running: the page reloads its data once it ended */
+  let watchedRedeploy: string | null = null;
 
   async function refresh(): Promise<boolean> {
     try { view = await api<UpdaterView>('/api/admin/updater'); return true; } catch { return false; }
@@ -57,13 +67,22 @@
       const ok = await refresh();
       reconnecting = !ok;
       const j = statusOf(view)?.job;
-      if (ok && !isRunning(j)) { t0 = 0; stopWatch(); if (watchedId && j?.id === watchedId) dispatch('finished'); watchedId = null; return; }
+      if (ok && !isRunning(j) && !redeployRunning(view)) {
+        t0 = 0; stopWatch();
+        if ((watchedId && j?.id === watchedId) || (watchedRedeploy && view.redeploy?.id === watchedRedeploy)) dispatch('finished');
+        watchedId = null; watchedRedeploy = null;
+        return;
+      }
       if (Date.now() - t0 > WATCH_MAX_MS) { stopWatch(); watchTimeout = true; t0 = 0; return; }
       timer = setTimeout(tick, nextPoll(reconnecting));
     };
     timer = setTimeout(tick, nextPoll(false));
   }
-  onMount(() => { if (running) { watchedId = job?.id ?? null; watch(); } });
+  onMount(() => {
+    if (running) watchedId = job?.id ?? null;
+    if (redeploying) watchedRedeploy = view.redeploy?.id ?? null;
+    if (running || redeploying) watch();
+  });
   onDestroy(stopWatch);
   const clock = setInterval(() => { if (t0) now = Date.now(); }, 1000);
   onDestroy(() => clearInterval(clock));
@@ -72,8 +91,12 @@
     confirming = null;
     const res = await runAction({ key: `updater:${action}`, run: () => api<{ job: UpdaterJob } | { portainer: { mode: string } }>(`/api/admin/updater/${action}`, { method: 'POST' }), error: false });
     if (res.ok && res.value && 'portainer' in res.value) {
-      // a Portainer stack: Portainer redeploys it (no updater job to follow)
+      // a Portainer stack: Portainer redeploys it; the backend records the redeploy, the page follows its phases
       toast.success(tr('admin.update.updater.foreign.started'));
+      await refresh();
+      watchedRedeploy = view.redeploy?.id ?? null;
+      t0 = Date.now();
+      watch();
       return;
     }
     if (res.ok && res.value && 'job' in res.value) {
@@ -92,6 +115,8 @@
     (a === 'update' && f === 'portainer' ? 'admin.update.updater.confirm.updatePortainer' : `admin.update.updater.confirm.${a}`) as 'admin.update.updater.confirm.update';
   const confirmTag = (a: UpdaterAction) => (a === 'rollback' ? s?.previous : s?.targetTag) ?? '';
   $: elapsed = t0 ? Math.max(0, Math.round((now - t0) / 1000)) : 0;
+  /** from the redeploy's own start (it survives a reload) */
+  $: redeployElapsed = redeploy?.running ? Math.max(0, Math.round((now - Date.parse(redeploy.startedAt)) / 1000)) : 0;
   $: resultText = job && !running
     ? job.state === 'succeeded' ? tr('admin.update.updater.result.succeeded', { to: job.to })
       : job.state === 'rolled_back' ? tr('admin.update.updater.result.rolled_back', { from: job.from ?? tr('admin.update.updater.none') })
@@ -121,6 +146,9 @@
         <Icon name={foreign !== 'portainer' ? 'alert' : 'info'} size={18} />{foreignNote}
       </p>
     {/if}
+    {#if missingNote}
+      <p class="banner warn" role="alert" data-portainer-missing><Icon name="alert" size={18} />{missingNote}</p>
+    {/if}
     <dl class="ver" data-updater>
       <div><dt>{$t('admin.update.updater.installed')}</dt><dd><code>{s.current ?? $t('admin.update.updater.none')}</code></dd></div>
       <div><dt>{$t('admin.update.updater.previous')}</dt><dd><code>{s.previous ?? $t('admin.update.updater.none')}</code></dd></div>
@@ -137,7 +165,7 @@
       </div>
     {:else}
       <div class="row actions">
-        <Button icon="download" pending={$busyKeys.has('updater:update')} disabled={running || s.busy || !s.targetTag || (foreign !== null && foreign !== 'portainer')} on:click={() => (confirming = 'update')}>{$t('admin.update.updater.updateNow')}</Button>
+        <Button icon="download" pending={$busyKeys.has('updater:update')} disabled={running || redeploying || s.busy || !s.targetTag || (foreign !== null && foreign !== 'portainer')} on:click={() => (confirming = 'update')}>{$t('admin.update.updater.updateNow')}</Button>
         <Button variant="secondary" icon="arrow-left" pending={$busyKeys.has('updater:rollback')} disabled={!canRollback(s) || foreign !== null} on:click={() => (confirming = 'rollback')}>{$t('admin.update.updater.rollback')}</Button>
       </div>
     {/if}
@@ -155,6 +183,13 @@
         {/if}
         {#if watchTimeout}<p class="err small" role="alert">{$t('admin.update.updater.watchTimeout')}</p>{/if}
         <JobSteps {job} />
+      </div>
+    {/if}
+
+    {#if redeploy && !running}
+      <div class="prog">
+        <RedeployProgress {redeploy} elapsed={redeployElapsed} {reconnecting} />
+        {#if watchTimeout && redeploy.running}<p class="err small" role="alert">{$t('admin.update.updater.watchTimeout')}</p>{/if}
       </div>
     {/if}
 
