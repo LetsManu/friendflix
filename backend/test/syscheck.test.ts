@@ -57,8 +57,9 @@ describe('engine', () => {
     expect(r.statusCode).toBe(200);
     expect(r.headers['cache-control']).toBe('no-store');
     const body = r.json();
-    expect(body.lines.map((l: { id: string }) => l.id)).toEqual(['core.publicUrl', 'core.database', 'media.server', 'media.requests']);
-    expect(body.counts).toEqual({ ok: 1, warning: 1, problem: 1, not_set_up: 1, unknown: 0 });
+    // the two request-scoped proxy lines come last (this request arrived without a proxy: plain http while PUBLIC_URL is https)
+    expect(body.lines.map((l: { id: string }) => l.id)).toEqual(['core.publicUrl', 'core.database', 'media.server', 'media.requests', 'proxy.forwardedProto', 'proxy.peer']);
+    expect(body.counts).toEqual({ ok: 2, warning: 2, problem: 1, not_set_up: 1, unknown: 0 });
     expect(body.lines[1]).toEqual({ id: 'core.database', group: 'core', status: 'problem', cause: 'db_down', fix: 'db_down', docs: 'operations.md', runs: 'server' });
     expect(body.lines[0]).toEqual({ id: 'core.publicUrl', group: 'core', status: 'ok', runs: 'server' });
     expect(typeof body.at).toBe('string');

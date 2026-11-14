@@ -152,6 +152,8 @@ const dict: Translation<typeof de> = {
     portainer_url_invalid: 'L’adresse de Portainer est invalide ou redirige.',
     portainer_down: 'Portainer ne répond pas.',
     redeploy_failed: 'La dernière mise à jour via Portainer a été refusée.',
+    proxy_no_proto: 'La requête est arrivée en http alors que l’adresse publique est en https : le proxy ne transmet pas le protocole.',
+    proxy_untrusted_peer: 'Le proxy joint FriendFlix depuis une adresse à laquelle il ne fait pas confiance : tous les utilisateurs partagent une adresse.',
   },
   fix: {
     envLocked: '{key} est dans le .env : modifiez-le là et redémarrez le conteneur.',
@@ -245,6 +247,8 @@ const dict: Translation<typeof de> = {
     portainer_url_invalid: 'Renseigner l’adresse exacte de Portainer, p. ex. https://portainer.example.com.',
     portainer_down: 'Vérifier Portainer et son adresse.',
     redeploy_failed: 'Consulter les détails sous Mise à jour et réessayer.',
+    proxy_no_proto: 'Définir X-Forwarded-Proto dans le proxy (le modèle du guide le fait) et le faire tourner sur une adresse privée.',
+    proxy_untrusted_peer: 'Faire tourner le proxy sur la même machine ou dans le réseau privé (voir le guide).',
   },
   action: { toSetting: 'Vers le réglage', details: 'Détails', docs: 'Guide', hevc: 'Vérifier HEVC maintenant' },
   summary: {

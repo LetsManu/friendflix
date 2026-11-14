@@ -152,6 +152,8 @@ const dict: Translation<typeof de> = {
     portainer_url_invalid: 'Portainer adresi geçersiz veya yönlendiriyor.',
     portainer_down: 'Portainer yanıt vermiyor.',
     redeploy_failed: 'Portainer üzerinden yapılan son güncelleme reddedildi.',
+    proxy_no_proto: 'Genel adres https olduğu hâlde istek http olarak geldi: proxy protokolü iletmiyor.',
+    proxy_untrusted_peer: 'Proxy FriendFlix’e güvenmediği bir adresten ulaşıyor: tüm kullanıcılar tek bir adresi paylaşıyor.',
   },
   fix: {
     envLocked: '{key} .env içinde: orada değiştir ve konteyneri yeniden başlat.',
@@ -245,6 +247,8 @@ const dict: Translation<typeof de> = {
     portainer_url_invalid: 'Portainer adresini tam olarak girin, örn. https://portainer.example.com.',
     portainer_down: 'Portainer’ı ve adresini kontrol edin.',
     redeploy_failed: 'Güncelleme altında ayrıntılara bakın ve yeniden deneyin.',
+    proxy_no_proto: 'Proxy’de X-Forwarded-Proto ayarlayın (kılavuzdaki şablon bunu yapar) ve onu özel bir adreste çalıştırın.',
+    proxy_untrusted_peer: 'Proxy’yi aynı makinede veya özel ağda çalıştırın (kılavuza bakın).',
   },
   action: { toSetting: 'Ayara git', details: 'Ayrıntılar', docs: 'Kılavuz', hevc: 'HEVC’yi şimdi kontrol et' },
   summary: {

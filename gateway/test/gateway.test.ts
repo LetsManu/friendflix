@@ -1032,3 +1032,51 @@ describe('hlsAttrs', () => {
     expect(performance.now() - t0).toBeLessThan(200);
   });
 });
+
+describe('buffering probe /media/probe/drip (Systemcheck)', () => {
+  /** one drip: when its first bytes and its end arrive (ms after the request), and what came */
+  async function drip(): Promise<{ status: number; first: number; total: number; bytes: number; headers: Headers }> {
+    const t0 = performance.now();
+    const r = await fetch(`http://127.0.0.1:${gwPort}/media/probe/drip`);
+    let first = -1, bytes = 0;
+    const reader = r.body!.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (first < 0) first = performance.now() - t0;
+      bytes += value.length;
+    }
+    return { status: r.status, first, total: performance.now() - t0, bytes, headers: r.headers };
+  }
+
+  it('drip sends the first 1024 bytes before the pause, then the rest: no auth, no upstream call, never cached', async () => {
+    const before = seen.length;
+    const d = await drip();
+    expect(d.status).toBe(200);
+    expect(d.first).toBeLessThan(300);
+    expect(d.total).toBeGreaterThanOrEqual(1490);
+    expect(d.bytes).toBe(2048);
+    expect(d.headers.get('content-type')).toBe('application/octet-stream');
+    expect(d.headers.get('cache-control')).toBe('no-store');
+    expect(d.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(seen.length).toBe(before); // nothing reached the media server
+  });
+
+  it('a fifth concurrent drip → 429; a slot is free again once one ended', async () => {
+    const four = Array.from({ length: 4 }, () => drip());
+    await new Promise((r) => setTimeout(r, 150));
+    const fifth = await fetch(`http://127.0.0.1:${gwPort}/media/probe/drip`);
+    expect(fifth.status).toBe(429);
+    await fifth.body?.cancel();
+    expect((await Promise.all(four)).map((d) => d.status)).toEqual([200, 200, 200, 200]);
+    expect((await drip()).status).toBe(200);
+  });
+
+  it('only GET; the query is ignored, nothing of the request is echoed', async () => {
+    expect((await fetch(`http://127.0.0.1:${gwPort}/media/probe/drip`, { method: 'POST', body: 'x' })).status).toBe(405);
+    const d = await fetch(`http://127.0.0.1:${gwPort}/media/probe/drip?x=%3Cscript%3E`);
+    const body = Buffer.from(await d.arrayBuffer());
+    expect(body.length).toBe(2048);
+    expect(body.includes(Buffer.from('script'))).toBe(false);
+  });
+});

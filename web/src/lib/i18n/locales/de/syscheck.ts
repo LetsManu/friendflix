@@ -153,6 +153,8 @@ export default {
     portainer_url_invalid: 'Die Portainer-Adresse ist ungültig oder leitet weiter.',
     portainer_down: 'Portainer antwortet nicht.',
     redeploy_failed: 'Das letzte Update über Portainer wurde abgelehnt.',
+    proxy_no_proto: 'Die Anfrage kam als http an, obwohl die öffentliche Adresse https ist: der Proxy gibt das Protokoll nicht weiter.',
+    proxy_untrusted_peer: 'Der Proxy erreicht FriendFlix von einer Adresse, der es nicht vertraut: alle Nutzer teilen sich eine Adresse.',
   },
   fix: {
     envLocked: '{key} steht in der .env: dort ändern und den Container neu starten.',
@@ -246,6 +248,8 @@ export default {
     portainer_url_invalid: 'Die Portainer-Adresse genau eintragen, z. B. https://portainer.example.com.',
     portainer_down: 'Portainer prüfen und seine Adresse kontrollieren.',
     redeploy_failed: 'Unter Update die Einzelheiten ansehen und es noch einmal versuchen.',
+    proxy_no_proto: 'Im Proxy X-Forwarded-Proto setzen (die Vorlage aus der Anleitung tut das) und ihn auf einer privaten Adresse betreiben.',
+    proxy_untrusted_peer: 'Den Proxy auf derselben Maschine oder im privaten Netz betreiben (siehe Anleitung).',
   },
   action: { toSetting: 'Zur Einstellung', details: 'Details', docs: 'Anleitung', hevc: 'HEVC jetzt prüfen' },
   summary: {

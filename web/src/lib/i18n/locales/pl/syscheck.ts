@@ -152,6 +152,8 @@ const dict: Translation<typeof de> = {
     portainer_url_invalid: 'Adres Portainera jest nieprawidłowy lub przekierowuje.',
     portainer_down: 'Portainer nie odpowiada.',
     redeploy_failed: 'Ostatnia aktualizacja przez Portainer została odrzucona.',
+    proxy_no_proto: 'Żądanie dotarło przez http, choć adres publiczny to https: proxy nie przekazuje protokołu.',
+    proxy_untrusted_peer: 'Proxy łączy się z FriendFlix z adresu, któremu ten nie ufa: wszyscy użytkownicy mają wspólny adres.',
   },
   fix: {
     envLocked: '{key} jest w .env: zmień to tam i uruchom kontener ponownie.',
@@ -245,6 +247,8 @@ const dict: Translation<typeof de> = {
     portainer_url_invalid: 'Wpisz dokładny adres Portainera, np. https://portainer.example.com.',
     portainer_down: 'Sprawdź Portainer i jego adres.',
     redeploy_failed: 'Sprawdź szczegóły w zakładce Aktualizacja i spróbuj ponownie.',
+    proxy_no_proto: 'Ustaw X-Forwarded-Proto w proxy (szablon z instrukcji to robi) i uruchom je na adresie prywatnym.',
+    proxy_untrusted_peer: 'Uruchom proxy na tej samej maszynie lub w sieci prywatnej (zob. instrukcję).',
   },
   action: { toSetting: 'Do ustawienia', details: 'Szczegóły', docs: 'Instrukcja', hevc: 'Sprawdź HEVC teraz' },
   summary: {

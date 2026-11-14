@@ -24,7 +24,7 @@ import { clearJoinMark, startOrJoin } from './streams.js';
 import { adminStopKey, liveSidHash, mintLiveToken, revokeLiveToken } from './tokens.js';
 import { epgSummary } from './epg.js';
 import { refreshRunning, refreshSource, schedulePinImport, uploadGuideFile } from './refresh.js';
-import { fileNameHeader, GUIDE_FILE_MAX_BYTES } from './guidefiles.js';
+import { drainProbe, fileNameHeader, GUIDE_FILE_MAX_BYTES, PROBE_MAX_BYTES, PROBE_SOURCE_ID } from './guidefiles.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
 import { FeedError, createFeed, deleteFeed, feedCreate, ingestView, reassignPort, regenerateCredentials, syncIngest } from './ownfeeds.js';
 import {
@@ -67,6 +67,8 @@ const mergeBody = z.object({ ids: z.array(id).min(1).max(500), into: id }).stric
 
 type Reply = { code(n: number): { send(b: unknown): unknown } };
 /** what an XMLTV file upload may be sent as (a browser names `.xml` text/xml or application/xml, `.gz` application/gzip or x-gzip) */
+/** upload-limit probes of the Systemcheck a minute, per session */
+const PROBE_PER_MIN = 10;
 const GUIDE_FILE_TYPES: readonly string[] = ['application/octet-stream', 'application/xml', 'text/xml', 'application/gzip', 'application/x-gzip'];
 /** Zod safeParse with the fixed refusal `{ error: 'invalid', field }` (the input is never echoed) */
 function parse<T>(schema: z.ZodType<T>, body: unknown, reply: Reply): T | undefined {
@@ -628,6 +630,24 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
    * the source's lock). The admin check runs before the body is read (onRequest), the
    * CSRF hook before the handler reads it; the file is never parsed here and never served back.
    */
+  /**
+   * The Systemcheck's upload-limit probe (guidefiles.ts PROBE_SOURCE_ID): admin and CSRF like a real upload, at most 10 a minute per
+   * session; the body is read and dropped (never stored, never audited), more than PROBE_MAX_BYTES is refused. 200 `{ probe, bytes }`.
+   */
+  async function uploadProbe(req: FastifyRequest, reply: FastifyReply) {
+    const n = await ctx.kv.incr(`syscheck:probe:upload:${req.sid}`, 60).catch(() => 0);
+    if (n > PROBE_PER_MIN) return reply.code(429).send({ error: 'rate_limited' });
+    const body = req.body as Readable | undefined;
+    if (!(body instanceof Readable)) return reply.code(400).send({ error: 'invalid', field: 'file' });
+    // the rest of a refused body is not read: the connection closes after the answer
+    const tooLarge = () => reply.header('connection', 'close').code(413).send({ error: 'too_large' });
+    if (Number(req.headers['content-length'] ?? 0) > PROBE_MAX_BYTES) return tooLarge();
+    const r = await drainProbe(body);
+    if (r === 'too_large') return tooLarge();
+    if (r === 'broken') return reply.code(400).send({ error: 'invalid', field: 'file' });
+    return { probe: 'ok', bytes: r };
+  }
+
   void app.register(async (sub) => {
     // the body stays a stream: the handler reads it (after the admin and CSRF checks)
     sub.addContentTypeParser('*', (_req, payload, done) => done(null, payload));
@@ -641,6 +661,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     sub.put('/api/admin/livetv/sources/:id/file', { onRequest: requireAdmin(ctx) }, async (req, reply) => {
       reply.header('cache-control', 'no-store');
       const sid = paramId(req);
+      if (sid === PROBE_SOURCE_ID) return uploadProbe(req, reply);
       const s = sid
         ? (await ctx.db.query<{ kind: string; guide_provider: string | null }>('select kind, guide_provider from livetv_sources where id = $1', [sid])).rows[0]
         : undefined;
