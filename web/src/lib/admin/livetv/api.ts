@@ -179,12 +179,6 @@ export const createSource = (b: SourceBody) => api<SourceView>(`${B}/sources`, {
 export const createGuide = (b: GuideBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
 export const createFileGuide = (b: FileGuideBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
 /**
- * PUT the file as is (raw `application/octet-stream` body: CSRF and 401 handling stay in `api()`), `?name=` = the original file name
- * (the card shows it). 202 `{ started: true }` = received; the import runs in the background and `fileName` / `fileBytes` change only
- * after a good one (the page follows `GET /sources`). Refusals: 413 `too_large` (300 MB), 409 `import_running` / `livetv_off`,
- * 404 `not_found`, 400 `invalid` (field `file`). fetch gives no upload progress, so the pages show an indeterminate bar.
- */
-/**
  * PUT /sources/:id/file: the file's bytes as they are; its name in the header `x-ff-file-name` (percent-encoded UTF-8; a header, not the
  * query, so it stays out of proxy access logs). 202 `{ started }`; refusals: 400 `invalid` (`field: 'file'`: an empty or broken-off
  * upload), 404, 409 `import_running` / `livetv_off`, 413 `too_large`.

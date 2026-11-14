@@ -18,7 +18,7 @@
    * guide can pick a new file too. The PUT itself is the page's (`upload`): closing the sheet while it runs does not lose the import's
    * outcome, the page still follows it and says how it went.
    */
-  import { createEventDispatcher, onMount, tick } from 'svelte';
+  import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
   import { ApiError } from '#lib/api';
   import { dialogKeys } from '#lib/actions';
   import { scrimFade, sheetSlide, twoWay } from '#lib/glass/fx';
@@ -149,6 +149,8 @@
         // 202: the import runs on the server; the page follows the list and shows name, size and outcome when it is done
         try { await upload(v, file); } finally { uploading = false; }
       }
+      // closed while the PUT ran: the page already follows the upload; a late close would shut whatever sheet is open now
+      if (destroyed) return;
       done = true;
       dispatch('saved', v);
       close(true);
@@ -214,6 +216,8 @@
   function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
   const slide = (node: Element) => twoWay((dir) => sheetSlide(node, { dir, side: 'right' }));
   onMount(() => { document.getElementById(`${id}-name`)?.focus({ preventScroll: true }); });
+  let destroyed = false;
+  onDestroy(() => { destroyed = true; });
 
   $: intervals = REFRESHES.map((r) => ({ value: r, label: $t(`adminLive.src.interval.${r}`) }));
 </script>
