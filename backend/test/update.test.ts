@@ -60,7 +60,7 @@ describe('admin update', () => {
     expect(b.current).toEqual({ sha: CUR, builtAt: '2026-01-01T00:00:00Z', ...VERSION_JSON }); // no APP_VERSION: read from version.json
     expect(b.release).toBeNull();
     expect(b.updateAvailable).toBeNull();
-    expect(b.portainer).toEqual({ configured: false, mode: null });
+    expect(b.portainer).toEqual({ configured: false, mode: null, missing: [] });
     expect(ghCalls()).toBe(4); // release, CI run, compare, tag commit of the installed version
     await get();
     expect(ghCalls()).toBe(4);
@@ -165,7 +165,7 @@ describe('admin update', () => {
   it('webhook mode posts to the URL, audits, and leaks no secret', async () => {
     const { post, get } = await setup({ PORTAINER_WEBHOOK_URL: HOOK });
     const g = await get();
-    expect(g.json().portainer).toEqual({ configured: true, mode: 'webhook' });
+    expect(g.json().portainer).toEqual({ configured: true, mode: 'webhook', missing: [] });
     const r = await post();
     expect(r.statusCode).toBe(202);
     expect(r.json()).toEqual({ ok: true, mode: 'webhook' });
@@ -227,6 +227,45 @@ describe('admin update', () => {
     const put = seen.find((s) => s.method === 'PUT')!;
     expect(put.url).toBe('https://portainer.example.com/api/stacks/7?endpointId=3');
     expect(put.body).toMatchObject({ stackFileContent: 'services: {}', env: [...stack.Env, { name: 'FF_TAG', value: 'latest' }], pullImage: true, prune: false });
+  });
+
+  it('api mode redeploys on the stack\'s own environment: Portainer moves a stack to whatever endpointId is named', async () => {
+    stack.EndpointId = 2;
+    const { post } = await setup(api); // PORTAINER_ENDPOINT_ID 3 (or the default 1) would move the stack to another environment
+    expect((await post()).statusCode).toBe(202);
+    expect(seen.find((s) => s.method === 'PUT')!.url).toBe('https://portainer.example.com/api/stacks/7?endpointId=2');
+  });
+
+  it('api set up only in part: GET names the missing settings (never a value), POST refuses as not configured', async () => {
+    const { post, get } = await setup({ PORTAINER_URL: 'https://portainer.example.com', PORTAINER_API_KEY: KEY });
+    const g = await get();
+    expect(g.json().portainer).toEqual({ configured: false, mode: null, missing: ['PORTAINER_STACK_ID'] });
+    expect(g.body).not.toContain(KEY);
+    expect((await post()).statusCode).toBe(409);
+    expect(seen.filter((s) => host(s.url) === 'portainer.example.com')).toHaveLength(0);
+  });
+
+  it('api mode: Portainer answers only after "started" went out; a proxy giving up (504) is no verdict, a refusal (500) ends the redeploy as failed', { timeout: 20_000 }, async () => {
+    const { admin } = await setup(api);
+    const { redeployViaPortainer } = await import('../src/updates.js');
+    const base = env.ctx.fetchImpl;
+    let answer!: (r: Response) => void;
+    env.ctx.fetchImpl = (async (i: any, init: RequestInit = {}) => (init.method === 'PUT' ? new Promise<Response>((res) => { answer = res; }) : base(i, init))) as typeof fetch;
+    const view = async () => (await env.app.inject({ url: '/api/admin/updater', cookies: admin.cookies })).json().redeploy;
+    const late = async (status: number) => {
+      const r = await redeployViaPortainer(env.ctx, null, 'api');
+      expect(r).toEqual({ ok: true, mode: 'api', pending: true }); // no answer within the grace window: started
+      answer(new Response('{"message":"compose up failed: secret detail"}', { status }));
+      await new Promise((res) => setTimeout(res, 50));
+      return view();
+    };
+    expect(await late(504)).toMatchObject({ phase: 'pulling', running: true, error: null });
+    const v = await late(500);
+    expect(v).toMatchObject({ phase: 'failed', running: false, error: 'portainer', step: 'redeploy', status: 500 });
+    expect(JSON.stringify(v)).not.toContain('secret detail');
+    const a = await env.pool.query("select meta from audit_log where action='system.update_result' order by id");
+    expect(a.rows.at(-1).meta).toMatchObject({ result: 'failed', late: true, status: 500, step: 'redeploy' });
+    expect(JSON.stringify(a.rows)).not.toContain(KEY);
   });
 
   it('nightly channel: webhook gets ?FF_TAG=nightly (existing query kept), the token never leaks', async () => {

@@ -5,7 +5,8 @@ import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { requireAdmin } from '../session.js';
 import { UPDATER_ACTIONS, startJob, updaterView, type UpdateJobAction } from '../updater.js';
-import { portainerMode } from '../updates.js';
+import { redeployView } from '../redeploy.js';
+import { portainerSetup } from '../updates.js';
 
 /**
  * Admin -> Update with the updater service. GET: whether an updater answers, its status (channel, installed/previous tag, the job
@@ -23,9 +24,12 @@ export function updaterRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/admin/updater', admin, async (_req, reply) => {
     reply.header('cache-control', 'no-store');
-    const mode = portainerMode(ctx);
-    // portainer: whether a foreign (Portainer) stack can be updated from here (the webhook / API in Admin -> Settings)
-    return { ...(await updaterView(ctx)), autoUpdate: auto(), portainer: { configured: mode !== null, mode } };
+    const view = await updaterView(ctx);
+    // portainer: whether a foreign (Portainer) stack can be updated from here (the webhook / API in Admin -> Settings) and which
+    // API settings are still missing; redeploy: the last update handed to Portainer and its phase (redeploy.ts), followed by the
+    // page while it runs (also without an updater: then from this backend's own build alone)
+    const redeploy = await redeployView(ctx, 'status' in view ? view.status.services : null).catch(() => null);
+    return { ...view, autoUpdate: auto(), portainer: portainerSetup(ctx), redeploy };
   });
 
   const action = z.object({ action: z.enum(UPDATER_ACTIONS as [UpdateJobAction, ...UpdateJobAction[]]) });
