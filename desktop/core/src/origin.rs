@@ -98,20 +98,31 @@ impl Origin {
 /// the internet, where the session cookie and the media would travel in clear text. That is loopback, private (RFC 1918),
 /// link-local and shared/CGNAT (100.64.0.0/10, e.g. Tailscale) IPv4; loopback, unique-local (fc00::/7) and link-local
 /// (fe80::/10) IPv6 (also IPv4-mapped); and names that only resolve locally: a single label (`nas`), `localhost` and the
-/// suffixes `.localhost`, `.local` (mDNS), `.lan`, `.home.arpa` (RFC 8375) and `.internal`. A public name is refused even
-/// when it resolves to a private address: the name is what is checked, never the DNS answer. Everything else needs `https`.
+/// suffixes `.localhost`, `.local` (mDNS), `.lan`, `.home.arpa` (RFC 8375), `.internal` and `.ts.net` (Tailscale MagicDNS:
+/// the traffic is WireGuard-encrypted end to end). 100.64.0.0/10 is also ISP carrier-grade-NAT space; that is accepted.
+/// At most one trailing dot (the absolute form) is ignored and an empty label (`nas..`) is refused. A public name is
+/// refused even when it resolves to a private address: the name is what is checked, never the DNS answer. Everything else
+/// needs `https`.
 pub fn http_allowed(host: &Host<&str>) -> bool {
     match host {
         Host::Ipv4(a) => local_v4(a),
         Host::Ipv6(a) => local_v6(a),
         Host::Domain(d) => {
-            let d = d.trim_end_matches('.').to_ascii_lowercase();
+            let d = d.strip_suffix('.').unwrap_or(d).to_ascii_lowercase();
             !d.is_empty()
+                && d.split('.').all(|l| !l.is_empty())
                 && (!d.contains('.')
                     || d == "localhost"
-                    || [".localhost", ".local", ".lan", ".home.arpa", ".internal"]
-                        .iter()
-                        .any(|s| d.ends_with(s)))
+                    || [
+                        ".localhost",
+                        ".local",
+                        ".lan",
+                        ".home.arpa",
+                        ".internal",
+                        ".ts.net",
+                    ]
+                    .iter()
+                    .any(|s| d.ends_with(s)))
         }
     }
 }
@@ -127,6 +138,27 @@ fn local_v6(a: &Ipv6Addr) -> bool {
     }
     let s0 = a.segments()[0];
     a.is_loopback() || (s0 & 0xfe00) == 0xfc00 || (s0 & 0xffc0) == 0xfe80
+}
+
+/// Why an address that `Origin::parse` refuses was refused, when that is worth telling the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalReason {
+    /// `http://` for a host outside the home network: the same address would be fine over https
+    PlainHttpPublicHost,
+}
+
+/// `Some` when `input` is refused only because of plain `http` to a public host (and `https://` would be accepted);
+/// `None` when it is accepted or simply not a valid address.
+pub fn refusal_reason(input: &str) -> Option<RefusalReason> {
+    if Origin::parse(input).is_some() {
+        return None;
+    }
+    let t = input.trim();
+    let http = t
+        .get(..7)
+        .is_some_and(|p| p.eq_ignore_ascii_case("http://"));
+    (http && Origin::parse(&format!("https://{}", &t[7..])).is_some())
+        .then_some(RefusalReason::PlainHttpPublicHost)
 }
 
 /// An auth origin must be https.
@@ -267,6 +299,8 @@ mod tests {
             "http://friendflix.lan:8096",
             "http://media.home.arpa",
             "http://box.internal.",
+            "http://3232235777", // normalised to 192.168.1.1
+            "http://pi.tail1234.ts.net",
         ] {
             assert!(Origin::parse(ok).is_some(), "{ok}");
         }
@@ -282,6 +316,13 @@ mod tests {
             "http://[::ffff:8.8.8.8]",
             "http://friendlocal.com",
             "http://example.localhost.com",
+            "http://192.168.1.5@friend.example.com",
+            "http://134744072", // 8.8.8.8
+            "http://[::ffff:808:808]",
+            "http://localhost.evil.example.com",
+            "http://0.0.0.0",
+            "http://nas..",
+            "http://nas..local",
         ] {
             assert!(Origin::parse(bad).is_none(), "{bad}");
         }
@@ -289,6 +330,33 @@ mod tests {
         assert!(Origin::parse("https://192.0.2.5:8096").is_some());
         let lan = Origin::parse("http://192.168.1.5:8096").unwrap();
         assert!(!lan.matches("http://friend.example.com:8096/"));
+    }
+
+    #[test]
+    fn refusal_reason_names_plain_http_only() {
+        for r in [
+            "http://friend.example.com",
+            "HTTP://friend.example.com:8096/x",
+            "  http://8.8.8.8 ",
+            "http://nas..", // https would parse, so the advice is right
+        ] {
+            assert_eq!(
+                refusal_reason(r),
+                Some(RefusalReason::PlainHttpPublicHost),
+                "{r}"
+            );
+        }
+        for none in [
+            "https://friend.example.com",
+            "friend.example.com",
+            "http://192.168.1.5",
+            "ftp://friend.example.com",
+            "http://",
+            "",
+            "http://exa mple.com",
+        ] {
+            assert_eq!(refusal_reason(none), None, "{none}");
+        }
     }
 
     #[test]

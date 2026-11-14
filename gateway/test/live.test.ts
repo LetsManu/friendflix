@@ -452,22 +452,39 @@ describe('live playlist URI scan (code-scanning #62: linear, no regex backtracki
     ]) expect(liveUrisOk(bad), bad).toBe(false);
   });
 
+  it('pins which attribute names count: any name ending in URI, also inside a quoted value; URIX is not one', () => {
+    expect(liveUrisOk('#X:SERVER-URI=https://evil')).toBe(false);
+    expect(liveUrisOk('#X:FOO="xURI=https://evil"')).toBe(false);
+    expect(liveUrisOk('#X:URIX=https://evil')).toBe(true); // no '=' right after the name: not a URI attribute
+  });
+
   it('stays linear on long hostile lines (a 2 MB playlist is the cap)', () => {
     const MB = 1024 * 1024;
-    const lines = [
-      `#X:URI="${'a'.repeat(2 * MB)}`, // unterminated quote
-      `#X:${'URI '.repeat(MB / 2)}`, // the name over and over, never an '='
-      `#X:${'URI='.repeat(MB / 2)}`,
-      `#X:${'URI="'.repeat(MB / 2)}`,
-      `#X:URI=${' '.repeat(2 * MB)}`,
-      `#X:URI${'\t'.repeat(2 * MB)}x`,
-      `#X:${'uRi = "init-1.mp4",'.repeat(MB / 20)}`,
+    const lines: ((n: number) => string)[] = [
+      (n) => `#X:URI="${'a'.repeat(n)}`, // unterminated quote
+      (n) => `#X:${'URI '.repeat(n / 4)}`, // the name over and over, never an '='
+      (n) => `#X:${'URI='.repeat(n / 4)}`,
+      (n) => `#X:${'URI="'.repeat(n / 5)}`,
+      (n) => `#X:URI=${' '.repeat(n)}`,
+      (n) => `#X:URI${'\t'.repeat(n)}x`,
+      (n) => `#X:${'uRi = "init-1.mp4",'.repeat(n / 20)}`,
     ];
-    for (const l of lines) {
-      const t0 = performance.now();
-      liveUrisOk(l);
-      tagUriValues(l);
-      expect(performance.now() - t0, l.slice(0, 12)).toBeLessThan(1500);
+    // Ratio, not an absolute bound (CI machines differ): a quadratic scan would take ~100x longer on 2 MB than on 200 KB,
+    // a linear one ~10x. 30x leaves room for noise and GC; the best of 3 runs of each size damps outliers.
+    const time = (l: string) => {
+      let best = Infinity;
+      for (let r = 0; r < 3; r++) {
+        const t0 = performance.now();
+        liveUrisOk(l);
+        tagUriValues(l);
+        best = Math.min(best, performance.now() - t0);
+      }
+      return Math.max(best, 1);
+    };
+    for (const make of lines) {
+      const small = time(make(MB / 5)), large = time(make(2 * MB));
+      expect(large / small, make(8).slice(0, 14)).toBeLessThan(30);
+      expect(large, 'generous absolute sanity bound').toBeLessThan(10_000);
     }
     expect(liveUrisOk(`#X:${'uRi = "init-1.mp4",'.repeat(MB / 20)}`)).toBe(true);
   });

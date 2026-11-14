@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use friendflix_core::bridge::PlayRequest;
 use friendflix_core::logs::scrub;
-use friendflix_core::origin::{classify, Nav, Origin};
+use friendflix_core::origin::{classify, refusal_reason, Nav, Origin, RefusalReason};
 use friendflix_core::probe::{self, ProbeError};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -571,10 +571,7 @@ pub async fn probe_server(app: AppHandle, address: String) -> Result<ProbeOk, St
     }
     let origin = Origin::parse(&address).ok_or_else(|| {
         // a valid address refused only for its plain http (a public host): say so instead of "not valid"
-        let t = address.trim();
-        let http_public = t.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("http://"))
-            && Origin::parse(&format!("https://{}", &t[7..])).is_some();
-        if http_public {
+        if refusal_reason(&address) == Some(RefusalReason::PlainHttpPublicHost) {
             "Plain http:// works only for a server in your home network. Use https:// for this address.".to_string()
         } else {
             invalid()
