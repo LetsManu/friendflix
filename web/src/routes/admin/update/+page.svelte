@@ -16,7 +16,7 @@
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import { saveSettings } from '#lib/admin/settings/api';
   import { CHANNELS, VERSION_RE, pullCommand, envLineFor, isUpToDate, showSnippet, snippetReason, stepChannel, switching, type ChannelInfo, type SelectedChannel } from '#lib/admin/updateChannel';
-  import { statusOf, type UpdaterView } from '#lib/admin/updater';
+  import { portainerMissing, statusOf, type UpdaterView } from '#lib/admin/updater';
   import UpdaterCard from '#lib/admin/UpdaterCard.svelte';
   import Field from '#lib/ui/Field.svelte';
   import CopyField from '#lib/ui/CopyField.svelte';
@@ -43,7 +43,8 @@
     latest?: { sha: string; date?: string | null; runUrl?: string } | null;
     behind?: number | null;
     error?: string;
-    portainer: { configured: boolean };
+    /** missing: the Portainer API settings still missing when it is set up only in part (older backends send none) */
+    portainer: { configured: boolean; missing?: string[] };
     commits: Commit[];
     /** older backends send no channel */
     channel?: ChannelInfo;
@@ -55,6 +56,7 @@
   /** error text for a failed update request */
   function updateError(e: any): string {
     if (e?.status === 429) return tr('admin.update.tooSoon');
+    if (e?.body?.error === 'busy') return tr('admin.update.updater.error.busy'); // a redeploy is already running
     if (e?.status === 409) return tr('admin.update.notConfigured');
     if (e?.body?.error === 'portainer_unreachable') {
       const code = e.body?.code, h = code ? hint(code) : undefined;
@@ -280,6 +282,7 @@
   {:else}
   <AdminCard title={$t('adminContent.update.applyTitle')}>
     {#if !u.portainer.configured}
+      {#if u.portainer.missing?.length}<p class="err small" role="alert" data-portainer-missing>{(void $t, portainerMissing(u.portainer))}</p>{/if}
       <p class="muted"><Rich text={$t('admin.update.setup')} /></p>
     {:else}
       <div class="apply">

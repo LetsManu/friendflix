@@ -7,7 +7,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   oxc: { tsconfig: false } as any,
   test: {
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'server/**/*.test.ts'],
     coverage: {
       provider: 'v8',
       // Every TypeScript module under src counts, also ones no test imports (coverage.include lists them all).

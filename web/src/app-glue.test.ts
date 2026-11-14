@@ -16,12 +16,27 @@ afterEach(() => {
 });
 
 describe('server hook', () => {
+  const ev = (u: string) => ({ url: new URL(u) }) as never;
   it('adds the security headers to every response', async () => {
     const { handle } = await import('./hooks.server');
-    const res = await handle({ event: {} as never, resolve: async () => new Response('ok') });
+    const res = await handle({ event: ev('https://p.example/browse'), resolve: async () => new Response('ok') });
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('referrer-policy')).toBe('same-origin');
-    expect(res.headers.get('permissions-policy')).toBe('camera=(), microphone=(), geolocation=()');
+    expect(res.headers.get('permissions-policy')).toContain('camera=()');
+    expect(res.headers.get('cross-origin-resource-policy')).toBe('same-origin');
+    expect(res.headers.get('cross-origin-opener-policy')).toBe('same-origin');
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
+    expect(res.headers.has('cross-origin-embedder-policy')).toBe(false);
+  });
+  it('keeps a route\'s own value, opens the Cast receiver to other origins and adds this host\'s websocket origin to the CSP', async () => {
+    const { handle } = await import('./hooks.server');
+    const res = await handle({
+      event: ev('https://p.example/cast-receiver/'),
+      resolve: async () => new Response('ok', { headers: { 'x-frame-options': 'SAMEORIGIN', 'content-security-policy': "default-src 'self'; connect-src 'self'" } }),
+    });
+    expect(res.headers.get('x-frame-options')).toBe('SAMEORIGIN');
+    expect(res.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
+    expect(res.headers.get('content-security-policy')).toBe("default-src 'self'; connect-src 'self' wss://p.example ws://p.example");
   });
 });
 

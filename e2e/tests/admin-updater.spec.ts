@@ -158,7 +158,42 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     await card(page).getByRole('button', { name: 'Ja, starten' }).click();
     await expect(toasts(page).getByText('Portainer deployt den Stack neu.')).toBeVisible();
     expect(api.updater.posts).toEqual(['update']);
-    await expect(card(page).locator('ol.steps')).toHaveCount(0); // no updater job to follow
+    // the redeploy is followed like a job: Portainer pulls, recreates (n of 3 on the new build), the backend restarts, health, done
+    const progress = card(page).locator('[data-redeploy]');
+    await expect(progress.locator('[data-step="recreating"]')).toHaveAttribute('data-state', 'running');
+    await expect(progress.locator('[data-count]')).toContainText('1 von 3 Diensten auf dem neuen Build');
+    await expect(progress.locator('[data-step="pulling"]')).toHaveAttribute('data-state', 'ok');
+    await expect(progress.getByRole('heading', { name: 'Update über Portainer' })).toBeVisible();
+    await expect(card(page).getByRole('button', { name: 'Jetzt aktualisieren' })).toBeDisabled();
+    const before = (await progress.locator('[data-step="pulling"]').boundingBox())!.y;
+    await expect(card(page).locator('[data-reconnecting]')).toBeVisible();
+    // "reconnecting" has its line reserved: the steps do not move
+    expect((await progress.locator('[data-step="pulling"]').boundingBox())!.y).toBe(before);
+    await expect(card(page).locator('[data-result="done"]')).toContainText('Portainer hat den Stack neu deployt', { timeout: 20_000 });
+    await expect(progress.locator('[data-step="health"]')).toHaveAttribute('data-state', 'ok');
+    await expect(card(page).locator('[data-reconnecting]')).toHaveCount(0);
+    await expect(card(page).locator('ol.steps')).toHaveCount(1); // no updater job, only the redeploy
+  });
+
+  test('a redeploy Portainer refuses after "started" is shown as failed with the HTTP status; a reload while it runs resumes it', async ({ page, api }) => {
+    api.updater = { ...updaterState(true), stack: 'foreign', portainer: true, redeployOutcome: 'failed' };
+    api.updater.redeploy = { id: 'abcdef0123456789', mode: 'api', tag: 'latest', phase: 'pulling', running: true, startedAt: new Date(Date.now() - 30_000).toISOString(), finishedAt: null,
+      services: null, error: null, status: null, step: null, code: null, at: null };
+    await page.goto('/admin/update'); // found running: the page follows it without a click
+    await expect(card(page).locator('[data-result="failed"]')).toContainText('Portainer hat das Neu-Deployen abgelehnt (HTTP 500, Schritt redeploy)', { timeout: 15_000 });
+    await expect(card(page).getByRole('button', { name: 'Jetzt aktualisieren' })).toBeEnabled();
+    expect(api.updater.posts).toEqual([]);
+  });
+
+  test('the Portainer API set up only in part: the page names the missing setting and where the stack ID is', async ({ page, api }) => {
+    api.updater = { ...updaterState(true), missing: ['PORTAINER_STACK_ID'] }; // an updater that cannot tell the stack
+    await page.goto('/admin/update');
+    await expect(card(page).locator('[data-foreign="manual"]')).toContainText('PORTAINER_STACK_ID');
+    const note = card(page).locator('[data-portainer-missing]');
+    await expect(note).toHaveAttribute('role', 'alert');
+    await expect(note).toContainText('Es fehlt PORTAINER_STACK_ID');
+    await expect(note).toContainText('?id=12');
+    await expect(card(page).getByRole('button', { name: 'Jetzt aktualisieren' })).toBeDisabled();
   });
 
   test('our own stack started from another directory: the note names both directories and UPDATER_PROJECT_DIR, not Portainer', async ({ page, api }) => {

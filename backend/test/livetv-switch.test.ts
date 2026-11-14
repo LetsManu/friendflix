@@ -19,7 +19,7 @@ import { deviceLiveView, liveViewKey, mintLiveToken, revokeLiveToken } from '../
 import type { StreamView } from '../src/livetv/wire.js';
 import { invalidateRights } from '../src/rights.js';
 import { invalidateRoles } from '../src/roles.js';
-import { cfg, ENC_KEY, fakeHttp, makeEnv, type TestEnv } from './helpers.js';
+import { cfg, driveClock, ENC_KEY, fakeHttp, makeEnv, settleIo, type TestEnv } from './helpers.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 const key = keyFromBase64(ENC_KEY);
@@ -112,15 +112,7 @@ const released = async () => (await listEvents(env.ctx)).filter((e) => e.code ==
 const grants = async () => (await env.kv.keys('conv:grant:')).sort();
 
 /** drives a promise that waits on (faked) timers: 100-ms steps of the fake clock, with real I/O turns in between */
-async function drive<T>(p: Promise<T>, stepMs = 100, max = 400): Promise<T> {
-  let done = false;
-  void p.then(() => { done = true; }, () => { done = true; });
-  for (let i = 0; i < max && !done; i++) {
-    await vi.advanceTimersByTimeAsync(stepMs);
-    for (let j = 0; j < 25 && !done; j++) await new Promise((r) => setImmediate(r));
-  }
-  return p;
-}
+const drive = <T>(p: Promise<T>, stepMs = 100, max = 400): Promise<T> => driveClock(env.pool, p, stepMs, max);
 
 async function person(id: string, sub: string, name: string, role: string): Promise<Sess> {
   await env.pool.query(
@@ -427,7 +419,7 @@ describe('release on switch', () => {
     const annaP = watch(anna, b);
     let done = false;
     void annaP.then(() => { done = true; }, () => { done = true; });
-    const step = async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); for (let j = 0; j < 25; j++) await new Promise((r) => setImmediate(r)); };
+    const step = async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); await settleIo(env.pool); };
     for (let i = 0; i < 100 && !order.includes(`POST:${b}`); i++) await step(50);
     expect(order).toContain(`POST:${b}`);
     await step(1_000);

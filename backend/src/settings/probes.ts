@@ -170,7 +170,8 @@ async function portainer(f: typeof fetch, cfg: Config): Promise<ProbeResult> {
     if (!url || !key || !stack) return fail('invalid', 'incomplete');
     const base = httpUrl(url);
     if (!base) return fail('invalid', 'invalid_url');
-    return byStatus(await f(join(base, `/api/stacks/${encodeURIComponent(stack)}`), { headers: { 'x-api-key': key } }));
+    // never follow a redirect (the runner forces it too): fetch would carry x-api-key to another origin; a 3xx is invalid/redirect
+    return byStatus(await f(join(base, `/api/stacks/${encodeURIComponent(stack)}`), { headers: { 'x-api-key': key }, redirect: 'manual' }));
   }
   // the webhook would start an update: only its form is checked
   return hook && httpUrl(hook) ? OK : fail('invalid', 'invalid_url');

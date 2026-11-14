@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { hasKey, setLocale, tr } from '#lib/i18n';
 import { ApiError } from '#lib/api';
-import { TIME_RE, canRollback, failReason, foreignMode, foreignText, isRunning, nextPoll, startError, statusOf, visibleSteps, type UpdaterJob, type UpdaterStatus } from './updater';
+import { TIME_RE, canRollback, failReason, foreignMode, foreignText, isRunning, nextPoll, portainerMissing, redeployResult, redeployRunning, redeploySteps, startError, statusOf, visibleSteps, type Redeploy, type UpdaterJob, type UpdaterStatus } from './updater';
 
 const job = (over: Partial<UpdaterJob> = {}): UpdaterJob => ({
   id: '0123456789abcdef', action: 'update', state: 'running', step: 'pull', from: 'sha-aaaaaaa', to: 'latest', startedAt: '2026-10-18T04:00:00.000Z', finishedAt: null, error: null,
@@ -98,5 +98,45 @@ describe('updater panel logic', () => {
       await setLocale(l);
       for (const k of keys) expect(hasKey(`admin.update.updater.${k}`), `${l} ${k}`).toBe(true);
     }
+  });
+
+  it('a Portainer redeploy: its phase as steps, the outcome line (status and step of a refusal only), polling while it runs', async () => {
+    const rd = (over: Partial<Redeploy> = {}): Redeploy => ({ id: 'abcdef0123456789', mode: 'api', tag: 'latest', phase: 'pulling', running: true, startedAt: '2026-11-14T10:00:00.000Z', finishedAt: null,
+      services: null, error: null, status: null, step: null, code: null, at: null, ...over });
+    expect(redeploySteps(rd())).toEqual({ pulling: 'running', recreating: 'pending', health: 'pending' });
+    expect(redeploySteps(rd({ phase: 'recreating' }))).toEqual({ pulling: 'ok', recreating: 'running', health: 'pending' });
+    expect(redeploySteps(rd({ phase: 'health' }))).toEqual({ pulling: 'ok', recreating: 'ok', health: 'running' });
+    expect(redeploySteps(rd({ phase: 'done' }))).toEqual({ pulling: 'ok', recreating: 'ok', health: 'ok' });
+    expect(redeploySteps(rd({ phase: 'unchanged' }))).toEqual({ pulling: 'ok', recreating: 'skipped', health: 'skipped' });
+    expect(redeploySteps(rd({ phase: 'failed' }))).toEqual({ pulling: 'failed', recreating: 'skipped', health: 'skipped' });
+    expect(redeploySteps(rd({ phase: 'timeout', at: 'health' }))).toEqual({ pulling: 'ok', recreating: 'ok', health: 'failed' });
+    expect(redeployRunning({ present: false, redeploy: rd() })).toBe(true);
+    expect(redeployRunning({ present: false, redeploy: rd({ phase: 'done', running: false }) })).toBe(false);
+    expect(redeployRunning({ present: false })).toBe(false);
+    await setLocale('en');
+    expect(redeployResult(rd())).toBe('');
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer', status: 500, step: 'redeploy' }))).toBe('Portainer refused the redeploy (HTTP 500, step redeploy). Check the stack in Portainer and the Portainer settings in Admin → Settings → Updates.');
+    expect(redeployResult(rd({ phase: 'unchanged', running: false, tag: 'nightly' }))).toContain('the images for nightly have nothing newer');
+    expect(redeployResult(rd({ phase: 'timeout', running: false, at: 'recreating' }))).toBe('Nothing changed within 15 minutes (Recreate containers). Check the stack and its logs in Portainer.');
+    // not reachable: its own text with the errno code and the hint; a fixed version without a number: its own text
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer_unreachable', code: 'ENOTFOUND', step: 'stack' })))
+      .toBe('Portainer was not reachable (ENOTFOUND: host name cannot be resolved, use the IP instead of nas.local). Check PORTAINER_URL in Admin → Settings → Updates: it must be an address the backend can reach.');
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer_unreachable', code: null }))).toMatch(/^Portainer was not reachable\. /);
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'no_target' }))).toBe('Nothing was started: choose a version for the “Fixed version” channel first.');
+  });
+
+  it('the Portainer API set up only in part: the missing setting is named with where the stack ID is; such a stack counts as Portainer\'s', async () => {
+    await setLocale('en');
+    expect(portainerMissing({ missing: [] })).toBeNull();
+    expect(portainerMissing(undefined)).toBeNull();
+    const note = portainerMissing({ missing: ['PORTAINER_STACK_ID', '<b>'] })!;
+    expect(note).toContain('PORTAINER_STACK_ID missing');
+    expect(note).not.toContain('<b>');
+    expect(note).toContain('?id=12');
+    // an updater that cannot tell the stack (null) with the API half set up: the backend refuses the updater job, the page says why
+    expect(foreignMode({ present: true, status: status({ stack: null }), portainer: { configured: false, mode: null, missing: ['PORTAINER_STACK_ID'] } })).toBe('manual');
+    expect(foreignMode({ present: true, status: status({ stack: 'own' }), portainer: { configured: false, mode: null, missing: ['PORTAINER_STACK_ID'] } })).toBeNull();
+    expect(foreignText('manual', null)).toContain('PORTAINER_STACK_ID');
+    expect(failReason('compose_config')).toContain('Portainer');
   });
 });
