@@ -99,13 +99,17 @@ const sleep = (ms: number) => new Promise<void>((r) => { setTimeout(r, ms); });
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 /**
- * The mode a start asks livetv for (spec §3.3): HLS passes through; MPEG-TS remuxes unless its probe says it must transcode; SRT
+ * The mode a start asks livetv for (spec §3.3): HLS passes through (remuxes when its stored probe shows audio a browser cannot play); MPEG-TS remuxes unless its probe says it must transcode; SRT
  * (pulled or pushed) uses the needs of a probe younger than 24 h (ruling 29), else it counts as a transcode (a slot is taken, and given
  * back when livetv's own probe at start says remux after all).
  */
 export function expectedMode(ch: { streamKind: StreamKind; probe: ProbeRec | null }, now: number): Mode {
-  if (ch.streamKind === 'hls') return 'passthrough';
   const p = ch.probe;
+  if (ch.streamKind === 'hls') {
+    // a stored probe of a source whose audio a browser cannot play (MP2, AC-3, ...) asks for a remux, which makes it AAC
+    const a = p?.ok ? p.audio?.codec : undefined;
+    return a !== undefined && a !== 'aac' && a !== 'mp3' && p?.video?.codec === 'h264' ? 'remux' : 'passthrough';
+  }
   if (ch.streamKind === 'ts') return p?.needs === 'transcode' ? 'transcode' : 'remux';
   const at = p ? Date.parse(p.at) : NaN;
   return p && p.ok && p.needs && Number.isFinite(at) && now - at < FRESH_PROBE_MS ? p.needs : 'transcode';

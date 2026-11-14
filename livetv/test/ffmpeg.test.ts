@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import type { FetchOptions, GuardDeps, GuardedResponse } from '../src/fetch.js';
-import { SCRUB_MAX_CHARS, audioFor, ffmpegArgs, pipeInput, scrubLine, segmentFormat, urlFormat, videoArgs } from '../src/ffmpeg.js';
+import { SCRUB_MAX_CHARS, audioFor, audioPassable, ffmpegArgs, pipeInput, scrubLine, segmentFormat, urlFormat, videoArgs } from '../src/ffmpeg.js';
 import { openInput } from '../src/inputs.js';
 import { createRun, stderrLine } from '../src/run.js';
 import { ENCODERS } from '../src/system.js';
@@ -52,6 +52,7 @@ async function read(src: AsyncIterable<Uint8Array>, n: number): Promise<Buffer> 
 describe('ffmpegArgs', () => {
   it('transcode args per encoder', () => {
     // audio: AAC and MP3 are copied, anything else (MP2, AC-3) becomes stereo AAC
+    expect(['aac', 'mp3', 'mp2', 'ac3', 'eac3', 'aac_latm', undefined].map(audioPassable)).toEqual([true, true, false, false, false, false, false]);
     expect([audioFor('aac'), audioFor('mp3'), audioFor('mp2'), audioFor('ac3')]).toEqual(['copy', 'copy', 'aac', 'aac']);
     for (const encoder of ENCODERS) {
       const a = args({ encoder, audio: audioFor('mp2') });

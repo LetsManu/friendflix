@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { ATTR_LINE_MAX, scanAttrs } from './attrlist.js';
-import { pipeInput, segmentFormat, urlFormat, type PipeFormat } from './ffmpeg.js';
+import { audioPassable, pipeInput, segmentFormat, urlFormat, type PipeFormat } from './ffmpeg.js';
 import { FetchError, guardedFetch, type FetchErrorCode, type GuardDeps } from './fetch.js';
 import { checkUrl, ipLiteralUrl, resolveChecked } from './netguard.js';
 import { TIMEOUT_CODE, type Run } from './run.js';
@@ -250,7 +250,8 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
       if (pipeError !== undefined) throw pipeError;
       return fail(srt && result.code !== 0 ? 'unreachable' : 'no_video');
     }
-    const needs = video.codec !== 'h264' ? 'transcode' : input.kind === 'hls' ? 'passthrough' : 'remux';
+    // an HLS source is passed through untouched only when a browser can play its audio (or it has none); else the audio becomes AAC
+    const needs = video.codec !== 'h264' ? 'transcode' : input.kind === 'hls' && (!audio || audioPassable(audio.codec)) ? 'passthrough' : 'remux';
     return { ok: true, video, ...(audio ? { audio } : {}), needs };
   } catch (e) {
     if (e instanceof ProbeFail) return fail(e.code);

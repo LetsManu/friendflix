@@ -228,6 +228,24 @@ describe('probe', () => {
     expect(run.calls).toHaveLength(0);
   });
 
+  it('HLS with H.264: MP2 / AC-3 audio → remux (a browser cannot play it); no audio stream → passthrough', async () => {
+    const seg = Buffer.alloc(1000, 0x47);
+    const s = await serve({
+      '/live/nordlicht/master.m3u8': (res) => res.end(MASTER),
+      '/live/nordlicht/fhd/index.m3u8': (res) => res.end(MEDIA),
+      '/live/nordlicht/fhd/seg-812.ts': (res) => res.end(seg),
+    });
+    const input = { url: `http://iptv.example.com:${s.port}/live/nordlicht/master.m3u8`, kind: 'hls' as const, allowLan: false };
+    const mp2 = await probe(input, { run: fakeRun(fixture('ffprobe-h264-mp2.json')), guard: guard() });
+    expect(mp2).toMatchObject({ ok: true, audio: { codec: 'mp2' }, needs: 'remux' });
+    const ac3 = '{"streams":[{"codec_type":"video","codec_name":"h264","width":1280,"height":720,"avg_frame_rate":"25/1"},{"codec_type":"audio","codec_name":"ac3","channels":6}]}';
+    expect(await probe(input, { run: fakeRun(ac3), guard: guard() })).toMatchObject({ needs: 'remux' });
+    const silent = '{"streams":[{"codec_type":"video","codec_name":"h264","width":1280,"height":720,"avg_frame_rate":"25/1"}]}';
+    const r = await probe(input, { run: fakeRun(silent), guard: guard() });
+    expect(r).toMatchObject({ ok: true, needs: 'passthrough' });
+    expect(r).not.toHaveProperty('audio');
+  });
+
   it('TS: the first 4 MB are piped → H.264 remux; H.264 with MP2 audio is still remux', async () => {
     const s = await serve({
       '/live/hafenkanal.ts': (res) => {

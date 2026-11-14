@@ -65,9 +65,14 @@ export const AUDIO_BITRATE = 160_000;
 const HEAD = ['-hide_banner', '-loglevel', 'error'];
 const SCALE = `scale=-2:'min(${MAX_LINES},ih)'`;
 
+/** the audio codecs a browser (hls.js) plays as they are; MP2, AC-3, E-AC-3 and LATM AAC are not among them */
+export function audioPassable(codec: string | undefined): boolean {
+  return codec === 'aac' || codec === 'mp3';
+}
+
 /** AAC and MP3 are copied; anything else (MP2, AC-3, none known) becomes stereo AAC */
 export function audioFor(codec: string | undefined): 'copy' | 'aac' {
-  return codec === 'aac' || codec === 'mp3' ? 'copy' : 'aac';
+  return audioPassable(codec) ? 'copy' : 'aac';
 }
 
 /** the video rate in bit/s: 6 Mbit/s, 3 Mbit/s for a source of at most 720 lines */
