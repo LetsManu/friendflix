@@ -476,8 +476,8 @@ jobs:
           done
           headers=$(curl -fsSI http://127.0.0.1:3000/favicon.svg)
           echo "$headers"
-          for h in x-content-type-options:nosniff cross-origin-resource-policy:; do
-            grep -iq "^${h}" <<< "$headers" || { echo "::error::missing header ${h%%:*} on /favicon.svg"; exit 1; }
+          for h in 'x-content-type-options: *nosniff' 'cross-origin-resource-policy: *[a-z]'; do
+            grep -iqE "^${h}" <<< "$headers" || { echo "::error::missing header ${h%%:*} on /favicon.svg"; exit 1; }
           done
   # Reproducible builds (OpenSSF build_reproducible, docs/reproducible-builds.md): each image is rebuilt from scratch by
   # scripts/reproduce-image.sh (fresh docker-container builder with BUILDKIT_IMAGE, --no-cache, context = git archive,
