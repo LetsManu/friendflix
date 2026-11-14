@@ -4,6 +4,6 @@
   "description": "Build tooling of the Windows app only (not a workspace): the Tauri CLI, pinned by package-lock.json so the release job never fetches an unpinned package.",
   "license": "AGPL-3.0-or-later",
   "devDependencies": {
-    "@tauri-apps/cli": "2.12.3"
+    "@tauri-apps/cli": "2.12.4"
   }
 }
