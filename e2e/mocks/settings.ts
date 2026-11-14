@@ -28,6 +28,8 @@ export interface SettingsMock {
   puts: Array<{ values: Record<string, unknown>; force?: boolean }>;
   tests: Array<{ group: string; values?: Record<string, unknown> }>;
   imports: Array<string[] | 'all'>;
+  /** whether the livetv group is listed (the backend lists it only while Live TV is installed) */
+  livetvInstalled: boolean;
 }
 
 const UPDATED = '2026-10-01T09:30:00Z';
@@ -126,6 +128,13 @@ const GROUPS: Array<[string, Array<[string, Spec]>]> = [
     ['PORTAINER_STACK_ID', { kind: 'string', source: 'unset' }],
     ['PORTAINER_ENDPOINT_ID', { kind: 'int', source: 'default', value: 1 }],
   ]],
+  // listed only while Live TV is installed (api.ts sets livetvInstalled from the Live-TV mock)
+  ['livetv', [
+    ['LIVETV_ENCODER', { kind: 'enum', source: 'default', value: 'auto', options: ['auto', 'qsv', 'vaapi', 'nvenc', 'software'] }],
+    ['LIVETV_SRT_HOST', { kind: 'string', source: 'unset' }],
+    ['LIVETV_DVR_MINUTES', { kind: 'int', source: 'default', value: 30, min: 0, max: 120 }],
+    ['LIVETV_MAX_BITRATE', { kind: 'int', source: 'default', value: 8000, min: 0 }],
+  ]],
   ['health', [
     ['PLAYBACK_CHECK_HOUR', { kind: 'int', source: 'default', value: 4, min: -1, max: 23 }],
     ['HEALTH_DISK_WARN_PCT', { kind: 'int', source: 'default', value: 85, min: 50, max: 99 }],
@@ -174,14 +183,14 @@ export function settingsState(kind: 'jellyfin' | 'plex' = 'jellyfin'): SettingsM
       key, kind: kind_, source, value: key === 'MEDIA_SERVER' ? kind : value, set: value !== null || source === 'bootstrap', apply: 'restart', restartPending: false, invalid: false, envNames: env(key), updatedAt: null,
     })),
   });
-  return { rev: 7, groups, reauthRequired: false, probeFail: null, saveErrors: null, testResult: { ok: true, code: 'ok' }, puts: [], tests: [], imports: [] };
+  return { rev: 7, groups, reauthRequired: false, probeFail: null, saveErrors: null, testResult: { ok: true, code: 'ok' }, puts: [], tests: [], imports: [], livetvInstalled: false };
 }
 
 const itemsOf = (st: SettingsMock) => st.groups.filter((g) => g.id !== 'server').flatMap((g) => g.items.map((i) => ({ group: g.id, item: i })));
 const view = (st: SettingsMock) => ({
   rev: st.rev,
   pendingRestart: itemsOf(st).filter((x) => x.item.restartPending).map((x) => x.item.key),
-  groups: st.groups,
+  groups: st.groups.filter((g) => g.id !== 'livetv' || st.livetvInstalled),
 });
 
 type Reply = (b: unknown, status?: number) => Promise<void>;

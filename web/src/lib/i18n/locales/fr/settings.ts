@@ -192,5 +192,6 @@ const settings: Translation<typeof de> = {
     RECO_HALF_LIFE_DAYS: { label: 'Demi-vie des goûts (jours)', help: 'Après ce nombre de jours, un signal de goût (p. ex. un pouce levé) ne compte plus qu’à moitié. Moteur v2 uniquement.' },
     POSTPLAY_ENABLED: { label: 'Écran après la fin', help: 'Après un film ou le dernier épisode : « Vous êtes à jour », la suite et des suggestions. Désactivé, il disparaît pour tout le monde.' },
   },
+  livetvMoved: 'Les réglages de la télévision en direct se trouvent désormais sous Télévision en direct.',
 };
 export default settings;

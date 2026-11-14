@@ -193,5 +193,6 @@ const settings: Translation<typeof de> = {
     RECO_HALF_LIFE_DAYS: { label: 'Okres półtrwania gustu (dni)', help: 'Po tylu dniach sygnał gustu (np. kciuk w górę) liczy się już tylko w połowie. Tylko silnik v2.' },
     POSTPLAY_ENABLED: { label: 'Ekran po zakończeniu', help: 'Po filmie lub ostatnim odcinku: „Wszystko obejrzane”, co dalej i propozycje. Wyłączenie ukrywa go dla wszystkich.' },
   },
+  livetvMoved: 'Ustawienia telewizji na żywo znajdziesz teraz w sekcji Telewizja na żywo.',
 };
 export default settings;

@@ -160,6 +160,7 @@ const dict: Translation<typeof de> = {
     groups: 'Grupos y permisos',
     guide: 'Guía de programación',
     status: 'Estado en directo',
+    settings: 'Ajustes',
   },
   src: {
     add: 'Añadir fuente',
@@ -627,6 +628,12 @@ const dict: Translation<typeof de> = {
       adminLocked: 'Las cuentas de administrador no admiten excepciones de grupo: ven todos los grupos liberados.',
       notFound: 'Ese grupo ya no existe.',
     },
+  },
+  settingsTab: {
+    loadFailed: 'No se pudieron cargar los ajustes de TV en directo.',
+    ports: 'Puertos SRT',
+    portsValue: 'UDP {range}',
+    hint: 'Los puertos y su exposición se definen en el archivo Compose (LIVETV_SRT_PORTS, LIVETV_SRT_BIND); en Portainer, como variables de entorno del stack.',
   },
 };
 export default dict;

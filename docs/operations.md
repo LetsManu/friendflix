@@ -336,7 +336,7 @@ Optional, nur mit dem Compose-Profil `livetv` ([Einrichtung](de/livetv.md), [Eng
 | `released_on_switch` | Beim Umschalten sofort beendet (Platz oder Verbindung gebraucht) | Informativ: ein Sender wurde beim Umschalten sofort beendet, damit der neue starten konnte. |
 
 - **Gesendete Feeds:** die Tabelle *Gesendete Streams* in *Live-Status* (Zustand *Sendet* oder *Keine Übertragung*, Bitrate, Ablehnungen der letzten Stunde); Zugangsdaten und Adressen erscheinen dort nie.
-- **Kodierer:** Einstellung `LIVETV_ENCODER` (`auto`, `qsv`, `vaapi`, `nvenc`, `software`; wird bei jedem Streamstart gelesen) und GPU-Overlays: [livetv.md, GPU](de/livetv.md#gpu). Nur Streams mit HEVC- oder MPEG-2-Video werden umgewandelt und belegen einen Platz im gemeinsamen Budget; Durchreichen und Umverpacken kosten keinen.
+- **Kodierer:** Einstellung `LIVETV_ENCODER` (*Admin → Live-TV → Einstellungen*; `auto`, `qsv`, `vaapi`, `nvenc`, `software`; wird bei jedem Streamstart gelesen) und GPU-Overlays: [livetv.md, GPU](de/livetv.md#gpu). Nur Streams mit HEVC- oder MPEG-2-Video werden umgewandelt und belegen einen Platz im gemeinsamen Budget; Durchreichen und Umverpacken kosten keinen.
 
 ## Umwandlungen: ein gemeinsames Limit
 Jede laufende Umwandlung des **Videos** belegt einen Platz in einem gemeinsamen Budget, damit der Server bei mehreren Zuschauern nicht in die Knie geht. Es gilt für Filme und Serien im Portal, beim Streamen auf einen Fernseher (Chromecast, AirPlay) und für die Vorbereitung von Downloads; ebenso Live-TV-Sender, die umgewandelt werden müssen (siehe [Live-TV](#live-tv-dienst-livetv)); spätere Aufnahmen kommen in dasselbe Budget.

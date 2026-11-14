@@ -24,7 +24,7 @@ test.describe('admin: Live-TV, Quellen (phone, 375 px)', () => {
   test('tabs become a chip row; cards fit 375 px', async ({ page }) => {
     await page.goto('/admin/livetv');
     const tabs = page.getByRole('tablist', { name: 'Live-TV-Bereiche' });
-    await expect(tabs.getByRole('tab')).toHaveCount(5);
+    await expect(tabs.getByRole('tab')).toHaveCount(6);
     // a row that scrolls sideways, of round chips, inside the page
     const row = await tabs.evaluate((el) => { const cs = getComputedStyle(el); return { x: cs.overflowX, wrap: cs.flexWrap, scrolls: el.scrollWidth > el.clientWidth }; });
     expect(row).toEqual({ x: 'auto', wrap: 'nowrap', scrolls: true });

@@ -173,3 +173,11 @@ export function enumOptions(v: SettingView): Array<{ value: string; label: strin
   const list = (v.options ?? []).map((o) => ({ value: o, label: hasKey(`settings.options.${v.key}.${o}`) ? trDynamic(`settings.options.${v.key}.${o}`) : o }));
   return v.optional ? [{ value: '', label: tr('settings.options.auto') }, ...list] : list;
 }
+
+/**
+ * Where the groups are edited: the `livetv` group lives in Admin → Live-TV → Einstellungen, so Admin → Einstellungen leaves it out of its
+ * cards and shows a link instead. The backend lists the group only while Live TV is installed, hence its presence is what shows the link.
+ */
+export const LIVETV_GROUP = 'livetv';
+export const pageGroups = <G extends { id: string }>(groups: readonly G[]): G[] => groups.filter((g) => g.id !== 'server' && g.id !== LIVETV_GROUP);
+export const livetvLinkShown = (groups: readonly { id: string }[]): boolean => groups.some((g) => g.id === LIVETV_GROUP);
