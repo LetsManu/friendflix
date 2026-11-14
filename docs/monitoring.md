@@ -99,7 +99,7 @@ Prometheus-Scrape:
 ```
 
 ## Zustand im Portal (Admin → Status)
-Ohne Prometheus/Icinga zeigt die Seite *Admin → Status* (`/admin/status`, nur Admins im Hauptprofil) dasselbe Bild im Portal. Grundlage ist ein **Snapshot**, den ein Hintergrundjob (`BACKGROUND_JOBS=true`) alle 60 s baut und in Redis ablegt (`health:snap`); eine Anfrage wartet nie auf einen langsamen Dienst. Ist der Snapshot älter als 90 s (z. B. auf einem Replikat ohne Jobs), wird er sofort ausgeliefert und im Hintergrund neu gebaut. „Neu prüfen“ (`GET /api/admin/health?refresh=1`, höchstens 6 pro Minute und Sitzung) wartet auf einen frischen Snapshot. Jede Prüfung hat ein hartes Zeitlimit von 3 s; eine Fehlermeldung eines Dienstes wird nie angezeigt (sie kann Adressen enthalten).
+Ohne Prometheus/Icinga zeigt die Seite *Admin → Status* (`/admin/status`, nur Admins im Hauptprofil) dasselbe Bild im Portal. Grundlage ist ein **Snapshot**, den ein Hintergrundjob (`BACKGROUND_JOBS=true`) alle 60 s baut und in Redis ablegt (`health:snap`); eine Anfrage wartet nie auf einen langsamen Dienst. Ist der Snapshot älter als 90 s (z. B. auf einem Replikat ohne Jobs), wird er sofort ausgeliefert und im Hintergrund neu gebaut. „Neu prüfen“ (`GET /api/admin/health?refresh=1`, höchstens 6 pro Minute und Sitzung) wartet auf einen frischen Snapshot. Jede Prüfung hat ein hartes Zeitlimit von 3 s; Datenbank-Abfragen einer Prüfung bricht Postgres nach diesem Limit selbst ab (`statement_timeout` in einer eigenen Transaktion), sodass ihre Verbindung in den Pool zurückkehrt, auch wenn die Datenbank hängt. Eine Fehlermeldung eines Dienstes wird nie angezeigt (sie kann Adressen enthalten).
 
 | Prüfung | Grün | Gelb | Rot |
 | --- | --- | --- | --- |

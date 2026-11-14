@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { stat as fsStat, statfs as fsStatfs } from 'node:fs/promises';
 import { REMOVED_ENV } from './config.js';
 import type { Ctx } from './ctx.js';
+import { probeQuery } from './db.js';
 import { hevcStatus, HEVC_SAFE_SPEED, type HevcStatus } from './hevcenc.js';
 import type { EncoderSettings } from './media/types.js';
 import { recentCount } from './errorlog.js';
@@ -60,7 +61,10 @@ export function issueFp(id: string, level: string, reason: string): string {
 
 type Outcome<T> = { ok: true; v: T; ms: number } | { ok: false; ms: number };
 
-/** Runs a probe with a hard time limit; a throw or a timeout is a failed probe (its message is dropped). */
+/**
+ * Runs a probe with a hard time limit; a throw or a timeout is a failed probe (its message is dropped). This only stops the wait: a
+ * database probe also runs its query through probeQuery (db.ts), which cancels it at the same bound and gives the connection back.
+ */
 async function bounded<T>(fn: () => Promise<T>, timeoutMs: number): Promise<Outcome<T>> {
   const t0 = performance.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -119,9 +123,9 @@ async function sourceProbe(ctx: Ctx, name: SourceName): Promise<ServiceHealth> {
   }
 }
 
-async function playbackCheckProbe(ctx: Ctx): Promise<ServiceHealth> {
+async function playbackCheckProbe(ctx: Ctx, timeoutMs: number): Promise<ServiceHealth> {
   try {
-    const r = await ctx.db.query<{ results: Array<{ ok: boolean; itemId?: string }> }>('select results from playback_checks order by id desc limit 1');
+    const r = await probeQuery<{ results: Array<{ ok: boolean; itemId?: string }> }>(ctx.db, 'select results from playback_checks order by id desc limit 1', [], timeoutMs);
     const row = r.rows[0];
     if (!row) return { id: 'playbackCheck', level: 'off' };
     // the "aborted" row (no itemId) is not a checked title
@@ -176,7 +180,7 @@ async function services(ctx: Ctx, fetchImpl: typeof fetch, timeoutMs: number): P
   const seerr = ctx.seerr;
   const [media, postgres, redis, gateway, oidc, requests, tmdb, omdb, check, encoder] = await Promise.all([
     bounded(() => ctx.jf.admin.ping(), timeoutMs).then((o) => timedService('media', o)),
-    bounded(async () => { await ctx.db.query('select 1'); return true; }, timeoutMs).then((o) => timedService('postgres', o)),
+    bounded(async () => { await probeQuery(ctx.db, 'select 1', [], timeoutMs); return true; }, timeoutMs).then((o) => timedService('postgres', o)),
     bounded(() => ctx.kv.ping(), timeoutMs).then((o) => timedService('redis', o)),
     bounded(async () => (await fetchImpl(gatewayUrl, { signal: AbortSignal.timeout(timeoutMs) })).status === 200, timeoutMs).then((o) => timedService('gateway', o)),
     oidcProbe(ctx, fetchImpl, timeoutMs),
@@ -186,7 +190,7 @@ async function services(ctx: Ctx, fetchImpl: typeof fetch, timeoutMs: number): P
       : Promise.resolve<ServiceHealth>({ id: 'requests', level: 'off', reason: 'not_set' }),
     bounded(() => sourceProbe(ctx, SOURCES[0]!), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'tmdb', level: 'off', reason: 'unavailable' })),
     bounded(() => sourceProbe(ctx, SOURCES[1]!), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'omdb', level: 'off', reason: 'unavailable' })),
-    bounded(() => playbackCheckProbe(ctx), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'playbackCheck', level: 'off', reason: 'unavailable' })),
+    bounded(() => playbackCheckProbe(ctx, timeoutMs), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'playbackCheck', level: 'off', reason: 'unavailable' })),
     encoderProbe(ctx, timeoutMs).catch(() => null),
   ]);
   return [media, postgres, redis, gateway, oidc, requests, tmdb, omdb, check, ...(encoder ? [encoder] : [])];
@@ -235,7 +239,8 @@ function diskEntry(ctx: Ctx, id: 'downloads' | 'previews', v: Vol | null, ownByt
 
 async function disks(ctx: Ctx, d: DiskDeps, timeoutMs: number): Promise<DiskHealth[]> {
   const downloadsOn = ctx.cfg.DOWNLOADS_ENABLED === 'true';
-  const num = async (sql: string) => Number((await ctx.db.query<{ n: string }>(sql).catch(() => ({ rows: [] as Array<{ n: string }> }))).rows[0]?.n ?? 0);
+  // each count is cancelled at the probe bound (probeQuery): a stalled database costs no pool connection; a failed count reads 0
+  const num = async (sql: string) => Number((await probeQuery<{ n: string }>(ctx.db, sql, [], timeoutMs).catch(() => ({ rows: [] as Array<{ n: string }> }))).rows[0]?.n ?? 0);
   const [dlVol, pvVol, dlBytes, pvBytes, dbBytes] = await Promise.all([
     downloadsOn ? volume(ctx.cfg.DOWNLOAD_DIR, d, timeoutMs) : Promise.resolve(null),
     volume(ctx.cfg.PREVIEW_DIR, d, timeoutMs),
@@ -267,7 +272,7 @@ async function errorHealth(ctx: Ctx): Promise<ErrorHealth> {
 
 /** Block 23: open sign-in requests (not rejected) in the approval queue; null when the count cannot be read. */
 async function pendingApprovals(ctx: Ctx, timeoutMs: number): Promise<number | null> {
-  const o = await bounded(async () => (await ctx.db.query<{ n: number }>('select count(*)::int as n from approval_requests where rejected_at is null')).rows[0]?.n ?? 0, timeoutMs);
+  const o = await bounded(async () => (await probeQuery<{ n: number }>(ctx.db, 'select count(*)::int as n from approval_requests where rejected_at is null', [], timeoutMs)).rows[0]?.n ?? 0, timeoutMs);
   return o.ok ? o.v : null;
 }
 

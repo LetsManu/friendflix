@@ -295,6 +295,8 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `GATEWAY_URL` | `http://gateway:4000` | Interne Gateway-Adresse für die Status-Seite im Admin-Bereich (nur `/health` wird abgefragt) |
 | `HEALTH_DISK_WARN_PCT`, `HEALTH_DISK_CRIT_PCT` | `85`, `95` | Belegung (Prozent), ab der Status-Seite und Warnband gelb / rot werden (Warnwert muss unter dem kritischen liegen, sonst gelten beide Standardwerte, mit Warnung beim Start) |
 | `HEALTH_DB_WARN_GB` | `10` | Datenbankgröße (GB), ab der die Status-Seite warnt |
+| `DB_CONNECT_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_TX_TIMEOUT_MS` | `5000`, `30000`, `300000` | Grenzen des Datenbank-Pools (ms, `0` = keine): wie lange eine Anfrage auf eine freie Verbindung wartet, nach welcher Zeit Postgres eine Anweisung abbricht und nach welcher Zeit es eine Sitzung beendet, die untätig in einer Transaktion hängt. Eine hängende Datenbank lässt Anfragen dann scheitern, statt den Pool zu füllen. Migrationen laufen ohne Grenze. Nur in der `.env` |
+| `DB_LONG_STATEMENT_TIMEOUT_MS` | `600000` | Grenze (ms, `0` = keine) für die wenigen langen Anweisungen der Hintergrundjobs: EPG-Import und tägliches Aufräumen, Live-TV-Listenimport, Bibliothekspflege und Empfehlungs-Index. Erhöhen, wenn diese auf langsamem Speicher eine abgebrochene Anweisung melden. Nur in der `.env` |
 | `METRICS_TOKEN` | leer | Bearer-Token für `/metrics` |
 | `PORTAINER_WEBHOOK_URL` oder `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` | leer | Updates per Knopfdruck unter *Admin → Update* (`PORTAINER_ENDPOINT_ID` Standard `1`) |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | `LetsManu/friendflix`, leer | Versionsprüfung; das Token hebt nur das GitHub-Limit an |

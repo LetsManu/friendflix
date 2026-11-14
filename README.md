@@ -290,6 +290,8 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `GATEWAY_URL` | `http://gateway:4000` | Internal gateway address for the admin status page (only `/health` is called) |
 | `HEALTH_DISK_WARN_PCT`, `HEALTH_DISK_CRIT_PCT` | `85`, `95` | Disk usage (percent) at which the status page and the banner turn amber / red (warn must be below crit, else both fall back to the defaults with a startup warning) |
 | `HEALTH_DB_WARN_GB` | `10` | Database size (GB) above which the status page warns |
+| `DB_CONNECT_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_TX_TIMEOUT_MS` | `5000`, `30000`, `300000` | Database pool limits (ms, `0` = none): how long a request waits for a free connection, after how long Postgres cancels a statement, and after how long it ends a session left idle inside a transaction. A stalled database then fails requests instead of filling the pool. Migrations run without a limit. `.env` only |
+| `DB_LONG_STATEMENT_TIMEOUT_MS` | `600000` | Statement limit (ms, `0` = none) of the few long statements of background jobs: EPG import and daily prune, Live TV list import, library hygiene and recommendation index sweeps. Raise it if those report a cancelled statement on slow storage. `.env` only |
 | `METRICS_TOKEN` | empty | Bearer token for `/metrics` |
 | `PORTAINER_WEBHOOK_URL` or `PORTAINER_URL` + `PORTAINER_API_KEY` + `PORTAINER_STACK_ID` | empty | One-click updates from *Admin → Update* (`PORTAINER_ENDPOINT_ID` default `1`) |
 | `UPDATE_REPO`, `GITHUB_TOKEN` | `LetsManu/friendflix`, empty | Version check; the token only raises the GitHub rate limit |

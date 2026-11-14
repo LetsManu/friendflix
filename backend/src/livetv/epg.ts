@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import type pg from 'pg';
 import type { Ctx } from '../ctx.js';
-import type { Db } from '../db.js';
+import { inTransaction, longQuery, setLocalStatementTimeout, type Db } from '../db.js';
 import { EFFECTIVE_SHIFT_SQL, isOwnFeeds } from './channels.js';
 import { LivetvError, dropLivetvProof, livetvStream } from './client.js';
 import { fileSha256, headThenFile, storedGuideFile } from './guidefiles.js';
@@ -571,7 +571,7 @@ async function importEpg(ctx: Ctx, source: SourceRow, feed: Feed, icons: Map<str
     if ('error' in r) return r;
     if (feed.deferIndex) fresh = chans;
     else {
-      await inTx(pool, (c) => storeEpgChannels(c, source.id, chans, true));
+      await inTx(ctx, (c) => storeEpgChannels(c, source.id, chans, true));
       await ctx.kv.set(indexKey(source.id), feed.key, INDEX_TTL_S);
     }
   }
@@ -581,13 +581,13 @@ async function importEpg(ctx: Ctx, source: SourceRow, feed: Feed, icons: Map<str
     // no channel could use this guide: nothing to download; the source's programmes go (one statement; with a file's fresh index)
     if (fresh) {
       const index = fresh;
-      await inTx(pool, async (c) => {
+      await inTx(ctx, async (c) => {
         await c.query('delete from livetv_programmes where source_id = $1', [source.id]);
         await storeEpgChannels(c, source.id, index, true);
       });
       await ctx.kv.set(indexKey(source.id), feed.key, INDEX_TTL_S);
     } else {
-      await ctx.db.query('delete from livetv_programmes where source_id = $1', [source.id]);
+      await longQuery(ctx, 'delete from livetv_programmes where source_id = $1', [source.id]); // a whole guide: the long limit
     }
     return { channels: await storedCount(), programmes: 0 };
   }
@@ -619,6 +619,8 @@ async function importEpg(ctx: Ctx, source: SourceRow, feed: Feed, icons: Map<str
     const c = await pool.connect();
     try {
       await c.query('begin');
+      // up to MAX_PROGRAMMES rows move in one statement: the long limit (DB_LONG_STATEMENT_TIMEOUT_MS), not the pool's
+      await setLocalStatementTimeout(c, ctx.cfg.DB_LONG_STATEMENT_TIMEOUT_MS);
       // serialises swaps of one source even if two runs ever overlap (lock lost): no duplicated guide
       await c.query('select pg_advisory_xact_lock(hashtext($1))', [`epgswap:${source.id}`]);
       await c.query('delete from livetv_programmes where source_id = $1', [source.id]);
@@ -642,23 +644,13 @@ async function importEpg(ctx: Ctx, source: SourceRow, feed: Feed, icons: Map<str
     return { channels: chans.size, programmes };
   } finally {
     // success or failure: the run's staging rows go (a crashed process leaves them to the daily prune)
-    await ctx.db.query('delete from livetv_programmes_stage where run_id = $1', [runId]).catch(() => undefined);
+    await longQuery(ctx, 'delete from livetv_programmes_stage where run_id = $1', [runId]).catch(() => undefined);
   }
 }
 
-/** one short transaction */
-async function inTx(pool: pg.Pool, fn: (c: pg.PoolClient) => Promise<void>): Promise<void> {
-  const c = await pool.connect();
-  try {
-    await c.query('begin');
-    await fn(c);
-    await c.query('commit');
-  } catch (e) {
-    await c.query('rollback').catch(() => undefined);
-    throw e;
-  } finally {
-    c.release();
-  }
+/** one transaction; a whole guide's channel index (or programme delete) may take longer than the pool's statement limit */
+async function inTx(ctx: Pick<Ctx, 'db' | 'cfg'>, fn: (c: pg.PoolClient) => Promise<void>): Promise<void> {
+  await inTransaction(ctx.db, fn, { statementTimeoutMs: ctx.cfg.DB_LONG_STATEMENT_TIMEOUT_MS });
 }
 
 /**
@@ -792,10 +784,11 @@ export async function epgSummary(ctx: Pick<Ctx, 'db'>): Promise<{ matched: numbe
  * favourites and recent rows go with them), and logos no channel references. A logo fetched in the last hour is kept: a refresh may
  * have stored it and not yet written its hash to a channel.
  */
-export async function epgPrune(ctx: Pick<Ctx, 'db'>, now: Date = new Date()): Promise<{ programmes: number; channels: number; logos: number }> {
+export async function epgPrune(ctx: Pick<Ctx, 'db' | 'cfg'>, now: Date = new Date()): Promise<{ programmes: number; channels: number; logos: number }> {
   const t = now.getTime();
-  const programmes = (await ctx.db.query('delete from livetv_programmes where end_at < $1', [new Date(t - DAY)])).rowCount ?? 0;
-  await ctx.db.query('delete from livetv_programmes_stage where staged_at < $1', [new Date(t - DAY)]); // runs a crash left behind
+  // a day of programmes of every guide in one statement: the long statement limit, not the pool's
+  const programmes = (await longQuery(ctx, 'delete from livetv_programmes where end_at < $1', [new Date(t - DAY)])).rowCount ?? 0;
+  await longQuery(ctx, 'delete from livetv_programmes_stage where staged_at < $1', [new Date(t - DAY)]); // runs a crash left behind
   const channels = (await ctx.db.query('delete from livetv_channels where missing_since < $1', [new Date(t - 30 * DAY)])).rowCount ?? 0;
   if (channels > 0) invalidateLivetvRights();
   const logos = (await ctx.db.query(
@@ -811,7 +804,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
  * Every 10 minutes (server.ts): runs epgPrune once a day from 04:10 server time, once across processes (KV day key). A failed prune
  * gives the day key back, so the next tick of the hour tries again. True when it ran.
  */
-export async function livetvEpgPruneTick(ctx: Pick<Ctx, 'db' | 'kv'>, now: Date = new Date()): Promise<boolean> {
+export async function livetvEpgPruneTick(ctx: Pick<Ctx, 'db' | 'kv' | 'cfg'>, now: Date = new Date()): Promise<boolean> {
   if (now.getHours() !== PRUNE_HOUR || now.getMinutes() < PRUNE_MINUTE) return false;
   const key = pruneKey(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`);
   if (!(await ctx.kv.setnx(key, '1', 2 * 24 * 3600))) return false;
