@@ -284,6 +284,9 @@ const dict: Translation<typeof de> = {
       lan_required: 'Indirizzo della tua rete: attiva «Consenti la rete di casa»',
       incomplete: 'Trasferimento incompleto',
       livetv_unreachable: 'Servizio TV in diretta non raggiungibile',
+      no_file: 'Il file salvato manca: caricalo di nuovo.',
+      bad_signature: 'Il file non è arrivato intatto al servizio TV in diretta: riprova.',
+      ratio: 'Il file si decomprime in una dimensione insolita ed è stato rifiutato.',
     },
     guide: {
       add: 'Aggiungi guida TV',
@@ -319,10 +322,10 @@ const dict: Translation<typeof de> = {
       newFile: 'Carica nuovo file',
       tooLarge: 'Il file supera i 300 MB.',
       importRunning: 'La guida viene letta proprio ora: riprova tra un attimo.',
-      fileInvalid: 'Questo file non è una guida XMLTV (.xml o .xml.gz).',
-      fileChosen: 'Scelto',
+      fileInvalid: 'Non è stato possibile caricare il file oppure era vuoto.',
       fileLater: 'La guida è salvata, ma il file manca ancora.',
       refreshNoFile: 'Nessun file caricato finora.',
+      xmltvInvalid: 'Questo file non è una guida XMLTV (.xml o .xml.gz).',
     },
   },
   push: {

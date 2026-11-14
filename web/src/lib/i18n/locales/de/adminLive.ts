@@ -282,6 +282,9 @@ export default {
       lan_required: 'Adresse im eigenen Netz – dafür „Heimnetz erlauben“ einschalten',
       incomplete: 'Unvollständig übertragen',
       livetv_unreachable: 'Live-TV-Dienst nicht erreichbar',
+      no_file: 'Die gespeicherte Datei fehlt – lade sie neu hoch.',
+      bad_signature: 'Die Datei kam beim Live-TV-Dienst nicht unverändert an – versuche es noch einmal.',
+      ratio: 'Die Datei entpackt sich ungewöhnlich stark und wurde abgelehnt.',
     },
     guide: {
       add: 'Programmführer hinzufügen',
@@ -317,10 +320,10 @@ export default {
       newFile: 'Neue Datei hochladen',
       tooLarge: 'Die Datei ist größer als 300 MB.',
       importRunning: 'Der Programmführer wird gerade eingelesen – versuche es gleich noch einmal.',
-      fileInvalid: 'Diese Datei ist kein XMLTV-Programmführer (.xml oder .xml.gz).',
-      fileChosen: 'Gewählt',
+      fileInvalid: 'Die Datei konnte nicht hochgeladen werden oder war leer.',
       fileLater: 'Gespeichert wurde der Programmführer, die Datei fehlt noch.',
       refreshNoFile: 'Noch keine Datei hochgeladen.',
+      xmltvInvalid: 'Diese Datei ist kein XMLTV-Programmführer (.xml oder .xml.gz).',
     },
   },
   push: {

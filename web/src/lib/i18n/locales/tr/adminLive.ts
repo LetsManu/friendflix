@@ -284,6 +284,9 @@ const dict: Translation<typeof de> = {
       lan_required: 'Kendi ağındaki bir adres – bunun için “Ev ağına izin ver”i aç',
       incomplete: 'Aktarım eksik',
       livetv_unreachable: 'Canlı TV hizmetine ulaşılamıyor',
+      no_file: 'Kayıtlı dosya bulunamadı – yeniden yükle.',
+      bad_signature: 'Dosya Canlı TV hizmetine değişmeden ulaşmadı – tekrar dene.',
+      ratio: 'Dosya olağandışı bir boyuta açılıyor ve reddedildi.',
     },
     guide: {
       add: 'Yayın akışı ekle',
@@ -319,10 +322,10 @@ const dict: Translation<typeof de> = {
       newFile: 'Yeni dosya yükle',
       tooLarge: 'Dosya 300 MB’tan büyük.',
       importRunning: 'Rehber şu anda okunuyor – birazdan tekrar dene.',
-      fileInvalid: 'Bu dosya bir XMLTV rehberi değil (.xml veya .xml.gz).',
-      fileChosen: 'Seçildi',
+      fileInvalid: 'Dosya yüklenemedi ya da boştu.',
       fileLater: 'Rehber kaydedildi, dosya hâlâ eksik.',
       refreshNoFile: 'Henüz dosya yüklenmedi.',
+      xmltvInvalid: 'Bu dosya bir XMLTV rehberi değil (.xml veya .xml.gz).',
     },
   },
   push: {

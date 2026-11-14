@@ -236,8 +236,19 @@ describe('guides from an uploaded file', () => {
   it('fileFailText: 413, 409 and 400 in words', () => {
     expect(fileFailText(new ApiError(413, { error: 'too_large' }))).toBe('Die Datei ist größer als 300 MB.');
     expect(fileFailText(new ApiError(409, { error: 'import_running' }))).toBe('Der Programmführer wird gerade eingelesen – versuche es gleich noch einmal.');
-    expect(fileFailText(new ApiError(400, { error: 'invalid', field: 'file' }))).toBe('Diese Datei ist kein XMLTV-Programmführer (.xml oder .xml.gz).');
+    // a 400 is an upload that broke off or was empty: the content is only read by the import
+    expect(fileFailText(new ApiError(400, { error: 'invalid', field: 'file' }))).toBe('Die Datei konnte nicht hochgeladen werden oder war leer.');
     expect(fileFailText(new ApiError(409, { error: 'livetv_off' }))).toBe(tr('adminLive.src.refreshOff'));
     expect(fileFailText(new ApiError(404, { error: 'not_found' }))).toBe(tr('adminLive.src.gone'));
+  });
+  it('the import errors of a file in words: XMLTV refused, file gone, signature, gzip bomb', () => {
+    const epg = (lastError: string) => ({ epg: { lastRefreshAt: '2026-11-14T09:00:00Z', lastOkAt: null, lastError, programmes: null } });
+    const failed = (code: string, over: Partial<SourceView> = {}) => view(epg(code), { kind: 'guide', guideProvider: 'xmltv_file', fileName: 'a.xml', fileBytes: 10, ...over });
+    expect(refreshResult(failed('invalid')).text).toBe('Aktualisieren fehlgeschlagen: Diese Datei ist kein XMLTV-Programmführer (.xml oder .xml.gz).');
+    expect(refreshResult(failed('doctype')).text).toContain('kein XMLTV-Programmführer');
+    // a link guide keeps the general wording
+    expect(refreshResult(failed('invalid', { guideProvider: 'xmltv_url' })).text).not.toContain('Datei');
+    expect(refreshResult(failed('no_file')).text).toBe('Aktualisieren fehlgeschlagen: Die gespeicherte Datei fehlt – lade sie neu hoch.');
+    for (const code of ['no_file', 'bad_signature', 'ratio']) expect(sourceError(code)).not.toBe(tr('adminLive.err.generic'));
   });
 });

@@ -284,6 +284,9 @@ const dict: Translation<typeof de> = {
       lan_required: 'Adres we własnej sieci – włącz „Zezwól na sieć domową”',
       incomplete: 'Przesyłanie niekompletne',
       livetv_unreachable: 'Usługa telewizji na żywo nieosiągalna',
+      no_file: 'Brakuje zapisanego pliku – wgraj go ponownie.',
+      bad_signature: 'Plik nie dotarł do usługi telewizji na żywo w niezmienionej postaci – spróbuj ponownie.',
+      ratio: 'Plik rozpakowuje się do nietypowego rozmiaru i został odrzucony.',
     },
     guide: {
       add: 'Dodaj program TV',
@@ -319,10 +322,10 @@ const dict: Translation<typeof de> = {
       newFile: 'Wgraj nowy plik',
       tooLarge: 'Plik jest większy niż 300 MB.',
       importRunning: 'Przewodnik jest właśnie wczytywany – spróbuj ponownie za chwilę.',
-      fileInvalid: 'Ten plik nie jest przewodnikiem XMLTV (.xml lub .xml.gz).',
-      fileChosen: 'Wybrano',
+      fileInvalid: 'Nie udało się wgrać pliku albo był pusty.',
       fileLater: 'Przewodnik zapisano, ale brakuje jeszcze pliku.',
       refreshNoFile: 'Nie wgrano jeszcze pliku.',
+      xmltvInvalid: 'Ten plik nie jest przewodnikiem XMLTV (.xml lub .xml.gz).',
     },
   },
   push: {

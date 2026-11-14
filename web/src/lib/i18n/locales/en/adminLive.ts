@@ -284,6 +284,9 @@ const dict: Translation<typeof de> = {
       lan_required: 'Address in your own network – turn on “Allow home network” for it',
       incomplete: 'Transfer incomplete',
       livetv_unreachable: 'Live TV service not reachable',
+      no_file: 'The stored file is missing – upload it again.',
+      bad_signature: 'The file did not reach the Live TV service unchanged – try again.',
+      ratio: 'The file unpacks to an unusual size and was refused.',
     },
     guide: {
       add: 'Add programme guide',
@@ -319,10 +322,10 @@ const dict: Translation<typeof de> = {
       newFile: 'Upload new file',
       tooLarge: 'The file is larger than 300 MB.',
       importRunning: 'The guide is being read in right now – try again in a moment.',
-      fileInvalid: 'This file is not an XMLTV guide (.xml or .xml.gz).',
-      fileChosen: 'Chosen',
+      fileInvalid: 'The file could not be uploaded or was empty.',
       fileLater: 'The guide was saved, the file is still missing.',
       refreshNoFile: 'No file uploaded yet.',
+      xmltvInvalid: 'This file is not an XMLTV guide (.xml or .xml.gz).',
     },
   },
   push: {
