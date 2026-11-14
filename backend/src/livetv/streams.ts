@@ -110,6 +110,7 @@ export function expectedMode(ch: { streamKind: StreamKind; probe: ProbeRec | nul
     // (needs remux: the probe found audio in a playlist of its own, which only a remux can merge)
     if (p?.ok && p.needs === 'remux') return 'remux';
     const a = p?.ok ? p.audio?.codec : undefined;
+    // aac and mp3 are what a browser plays as they are: the same list as livetv's `audioPassable` (livetv/src/ffmpeg.ts), change both
     return a !== undefined && a !== 'aac' && a !== 'mp3' && p?.video?.codec === 'h264' ? 'remux' : 'passthrough';
   }
   if (ch.streamKind === 'ts') return p?.needs === 'transcode' ? 'transcode' : 'remux';

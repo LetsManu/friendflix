@@ -5,8 +5,9 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GuardDeps } from '../src/fetch.js';
+import { ATTR_LINE_MAX } from '../src/attrlist.js';
 import { attrList, pickVariant, probe, type StreamInput } from '../src/probe.js';
-import type { Run, RunResult } from '../src/run.js';
+import { TIMEOUT_CODE, type Run, type RunResult } from '../src/run.js';
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
 
@@ -259,6 +260,106 @@ describe('probe', () => {
     // bounded: a rendition past the 64th media line is never looked at
     const many = Array.from({ length: 64 }, () => '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="z",URI="z.m3u8"');
     expect(pickVariant(m([...many, med('DEFAULT=YES,URI="late.m3u8"')]), 10e6)).not.toHaveProperty('audio');
+  });
+
+  it('pickVariant (I2): the choice is made among all renditions; a chosen one without URI is the muxed audio (none separate)', () => {
+    const m = (media: string[]) => ['#EXTM3U', ...media, '#EXT-X-STREAM-INF:BANDWIDTH=3000000,CODECS="avc1.4d401f",AUDIO="a"', 'v.m3u8'].join('\n');
+    const med = (extra: string) => `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="x",${extra}`;
+    const AD = 'CHARACTERISTICS="public.accessibility.describes-video,public.accessibility.describes-music-and-sound"';
+    // the DEFAULT one is muxed in the variant: an AD or foreign-language playlist next to it is never picked
+    expect(pickVariant(m([med('DEFAULT=YES'), med('URI="ad.m3u8"')]), 10e6)).not.toHaveProperty('audio');
+    expect(pickVariant(m([med('URI="en.m3u8"'), med('DEFAULT=YES,AUTOSELECT=YES')]), 10e6)).not.toHaveProperty('audio');
+    // a muxed AUTOSELECT one wins over a later playlist when there is no DEFAULT
+    expect(pickVariant(m([med('AUTOSELECT=YES'), med('URI="en.m3u8"')]), 10e6)).not.toHaveProperty('audio');
+    // among the non-default ones an audio description track is avoided ...
+    expect(pickVariant(m([med(`AUTOSELECT=YES,${AD},URI="ad.m3u8"`), med('AUTOSELECT=YES,URI="de.m3u8"')]), 10e6)!.audio).toEqual({ uri: 'de.m3u8' });
+    expect(pickVariant(m([med(`${AD},URI="ad.m3u8"`), med('URI="de.m3u8"')]), 10e6)!.audio).toEqual({ uri: 'de.m3u8' });
+    expect(pickVariant(m([med(`AUTOSELECT=YES,${AD},URI="ad.m3u8"`), med('URI="de.m3u8"')]), 10e6)!.audio).toEqual({ uri: 'de.m3u8' });
+    // ... but taken when it is the DEFAULT or the only one
+    expect(pickVariant(m([med(`DEFAULT=YES,${AD},URI="ad.m3u8"`), med('URI="de.m3u8"')]), 10e6)!.audio).toEqual({ uri: 'ad.m3u8' });
+    expect(pickVariant(m([med(`${AD},URI="ad.m3u8"`)]), 10e6)!.audio).toEqual({ uri: 'ad.m3u8' });
+    // an #EXT-X-MEDIA line longer than ATTR_LINE_MAX is skipped, also when it says DEFAULT
+    const long = med(`DEFAULT=YES,LANGUAGE="${'x'.repeat(ATTR_LINE_MAX)}",URI="long.m3u8"`);
+    expect(long.length).toBeGreaterThan(ATTR_LINE_MAX);
+    expect(pickVariant(m([long, med('URI="short.m3u8"')]), 10e6)!.audio).toEqual({ uri: 'short.m3u8' });
+  });
+
+  /** a master with a separate audio rendition; `audio` serves the rendition (playlist and segment) or leaves it 404 */
+  const renditionSource = async (audio: 'ok' | 'missing', extra: Record<string, (res: http.ServerResponse) => void> = {}) => {
+    const master = ['#EXTM3U', '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="Deutsch",DEFAULT=YES,URI="audio/de.m3u8"',
+      '#EXT-X-STREAM-INF:BANDWIDTH=3000000,CODECS="avc1.4d401f,mp4a.40.2",AUDIO="a"', 'video/index.m3u8'].join('\n');
+    const pl = (seg: string) => `#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\n${seg}\n`;
+    return serve({
+      '/nl/master.m3u8': (res) => res.end(master),
+      '/nl/video/index.m3u8': (res) => res.end(pl('v1.ts')), '/nl/video/v1.ts': (res) => res.end(Buffer.alloc(300, 0x47)),
+      ...(audio === 'ok' ? { '/nl/audio/de.m3u8': (res: http.ServerResponse) => res.end(pl('a1.aac')), '/nl/audio/a1.aac': (res: http.ServerResponse) => res.end(Buffer.alloc(100, 0xff)) } : {}),
+      ...extra,
+    });
+  };
+  const VIDEO_ONLY = '{"streams":[{"codec_type":"video","codec_name":"h264","width":1280,"height":720,"avg_frame_rate":"25/1"}]}';
+  const VIDEO_MP2 = '{"streams":[{"codec_type":"video","codec_name":"h264","width":1280,"height":720,"avg_frame_rate":"25/1"},{"codec_type":"audio","codec_name":"mp2","channels":2}]}';
+  /** ffprobe: the video sample (-f mpegts) answers `video`, the audio one (-f aac) `audio` */
+  const byFormat = (video: string, audio: string | 'timeout'): Run => (async (_c, args, o) => {
+    if (o.stdin) for await (const _ of o.stdin) { /* drained */ }
+    if (!args.includes('aac')) return { code: 0, stdout: Buffer.from(video), stderr: '' };
+    return audio === 'timeout' ? { code: TIMEOUT_CODE, stdout: Buffer.alloc(0), stderr: '' } : { code: 0, stdout: Buffer.from(audio), stderr: '' };
+  }) as Run;
+
+  it('I3: a separate rendition whose sample shows no audio, fails or times out → remux, its audio unknown (never passthrough)', async () => {
+    const s = await renditionSource('ok');
+    const input = { url: `http://iptv.example.com:${s.port}/nl/master.m3u8`, kind: 'hls' as const, allowLan: false };
+    for (const audio of ['{}', '{"streams":[]}', 'not json', 'timeout'] as const) {
+      // the variant's own (muxed) audio is not what plays: it never stands in for the rendition's
+      const r = await probe(input, { run: byFormat(VIDEO_MP2, audio), guard: guard() });
+      expect(r).toEqual({ ok: true, video: { codec: 'h264', width: 1280, height: 720, fps: 25 }, needs: 'remux' });
+    }
+  });
+
+  it('I3: a rendition playlist that is gone (404) → still remux with the video facts; onSeparateAudio is told before sampling', async () => {
+    const s = await renditionSource('missing');
+    const told: string[] = [];
+    const r = await probe({ url: `http://iptv.example.com:${s.port}/nl/master.m3u8`, kind: 'hls', allowLan: false },
+      { run: byFormat(VIDEO_ONLY, 'timeout'), guard: guard(), onSeparateAudio: () => told.push(`told after ${s.paths.length} requests`) });
+    expect(r).toEqual({ ok: true, video: { codec: 'h264', width: 1280, height: 720, fps: 25 }, needs: 'remux' });
+    expect(told).toEqual(['told after 1 requests']);
+    expect(s.paths).toContain('/nl/audio/de.m3u8');
+  });
+
+  it('I4: the rendition and the video are sampled at the same time (two ffprobe runs overlap)', async () => {
+    const s = await renditionSource('ok');
+    let running = 0;
+    let most = 0;
+    const run = (async (_c, args, o) => {
+      running++;
+      most = Math.max(most, running);
+      if (o.stdin) for await (const _ of o.stdin) { /* drained */ }
+      // each run lasts until the other has started (or 1 s): sequential sampling would take 2 s and see one at a time
+      for (let i = 0; i < 100 && most < 2; i++) await new Promise((r) => setTimeout(r, 10));
+      running--;
+      return { code: 0, stdout: Buffer.from(args.includes('aac') ? '{"streams":[{"codec_type":"audio","codec_name":"aac","channels":2}]}' : VIDEO_ONLY), stderr: '' };
+    }) as Run;
+    const r = await probe({ url: `http://iptv.example.com:${s.port}/nl/master.m3u8`, kind: 'hls', allowLan: false }, { run, guard: guard() });
+    expect(r).toMatchObject({ ok: true, audio: { codec: 'aac', channels: 2 }, needs: 'remux' });
+    expect(most).toBe(2);
+  });
+
+  it('I4/M4: the budget and the variant limit of the caller are used', async () => {
+    const hang: http.ServerResponse[] = [];
+    const s = await serve({
+      '/live/nordlicht/master.m3u8': (res) => res.end(MASTER),
+      '/live/nordlicht/hd/index.m3u8': (res) => res.end(MEDIA),
+      // a segment that never ends: only the budget ends the probe
+      '/live/nordlicht/hd/seg-812.ts': (res) => { res.write(Buffer.alloc(188, 0x47)); hang.push(res); },
+    });
+    const t0 = Date.now();
+    const r = await probe({ url: `http://iptv.example.com:${s.port}/live/nordlicht/master.m3u8`, kind: 'hls', allowLan: false },
+      { run: fakeRun(fixture('ffprobe-h264-aac.json'), (o) => (o.timeoutMs <= 400 ? { code: TIMEOUT_CODE, stdout: Buffer.alloc(0), stderr: '' } : undefined)), guard: guard(), budgetMs: 400, maxBitrate: 5_000_000 });
+    expect(r).toMatchObject({ ok: false, error: 'timeout' });
+    expect(Date.now() - t0).toBeLessThan(3_000);
+    // 5 Mbit/s: the 3-Mbit/s variant, not the default limit's 6-Mbit/s one
+    expect(s.paths).toContain('/live/nordlicht/hd/index.m3u8');
+    expect(s.paths).not.toContain('/live/nordlicht/fhd/index.m3u8');
+    for (const h of hang) h.destroy();
   });
 
   it('HLS with a separate audio rendition: the audio facts come from its own segment; needs remux', async () => {

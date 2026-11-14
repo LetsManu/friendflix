@@ -4,10 +4,10 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { FetchError, type GuardDeps } from './fetch.js';
 import { AUDIO_BITRATE, SEGMENT_SECONDS, audioFor, ffmpegArgs, videoBitrate } from './ffmpeg.js';
-import { openInput, type OpenedInput } from './inputs.js';
+import { AudioUnavailable, openInput, type OpenedInput } from './inputs.js';
 import type { Log } from './log.js';
 import { PlaylistRefused, type FetchFn } from './passthrough.js';
-import { probe, type ProbeResult, type StreamInput } from './probe.js';
+import { START_PROBE_MS, probe, type ProbeDeps, type ProbeResult, type StreamInput } from './probe.js';
 import type { Run } from './run.js';
 import type { IngestReader } from './srtingest.js';
 import type { Driver, Mode } from './streams.js';
@@ -30,7 +30,7 @@ export interface RemuxDeps {
   /** replaces `guardedFetch` (tests) */
   fetch?: FetchFn;
   /** replaces the Task 14 probe (tests); `signal` aborts when the stream stops */
-  probe?: (input: StreamInput, signal: AbortSignal) => Promise<ProbeResult>;
+  probe?: (input: StreamInput, signal: AbortSignal, o?: ProbeOptions) => Promise<ProbeResult>;
   /** where ffmpeg's scrubbed stderr goes */
   log?: Log;
   /** the size of a written segment (default: the file's size, 0 when it is missing) */
@@ -48,6 +48,12 @@ const MAX_SEGMENT_S = 120;
 const MAX_PENDING = 4096;
 const CSV_RE = /^(?:.*[\\/])?(0|[1-9]\d{0,9})\.ts,(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/;
 const PROBE_FAILED: ProbeResult = { ok: false, needs: 'transcode' };
+/**
+ * runs in a row that had a separate audio rendition and delivered no segment (or could not open it) before the driver goes on
+ * without it; a rendition that is refused or encrypted is left out at once
+ */
+export const AUDIO_TRIES = 2;
+type ProbeOptions = Pick<ProbeDeps, 'maxBitrate' | 'budgetMs' | 'onSeparateAudio'>;
 
 /** a segment list line (`<n>.ts,<start>,<end>`) → its number and duration; anything else null */
 export function csvLine(line: string): { n: number; duration: number } | null {
@@ -78,24 +84,31 @@ function untilAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T | null> {
 
 const fileSize = (p: string): Promise<number> => stat(p).then((s) => s.size, () => 0);
 
-const probeOf = (d: RemuxDeps) => d.probe ?? ((input: StreamInput, signal: AbortSignal) => probe(input, { run: d.run, guard: d.guard, signal, ingest: d.ingest }));
+const probeOf = (d: RemuxDeps) => d.probe
+  ?? ((input: StreamInput, signal: AbortSignal, o: ProbeOptions = {}) => probe(input, { run: d.run, guard: d.guard, signal, ...(d.ingest ? { ingest: d.ingest } : {}), ...o }));
 
 /** a media driver that can take the probe facts a caller already has (then it does not probe again) */
 export type MediaDriver = (ctx: Parameters<Driver>[0], known?: ProbeResult) => Promise<void>;
 
 /**
- * The passthrough driver behind a probe: an HLS channel is passed through only when a browser can play its audio. The probe runs
- * once, first (it adds its time, at most the probe's own timeout, to the first segment of a passthrough start): `needs: remux`
- * (audio a browser cannot play) runs the media driver as `remux` with these facts; anything else, also a failed probe or a
- * `transcode` verdict (non-H264 HLS: as before, no slot was taken for it), runs the passthrough driver, so a probe outage never
- * breaks a working channel.
+ * The passthrough driver behind a probe: an HLS channel is passed through only when a browser can play its audio and that audio
+ * is in the variant itself. The probe runs once, first, on the variant the stream will play (`maxBitrate`), with START_PROBE_MS
+ * (5 s) as its budget: its time is added to the first segment of a passthrough start, inside the backend's 15-s wait, so it must
+ * leave that wait room for the first segment. `needs: remux` (audio a browser cannot play, or audio in a playlist of its own)
+ * runs the media driver as `remux` with these facts. A probe that failed after the master showed a separate audio rendition runs
+ * the remux too, without facts (the audio becomes AAC): passthrough would play that source silent. Anything else, also any other
+ * failed probe or a `transcode` verdict (non-H264 HLS: as before, no slot was taken for it), runs the passthrough driver, so a
+ * probe outage never breaks a working channel.
  */
 export function probedPassthrough(d: RemuxDeps, media: MediaDriver, pass: Driver): Driver {
   const probeFn = probeOf(d);
   return async (ctx) => {
-    const facts = await untilAbort(probeFn(ctx.input, ctx.signal).catch(() => PROBE_FAILED), ctx.signal);
+    let separateAudio = false;
+    const o: ProbeOptions = { maxBitrate: ctx.maxBitrate, budgetMs: START_PROBE_MS, onSeparateAudio: () => { separateAudio = true; } };
+    const facts = await untilAbort(probeFn(ctx.input, ctx.signal, o).catch(() => PROBE_FAILED), ctx.signal);
     if (facts === null || ctx.signal.aborted) return;
     if (facts.ok && facts.needs === 'remux') return media(ctx, facts);
+    if (!facts.ok && separateAudio) return media(ctx, PROBE_FAILED);
     return pass(ctx);
   };
 }
@@ -107,7 +120,7 @@ export function remuxDriver(d: RemuxDeps): MediaDriver {
   const now = d.now ?? Date.now;
   return async (ctx, known) => {
     const input = ctx.input;
-    const facts = known ?? (await untilAbort(probeFn(input, ctx.signal).catch(() => PROBE_FAILED), ctx.signal));
+    const facts = known ?? (await untilAbort(probeFn(input, ctx.signal, { maxBitrate: ctx.maxBitrate }).catch(() => PROBE_FAILED), ctx.signal));
     if (facts === null || ctx.signal.aborted) return;
     const mode = chooseMode(ctx.mode, facts);
     if (mode !== ctx.mode) ctx.runsAs(mode);
@@ -123,26 +136,52 @@ export function remuxDriver(d: RemuxDeps): MediaDriver {
     let next = 0;
     /** the next segment taken starts a discontinuity (after a restart) */
     let disc = false;
+    /**
+     * Runs in a row whose separate audio rendition failed (could not be opened, or the run delivered no segment). From AUDIO_TRIES
+     * on, the input is opened without it (the video with its own audio, if any, made AAC): a broken rendition must not take the
+     * picture down with it. A run without it that delivers segments resets the count, so the next run tries the rendition again.
+     */
+    let audioFails = 0;
+    const audioFailed = (fatal: boolean) => {
+      const before = audioFails;
+      audioFails = fatal ? AUDIO_TRIES : audioFails + 1;
+      if (before < AUDIO_TRIES && audioFails >= AUDIO_TRIES) ctx.log('separate audio rendition unavailable, playing the video without it');
+    };
+    // fixed texts from openInput; the same one again in a row (each restart of a source that cannot be aligned) is said once
+    let lastInputLog = '';
+    const inputLog = (m: string) => { if (m !== lastInputLog) { lastInputLog = m; ctx.log(m); } };
 
     while (!ctx.signal.aborted) {
       let opened: OpenedInput;
+      const noAudio = audioFails >= AUDIO_TRIES;
       try {
         opened = await openInput(input, {
           guard: d.guard, ...(d.fetch ? { fetch: d.fetch } : {}), ...(d.ingest ? { ingest: d.ingest } : {}), signal: ctx.signal, maxBitrate: ctx.maxBitrate,
+          log: inputLog, ...(noAudio ? { noAudio: true } : {}),
         });
       } catch (e) {
         if (ctx.signal.aborted) break;
-        if (e instanceof FetchError && FATAL.has(e.code)) { ctx.fail(e.code); return; }
-        if (e instanceof PlaylistRefused) { ctx.fail(e.code); return; }
+        if (e instanceof AudioUnavailable) {
+          audioFailed(e.fatal);
+          // without the rendition now: at once, the video works
+          if (audioFails >= AUDIO_TRIES) continue;
+        } else {
+          if (e instanceof FetchError && FATAL.has(e.code)) { ctx.fail(e.code); return; }
+          if (e instanceof PlaylistRefused) { ctx.fail(e.code); return; }
+        }
         disc = true;
         if (!(await ctx.sleep(ctx.lost()))) break;
         continue;
       }
       const ff = opened.ffInput;
+      const withAudio = ff.kind === 'pipe' && ff.audio !== undefined;
       const args = ffmpegArgs({
         mode, input: ff.kind === 'pipe' ? { kind: 'pipe', format: ff.format } : { kind: 'srt', url: ff.url },
-        ...(ff.kind === 'pipe' && ff.audio ? { audioInput: { format: ff.audio.format } } : {}), encoder: ctx.encoder, audio, srcHeight, dir: ctx.dir, startNumber: next,
+        ...(ff.kind === 'pipe' && ff.audio ? { audioInput: { format: ff.audio.format, ...(ff.audio.shift ? { shift: ff.audio.shift } : {}) } } : {}),
+        // left without its rendition: the variant's own audio is of unknown codec (the facts describe the rendition), so AAC
+        encoder: ctx.encoder, audio: noAudio ? 'aac' : audio, srcHeight, dir: ctx.dir, startNumber: next,
       });
+      let delivered = false;
       // this run alone: a stop aborts it, and so does the stall watchdog (the stream then lives on and the loop restarts ffmpeg)
       const runAc = new AbortController();
       const endRun = () => runAc.abort();
@@ -163,6 +202,7 @@ export function remuxDriver(d: RemuxDeps): MediaDriver {
         const c = csvLine(l);
         if (!c || c.n < next) return;
         next = c.n + 1;
+        delivered = true;
         watch();
         const pdt = Math.round(now() - c.duration * 1000);
         const discontinuity = disc;
@@ -200,6 +240,8 @@ export function remuxDriver(d: RemuxDeps): MediaDriver {
         opened.close();
       }
       if (ctx.signal.aborted) break;
+      if (withAudio && !delivered) audioFailed(false);
+      else if (delivered) audioFails = 0;
       // ffmpeg ended (or was cut) while the stream lives: the input is lost until a new run delivers a segment
       disc = true;
       if (!(await ctx.sleep(ctx.lost()))) break;

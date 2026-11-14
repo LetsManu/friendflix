@@ -13,7 +13,7 @@ import type { IngestReader } from './srtingest.js';
  * its host replaced by the checked IP literal (`-protocol_whitelist srt,udp`). A `{ push }` input (Task 29) is its feed's ring on
  * stdin: the oldest of the last 4 s, then at most 4 s more of live data; a feed that is not receiving is `unreachable` without
  * starting ffprobe, and without an ingest hub (a caller that wired none) a push input cannot be probed at all: `invalid`. The
- * whole probe has a 10 s budget. The answer never carries a URL, a host or ffprobe output, only the stream facts or a fixed code.
+ * whole probe has a 10 s budget (`budgetMs`: a passthrough start's probe has 5 s, START_PROBE_MS). The answer never carries a URL, a host or ffprobe output, only the stream facts or a fixed code.
  * `deps.signal` (Task 28: the start probe of a stream that is stopped meanwhile) aborts every fetch and the ffprobe run at once.
  */
 export type StreamInput = { url: string; kind: 'hls' | 'ts' | 'srt'; userAgent?: string; allowLan: boolean } | { push: string };
@@ -27,6 +27,11 @@ export interface ProbeResult {
 }
 
 export const PROBE_BUDGET_MS = 10_000;
+/**
+ * The budget of the probe a passthrough start runs before its first fetch (remux.ts probedPassthrough): it is spent inside the
+ * backend's 15-s wait for the first segment (backend/src/livetv/streams.ts FIRST_SEGMENT_MS), so it leaves that wait at least 10 s
+ */
+export const START_PROBE_MS = 5_000;
 /** HLS playlists (master and media) for passthrough and probing */
 export const PLAYLIST_MAX_BYTES = 2 * 1024 * 1024;
 export const SEGMENT_MAX_BYTES = 50 * 1024 * 1024;
@@ -61,24 +66,31 @@ export function attrList(s: string): Map<string, string> {
 export const MAX_MEDIA_LINES = 64;
 export interface Variant { uri: string; bandwidth: number; codecs: string | null; audio?: { uri: string } }
 
+/** the HLS characteristic of an audio description track (a narrator describing the picture) */
+const DESCRIBES_VIDEO = 'public.accessibility.describes-video';
+
 /**
- * The separate audio rendition of an `AUDIO="group"` variant: among the group's `#EXT-X-MEDIA:TYPE=AUDIO` lines that have a URI
- * (a rendition without one is muxed in the variant: nothing to fetch), the `DEFAULT=YES` one, else the `AUTOSELECT=YES` one, else
- * the first. Lines longer than ATTR_LINE_MAX are skipped; at most MAX_MEDIA_LINES media lines are read.
+ * The separate audio rendition of an `AUDIO="group"` variant. The choice is made among ALL the group's `#EXT-X-MEDIA:TYPE=AUDIO`
+ * lines, with or without a URI, as a player would: the `DEFAULT=YES` one, else the `AUTOSELECT=YES` one, else the first; among
+ * the non-default ones an audio description track (CHARACTERISTICS with `public.accessibility.describes-video`) is taken only when
+ * there is nothing else. Only when the chosen rendition has a URI is it a playlist of its own; one without a URI is the audio
+ * muxed in the variant (null: nothing to fetch, the variant plays as it is). Lines longer than ATTR_LINE_MAX are skipped; at
+ * most MAX_MEDIA_LINES media lines are read.
  */
 export function pickAudio(lines: readonly string[], group: string): { uri: string } | null {
-  const found: Array<{ uri: string; def: boolean; auto: boolean }> = [];
+  const found: Array<{ uri: string | null; def: boolean; auto: boolean; ad: boolean }> = [];
   let seen = 0;
   for (const l of lines) {
     if (!l.startsWith('#EXT-X-MEDIA:') || l.length > ATTR_LINE_MAX) continue;
     if (++seen > MAX_MEDIA_LINES) break;
     const a = attrList(l.slice(13));
-    const uri = a.get('URI');
-    if (a.get('TYPE') !== 'AUDIO' || a.get('GROUP-ID') !== group || !uri) continue;
-    found.push({ uri, def: a.get('DEFAULT') === 'YES', auto: a.get('AUTOSELECT') === 'YES' });
+    if (a.get('TYPE') !== 'AUDIO' || a.get('GROUP-ID') !== group) continue;
+    const ad = (a.get('CHARACTERISTICS') ?? '').split(',').some((c) => c.trim() === DESCRIBES_VIDEO);
+    found.push({ uri: a.get('URI') || null, def: a.get('DEFAULT') === 'YES', auto: a.get('AUTOSELECT') === 'YES', ad });
   }
-  const best = found.find((f) => f.def) ?? found.find((f) => f.auto) ?? found[0];
-  return best ? { uri: best.uri } : null;
+  const plain = found.filter((f) => !f.ad);
+  const best = found.find((f) => f.def) ?? plain.find((f) => f.auto) ?? plain[0] ?? found.find((f) => f.auto) ?? found[0];
+  return best?.uri ? { uri: best.uri } : null;
 }
 
 /**
@@ -198,8 +210,24 @@ async function within<T>(p: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDeps; signal?: AbortSignal; ingest?: IngestReader }): Promise<ProbeResult> {
-  const deadline = Date.now() + PROBE_BUDGET_MS;
+export interface ProbeDeps {
+  run: Run;
+  guard: GuardDeps;
+  signal?: AbortSignal;
+  ingest?: IngestReader;
+  /** the HLS variant limit of the stream that will play (default DEFAULT_MAX_BITRATE), so the probe looks at the same variant */
+  maxBitrate?: number;
+  /** the whole probe's budget (default PROBE_BUDGET_MS) */
+  budgetMs?: number;
+  /**
+   * called as soon as the master shows that the chosen variant's audio is a playlist of its own (pickAudio), before anything is
+   * sampled: a start whose probe then fails still knows that only a remux plays this source with sound
+   */
+  onSeparateAudio?: () => void;
+}
+
+export async function probe(input: StreamInput, deps: ProbeDeps): Promise<ProbeResult> {
+  const deadline = Date.now() + (deps.budgetMs ?? PROBE_BUDGET_MS);
   const left = () => Math.max(1, deadline - Date.now());
   const abort = deps.signal ? { signal: deps.signal } : {};
   // every response body opened here is closed when the probe ends, read or not (an init segment whose media segment failed, a
@@ -230,7 +258,11 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
     const c = checkUrl(input.url, srt ? ['srt:'] : ['http:', 'https:']);
     if ('error' in c) return fail(c.error === 'host' ? 'address_refused' : 'invalid');
     let pipeError: unknown;
+    /** the chosen variant's audio is a playlist of its own (pickAudio) */
+    let rendition = false;
+    /** that rendition's audio facts; undefined when its sample failed, timed out or showed no audio stream */
     let separate: ReturnType<typeof streamsOf>['audio'];
+    let renditionDone: Promise<void> = Promise.resolve();
     let result;
     if (srt) {
       const ip = await within(resolveChecked(c.url.hostname, input.allowLan, deps.guard), left());
@@ -249,15 +281,13 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
         let base = master.url;
         let media = await readText(master.body);
         if (!media.trimStart().startsWith('#EXTM3U')) return fail('invalid');
-        const variant = pickVariant(media, DEFAULT_MAX_BITRATE);
-        if (variant) {
-          const list = await get(resolveUri(variant.uri, base), PLAYLIST_MAX_BYTES);
-          base = list.url;
-          media = await readText(list.body);
-          if (!media.trimStart().startsWith('#EXTM3U')) return fail('invalid');
+        const variant = pickVariant(media, deps.maxBitrate ?? DEFAULT_MAX_BITRATE);
+        if (variant?.audio) {
+          rendition = true;
+          try { deps.onSeparateAudio?.(); } catch { /* a listener's bug never breaks the probe */ }
         }
         // the first segment of a media playlist (with its init segment) as ffprobe's stdin
-        const sample = async (text: string, from: string) => {
+        const sample = async (text: string, from: string, onError: (e: unknown) => void) => {
           const lines = text.split(/\r?\n/).map((l) => l.trim());
           const seg = lines.find((l) => l !== '' && !l.startsWith('#'));
           if (!seg) throw new ProbeFail('invalid');
@@ -267,22 +297,32 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
           const fmt = segmentFormat(seg, init);
           const segBody = (await get(resolveUri(seg, from), SEGMENT_MAX_BYTES)).body;
           const body = (async function* () {
-            if (initBody) yield* upTo(initBody, SEGMENT_MAX_BYTES, (e) => { pipeError = e; });
-            yield* upTo(segBody, SEGMENT_MAX_BYTES, (e) => { pipeError = e; });
+            if (initBody) yield* upTo(initBody, SEGMENT_MAX_BYTES, onError);
+            yield* upTo(segBody, SEGMENT_MAX_BYTES, onError);
           })();
           return { fmt, body };
         };
         if (variant?.audio) {
-          // audio in a playlist of its own: its facts come from its own first segment; passthrough cannot merge two playlists
-          const list = await get(resolveUri(variant.audio.uri, master.url), PLAYLIST_MAX_BYTES);
-          const text = await readText(list.body);
-          if (!text.trimStart().startsWith('#EXTM3U')) return fail('invalid');
-          const a = await sample(text, list.url);
-          const r = await deps.run('ffprobe', pipeArgs(a.fmt), { timeoutMs: left(), stdin: a.body, ...abort });
-          if (r.code === TIMEOUT_CODE) return fail('timeout');
-          separate = streamsOf(r.stdout).audio;
+          // audio in a playlist of its own: its facts come from its own first segment, sampled while the video is (one budget for
+          // both). Whatever goes wrong with it (playlist or segment unreachable, no audio stream found, the budget spent) leaves
+          // its facts unknown but never fails the probe or turns it into a passthrough: the answer is remux either way
+          const audioUri = resolveUri(variant.audio.uri, master.url);
+          renditionDone = (async () => {
+            const list = await get(audioUri, PLAYLIST_MAX_BYTES);
+            const text = await readText(list.body);
+            if (!text.trimStart().startsWith('#EXTM3U')) return;
+            const a = await sample(text, list.url, () => {});
+            const r = await deps.run('ffprobe', pipeArgs(a.fmt), { timeoutMs: left(), stdin: a.body, ...abort });
+            if (r.code !== TIMEOUT_CODE) separate = streamsOf(r.stdout).audio;
+          })().catch(() => {});
         }
-        const v = await sample(media, base);
+        if (variant) {
+          const list = await get(resolveUri(variant.uri, base), PLAYLIST_MAX_BYTES);
+          base = list.url;
+          media = await readText(list.body);
+          if (!media.trimStart().startsWith('#EXTM3U')) return fail('invalid');
+        }
+        const v = await sample(media, base, (e) => { pipeError = e; });
         format = v.fmt;
         stdin = v.body;
       } else {
@@ -291,16 +331,22 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
         stdin = upTo(res.body, TS_PROBE_BYTES, (e) => { pipeError = e; });
       }
       result = await deps.run('ffprobe', pipeArgs(format), { timeoutMs: left(), stdin, ...abort });
+      await within(renditionDone, left()).catch(() => {});
     }
     if (result.code === TIMEOUT_CODE) return fail('timeout');
     const { video, audio: muxed } = streamsOf(result.stdout);
-    const audio = separate ?? muxed;
+    // a separate rendition is what plays, never the variant's own audio; unknown (undefined) when its sample failed
+    const audio = rendition ? separate : muxed;
     if (!video) {
       if (pipeError !== undefined) throw pipeError;
       return fail(srt && result.code !== 0 ? 'unreachable' : 'no_video');
     }
-    // an HLS source is passed through untouched only when a browser can play its audio (or it has none); else the audio becomes AAC
-    const needs = video.codec !== 'h264' ? 'transcode' : input.kind === 'hls' && !separate && (!audio || audioPassable(audio.codec)) ? 'passthrough' : 'remux';
+    // An HLS source is passed through untouched only when a browser can play its audio (or it has none) and that audio is in the
+    // variant itself; else the audio becomes AAC. A separate rendition always needs a remux (passthrough plays one playlist only),
+    // also when its sample failed: the remux then reads it as a second input and makes AAC of whatever it holds (`1:a:0?`, so a
+    // rendition that turns out silent still gives the picture). Answering passthrough there would be the silent picture this rule
+    // exists to prevent; a remux of a working channel plays it either way (the driver drops a rendition it cannot read at all).
+    const needs = video.codec !== 'h264' ? 'transcode' : input.kind === 'hls' && !rendition && (!audio || audioPassable(audio.codec)) ? 'passthrough' : 'remux';
     return { ok: true, video, ...(audio ? { audio } : {}), needs };
   } catch (e) {
     if (e instanceof ProbeFail) return fail(e.code);
