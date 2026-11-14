@@ -25,7 +25,7 @@ import { epgSummary } from './epg.js';
 import { refreshRunning, refreshSource } from './refresh.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
 import { FeedError, createFeed, deleteFeed, feedCreate, ingestView, reassignPort, regenerateCredentials, syncIngest } from './ownfeeds.js';
-import { SourceRefusal, SourceTestError, anyTestBody, createSource, deleteSource, listSources, sourceCreate, sourcePatch, testGuide, testSource, updateSource } from './sources.js';
+import { SourceRefusal, SourceTestError, anyTestBody, createSource, deleteSource, isGuide, listSources, sourceCreate, sourcePatch, testGuide, testSource, updateSource } from './sources.js';
 
 /** the line for an install without the updater (spec §4.3); the page shows it with the compose commands */
 const ENV_LINE = 'COMPOSE_PROFILES=livetv';
@@ -320,15 +320,16 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   /**
    * *Aktualisieren*: starts the refresh and answers 202 `{ started: true }` at once; the page polls `GET /sources` for `state`
    * (lastRefreshAt, lastError, counts). A refresh already running for the source is not started again (`{ started: false }`; the single
-   * flight in refresh.ts also covers the race). The own-feeds source has no list (409 `no_list`); while livetv is not installed nothing
+   * flight in refresh.ts also covers the race). A disabled guide answers 409 `disabled`. The own-feeds source has no list (409 `no_list`); while livetv is not installed nothing
    * could be fetched (409 `livetv_off`, nothing recorded on the source).
    */
   app.post('/api/admin/livetv/sources/:id/refresh', admin, async (req, reply) => {
     const sid = paramId(req);
-    const s = sid ? (await ctx.db.query<{ kind: string }>('select kind from livetv_sources where id = $1', [sid])).rows[0] : undefined;
+    const s = sid ? (await ctx.db.query<{ kind: string; enabled: boolean }>('select kind, enabled from livetv_sources where id = $1', [sid])).rows[0] : undefined;
     if (!sid || !s) return reply.code(404).send({ error: 'not_found' });
     if (isOwnFeeds(s.kind)) return reply.code(409).send({ error: 'no_list' });
     if (!livetvInstalled(ctx)) return reply.code(409).send({ error: 'livetv_off' });
+    if (isGuide(s.kind) && !s.enabled) return reply.code(409).send({ error: 'disabled' }); // a disabled guide is not refreshed
     if (await refreshRunning(ctx, sid)) return reply.code(202).send({ started: false });
     await audit(ctx, req.user!.id, 'livetv.source.refresh', sid, { fields: [] });
     const log = req.log;

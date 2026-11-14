@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { decrypt, encrypt, keyFromBase64 } from '../src/crypto.js';
 import { detectLivetv } from '../src/livetv/detect.js';
-import { buildEpgIndex, matchGuides, matchIds, nowNext, refreshEpg } from '../src/livetv/epg.js';
+import { buildEpgIndex, matchGuides, matchIds, nowNext, refreshEpg, scopeGuides } from '../src/livetv/epg.js';
 import { livetvRefreshTick } from '../src/livetv/refresh.js';
 import type { SourceRow } from '../src/livetv/sources.js';
 import { ENC_KEY, fakeHttp, makeEnv, type Call, type TestEnv } from './helpers.js';
@@ -274,6 +274,8 @@ describe('fill-only matching across guides (Task 2)', () => {
     // a scope without the channel's source skips the guide
     expect(matchGuides(ch, [{ sourceId: 'g1', scope: ['X'], index: byName }, { sourceId: 'g2', scope: ['L'], index: byName2 }])).toEqual({ sourceId: 'g2', xmlId: 'sw-b', pass: 3 });
     expect(matchGuides(ch, [{ sourceId: 'g1', scope: ['X'], index: byName }])).toBeNull();
+    // the precomputed (Set) form gives the same answers
+    expect(matchGuides(ch, scopeGuides([{ sourceId: 'g1', scope: ['X'], index: byName }, { sourceId: 'g2', scope: ['L'], index: byName2 }]))).toEqual({ sourceId: 'g2', xmlId: 'sw-b', pass: 3 });
   });
 
   it('a guide fills a channel no list guide matches', async () => {
@@ -348,6 +350,56 @@ describe('fill-only matching across guides (Task 2)', () => {
     expect(await mapped(ch)).toEqual([g2.id, 'sw-2']);
     await matchIds(env.pool);
     expect(await mapped(ch)).toEqual([g2.id, 'sw-2']);
+  });
+
+  it('checkScope locks the scoped sources: a concurrent list delete waits for the guide write', async () => {
+    const a = await addList('Nordlicht Paket');
+    const c = await env.pool.connect();
+    try {
+      await c.query('begin');
+      await c.query('select id from livetv_sources where id = $1 for share', [a]); // what checkScope holds until commit
+      const del = call('DELETE', `/api/admin/livetv/sources/${a}`);
+      await new Promise((r) => setTimeout(r, 300));
+      expect((await env.pool.query('select 1 from livetv_sources where id = $1', [a])).rowCount).toBe(1); // still blocked
+      await c.query('commit');
+      expect((await del).statusCode).toBe(200);
+    } finally { c.release(); }
+    // and the source in the SQL really is taken with a share lock
+    const src = (await import('node:fs')).readFileSync(new URL('../src/livetv/sources.ts', import.meta.url), 'utf8');
+    expect(src).toMatch(/kind <> \$2 order by id for share/);
+  });
+
+  it('refuses position for a list and the own-feeds source', async () => {
+    const list = await addList();
+    const feeds = await addFeeds();
+    for (const id of [list, feeds]) {
+      const r = await call('PATCH', `/api/admin/livetv/sources/${id}`, { position: 7 });
+      expect(r.statusCode).toBe(400);
+      expect(r.json()).toEqual({ error: 'invalid', field: 'position' });
+    }
+    expect((await row(list)).position).toBe(0);
+  });
+
+  it("changing a guide's epgUrl re-matches its channels and marks the import due", async () => {
+    const list = await addList();
+    const g = (await createGuide()).json().id;
+    await addEpg(g, 'sw-1', 'Sternwarte 24');
+    const ch = await addChannel(list, 'Sternwarte 24');
+    await matchIds(env.pool);
+    expect(await mapped(ch)).toEqual([g, 'sw-1']);
+    await env.pool.query('update livetv_sources set epg_last_refresh_at = now() where id = $1', [g]);
+    await env.pool.query('delete from livetv_epg_channels where source_id = $1', [g]);
+    expect((await call('PATCH', `/api/admin/livetv/sources/${g}`, { epgUrl: GUIDE_URL_2 })).statusCode).toBe(200);
+    expect((await row(g)).epg_last_refresh_at).toBeNull();
+    expect(await mapped(ch)).toBeNull(); // re-matched at once against the (now empty) index
+  });
+
+  it('a manual refresh of a disabled guide answers 409 disabled', async () => {
+    const g = (await createGuide()).json().id;
+    await call('PATCH', `/api/admin/livetv/sources/${g}`, { enabled: false });
+    const r = await call('POST', `/api/admin/livetv/sources/${g}/refresh`);
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'disabled' });
   });
 
   it('a disabled guide is not used and now/next ignores it', async () => {

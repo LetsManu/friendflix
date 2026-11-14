@@ -312,7 +312,8 @@ const named = (b: object) => FIELD_ORDER.filter((k) => k in b && (b as Record<st
 /** a guide's scope names existing lists or the own-feeds source, never a guide (or an unknown id): else `invalid` `guideScope` */
 async function checkScope(c: pg.PoolClient, scope: readonly string[] | null): Promise<void> {
   if (scope === null) return;
-  const n = (await c.query<{ n: number }>('select count(*)::int as n from livetv_sources where id = any($1::uuid[]) and kind <> $2', [[...scope], GUIDE_KIND])).rows[0]!.n;
+  // locked (like deleteSource's `for update`): a list deleted meanwhile cannot leave its id in an enabled guide's scope
+  const n = (await c.query('select id from livetv_sources where id = any($1::uuid[]) and kind <> $2 order by id for share', [[...scope], GUIDE_KIND])).rowCount;
   if (n !== scope.length) throw new SourceRefusal('invalid', 'guideScope'); // the schema removed duplicates
 }
 
@@ -381,6 +382,8 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
     if (!guide && patch.guideScope !== undefined) throw new SourceRefusal('invalid', 'guideScope');
     // a guide whose scoped sources were all deleted ([]) is switched on again only together with a new scope
     if (guide && patch.enabled === true && patch.guideScope === undefined && s.guide_scope?.length === 0) throw new SourceRefusal('invalid', 'guideScope');
+    // only the extra guides are ordered (the web does not reorder lists): a list's or the own-feeds source's position is not patchable
+    if (!guide && patch.position !== undefined) throw new SourceRefusal('invalid', 'position');
     if (own && patch.url !== undefined) throw new SourceRefusal('invalid', 'url');
     if (own && patch.epgUrl !== undefined && patch.epgUrl !== null) throw new SourceRefusal('invalid', 'epgUrl');
     const allowLan = patch.allowLan ?? s.allow_lan;
@@ -415,12 +418,13 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
     }
     if (patch.position !== undefined && patch.position !== s.position) {
       // order among guides (first wins a fill): the guide holding that place takes this one's old place
-      if (guide) await c.query('update livetv_sources set position = $2 where kind = $3 and position = $1 and id <> $4', [patch.position, s.position, GUIDE_KIND, id]);
+      await c.query('update livetv_sources set position = $2 where kind = $3 and position = $1 and id <> $4', [patch.position, s.position, GUIDE_KIND, id]);
       put('position', patch.position);
     }
     // a guide imports again on the next tick when its link, its scope (the request filter) or its being switched on changed
     const scopeChanged = patch.guideScope !== undefined && !(patch.guideScope === null ? s.guide_scope === null : s.guide_scope !== null && sameSet(patch.guideScope, s.guide_scope));
-    if (guide && ((patch.epgUrl != null && decrypt(ctx.encKey, s.epg_url_enc!) !== patch.epgUrl) || scopeChanged || (patch.enabled === true && !s.enabled))) {
+    const epgUrlChanged = guide && patch.epgUrl != null && decrypt(ctx.encKey, s.epg_url_enc!) !== patch.epgUrl;
+    if (guide && (epgUrlChanged || scopeChanged || (patch.enabled === true && !s.enabled))) {
       set.push('epg_last_refresh_at = null');
     }
     // another list (a new URL) is imported again too (bughunt L1), also for a source with refresh *Manuell*
@@ -436,7 +440,7 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
     await c.query(`update livetv_sources set ${set.join(', ')} where id = $${vals.length}`, vals);
     await auditInTx({ db: c }, actor, 'livetv.source.update', id, { fields: named(patch) });
     // the fill pass (epg.ts matchIds) follows a guide's being switched on or off, its scope and its order at once
-    if (guide && ((patch.enabled !== undefined && patch.enabled !== s.enabled) || scopeChanged || (patch.position !== undefined && patch.position !== s.position))) {
+    if (guide && ((patch.enabled !== undefined && patch.enabled !== s.enabled) || scopeChanged || epgUrlChanged || (patch.position !== undefined && patch.position !== s.position))) {
       await matchIds(c);
     }
     return true;

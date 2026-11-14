@@ -159,18 +159,22 @@ export function matchChannel(ch: MatchInput, idx: EpgIndex): { sourceId: string;
 
 /** one enabled extra guide for the fill pass: its "Gilt für" (null = all channels) and its XMLTV channel index */
 export type GuideIndex = { sourceId: string; scope: readonly string[] | null; index: EpgSourceIndex };
+type ScopedGuide = { g: GuideIndex; scope: ReadonlySet<string> | null };
+/** each guide's scope as a Set, once per run (matchIds builds it once for all channels) */
+export const scopeGuides = (guides: ReadonlyArray<GuideIndex>): ScopedGuide[] => guides.map((g) => ({ g, scope: g.scope === null ? null : new Set(g.scope) }));
 
 /**
  * The fill pass of the extra guides (extra guides design, *Matching*): only for a channel matchChannel left without a match. The four
  * passes in order; per pass the guides in the given order (their `position`), skipping a guide whose scope does not hold the channel's
  * source; the first guide with any hit decides (exactly one hit -> match, several -> next pass). Never a similarity match.
  */
-export function matchGuides(ch: MatchInput, guides: ReadonlyArray<GuideIndex>): { sourceId: string; xmlId: string; pass: 1 | 2 | 3 | 4 } | null {
+export function matchGuides(ch: MatchInput, guides: ReadonlyArray<GuideIndex> | ReadonlyArray<ScopedGuide>): { sourceId: string; xmlId: string; pass: 1 | 2 | 3 | 4 } | null {
   for (const p of PASSES) {
     const key = p.key(ch);
     if (!key) continue;
-    for (const g of guides) {
-      if (g.scope !== null && !g.scope.includes(ch.sourceId)) continue;
+    for (const x of guides) {
+      const { g, scope } = 'g' in x ? x : { g: x, scope: x.scope === null ? null : new Set(x.scope) };
+      if (scope !== null && !scope.has(ch.sourceId)) continue;
       const a = g.index[p.map].get(key);
       if (!a || a.length === 0) continue;
       if (a.length === 1) return { sourceId: g.sourceId, xmlId: a[0]!, pass: p.pass };
@@ -235,6 +239,7 @@ async function matchIndexes(db: Db): Promise<{ lists: EpgIndex; guides: GuideInd
 export async function matchIds(db: Db, o: { ids?: readonly string[]; includeMissing?: boolean; dropLogo?: boolean } = {}): Promise<{ matched: number; total: number }> {
   if (o.ids && o.ids.length === 0) return { matched: 0, total: 0 };
   const { lists, guides } = await matchIndexes(db);
+  const scoped = scopeGuides(guides);
   const rows = (await db.query<{ id: string; source_id: string; tvg_id: string | null; tvg_name: string | null; import_name: string; epg_source_id: string | null; epg_channel_id: string | null }>(
     `select id, source_id, tvg_id, tvg_name, import_name, epg_source_id, epg_channel_id from livetv_channels
       where epg_match = 'auto' and ($2::boolean or missing_since is null) and ($1::uuid[] is null or id = any($1::uuid[]))`,
@@ -245,7 +250,7 @@ export async function matchIds(db: Db, o: { ids?: readonly string[]; includeMiss
   const xmls: Array<string | null> = [];
   for (const r of rows) {
     const ch = { sourceId: r.source_id, tvgId: r.tvg_id, tvgName: r.tvg_name, importName: r.import_name };
-    const m = matchChannel(ch, lists) ?? (guides.length > 0 ? matchGuides(ch, guides) : null);
+    const m = matchChannel(ch, lists) ?? (guides.length > 0 ? matchGuides(ch, scoped) : null);
     if (m) matched++;
     const src = m?.sourceId ?? null;
     const xml = m?.xmlId ?? null;
