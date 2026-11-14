@@ -9,6 +9,7 @@ import type { Ctx } from '../ctx.js';
 import { CHANNEL_SELECT, OWN_FEEDS_KIND, isOwnFeeds } from './channels.js';
 import { LivetvError, dropLivetvProof, livetvCall, livetvStream } from './client.js';
 import { matchIds } from './epg.js';
+import { removeGuideFiles } from './guidefiles.js';
 import { livetvWrite } from './tx.js';
 import { checkSourceUrl, maskUrl, urlRefusal } from './urls.js';
 import type { FetchM3uAnswer } from './wire.js';
@@ -34,6 +35,8 @@ export const GUIDE_KIND = 'guide';
 /** an extra programme guide (kind 'guide'): no channels, no list, only its XMLTV (extra guides design) */
 export const isGuide = (kind: string): boolean => kind === GUIDE_KIND;
 export type GuideProvider = 'xmltv_url' | 'xmltv_file';
+/** an extra guide from an uploaded XMLTV file (Stage 2): no link, refreshed only by an upload, *Aktualisieren* or an edit (refresh.ts) */
+export const isFileGuide = (s: { kind: string; guide_provider: string | null }): boolean => isGuide(s.kind) && s.guide_provider === 'xmltv_file';
 
 export type Refresh = '6h' | '12h' | '24h' | 'weekly' | 'manual';
 
@@ -69,8 +72,11 @@ export interface SourceRow {
   guide_provider: GuideProvider | null;
   /** kind 'guide' only: the sources whose channels it may serve; null = all, [] = none left (the guide was disabled) */
   guide_scope: string[] | null;
-  /** an uploaded guide's stored file (Stage 2) */
+  /** an uploaded guide's stored file (Stage 2): `<id>.xml[.gz]` in guidefiles.ts guideDir, set once an upload's import succeeded */
   guide_file: string | null;
+  /** the stored file's name as uploaded (cut) and its size (bigint: pg answers a string) (migration 53) */
+  guide_file_name: string | null;
+  guide_file_bytes: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -104,6 +110,9 @@ export interface SourceView {
   guideScope: string[] | null;
   /** channels (in the latest import) whose programme currently comes from this source */
   servedChannels: number;
+  /** an uploaded guide's current file: the name it was uploaded with and its size; null until an upload was imported, and for others */
+  fileName: string | null;
+  fileBytes: number | null;
   state: {
     lastRefreshAt: string | null;
     lastOkAt: string | null;
@@ -159,9 +168,10 @@ const listCreate = z.object({
   maxStreams: fields.maxStreams.default(null),
   enabled: fields.enabled.default(true),
 }).strict();
-/** an extra programme guide from an XMLTV link (Stage 1; uploaded files come with Stage 2) */
-const guideCreate = z.object({
+/** an extra programme guide from an XMLTV link (Stage 1) */
+const linkGuideCreate = z.object({
   kind: z.literal('guide'),
+  guideProvider: z.literal('xmltv_url'),
   name: fields.name,
   epgUrl: httpUrl,
   userAgent: fields.userAgent.default(null),
@@ -171,15 +181,37 @@ const guideCreate = z.object({
   guideScope,
   enabled: fields.enabled.default(true),
 }).strict();
-/** `POST /sources`: a body without `kind` is a provider list (as before guides existed) */
+/** none of a link's fields: a field given anyway is refused `invalid` with its name */
+const absent = z.never().optional();
+/** an extra programme guide from an uploaded XMLTV file (Stage 2): created first, its file follows with `PUT /sources/:id/file` */
+const fileGuideCreate = z.object({
+  kind: z.literal('guide'),
+  guideProvider: z.literal('xmltv_file'),
+  name: fields.name,
+  epgUrl: absent,
+  userAgent: absent,
+  allowLan: absent,
+  /** a file is imported when it is uploaded, never on a schedule */
+  refresh: z.literal('manual').default('manual'),
+  epgShiftMin: fields.epgShiftMin.default(0),
+  guideScope,
+  enabled: fields.enabled.default(true),
+}).strict();
+const guideCreate = z.discriminatedUnion('guideProvider', [linkGuideCreate, fileGuideCreate]);
+/** `POST /sources`: a body without `kind` is a provider list (as before guides existed), a guide without `guideProvider` a link */
 export const sourceCreate = z.preprocess(
-  (v) => (v && typeof v === 'object' && !Array.isArray(v) && !('kind' in v) ? { ...v, kind: 'm3u' } : v),
+  (v) => {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return v;
+    if (!('kind' in v)) return { ...v, kind: 'm3u' };
+    return (v as { kind: unknown }).kind === 'guide' && !('guideProvider' in v) ? { ...v, guideProvider: 'xmltv_url' } : v;
+  },
   z.discriminatedUnion('kind', [listCreate, guideCreate]),
 );
 export const sourcePatch = z.object({ ...fields, guideScope, position }).partial().strict();
 export type ListBody = z.output<typeof listCreate>;
-export type GuideBody = z.output<typeof guideCreate>;
-export type SourceBody = ListBody | GuideBody;
+export type GuideBody = z.output<typeof linkGuideCreate>;
+export type FileGuideBody = z.output<typeof fileGuideCreate>;
+export type SourceBody = ListBody | GuideBody | FileGuideBody;
 export type SourcePatch = z.output<typeof sourcePatch>;
 
 /** `POST /sources/test`: a missing `url` (`epgUrl`, `userAgent`) with `sourceId` uses the stored one; `epgUrl: null` = no EPG */
@@ -224,7 +256,7 @@ function checkUrl(raw: string, allowLan: boolean, field: 'url' | 'epgUrl'): void
 const VIEW_COLUMNS = `src.id, src.kind, src.name, src.url_hint, src.epg_hint, src.user_agent, src.allow_lan, src.refresh, src.skip_groups,
   src.numbering, src.number_base, src.logo_pref, src.epg_shift_min, src.max_streams, src.enabled, src.position,
   src.last_refresh_at, src.last_ok_at, src.last_error, src.last_counts, src.epg_last_refresh_at, src.epg_last_ok_at, src.epg_last_error,
-  src.epg_counts, src.guide_provider, src.guide_scope`;
+  src.epg_counts, src.guide_provider, src.guide_scope, src.guide_file, src.guide_file_name, src.guide_file_bytes`;
 const VIEW_SQL = `
   select ${VIEW_COLUMNS},
     coalesce(n.channels, 0)::int as channel_count,
@@ -240,7 +272,7 @@ const VIEW_SQL = `
   left join (select epg_source_id, count(*) as served from livetv_channels
               where missing_since is null and epg_channel_id is not null and epg_match <> 'none' group by epg_source_id) sv
     on sv.epg_source_id = src.id`;
-type ViewRow = Omit<SourceRow, 'url_enc' | 'epg_url_enc' | 'guide_file' | 'created_at' | 'updated_at'> & { channel_count: number; pending_groups: number; served_channels: number };
+type ViewRow = Omit<SourceRow, 'url_enc' | 'epg_url_enc' | 'created_at' | 'updated_at'> & { channel_count: number; pending_groups: number; served_channels: number };
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -270,6 +302,8 @@ function toView(r: ViewRow): SourceView {
     guideProvider: isGuide(r.kind) ? r.guide_provider : null,
     guideScope: isGuide(r.kind) ? r.guide_scope : null,
     servedChannels: r.served_channels,
+    fileName: isFileGuide(r) && r.guide_file ? r.guide_file_name ?? 'guide.xml' : null,
+    fileBytes: isFileGuide(r) && r.guide_file ? num(Number(r.guide_file_bytes)) : null,
     state: {
       lastRefreshAt: iso(r.last_refresh_at),
       lastOkAt: iso(r.last_ok_at),
@@ -319,13 +353,15 @@ async function checkScope(c: pg.PoolClient, scope: readonly string[] | null): Pr
 
 /** the fields a guide does not have (it has no list): a patch naming one is refused `invalid` with that field */
 const LIST_ONLY = ['url', 'skipGroups', 'numbering', 'numberBase', 'logoPref', 'maxStreams'] as const;
+/** the link fields an uploaded guide does not have either (its refresh stays 'manual') */
+const LINK_ONLY = ['epgUrl', 'userAgent', 'allowLan'] as const;
 
 /**
  * A provider list (kind 'm3u'; the own-feeds source is created by Task 20) or an extra programme guide (kind 'guide', an XMLTV link).
  * URLs are checked first, then stored encrypted. A new guide has never been refreshed, so the next refresh tick imports it.
  */
 export async function createSource(ctx: WriteCtx, actor: string, b: SourceBody): Promise<SourceView> {
-  if (b.kind === 'guide') return createGuide(ctx, actor, b);
+  if (b.kind === 'guide') return b.guideProvider === 'xmltv_file' ? createFileGuide(ctx, actor, b) : createGuide(ctx, actor, b);
   checkUrl(b.url, b.allowLan, 'url');
   if (b.epgUrl !== null) checkUrl(b.epgUrl, b.allowLan, 'epgUrl');
   const id = randomUUID();
@@ -358,6 +394,20 @@ async function createGuide(ctx: WriteCtx, actor: string, b: GuideBody): Promise<
   return (await sourceView(ctx, id))!;
 }
 
+/** a guide whose file comes with `PUT /sources/:id/file`; until then it has none (`fileName` null) and nothing to import */
+async function createFileGuide(ctx: WriteCtx, actor: string, b: FileGuideBody): Promise<SourceView> {
+  const id = randomUUID();
+  await write(ctx, async (c) => {
+    await checkScope(c, b.guideScope);
+    await c.query(
+      `insert into livetv_sources(id, kind, name, refresh, epg_shift_min, enabled, guide_provider, guide_scope, position)
+       values ($1, $2, $3, 'manual', $4, $5, 'xmltv_file', $6, (select coalesce(max(position) + 1, 0) from livetv_sources))`,
+      [id, GUIDE_KIND, b.name, b.epgShiftMin, b.enabled, b.guideScope]);
+    await auditInTx({ db: c }, actor, 'livetv.source.create', id, { fields: named(b) });
+  });
+  return (await sourceView(ctx, id))!;
+}
+
 /** the same set of group names (both are free of duplicates: the schema removes them, and so did every earlier save) */
 const sameSet = (a: readonly string[], b: readonly string[]) => {
   const have = new Set(b);
@@ -378,6 +428,10 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
     const guide = isGuide(s.kind);
     // a guide has no list and always its link; only a guide has a scope
     if (guide) for (const k of LIST_ONLY) if (patch[k] !== undefined) throw new SourceRefusal('invalid', k);
+    if (isFileGuide(s)) {
+      for (const k of LINK_ONLY) if (patch[k] !== undefined) throw new SourceRefusal('invalid', k);
+      if (patch.refresh !== undefined && patch.refresh !== 'manual') throw new SourceRefusal('invalid', 'refresh');
+    }
     if (guide && patch.epgUrl === null) throw new SourceRefusal('invalid', 'epgUrl');
     if (!guide && patch.guideScope !== undefined) throw new SourceRefusal('invalid', 'guideScope');
     // a guide whose scoped sources were all deleted ([]) is switched on again only together with a new scope
@@ -453,9 +507,12 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
  * push feeds went with it (counted inside the transaction), so the caller re-sends livetv's ingest set (ownfeeds.ts syncIngest).
  * Guides: a deleted guide's channels (automatic matches and hand pins) go back to `auto`; a deleted source leaves every guide scope,
  * and a guide whose scope is left empty is switched off ("Gilt für keine Quelle mehr"). Either way the channels are matched again.
+ * An uploaded guide's files go after the commit (an upload still running for it removes its own when it finds the row gone).
  */
-export async function deleteSource(ctx: Pick<Ctx, 'db'>, actor: string, id: string): Promise<{ channels: number; push: boolean } | null> {
-  return write(ctx, async (c) => {
+export async function deleteSource(
+  ctx: Pick<Ctx, 'db' | 'cfg'>, actor: string, id: string, log?: { warn(o: object, m: string): void },
+): Promise<{ channels: number; push: boolean } | null> {
+  const r = await write(ctx, async (c) => {
     const s = (await c.query<{ kind: string }>('select kind from livetv_sources where id = $1 for update', [id])).rows[0];
     if (!s) return null;
     const n = (await c.query<{ n: number; push: number }>(
@@ -472,8 +529,16 @@ export async function deleteSource(ctx: Pick<Ctx, 'db'>, actor: string, id: stri
         where kind = $2 and $1::uuid = any(guide_scope)`, [id, GUIDE_KIND])).rowCount ?? 0;
     if (guide || scoped > 0) await matchIds(c);
     await auditInTx({ db: c }, actor, 'livetv.source.delete', id, { fields: [], channels: n.n });
-    return { channels: n.n, push: n.push > 0 };
+    return { channels: n.n, push: n.push > 0, guide };
   });
+  if (!r) return null;
+  // the delete has committed: a file that cannot be removed is logged (by the error's name), never answered as a failed delete
+  if (r.guide) {
+    await removeGuideFiles(ctx, id).catch((e: unknown) => {
+      log?.warn({ sourceId: id, error: e instanceof Error ? e.name : 'unknown' }, 'livetv guide files not removed');
+    });
+  }
+  return { channels: r.channels, push: r.push };
 }
 
 // ---- Prüfen (spec §9.1) ----

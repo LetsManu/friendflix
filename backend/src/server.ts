@@ -20,7 +20,8 @@ import { convBenchTick } from './convbench.js';
 import { detectLivetv, livetvDetectTick, livetvInstalled } from './livetv/detect.js';
 import { livetvEpgPruneTick } from './livetv/epg.js';
 import { livetvIngestTick } from './livetv/ownfeeds.js';
-import { livetvRefreshTick } from './livetv/refresh.js';
+import { sweepPendingGuideFiles } from './livetv/guidefiles.js';
+import { livetvRefreshTick, refreshRunning } from './livetv/refresh.js';
 import { livetvTick } from './livetv/streams.js';
 import { hevcTick } from './hevcenc.js';
 import { digestTick } from './digest.js';
@@ -132,6 +133,10 @@ timers.push(setInterval(() => { if (op()) void reminderTick(ctx).catch(jobFailed
 timers.push(setInterval(() => { if (op()) void nightlyTick(ctx).catch(jobFailed(ctx, app.log, 'playback-check', 'playback check failed')); }, 600_000));
 timers.push(setInterval(() => { if (op()) void hevcTick(ctx).catch(jobFailed(ctx, app.log, 'hevc-probe', 'HEVC probe failed')); }, 600_000)); // timed probe of the HEVC conversion while unproven and idle
 timers.push(setInterval(() => { if (op()) void convBenchTick(ctx).catch(jobFailed(ctx, app.log, 'conv-bench', 'conversion benchmark failed')); }, 600_000)); // the conversion benchmark once while unmeasured (or stale) and idle
+// upload files left over from a crash or a restart (livetv-guides/*.pending*), except those of an upload another backend runs now
+void sweepPendingGuideFiles(ctx, (id) => refreshRunning(ctx, id))
+  .then((n) => { if (n) app.log.info({ files: n }, 'removed leftover livetv guide uploads'); })
+  .catch(jobFailed(ctx, app.log, 'livetv-guide-sweep', 'livetv guide upload sweep failed'));
 void detectLivetv(ctx).catch(() => undefined); // the first look at the optional livetv container, so a running one is not mistaken for a new one
 timers.push(setInterval(() => { void livetvDetectTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-detect', 'livetv detection failed')); }, 60_000)); // installed or not: featureFlags, the admin entry, the benchmark after enabling
 timers.push(setInterval(() => { if (op()) void livetvIngestTick(ctx, app.log).catch(jobFailed(ctx, app.log, 'livetv-ingest', 'livetv ingest retry failed')); }, 60_000)); // re-sends the SRT push set after a failed sync (ltv:ingest:dirty), only while livetv is installed

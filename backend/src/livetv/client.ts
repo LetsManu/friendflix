@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { Readable } from 'node:stream';
 import type { Ctx } from '../ctx.js';
 
 /**
@@ -39,7 +40,11 @@ export function livetvKey(secret: string): Buffer {
 }
 
 export function signLivetv(key: Buffer, method: string, path: string, body = '', ts = String(Date.now()), nonce = randomBytes(16).toString('hex')): Record<string, string> {
-  const canonical = [method.toUpperCase(), path, ts, nonce, createHash('sha256').update(body).digest('hex')].join('\n');
+  return signLivetvHash(key, method, path, createHash('sha256').update(body).digest('hex'), ts, nonce);
+}
+/** signLivetv from the body's SHA-256 (hex): the same canonical string, for a body that is streamed (livetvUpload) */
+export function signLivetvHash(key: Buffer, method: string, path: string, bodySha256: string, ts = String(Date.now()), nonce = randomBytes(16).toString('hex')): Record<string, string> {
+  const canonical = [method.toUpperCase(), path, ts, nonce, bodySha256].join('\n');
   return { 'x-ff-livetv-ts': ts, 'x-ff-livetv-nonce': nonce, 'x-ff-livetv-signature': `v1=${createHmac('sha256', key).update(canonical).digest('hex')}` };
 }
 
@@ -73,6 +78,13 @@ function deadline(ms: number, outer?: AbortSignal): { signal: AbortSignal; clear
   return { signal: ac.signal, clear };
 }
 
+/**
+ * a streamed body (livetvUpload): its bytes (read once, as fetch sends them), their SHA-256 (hex, computed by the caller beforehand) and
+ * their length. livetv checks the signed hash against the bytes it reads (livetv/src/routes/parse.ts).
+ */
+export interface RawBody { raw: AsyncIterable<Uint8Array>; sha256: string; length: number }
+const isRaw = (b: unknown): b is RawBody => typeof b === 'object' && b !== null && 'raw' in b && 'sha256' in b;
+
 /** one signed request; network errors and timeouts become LivetvError(null, 'unreachable'), a path off livetv `invalid_path` */
 async function signedFetch(ctx: Ctx, method: Method, path: string, body: unknown, signal: AbortSignal): Promise<Response> {
   const base = new URL(ctx.cfg.LIVETV_URL);
@@ -81,11 +93,22 @@ async function signedFetch(ctx: Ctx, method: Method, path: string, body: unknown
   if (!path.startsWith('/') || path.startsWith('//') || url.origin !== base.origin) throw new LivetvError(null, 'invalid_path');
   // nothing leaves for a host that has not proven livetv's key (the body is not even serialised before)
   if (!(await proven(ctx))) throw new LivetvError(null, 'unproven');
-  const raw = body === undefined ? '' : JSON.stringify(body);
-  const headers = signLivetv(livetvKey(ctx.cfg.INTERNAL_SECRET), method, url.pathname + url.search, raw);
-  if (raw) headers['content-type'] = 'application/json';
+  let init: RequestInit;
+  if (isRaw(body)) {
+    // the declared hash is signed; the bytes are streamed (`duplex: 'half'`: Node's fetch needs it for a stream body)
+    const headers = signLivetvHash(livetvKey(ctx.cfg.INTERNAL_SECRET), method, url.pathname + url.search, body.sha256);
+    headers['x-ff-livetv-body-sha256'] = body.sha256;
+    headers['content-type'] = 'application/octet-stream';
+    headers['content-length'] = String(body.length);
+    init = { method, headers, body: Readable.toWeb(Readable.from(body.raw)) as ReadableStream<Uint8Array>, duplex: 'half', signal, redirect: 'error' } as RequestInit;
+  } else {
+    const raw = body === undefined ? '' : JSON.stringify(body);
+    const headers = signLivetv(livetvKey(ctx.cfg.INTERNAL_SECRET), method, url.pathname + url.search, raw);
+    if (raw) headers['content-type'] = 'application/json';
+    init = { method, headers, body: raw || undefined, signal, redirect: 'error' };
+  }
   try {
-    return await ctx.fetchImpl(url.href, { method, headers, body: raw || undefined, signal, redirect: 'error' });
+    return await ctx.fetchImpl(url.href, init);
   } catch {
     dropLivetvProof(ctx); // livetv may be gone: whoever answers to the name next proves its key first
     throw new LivetvError(null, 'unreachable');
@@ -126,7 +149,8 @@ export async function livetvCall<T>(ctx: Ctx, method: Method, path: string, body
 /**
  * A signed POST whose answer is streamed (NDJSON, image bytes); the timeout (and `signal`, which cancels early) keeps running while
  * the caller reads it. Refusals throw like livetvCall. A caller whose read of the body fails (reset, timeout) turns that into
- * `unreachable` and must call dropLivetvProof(ctx) there, as livetvCall does.
+ * `unreachable` and must call dropLivetvProof(ctx) there, as livetvCall does. `body` is JSON, or a RawBody (a file streamed to livetv
+ * while the answer is read: `POST /v1/parse/xmltv`).
  */
 export async function livetvStream(ctx: Ctx, path: string, body: unknown, o: { timeoutMs: number; signal?: AbortSignal }): Promise<Response> {
   const d = deadline(o.timeoutMs, o.signal);

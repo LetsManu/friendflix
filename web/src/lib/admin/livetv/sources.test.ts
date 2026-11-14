@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
-import { hasKey, setLocale } from '#lib/i18n';
+import { hasKey, setLocale, tr } from '#lib/i18n';
 import type { SourceView } from './api';
 import { ApiError } from '#lib/api';
-import { detectKind, guideMoves, guideScopeLabel, guideStateLine, portRange, portsLine, refreshDone, refreshResult, scopeOptions, sourceError, sourceFailText, stateLine, tabOf, urlShapeOk } from './sources';
+import { detectKind, fileFailText, fileLine, guideProviderLabel, isFileGuide, guideMoves, guideScopeLabel, guideStateLine, portRange, portsLine, refreshDone, refreshResult, scopeOptions, sourceError, sourceFailText, stateLine, tabOf, urlShapeOk } from './sources';
 
 const at = (h: number, min: number, dayShift = 0) => new Date(2026, 10, 12 + dayShift, h, min).toISOString();
 const NOW = new Date(2026, 10, 12, 9, 30);
@@ -12,7 +12,7 @@ const NOW = new Date(2026, 10, 12, 9, 30);
 const view = (state: Partial<SourceView['state']> = {}, over: Partial<SourceView> = {}): SourceView => ({
   id: 's1', kind: 'm3u', name: 'Nordlicht Paket', urlHint: 'https://iptv.example.com/…', epgHint: 'https://iptv.example.com/…', userAgent: null, allowLan: false,
   refresh: '24h', skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0, maxStreams: null, enabled: true, position: 0,
-  channelCount: 412, pendingGroups: 0, guideProvider: null, guideScope: null, servedChannels: 380,
+  channelCount: 412, pendingGroups: 0, guideProvider: null, guideScope: null, fileName: null, fileBytes: null, servedChannels: 380,
   state: {
     lastRefreshAt: at(6, 12), lastOkAt: at(6, 12), lastError: null, counts: { channels: 412, added: 3, removed: 1 },
     epg: { lastRefreshAt: at(6, 12), lastOkAt: at(6, 12), lastError: null, programmes: 6812 },
@@ -216,5 +216,39 @@ describe('guides (extra programme guides)', () => {
   });
   it('a 400 on guideScope has its own sentence', () => {
     expect(sourceFailText(new ApiError(400, { error: 'invalid', field: 'guideScope' }))).toBe('Wähle mindestens eine Quelle.');
+  });
+});
+
+describe('guides from an uploaded file', () => {
+  const f = (over: Partial<SourceView> = {}) => view({}, { kind: 'guide', guideProvider: 'xmltv_file', fileName: 'guide-uk.xml.gz', fileBytes: 48 * 1024 * 1024, ...over });
+  it('fileLine: name and size, or none yet', () => {
+    expect(fileLine(f())).toBe('guide-uk.xml.gz · 48 MB');
+    expect(fileLine(f({ fileBytes: 1536 }))).toBe('guide-uk.xml.gz · 1,5 kB');
+    expect(fileLine(f({ fileName: null, fileBytes: null }))).toBe('Noch keine Datei hochgeladen');
+  });
+  it('isFileGuide / guideProviderLabel', () => {
+    expect(isFileGuide(f())).toBe(true);
+    expect(isFileGuide(f({ guideProvider: 'xmltv_url' }))).toBe(false);
+    expect(isFileGuide(view())).toBe(false);
+    expect(guideProviderLabel(f())).toBe('Datei');
+    expect(guideProviderLabel(f({ guideProvider: 'xmltv_url' }))).toBe('Link');
+  });
+  it('fileFailText: 413, 409 and 400 in words', () => {
+    expect(fileFailText(new ApiError(413, { error: 'too_large' }))).toBe('Die Datei ist größer als 300 MB.');
+    expect(fileFailText(new ApiError(409, { error: 'import_running' }))).toBe('Der Programmführer wird gerade eingelesen – versuche es gleich noch einmal.');
+    // a 400 is an upload that broke off or was empty: the content is only read by the import
+    expect(fileFailText(new ApiError(400, { error: 'invalid', field: 'file' }))).toBe('Die Datei konnte nicht hochgeladen werden oder war leer.');
+    expect(fileFailText(new ApiError(409, { error: 'livetv_off' }))).toBe(tr('adminLive.src.refreshOff'));
+    expect(fileFailText(new ApiError(404, { error: 'not_found' }))).toBe(tr('adminLive.src.gone'));
+  });
+  it('the import errors of a file in words: XMLTV refused, file gone, signature, gzip bomb', () => {
+    const epg = (lastError: string) => ({ epg: { lastRefreshAt: '2026-11-14T09:00:00Z', lastOkAt: null, lastError, programmes: null } });
+    const failed = (code: string, over: Partial<SourceView> = {}) => view(epg(code), { kind: 'guide', guideProvider: 'xmltv_file', fileName: 'a.xml', fileBytes: 10, ...over });
+    expect(refreshResult(failed('invalid')).text).toBe('Aktualisieren fehlgeschlagen: Diese Datei ist kein XMLTV-Programmführer (.xml oder .xml.gz).');
+    expect(refreshResult(failed('doctype')).text).toContain('kein XMLTV-Programmführer');
+    // a link guide keeps the general wording
+    expect(refreshResult(failed('invalid', { guideProvider: 'xmltv_url' })).text).not.toContain('Datei');
+    expect(refreshResult(failed('no_file')).text).toBe('Aktualisieren fehlgeschlagen: Die gespeicherte Datei fehlt – lade sie neu hoch.');
+    for (const code of ['no_file', 'bad_signature', 'ratio']) expect(sourceError(code)).not.toBe(tr('adminLive.err.generic'));
   });
 });

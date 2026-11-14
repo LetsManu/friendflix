@@ -56,13 +56,13 @@ export async function sessionGone(status: number, json: any): Promise<void> {
   }
 }
 
-export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; signal?: AbortSignal; /** survive page unload (progress/stop reports) */ keepalive?: boolean; /** a raw body (an image upload) sent as is with its own content-type instead of JSON */ raw?: Blob } = {}): Promise<T> {
+export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; signal?: AbortSignal; /** survive page unload (progress/stop reports) */ keepalive?: boolean; /** a raw body (an image upload) sent as is with its own content-type instead of JSON */ raw?: Blob; /** extra request headers (never the CSRF or profile header) */ headers?: Record<string, string> } = {}): Promise<T> {
   const res = await fetch(path, {
     method: opts.method ?? 'GET',
     credentials: 'same-origin',
     signal: opts.signal,
     keepalive: opts.keepalive || forceKeepalive || undefined,
-    headers: { ...(opts.raw ? { 'content-type': opts.raw.type } : opts.body === undefined ? {} : { 'content-type': 'application/json' }), 'x-csrf-token': csrf, ...(activeProfile ? { 'x-ff-profile': activeProfile } : {}) },
+    headers: { ...(opts.raw ? { 'content-type': opts.raw.type } : opts.body === undefined ? {} : { 'content-type': 'application/json' }), ...opts.headers, 'x-csrf-token': csrf, ...(activeProfile ? { 'x-ff-profile': activeProfile } : {}) },
     body: opts.raw ?? (opts.body === undefined ? undefined : JSON.stringify(opts.body)),
   });
   const text = await res.text();
