@@ -1404,6 +1404,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
   }
 
   const server = createServer((req, res) => {
+    for (const [k, v] of Object.entries(baseHeaders(req.url ?? '/'))) res.setHeader(k, v);
     handle(req, res).catch(() => {
       if (!res.headersSent) end(res, 500, 'error');
       else res.destroy();
@@ -1411,6 +1412,19 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
   });
   server.keepAliveTimeout = 65_000;
   return { server, metrics };
+}
+
+/**
+ * Headers on every gateway response (a route's own writeHead values win, Node merges them over these): no MIME sniffing, and
+ * Cross-Origin-Resource-Policy `same-origin` except on the cast and live paths, which a Cast receiver (another origin, e.g. Google's
+ * Default Media Receiver) loads by design (CAST_CORS sets the same there). The app, the TV and desktop shells and the Android WebView
+ * all load /media/ from the portal's own origin; native players (ExoPlayer, mpv, AirPlay) do not check CORP.
+ */
+export function baseHeaders(rawUrl: string): Record<string, string> {
+  let path = rawUrl;
+  try { path = new URL(rawUrl, 'http://x').pathname; } catch { /* the raw path, as handle() dispatches live paths */ }
+  const cast = [rawUrl, path].some((p) => p.startsWith(CAST_PREFIX) || p.startsWith(LIVE_PREFIX));
+  return { 'x-content-type-options': 'nosniff', 'cross-origin-resource-policy': cast ? 'cross-origin' : 'same-origin' };
 }
 
 /** the body as UTF-8 when it is at most `max` bytes (read in chunks, cancelled as soon as it is longer); else null */

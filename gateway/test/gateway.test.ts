@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { isTrustedPeer, setUntrustedPeers, watchUntrustedHost } from '../src/peers.js';
-import { authClientIp, blocksDirectStream, castHlsSubAllowed, compatPlaylist, createGateway, hlsAttrs, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
+import { authClientIp, baseHeaders, blocksDirectStream, castHlsSubAllowed, compatPlaylist, createGateway, hlsAttrs, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
 import { UPSTREAMS } from '../src/upstream/index.js';
 
 const ID = 'a'.repeat(32);
@@ -292,7 +292,24 @@ describe('normalizePath', () => {
   });
 });
 
+describe('baseHeaders', () => {
+  it('nosniff everywhere; CORP same-origin, cross-origin only on the cast and live paths', () => {
+    expect(baseHeaders(`/media/Items/${ID}/Images/Primary`)).toEqual({ 'x-content-type-options': 'nosniff', 'cross-origin-resource-policy': 'same-origin' });
+    for (const u of ['/health', '/media/d/x', '/media/joined/master.m3u8', '/x/media/c/t/a']) expect(baseHeaders(u)['cross-origin-resource-policy'], u).toBe('same-origin');
+    for (const u of [`/media/c/${CT}/x.m3u8`, '/media/l/tok/index.m3u8', '/media/./c/t/a']) expect(baseHeaders(u)['cross-origin-resource-policy'], u).toBe('cross-origin');
+  });
+});
+
 describe('gateway', () => {
+  it('sends nosniff and CORP on every answer (an image for the app: same-origin; an error and the health check too)', async () => {
+    const img = await get(`/media/Items/${ID}/Images/Primary?maxWidth=600`);
+    expect(img.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(img.headers.get('cross-origin-resource-policy')).toBe('same-origin');
+    for (const r of [await get('/media/System/Info'), await fetch(`http://127.0.0.1:${gwPort}/health`)]) {
+      expect(r.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(r.headers.get('cross-origin-resource-policy')).toBe('same-origin');
+    }
+  });
   it('requires a valid session', async () => {
     const r = await fetch(`http://127.0.0.1:${gwPort}/media/Videos/${ID}/master.m3u8`);
     expect(r.status).toBe(401);
