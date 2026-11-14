@@ -79,6 +79,7 @@ export function sourceFailText(e: unknown): string {
     if (f === 'url' || f === 'epgUrl') return tr('adminLive.src.urlBad');
     if (f === 'skipGroups') return tr('adminLive.src.skipBad');
     if (f === 'userAgent') return tr('adminLive.src.uaBad');
+    if (f === 'guideScope') return tr('adminLive.src.guide.scopeMissing');
     return tr('adminLive.err.generic');
   }
   return sourceError(code);
@@ -123,8 +124,13 @@ export function portsLine(ports: number[] | { from: number; to: number } | null)
   return range ? tr('adminLive.push.portsLine', { range }) : '';
 }
 
-/** the result toast of *Jetzt aktualisieren*: the error in words, or the new counts */
+/** the result toast of *Jetzt aktualisieren*: the error in words, or the new counts (a guide: its programmes) */
 export function refreshResult(s: SourceView): { ok: boolean; text: string } {
+  if (s.kind === 'guide') {
+    const e = s.state.epg;
+    if (e.lastError) return { ok: false, text: tr('adminLive.src.refreshFailed', { err: sourceError(e.lastError) }) };
+    return { ok: true, text: e.programmes !== null ? tr('adminLive.src.guide.refreshed', { n: e.programmes }) : tr('adminLive.src.refreshedPlain') };
+  }
   if (s.state.lastError) return { ok: false, text: tr('adminLive.src.refreshFailed', { err: sourceError(s.state.lastError) }) };
   const c = s.state.counts;
   return { ok: true, text: c ? tr('adminLive.src.refreshed', { n: c.channels, a: c.added, r: c.removed }) : tr('adminLive.src.refreshedPlain') };
@@ -134,8 +140,10 @@ export function refreshResult(s: SourceView): { ok: boolean; text: string } {
 export const REFRESH_POLL_MS = 1_500;
 export const REFRESH_POLLS = 120;
 
-/** a refresh that started at `since` (the `lastRefreshAt` before it) is over once that moved */
-export const refreshDone = (s: SourceView, since: string | null): boolean => s.state.lastRefreshAt !== since && s.state.lastRefreshAt !== null;
+/** when the source was last refreshed: a guide has no list, its refresh is its guide import (`state.epg`) */
+export const refreshedAt = (s: SourceView): string | null => (s.kind === 'guide' ? s.state.epg.lastRefreshAt : s.state.lastRefreshAt);
+/** a refresh that started at `since` (the `refreshedAt` before it) is over once that moved */
+export const refreshDone = (s: SourceView, since: string | null): boolean => refreshedAt(s) !== since && refreshedAt(s) !== null;
 
 /** a URL the sheet may send: http(s) (lists) or also srt (own feeds); the server checks hosts and addresses (spec §3.4) */
 export function urlShapeOk(raw: string, schemes: readonly string[]): boolean {
@@ -143,4 +151,46 @@ export function urlShapeOk(raw: string, schemes: readonly string[]): boolean {
     const u = new URL(raw.trim());
     return schemes.includes(u.protocol) && Boolean(u.hostname);
   } catch { return false; }
+}
+
+// ---- extra programme guides (kind `guide`, extra-guides plan Task 3)
+
+/** what a guide's *Gilt für* may name: the provider lists by position, then the own streams (worded in the page's language) */
+export function scopeOptions(sources: readonly SourceView[]): Array<{ id: string; name: string }> {
+  const lists = sources.filter((s) => s.kind === 'm3u').sort((a, b) => a.position - b.position).map((s) => ({ id: s.id, name: s.name }));
+  const feeds = sources.find((s) => s.kind === 'feeds');
+  return feeds ? [...lists, { id: feeds.id, name: tr('adminLive.src.kindOwn') }] : lists;
+}
+
+/**
+ * The card's *Gilt für* line: "Gilt für: Alle Sender" (null), "Gilt für: Nordlicht Paket, Eigene Streams" (in card order; ids of sources
+ * that are gone are left out), or "Gilt für keine Quelle mehr" when nothing is left (the backend then disabled the guide).
+ */
+export function guideScopeLabel(scope: readonly string[] | null, sources: readonly SourceView[]): string {
+  if (scope === null) return tr('adminLive.src.guide.scopeLine', { scope: tr('adminLive.src.guide.scopeAll') });
+  const names = scopeOptions(sources).filter((o) => scope.includes(o.id)).map((o) => o.name);
+  return names.length ? tr('adminLive.src.guide.scopeLine', { scope: names.join(', ') }) : tr('adminLive.src.guide.scopeNone');
+}
+
+/** a guide card's state line: its import's error first, then "Zuletzt aktualisiert heute 05:40 · Programm: 2.140 Sendungen" */
+export function guideStateLine(s: SourceView, now: Date): string {
+  const e = s.state.epg;
+  const parts: string[] = [];
+  if (e.lastError) parts.push(tr('adminLive.src.stateEpgErr', { err: sourceError(e.lastError) }));
+  const ok = validDate(e.lastOkAt);
+  if (ok) parts.push(tr('adminLive.src.guide.updated', { when: whenText(ok, now) }));
+  if (!e.lastError && e.programmes !== null) parts.push(tr('adminLive.src.stateEpg', { n: e.programmes }));
+  return parts.length ? parts.join(' · ') : tr('adminLive.src.never');
+}
+
+/**
+ * Moving a guide one place up (-1) or down (1) among the guides: one PATCH with the neighbour's `position` (the backend swaps the two
+ * guides and re-matches); `swap` is what the page shows meanwhile. null at either end.
+ */
+export function guideMoves(guides: readonly SourceView[], id: string, dir: 1 | -1): { patch: { id: string; position: number }; swap: Array<{ id: string; position: number }> } | null {
+  const sorted = [...guides].sort((a, b) => a.position - b.position);
+  const i = sorted.findIndex((g) => g.id === id), other = sorted[i + dir];
+  const me = sorted[i];
+  if (!me || !other) return null;
+  return { patch: { id: me.id, position: other.position }, swap: [{ id: me.id, position: other.position }, { id: other.id, position: me.position }] };
 }

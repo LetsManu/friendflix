@@ -8,7 +8,9 @@
  */
 import { api } from '#lib/api';
 
-export type SourceKind = 'm3u' | 'feeds';
+/** `guide` = an extra programme guide (extra-guides plan Task 1): no channels, its import fills channels the lists' guides leave empty */
+export type SourceKind = 'm3u' | 'feeds' | 'guide';
+export type GuideProvider = 'xmltv_url' | 'xmltv_file';
 export type Refresh = '6h' | '12h' | '24h' | 'weekly' | 'manual';
 export const REFRESHES: readonly Refresh[] = ['6h', '12h', '24h', 'weekly', 'manual'];
 export type Numbering = 'chno' | 'order';
@@ -46,6 +48,15 @@ export interface SourceView {
   channelCount: number;
   /** unreleased groups holding channels of this source */
   pendingGroups: number;
+  /** kind `guide` only (null otherwise): where the guide comes from */
+  guideProvider: GuideProvider | null;
+  /**
+   * kind `guide`: the source ids (lists, the own-feeds source) whose channels it may serve; null = all channels; `[]` = every scoped
+   * source was deleted (the guide is then disabled: "Gilt für keine Quelle mehr")
+   */
+  guideScope: string[] | null;
+  /** channels currently matched to this source's guide (`epg_source_id`) */
+  servedChannels: number;
   state: SourceState;
 }
 /**
@@ -69,11 +80,34 @@ export interface SourceBody {
 }
 export type SourcePatch = Partial<SourceBody>;
 /**
+ * A link guide (extra-guides plan Task 1): POST sends `kind: 'guide'`; `guideScope` null = all channels, else a non-empty list of list /
+ * own-feeds ids (`[]` is refused 400 `invalid`, field `guideScope`). PATCH takes only the fields below plus `position`.
+ */
+export interface GuideBody {
+  kind: 'guide';
+  name: string;
+  epgUrl: string;
+  userAgent?: string | null;
+  allowLan?: boolean;
+  refresh?: Refresh;
+  epgShiftMin?: number;
+  guideScope: string[] | null;
+  enabled?: boolean;
+}
+export type GuidePatch = Partial<Pick<GuideBody, 'name' | 'epgUrl' | 'refresh' | 'epgShiftMin' | 'guideScope' | 'enabled'>> & { position?: number };
+/**
  * POST /sources/test: a missing `url` / `epgUrl` / `userAgent` with `sourceId` uses the stored one; `epgUrl: null` = no guide. Refusals:
  * 400 `{ error: 'invalid' | 'refused' | 'lan_required', field }`, 404 `not_found`, 409 `test_running` (one test per admin at a time),
  * 422 `{ error: code }` from livetv, 503 `livetv_unreachable`.
  */
 export interface SourceTestBody { url?: string; epgUrl?: string | null; userAgent?: string; allowLan: boolean; sourceId?: string }
+/** POST /sources/test for a guide: a missing `epgUrl` with `sourceId` uses the stored link */
+export interface GuideTestBody { kind: 'guide'; epgUrl?: string; userAgent?: string; allowLan: boolean; sourceId?: string }
+export interface GuideTest {
+  epgChannels: number;
+  /** up to eight channel display names */
+  samples: string[];
+}
 export interface SourceTest {
   /** listed channels (every group counted) */
   channels: number;
@@ -129,6 +163,9 @@ const enc = encodeURIComponent;
 /** a bare array (backend adminRoutes.ts `GET /sources` → `listSources(ctx)`) */
 export const listSources = () => api<SourceView[]>(`${B}/sources`);
 export const createSource = (b: SourceBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
+export const createGuide = (b: GuideBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
+export const updateGuide = (id: string, patch: GuidePatch) => api<SourceView>(`${B}/sources/${enc(id)}`, { method: 'PATCH', body: patch });
+export const testGuide = (b: GuideTestBody) => api<GuideTest>(`${B}/sources/test`, { method: 'POST', body: b });
 export const updateSource = (id: string, patch: SourcePatch) => api<SourceView>(`${B}/sources/${enc(id)}`, { method: 'PATCH', body: patch });
 export const deleteSource = (id: string) => api<{ channels: number }>(`${B}/sources/${enc(id)}`, { method: 'DELETE' });
 /**

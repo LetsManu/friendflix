@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { hasKey, setLocale } from '#lib/i18n';
 import type { SourceView } from './api';
 import { ApiError } from '#lib/api';
-import { detectKind, portRange, portsLine, refreshDone, refreshResult, sourceError, sourceFailText, stateLine, tabOf, urlShapeOk } from './sources';
+import { detectKind, guideMoves, guideScopeLabel, guideStateLine, portRange, portsLine, refreshDone, refreshResult, scopeOptions, sourceError, sourceFailText, stateLine, tabOf, urlShapeOk } from './sources';
 
 const at = (h: number, min: number, dayShift = 0) => new Date(2026, 10, 12 + dayShift, h, min).toISOString();
 const NOW = new Date(2026, 10, 12, 9, 30);
@@ -12,7 +12,7 @@ const NOW = new Date(2026, 10, 12, 9, 30);
 const view = (state: Partial<SourceView['state']> = {}, over: Partial<SourceView> = {}): SourceView => ({
   id: 's1', kind: 'm3u', name: 'Nordlicht Paket', urlHint: 'https://iptv.example.com/…', epgHint: 'https://iptv.example.com/…', userAgent: null, allowLan: false,
   refresh: '24h', skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0, maxStreams: null, enabled: true, position: 0,
-  channelCount: 412, pendingGroups: 0,
+  channelCount: 412, pendingGroups: 0, guideProvider: null, guideScope: null, servedChannels: 380,
   state: {
     lastRefreshAt: at(6, 12), lastOkAt: at(6, 12), lastError: null, counts: { channels: 412, added: 3, removed: 1 },
     epg: { lastRefreshAt: at(6, 12), lastOkAt: at(6, 12), lastError: null, programmes: 6812 },
@@ -165,5 +165,56 @@ describe('sourceFailText: FriendFlix\'s own failures are not the provider\'s', (
     expect(sourceError('too_large')).toBe('Die Liste der ausgeschlossenen Gruppen ist zu groß.');
     expect(sourceFailText(new ApiError(422, { error: 'invalid' }))).toBe('Keine gültige Senderliste');
     expect(sourceFailText(new ApiError(400, { error: 'lan_required' }))).toContain('Heimnetz');
+  });
+});
+
+describe('guides (extra programme guides)', () => {
+  const list = view({}, { id: 'src-nordlicht', name: 'Nordlicht Paket', position: 0 });
+  const list2 = view({}, { id: 'src-hafen', name: 'Hafen Paket', position: 2 });
+  const feeds = view({}, { id: 'src-feeds', kind: 'feeds', name: 'Eigene Streams', position: 1 });
+  const guide = (over: Partial<SourceView> = {}, state: Partial<SourceView['state']> = {}) => view({
+    lastRefreshAt: null, lastOkAt: null, counts: null,
+    epg: { lastRefreshAt: at(5, 40), lastOkAt: at(5, 40), lastError: null, programmes: 2140 }, ...state,
+  }, { id: 'g1', kind: 'guide', name: 'Sternwarte Guide', urlHint: null, guideProvider: 'xmltv_url', guideScope: null, servedChannels: 12, channelCount: 0, position: 3, ...over });
+  const all = [list2, feeds, list, guide()];
+
+  it('guideScopeLabel: all channels, the named sources in card order, none left', () => {
+    expect(guideScopeLabel(null, all)).toBe('Gilt für: Alle Sender');
+    expect(guideScopeLabel(['src-feeds', 'src-nordlicht'], all)).toBe('Gilt für: Nordlicht Paket, Eigene Streams');
+    expect(guideScopeLabel([], all)).toBe('Gilt für keine Quelle mehr');
+    // ids of deleted sources are not shown; none left reads as none
+    expect(guideScopeLabel(['src-gone', 'src-hafen'], all)).toBe('Gilt für: Hafen Paket');
+    expect(guideScopeLabel(['src-gone'], all)).toBe('Gilt für keine Quelle mehr');
+  });
+  it('guideScopeLabel: English', async () => {
+    await setLocale('en');
+    expect(guideScopeLabel(null, all)).toMatch(/^[^:]+: \S/);
+    expect(guideScopeLabel(['src-feeds'], all)).not.toContain('Eigene Streams');
+  });
+  it('scopeOptions: the lists by position, then the own streams; never a guide', () => {
+    expect(scopeOptions(all).map((o) => o.id)).toEqual(['src-nordlicht', 'src-hafen', 'src-feeds']);
+    expect(scopeOptions(all).at(-1)!.name).toBe('Eigene Streams');
+  });
+  it('guideStateLine: the last import of the guide', () => {
+    expect(guideStateLine(guide(), NOW)).toBe('Zuletzt aktualisiert heute 05:40 · Programm: 2.140 Sendungen');
+    expect(guideStateLine(guide({}, { epg: { lastRefreshAt: null, lastOkAt: null, lastError: null, programmes: null } }), NOW)).toBe('Noch nicht aktualisiert');
+    expect(guideStateLine(guide({}, { epg: { lastRefreshAt: at(9, 0), lastOkAt: at(5, 40), lastError: 'timeout', programmes: 2140 } }), NOW)).toBe('Programm: Zeitüberschreitung · Zuletzt aktualisiert heute 05:40');
+  });
+  it('a guide refresh is done once its guide import moved; its result names the programmes', () => {
+    const g = guide();
+    expect(refreshDone(g, at(5, 40))).toBe(false);
+    expect(refreshDone(guide({}, { epg: { ...g.state.epg, lastRefreshAt: at(9, 31) } }), at(5, 40))).toBe(true);
+    expect(refreshResult(g)).toEqual({ ok: true, text: 'Programm aktualisiert: 2.140 Sendungen' });
+    expect(refreshResult(guide({}, { epg: { ...g.state.epg, lastError: 'unreachable' } }))).toEqual({ ok: false, text: 'Aktualisieren fehlgeschlagen: Nicht erreichbar' });
+  });
+  it('guideMoves: up/down sends the neighbour\'s position (the server swaps the two); the page shows the swap; nothing past the ends', () => {
+    const a = guide({ id: 'ga', position: 3 }), b = guide({ id: 'gb', position: 5 }), c = guide({ id: 'gc', position: 6 });
+    expect(guideMoves([c, a, b], 'gb', -1)).toEqual({ patch: { id: 'gb', position: 3 }, swap: [{ id: 'gb', position: 3 }, { id: 'ga', position: 5 }] });
+    expect(guideMoves([a, b, c], 'gb', 1)).toEqual({ patch: { id: 'gb', position: 6 }, swap: [{ id: 'gb', position: 6 }, { id: 'gc', position: 5 }] });
+    expect(guideMoves([a, b, c], 'ga', -1)).toBeNull();
+    expect(guideMoves([a, b, c], 'gc', 1)).toBeNull();
+  });
+  it('a 400 on guideScope has its own sentence', () => {
+    expect(sourceFailText(new ApiError(400, { error: 'invalid', field: 'guideScope' }))).toBe('Wähle mindestens eine Quelle.');
   });
 });
