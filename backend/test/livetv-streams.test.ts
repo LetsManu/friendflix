@@ -672,6 +672,7 @@ describe('logos and settings', () => {
     const img = await env.app.inject({ url: u.pathname + u.search });
     expect(img.statusCode).toBe(200);
     expect(img.headers['content-type']).toBe('image/png');
+    expect(img.headers['cross-origin-resource-policy']).toBe('cross-origin'); // the Default Media Receiver is another origin
     expect(Buffer.compare(img.rawPayload, PNG)).toBe(0);
     const bad = new URL(logo);
     bad.searchParams.set('sig', 'A'.repeat(43));

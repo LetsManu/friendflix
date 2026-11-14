@@ -1,12 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createECDH, randomBytes } from 'node:crypto';
-import webpush from 'web-push';
+import * as webpush from 'web-push';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { notify } from '../src/notify.js';
 import { revokeSessions } from '../src/devices.js';
 import { endpointAllowed, pushEnabled, sendWebPush } from '../src/push.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
+// web-push 4 is ESM: its namespace is read-only, so wrap generateRequestDetails in a pass-through mock the tests can observe
+vi.mock('web-push', async (orig) => {
+  const real = await orig<typeof import('web-push')>();
+  return { ...real, generateRequestDetails: vi.fn(real.generateRequestDetails) };
+});
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 const vapid = webpush.generateVAPIDKeys();
@@ -132,9 +137,10 @@ describe('web push', () => {
   });
 
   it('payload: owner gets the text (pushBody wins), unsafe links are dropped, non-owner profiles get a generic text', async () => {
-    const orig = webpush.generateRequestDetails;
+    const spy = vi.mocked(webpush.generateRequestDetails);
+    const orig = spy.getMockImplementation()!;
     const payloads: Array<Record<string, string>> = [];
-    (webpush as { generateRequestDetails: unknown }).generateRequestDetails = (s: unknown, p: string, o: unknown) => { payloads.push(JSON.parse(p)); return orig.call(webpush, s as never, p, o as never); };
+    spy.mockImplementation(((s: unknown, p: string, o: unknown) => { payloads.push(JSON.parse(p)); return (orig as (...a: unknown[]) => unknown)(s, p, o); }) as typeof webpush.generateRequestDetails);
     try {
       await sub(a, 'own');
       await sendWebPush(env.ctx, { userId: aId, kind: 'k', title: 'Titel', body: 'inbox', pushBody: 'geheim', link: '//evil.example.com' });
@@ -151,7 +157,7 @@ describe('web push', () => {
       await sendWebPush(env.ctx, { userId: aId, kind: 'k', title: 'Titel', body: 'inbox', link: '/watch/1' });
       expect(payloads[0]).toMatchObject({ title: 'FriendFlix', body: 'Neue Benachrichtigung', link: '/' });
     } finally {
-      (webpush as { generateRequestDetails: unknown }).generateRequestDetails = orig;
+      spy.mockImplementation(orig);
     }
     await env.pool.query('delete from push_subscriptions');
   });

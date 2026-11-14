@@ -5,7 +5,18 @@
 # Only add IGNORE for a documented false positive or a purely informational rule, with the reason in the 4th column.
 # Set a rule to FAIL to make it blocking even below High risk.
 #
-# Known, accepted findings (NOT suppressed, they show up as warnings):
-#   10055 CSP: Wildcard Directive (connect-src ws: wss:) and style-src 'unsafe-inline' - CSP lives in web/vite.config.ts
-#   10021 X-Content-Type-Options missing on static files (served before the SvelteKit hook that sets it; Low)
+# Security headers: web/server/headers.js, set on every response by the server entry (web/server/index.js; static files and the
+# prerendered /offline page included) and by web/src/hooks.server.ts. The CSP lives in web/vite.config.ts.
+# Known, accepted findings (NOT suppressed, they show up as warnings; anything new on top of these is worth a look):
+#   10055 CSP: style-src 'unsafe-inline' - only the fallback for engines without CSP Level 3 (the old Chromium the Tizen/webOS TV
+#         shells run the app in reads neither style-src-elem nor style-src-attr). Current browsers get style-src-elem 'self' (no
+#         inline <style> at all) and style-src-attr 'unsafe-inline' (Svelte renders and sets style="" attributes; a hash or nonce
+#         cannot cover an attribute). The Cast receiver page (/cast-receiver/, lib/cast/receiverPage.ts) keeps its own
+#         style-src 'self' 'unsafe-inline' for Google's receiver framework until it is checked on a device.
+#   90004 Cross-Origin-Embedder-Policy missing (HTML) - require-corp (or credentialless) would block the trailer iframe
+#         (youtube-nocookie.com) and the Cast sender script from www.gstatic.com; the app needs no cross-origin isolation.
+#   2     Private IP Disclosure - false positive: the help text of the "home networks" setting (i18n strings bundled into a JS
+#         chunk) shows 192.168.0.0/16 as the example network. No address of any real host is in the build.
+#   10096 Timestamp Disclosure - Unix - false positive: 1831565813 = 0x6d2b79f5, the mulberry32 PRNG constant of the login
+#         wall's fallback art (lib/auth/flow.ts fallbackArt), in a JS chunk.
 10109	IGNORE	(Modern Web Application)	Informational only: tells the scanner that the AJAX spider would find more; not a vulnerability.
