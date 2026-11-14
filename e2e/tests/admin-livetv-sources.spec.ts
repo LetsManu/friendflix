@@ -23,7 +23,7 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
   test('the area opens on Quellen with its tabs, the list card and the own streams', async ({ page }) => {
     await page.goto('/admin/livetv');
     const tabs = page.getByRole('tablist', { name: 'Live-TV-Bereiche' });
-    await expect(tabs.getByRole('tab')).toHaveText(['Quellen', 'Kanäle', 'Gruppen & Rechte', 'Programmführer', 'Live-Status']);
+    await expect(tabs.getByRole('tab')).toHaveText(['Quellen', 'Kanäle', 'Gruppen & Rechte', 'Programmführer', 'Live-Status', 'Einstellungen']);
     await expect(tabs.getByRole('tab', { name: 'Quellen' })).toHaveAttribute('aria-selected', 'true');
     const c = card(page, 'Nordlicht Paket');
     await expect(c).toContainText('Anbieterliste');
