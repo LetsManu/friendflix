@@ -65,28 +65,48 @@ design must leave room for them.
 
 ### Matching (extends §9.4)
 
-For each `epg_match='auto'` channel, the four exact passes stay as they are. Within each pass the candidate guides are
-looked at in this order:
+Today's matching (`matchChannel` in `backend/src/livetv/epg.ts`, "ruling 27") runs **unchanged first**, over provider-list
+guides only: per pass, the channel's own list's guide decides when it has any hit; otherwise all other lists' guides are
+pooled and a pass matches on exactly one hit across them.
 
-1. the channel's own provider list's guide (if it has one) — as today;
-2. every enabled `guide` source whose scope is null or contains the channel's source id, in `position` order;
-3. the other provider lists' guides — as today ("then the other sources' EPG").
+Extra guides then **only fill channels that are still unmatched** (never replace a match, so adding a guide can never take
+away a programme a channel has today): for each `epg_match='auto'` channel without a match, the same four passes run over
+the enabled `guide` sources whose scope covers the channel's source, **in `position` order**; in each pass the first guide
+with any hit decides (exactly one hit = match, several = ambiguous, next pass). A channel that gets a list match later
+(a list's guide changed) moves to that match on the next pass. A hand pin (`manual`) beats both. *(Builder's note: this
+replaces the earlier "own, then guides, then others" ordering; decided to keep the promise that guides never remove a match.)*
 
-In each pass, the first candidate guide that has any hit decides: exactly one hit there matches; several hits there are
-ambiguous and the pass moves on (as today). Owner-visible effect: adding guides never removes a match a channel has today
-from its own list's guide; it can fill channels that had none.
+`indexRows` / the matching index includes provider lists with an XMLTV link and enabled `guide` sources (link or file),
+not disabled guides. `filterIds` (the request filter that narrows an import to channels' candidate ids) is computed per
+guide over the channels in that guide's scope.
 
 ### Import and refresh
 
-- Link guides: exactly the existing `refreshEpg` path (`POST /v1/fetch/xmltv` on livetv, NDJSON, staging + swap).
+- Link guides: exactly the existing `refreshEpg` path (`POST /v1/fetch/xmltv` on livetv, NDJSON, staging + swap); the
+  refresh tick treats them like a list's guide (their `refresh` interval, at least every 24 h).
 - File guides: the admin uploads the file to the backend (`PUT /api/admin/livetv/sources/:id/file`, body = raw bytes,
-  `.xml` or gzip, ≤ `XMLTV_MAX_BYTES` 300 MB, admin + CSRF, streamed to disk). The backend stores it in its data volume
-  (`livetv-guides/<sourceId>.xml[.gz]`, written to a temp name then renamed). The import sends the file's bytes to a new
-  signed livetv route `POST /v1/parse/xmltv` (body = the file, same NDJSON answer and limits as `/v1/fetch/xmltv`; the
-  route's body cap = `XMLTV_MAX_BYTES`). livetv parses; the backend never parses XML. A file guide refreshes only when a new
-  file is uploaded or on *Jetzt aktualisieren* (its `refresh` is fixed to `manual`).
-- Deleting a guide deletes its file, its programmes and its index rows, and resets channels matched to it to `auto` (they
-  re-match on the next pass).
+  `.xml` or gzip, ≤ `XMLTV_MAX_BYTES` 300 MB, admin + CSRF, streamed to disk). The backend writes it as
+  `livetv-guides/<sourceId>.pending.xml[.gz]` in its data volume and imports from it: the bytes go to a new signed livetv
+  route `POST /v1/parse/xmltv` (body = the file, same NDJSON answer and limits as `/v1/fetch/xmltv`, body cap
+  `XMLTV_MAX_BYTES`). livetv parses; the backend never parses XML. Only after a successful import does the pending file
+  replace the current one (`<sourceId>.xml[.gz]`); a failed import keeps the old file, its programmes and its index, and
+  shows the error. Upload and import share the source's existing single-flight import lock (a second upload while one runs
+  answers 409 `import_running`). The index re-runs when the stored file's SHA-256 changes (instead of the URL hash).
+- The refresh tick skips file guides (their `refresh` is fixed to `manual`); *Jetzt aktualisieren* on a file guide re-imports
+  the stored file.
+- Deleting a guide deletes its files, its programmes and its index rows, and resets every channel matched to it — automatic
+  matches and hand pins — to `auto` (they re-match on the next pass).
+- A disabled guide is not refreshed and not used for matching or now/next; hand pins to it stay set and show "Programmführer
+  ausgeschaltet" in *Kanäle*; the pin picker lists enabled guides only.
+
+### Sources API and counts
+
+- The admin view and API expose `kind: 'guide'` (with `guideProvider`, `guideScope`, `fileName`, `fileBytes` instead of the
+  list fields). `refreshSource` (lists) never runs for guides; guides have no channels and are left out of channel lists,
+  quotas, `max_streams` and the "Quellen" count shown to viewers. The admin overview counts them separately ("2 Programmführer").
+- `guideScope`: `null` = all channels, or a **non-empty** array of provider-list ids and/or the own-feeds source id (never a
+  guide); the API refuses an empty array (400 `invalid`, field `guideScope`). When a scoped source is deleted it is removed
+  from the array; if the array becomes empty the guide is disabled and the card says "Gilt für keine Quelle mehr".
 
 ### Admin UI (Quellen tab)
 
