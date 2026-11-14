@@ -107,6 +107,8 @@ export function expectedMode(ch: { streamKind: StreamKind; probe: ProbeRec | nul
   const p = ch.probe;
   if (ch.streamKind === 'hls') {
     // a stored probe of a source whose audio a browser cannot play (MP2, AC-3, ...) asks for a remux, which makes it AAC
+    // (needs remux: the probe found audio in a playlist of its own, which only a remux can merge)
+    if (p?.ok && p.needs === 'remux') return 'remux';
     const a = p?.ok ? p.audio?.codec : undefined;
     return a !== undefined && a !== 'aac' && a !== 'mp3' && p?.video?.codec === 'h264' ? 'remux' : 'passthrough';
   }

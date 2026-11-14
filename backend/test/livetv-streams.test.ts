@@ -198,6 +198,8 @@ describe('pure rules', () => {
     expect(expectedMode({ streamKind: 'hls', probe: withAudio('mp2') }, now)).toBe('remux');
     expect(expectedMode({ streamKind: 'hls', probe: withAudio('ac3') }, now)).toBe('remux');
     expect(expectedMode({ streamKind: 'hls', probe: withAudio('aac') }, now)).toBe('passthrough');
+    // audio in a playlist of its own: the probe says remux although the codec is AAC
+    expect(expectedMode({ streamKind: 'hls', probe: { ...withAudio('aac'), needs: 'remux' } }, now)).toBe('remux');
     expect(expectedMode({ streamKind: 'hls', probe: probe('passthrough', 1) }, now)).toBe('passthrough');
     expect(expectedMode({ streamKind: 'ts', probe: null }, now)).toBe('remux');
     expect(expectedMode({ streamKind: 'ts', probe: probe('transcode', 100) }, now)).toBe('transcode');

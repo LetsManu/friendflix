@@ -246,6 +246,44 @@ describe('probe', () => {
     expect(r).not.toHaveProperty('audio');
   });
 
+  it('pickVariant: the audio rendition is DEFAULT, else AUTOSELECT, else the first with a URI; none without URI or group', () => {
+    const m = (media: string[], group = 'AUDIO="a"') => ['#EXTM3U', ...media, `#EXT-X-STREAM-INF:BANDWIDTH=3000000,CODECS="avc1.4d401f",${group}`, 'v.m3u8'].join('\n');
+    const med = (extra: string) => `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="x",${extra}`;
+    expect(pickVariant(m([med('URI="one.m3u8"'), med('AUTOSELECT=YES,URI="two.m3u8"'), med('DEFAULT=YES,AUTOSELECT=YES,URI="three.m3u8"')]), 10e6)!.audio).toEqual({ uri: 'three.m3u8' });
+    expect(pickVariant(m([med('URI="one.m3u8"'), med('AUTOSELECT=YES,URI="two.m3u8"')]), 10e6)!.audio).toEqual({ uri: 'two.m3u8' });
+    expect(pickVariant(m([med('URI="one.m3u8"'), med('LANGUAGE="en",URI="two.m3u8"')]), 10e6)!.audio).toEqual({ uri: 'one.m3u8' });
+    expect(pickVariant(m([med('DEFAULT=YES')]), 10e6)).not.toHaveProperty('audio');
+    expect(pickVariant(m([med('DEFAULT=YES,URI="x.m3u8"')], 'AUDIO="other"'), 10e6)).not.toHaveProperty('audio');
+    expect(pickVariant(m([med('DEFAULT=YES,URI="x.m3u8"')], ''), 10e6)).not.toHaveProperty('audio');
+    expect(pickVariant(m(['#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="a",URI="s.m3u8"']), 10e6)).not.toHaveProperty('audio');
+    // bounded: a rendition past the 64th media line is never looked at
+    const many = Array.from({ length: 64 }, () => '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="z",URI="z.m3u8"');
+    expect(pickVariant(m([...many, med('DEFAULT=YES,URI="late.m3u8"')]), 10e6)).not.toHaveProperty('audio');
+  });
+
+  it('HLS with a separate audio rendition: the audio facts come from its own segment; needs remux', async () => {
+    const master = ['#EXTM3U', '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="Deutsch",DEFAULT=YES,URI="audio/de.m3u8"',
+      '#EXT-X-STREAM-INF:BANDWIDTH=3000000,CODECS="avc1.4d401f,mp4a.40.2",AUDIO="a"', 'video/index.m3u8'].join('\n');
+    const pl = (seg: string) => `#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\n${seg}\n`;
+    const s = await serve({
+      '/nl/master.m3u8': (res) => res.end(master),
+      '/nl/video/index.m3u8': (res) => res.end(pl('v1.ts')), '/nl/video/v1.ts': (res) => res.end(Buffer.alloc(300, 0x47)),
+      '/nl/audio/de.m3u8': (res) => res.end(pl('a1.aac')), '/nl/audio/a1.aac': (res) => res.end(Buffer.alloc(100, 0xff)),
+    });
+    const video = '{"streams":[{"codec_type":"video","codec_name":"h264","width":1280,"height":720,"avg_frame_rate":"25/1"}]}';
+    const audio = '{"streams":[{"codec_type":"audio","codec_name":"aac","channels":2}]}';
+    const calls: string[][] = [];
+    const run = (async (_c, args, o) => {
+      if (o.stdin) for await (const _ of o.stdin) { /* drained */ }
+      calls.push(args);
+      return { code: 0, stdout: Buffer.from(args.includes('aac') ? audio : video), stderr: '' };
+    }) as Run;
+    const r = await probe({ url: `http://iptv.example.com:${s.port}/nl/master.m3u8`, kind: 'hls', allowLan: false }, { run, guard: guard() });
+    expect(r).toEqual({ ok: true, video: { codec: 'h264', width: 1280, height: 720, fps: 25 }, audio: { codec: 'aac', channels: 2 }, needs: 'remux' });
+    expect(calls).toHaveLength(2);
+    expect(s.paths).toContain('/nl/audio/a1.aac');
+  });
+
   it('TS: the first 4 MB are piped → H.264 remux; H.264 with MP2 audio is still remux', async () => {
     const s = await serve({
       '/live/hafenkanal.ts': (res) => {

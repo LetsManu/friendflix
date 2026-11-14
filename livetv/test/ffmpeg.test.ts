@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import type { FetchOptions, GuardDeps, GuardedResponse } from '../src/fetch.js';
+import { guardedFetch, type FetchOptions, type GuardDeps, type GuardedResponse } from '../src/fetch.js';
 import { SCRUB_MAX_CHARS, audioFor, audioPassable, ffmpegArgs, pipeInput, scrubLine, segmentFormat, urlFormat, videoArgs } from '../src/ffmpeg.js';
 import { openInput } from '../src/inputs.js';
 import { createRun, stderrLine } from '../src/run.js';
@@ -174,6 +174,47 @@ describe('inputs', () => {
     expect(await read(ffInput.stdin, 300)).toEqual(Buffer.concat([init, seg]));
     const a = ffmpegArgs({ mode: 'remux', input: { kind: 'pipe', format: ffInput.format }, encoder: 'libx264', audio: 'copy', srcHeight: 1080, dir: DIR, startNumber: 0 });
     expect(has(a, ['-protocol_whitelist', 'pipe', '-f', 'mov', '-format_whitelist', 'mov', '-i', 'pipe:0'])).toBe(true);
+  });
+
+  it('a separate HLS audio rendition: fetched by livetv through the guard and followed as a second pipe', async () => {
+    const base = 'http://iptv.example.com/live/nordlicht';
+    const v = Buffer.alloc(188, 1);
+    const au = Buffer.alloc(100, 2);
+    const master = ['#EXTM3U', '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="Deutsch",DEFAULT=YES,URI="audio/de.m3u8"',
+      '#EXT-X-STREAM-INF:BANDWIDTH=3000000,CODECS="avc1.4d401f,mp4a.40.2",AUDIO="a"', 'video/index.m3u8'].join('\n');
+    const pl = (seg: string) => ['#EXTM3U', '#EXT-X-TARGETDURATION:4', '#EXT-X-MEDIA-SEQUENCE:7', '#EXTINF:4.000,', seg].join('\n');
+    const routes = new Map<string, Served>([
+      [`${base}/master.m3u8`, master], [`${base}/video/index.m3u8`, pl('v7.ts')], [`${base}/video/v7.ts`, v],
+      [`${base}/audio/de.m3u8`, pl('a7.aac')], [`${base}/audio/a7.aac`, au],
+    ]);
+    const ff = fakeFetch(routes);
+    const g = guard();
+    const { ffInput } = await openInput({ url: `${base}/master.m3u8`, kind: 'hls', allowLan: false }, { guard: g, fetch: ff.fetch });
+    if (ffInput.kind !== 'pipe' || !ffInput.audio) throw new Error('an audio pipe is expected');
+    expect([ffInput.format, ffInput.audio.format]).toEqual(['mpegts', 'aac']);
+    expect(await read(ffInput.stdin, 188)).toEqual(v);
+    expect(await read(ffInput.audio.stdin, 100)).toEqual(au);
+    expect(ff.calls.map((c) => c.url)).toEqual(expect.arrayContaining([`${base}/audio/de.m3u8`, `${base}/audio/a7.aac`]));
+    const a = ffmpegArgs({ mode: 'remux', input: { kind: 'pipe', format: ffInput.format }, audioInput: { format: ffInput.audio.format }, encoder: 'libx264', audio: 'aac', srcHeight: 720, dir: DIR, startNumber: 0 });
+    expect(has(a, ['-protocol_whitelist', 'pipe', '-f', 'mpegts', '-format_whitelist', 'mpegts', '-i', 'pipe:0'])).toBe(true);
+    expect(has(a, ['-protocol_whitelist', 'pipe', '-f', 'aac', '-format_whitelist', 'aac', '-i', 'pipe:3'])).toBe(true);
+    expect(has(a, ['-map', '0:v:0', '-map', '1:a:0'])).toBe(true);
+    expect(a.some((x) => x.includes('iptv.example.com'))).toBe(false);
+  });
+
+  it('a refused address of the audio playlist fails the input like the video one', async () => {
+    const base = 'http://iptv.example.com/live/nordlicht';
+    const master = ['#EXTM3U', '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",DEFAULT=YES,URI="http://audio.example.com/de.m3u8"',
+      '#EXT-X-STREAM-INF:BANDWIDTH=3000000,AUDIO="a"', 'video.m3u8'].join('\n');
+    const pl = ['#EXTM3U', '#EXT-X-TARGETDURATION:4', '#EXTINF:4.000,', 'v.ts'].join('\n');
+    const routes = new Map<string, Served>([[`${base}/master.m3u8`, master], [`${base}/video.m3u8`, pl]]);
+    const ff = fakeFetch(routes);
+    // the real guard decides for the audio host, which resolves to a private address
+    const g = guard();
+    g.lookup = async (h) => (h === 'audio.example.com' ? ['10.0.0.5'] : ['192.0.2.40']);
+    const fetch = (u: string, o: FetchOptions) => (new URL(u).hostname === 'audio.example.com' ? guardedFetch(u, o, g) : ff.fetch(u, o));
+    await expect(openInput({ url: `${base}/master.m3u8`, kind: 'hls', allowLan: false }, { guard: g, fetch }))
+      .rejects.toMatchObject({ code: 'address_refused' });
   });
 
   it('srt inputs carry the IP literal', async () => {

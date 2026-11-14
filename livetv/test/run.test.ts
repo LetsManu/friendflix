@@ -68,6 +68,13 @@ describe('createRun', () => {
     expect(r).toEqual({ code: 0, stdout: Buffer.from('Nordlicht TV:200012'), stderr: '' });
   });
 
+  it('audioStdin arrives on descriptor 3, next to stdin on descriptor 0', async () => {
+    async function* chunks(...c: string[]) { for (const x of c) yield Buffer.from(x); }
+    const prog = 'const fs = require("fs"); const a = fs.readFileSync(0, "utf8"); const b = fs.readFileSync(3, "utf8"); process.stdout.write(a + "|" + b)';
+    const r = await run('ffmpeg', ['-e', prog], { timeoutMs: 5_000, stdin: chunks('video-', 'bytes'), audioStdin: chunks('audio-', 'bytes') });
+    expect(r.stdout.toString()).toBe('video-bytes|audio-bytes');
+  });
+
   it('without stdin the child reads EOF at once (stdin is not piped)', async () => {
     const r = await run('ffprobe', ['-e', 'let n = 0; process.stdin.on("data", (c) => { n += c.length; }); process.stdin.on("end", () => process.stdout.write("eof:" + n))'], { timeoutMs: 5_000 });
     expect(r.stdout.toString()).toBe('eof:0');

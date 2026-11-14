@@ -30,6 +30,8 @@ export type RunResult = { code: number; stdout: Buffer; stderr: string; truncate
 export type RunOptions = {
   timeoutMs: number;
   stdin?: AsyncIterable<Uint8Array>;
+  /** a second input on descriptor 3 (`pipe:3`), pumped like `stdin`: a separate HLS audio rendition */
+  audioStdin?: AsyncIterable<Uint8Array>;
   onStdout?(chunk: Buffer): void;
   signal?: AbortSignal;
   stderrLog?: { channelId: string; log: Log };
@@ -70,7 +72,7 @@ export function stderrLine(line: string, args: readonly string[]): string {
 export function createRun(bins: Partial<Record<Cmd, string>> = {}): Run {
   return (cmd, args, o) => new Promise((resolve) => {
     if (o.signal?.aborted) { resolve({ code: 1, stdout: Buffer.alloc(0), stderr: '' }); return; }
-    const child = spawn(bins[cmd] ?? BINS[cmd], args, { env: CHILD_ENV, stdio: [o.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+    const child = spawn(bins[cmd] ?? BINS[cmd], args, { env: CHILD_ENV, stdio: [o.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe', ...(o.audioStdin ? ['pipe' as const] : [])] });
     const out: Buffer[] = [];
     let outLen = 0;
     let truncated = false;
@@ -122,6 +124,7 @@ export function createRun(bins: Partial<Record<Cmd, string>> = {}): Run {
     child.on('error', () => finish(127));
     child.on('close', (code) => finish(typeof code === 'number' ? code : 1));
     if (o.stdin && child.stdin) void pump(o.stdin, child.stdin);
+    if (o.audioStdin && child.stdio[3]) void pump(o.audioStdin, child.stdio[3] as Writable);
   });
 }
 

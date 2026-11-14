@@ -18,8 +18,10 @@ export type PipeFormat = 'mpegts' | 'mov' | 'aac' | 'mp3' | 'matroska' | 'flv';
 /** the demuxer names `-format_whitelist` allows for a forced format (matroska's demuxer also answers to webm) */
 const WHITELIST: Record<PipeFormat, string> = { mpegts: 'mpegts', mov: 'mov', aac: 'aac', mp3: 'mp3', matroska: 'matroska,webm', flv: 'flv' };
 /** the input options of a pipe: stdin only, the given demuxer only */
-export const pipeInput = (format: PipeFormat): string[] =>
-  ['-protocol_whitelist', 'pipe', '-f', format, '-format_whitelist', WHITELIST[format], '-i', 'pipe:0'];
+export const pipeInput = (format: PipeFormat, fd = 0): string[] =>
+  ['-protocol_whitelist', 'pipe', '-f', format, '-format_whitelist', WHITELIST[format], '-i', `pipe:${fd}`];
+/** the descriptor a separate audio rendition arrives on (run.ts `audioStdin`) */
+export const AUDIO_FD = 3;
 /** the input options of an SRT caller input: srt/udp only and the demuxer forced to MPEG-TS, as SRT carries (L5 rest) */
 export const SRT_INPUT = ['-protocol_whitelist', 'srt,udp', '-f', 'mpegts', '-format_whitelist', 'mpegts'];
 const extOf = (uri: string): string => /\.([a-z0-9]+)$/i.exec(uri.split(/[?#]/)[0]!)?.[1]?.toLowerCase() ?? '';
@@ -46,6 +48,8 @@ export const urlFormat = (url: string): PipeFormat => {
 export interface FfmpegArgsIn {
   mode: 'remux' | 'transcode';
   input: FfInput;
+  /** the audio of a separate HLS rendition: a second pipe input on AUDIO_FD, mapped instead of the first input's audio */
+  audioInput?: { format: PipeFormat };
   encoder: Encoder;
   audio: 'copy' | 'aac';
   /** the source's lines (probe); null = unknown, treated as large */
@@ -114,7 +118,7 @@ export function ffmpegArgs(o: FfmpegArgsIn): string[] {
     ...HEAD,
     ...(o.mode === 'transcode' ? hwArgs(o.encoder) : []),
     ...input,
-    '-map', '0:v:0', '-map', '0:a:0?',
+    ...(o.audioInput ? [...pipeInput(o.audioInput.format, AUDIO_FD), '-map', '0:v:0', '-map', '1:a:0'] : ['-map', '0:v:0', '-map', '0:a:0?']),
     ...video,
     ...audioArgs(o.audio),
     '-f', 'segment', '-segment_time', String(SEGMENT_SECONDS), '-segment_format', 'mpegts',

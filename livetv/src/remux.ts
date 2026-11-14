@@ -140,7 +140,8 @@ export function remuxDriver(d: RemuxDeps): MediaDriver {
       }
       const ff = opened.ffInput;
       const args = ffmpegArgs({
-        mode, input: ff.kind === 'pipe' ? { kind: 'pipe', format: ff.format } : { kind: 'srt', url: ff.url }, encoder: ctx.encoder, audio, srcHeight, dir: ctx.dir, startNumber: next,
+        mode, input: ff.kind === 'pipe' ? { kind: 'pipe', format: ff.format } : { kind: 'srt', url: ff.url },
+        ...(ff.kind === 'pipe' && ff.audio ? { audioInput: { format: ff.audio.format } } : {}), encoder: ctx.encoder, audio, srcHeight, dir: ctx.dir, startNumber: next,
       });
       // this run alone: a stop aborts it, and so does the stall watchdog (the stream then lives on and the loop restarts ffmpeg)
       const runAc = new AbortController();
@@ -181,7 +182,7 @@ export function remuxDriver(d: RemuxDeps): MediaDriver {
         await d.run('ffmpeg', args, {
           timeoutMs: FOREVER_MS,
           signal: runAc.signal,
-          ...(ff.kind === 'pipe' ? { stdin: ff.stdin } : {}),
+          ...(ff.kind === 'pipe' ? { stdin: ff.stdin, ...(ff.audio ? { audioStdin: ff.audio.stdin } : {}) } : {}),
           onStdout: (chunk) => {
             pending += chunk.toString('utf8');
             const lines = pending.split('\n');

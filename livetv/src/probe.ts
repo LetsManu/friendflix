@@ -57,13 +57,38 @@ export function attrList(s: string): Map<string, string> {
   return out;
 }
 
+/** at most this many `#EXT-X-MEDIA` lines of a master playlist are looked at */
+export const MAX_MEDIA_LINES = 64;
+export interface Variant { uri: string; bandwidth: number; codecs: string | null; audio?: { uri: string } }
+
+/**
+ * The separate audio rendition of an `AUDIO="group"` variant: among the group's `#EXT-X-MEDIA:TYPE=AUDIO` lines that have a URI
+ * (a rendition without one is muxed in the variant: nothing to fetch), the `DEFAULT=YES` one, else the `AUTOSELECT=YES` one, else
+ * the first. Lines longer than ATTR_LINE_MAX are skipped; at most MAX_MEDIA_LINES media lines are read.
+ */
+export function pickAudio(lines: readonly string[], group: string): { uri: string } | null {
+  const found: Array<{ uri: string; def: boolean; auto: boolean }> = [];
+  let seen = 0;
+  for (const l of lines) {
+    if (!l.startsWith('#EXT-X-MEDIA:') || l.length > ATTR_LINE_MAX) continue;
+    if (++seen > MAX_MEDIA_LINES) break;
+    const a = attrList(l.slice(13));
+    const uri = a.get('URI');
+    if (a.get('TYPE') !== 'AUDIO' || a.get('GROUP-ID') !== group || !uri) continue;
+    found.push({ uri, def: a.get('DEFAULT') === 'YES', auto: a.get('AUTOSELECT') === 'YES' });
+  }
+  const best = found.find((f) => f.def) ?? found.find((f) => f.auto) ?? found[0];
+  return best ? { uri: best.uri } : null;
+}
+
 /**
  * The variant of an HLS master playlist to use: the highest BANDWIDTH ≤ `maxBitrate`, among the H.264 ones (`avc1`/`avc3`) when
- * any fits; when every variant is above the limit, the lowest one. null when the text has no variant (a media playlist).
+ * any fits; when every variant is above the limit, the lowest one. null when the text has no variant (a media playlist). A variant
+ * whose `AUDIO` group has a rendition with its own playlist carries it as `audio` (pickAudio).
  */
-export function pickVariant(master: string, maxBitrate: number): { uri: string; bandwidth: number; codecs: string | null } | null {
+export function pickVariant(master: string, maxBitrate: number): Variant | null {
   const lines = master.split(/\r?\n/).map((l) => l.trim());
-  const vars: Array<{ uri: string; bandwidth: number; codecs: string | null }> = [];
+  const vars: Array<Variant & { group: string | null }> = [];
   for (let i = 0; i < lines.length; i++) {
     // a variant line longer than ATTR_LINE_MAX is no variant (M2: no provider line is scanned at any length)
     if (!lines[i]!.startsWith('#EXT-X-STREAM-INF:') || lines[i]!.length > ATTR_LINE_MAX) continue;
@@ -77,13 +102,18 @@ export function pickVariant(master: string, maxBitrate: number): { uri: string; 
       break;
     }
     const bw = Number(a.get('BANDWIDTH'));
-    if (uri && Number.isInteger(bw) && bw > 0) vars.push({ uri, bandwidth: bw, codecs: a.get('CODECS') || null });
+    if (uri && Number.isInteger(bw) && bw > 0) vars.push({ uri, bandwidth: bw, codecs: a.get('CODECS') || null, group: a.get('AUDIO') || null });
   }
   if (vars.length === 0) return null;
   const fit = vars.filter((v) => v.bandwidth <= maxBitrate);
-  if (fit.length === 0) return vars.reduce((a, b) => (b.bandwidth < a.bandwidth ? b : a));
-  const h264 = fit.filter((v) => v.codecs !== null && /\bavc[13]\./i.test(v.codecs));
-  return (h264.length ? h264 : fit).reduce((a, b) => (b.bandwidth > a.bandwidth ? b : a));
+  let best: Variant & { group: string | null };
+  if (fit.length === 0) best = vars.reduce((a, b) => (b.bandwidth < a.bandwidth ? b : a));
+  else {
+    const h264 = fit.filter((v) => v.codecs !== null && /\bavc[13]\./i.test(v.codecs));
+    best = (h264.length ? h264 : fit).reduce((a, b) => (b.bandwidth > a.bandwidth ? b : a));
+  }
+  const audio = best.group ? pickAudio(lines, best.group) : null;
+  return { uri: best.uri, bandwidth: best.bandwidth, codecs: best.codecs, ...(audio ? { audio } : {}) };
 }
 
 type Stream = { codec_type?: unknown; codec_name?: unknown; width?: unknown; height?: unknown; avg_frame_rate?: unknown; r_frame_rate?: unknown; channels?: unknown };
@@ -200,6 +230,7 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
     const c = checkUrl(input.url, srt ? ['srt:'] : ['http:', 'https:']);
     if ('error' in c) return fail(c.error === 'host' ? 'address_refused' : 'invalid');
     let pipeError: unknown;
+    let separate: ReturnType<typeof streamsOf>['audio'];
     let result;
     if (srt) {
       const ip = await within(resolveChecked(c.url.hostname, input.allowLan, deps.guard), left());
@@ -225,18 +256,35 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
           media = await readText(list.body);
           if (!media.trimStart().startsWith('#EXTM3U')) return fail('invalid');
         }
-        const lines = media.split(/\r?\n/).map((l) => l.trim());
-        const seg = lines.find((l) => l !== '' && !l.startsWith('#'));
-        if (!seg) return fail('invalid');
-        const mapLine = lines.find((l) => l.startsWith('#EXT-X-MAP:'));
-        const init = mapLine && mapLine.length <= ATTR_LINE_MAX ? attrList(mapLine.slice(11)).get('URI') || undefined : undefined;
-        const initBody = init ? (await get(resolveUri(init, base), SEGMENT_MAX_BYTES)).body : null;
-        format = segmentFormat(seg, init);
-        const segBody = (await get(resolveUri(seg, base), SEGMENT_MAX_BYTES)).body;
-        stdin = (async function* () {
-          if (initBody) yield* upTo(initBody, SEGMENT_MAX_BYTES, (e) => { pipeError = e; });
-          yield* upTo(segBody, SEGMENT_MAX_BYTES, (e) => { pipeError = e; });
-        })();
+        // the first segment of a media playlist (with its init segment) as ffprobe's stdin
+        const sample = async (text: string, from: string) => {
+          const lines = text.split(/\r?\n/).map((l) => l.trim());
+          const seg = lines.find((l) => l !== '' && !l.startsWith('#'));
+          if (!seg) throw new ProbeFail('invalid');
+          const mapLine = lines.find((l) => l.startsWith('#EXT-X-MAP:'));
+          const init = mapLine && mapLine.length <= ATTR_LINE_MAX ? attrList(mapLine.slice(11)).get('URI') || undefined : undefined;
+          const initBody = init ? (await get(resolveUri(init, from), SEGMENT_MAX_BYTES)).body : null;
+          const fmt = segmentFormat(seg, init);
+          const segBody = (await get(resolveUri(seg, from), SEGMENT_MAX_BYTES)).body;
+          const body = (async function* () {
+            if (initBody) yield* upTo(initBody, SEGMENT_MAX_BYTES, (e) => { pipeError = e; });
+            yield* upTo(segBody, SEGMENT_MAX_BYTES, (e) => { pipeError = e; });
+          })();
+          return { fmt, body };
+        };
+        if (variant?.audio) {
+          // audio in a playlist of its own: its facts come from its own first segment; passthrough cannot merge two playlists
+          const list = await get(resolveUri(variant.audio.uri, master.url), PLAYLIST_MAX_BYTES);
+          const text = await readText(list.body);
+          if (!text.trimStart().startsWith('#EXTM3U')) return fail('invalid');
+          const a = await sample(text, list.url);
+          const r = await deps.run('ffprobe', pipeArgs(a.fmt), { timeoutMs: left(), stdin: a.body, ...abort });
+          if (r.code === TIMEOUT_CODE) return fail('timeout');
+          separate = streamsOf(r.stdout).audio;
+        }
+        const v = await sample(media, base);
+        format = v.fmt;
+        stdin = v.body;
       } else {
         format = urlFormat(c.url.pathname);
         const res = await get(c.url.href, Number.MAX_SAFE_INTEGER);
@@ -245,13 +293,14 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
       result = await deps.run('ffprobe', pipeArgs(format), { timeoutMs: left(), stdin, ...abort });
     }
     if (result.code === TIMEOUT_CODE) return fail('timeout');
-    const { video, audio } = streamsOf(result.stdout);
+    const { video, audio: muxed } = streamsOf(result.stdout);
+    const audio = separate ?? muxed;
     if (!video) {
       if (pipeError !== undefined) throw pipeError;
       return fail(srt && result.code !== 0 ? 'unreachable' : 'no_video');
     }
     // an HLS source is passed through untouched only when a browser can play its audio (or it has none); else the audio becomes AAC
-    const needs = video.codec !== 'h264' ? 'transcode' : input.kind === 'hls' && (!audio || audioPassable(audio.codec)) ? 'passthrough' : 'remux';
+    const needs = video.codec !== 'h264' ? 'transcode' : input.kind === 'hls' && !separate && (!audio || audioPassable(audio.codec)) ? 'passthrough' : 'remux';
     return { ok: true, video, ...(audio ? { audio } : {}), needs };
   } catch (e) {
     if (e instanceof ProbeFail) return fail(e.code);

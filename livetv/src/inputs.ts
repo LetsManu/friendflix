@@ -14,7 +14,9 @@ import type { IngestReader } from './srtingest.js';
  * checked IP literal. A `{ push }` input (Task 29) is its feed's ring in the ingest hub on stdin, from the oldest of the last 4 s
  * on; a feed that is not receiving fails like an unreachable input (the driver's reconnect waits for it).
  */
-export type FfmpegInput = { kind: 'pipe'; format: PipeFormat; stdin: AsyncIterable<Uint8Array> } | { kind: 'srt'; url: string };
+export type FfmpegInput =
+  | { kind: 'pipe'; format: PipeFormat; stdin: AsyncIterable<Uint8Array>; audio?: { format: PipeFormat; stdin: AsyncIterable<Uint8Array> } }
+  | { kind: 'srt'; url: string };
 export interface OpenedInput {
   ffInput: FfmpegInput;
   /** ends every fetch of this input (an unread body included) */
@@ -136,6 +138,16 @@ function openPush(channelId: string, deps: InputDeps): OpenedInput {
   return { ffInput: { kind: 'pipe', format: 'mpegts', stdin: watched({ [Symbol.asyncIterator]: () => it }, STREAM_IDLE_MS, close) }, close };
 }
 
+/** `gen`, but a failure of it ends the whole input (`end`), so its sibling pipe ends too */
+async function* linked(gen: AsyncGenerator<Uint8Array>, end: () => void): AsyncGenerator<Uint8Array> {
+  try {
+    yield* gen;
+  } catch (e) {
+    end();
+    throw e;
+  }
+}
+
 export async function openInput(input: StreamInput, deps: InputDeps): Promise<OpenedInput> {
   if ('push' in input) return openPush(input.push, deps);
   if (input.kind === 'srt') {
@@ -162,12 +174,14 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     let text = await readText(m.body);
     let base = m.url;
     let url = m.url;
+    let audioUri: string | null = null;
     const v = pickVariant(text, deps.maxBitrate ?? DEFAULT_MAX_BITRATE);
     if (v) {
       url = resolveRef(v.uri, base);
       const r = await get(url, PLAYLIST_MAX_BYTES, PLAYLIST_TIMEOUT_MS);
       text = await readText(r.body);
       base = r.url;
+      if (v.audio) audioUri = resolveRef(v.audio.uri, m.url);
     }
     // throws PlaylistRefused (encrypted, byte ranges) now: the driver fails the stream
     const media = parseMedia(text);
@@ -175,7 +189,18 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     // the demuxer follows the playlist's first segment (L5, see segmentFormat)
     const first = media.segments[0];
     const format: PipeFormat = first ? segmentFormat(first.uri, first.map) : 'mpegts';
-    return { ffInput: { kind: 'pipe', format, stdin: hlsBytes({ text, base, url }, get, ac.signal) }, close };
+    const video = hlsBytes({ text, base, url }, get, ac.signal);
+    if (audioUri === null) return { ffInput: { kind: 'pipe', format, stdin: video }, close };
+    // audio in a playlist of its own: fetched and followed like the video one (same guard, same limits), as a second pipe. Either
+    // one failing ends both (ffmpeg sees EOF, the driver backs off and restarts), so a stream never runs video-only unnoticed.
+    const ar = await get(audioUri, PLAYLIST_MAX_BYTES, PLAYLIST_TIMEOUT_MS);
+    const atext = await readText(ar.body);
+    const amedia = parseMedia(atext);
+    if (!amedia) throw new FetchError('unreachable');
+    const afirst = amedia.segments[0];
+    const aformat: PipeFormat = afirst ? segmentFormat(afirst.uri, afirst.map) : 'mpegts';
+    const audio = hlsBytes({ text: atext, base: ar.url, url: ar.url }, get, ac.signal);
+    return { ffInput: { kind: 'pipe', format, stdin: linked(video, close), audio: { format: aformat, stdin: linked(audio, close) } }, close };
   } catch (e) {
     close();
     throw e;
