@@ -24,7 +24,7 @@ import { clearJoinMark, startOrJoin } from './streams.js';
 import { adminStopKey, liveSidHash, mintLiveToken, revokeLiveToken } from './tokens.js';
 import { epgSummary } from './epg.js';
 import { refreshRunning, refreshSource, uploadGuideFile } from './refresh.js';
-import { GUIDE_FILE_MAX_BYTES } from './guidefiles.js';
+import { fileNameHeader, GUIDE_FILE_MAX_BYTES } from './guidefiles.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
 import { FeedError, createFeed, deleteFeed, feedCreate, ingestView, reassignPort, regenerateCredentials, syncIngest } from './ownfeeds.js';
 import {
@@ -192,8 +192,11 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     return keys;
   }
-  /** the `:id` path parameter as a uuid (groups, sources, channels); undefined when it is none */
-  const paramId = (req: { params: unknown }) => id.safeParse((req.params as { id?: string }).id).data;
+  /**
+   * the `:id` path parameter as a lowercase uuid (groups, sources, channels); undefined when it is none. Lowercase: the database
+   * matches either case, but lock keys and the guide file names (guidefiles.ts) are built from it and must be one name per row.
+   */
+  const paramId = (req: { params: unknown }) => id.safeParse((req.params as { id?: string }).id).data?.toLowerCase();
 
   app.get('/api/admin/livetv/groups', admin, async (_req, reply) => {
     reply.header('cache-control', 'no-store');
@@ -358,7 +361,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.delete('/api/admin/livetv/sources/:id', admin, async (req, reply) => {
     const sid = paramId(req);
-    const r = sid ? await deleteSource(ctx, req.user!.id, sid) : null;
+    const r = sid ? await deleteSource(ctx, req.user!.id, sid, req.log) : null;
     if (!r) return reply.code(404).send({ error: 'not_found' });
     // push feeds went with it (counted in the delete's transaction): livetv must stop accepting their credentials (Task 20)
     if (r.push) await syncIngest(ctx, req.log);
@@ -579,11 +582,13 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /**
    * `PUT /api/admin/livetv/sources/:id/file`: the raw bytes of an XMLTV file (`.xml` or gzip, recognised by its first bytes; no
-   * multipart), at most 300 MB, streamed to disk (refresh.ts uploadGuideFile). `?name=` may carry the file's own name for the card.
+   * multipart), at most 300 MB, streamed to disk (refresh.ts uploadGuideFile). The header `x-ff-file-name` (percent-encoded UTF-8) may
+   * carry the file's own name for the card (a header, not the query: it stays out of proxy access logs).
    * Answers 202 `{ started: true }` once the file is received; its import runs on and the page polls `GET /sources` (`state.epg`,
    * `fileName`, `fileBytes`). Refusals: 404 `not_found`; 400 `invalid` (`field: 'file'`) for a source that is not an uploaded guide, another
-   * content type or an empty body; 413 `too_large` (declared or counted); 409 `livetv_off` (nothing could import it), 409
-   * `import_running` (an upload or a refresh of this guide is running). The admin check runs before the body is read (onRequest), the
+   * content type, an empty body, an upload that broke off or sent nothing for a minute; 413 `too_large` (declared or counted); 409
+   * `livetv_off` (nothing could import it), 409 `import_running` (an upload or a refresh of this guide is running, or this upload lost
+   * the source's lock). The admin check runs before the body is read (onRequest), the
    * CSRF hook before the handler reads it; the file is never parsed here and never served back.
    */
   void app.register(async (sub) => {
@@ -608,8 +613,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
       if (!isFileGuide(s) || !GUIDE_FILE_TYPES.includes(type) || !(body instanceof Readable)) return reply.code(400).send({ error: 'invalid', field: 'file' });
       if (Number(req.headers['content-length'] ?? 0) > GUIDE_FILE_MAX_BYTES) return reply.code(413).send({ error: 'too_large' });
       if (!livetvInstalled(ctx)) return reply.code(409).send({ error: 'livetv_off' });
-      const name = (req.query as { name?: unknown } | undefined)?.name;
-      const r = await uploadGuideFile(ctx, sid, body, { name: typeof name === 'string' ? name : undefined, log: req.log });
+      const r = await uploadGuideFile(ctx, sid, body, { name: fileNameHeader(req.headers['x-ff-file-name']), log: req.log });
       if ('started' in r) {
         await audit(ctx, req.user!.id, 'livetv.source.file', sid, { fields: ['file'] });
         return reply.code(202).send(r);
@@ -617,7 +621,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
       if (r.error === 'import_running') return reply.code(409).send({ error: 'import_running' });
       if (r.error === 'too_large') return reply.code(413).send({ error: 'too_large' });
       if (r.error === 'not_found') return reply.code(404).send({ error: 'not_found' });
-      return reply.code(400).send({ error: 'invalid', field: 'file' }); // empty, or the upload broke off
+      return reply.code(400).send({ error: 'invalid', field: 'file' }); // empty, the upload broke off, or it stalled (idle)
     });
   });
 

@@ -661,12 +661,18 @@ async function inTx(pool: pg.Pool, fn: (c: pg.PoolClient) => Promise<void>): Pro
   }
 }
 
-/** the EPG state of the source: a fixed code or null (ok); a failure keeps the counts of the last good refresh */
-async function record(ctx: Ctx, id: string, at: Date, error: string | null, counts: { channels: number; programmes: number } | null): Promise<void> {
+/**
+ * the EPG state of the source: a fixed code or null (ok); a failure keeps the counts of the last good refresh. `rev` = the row's version
+ * (`updated_at::text`) the run read: an edit that landed meanwhile and marked the guide due (`epg_last_refresh_at` null: another scope, or
+ * switched on) keeps that mark, since this run used the old settings; without `rev` the time is always set.
+ */
+async function record(ctx: Ctx, id: string, at: Date, error: string | null, counts: { channels: number; programmes: number } | null, rev: string | null): Promise<void> {
   await ctx.db.query(
-    `update livetv_sources set epg_last_refresh_at = $2, epg_last_ok_at = case when $3::text is null then $2 else epg_last_ok_at end,
+    `update livetv_sources set
+       epg_last_refresh_at = case when $5::text is not null and epg_last_refresh_at is null and updated_at::text <> $5 then null else $2::timestamptz end,
+       epg_last_ok_at = case when $3::text is null then $2 else epg_last_ok_at end,
        epg_last_error = $3, epg_counts = coalesce($4::jsonb, epg_counts) where id = $1`,
-    [id, at, error, counts ? JSON.stringify(counts) : null]);
+    [id, at, error, counts ? JSON.stringify(counts) : null, rev]);
 }
 
 /**
@@ -679,18 +685,19 @@ async function record(ctx: Ctx, id: string, at: Date, error: string | null, coun
  *
  * An uploaded guide reads its stored file (`no_file` when it has none yet, nothing recorded; recorded when the stored file is gone), or,
  * with `file`, a just received upload; `onSuccess` runs after the swap committed and before the outcome is recorded (the upload makes
- * its file the current one there; refresh.ts).
+ * its file the current one there; refresh.ts). A `source` read with `rev` (its `updated_at::text`) keeps an edit's due mark (see record).
  */
 export async function refreshEpg(
-  ctx: Ctx, source: SourceRow,
+  ctx: Ctx, source: SourceRow & { rev?: string },
   o: { heartbeat?: () => Promise<unknown>; file?: { path: string; sha256: string }; onSuccess?: () => Promise<void> } = {},
 ): Promise<{ channels: number; programmes: number } | { error: string }> {
   if (isOwnFeeds(source.kind)) return { error: 'no_epg' };
+  const rev = source.rev ?? null;
   let feed: Feed;
   if (isFileGuide(source)) {
     const file = o.file ?? (source.guide_file ? await storedGuideFile(ctx, source.guide_file) : null);
     if (!file) {
-      if (source.guide_file) await record(ctx, source.id, new Date(), 'no_file', null); // the stored file is gone (a wiped volume)
+      if (source.guide_file) await record(ctx, source.id, new Date(), 'no_file', null, rev); // the stored file is gone (a wiped volume)
       return { error: 'no_file' };
     }
     feed = fileFeed(ctx, file);
@@ -709,9 +716,9 @@ export async function refreshEpg(
   try {
     r = await importEpg(ctx, source, feed, icons);
     if (!('error' in r) && o.onSuccess) await o.onSuccess();
-    await record(ctx, source.id, at, 'error' in r ? r.error : null, 'error' in r ? null : r);
+    await record(ctx, source.id, at, 'error' in r ? r.error : null, 'error' in r ? null : r, rev);
   } catch (e) {
-    await record(ctx, source.id, at, 'internal', null).catch(() => undefined);
+    await record(ctx, source.id, at, 'internal', null, rev).catch(() => undefined);
     throw e;
   } finally {
     if (timer) clearInterval(timer);

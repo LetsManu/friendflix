@@ -14,7 +14,7 @@ import { pushEvent } from './events.js';
 import { mergeImport, type ImportResult } from './import.js';
 import { importLogos } from './logos.js';
 import { invalidateLivetvRights } from './rights.js';
-import { dropPendingFile, fileLabel, promoteGuideFile, receiveGuideFile, removeGuideFiles, type PendingFile } from './guidefiles.js';
+import { dropPendingFile, fileLabel, promoteGuideFile, receiveGuideFile, removeGuideFiles, removeOtherKind, type PendingFile } from './guidefiles.js';
 import { isFileGuide, isGuide, sourceSecrets, type Refresh, type SourceRow } from './sources.js';
 import type { FetchM3uAnswer, M3uEntry } from './wire.js';
 
@@ -223,7 +223,7 @@ const hasEpg = (s: { kind: string; guide_provider: string | null; has_epg: boole
   !isOwnFeeds(s.kind) && (isFileGuide(s) ? ('has_file' in s ? s.has_file : s.guide_file !== null) : ('has_epg' in s ? s.has_epg : s.epg_url_enc !== null));
 
 /** the EPG step under the caller's lock (renewed while the XMLTV stream is read); its outcome is in `epg_last_*` (epg.ts) */
-async function epgStep(ctx: Ctx, source: SourceRow, token: string): Promise<void> {
+async function epgStep(ctx: Ctx, source: SourceRow & { rev?: string }, token: string): Promise<void> {
   await refreshEpg(ctx, source, { heartbeat: () => ctx.kv.refreshIfEquals(lockKey(source.id), token, LOCK_TTL_S) });
 }
 
@@ -235,7 +235,7 @@ export async function refreshSourceEpg(ctx: Ctx, id: string): Promise<void> {
   const token = randomBytes(12).toString('hex');
   if (!(await ctx.kv.setnx(lockKey(id), token, LOCK_TTL_S))) return;
   try {
-    const source = (await ctx.db.query<SourceRow>('select * from livetv_sources where id = $1', [id])).rows[0];
+    const source = (await ctx.db.query<SourceRow & { rev: string }>('select *, updated_at::text as rev from livetv_sources where id = $1', [id])).rows[0];
     if (!source || !hasEpg(source)) return;
     await epgStep(ctx, source, token);
   } finally {
@@ -272,19 +272,25 @@ function due(s: { refresh: Refresh; last_refresh_at: Date | null; last_error: st
  * (guidefiles.ts, at most GUIDE_FILE_MAX_BYTES: `too_large`), then the import starts and this answers `{ started: true }` while it runs
  * in the background (its outcome is the source's `epg_last_*`, as after *Aktualisieren*). Only a successful import makes the pending
  * file the guide's file (`guide_file`, `guide_file_name`, `guide_file_bytes`); a failed one drops it and keeps the old file, its
- * programmes and its index. A guide deleted meanwhile loses the upload's files too.
+ * programmes and its index. A guide deleted meanwhile loses the upload's files too. An upload that stalls (nothing for a minute: `idle`) or
+ * whose lock can no longer be renewed (`lost`, answered as `import_running`) is stopped and leaves no file.
  */
 export async function uploadGuideFile(
-  ctx: Ctx, id: string, body: Readable, o: { name?: string; max?: number; log: { warn(o: object, m: string): void } },
-): Promise<{ started: true } | { error: 'import_running' | 'too_large' | 'empty' | 'broken' | 'not_found' }> {
+  ctx: Ctx, id: string, body: Readable, o: { name?: string; max?: number; idleMs?: number; log: { warn(o: object, m: string): void } },
+): Promise<{ started: true } | { error: 'import_running' | 'too_large' | 'empty' | 'broken' | 'idle' | 'not_found' }> {
   const token = randomBytes(12).toString('hex');
   if (!(await ctx.kv.setnx(lockKey(id), token, LOCK_TTL_S))) return { error: 'import_running' };
   const renew = () => ctx.kv.refreshIfEquals(lockKey(id), token, LOCK_TTL_S);
   let started = false;
   try {
-    const got = await receiveGuideFile(ctx, id, body, { max: o.max, tick: renew });
-    if ('error' in got) return got;
-    const source = (await ctx.db.query<SourceRow>('select * from livetv_sources where id = $1', [id])).rows[0];
+    const got = await receiveGuideFile(ctx, id, body, { max: o.max, idleMs: o.idleMs, renew });
+    if ('error' in got) {
+      if (got.error === 'lost') return { error: 'import_running' };
+      if (got.error === 'gone') return { error: 'not_found' };
+      return { error: got.error };
+    }
+    // `rev`: the row's version this import is based on (an edit while it runs keeps its "import again" mark; epg.ts record)
+    const source = (await ctx.db.query<SourceRow & { rev: string }>('select *, updated_at::text as rev from livetv_sources where id = $1', [id])).rows[0];
     if (!source || !isFileGuide(source)) { await removeGuideFiles(ctx, id); return { error: 'not_found' }; }
     started = true;
     void importUpload(ctx, source, got, fileLabel(o.name), renew)
@@ -296,7 +302,11 @@ export async function uploadGuideFile(
   }
 }
 
-/** the import of a received upload (under the caller's lock); the pending file goes whatever happens, promoted or dropped */
+/**
+ * the import of a received upload (under the caller's lock); the pending file goes whatever happens, promoted or dropped. The promoted
+ * file is named in the row first; only then does a stored file of the other kind go (a failed update never leaves `guide_file` naming a
+ * removed file).
+ */
 async function importUpload(ctx: Ctx, source: SourceRow, file: PendingFile, label: string | null, heartbeat: () => Promise<unknown>): Promise<void> {
   let promoted = false;
   try {
@@ -310,6 +320,7 @@ async function importUpload(ctx: Ctx, source: SourceRow, file: PendingFile, labe
           [source.id, name, label ?? (file.gz ? 'guide.xml.gz' : 'guide.xml'), file.bytes]);
         // deleted while it was imported: the delete may have run before the rename, so its files go now
         if (!row.rowCount) await removeGuideFiles(ctx, source.id);
+        else await removeOtherKind(ctx, source.id, name);
       },
     });
   } finally {

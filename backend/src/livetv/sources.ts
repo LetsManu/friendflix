@@ -509,7 +509,9 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
  * and a guide whose scope is left empty is switched off ("Gilt für keine Quelle mehr"). Either way the channels are matched again.
  * An uploaded guide's files go after the commit (an upload still running for it removes its own when it finds the row gone).
  */
-export async function deleteSource(ctx: Pick<Ctx, 'db' | 'cfg'>, actor: string, id: string): Promise<{ channels: number; push: boolean } | null> {
+export async function deleteSource(
+  ctx: Pick<Ctx, 'db' | 'cfg'>, actor: string, id: string, log?: { warn(o: object, m: string): void },
+): Promise<{ channels: number; push: boolean } | null> {
   const r = await write(ctx, async (c) => {
     const s = (await c.query<{ kind: string }>('select kind from livetv_sources where id = $1 for update', [id])).rows[0];
     if (!s) return null;
@@ -530,7 +532,12 @@ export async function deleteSource(ctx: Pick<Ctx, 'db' | 'cfg'>, actor: string, 
     return { channels: n.n, push: n.push > 0, guide };
   });
   if (!r) return null;
-  if (r.guide) await removeGuideFiles(ctx, id);
+  // the delete has committed: a file that cannot be removed is logged (by the error's name), never answered as a failed delete
+  if (r.guide) {
+    await removeGuideFiles(ctx, id).catch((e: unknown) => {
+      log?.warn({ sourceId: id, error: e instanceof Error ? e.name : 'unknown' }, 'livetv guide files not removed');
+    });
+  }
   return { channels: r.channels, push: r.push };
 }
 

@@ -6,17 +6,17 @@
  * `POST /v1/parse/xmltv` (faked here; the backend never parses XML) and only then becomes the guide's file.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { gzipSync } from 'node:zlib';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { livetvKey, signLivetvHash } from '../src/livetv/client.js';
 import { detectLivetv } from '../src/livetv/detect.js';
 import { nowNext } from '../src/livetv/epg.js';
-import { guideDir } from '../src/livetv/guidefiles.js';
+import { guideDir, receiveGuideFile, removeGuideFiles, sweepPendingGuideFiles } from '../src/livetv/guidefiles.js';
 import { livetvRefreshTick, refreshRunning, uploadGuideFile } from '../src/livetv/refresh.js';
 import { ENC_KEY, cfg, fakeHttp, makeEnv, type TestEnv } from './helpers.js';
 
@@ -79,8 +79,9 @@ const call = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?
   env.app.inject({ method, url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, remoteAddress: `192.0.2.${++addr % 200 + 1}`, ...(payload === undefined ? {} : { payload: payload as object }) });
 const upload = (id: string, bytes: Buffer, o: { type?: string; name?: string; headers?: Record<string, string> } = {}) =>
   env.app.inject({
-    method: 'PUT', url: `/api/admin/livetv/sources/${id}/file${o.name ? `?name=${encodeURIComponent(o.name)}` : ''}`, payload: bytes, cookies: admin.cookies,
-    headers: { 'x-csrf-token': admin.csrf, 'content-type': o.type ?? 'application/gzip', ...o.headers }, remoteAddress: `192.0.2.${++addr % 200 + 1}`,
+    method: 'PUT', url: `/api/admin/livetv/sources/${id}/file`, payload: bytes, cookies: admin.cookies,
+    headers: { 'x-csrf-token': admin.csrf, 'content-type': o.type ?? 'application/gzip', ...(o.name ? { 'x-ff-file-name': encodeURIComponent(o.name) } : {}), ...o.headers },
+    remoteAddress: `192.0.2.${++addr % 200 + 1}`,
   });
 const row = async (id: string) => (await env.pool.query('select * from livetv_sources where id = $1', [id])).rows[0];
 const view = async (id: string) => ((await call('GET', '/api/admin/livetv/sources')).json() as Array<Record<string, unknown> & { id: string }>).find((s) => s.id === id)!;
@@ -319,5 +320,172 @@ describe('uploaded guide files (Task 5)', () => {
     open();
     await settle(id2);
     expect(dirFiles(id2)).toEqual([]);
+  });
+
+  it('the file name comes from the x-ff-file-name header (percent-encoded UTF-8); one that cannot be decoded is ignored', async () => {
+    const id = (await createFileGuide()).json().id as string;
+    await upload(id, FILE_A, { name: 'Programm für Köln/Bonn.xml.gz' });
+    await settle(id);
+    expect(await view(id)).toMatchObject({ fileName: 'Bonn.xml.gz' });
+    await upload(id, FILE_B, { type: 'text/xml', headers: { 'x-ff-file-name': '%E0%A4%A' } });
+    await settle(id);
+    expect(await view(id)).toMatchObject({ fileName: 'guide.xml' });
+    // the query is not read any more
+    const q = await env.app.inject({
+      method: 'PUT', url: `/api/admin/livetv/sources/${id}/file?name=quer.xml`, payload: FILE_A, cookies: admin.cookies,
+      headers: { 'x-csrf-token': admin.csrf, 'content-type': 'application/gzip' }, remoteAddress: '192.0.2.250',
+    });
+    expect(q.statusCode).toBe(202);
+    await settle(id);
+    expect(await view(id)).toMatchObject({ fileName: 'guide.xml.gz' });
+  });
+
+  it('an uppercase id is the same source: one lock, the same files, and its delete removes them', async () => {
+    const id = (await createFileGuide()).json().id as string;
+    const ID = id.toUpperCase();
+    let open!: () => void;
+    gate = new Promise<void>((r) => { open = r; });
+    expect((await upload(ID, FILE_A)).statusCode).toBe(202);
+    // the lowercase refresh sees the uppercase upload's lock (and the other way round)
+    expect((await call('POST', `/api/admin/livetv/sources/${id}/refresh`)).json()).toEqual({ started: false });
+    expect((await upload(id, FILE_B)).json()).toEqual({ error: 'import_running' });
+    open();
+    await settle(id);
+    expect(dirFiles(id)).toEqual([`${id}.xml.gz`]);
+    expect((await call('POST', `/api/admin/livetv/sources/${ID}/refresh`)).json()).toEqual({ started: true });
+    await settle(id);
+    expect((await call('DELETE', `/api/admin/livetv/sources/${ID}`)).statusCode).toBe(200);
+    expect(dirFiles(id)).toEqual([]);
+    expect(await row(id)).toBeUndefined();
+  });
+
+  it('a delete that cannot remove a file still answers 200 (the delete has committed)', async () => {
+    const id = (await createFileGuide()).json().id as string;
+    await upload(id, FILE_A);
+    await settle(id);
+    // a directory where a stored file of the other kind would be: rm without recursive refuses it
+    mkdirSync(join(guideDir(env.ctx), `${id}.xml`, 'x'), { recursive: true });
+    const r = await call('DELETE', `/api/admin/livetv/sources/${id}`);
+    expect([r.statusCode, r.json()]).toEqual([200, { channels: 0 }]);
+    expect(await row(id)).toBeUndefined();
+    rmSync(join(guideDir(env.ctx), `${id}.xml`), { recursive: true });
+  });
+
+  describe('receiving (guidefiles.ts)', () => {
+    afterEach(() => { vi.useRealTimers(); });
+    /** a body the test feeds by hand */
+    const feed = () => new Readable({ read() { /* pushed by the test */ } });
+    const parts = (id: string) => dirFiles(id).filter((f) => f.endsWith('.part'));
+
+    it('each upload writes its own part file; a stalled one is stopped after the idle time and leaves nothing', async () => {
+      const id = randomUUID();
+      const a = feed();
+      const b = feed();
+      const ra = receiveGuideFile(env.ctx, id, a, { idleMs: 80 });
+      const rb = receiveGuideFile(env.ctx, id, b, { idleMs: 5_000 });
+      a.push(Buffer.from('<tv>'));
+      b.push(Buffer.from('<tv>'));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(parts(id)).toHaveLength(2);
+      // a sends nothing more: idle
+      expect(await ra).toEqual({ error: 'idle' });
+      b.push(Buffer.from('</tv>'));
+      b.push(null);
+      expect(await rb).toMatchObject({ path: join(guideDir(env.ctx), `${id}.pending.xml`), bytes: 9 });
+      expect(dirFiles(id)).toEqual([`${id}.pending.xml`]);
+      await removeGuideFiles(env.ctx, id);
+      expect(dirFiles(id)).toEqual([]);
+    });
+
+    it('a lock that cannot be renewed stops the upload (while it streams, or before the rename) and leaves nothing', async () => {
+      const id = randomUUID();
+      // before the rename
+      expect(await receiveGuideFile(env.ctx, id, Readable.from([Buffer.from('<tv></tv>')]), { renew: async () => false })).toEqual({ error: 'lost' });
+      expect(await receiveGuideFile(env.ctx, id, Readable.from([Buffer.from('<tv></tv>')]), { renew: async () => { throw new Error('kv down'); } })).toEqual({ error: 'lost' });
+      expect(dirFiles(id)).toEqual([]);
+      // while it streams: the renewal after 30 s fails
+      vi.useFakeTimers({ toFake: ['Date'] });
+      let renewals = 0;
+      const body = feed();
+      const r = receiveGuideFile(env.ctx, id, body, { renew: async () => { renewals++; return false; } });
+      body.push(Buffer.from('<tv>'));
+      await new Promise((res) => setTimeout(res, 20));
+      vi.setSystemTime(Date.now() + 31_000);
+      body.push(Buffer.from('<programme/>'));
+      expect(await r).toEqual({ error: 'lost' });
+      expect(renewals).toBe(1);
+      expect(dirFiles(id)).toEqual([]);
+    });
+
+    it("an upload whose lock was taken over answers import_running; a guide deleted while it streams answers 404", async () => {
+      const id = (await createFileGuide()).json().id as string;
+      const body = feed();
+      const r = uploadGuideFile(env.ctx, id, body, { log: { warn: () => undefined } });
+      body.push(FILE_A.subarray(0, 4));
+      await new Promise((res) => setTimeout(res, 20));
+      await env.kv.set(`ltv:refresh:${id}`, 'another-owner', 60); // the lock expired and another upload took it
+      body.push(FILE_A.subarray(4));
+      body.push(null);
+      expect(await r).toEqual({ error: 'import_running' });
+      expect(dirFiles(id)).toEqual([]);
+      await env.kv.del(`ltv:refresh:${id}`);
+      const id2 = (await createFileGuide()).json().id as string;
+      const body2 = feed();
+      const r2 = uploadGuideFile(env.ctx, id2, body2, { log: { warn: () => undefined } });
+      body2.push(FILE_A.subarray(0, 4));
+      await new Promise((res) => setTimeout(res, 20));
+      expect((await call('DELETE', `/api/admin/livetv/sources/${id2}`)).statusCode).toBe(200);
+      body2.push(FILE_A.subarray(4));
+      body2.push(null);
+      expect(await r2).toEqual({ error: 'not_found' });
+      expect(dirFiles(id2)).toEqual([]);
+    });
+
+    it('the boot sweep removes pending and part files only, and none of a guide whose upload runs', async () => {
+      const dir = guideDir(env.ctx);
+      mkdirSync(dir, { recursive: true });
+      const [idle, busy] = [randomUUID(), randomUUID()];
+      const names = [`${idle}.pending.xml`, `${idle}.pending.xml.gz`, `${idle}.pending.${'ab'.repeat(12)}.part`, `${idle}.pending.part`, `${idle}.xml.gz`,
+        `${busy}.pending.xml`, 'notizen.pending.txt'];
+      for (const n of names) writeFileSync(join(dir, n), 'x');
+      const n = await sweepPendingGuideFiles(env.ctx, async (id) => id === busy);
+      expect(n).toBe(4);
+      expect(readdirSync(dir).filter((f) => names.includes(f)).sort()).toEqual([`${busy}.pending.xml`, `${idle}.xml.gz`, 'notizen.pending.txt'].sort());
+      for (const f of [`${busy}.pending.xml`, `${idle}.xml.gz`, 'notizen.pending.txt']) rmSync(join(dir, f));
+    });
+  });
+
+  it('a scope edit while an import runs keeps its due mark: the tick imports again with the new scope', async () => {
+    const list = await addList();
+    const other = await addList('Hafen Paket');
+    await addChannel(list, 'Sternwarte 24');
+    const hafen = await addChannel(other, 'Hafenkanal');
+    const id = (await createFileGuide({ guideScope: [list] })).json().id as string;
+    let open!: () => void;
+    gate = new Promise<void>((r) => { open = r; });
+    expect((await upload(id, FILE_B, { type: 'text/xml' })).statusCode).toBe(202);
+    // the import has read the old scope; the edit lands while it runs
+    for (let i = 0; i < 100 && parsed.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    expect((await call('PATCH', `/api/admin/livetv/sources/${id}`, { guideScope: [list, other] })).statusCode).toBe(200);
+    gate = null;
+    open();
+    await settle(id);
+    expect(parsed.at(-1)!.head.channels).toEqual(['sternwarte.int']);
+    expect(await row(id)).toMatchObject({ epg_last_refresh_at: null, epg_last_error: null, guide_file: `${id}.xml` });
+    parsed.length = 0;
+    await livetvRefreshTick(env.ctx);
+    expect(parsed.map((p) => p.head.channels?.sort())).toEqual([['hafen.int', 'sternwarte.int']]);
+    expect((await nowNext(env.ctx, [hafen])).get(hafen)?.now?.title).toBe('Jetzt auf Hafenkanal');
+    expect((await row(id)).epg_last_refresh_at).not.toBeNull();
+    // an edit that changes nothing the import uses (the name) does not make it run again
+    parsed.length = 0;
+    gate = new Promise<void>((r) => { open = r; });
+    await call('POST', `/api/admin/livetv/sources/${id}/refresh`);
+    for (let i = 0; i < 100 && parsed.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    await call('PATCH', `/api/admin/livetv/sources/${id}`, { name: 'Sternwarte neu' });
+    gate = null;
+    open();
+    await settle(id);
+    expect((await row(id)).epg_last_refresh_at).not.toBeNull();
   });
 });
