@@ -145,7 +145,7 @@ describe('the list (spec §9.2)', () => {
     expect(page.channels.map((c) => c.number)).toEqual([11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
     expect(page.channels[0]).toEqual({
       id: ids[10], number: 11, name: 'Kanal 11', groupId: null, sourceId: src, streamKind: 'hls', ingest: 'pull', logoHash: null, hidden: false,
-      missing: false, epg: false, now: null, mode: null, probeError: null, overridden: {}, dupNumber: false, epgShift: { min: 0, from: 'none' },
+      missing: false, epg: false, epgMatch: 'auto', epgPin: null, now: null, mode: null, probeError: null, overridden: {}, dupNumber: false, epgShift: { min: 0, from: 'none' },
     });
     expect((await list()).channels).toHaveLength(25); // default page of 100
     expect((await list('limit=10&offset=20')).channels.map((c) => c.number)).toEqual([21, 22, 23, 24, 25]);

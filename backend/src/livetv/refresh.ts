@@ -231,15 +231,56 @@ async function epgStep(ctx: Ctx, source: SourceRow & { rev?: string }, token: st
  * Refreshes only the EPG of a source (the tick's 24-h due check), under the same single-flight lock as refreshSource. The own-feeds
  * source and a source without an EPG URL are skipped (F16).
  */
-export async function refreshSourceEpg(ctx: Ctx, id: string): Promise<void> {
+export async function refreshSourceEpg(ctx: Ctx, id: string, opts: { onStart?: () => Promise<void> } = {}): Promise<boolean> {
   const token = randomBytes(12).toString('hex');
-  if (!(await ctx.kv.setnx(lockKey(id), token, LOCK_TTL_S))) return;
+  if (!(await ctx.kv.setnx(lockKey(id), token, LOCK_TTL_S))) return false;
   try {
+    await opts.onStart?.();
     const source = (await ctx.db.query<SourceRow & { rev: string }>('select *, updated_at::text as rev from livetv_sources where id = $1', [id])).rows[0];
-    if (!source || !hasEpg(source)) return;
+    if (!source || !hasEpg(source)) return true;
     await epgStep(ctx, source, token);
+    return true;
   } finally {
     await ctx.kv.delIfEquals(lockKey(id), token);
+  }
+}
+
+const pinImportKey = (id: string) => `ltv:pinimport:${id}`;
+const PIN_IMPORT_WINDOW_S = 30;
+const PIN_IMPORT_DELAY_MS = 4000;
+const PIN_IMPORT_POLL_MS = 2000;
+const sleepUnref = (ms: number) => new Promise<void>((res) => { setTimeout(res, ms).unref(); });
+
+/**
+ * The background import after a hand pin, coalesced per source: the first call sets `ltv:pinimport:<id>` to its own random token and
+ * runs one EPG import after ~4 s (ctx.pinImportDelayMs); later calls see the key and only return. The owner renews the key's TTL
+ * while it waits and polls (a busy single-flight lock is polled at most the lock's TTL), so a newcomer never schedules a second
+ * poller behind it; the run reads the filter after every pin made meanwhile. The key is cleared when the run starts, and only while it
+ * still holds the owner's token (delIfEquals, atomic), never a newer owner's. Giving up at the poll cap is recorded (job error, code
+ * only) and releases the key. The timer is in-process: a restart loses a scheduled import (accepted; the next refresh imports).
+ * Resolves when the run ended (callers do not await it in production).
+ */
+export async function schedulePinImport(ctx: Ctx, id: string): Promise<void> {
+  const key = pinImportKey(id);
+  const token = randomBytes(12).toString('hex');
+  if (!(await ctx.kv.setnx(key, token, PIN_IMPORT_WINDOW_S))) return;
+  /** keeps the key while waiting; false = the key is another owner's now (ours expired and a newer pin scheduled): that one covers the pins */
+  const keep = async (): Promise<boolean> =>
+    (await ctx.kv.refreshIfEquals(key, token, PIN_IMPORT_WINDOW_S)) || (await ctx.kv.setnx(key, token, PIN_IMPORT_WINDOW_S));
+  try {
+    await sleepUnref(ctx.pinImportDelayMs ?? PIN_IMPORT_DELAY_MS);
+    const poll = ctx.pinImportPollMs ?? PIN_IMPORT_POLL_MS;
+    const until = Date.now() + LOCK_TTL_S * 1000;
+    while (!(await refreshSourceEpg(ctx, id, { onStart: async () => { await ctx.kv.delIfEquals(key, token); } }))) {
+      if (Date.now() >= until) {
+        await recordError(ctx, { source: 'job', code: 'livetv-pin-import-timeout' });
+        return;
+      }
+      await sleepUnref(poll);
+      if (!(await keep())) return;
+    }
+  } finally {
+    await ctx.kv.delIfEquals(key, token).catch(() => undefined); // gave up or failed: a later pin may schedule again; never another owner's key
   }
 }
 

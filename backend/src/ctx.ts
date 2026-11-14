@@ -25,6 +25,9 @@ export interface Ctx {
   roles: Record<string, RoleTemplate>;
   encKey: Buffer;
   fetchImpl: typeof fetch;
+  /** livetv's coalesced import after hand pins (refresh.ts schedulePinImport): delay and lock poll interval; tests shorten them */
+  pinImportDelayMs?: number;
+  pinImportPollMs?: number;
 }
 
 export interface LiveCtxDeps {
