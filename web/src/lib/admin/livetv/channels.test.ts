@@ -197,7 +197,7 @@ describe('synced (own feeds, "wird übertragen …")', () => {
 describe('Programm zuordnen… (pinGuides / startGuide / pinLine)', () => {
   const src = (o: Partial<SourceView> & Pick<SourceView, 'id' | 'kind' | 'name'>): SourceView => ({
     urlHint: null, epgHint: null, userAgent: null, allowLan: false, refresh: '24h', skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0,
-    maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0, guideProvider: null, guideScope: null, servedChannels: 0,
+    maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0, guideProvider: null, guideScope: null, servedChannels: 0, fileName: null, fileBytes: null,
     state: { lastRefreshAt: null, lastOkAt: null, lastError: null, counts: null, epg: { lastRefreshAt: null, lastOkAt: null, lastError: null, programmes: null } }, ...o,
   });
   const sources = [
