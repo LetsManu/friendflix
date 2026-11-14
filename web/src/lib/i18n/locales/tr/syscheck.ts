@@ -7,6 +7,7 @@ const dict: Translation<typeof de> = {
   title: 'Sistem kontrolü',
   intro: 'Ne çalışıyor, ne çalışmıyor, neden – ve nerede düzeltilir.',
   checkedAt: '{time} itibarıyla kontrol edildi',
+  staleAt: '{time} itibarıyla (güncel değil)',
   checkNow: 'Şimdi kontrol et',
   loadFailed: 'Sistem kontrolü yüklenemedi.',
   status: { ok: 'Sorunsuz', warning: 'Uyarı', problem: 'Sorun', not_set_up: 'Kurulmadı', unknown: 'Kontrol edilmedi' },

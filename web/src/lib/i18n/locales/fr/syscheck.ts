@@ -7,6 +7,7 @@ const dict: Translation<typeof de> = {
   title: 'Vérification du système',
   intro: 'Ce qui marche, ce qui ne marche pas, pourquoi – et où le corriger.',
   checkedAt: 'vérifié à {time}',
+  staleAt: 'État de {time} (périmé)',
   checkNow: 'Vérifier maintenant',
   loadFailed: 'La vérification du système n’a pas pu être chargée.',
   status: { ok: 'En ordre', warning: 'Avertissement', problem: 'Problème', not_set_up: 'Non configuré', unknown: 'Non vérifié' },

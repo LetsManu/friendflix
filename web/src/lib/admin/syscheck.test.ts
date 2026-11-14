@@ -11,7 +11,7 @@ import it_ from '#lib/i18n/locales/it/index';
 import pl from '#lib/i18n/locales/pl/index';
 import tr_ from '#lib/i18n/locales/tr/index';
 import {
-  CHECK_GROUPS, CHECK_IDS, BROWSER_IDS, adviceTexts, cachedSystemcheck, docsHref, forgetSystemcheck, isNewer, lineText, mergeLines, rememberSystemcheck, settingHref, statusIcon,
+  CHECK_GROUPS, CHECK_IDS, BROWSER_IDS, adviceTexts, cachedSystemcheck, checkedAtText, docsHref, forgetSystemcheck, isNewer, lineText, mergeLines, rememberSystemcheck, settingHref, statusIcon,
   statusTone, summaryOf, type CheckLine, type CheckStatus, type SystemcheckResult,
 } from './syscheck';
 
@@ -111,6 +111,30 @@ describe('remembered answer (stale-while-revalidate)', () => {
     vi.stubGlobal('sessionStorage', { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); }, removeItem: () => { throw new Error('denied'); } });
     expect(() => rememberSystemcheck(res('2026-11-14T10:00:00.000Z'))).not.toThrow();
     expect(cachedSystemcheck()?.at).toBe('2026-11-14T10:00:00.000Z');
+  });
+
+  it('a stored entry with a malformed line is ignored, never thrown on in mergeLines', () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('sessionStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) });
+    forgetSystemcheck();
+    const at = '2026-11-14T09:00:00.000Z';
+    for (const lines of [[null], [{ id: 'core.database' }], [{ status: 'ok' }], [{ id: 7, status: 'ok' }], ['core.database']]) {
+      store.set('ff-syscheck', JSON.stringify({ at, lines, counts: counts({}) }));
+      expect(cachedSystemcheck(), JSON.stringify(lines)).toBeNull();
+    }
+    // and an answer of that shape is not remembered either
+    rememberSystemcheck({ at, lines: [null], counts: counts({}) } as unknown as SystemcheckResult);
+    expect(cachedSystemcheck()).toBeNull();
+    expect(() => mergeLines(cachedSystemcheck()?.lines ?? [], [])).not.toThrow();
+  });
+});
+
+describe('the time of the list', () => {
+  it('checkedAtText: "geprüft um …" for a current answer, "Stand von …" once a reload failed', () => {
+    const at = '2026-11-14T09:05:00.000Z';
+    expect(checkedAtText(at, false)).toMatch(/^geprüft um \d{2}:\d{2}$/);
+    expect(checkedAtText(at, true)).toMatch(/^Stand von \d{2}:\d{2}/);
+    expect(checkedAtText(at, true)).toContain('veraltet');
   });
 });
 

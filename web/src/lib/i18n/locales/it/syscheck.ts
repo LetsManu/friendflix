@@ -7,6 +7,7 @@ const dict: Translation<typeof de> = {
   title: 'Controllo del sistema',
   intro: 'Cosa funziona, cosa no, perché – e dove sistemarlo.',
   checkedAt: 'controllato alle {time}',
+  staleAt: 'Stato delle {time} (non aggiornato)',
   checkNow: 'Controlla ora',
   loadFailed: 'Non è stato possibile caricare il controllo del sistema.',
   status: { ok: 'In ordine', warning: 'Avviso', problem: 'Problema', not_set_up: 'Non configurato', unknown: 'Non controllato' },

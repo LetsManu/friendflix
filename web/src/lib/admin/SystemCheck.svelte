@@ -13,7 +13,7 @@
   import { createEventDispatcher, onMount } from 'svelte';
   import { apiCode } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
-  import { fmtTime, t, tr, type TKey } from '#lib/i18n';
+  import { t, tr, type TKey } from '#lib/i18n';
   import { poll } from '#lib/adminContent/poll';
   import { errorText } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
@@ -24,7 +24,7 @@
   import CheckLine from './CheckLine.svelte';
   import { runBrowserChecks, uploadNotSetUp } from './syscheckBrowser';
   import {
-    CHECK_GROUPS, CHECK_IDS, cachedSystemcheck, countLines, isNewer, loadSystemcheck, mergeLines, statusIcon, statusTone, summaryOf,
+    CHECK_GROUPS, CHECK_IDS, cachedSystemcheck, checkedAtText, countLines, isNewer, loadSystemcheck, mergeLines, statusIcon, statusTone, summaryOf,
     type CheckGroup, type CheckId, type CheckLine as Line, type CheckStatus, type SystemcheckResult,
   } from './syscheck';
 
@@ -39,6 +39,10 @@
   let result: SystemcheckResult | null = cachedSystemcheck();
   if (result) ready = true;
   let failed = false, checking = false, retrying = false;
+  /** a reload failed while an older answer is shown: the time reads "Stand von …" until one succeeds */
+  let stale = false;
+  // $t as an argument: the time follows a language switch
+  const atText = (at: string, old: boolean, _tr: unknown) => checkedAtText(at, old);
   /** what the polite status region says: loading, then the summary after the first answer and after Jetzt prüfen (never on a silent poll) */
   let announce = result ? '' : tr('ui.table.loading');
 
@@ -71,9 +75,11 @@
       const r = await loadSystemcheck();
       if (!checking && isNewer(r, result)) result = r;
       failed = false;
+      stale = false;
       if (first && result) announce = summaryOf(result.counts).text;
     } catch {
       failed = result === null;
+      stale = result !== null;
       if (failed) announce = tr('syscheck.loadFailed');
     }
     ready = true;
@@ -87,6 +93,7 @@
     try {
       result = await loadSystemcheck(true);
       failed = false;
+      stale = false;
       announce = summaryOf(result.counts).text;
       toast.success(tr('adminContent.health.checked'));
       void refreshBanner(); // the banner shows the new state now, not after its next 60 s poll
@@ -121,7 +128,8 @@
 <section id="systemcheck" class="sc" aria-labelledby="sc-title">
   <div class="sh">
     <h2 id="sc-title">{$t('syscheck.title')}</h2>
-    <span class="at muted small">{#if result}{$t('syscheck.checkedAt', { time: fmtTime(result.at) })}{:else}<Skeleton w="7.5rem" h=".85rem" inline />{/if}</span>
+    <!-- both texts take the same cell (the longer one sets its width), so switching to "Stand von …" never moves the header -->
+    <span class="at muted small">{#if result}<span class:off={stale}>{atText(result.at, false, $t)}</span><span class="stale" class:off={!stale}><Icon name="clock" size={13} />{atText(result.at, true, $t)}</span>{:else}<Skeleton w="7.5rem" h=".85rem" inline />{/if}</span>
     <span class="sp"></span>
     <Button variant="secondary" icon="refresh" pending={checking} on:click={checkNow}>{$t('syscheck.checkNow')}</Button>
   </div>
@@ -159,7 +167,10 @@
   .sh { display: flex; align-items: center; gap: .5rem 1rem; flex-wrap: wrap; margin-bottom: .3rem; }
   .sp { flex: 1; }
   .small { font-size: .85rem; }
-  .at { font-variant-numeric: tabular-nums; min-width: 7.5rem; }
+  .at { font-variant-numeric: tabular-nums; min-width: 7.5rem; display: inline-grid; }
+  .at > :global(*) { grid-area: 1 / 1; }
+  .at > .off { visibility: hidden; }
+  .stale { display: inline-flex; align-items: center; gap: .3rem; color: var(--warn); }
   .intro { margin: 0 0 .7rem; }
   /* a fixed column grid: the pills and their skeletons take the same rows at every width */
   .counts { list-style: none; margin: 0 0 .9rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); gap: .4rem .6rem; }

@@ -6,7 +6,7 @@
  * text shows nothing rather than the raw code. Spec: docs/superpowers/specs/2026-11-14-systemcheck-design.md.
  */
 import { api } from '#lib/api';
-import { hasKey, tr, trDynamic, type TKey, type TParams } from '#lib/i18n';
+import { fmtTime, hasKey, tr, trDynamic, type TKey, type TParams } from '#lib/i18n';
 import type { Tone } from '#lib/ui/StatusPill.svelte';
 import { failClassText } from './health';
 
@@ -50,9 +50,11 @@ export interface SystemcheckResult { at: string; lines: CheckLine[]; counts: Rec
 const STORE_KEY = 'ff-syscheck';
 let last: SystemcheckResult | null = null;
 const atOf = (r: SystemcheckResult | null): number => (r ? Date.parse(r.at) : NaN);
-/** a stored or received answer of the right shape (codes only: nothing in it is secret) */
+/** a stored or received answer of the right shape, every line with an id and a status (codes only: nothing in it is secret) */
 const validResult = (r: unknown): r is SystemcheckResult =>
-  !!r && typeof r === 'object' && typeof (r as SystemcheckResult).at === 'string' && Array.isArray((r as SystemcheckResult).lines) && !!(r as SystemcheckResult).counts && typeof (r as SystemcheckResult).counts === 'object';
+  !!r && typeof r === 'object' && typeof (r as SystemcheckResult).at === 'string' && Array.isArray((r as SystemcheckResult).lines)
+  && (r as SystemcheckResult).lines.every((l) => !!l && typeof l === 'object' && typeof l.id === 'string' && typeof l.status === 'string')
+  && !!(r as SystemcheckResult).counts && typeof (r as SystemcheckResult).counts === 'object';
 
 /** true when `next` may replace `cur`: an answer never gives way to an older one (a slow cached read after a fresh run) */
 export const isNewer = (next: SystemcheckResult, cur: SystemcheckResult | null): boolean => !cur || !(atOf(next) < atOf(cur));
@@ -77,6 +79,9 @@ export function forgetSystemcheck(): void {
   last = null;
   try { sessionStorage.removeItem(STORE_KEY); } catch { /* no storage */ }
 }
+
+/** The time of the list: "geprüft um 10:05", or "Stand von 10:05 (veraltet)" while reloading it fails and an older answer is shown. */
+export const checkedAtText = (at: string, stale: boolean): string => tr(stale ? 'syscheck.staleAt' : 'syscheck.checkedAt', { time: fmtTime(at) });
 
 /** GET /api/admin/systemcheck (cached on the server); `refresh` is "Jetzt prüfen" (rate limited: 429 rate_limited). Remembers the answer. */
 export async function loadSystemcheck(refresh = false): Promise<SystemcheckResult> {

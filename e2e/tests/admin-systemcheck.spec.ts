@@ -245,6 +245,36 @@ test.describe('Systemcheck on Admin → Status', () => {
     });
   });
 
+  test.describe('a failing poll', () => {
+    test.use({ allowedConsole: /status of 500/ });
+    test('keeps the list and says "Stand von …" in the same place: nothing moves', async ({ page, api }) => {
+      await page.clock.install();
+      await page.goto('/admin/status');
+      const sc = page.locator('#systemcheck');
+      await expect(sc.locator('li[data-id="signin.authentik"] .pill.err')).toBeVisible();
+      // both texts share one cell (the longer sets its width); only one is visible
+      const now = sc.locator('.at > span').filter({ hasText: 'geprüft um' });
+      const old = sc.locator('.at > .stale');
+      await expect(now).toBeVisible();
+      await expect(old).toBeHidden();
+      const head = (await sc.locator('.sh').boundingBox())!;
+      const list = (await sc.locator('.groups').boundingBox())!;
+      api.syscheck.status = 500;
+      await page.clock.fastForward('00:31');
+      await expect(old).toBeVisible();
+      await expect(old).toContainText(/^Stand von \d{2}:\d{2} \(veraltet\)$/);
+      await expect(now).toBeHidden();
+      await expect(sc.locator('li[data-id="signin.authentik"] .pill.err')).toBeVisible();
+      expect((await sc.locator('.sh').boundingBox())!.height).toBeCloseTo(head.height, 0);
+      expect((await sc.locator('.groups').boundingBox())!.y).toBeCloseTo(list.y, 0);
+      // the next good answer drops the hint again
+      api.syscheck.status = null;
+      await page.clock.fastForward('00:31');
+      await expect(old).toBeHidden();
+      await expect(now).toBeVisible();
+    });
+  });
+
   test('page HTML never shows a secret-looking value or an internal host', async ({ page }) => {
     await page.goto('/admin/status');
     await expect(page.locator('#systemcheck li[data-id="media.server"] .pill.err')).toBeVisible();

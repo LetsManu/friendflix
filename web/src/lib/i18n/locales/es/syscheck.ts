@@ -7,6 +7,7 @@ const dict: Translation<typeof de> = {
   title: 'Comprobación del sistema',
   intro: 'Qué funciona, qué no, por qué y dónde arreglarlo.',
   checkedAt: 'comprobado a las {time}',
+  staleAt: 'Estado de las {time} (desactualizado)',
   checkNow: 'Comprobar ahora',
   loadFailed: 'No se pudo cargar la comprobación del sistema.',
   status: { ok: 'Correcto', warning: 'Aviso', problem: 'Problema', not_set_up: 'Sin configurar', unknown: 'Sin comprobar' },

@@ -7,6 +7,7 @@ const dict: Translation<typeof de> = {
   title: 'System check',
   intro: 'What works, what does not, why – and where to fix it.',
   checkedAt: 'checked at {time}',
+  staleAt: 'As of {time} (outdated)',
   checkNow: 'Check now',
   loadFailed: 'The system check could not be loaded.',
   status: { ok: 'OK', warning: 'Warning', problem: 'Problem', not_set_up: 'Not set up', unknown: 'Not checked' },

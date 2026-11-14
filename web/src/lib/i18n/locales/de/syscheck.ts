@@ -8,6 +8,7 @@ export default {
   title: 'Systemcheck',
   intro: 'Was läuft, was nicht, warum – und wo du es behebst.',
   checkedAt: 'geprüft um {time}',
+  staleAt: 'Stand von {time} (veraltet)',
   checkNow: 'Jetzt prüfen',
   loadFailed: 'Der Systemcheck konnte nicht geladen werden.',
   status: { ok: 'In Ordnung', warning: 'Warnung', problem: 'Problem', not_set_up: 'Nicht eingerichtet', unknown: 'Nicht geprüft' },
