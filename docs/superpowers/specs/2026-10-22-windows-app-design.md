@@ -63,6 +63,9 @@ desktop/
   - Before the headers it turns off HTTP redirects for the player (`curl-max-redirects=0`, `stream-lavf-o=max_redirects=0`):
     mpv sends the headers with every request, and FFmpeg's http protocol follows a redirect to any host or to plain http
     with them. When mpv refuses either option, no header is set and the title fails.
+  - mpv is started with `--tls-verify=yes`, so the headers only go to a server whose certificate checks out (e.g.
+    `https://friend.example.com`). mpv's default for it depends on the build (yes with libcurl; no without libcurl and
+    with libavformat older than 63.0.100), so a re-pinned `mpv.exe` must not silently turn verification off.
 
 ## 3. Web change
 

@@ -70,5 +70,8 @@ run.
   `backend/src/routes/cast.ts`), tied to the cast permission and receiver flow; reusing it for the desktop player would
   be a larger change and still leaves the cookie for the player's own server calls.
 - Not needed: refusing only cross-origin redirects; no redirect is expected at all.
-- Re-pinning mpv must keep both options (see `mpv.lock`). Note: `--tls-verify` defaults to yes in this build (libcurl);
-  the app does not pin it on the command line.
+- Re-pinning mpv must keep both options (see `mpv.lock`).
+- TLS: `--tls-verify` defaults to yes in this build (libcurl), but to no on builds without libcurl and with libavformat
+  older than 63.0.100. The app therefore passes `--tls-verify=yes` on the command line (`desktop/app/src/player/mpv.rs`,
+  `args`), so the cookie is never sent to `https://friend.example.com` over an unverified connection, whatever build is
+  pinned.

@@ -52,7 +52,7 @@ pub fn pipe_name() -> io::Result<String> {
     Ok(format!(r"\\.\pipe\friendflix-{hex}"))
 }
 
-/// The exact mpv flags: the spec §6 list, `--osc=no`, hardware decoding and fullscreen from the settings,
+/// The exact mpv flags: the spec §6 list, `--tls-verify=yes`, `--osc=no`, hardware decoding and fullscreen from the settings,
 /// `--force-window=immediate`, and `--idle=yes` so the window stays between episodes and before the first `loadfile`.
 pub fn args(paths: &Paths, pipe: &str, s: &Settings) -> Vec<String> {
     let on = |b: bool, yes: &str, no: &str| if b { yes } else { no }.to_string();
@@ -65,6 +65,8 @@ pub fn args(paths: &Paths, pipe: &str, s: &Settings) -> Vec<String> {
         format!("--input-ipc-server={pipe}"),
         // no `file`: the trickplay tiles reach mpv through `overlay-add`, which reads the file itself, not via lavf
         "--demuxer-lavf-o=protocol_whitelist=[http,https,tls,tcp,crypto]".into(),
+        // the session cookie goes out with every https request: never rely on the build's default for certificate checks
+        "--tls-verify=yes".into(),
         "--media-controls=yes".into(),
         "--osc=no".into(),
         on(s.hwdec, "--hwdec=auto-safe", "--hwdec=no"),
@@ -161,6 +163,7 @@ mod tests {
                 "--ytdl=no",
                 r"--input-ipc-server=\\.\pipe\friendflix-0123456789abcdef0123456789abcdef",
                 "--demuxer-lavf-o=protocol_whitelist=[http,https,tls,tcp,crypto]",
+                "--tls-verify=yes",
                 "--media-controls=yes",
                 "--osc=no",
                 "--hwdec=auto-safe",
