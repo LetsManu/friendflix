@@ -12,6 +12,11 @@
 #         compatible; the desktop-core CI job checks it.
 # Archive: mpv.exe, mpv.com, d3dcompiler_43.dll, doc/, installer/, mpv/fonts.conf and .bat helpers; no licence files.
 #         mpv.exe imports vulkan-1.dll, which the GPU drivers install (as with every shinchiro build).
+# Redirects: the player turns them off before it hands mpv the session cookie (friendflix-core session.rs NO_REDIRECTS):
+#         `curl-max-redirects` needs mpv built with libcurl (this build: -Dlibcurl=enabled, libcurl 8.22.0-DEV, on by
+#         default), `stream-lavf-o=max_redirects` needs FFmpeg 8.1 or later (this build: N-127617-g94cba3150). An older
+#         FFmpeg ignores the option silently, so a re-pin must keep both: `strings mpv.exe | grep -cx max-redirects`
+#         (mpv's curl option) and `strings mpv.exe | grep -c 'Maximum number of redirects'` (FFmpeg's) are both at least 1.
 # Licence: GPL-2.0-or-later (mpv with GPL libraries); the texts are in desktop/player/licenses/.
 # Re-pin: pick a current mpv-x86_64-<date>-git-<sha>.7z from https://sourceforge.net/projects/mpv-player-windows/files/64bit/,
 #         set url (downloads.sourceforge.net form) and sha256 (sha256sum of the downloaded file), and update the lines
