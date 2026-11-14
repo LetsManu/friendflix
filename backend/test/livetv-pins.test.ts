@@ -152,7 +152,7 @@ describe('hand pins (Task 7)', () => {
 
   it('pins made in quick succession share one import; a pin during a running import gets one trailing import', async () => {
     const list = await addList('Nordlicht Paket');
-    const [a, b, c, d] = await Promise.all(['Eins', 'Zwei', 'Drei', 'Vier'].map((n) => addChannel(list, n)));
+    const [a, b, c, d] = (await Promise.all(['Eins', 'Zwei', 'Drei', 'Vier'].map((n) => addChannel(list, n)))) as [string, string, string, string];
     const g = await createGuide();
     guides.set(GUIDE_URL, guide([['a.de', 'A'], ['b.de', 'B'], ['c.de', 'C'], ['d.de', 'D']]));
     await refreshEpg(env.ctx, await src(g));
@@ -175,7 +175,7 @@ describe('hand pins (Task 7)', () => {
 
   it('several pins while the lock is held: one owner keeps the key, one import after the lock frees', async () => {
     const list = await addList('Nordlicht Paket');
-    const [a, b, c] = await Promise.all(['Eins', 'Zwei', 'Drei'].map((n) => addChannel(list, n)));
+    const [a, b, c] = (await Promise.all(['Eins', 'Zwei', 'Drei'].map((n) => addChannel(list, n)))) as [string, string, string];
     const g = await createGuide();
     guides.set(GUIDE_URL, guide([['a.de', 'A'], ['b.de', 'B'], ['c.de', 'C']]));
     await refreshEpg(env.ctx, await src(g));
