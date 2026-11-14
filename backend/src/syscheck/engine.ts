@@ -3,6 +3,7 @@
 import type { Ctx } from '../ctx.js';
 import { checkLoginFlows, type LoginCheck } from '../flowCheck.js';
 import { bounded, getSnapshot, type HealthSnapshot } from '../health.js';
+import { BUILTIN_CHECKS } from './checks/index.js';
 import { cleanLine, line } from './line.js';
 import { CHECK_IDS, CHECK_STATUSES, type CheckGroup, type CheckId, type CheckLine, type CheckStatus, type SystemcheckResult } from './types.js';
 
@@ -42,7 +43,7 @@ const FRESH_MS = 60_000;
 const KV_READ_MS = 1_000;
 const ORDER = new Map<string, number>(CHECK_IDS.map((id, i) => [id, i]));
 
-let registry: GroupCheck[] = [];
+let registry: GroupCheck[] = [...BUILTIN_CHECKS];
 
 /** Adds group checks to the module registry (a check already registered is not added twice). */
 export function registerChecks(list: GroupCheck[]): void {

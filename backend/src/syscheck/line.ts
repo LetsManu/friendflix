@@ -34,12 +34,13 @@ export function safeParams(p: Record<string, unknown> | undefined): CheckLine['p
 
 export const groupOf = (id: CheckId): CheckGroup => id.slice(0, id.indexOf('.')) as CheckGroup;
 
-type LineOpts = Partial<Omit<CheckLine, 'id' | 'group' | 'status' | 'runs'>>;
+/** what a check may set on a line; params are filtered by safeParams (a value of another form, or undefined, is dropped) */
+export type LineOpts = Partial<Omit<CheckLine, 'id' | 'group' | 'status' | 'runs' | 'params'>> & { params?: Record<string, unknown> };
 
 /**
  * One server line: `group` from the id prefix, `settingGroup` from the registry; an unknown setting key, a docs value that is no
  * `<file>.md#anchor`, an href that is no app path, a cause or fix that is no code and params of another form are dropped. `locked`
- * needs the live settings and is set by the engine (withLocked) for every line a check returns.
+ * needs the live settings and is set by the engine (cleanLine) for every line a check returns.
  */
 export function line(id: CheckId, status: CheckStatus, o: LineOpts = {}): CheckLine {
   const def = o.settingKey ? settingDef(o.settingKey) : undefined;
@@ -56,6 +57,9 @@ export function line(id: CheckId, status: CheckStatus, o: LineOpts = {}): CheckL
     runs: 'server',
   };
 }
+
+/** A line that is not ok: the fix sentence is the cause's own (i18n syscheck.fix.<cause>) unless given. */
+export const bad = (id: CheckId, status: CheckStatus, cause: string, o: LineOpts = {}): CheckLine => line(id, status, { cause, fix: cause, ...o });
 
 /** A line a check returned, rebuilt through line() (whatever else it carried is dropped) plus `locked` for a setting from the environment. */
 export function cleanLine(ctx: Pick<Ctx, 'settings'>, l: CheckLine): CheckLine {
