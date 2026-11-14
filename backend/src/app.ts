@@ -61,6 +61,7 @@ import { animeRoutes } from './routes/anime.js';
 import { sourceRoutes } from './routes/sources.js';
 import { aboutRoutes } from './routes/about.js';
 import { healthRoutes } from './routes/health.js';
+import { systemcheckRoutes } from './routes/systemcheck.js';
 import { hygieneRoutes } from './routes/hygiene.js';
 import { usageRoutes } from './routes/usage.js';
 import { SettingsError } from './settings/store.js';
@@ -302,6 +303,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   sourceRoutes(app, ctx, testSourceKey);
   aboutRoutes(app, ctx);
   healthRoutes(app, ctx);
+  systemcheckRoutes(app, ctx);
   authentikRepairRoutes(app, ctx);
   hygieneRoutes(app, ctx);
   usageRoutes(app, ctx);

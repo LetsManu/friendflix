@@ -58,17 +58,19 @@ export function issueFp(id: string, level: string, reason: string): string {
   return createHash('sha1').update(`${id}|${level}|${reason}`).digest('hex').slice(0, 12);
 }
 
-type Outcome<T> = { ok: true; v: T; ms: number } | { ok: false; ms: number };
+/** `timeout`: the limit was hit (else fn threw) */
+export type Outcome<T> = { ok: true; v: T; ms: number } | { ok: false; ms: number; timeout?: true };
+const TIMEOUT = Symbol('timeout');
 
-/** Runs a probe with a hard time limit; a throw or a timeout is a failed probe (its message is dropped). */
-async function bounded<T>(fn: () => Promise<T>, timeoutMs: number): Promise<Outcome<T>> {
+/** Runs a probe with a hard time limit; a throw or a timeout is a failed probe (its message is dropped). Also the Systemcheck's group limit. */
+export async function bounded<T>(fn: () => Promise<T>, timeoutMs: number): Promise<Outcome<T>> {
   const t0 = performance.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<'timeout'>((res) => { timer = setTimeout(() => res('timeout'), timeoutMs); });
+  const timeout = new Promise<typeof TIMEOUT>((res) => { timer = setTimeout(() => res(TIMEOUT), timeoutMs); });
   try {
     const r = await Promise.race([fn(), timeout]);
     const ms = Math.round(performance.now() - t0);
-    return r === 'timeout' ? { ok: false, ms } : { ok: true, v: r as T, ms };
+    return r === TIMEOUT ? { ok: false, ms, timeout: true } : { ok: true, v: r as T, ms };
   } catch {
     return { ok: false, ms: Math.round(performance.now() - t0) };
   } finally {
