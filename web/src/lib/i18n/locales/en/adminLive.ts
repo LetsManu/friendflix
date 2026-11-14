@@ -160,6 +160,7 @@ const dict: Translation<typeof de> = {
     groups: 'Groups & rights',
     guide: 'Programme guide',
     status: 'Live status',
+    settings: 'Settings',
   },
   src: {
     add: 'Add source',
@@ -674,6 +675,12 @@ const dict: Translation<typeof de> = {
       adminLocked: 'Admin accounts take no group exceptions: they see every released group.',
       notFound: 'That group no longer exists.',
     },
+  },
+  settingsTab: {
+    loadFailed: 'The Live TV settings could not be loaded.',
+    ports: 'SRT ports',
+    portsValue: 'UDP {range}',
+    hint: 'Ports and exposure are set in the Compose file (LIVETV_SRT_PORTS, LIVETV_SRT_BIND); in Portainer as environment variables of the stack.',
   },
 };
 export default dict;

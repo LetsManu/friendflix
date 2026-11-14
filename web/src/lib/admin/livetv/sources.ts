@@ -9,7 +9,7 @@ import { fmtDateTime, fmtTime, tr, type TKey } from '#lib/i18n';
 import { errorText } from '#lib/ui/action';
 import type { SourceView, StreamKind } from './api';
 
-export const TABS = ['sources', 'channels', 'groups', 'guide', 'status'] as const;
+export const TABS = ['sources', 'channels', 'groups', 'guide', 'status', 'settings'] as const;
 export type Tab = (typeof TABS)[number];
 /** `?tab=` → the tab; anything else is *Quellen* */
 export const tabOf = (v: string | null | undefined): Tab => ((TABS as readonly string[]).includes(v ?? '') ? (v as Tab) : 'sources');

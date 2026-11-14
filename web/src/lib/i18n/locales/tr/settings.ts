@@ -191,5 +191,6 @@ const settings: Translation<typeof de> = {
     RECO_HALF_LIFE_DAYS: { label: 'Zevk yarı ömrü (gün)', help: 'Bu kadar gün sonra bir zevk sinyali (ör. beğeni) yalnızca yarı ağırlıkta sayılır. Yalnızca motor v2.' },
     POSTPLAY_ENABLED: { label: 'Bitiş sonrası ekran', help: 'Bir filmden veya son bölümden sonra: “Her şeyi izledin”, sıradaki ve öneriler. Kapalıysa herkes için gizlenir.' },
   },
+  livetvMoved: 'Canlı TV ayarlarını artık Canlı TV bölümünde bulursun.',
 };
 export default settings;

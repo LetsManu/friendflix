@@ -160,6 +160,7 @@ const dict: Translation<typeof de> = {
     groups: 'Gruplar ve haklar',
     guide: 'Yayın akışı',
     status: 'Canlı durum',
+    settings: 'Ayarlar',
   },
   src: {
     add: 'Kaynak ekle',
@@ -674,6 +675,12 @@ const dict: Translation<typeof de> = {
       adminLocked: 'Yönetici hesaplarına grup istisnası verilmez: yayındaki tüm grupları görürler.',
       notFound: 'Bu grup artık yok.',
     },
+  },
+  settingsTab: {
+    loadFailed: 'Canlı TV ayarları yüklenemedi.',
+    ports: 'SRT portları',
+    portsValue: 'UDP {range}',
+    hint: 'Portlar ve erişime açma Compose dosyasında ayarlanır (LIVETV_SRT_PORTS, LIVETV_SRT_BIND); Portainer’da yığının ortam değişkenleri olarak.',
   },
 };
 export default dict;
