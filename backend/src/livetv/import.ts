@@ -30,6 +30,16 @@ export function importNumber(e: Pick<M3uEntry, 'chno' | 'pos'>, src: { numbering
   return src.numbering === 'chno' ? e.chno ?? derived : derived;
 }
 
+/**
+ * whether a list's own channel numbers (`tvg-chno`) can number it: not when most of them repeat (some lists give every channel
+ * `tvg-chno="1"`, or the same few numbers). Then the list order numbers the import, as `numbering: 'order'` would.
+ */
+export function chnoUsable(entries: readonly Pick<M3uEntry, 'chno'>[]): boolean {
+  const nums = entries.map((e) => e.chno).filter((n): n is number => n !== undefined);
+  if (nums.length === 0) return true; // nothing to judge: entries without a number fall back to the order one by one
+  return new Set(nums).size >= nums.length * 0.9;
+}
+
 /** a group name as stored (1-40 characters, spec §6.1); '' = no group */
 export function groupName(provider: string): string {
   return [...provider.trim()].slice(0, 40).join('').trim();
@@ -151,8 +161,10 @@ export async function mergeImport(
     const inserts: Row[] = [];
     const updates: Row[] = [];
     let returned = 0;
+    // a list whose tvg-chno numbers mostly repeat is numbered by its order (chnoUsable)
+    const numbering = source.numbering === 'chno' && !chnoUsable(entries) ? { numbering: 'order' as const, number_base: source.number_base } : source;
     for (const e of entries) {
-      const num = importNumber(e, source);
+      const num = importNumber(e, numbering);
       const group = e.group || null;
       const tvgId = e.tvgId ?? null, tvgName = e.tvgName ?? null, shift = e.shiftMin ?? null;
       const old = existing.get(e.key);
