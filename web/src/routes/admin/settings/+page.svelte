@@ -30,7 +30,7 @@
     type ProbeResult, type SettingGroup, type SettingsGroupView, type SettingsView, type SettingView,
   } from '#lib/admin/settings/api';
   import {
-    changedValues, clearPending, errorText, groupHelp, keyLabel, moveHint, probeText, redactedKeys, stashPending, takePending, type Draft, type PendingAction,
+    changedValues, clearPending, errorText, groupHelp, keyLabel, livetvLinkShown, moveHint, pageGroups, probeText, redactedKeys, stashPending, takePending, type Draft, type PendingAction,
   } from '#lib/admin/settings/form';
 
   const RESUME = '/admin/settings?resume=1';
@@ -49,7 +49,9 @@
   /** the action repeated after a re-authentication runs: another reauth_required is an error, not a new round trip */
   let resuming = false;
 
-  $: groups = (view?.groups ?? []).filter((g): g is SettingsGroupView & { id: SettingGroup } => g.id !== 'server');
+  // the livetv group moved to Admin → Live-TV → Einstellungen; the backend lists it only while Live TV is installed, so its presence says that
+  $: livetvInstalled = livetvLinkShown(view?.groups ?? []);
+  $: groups = pageGroups(view?.groups ?? []) as Array<SettingsGroupView & { id: SettingGroup }>;
   $: server = view?.groups.find((g) => g.id === 'server') ?? null;
   $: envRows = groups.flatMap((g) => g.items).filter((i) => i.source === 'env' && !moved.has(i.key));
   $: changes = Object.fromEntries(groups.map((g) => [g.id, changedValues(g.items, edits)])) as Record<SettingGroup, Record<string, unknown>>;
@@ -231,6 +233,10 @@
       </div>
     {/if}
 
+    {#if livetvInstalled}
+      <p class="moved"><a href="/admin/livetv?tab=settings">{$t('settings.livetvMoved')}</a></p>
+    {/if}
+
     {#each groups as g (g.id)}
       {@const dirty = Object.keys(changes[g.id] ?? {}).length > 0}
       {@const probe = probes[g.id]}
@@ -292,6 +298,8 @@
 <style>
   .wrap { max-width: 760px; }
   .intro { margin: 0 0 1rem; }
+  .moved { margin: 0 0 1rem; }
+  .moved a { display: inline-flex; align-items: center; min-height: 44px; text-decoration: underline; }
   /* a deep-linked group (#settings-<group>) does not end up under the sticky admin header */
   .wrap :global(h2[id^='settings-']) { scroll-margin-top: 5rem; }
   form { display: grid; gap: .25rem; }
