@@ -8,7 +8,7 @@ import { EFFECTIVE_SHIFT_SQL, isOwnFeeds } from './channels.js';
 import { LivetvError, dropLivetvProof, livetvStream } from './client.js';
 import { importLogos } from './logos.js';
 import { invalidateLivetvRights } from './rights.js';
-import { sourceSecrets, type SourceRow } from './sources.js';
+import { GUIDE_KIND, sourceSecrets, type SourceRow } from './sources.js';
 import type { XmlItem } from './wire.js';
 
 /**
@@ -165,11 +165,15 @@ function candidates(ch: MatchInput, s: EpgSourceIndex, out: Set<string>): void {
   }
 }
 
-/** the stored XMLTV channels of the sources that still have an EPG URL (one of them: `sourceId`) */
+/**
+ * the stored XMLTV channels of the provider lists that still have an EPG URL and of the enabled extra guides (a disabled guide is not
+ * matched against); one of them: `sourceId`
+ */
 export async function indexRows(ctx: Pick<Ctx, 'db'>, sourceId?: string): Promise<Array<{ sourceId: string; xmlId: string; names: string[] }>> {
   const rows = (await ctx.db.query<{ source_id: string; xml_id: string; names: string[] }>(
     `select e.source_id, e.xml_id, e.names from livetv_epg_channels e join livetv_sources s on s.id = e.source_id
-      where s.epg_url_enc is not null and ($1::uuid is null or e.source_id = $1)`, [sourceId ?? null])).rows;
+      where (case when s.kind = $2 then s.enabled else s.epg_url_enc is not null end) and ($1::uuid is null or e.source_id = $1)`,
+    [sourceId ?? null, GUIDE_KIND])).rows;
   return rows.map((r) => ({ sourceId: r.source_id, xmlId: r.xml_id, names: r.names }));
 }
 

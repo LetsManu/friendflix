@@ -25,7 +25,7 @@ import { epgSummary } from './epg.js';
 import { refreshRunning, refreshSource } from './refresh.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
 import { FeedError, createFeed, deleteFeed, feedCreate, ingestView, reassignPort, regenerateCredentials, syncIngest } from './ownfeeds.js';
-import { SourceRefusal, SourceTestError, createSource, deleteSource, listSources, sourceCreate, sourcePatch, sourceTestBody, testSource, updateSource } from './sources.js';
+import { SourceRefusal, SourceTestError, anyTestBody, createSource, deleteSource, listSources, sourceCreate, sourcePatch, testGuide, testSource, updateSource } from './sources.js';
 
 /** the line for an install without the updater (spec §4.3); the page shows it with the compose commands */
 const ENV_LINE = 'COMPOSE_PROFILES=livetv';
@@ -276,16 +276,19 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // Prüfen: asks livetv, never the provider (spec §3.4); a static route, so it wins over /:id. One test per admin at a time (each can
-  // hold a provider download in livetv for up to two minutes): a second one while it runs answers 409 test_running.
+  // hold a provider download in livetv for up to two minutes): a second one while it runs answers 409 test_running. A body with
+  // `kind: 'guide'` tests a guide link (`{ epgChannels, samples }`).
   app.post('/api/admin/livetv/sources/test', admin, async (req, reply) => {
-    const b = parse(sourceTestBody, req.body, reply);
+    const b = parse(anyTestBody, req.body, reply);
     if (!b) return reply;
     reply.header('cache-control', 'no-store');
     const lock = `ltv:srctest:${req.user!.id}`;
     const token = randomUUID();
     if (!(await ctx.kv.setnx(lock, token, TEST_LOCK_TTL_S))) return reply.code(409).send({ error: 'test_running' });
     try {
-      return await testSource(ctx, b);
+      if (b.kind === 'guide') return await testGuide(ctx, b);
+      const { kind: _kind, ...list } = b;
+      return await testSource(ctx, list);
     } catch (e) {
       if (e instanceof SourceTestError) {
         if (e.status === 404) return reply.code(404).send({ error: 'not_found' });

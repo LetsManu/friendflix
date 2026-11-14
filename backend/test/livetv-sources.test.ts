@@ -81,6 +81,7 @@ describe('stored encrypted, answered masked', () => {
     expect(list.json()).toEqual([{
       id: s.id, kind: 'm3u', name: 'Anbieter', urlHint: HINT, epgHint: HINT, userAgent: null, allowLan: false, refresh: '24h', skipGroups: [],
       numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0, maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0,
+      guideProvider: null, guideScope: null, servedChannels: 0,
       state: { lastRefreshAt: null, lastOkAt: null, lastError: null, counts: null, epg: { lastRefreshAt: null, lastOkAt: null, lastError: null, programmes: null } },
     }]);
   });
@@ -141,7 +142,8 @@ describe('save-time validation (spec §3.4)', () => {
     await bad({ epgUrl: 'http://10.0.0.8/epg.xml' }, 400, { error: 'lan_required', field: 'epgUrl' });
     await bad({ epgUrl: 'srt://iptv.example.com:9000' }, 400, { error: 'invalid', field: 'epgUrl' });
     await bad({ name: '' }, 400, { error: 'invalid', field: 'name' });
-    await bad({ kind: 'manual' }, 400, { error: 'invalid', field: 'body' }); // strict: no unknown keys (the kind is not chosen here)
+    await bad({ kind: 'manual' }, 400, { error: 'invalid', field: 'kind' }); // only a list ('m3u', the default) or a guide is created here
+    await bad({ other: 1 }, 400, { error: 'invalid', field: 'body' }); // strict: no unknown keys
     expect((await call('GET', '/api/admin/livetv/sources')).json()).toHaveLength(1);
   });
 

@@ -1072,6 +1072,22 @@ export const MIGRATIONS: string[] = [
   alter table playback_timings drop constraint if exists playback_timings_mode_check;
   alter table playback_timings add constraint playback_timings_mode_check check (mode in ('direct','hls','live'));
   `,
+  // 52: Live TV extra programme guides (docs/superpowers/specs/2026-11-14-livetv-extra-guides-design.md): a source of kind 'guide' is an
+  // XMLTV guide of its own (no channels, no url_enc). guide_provider says where its XMLTV comes from (a link now, an uploaded file in
+  // Stage 2; later API services add values), guide_scope the sources whose channels it may serve (null = all; never empty while
+  // enabled), guide_file the stored file's name (Stage 2). Migration 48's inline kind check (auto-named livetv_sources_kind_check) is
+  // dropped by name and re-added wider. Rerunnable.
+  `
+  alter table livetv_sources drop constraint if exists livetv_sources_kind_check;
+  alter table livetv_sources add constraint livetv_sources_kind_check check (kind in ('m3u','manual','guide'));
+  alter table livetv_sources add column if not exists guide_provider text;
+  alter table livetv_sources add column if not exists guide_scope uuid[];
+  alter table livetv_sources add column if not exists guide_file text;
+  alter table livetv_sources drop constraint if exists livetv_sources_guide_provider_check;
+  alter table livetv_sources add constraint livetv_sources_guide_provider_check check (guide_provider in ('xmltv_url','xmltv_file'));
+  alter table livetv_sources drop constraint if exists livetv_sources_guide_check;
+  alter table livetv_sources add constraint livetv_sources_guide_check check ((kind = 'guide') = (guide_provider is not null));
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

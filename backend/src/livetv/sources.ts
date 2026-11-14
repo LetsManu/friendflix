@@ -8,6 +8,7 @@ import { decrypt, encrypt } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
 import { CHANNEL_SELECT, OWN_FEEDS_KIND, isOwnFeeds } from './channels.js';
 import { LivetvError, dropLivetvProof, livetvCall, livetvStream } from './client.js';
+import { matchIds } from './epg.js';
 import { livetvWrite } from './tx.js';
 import { checkSourceUrl, maskUrl, urlRefusal } from './urls.js';
 import type { FetchM3uAnswer } from './wire.js';
@@ -26,13 +27,20 @@ const TEST_M3U_TIMEOUT_MS = 75_000;
 /** the EPG count of *Prüfen* stops after 2 minutes (the refresh itself may take 10) */
 const TEST_EPG_TIMEOUT_MS = 120_000;
 const SAMPLES = 5;
+/** *Prüfen* on a guide names this many of its channels */
+const GUIDE_SAMPLES = 8;
+/** stored kind of an extra programme guide (migration 52); the API says 'guide' too */
+export const GUIDE_KIND = 'guide';
+/** an extra programme guide (kind 'guide'): no channels, no list, only its XMLTV (extra guides design) */
+export const isGuide = (kind: string): boolean => kind === GUIDE_KIND;
+export type GuideProvider = 'xmltv_url' | 'xmltv_file';
 
 export type Refresh = '6h' | '12h' | '24h' | 'weekly' | 'manual';
 
-/** a `livetv_sources` row as stored (migration 48); `*_enc` are APP_ENC_KEY blobs and never leave the backend */
+/** a `livetv_sources` row as stored (migrations 48, 52); `*_enc` are APP_ENC_KEY blobs and never leave the backend */
 export interface SourceRow {
   id: string;
-  kind: 'm3u' | typeof OWN_FEEDS_KIND;
+  kind: 'm3u' | typeof OWN_FEEDS_KIND | typeof GUIDE_KIND;
   name: string;
   url_enc: string | null;
   url_hint: string | null;
@@ -57,6 +65,12 @@ export interface SourceRow {
   epg_last_ok_at: Date | null;
   epg_last_error: string | null;
   epg_counts: Record<string, unknown> | null;
+  /** kind 'guide' only: where its XMLTV comes from */
+  guide_provider: GuideProvider | null;
+  /** kind 'guide' only: the sources whose channels it may serve; null = all, [] = none left (the guide was disabled) */
+  guide_scope: string[] | null;
+  /** an uploaded guide's stored file (Stage 2) */
+  guide_file: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -64,8 +78,8 @@ export interface SourceRow {
 /** one source as the admin sees it (the web re-declares it, Task 21); no URL but the masked hints */
 export interface SourceView {
   id: string;
-  /** stored 'm3u' | 'manual' (F16) */
-  kind: 'm3u' | 'feeds';
+  /** stored 'm3u' | 'manual' (F16) | 'guide' */
+  kind: 'm3u' | 'feeds' | 'guide';
   name: string;
   urlHint: string | null;
   epgHint: string | null;
@@ -84,6 +98,12 @@ export interface SourceView {
   channelCount: number;
   /** unreleased groups holding channels of this source */
   pendingGroups: number;
+  /** a guide's provider; null for lists and the own-feeds source */
+  guideProvider: GuideProvider | null;
+  /** a guide's "Gilt für": null = all channels, else source ids; [] = its scoped sources were all deleted (then it is disabled) */
+  guideScope: string[] | null;
+  /** channels (in the latest import) whose programme currently comes from this source */
+  servedChannels: number;
   state: {
     lastRefreshAt: string | null;
     lastOkAt: string | null;
@@ -120,7 +140,12 @@ const fields = {
   maxStreams: z.number().int().min(1).max(50).nullable(),
   enabled: z.boolean(),
 };
-export const sourceCreate = z.object({
+/** a guide's "Gilt für": null = all channels, else a non-empty set of source ids (lists or the own-feeds source, checked on save) */
+const guideScope = z.array(z.guid()).min(1).max(500).transform((a) => [...new Set(a)]).nullable();
+/** the place of a source in its card list; a guide given the place of another guide swaps with it (updateSource) */
+const position = z.number().int().min(0).max(1_000_000);
+const listCreate = z.object({
+  kind: z.literal('m3u'),
   ...fields,
   epgUrl: fields.epgUrl.default(null),
   userAgent: fields.userAgent.default(null),
@@ -134,8 +159,28 @@ export const sourceCreate = z.object({
   maxStreams: fields.maxStreams.default(null),
   enabled: fields.enabled.default(true),
 }).strict();
-export const sourcePatch = z.object(fields).partial().strict();
-export type SourceBody = z.output<typeof sourceCreate>;
+/** an extra programme guide from an XMLTV link (Stage 1; uploaded files come with Stage 2) */
+const guideCreate = z.object({
+  kind: z.literal('guide'),
+  name: fields.name,
+  epgUrl: httpUrl,
+  userAgent: fields.userAgent.default(null),
+  allowLan: fields.allowLan.default(false),
+  refresh: fields.refresh.default('24h'),
+  epgShiftMin: fields.epgShiftMin.default(0),
+  guideScope,
+  enabled: fields.enabled.default(true),
+}).strict();
+/** `POST /sources`: a body without `kind` is a provider list (as before guides existed) */
+export const sourceCreate = z.preprocess(
+  (v) => (v && typeof v === 'object' && !Array.isArray(v) && !('kind' in v) ? { ...v, kind: 'm3u' } : v),
+  z.discriminatedUnion('kind', [listCreate, guideCreate]),
+);
+export const sourcePatch = z.object({ ...fields, guideScope, position }).partial().strict();
+export type ListBody = z.output<typeof listCreate>;
+export type GuideBody = z.output<typeof guideCreate>;
+export type SourceBody = ListBody | GuideBody;
+export type SourcePatch = z.output<typeof sourcePatch>;
 
 /** `POST /sources/test`: a missing `url` (`epgUrl`, `userAgent`) with `sourceId` uses the stored one; `epgUrl: null` = no EPG */
 export const sourceTestBody = z.object({
@@ -146,6 +191,20 @@ export const sourceTestBody = z.object({
   sourceId: z.guid().optional(),
 }).strict();
 export type SourceTestBody = z.output<typeof sourceTestBody>;
+/** `POST /sources/test` for a guide: its link (or, with `sourceId`, the stored one) */
+export const guideTestBody = z.object({
+  kind: z.literal('guide'),
+  epgUrl: httpUrl.optional(),
+  userAgent: userAgent.optional(),
+  allowLan: z.boolean().default(false),
+  sourceId: z.guid().optional(),
+}).strict();
+export type GuideTestBody = z.output<typeof guideTestBody>;
+/** a list test body has no `kind` (as before guides existed) */
+export const anyTestBody = z.preprocess(
+  (v) => (v && typeof v === 'object' && !Array.isArray(v) && !('kind' in v) ? { ...v, kind: 'm3u' } : v),
+  z.discriminatedUnion('kind', [sourceTestBody.extend({ kind: z.literal('m3u') }), guideTestBody]),
+);
 
 /** a refusal that is not a schema failure, answered `400 { error: code, field }` (Global Constraint *Errors*) */
 export class SourceRefusal extends Error {
@@ -165,19 +224,23 @@ function checkUrl(raw: string, allowLan: boolean, field: 'url' | 'epgUrl'): void
 const VIEW_COLUMNS = `src.id, src.kind, src.name, src.url_hint, src.epg_hint, src.user_agent, src.allow_lan, src.refresh, src.skip_groups,
   src.numbering, src.number_base, src.logo_pref, src.epg_shift_min, src.max_streams, src.enabled, src.position,
   src.last_refresh_at, src.last_ok_at, src.last_error, src.last_counts, src.epg_last_refresh_at, src.epg_last_ok_at, src.epg_last_error,
-  src.epg_counts`;
+  src.epg_counts, src.guide_provider, src.guide_scope`;
 const VIEW_SQL = `
   select ${VIEW_COLUMNS},
     coalesce(n.channels, 0)::int as channel_count,
-    coalesce(p.pending, 0)::int as pending_groups
+    coalesce(p.pending, 0)::int as pending_groups,
+    coalesce(sv.served, 0)::int as served_channels
   from livetv_sources src
   left join (select source_id, count(*) as channels from livetv_channels where missing_since is null group by source_id) n
     on n.source_id = src.id
   left join (select x.source_id, count(distinct x.group_id) as pending from (${CHANNEL_SELECT}) x
                join livetv_groups g on g.id = x.group_id and not g.released
               where x.missing_since is null group by x.source_id) p
-    on p.source_id = src.id`;
-type ViewRow = Omit<SourceRow, 'url_enc' | 'epg_url_enc' | 'created_at' | 'updated_at'> & { channel_count: number; pending_groups: number };
+    on p.source_id = src.id
+  left join (select epg_source_id, count(*) as served from livetv_channels
+              where missing_since is null and epg_channel_id is not null and epg_match <> 'none' group by epg_source_id) sv
+    on sv.epg_source_id = src.id`;
+type ViewRow = Omit<SourceRow, 'url_enc' | 'epg_url_enc' | 'guide_file' | 'created_at' | 'updated_at'> & { channel_count: number; pending_groups: number; served_channels: number };
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -187,7 +250,7 @@ function toView(r: ViewRow): SourceView {
   const counts = c && num(c.channels) !== null ? { channels: num(c.channels)!, added: num(c.added) ?? 0, removed: num(c.removed) ?? 0 } : null;
   return {
     id: r.id,
-    kind: isOwnFeeds(r.kind) ? 'feeds' : 'm3u',
+    kind: isOwnFeeds(r.kind) ? 'feeds' : isGuide(r.kind) ? 'guide' : 'm3u',
     name: r.name,
     urlHint: r.url_hint,
     epgHint: r.epg_hint,
@@ -204,6 +267,9 @@ function toView(r: ViewRow): SourceView {
     position: r.position,
     channelCount: r.channel_count,
     pendingGroups: r.pending_groups,
+    guideProvider: isGuide(r.kind) ? r.guide_provider : null,
+    guideScope: isGuide(r.kind) ? r.guide_scope : null,
+    servedChannels: r.served_channels,
     state: {
       lastRefreshAt: iso(r.last_refresh_at),
       lastOkAt: iso(r.last_ok_at),
@@ -240,11 +306,25 @@ type WriteCtx = Pick<Ctx, 'db' | 'encKey'>;
 const write = <T>(ctx: Pick<Ctx, 'db'>, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> => livetvWrite(ctx, fn);
 
 /** the field names of a body in a fixed order (audit meta: names only, never values) */
-const FIELD_ORDER = Object.keys(fields);
+const FIELD_ORDER = [...Object.keys(fields), 'guideScope', 'position'];
 const named = (b: object) => FIELD_ORDER.filter((k) => k in b && (b as Record<string, unknown>)[k] !== undefined);
 
-/** A provider list (kind 'm3u'; the own-feeds source is created by Task 20). URLs are checked first, then stored encrypted. */
+/** a guide's scope names existing lists or the own-feeds source, never a guide (or an unknown id): else `invalid` `guideScope` */
+async function checkScope(c: pg.PoolClient, scope: readonly string[] | null): Promise<void> {
+  if (scope === null) return;
+  const n = (await c.query<{ n: number }>('select count(*)::int as n from livetv_sources where id = any($1::uuid[]) and kind <> $2', [[...scope], GUIDE_KIND])).rows[0]!.n;
+  if (n !== scope.length) throw new SourceRefusal('invalid', 'guideScope'); // the schema removed duplicates
+}
+
+/** the fields a guide does not have (it has no list): a patch naming one is refused `invalid` with that field */
+const LIST_ONLY = ['url', 'skipGroups', 'numbering', 'numberBase', 'logoPref', 'maxStreams'] as const;
+
+/**
+ * A provider list (kind 'm3u'; the own-feeds source is created by Task 20) or an extra programme guide (kind 'guide', an XMLTV link).
+ * URLs are checked first, then stored encrypted. A new guide has never been refreshed, so the next refresh tick imports it.
+ */
 export async function createSource(ctx: WriteCtx, actor: string, b: SourceBody): Promise<SourceView> {
+  if (b.kind === 'guide') return createGuide(ctx, actor, b);
   checkUrl(b.url, b.allowLan, 'url');
   if (b.epgUrl !== null) checkUrl(b.epgUrl, b.allowLan, 'epgUrl');
   const id = randomUUID();
@@ -256,6 +336,22 @@ export async function createSource(ctx: WriteCtx, actor: string, b: SourceBody):
          (select coalesce(max(position) + 1, 0) from livetv_sources))`,
       [id, b.name, encrypt(ctx.encKey, b.url), maskUrl(b.url), b.epgUrl === null ? null : encrypt(ctx.encKey, b.epgUrl), b.epgUrl === null ? null : maskUrl(b.epgUrl),
         b.userAgent || null, b.allowLan, b.refresh, b.skipGroups, b.numbering, b.numberBase, b.logoPref, b.epgShiftMin, b.maxStreams, b.enabled]);
+    await auditInTx({ db: c }, actor, 'livetv.source.create', id, { fields: named(b) });
+  });
+  return (await sourceView(ctx, id))!;
+}
+
+async function createGuide(ctx: WriteCtx, actor: string, b: GuideBody): Promise<SourceView> {
+  checkUrl(b.epgUrl, b.allowLan, 'epgUrl');
+  const id = randomUUID();
+  await write(ctx, async (c) => {
+    await checkScope(c, b.guideScope);
+    await c.query(
+      `insert into livetv_sources(id, kind, name, epg_url_enc, epg_hint, user_agent, allow_lan, refresh, epg_shift_min, enabled, guide_provider, guide_scope,
+         position)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'xmltv_url', $11, (select coalesce(max(position) + 1, 0) from livetv_sources))`,
+      [id, GUIDE_KIND, b.name, encrypt(ctx.encKey, b.epgUrl), maskUrl(b.epgUrl), b.userAgent || null, b.allowLan, b.refresh, b.epgShiftMin, b.enabled,
+        b.guideScope]);
     await auditInTx({ db: c }, actor, 'livetv.source.create', id, { fields: named(b) });
   });
   return (await sourceView(ctx, id))!;
@@ -273,11 +369,16 @@ const sameSet = (a: readonly string[], b: readonly string[]) => {
  * and no EPG URL (`invalid`). A changed `skipGroups`, `numbering`, `numberBase` or `url` marks the source due (`last_refresh_at`
  * cleared), so the next refresh tick re-imports it (whatever its refresh interval, *Manuell* too). A new `url` drops `last_counts.listed`, the shrink guard's reference. null = no such source.
  */
-export async function updateSource(ctx: WriteCtx, actor: string, id: string, patch: Partial<SourceBody>): Promise<SourceView | null> {
+export async function updateSource(ctx: WriteCtx, actor: string, id: string, patch: SourcePatch): Promise<SourceView | null> {
   const found = await write(ctx, async (c) => {
     const s = (await c.query<SourceRow>('select * from livetv_sources where id = $1 for update', [id])).rows[0];
     if (!s) return false;
     const own = isOwnFeeds(s.kind);
+    const guide = isGuide(s.kind);
+    // a guide has no list and always its link; only a guide has a scope
+    if (guide) for (const k of LIST_ONLY) if (patch[k] !== undefined) throw new SourceRefusal('invalid', k);
+    if (guide && patch.epgUrl === null) throw new SourceRefusal('invalid', 'epgUrl');
+    if (!guide && patch.guideScope !== undefined) throw new SourceRefusal('invalid', 'guideScope');
     if (own && patch.url !== undefined) throw new SourceRefusal('invalid', 'url');
     if (own && patch.epgUrl !== undefined && patch.epgUrl !== null) throw new SourceRefusal('invalid', 'epgUrl');
     const allowLan = patch.allowLan ?? s.allow_lan;
@@ -306,6 +407,20 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
     if (patch.epgShiftMin !== undefined) put('epg_shift_min', patch.epgShiftMin);
     if (patch.maxStreams !== undefined) put('max_streams', patch.maxStreams);
     if (patch.enabled !== undefined) put('enabled', patch.enabled);
+    if (patch.guideScope !== undefined) {
+      await checkScope(c, patch.guideScope);
+      put('guide_scope', patch.guideScope);
+    }
+    if (patch.position !== undefined && patch.position !== s.position) {
+      // order among guides (first wins a fill): the guide holding that place takes this one's old place
+      if (guide) await c.query('update livetv_sources set position = $2 where kind = $3 and position = $1 and id <> $4', [patch.position, s.position, GUIDE_KIND, id]);
+      put('position', patch.position);
+    }
+    // a guide imports again on the next tick when its link, its scope (the request filter) or its being switched on changed
+    const scopeChanged = patch.guideScope !== undefined && !(patch.guideScope === null ? s.guide_scope === null : s.guide_scope !== null && sameSet(patch.guideScope, s.guide_scope));
+    if (guide && ((patch.epgUrl != null && decrypt(ctx.encKey, s.epg_url_enc!) !== patch.epgUrl) || scopeChanged || (patch.enabled === true && !s.enabled))) {
+      set.push('epg_last_refresh_at = null');
+    }
     // another list (a new URL) is imported again too (bughunt L1), also for a source with refresh *Manuell*
     const due = (patch.skipGroups !== undefined && !sameSet(patch.skipGroups, s.skip_groups))
       || (patch.numbering !== undefined && patch.numbering !== s.numbering)
@@ -318,6 +433,10 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
     vals.push(id);
     await c.query(`update livetv_sources set ${set.join(', ')} where id = $${vals.length}`, vals);
     await auditInTx({ db: c }, actor, 'livetv.source.update', id, { fields: named(patch) });
+    // the fill pass (epg.ts matchIds) follows a guide's being switched on or off, its scope and its order at once
+    if (guide && ((patch.enabled !== undefined && patch.enabled !== s.enabled) || scopeChanged || (patch.position !== undefined && patch.position !== s.position))) {
+      await matchIds(c);
+    }
     return true;
   });
   return found ? sourceView(ctx, id) : null;
@@ -326,14 +445,26 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
 /**
  * Deletes the source; its channels (with their overrides, favourites and recent entries) go with it. null = no such source. `push` =
  * push feeds went with it (counted inside the transaction), so the caller re-sends livetv's ingest set (ownfeeds.ts syncIngest).
+ * Guides: a deleted guide's channels (automatic matches and hand pins) go back to `auto`; a deleted source leaves every guide scope,
+ * and a guide whose scope is left empty is switched off ("Gilt für keine Quelle mehr"). Either way the channels are matched again.
  */
 export async function deleteSource(ctx: Pick<Ctx, 'db'>, actor: string, id: string): Promise<{ channels: number; push: boolean } | null> {
   return write(ctx, async (c) => {
-    const s = (await c.query('select id from livetv_sources where id = $1 for update', [id])).rows[0];
+    const s = (await c.query<{ kind: string }>('select kind from livetv_sources where id = $1 for update', [id])).rows[0];
     if (!s) return null;
     const n = (await c.query<{ n: number; push: number }>(
       "select count(*)::int as n, count(*) filter (where ingest = 'push')::int as push from livetv_channels where source_id = $1", [id])).rows[0]!;
+    const guide = isGuide(s.kind);
+    if (guide) {
+      await c.query(
+        "update livetv_channels set epg_match = 'auto', epg_source_id = null, epg_channel_id = null, epg_logo_hash = null where epg_source_id = $1", [id]);
+    }
     await c.query('delete from livetv_sources where id = $1', [id]);
+    const scoped = (await c.query(
+      `update livetv_sources set guide_scope = array_remove(guide_scope, $1::uuid),
+         enabled = enabled and cardinality(array_remove(guide_scope, $1::uuid)) > 0, updated_at = now()
+        where kind = $2 and $1::uuid = any(guide_scope)`, [id, GUIDE_KIND])).rowCount ?? 0;
+    if (guide || scoped > 0) await matchIds(c);
     await auditInTx({ db: c }, actor, 'livetv.source.delete', id, { fields: [], channels: n.n });
     return { channels: n.n, push: n.push > 0 };
   });
@@ -374,8 +505,11 @@ function readM3u(a: FetchM3uAnswer | undefined): Omit<SourceTestAnswer, 'epgChan
   };
 }
 
-/** counts the channels of an XMLTV file: livetv streams NDJSON; programmes are left out by an empty time window */
-async function epgChannels(ctx: Ctx, url: string, allowLan: boolean, userAgent: string | null, signal: AbortSignal): Promise<{ n: number } | { error: string }> {
+/**
+ * counts the channels of an XMLTV file: livetv streams NDJSON; programmes are left out by an empty time window. `samples` > 0 also
+ * keeps the first display names (a provider's text: NUL stripped, at most 200 characters, the id when a channel has no name).
+ */
+async function epgChannels(ctx: Ctx, url: string, allowLan: boolean, userAgent: string | null, signal: AbortSignal, samples = 0): Promise<{ n: number; samples: string[] } | { error: string }> {
   try {
     const r = await livetvStream(ctx, '/v1/fetch/xmltv', { url, allowLan, ...(userAgent ? { userAgent } : {}), from: 0, to: 1 }, { timeoutMs: TEST_EPG_TIMEOUT_MS, signal });
     let text: string;
@@ -384,12 +518,19 @@ async function epgChannels(ctx: Ctx, url: string, allowLan: boolean, userAgent: 
       return { error: 'timeout' };
     }
     let n = 0;
+    const names: string[] = [];
+    const clean = (v: unknown) => (typeof v === 'string' ? [...v.replace(/\u0000/g, '').trim()].slice(0, 200).join('') : '');
     for (const line of text.split('\n')) {
       if (!line) continue;
-      let j: { t?: unknown; code?: unknown };
+      let j: { t?: unknown; code?: unknown; id?: unknown; names?: unknown };
       try { j = JSON.parse(line) as typeof j; } catch { return { error: 'invalid_answer' }; }
-      if (j.t === 'channel') n++;
-      else if (j.t === 'end') return { n };
+      if (j.t === 'channel') {
+        n++;
+        if (names.length < samples) {
+          const name = (Array.isArray(j.names) ? j.names.map(clean).find((x) => x) : undefined) ?? clean(j.id);
+          if (name) names.push(name);
+        }
+      } else if (j.t === 'end') return { n, samples: names };
       else if (j.t === 'error') return { error: typeof j.code === 'string' && /^[a-z_]{1,40}$/.test(j.code) ? j.code : 'invalid' };
     }
     return { error: 'incomplete' }; // a stream without its end line failed (Task 14 ruling)
@@ -430,4 +571,27 @@ export async function testSource(ctx: Ctx, b: SourceTestBody): Promise<SourceTes
     });
   const [list, epg] = await Promise.all([listed, epgUrl === null ? Promise.resolve(null) : epgChannels(ctx, epgUrl, b.allowLan, ua, cancel.signal)]);
   return { ...list, epgChannels: epg && 'n' in epg ? epg.n : null, epgError: epg && 'error' in epg ? epg.error : null };
+}
+
+/** *Prüfen* of a guide: how many channels its XMLTV has, and the first few names */
+export interface GuideTestAnswer { epgChannels: number; samples: string[] }
+
+/**
+ * *Prüfen* on a guide link, through livetv's `/v1/fetch/xmltv` (never the provider). A missing `epgUrl` with `sourceId` uses the stored
+ * link. Refusals as testSource: `SourceRefusal` (400 with field), `SourceTestError` (null = livetv not reached, else the fixed code).
+ */
+export async function testGuide(ctx: Ctx, b: GuideTestBody): Promise<GuideTestAnswer> {
+  let stored: { epgUrl: string | null; userAgent: string | null } | null = null;
+  if (b.sourceId) {
+    const s = (await ctx.db.query<Pick<SourceRow, 'user_agent'>>('select user_agent from livetv_sources where id = $1', [b.sourceId])).rows[0];
+    if (!s) throw new SourceTestError(404, 'not_found');
+    stored = { epgUrl: (await sourceSecrets(ctx, b.sourceId)).epgUrl, userAgent: s.user_agent };
+  }
+  const url = b.epgUrl ?? stored?.epgUrl;
+  if (!url) throw new SourceRefusal('invalid', 'epgUrl');
+  const ua = (b.userAgent !== undefined ? b.userAgent : stored?.userAgent ?? null) || null;
+  checkUrl(url, b.allowLan, 'epgUrl');
+  const r = await epgChannels(ctx, url, b.allowLan, ua, new AbortController().signal, GUIDE_SAMPLES);
+  if ('error' in r) throw new SourceTestError(r.error === 'livetv_unreachable' ? null : 422, r.error);
+  return { epgChannels: r.n, samples: r.samples };
 }
