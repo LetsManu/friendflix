@@ -1,15 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import http from 'node:http';
+import { Readable } from 'node:stream';
 import { createServer as netServer, type AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { GuardDeps } from '../src/fetch.js';
-import { ReplayCache, sign } from '../src/protocol.js';
+import { gzipSync } from 'node:zlib';
+import { ReplayCache, sign, signHash } from '../src/protocol.js';
 import { fetchRoutes } from '../src/routes/fetch.js';
+import { parseRoutes } from '../src/routes/parse.js';
 import type { Run } from '../src/run.js';
 import { createApp, start } from '../src/server.js';
 import type { SystemView } from '../src/system.js';
@@ -18,6 +21,11 @@ const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, imp
 /** what the bootstrap service writes into livetv's key file; livetv itself derives nothing */
 const deriveKey = (secret: string) => createHmac('sha256', secret).update('friendflix-livetv/v1').digest();
 const key = deriveKey('fetch-routes-test-secret-0123');
+/** a raw U+0000 in a title is passed through (the backend strips it); a `&#0;` reference refuses the document */
+const NUL_GUIDE = Buffer.from(fixture('guide.xml').toString('utf8').replace('Wetter am Hafen', 'Wetter\u0000am Hafen'));
+const NUL_REF_GUIDE = Buffer.from(fixture('guide.xml').toString('utf8').replace('Sturm &amp; Stille', 'Sturm &#0; Stille'));
+/** the file cap of the test app's `/v1/parse/xmltv` (production: XMLTV_MAX_BYTES) */
+const PARSE_TEST_MAX = 16 * 1024;
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
 
 // The provider: a local server reached through `dial` (every checked address maps onto it).
@@ -29,6 +37,8 @@ const providerRoutes: Record<string, (res: http.ServerResponse) => void> = {
   '/epg.xml.gz': (res) => res.end(fixture('guide.xml.gz')),
   '/broken.xml': (res) => res.end(fixture('guide.xml').subarray(0, 900)),
   '/doctype.xml': (res) => res.end(fixture('doctype.xml')),
+  '/nul.xml': (res) => res.end(NUL_GUIDE),
+  '/nulref.xml': (res) => res.end(NUL_REF_GUIDE),
   '/logo.png': (res) => res.end(PNG),
   '/logo.svg': (res) => { res.setHeader('content-type', 'image/png'); res.end('<svg xmlns="http://www.w3.org/2000/svg"/>'); },
   '/huge.png': (res) => res.end(Buffer.concat([PNG, Buffer.alloc(600 * 1024)])),
@@ -76,7 +86,7 @@ beforeAll(async () => {
   port = (provider.address() as AddressInfo).port;
   const app = createApp({
     verifier: { key, cache: new ReplayCache(), notBefore: Date.now() - 1000 }, version: null, bootId: '0123456789abcdef',
-    system: async () => ({}) as SystemView, routes: fetchRoutes({ guard, run }), warn: (m) => warnings.push(m),
+    system: async () => ({}) as SystemView, routes: [...fetchRoutes({ guard, run }), ...parseRoutes({ maxBytes: PARSE_TEST_MAX })], warn: (m) => warnings.push(m),
   });
   api = http.createServer((req, res) => { void app(req, res); });
   await new Promise<void>((r) => api.listen(0, '127.0.0.1', r));
@@ -215,6 +225,115 @@ describe('POST /v1/fetch/xmltv', () => {
   });
 });
 
+describe('POST /v1/parse/xmltv', () => {
+  const window = { from: Date.UTC(2026, 10, 11), to: Date.UTC(2026, 10, 12) };
+  const PATH = '/v1/parse/xmltv';
+  const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
+  /** the filter line, `\n`, the file; signed by the SHA-256 of all of it (or of `signed` when given) */
+  const parse = (head: unknown, file: Buffer, o: { signed?: Buffer; type?: string } = {}) => {
+    const body = Buffer.concat([Buffer.from(`${JSON.stringify(head)}\n`), file]);
+    return fetch(base + PATH, { method: 'POST', body, headers: { ...signHash(key, 'POST', PATH, sha(o.signed ?? body)), 'content-type': o.type ?? 'application/octet-stream' } });
+  };
+  /** both routes' answers for the same file: `/v1/fetch/xmltv` from the provider path, `/v1/parse/xmltv` with the file posted */
+  const both = async (path: string, file: Buffer, filter: Record<string, unknown>) => [
+    await ndjson(await post('/v1/fetch/xmltv', { url: p(path), allowLan: false, ...filter })),
+    await ndjson(await parse(filter, file)),
+  ] as const;
+
+  it('parses a posted guide', async () => {
+    const r = await parse({ channels: ['nordlicht.de'], ...window }, fixture('guide.xml'));
+    expect(r.status).toBe(200);
+    expect(r.headers.get('content-type')).toBe('application/x-ndjson');
+    const lines = await ndjson(r);
+    expect(lines.map((l) => l.t)).toEqual(['channel', 'prog', 'prog', 'end']);
+    expect(lines[1]).toMatchObject({ ch: 'nordlicht.de', title: 'Die Leuchtturmwärter', start: Date.UTC(2026, 10, 11, 19, 15) });
+    // the same lines as the fetched guide; nothing was downloaded
+    const [fetched, posted] = await both('/epg.xml.gz', fixture('guide.xml'), { ...window });
+    expect(posted).toEqual(fetched);
+    expect(posted.at(-1)).toEqual({ t: 'end', programmes: 4, channels: 3 });
+    expect(lookups).not.toContain('nordlicht.de');
+  });
+
+  it('a gzip body is inflated', async () => {
+    const lines = await ndjson(await parse({ ...window }, fixture('guide.xml.gz')));
+    expect(lines.at(-1)).toEqual({ t: 'end', programmes: 4, channels: 3 });
+    expect(lines).toEqual(await ndjson(await parse({ ...window }, fixture('guide.xml'))));
+    // a gzip bomb hits the ratio guard as a fetched one does
+    const bomb = await ndjson(await parse({ ...window }, gzipSync(Buffer.concat([Buffer.from('<tv>'), Buffer.alloc(PARSE_TEST_MAX * 40, 0x20)]))));
+    expect(bomb).toEqual([{ t: 'error', code: 'ratio' }]);
+  });
+
+  it('a body over the cap answers 413', async () => {
+    // declared: refused before anything is read
+    const declared = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const head = signHash(key, 'POST', PATH, sha(Buffer.from('x')));
+      const r = http.request(base + PATH, { method: 'POST', headers: { ...head, 'content-type': 'application/octet-stream', 'content-length': String(PARSE_TEST_MAX + 70 * 1024) } }, (res) => {
+        let body = '';
+        res.on('data', (c: Buffer) => { body += c.toString(); });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+      });
+      r.on('error', reject);
+      r.write(Buffer.alloc(1024, 0x20));
+    });
+    expect(declared).toEqual({ status: 413, body: JSON.stringify({ error: 'too_large' }) });
+    // not declared (chunked): the stream ends with too_big, never with end
+    const big = Buffer.concat([fixture('guide.xml'), Buffer.alloc(PARSE_TEST_MAX + 64 * 1024, 0x20)]);
+    const body = Buffer.concat([Buffer.from(`${JSON.stringify(window)}\n`), big]);
+    async function* chunks() { for (let i = 0; i < body.length; i += 4096) yield body.subarray(i, i + 4096); }
+    const r = await fetch(base + PATH, {
+      method: 'POST', body: Readable.from(chunks()) as unknown as BodyInit, duplex: 'half',
+      headers: { ...signHash(key, 'POST', PATH, sha(body)), 'content-type': 'application/octet-stream' },
+    } as RequestInit);
+    const lines = await ndjson(r);
+    expect(lines.at(-1)).toEqual({ t: 'error', code: 'too_big' });
+    expect(lines.some((l) => l.t === 'end')).toBe(false);
+  });
+
+  it('NUL and limits behave as /v1/fetch/xmltv', async () => {
+    // a raw NUL passes through on both routes; a NUL reference refuses the file on both
+    const [fetchedNul, postedNul] = await both('/nul.xml', NUL_GUIDE, { ...window });
+    expect(postedNul).toEqual(fetchedNul);
+    expect(postedNul.some((l) => l.title === 'Wetter\u0000am Hafen')).toBe(true);
+    const [fetchedRef, postedRef] = await both('/nulref.xml', NUL_REF_GUIDE, { ...window });
+    expect(postedRef).toEqual(fetchedRef);
+    expect(postedRef.at(-1)).toEqual({ t: 'error', code: 'invalid' });
+    // a DOCTYPE, the time window and the channel filter: the same answers
+    const [fetchedDoc, postedDoc] = await both('/doctype.xml', fixture('doctype.xml'), { ...window });
+    expect(postedDoc).toEqual(fetchedDoc);
+    expect(postedDoc).toEqual([{ t: 'error', code: 'doctype' }]);
+    const late = { from: Date.UTC(2026, 10, 11, 20, 30), to: Date.UTC(2026, 10, 12) };
+    const [fetchedLate, postedLate] = await both('/epg.xml.gz', fixture('guide.xml'), { channels: ['nordlicht.de', 'hafenkanal.de'], ...late });
+    expect(postedLate).toEqual(fetchedLate);
+    expect(postedLate.at(-1)).toMatchObject({ t: 'end', channels: 2 });
+    // the filter line is checked like the fetch body
+    const cases: Array<[unknown, string]> = [
+      [{ to: window.to }, 'from'], [{ from: window.to, to: window.from }, 'to'], [{ ...window, channels: [''] }, 'channels'], [[], 'head'], ['x', 'head'],
+    ];
+    for (const [head, field] of cases) {
+      const r = await parse(head, fixture('guide.xml'));
+      expect([r.status, await r.json()]).toEqual([400, { error: 'invalid', field }]);
+    }
+    const noLine = Buffer.from('<tv></tv>');
+    const r = await fetch(base + PATH, { method: 'POST', body: noLine, headers: { ...signHash(key, 'POST', PATH, sha(noLine)), 'content-type': 'application/octet-stream' } });
+    expect([r.status, await r.json()]).toEqual([400, { error: 'invalid', field: 'head' }]);
+  });
+
+  it('the bytes must be the signed ones: another body never ends with end; no hash, a wrong one or JSON is refused', async () => {
+    const lines = await ndjson(await parse({ ...window }, fixture('guide.xml'), { signed: Buffer.from('ein anderer Inhalt') }));
+    expect(lines.at(-1)).toEqual({ t: 'error', code: 'bad_signature' });
+    expect(lines.some((l) => l.t === 'end')).toBe(false);
+    const file = Buffer.concat([Buffer.from(`${JSON.stringify(window)}\n`), fixture('guide.xml')]);
+    const { 'x-ff-livetv-body-sha256': _h, ...unhashed } = signHash(key, 'POST', PATH, sha(file));
+    const missing = await fetch(base + PATH, { method: 'POST', body: file, headers: { ...unhashed, 'content-type': 'application/octet-stream' } });
+    expect([missing.status, await missing.json()]).toEqual([401, { error: 'missing' }]);
+    // the signature covers the declared hash: changing it breaks the signature
+    const swapped = await fetch(base + PATH, { method: 'POST', body: file, headers: { ...signHash(key, 'POST', PATH, sha(file)), 'x-ff-livetv-body-sha256': 'a'.repeat(64), 'content-type': 'application/octet-stream' } });
+    expect([swapped.status, await swapped.json()]).toEqual([401, { error: 'bad_signature' }]);
+    const json = await parse({ ...window }, fixture('guide.xml'), { type: 'application/json' });
+    expect([json.status, await json.json()]).toEqual([415, { error: 'binary_required' }]);
+  });
+});
+
 describe('POST /v1/fetch/logo', () => {
   it('a PNG comes back as its bytes with its sniffed type', async () => {
     const r = await post('/v1/fetch/logo', { url: p('/logo.png'), allowLan: false });
@@ -273,6 +392,11 @@ describe('start', () => {
         const r = await fetch(`http://127.0.0.1:${free}${path}`, { method: 'POST', body, headers: { ...sign(k, 'POST', path, body), 'content-type': 'application/json' } });
         expect(r.status).toBe(400);
       }
+      const file = Buffer.from('{}\n<tv/>');
+      const parsed = await fetch(`http://127.0.0.1:${free}/v1/parse/xmltv`, {
+        method: 'POST', body: file, headers: { ...signHash(k, 'POST', '/v1/parse/xmltv', createHash('sha256').update(file).digest('hex')), 'content-type': 'application/octet-stream' },
+      });
+      expect([parsed.status, await parsed.json()]).toEqual([400, { error: 'invalid', field: 'from' }]);
     } finally {
       await new Promise<void>((r) => s.close(() => r()));
     }

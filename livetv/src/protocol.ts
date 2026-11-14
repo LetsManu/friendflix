@@ -17,15 +17,23 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
  * livetv only ever holds `key` (the bootstrap service derives it, config.ts); it never sees INTERNAL_SECRET and derives nothing.
  * It accepts a request only inside a 60 s window around its own clock, never one signed before it started (a replay cache
  * cannot outlive the process), and every nonce once.
+ *
+ * A streamed body (the one route with `rawBody`, `POST /v1/parse/xmltv`) is not read before the check: the caller sends the body's
+ * SHA-256 in `x-ff-livetv-body-sha256`, the signature covers that hash in the same canonical string, and the route compares it with
+ * the bytes it actually read before it reports success (a stream whose bytes do not match ends with an error, never with `end`).
  */
 export const KEY_LABEL = 'friendflix-livetv/v1';
 export const HEADER_TS = 'x-ff-livetv-ts';
 export const HEADER_NONCE = 'x-ff-livetv-nonce';
 export const HEADER_SIG = 'x-ff-livetv-signature';
+/** the declared SHA-256 (64 hex) of a streamed body; only routes with `rawBody` read it */
+export const HEADER_BODY_SHA = 'x-ff-livetv-body-sha256';
 export const WINDOW_MS = 60_000;
 const NONCE_RE = /^[0-9a-f]{32}$/;
 const SIG_RE = /^v1=[0-9a-f]{64}$/;
 const TS_RE = /^[0-9]{13}$/;
+const SHA_RE = /^[0-9a-f]{64}$/;
+export const isBodySha = (v: unknown): v is string => typeof v === 'string' && SHA_RE.test(v);
 
 
 /** what `/healthz?n=<nonce>` answers (the backend's copy: backend/src/livetv/client.ts, pinned by test-vectors/livetv-hmac.json) */
@@ -36,12 +44,21 @@ export function healthProof(key: Buffer, nonce: string): string {
 export const isNonce = (v: string): boolean => NONCE_RE.test(v);
 
 export function canonical(method: string, path: string, ts: string, nonce: string, body: string): string {
-  return [method.toUpperCase(), path, ts, nonce, createHash('sha256').update(body).digest('hex')].join('\n');
+  return canonicalHash(method, path, ts, nonce, createHash('sha256').update(body).digest('hex'));
+}
+/** the same canonical string from the body's SHA-256 (hex): a streamed body is hashed while it is sent */
+export function canonicalHash(method: string, path: string, ts: string, nonce: string, bodySha256: string): string {
+  return [method.toUpperCase(), path, ts, nonce, bodySha256].join('\n');
 }
 
 export function sign(key: Buffer, method: string, path: string, body = '', ts = String(Date.now()), nonce = randomBytes(16).toString('hex')): Record<string, string> {
   const sig = createHmac('sha256', key).update(canonical(method, path, ts, nonce, body)).digest('hex');
   return { [HEADER_TS]: ts, [HEADER_NONCE]: nonce, [HEADER_SIG]: `v1=${sig}` };
+}
+/** `sign` for a streamed body: its SHA-256 (hex) is signed and sent along in HEADER_BODY_SHA */
+export function signHash(key: Buffer, method: string, path: string, bodySha256: string, ts = String(Date.now()), nonce = randomBytes(16).toString('hex')): Record<string, string> {
+  const sig = createHmac('sha256', key).update(canonicalHash(method, path, ts, nonce, bodySha256)).digest('hex');
+  return { [HEADER_TS]: ts, [HEADER_NONCE]: nonce, [HEADER_SIG]: `v1=${sig}`, [HEADER_BODY_SHA]: bodySha256 };
 }
 
 export type AuthError = 'missing' | 'malformed' | 'expired' | 'bad_signature' | 'replay';
@@ -71,8 +88,14 @@ export interface Verifier {
   now?: () => number;
 }
 
-/** Checks one request; the signature is compared in constant time before the nonce is claimed (an invalid request burns no nonce). */
-export function verify(v: Verifier, req: { method: string; path: string; headers: Record<string, string | string[] | undefined>; body: string }): { ok: true } | { ok: false; error: AuthError } {
+/**
+ * Checks one request; the signature is compared in constant time before the nonce is claimed (an invalid request burns no nonce).
+ * `bodySha256` instead of `body`: a streamed body, checked against its declared hash (the caller must compare the bytes later).
+ */
+export function verify(
+  v: Verifier,
+  req: { method: string; path: string; headers: Record<string, string | string[] | undefined> } & ({ body: string } | { bodySha256: string }),
+): { ok: true } | { ok: false; error: AuthError } {
   const h = (k: string) => { const x = req.headers[k]; return Array.isArray(x) ? undefined : x; };
   const ts = h(HEADER_TS), nonce = h(HEADER_NONCE), sig = h(HEADER_SIG);
   if (!ts || !nonce || !sig) return { ok: false, error: 'missing' };
@@ -80,7 +103,8 @@ export function verify(v: Verifier, req: { method: string; path: string; headers
   const now = (v.now ?? Date.now)();
   const t = Number(ts);
   if (Math.abs(now - t) > WINDOW_MS || t < v.notBefore) return { ok: false, error: 'expired' };
-  const want = createHmac('sha256', v.key).update(canonical(req.method, req.path, ts, nonce, req.body)).digest();
+  const text = 'body' in req ? canonical(req.method, req.path, ts, nonce, req.body) : canonicalHash(req.method, req.path, ts, nonce, req.bodySha256);
+  const want = createHmac('sha256', v.key).update(text).digest();
   const got = Buffer.from(sig.slice(3), 'hex');
   if (got.length !== want.length || !timingSafeEqual(got, want)) return { ok: false, error: 'bad_signature' };
   if (!v.cache.claim(nonce, t + WINDOW_MS, now)) return { ok: false, error: 'replay' };
