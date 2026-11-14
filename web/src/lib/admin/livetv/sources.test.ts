@@ -259,6 +259,9 @@ describe('chnoFallbackShown (the note under Nummern)', () => {
     expect(chnoFallbackShown('order', view({}, { chnoFallback: true }))).toBe(false);
     expect(chnoFallbackShown('chno', view())).toBe(false);
     expect(chnoFallbackShown('chno', null)).toBe(false); // a new source: no import has judged it yet
+    // another address typed: the verdict is the saved list's, the new one is judged at its first import
+    expect(chnoFallbackShown('chno', view({}, { chnoFallback: true }), true)).toBe(false);
+    expect(chnoFallbackShown('chno', view({}, { chnoFallback: true }), false)).toBe(true);
   });
   it('says so in every language', async () => {
     const de = 'Die Nummern der Liste wiederholen sich – Sender werden nach der Reihenfolge der Liste nummeriert.';

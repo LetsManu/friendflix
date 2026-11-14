@@ -740,7 +740,8 @@ source's numbering policy (`chno`: the entry's `tvg-chno`, else `number_base` + 
 `number_base` + position, `tvg-chno` ignored; position counts every live entry of the list, skipped groups included, so a
 changed group selection never renumbers other channels; under `chno` a list whose `tvg-chno` values are less than 90 % distinct,
 judged over the whole list with skipped groups included and kept per source in `livetv_sources.chno_fallback`, is numbered as
-`order` — ties in the list sort by name — and the sheet says so under *Nummern*); group = `group_override ?? group_map(source, import_group)`; logo =
+`order` — ties in the list sort by name — and the sheet says so under *Nummern*; it leaves that only at 95 % distinct
+(hysteresis), a list with fewer than 10 `tvg-chno` values never enters it, and a new URL is judged afresh); group = `group_override ?? group_map(source, import_group)`; logo =
 `logo_override_hash ??` (`logo_pref = 'm3u'`: `import_logo_hash ?? epg_logo_hash`; `'xmltv'`: `epg_logo_hash ??
 import_logo_hash`); EPG offset = `epg_shift_override_min ?? import_epg_shift_min ?? source.epg_shift_min` (the most specific
 value wins; offsets are applied when programmes are read, never stored into them, so one EPG channel can serve channels with

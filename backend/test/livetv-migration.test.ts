@@ -228,6 +228,26 @@ describe('migration 53 (uploaded guide files)', () => {
   });
 });
 
+describe('migration 54 (numbering fallback)', () => {
+  it('a source keeps its tvg-chno verdict (null = undecided); reruns keep the values', async () => {
+    const yes = await addSource({ name: 'Nordlicht TV', chno_fallback: true });
+    const no = await addSource({ name: 'Hafenkanal', chno_fallback: false });
+    const open = await addSource({ name: 'Sternwarte 24' });
+    const verdicts = async () => (await q('select id, chno_fallback from livetv_sources where id = any($1::uuid[])', [[yes, no, open]])).rows
+      .reduce<Record<string, boolean | null>>((m, r) => ({ ...m, [r.id]: r.chno_fallback }), {});
+    expect(await verdicts()).toEqual({ [yes]: true, [no]: false, [open]: null });
+    for (let i = 0; i < 2; i++) {
+      await q('delete from schema_migrations where version = 54');
+      await migrate(pool());
+    }
+    expect((await q('select count(*)::int n from schema_migrations where version = 54')).rows[0].n).toBe(1);
+    expect((await q("select data_type from information_schema.columns where table_name = 'livetv_sources' and column_name = 'chno_fallback'")).rows)
+      .toEqual([{ data_type: 'boolean' }]);
+    expect(await verdicts()).toEqual({ [yes]: true, [no]: false, [open]: null });
+    expect(MIGRATIONS[53]).toContain('chno_fallback boolean');
+  });
+});
+
 describe('effective values', () => {
   it('number, name and group', async () => {
     const sid = await addSource({ name: 'Zahlenliste' });

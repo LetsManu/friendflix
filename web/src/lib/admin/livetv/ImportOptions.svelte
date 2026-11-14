@@ -26,10 +26,15 @@
   export let baseErr = '';
   /** the source being edited (null = a new one): its last import's verdict on the list's own numbers */
   export let source: Pick<SourceView, 'chnoFallback'> | null = null;
+  /**
+   * another address is typed in the sheet: the stored verdict belongs to the saved list (the field starts empty and the saved address
+   * never reaches the browser, so any typed address counts as another one), and the new list is judged afresh, so the note is hidden
+   */
+  export let newUrl = false;
 
   const id = uid('io');
   $: numberings = [{ value: 'chno' as const, label: $t('adminLive.src.numChno') }, { value: 'order' as const, label: $t('adminLive.src.numOrder') }];
-  $: fallbackNote = chnoFallbackShown(numbering, source);
+  $: fallbackNote = chnoFallbackShown(numbering, source, newUrl);
   $: logos = [{ value: 'm3u' as const, label: $t('adminLive.src.logoM3u') }, { value: 'xmltv' as const, label: $t('adminLive.src.logoXmltv') }];
 
   /** a radio group: the arrow keys move the choice (and the focus) like native radios */

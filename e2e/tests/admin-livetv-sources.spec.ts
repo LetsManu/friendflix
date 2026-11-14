@@ -137,6 +137,13 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
     expect(await gap()).toBe(before);
     await dlg.getByRole('radio', { name: 'Aus der Liste (tvg-chno)' }).click();
     await expect(note).toBeVisible();
+    // another address: the verdict was the saved list's, the new list is judged at its first import
+    const url = dlg.getByLabel('Senderliste (M3U-Adresse)');
+    await url.fill(LIST_URL);
+    await expect(note).toBeHidden();
+    expect(await gap()).toBe(before);
+    await url.fill('');
+    await expect(note).toBeVisible();
   });
 
   test('a list whose own numbers are used shows no such note', async ({ page }) => {

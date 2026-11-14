@@ -37,25 +37,34 @@ export function chnoStats(entries: readonly Pick<M3uEntry, 'chno'>[]): ChnoStats
 }
 export interface ChnoStats { count: number; distinct: number }
 
+/** fewer `tvg-chno` numbers than this never make the list order number a list: too few to judge (duplicates show as *Nummer doppelt*) */
+export const CHNO_MIN = 10;
+/** the share of different numbers below which a list enters the list-order fallback ... */
+export const CHNO_ENTER = 0.9;
+/** ... and the share it must reach again to leave it (hysteresis: a list hovering around 90 % does not renumber back and forth) */
+export const CHNO_LEAVE = 0.95;
+
 /**
- * whether a list's own channel numbers (`tvg-chno`) repeat too much to number it: fewer than 90 % of them are different (some lists give
- * every channel `tvg-chno="1"`, or the same few numbers). Then *Aus der Liste (tvg-chno)* numbers by list order, as `numbering: 'order'`
- * would (`number_base` + position, the owner's "provider order first, then A-Z": channels with the same number sort by name). Judged
- * over the WHOLE provider list (livetv's `chnos`, skipped groups included), never over the picked groups, so ticking or unticking groups
- * never flips it and never renumbers channels (spec ruling 18). A list without any `tvg-chno` is not a fallback: each entry without a
- * number falls back to its position one by one.
+ * whether a list's own channel numbers (`tvg-chno`) repeat too much to number it (some lists give every channel `tvg-chno="1"`, or the
+ * same few numbers). Then *Aus der Liste (tvg-chno)* numbers by list order, as `numbering: 'order'` would (`number_base` + position, the
+ * owner's "provider order first, then A-Z": channels with the same number sort by name). Judged over the WHOLE provider list (livetv's
+ * `chnos`, skipped groups included), never over the picked groups, so ticking or unticking groups never flips it and never renumbers
+ * channels (spec ruling 18). With hysteresis on the previous verdict (`previous`): a list enters the fallback when fewer than 90 % of
+ * its numbers are different and leaves it only once 95 % are. A list with fewer than CHNO_MIN numbers is never a fallback (each entry
+ * without a number still falls back to its position one by one).
  */
-export function chnoFallback(stats: ChnoStats): boolean {
-  return stats.count > 0 && stats.distinct < stats.count * 0.9;
+export function chnoFallback(stats: ChnoStats, previous: boolean | null = null): boolean {
+  if (stats.count < CHNO_MIN) return false;
+  return stats.distinct < stats.count * (previous === true ? CHNO_LEAVE : CHNO_ENTER);
 }
 
 /**
- * The fallback verdict an import uses: the whole list's (livetv's `chnos`) whenever livetv sends it, so a changed provider list can
- * change it but a changed selection cannot; else (an older livetv) the source's stored verdict, and only when there is none yet the
- * imported entries' own, which is then kept (stored) so later selection changes still do not flip it.
+ * The fallback verdict an import uses: the whole list's (livetv's `chnos`, with hysteresis on the stored verdict) whenever livetv sends
+ * it, so a changed provider list can change it but a changed selection cannot; else (an older livetv) the source's stored verdict, and
+ * only when there is none yet the imported entries' own, which is then kept (stored) so later selection changes still do not flip it.
  */
 export function fallbackVerdict(full: ChnoStats | undefined, stored: boolean | null, entries: readonly Pick<M3uEntry, 'chno'>[]): boolean {
-  if (full) return chnoFallback(full);
+  if (full) return chnoFallback(full, stored);
   return stored ?? chnoFallback(chnoStats(entries));
 }
 
