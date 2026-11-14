@@ -3,6 +3,7 @@
 import type { GroupCheck } from '../engine.js';
 import { coreCheck } from './core.js';
 import { mediaCheck } from './media.js';
+import { signinCheck } from './signin.js';
 
 /** The built-in group checks, registered by the engine at module load (later stages add theirs here). */
-export const BUILTIN_CHECKS: readonly GroupCheck[] = [coreCheck, mediaCheck];
+export const BUILTIN_CHECKS: readonly GroupCheck[] = [coreCheck, signinCheck, mediaCheck];
