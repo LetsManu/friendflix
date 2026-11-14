@@ -64,7 +64,7 @@ describe('Portainer redeploy phases', () => {
     expect(await redeployView(quick, null, T0 + REDEPLOY_TIMEOUT_MS + 1, T0 - 1)).toMatchObject({ phase: 'unchanged' });
     const silent = ctxOf();
     await beginRedeploy(silent, 'api', 'latest', T0);
-    expect(await redeployView(silent, null, T0 + REDEPLOY_TIMEOUT_MS + 1, T0 - 1)).toMatchObject({ phase: 'timeout', running: false });
+    expect(await redeployView(silent, null, T0 + REDEPLOY_TIMEOUT_MS + 1, T0 - 1)).toMatchObject({ phase: 'timeout', running: false, at: 'pulling' });
   });
 
   it('nothing recorded: null', async () => {

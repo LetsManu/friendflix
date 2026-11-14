@@ -394,6 +394,18 @@ describe('POST /api/admin/updater/:action', () => {
     expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
   });
 
+  it('an updater that cannot tell the stack and the Portainer API set up only in part: refused (foreign_stack), never an updater job that fails with compose_config', async () => {
+    await stamp();
+    e2.ctx.cfg = { ...e2.ctx.cfg, PORTAINER_URL: 'https://portainer.example.com', PORTAINER_API_KEY: 'ptr_secret_value' };
+    const r = await post('update');
+    expect([r.statusCode, r.json()]).toEqual([409, { error: 'foreign_stack' }]);
+    expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
+    expect(fake.portainer).toEqual([]);
+    // the updater confirms its own stack: the job runs as before
+    fake.stack = 'own';
+    expect((await post('update')).statusCode).toBe(202);
+  });
+
   it('our own stack: unchanged, the updater runs the job (also with Portainer configured)', async () => {
     await stamp();
     fake.stack = 'own';

@@ -3,7 +3,7 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { audit } from './audit.js';
 import type { Ctx } from './ctx.js';
-import { portainerMode, redeployViaPortainer, updateInfo, type UpdateInfo } from './updates.js';
+import { portainerMode, portainerSetup, redeployViaPortainer, updateInfo, type UpdateInfo } from './updates.js';
 
 /**
  * Client of the updater container (updater/, on by default since 2.0, off with compose.no-updater.yaml; docs/security.md "Updater"). The backend never
@@ -173,7 +173,9 @@ const PENDING = 'updater:pending:';
  * recreate the services without Portainer's variables). Plain compose installs without Portainer keep the updater as before.
  */
 function portainerStack(ctx: Ctx, s: UpdaterStatus): boolean {
-  return s.stack === 'foreign' || (portainerMode(ctx) !== null && s.stack !== 'own');
+  // Portainer set up only in part (some PORTAINER_* API setting) counts too: the admin is setting up the Portainer way, and an
+  // updater that cannot tell the stack (one from before the label check) would only fail with compose_config on it
+  return s.stack === 'foreign' || (s.stack !== 'own' && (portainerMode(ctx) !== null || portainerSetup(ctx).missing.length > 0));
 }
 
 export async function startJob(ctx: Ctx, action: UpdateJobAction, actor: string | null): Promise<StartResult> {

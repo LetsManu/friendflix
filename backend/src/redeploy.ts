@@ -34,6 +34,8 @@ interface Rec {
   answer: 'pending' | 'ok' | 'failed'; answeredAt: number | null;
   error: string | null; step: string | null; status: number | null; code: string | null;
   final: RedeployPhase | null; finishedAt: number | null;
+  /** timeout: the phase it hung in */
+  at?: RedeployPhase | null;
 }
 
 export interface RedeployView {
@@ -43,6 +45,8 @@ export interface RedeployView {
   services: { updated: number; total: number } | null;
   /** failed: the fixed code, Portainer's HTTP status and the step (webhook / stack / stack_file / redeploy), the errno code */
   error: string | null; status: number | null; step: string | null; code: string | null;
+  /** timeout: the phase it hung in (pulling / recreating / health) */
+  at: RedeployPhase | null;
 }
 
 export interface ServiceSeen { service: string; state: string; health: string; sha: string | null }
@@ -98,12 +102,12 @@ export async function redeployView(ctx: Ctx, services: readonly ServiceSeen[] | 
       // container of the same build: nothing was recreated
       phase = 'unchanged';
     }
-    if (!FINAL.includes(phase) && now - r.startedAt > REDEPLOY_TIMEOUT_MS) phase = r.answer === 'ok' ? 'unchanged' : 'timeout';
+    if (!FINAL.includes(phase) && now - r.startedAt > REDEPLOY_TIMEOUT_MS) { r.at = phase; phase = r.answer === 'ok' ? 'unchanged' : 'timeout'; }
     if (FINAL.includes(phase)) { r.final = phase; r.finishedAt = now; await write(ctx, r); }
   }
   return {
     id: r.id, mode: r.mode, tag: r.tag, phase, running: !FINAL.includes(phase), startedAt: new Date(r.startedAt).toISOString(),
     finishedAt: r.finishedAt ? new Date(r.finishedAt).toISOString() : null, services: counts,
-    error: r.error, status: r.status, step: r.step, code: r.code,
+    error: r.error, status: r.status, step: r.step, code: r.code, at: r.final === 'timeout' ? (r.at ?? null) : null,
   };
 }
