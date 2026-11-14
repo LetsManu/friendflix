@@ -4,6 +4,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
+import { REDEPLOY_KEY, REDEPLOY_LOCK } from '../src/redeploy.js';
 import { autoUpdateTick, parseStatus, signUpdater, updaterKey } from '../src/updater.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 
@@ -69,6 +70,8 @@ let env: TestEnv, admin: Sess;
 const as = (s: Sess, method: string, url: string, payload?: unknown) => env.app.inject({ method: method as 'GET', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: payload as object });
 const audits = async (action: string) => (await env.pool.query<{ actor: string | null; meta: Record<string, unknown> }>('select actor, meta from audit_log where action=$1 order by id', [action])).rows;
 const setCfg = (patch: Record<string, unknown>) => { env.ctx.cfg = { ...env.ctx.cfg, ...patch } as typeof env.ctx.cfg; };
+/** the last Portainer redeploy ended (here: forgotten), so the next one may start (one at a time, redeploy.ts) */
+const endRedeploy = async (e: TestEnv = env) => { await e.kv.del(REDEPLOY_LOCK); await e.kv.del(REDEPLOY_KEY); };
 
 beforeAll(async () => {
   env = await makeEnv({}, { ctxPatch: (c) => { c.fetchImpl = updaterFetch as typeof fetch; c.cfg = { ...c.cfg, UPDATER_URL: 'http://updater:7070' }; } });
@@ -206,26 +209,31 @@ describe('settings and automatic updates', () => {
     // the next nights: a version that was redeployed is not redeployed again (also when the stack pins another tag)
     expect(await tick(at(2, 1, 24))).toBe('done');
     expect(fake.portainer.length).toBe(1);
-    // Portainer refuses: logged (never the URL), audited as failed, one attempt per night, tried again the next night
+    // a redeploy still running is never doubled by the next night: busy, nothing sent
     fake.release = 'v99.0.1';
+    expect(await tick(at(2, 1, 25))).toBe('busy');
+    expect(fake.portainer.length).toBe(1);
+    await endRedeploy();
+    // Portainer refuses: logged (never the URL), audited as failed, one attempt per night, tried again the next night
     fake.portainerStatus = 500;
-    expect(await tick(at(2, 1, 25))).toBe('failed');
-    expect(await tick(at(2, 5, 25))).toBe('done');
+    expect(await tick(at(2, 1, 26))).toBe('failed');
+    expect(await tick(at(2, 5, 26))).toBe('done');
     expect(warns).toEqual([[{ mode: 'webhook', step: 'webhook', status: 500 }, 'automatic update through Portainer failed']]);
     expect(JSON.stringify(warns)).not.toContain('0e1d2c3b');
     expect((await audits('system.update_result')).at(-1)).toMatchObject({ actor: null, meta: { toVersion: '99.0.1', result: 'failed', error: 'portainer', step: 'webhook', status: 500 } });
     fake.portainerStatus = 204;
-    expect(await tick(at(2, 1, 26))).toBe('started');
-    expect(await tick(at(2, 1, 27))).toBe('done');
+    expect(await tick(at(2, 1, 27))).toBe('started');
+    expect(await tick(at(2, 1, 28))).toBe('done');
     expect(fake.portainer.length).toBe(3);
   });
 
   it('an updater from before the stack field on a Portainer-configured install: the update goes through Portainer, never the old updater', async () => {
+    await endRedeploy();
     const at = (h: number, m: number, d: number) => new Date(2026, 9, d, h, m);
     setCfg({ AUTO_UPDATE: 'nightly-window', AUTO_UPDATE_TIME: '02:00', PORTAINER_WEBHOOK_URL: HOOK });
     fake.stack = undefined;
     fake.release = 'v98.0.0';
-    expect(await autoUpdateTick(env.ctx, at(2, 1, 28))).toBe('started');
+    expect(await autoUpdateTick(env.ctx, at(2, 1, 29))).toBe('started');
     expect(fake.portainer).toEqual([{ method: 'POST', url: `${HOOK}?FF_TAG=latest` }]); // the stable channel rides along
     expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
   });
@@ -349,7 +357,14 @@ describe('POST /api/admin/updater/:action', () => {
     expect(fake.calls.map((c) => [c.method, c.path])).toEqual([['GET', '/v1/status']]); // no channel sync, no /v1/update
     const userId = (await e2.pool.query("select id from users where authentik_sub='sub-admin'")).rows[0].id;
     expect((await e2.pool.query('select actor, meta from audit_log where action=$1', ['system.update'])).rows).toEqual([{ actor: userId, meta: expect.objectContaining({ mode: 'webhook' }) }]);
+    // a second start while it runs: refused (busy), nothing sent, the record stays
+    const running = await e2.kv.get(REDEPLOY_KEY);
+    const twice = await post('update');
+    expect([twice.statusCode, twice.json()]).toEqual([409, { error: 'busy' }]);
+    expect(fake.portainer.length).toBe(1);
+    expect(await e2.kv.get(REDEPLOY_KEY)).toBe(running);
     // Portainer refuses: the error comes back
+    await endRedeploy(e2);
     fake.portainerStatus = 500;
     const f = await post('update');
     expect([f.statusCode, f.json()]).toEqual([502, { error: 'portainer', status: 500, step: 'webhook' }]);

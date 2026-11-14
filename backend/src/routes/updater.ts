@@ -28,7 +28,9 @@ export function updaterRoutes(app: FastifyInstance, ctx: Ctx) {
     // portainer: whether a foreign (Portainer) stack can be updated from here (the webhook / API in Admin -> Settings) and which
     // API settings are still missing; redeploy: the last update handed to Portainer and its phase (redeploy.ts), followed by the
     // page while it runs (also without an updater: then from this backend's own build alone)
-    const redeploy = await redeployView(ctx, 'status' in view ? view.status.services : null).catch(() => null);
+    // services: undefined = no updater set up (the backend's own build decides), null = set up but no listing right now
+    const services = 'status' in view ? view.status.services : ctx.cfg.UPDATER_URL ? null : undefined;
+    const redeploy = await redeployView(ctx, services).catch(() => null);
     return { ...view, autoUpdate: auto(), portainer: portainerSetup(ctx), redeploy };
   });
 

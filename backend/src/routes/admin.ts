@@ -26,6 +26,7 @@ import { recoIndexState } from '../reco/indexJob.js';
 import { recoStats } from '../reco/engine.js';
 import { requireAdmin, requireOwner } from '../session.js';
 import { portainerMode, redeployViaPortainer, updateInfo } from '../updates.js';
+import { updaterView } from '../updater.js';
 import { MAX_FEATURED } from '../lists.js';
 import { livetvInstalled } from '../livetv/detect.js';
 import { stopLiveSession } from '../livetv/tokens.js';
@@ -239,7 +240,10 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/admin/update', { ...admin, config: { rateLimit: { max: 1, timeWindow: '2 minutes', keyGenerator: () => 'update' } } }, async (req, reply) => {
     const mode = portainerMode(ctx);
     if (!mode) return reply.code(409).send({ error: 'not_configured' });
-    const r = await redeployViaPortainer(ctx, req.user!.id, mode);
+    // whether an updater lists the services (it then judges the redeploy's progress; else this backend's build alone)
+    const v = await updaterView(ctx).catch(() => null);
+    const r = await redeployViaPortainer(ctx, req.user!.id, mode, undefined, { updater: Boolean(v && 'status' in v && v.status.services.length) });
+    if (!r.ok && r.error === 'busy') return reply.code(409).send({ error: 'busy' });
     if (!r.ok) {
       req.log.error({ mode, step: r.step, status: r.status, error: r.error, code: r.code }, 'portainer update failed');
       return reply.code(502).send({ error: r.error, status: r.status, step: r.step, ...(r.code ? { code: r.code } : {}) });

@@ -3,71 +3,114 @@
 import { describe, expect, it } from 'vitest';
 import type { Ctx } from '../src/ctx.js';
 import { MemoryKV } from '../src/kv.js';
-import { REDEPLOY_TIMEOUT_MS, beginRedeploy, redeployView, settleRedeploy, type ServiceSeen } from '../src/redeploy.js';
+import { REDEPLOY_KEY, REDEPLOY_LOCK, REDEPLOY_TIMEOUT_MS, beginRedeploy, claimRedeploy, redeployView, settleRedeploy, type ServiceSeen } from '../src/redeploy.js';
 
 // The phase of an update handed to Portainer (redeploy.ts), worked out from what runs afterwards: Portainer gives no progress
 // and recreates this backend halfway through, so the record lives in the kv store and every read judges it again.
 const OLD = 'a'.repeat(40), NEW = 'b'.repeat(40);
 const T0 = 1_800_000_000_000;
+const BEFORE = T0 - 60_000; // this backend ran before the redeploy
 const ctxOf = (sha = OLD, kv = new MemoryKV()) => ({ kv, cfg: { GIT_SHA: sha } }) as unknown as Ctx;
 const svc = (service: string, sha: string, state = 'running', health = 'healthy'): ServiceSeen => ({ service, state, health, sha });
 const all = (sha: string, over: Partial<Record<string, ServiceSeen>> = {}) => ['backend', 'gateway', 'web', 'updater'].map((s) => over[s] ?? svc(s, sha));
+async function start(ctx: Ctx, mode: 'api' | 'webhook' = 'api', updater = true, at = T0) {
+  const id = (await claimRedeploy(ctx, at))!;
+  expect(id).toMatch(/^[0-9a-f]{16}$/);
+  await beginRedeploy(ctx, id, mode, 'latest', updater, at);
+  return id;
+}
 
 describe('Portainer redeploy phases', () => {
-  it('pulling -> recreating (n of 3) -> health -> done on the new backend; the end is kept', async () => {
+  it('pulling -> recreating (n of 3) -> health -> done on the new backend; the end is kept and frees the slot', async () => {
     const kv = new MemoryKV();
     const old = ctxOf(OLD, kv);
-    const id = await beginRedeploy(old, 'api', 'latest', T0);
-    const booted = T0 - 60_000; // this backend ran before the redeploy
-    expect(await redeployView(old, all('sha-aaaaaaa'), T0 + 1_000, booted)).toMatchObject({ id, mode: 'api', tag: 'latest', phase: 'pulling', running: true, services: { updated: 0, total: 3 } });
-    // Portainer recreates the gateway first (the updater is not one of the judged services)
+    const id = await start(old);
+    expect(await redeployView(old, all('sha-aaaaaaa'), T0 + 1_000, BEFORE)).toMatchObject({ id, mode: 'api', tag: 'latest', phase: 'pulling', running: true, services: { updated: 0, total: 3 } });
     const mid = all('sha-aaaaaaa', { gateway: svc('gateway', 'sha-bbbbbbb'), web: svc('web', 'sha-aaaaaaa', 'exited', '') });
-    expect(await redeployView(old, mid, T0 + 60_000, booted)).toMatchObject({ phase: 'recreating', services: { updated: 1, total: 3 } });
-    // the new backend (another build, started after the redeploy) answers; web still starting
+    expect(await redeployView(old, mid, T0 + 60_000, BEFORE)).toMatchObject({ phase: 'recreating', services: { updated: 1, total: 3 } });
     const fresh = ctxOf(NEW, kv);
+    // the new backend answers while the updater is being recreated too: no listing now, so it waits (never done from the backend alone)
+    expect(await redeployView(fresh, null, T0 + 80_000, T0 + 70_000)).toMatchObject({ phase: 'health', running: true });
     const starting = all('sha-bbbbbbb', { web: svc('web', 'sha-bbbbbbb', 'running', 'starting') });
-    expect(await redeployView(fresh, starting, T0 + 90_000, T0 + 80_000)).toMatchObject({ phase: 'health', running: true, services: { updated: 3, total: 3 } });
-    const done = await redeployView(fresh, all('sha-bbbbbbb'), T0 + 100_000, T0 + 80_000);
+    expect(await redeployView(fresh, starting, T0 + 90_000, T0 + 70_000)).toMatchObject({ phase: 'health', running: true, services: { updated: 3, total: 3 } });
+    expect(await kv.get(REDEPLOY_LOCK)).toBe(id);
+    const done = await redeployView(fresh, all('sha-bbbbbbb'), T0 + 100_000, T0 + 70_000);
     expect(done).toMatchObject({ phase: 'done', running: false, finishedAt: new Date(T0 + 100_000).toISOString() });
-    // stored: a later read with other services (a manual change, the updater gone) still shows how it ended
-    expect(await redeployView(fresh, null, T0 + 999_999_999, T0 + 80_000)).toMatchObject({ phase: 'done', finishedAt: done!.finishedAt });
+    expect(await kv.get(REDEPLOY_LOCK)).toBeNull();
+    expect(await redeployView(fresh, null, T0 + 999_999_999, T0 + 70_000)).toMatchObject({ phase: 'done', finishedAt: done!.finishedAt });
   });
 
-  it('without an updater listing: done as soon as this backend is a new container (also of the same build: a forced redeploy)', async () => {
+  it('one at a time: a second claim while one runs is refused and the record stays', async () => {
     const kv = new MemoryKV();
-    await beginRedeploy(ctxOf(OLD, kv), 'webhook', 'nightly', T0);
-    expect(await redeployView(ctxOf(OLD, kv), null, T0 + 5_000, T0 - 1)).toMatchObject({ phase: 'pulling', services: null });
-    expect(await redeployView(ctxOf(OLD, kv), null, T0 + 50_000, T0 + 40_000)).toMatchObject({ phase: 'done' });
+    const ctx = ctxOf(OLD, kv);
+    const id = await start(ctx, 'api', true, Date.now());
+    expect(await claimRedeploy(ctx)).toBeNull();
+    expect(JSON.parse((await kv.get(REDEPLOY_KEY))!).id).toBe(id);
+    // a refusal ends it and frees the slot
+    await settleRedeploy(ctx, id, { ok: false, error: 'portainer', step: 'redeploy', status: 500 });
+    expect(await claimRedeploy(ctx)).toMatch(/^[0-9a-f]{16}$/);
   });
 
-  it('a refusal, also one that came after "started" went out, ends it as failed with the status and step only', async () => {
+  it('without an updater: the new build alone decides; a restart of the same build without any change seen is not done', async () => {
+    const kv = new MemoryKV();
+    await start(ctxOf(OLD, kv), 'webhook', false);
+    expect(await redeployView(ctxOf(OLD, kv), undefined, T0 + 5_000, BEFORE)).toMatchObject({ phase: 'pulling', services: null });
+    // a crash or reboot of this backend (same build) proves nothing
+    expect(await redeployView(ctxOf(OLD, kv), undefined, T0 + 50_000, T0 + 40_000)).toMatchObject({ phase: 'pulling', running: true });
+    expect(await redeployView(ctxOf(NEW, kv), undefined, T0 + 60_000, T0 + 55_000)).toMatchObject({ phase: 'done' });
+    // set up but absent from the start (compose.no-updater.yaml keeps UPDATER_URL): null counts as no updater for this redeploy
+    const kv2 = new MemoryKV();
+    await start(ctxOf(OLD, kv2), 'webhook', false);
+    expect(await redeployView(ctxOf(NEW, kv2), null, T0 + 60_000, T0 + 55_000)).toMatchObject({ phase: 'done' });
+  });
+
+  it('a same-build restart counts once a change was seen (a forced redeploy recreated the services)', async () => {
+    const kv = new MemoryKV();
+    await start(ctxOf(OLD, kv));
+    expect(await redeployView(ctxOf(OLD, kv), all('sha-aaaaaaa', { web: svc('web', 'sha-aaaaaaa', 'exited', '') }), T0 + 20_000, BEFORE)).toMatchObject({ phase: 'recreating' });
+    expect(await redeployView(ctxOf(OLD, kv), all('sha-aaaaaaa'), T0 + 40_000, T0 + 30_000)).toMatchObject({ phase: 'done' });
+  });
+
+  it('a refusal, also one after "started" went out, ends it as failed with the status and step only; an older answer changes nothing', async () => {
     const ctx = ctxOf();
-    const id = await beginRedeploy(ctx, 'api', 'latest', T0);
+    const id = await start(ctx);
     await settleRedeploy(ctx, id, { ok: false, error: 'portainer', step: 'redeploy', status: 500 }, T0 + 90_000);
-    expect(await redeployView(ctx, null, T0 + 91_000, T0 - 1)).toMatchObject({ phase: 'failed', running: false, error: 'portainer', step: 'redeploy', status: 500, code: null });
-    // an answer for an older redeploy changes nothing
-    const next = await beginRedeploy(ctx, 'api', 'latest', T0 + 100_000);
+    expect(await redeployView(ctx, null, T0 + 91_000, BEFORE)).toMatchObject({ phase: 'failed', running: false, error: 'portainer', step: 'redeploy', status: 500, code: null });
+    const next = await start(ctx, 'api', true, T0 + 100_000);
     await settleRedeploy(ctx, id, { ok: false, error: 'portainer', step: 'redeploy', status: 404 });
-    expect(await redeployView(ctx, null, T0 + 101_000, T0 - 1)).toMatchObject({ id: next, phase: 'pulling' });
+    expect(await redeployView(ctx, null, T0 + 101_000, BEFORE)).toMatchObject({ id: next, phase: 'pulling' });
   });
 
-  it('Portainer done (its API answers after redeploying) but nothing recreated: unchanged; no answer and no change in 15 minutes: timeout', async () => {
+  it('the API answered "done" (not deploying) and nothing changed: unchanged at once; a "deploying" or webhook answer waits', async () => {
     const ctx = ctxOf();
-    const id = await beginRedeploy(ctx, 'api', 'latest', T0);
-    await settleRedeploy(ctx, id, { ok: true }, T0 + 40_000);
-    expect(await redeployView(ctx, all('sha-aaaaaaa'), T0 + 41_000, T0 - 1)).toMatchObject({ phase: 'unchanged', running: false });
-    // an answer inside the grace window (a webhook, or a Portainer that deploys in the background) proves nothing yet
+    const id = await start(ctx);
+    await settleRedeploy(ctx, id, { ok: true, sync: true }, T0 + 2_000);
+    expect(await redeployView(ctx, all('sha-aaaaaaa'), T0 + 3_000, BEFORE)).toMatchObject({ phase: 'unchanged', running: false });
     const quick = ctxOf();
-    const q = await beginRedeploy(quick, 'webhook', 'latest', T0);
-    await settleRedeploy(quick, q, { ok: true }, T0 + 300);
-    expect(await redeployView(quick, null, T0 + 60_000, T0 - 1)).toMatchObject({ phase: 'pulling' });
-    expect(await redeployView(quick, null, T0 + REDEPLOY_TIMEOUT_MS + 1, T0 - 1)).toMatchObject({ phase: 'unchanged' });
-    const silent = ctxOf();
-    await beginRedeploy(silent, 'api', 'latest', T0);
-    expect(await redeployView(silent, null, T0 + REDEPLOY_TIMEOUT_MS + 1, T0 - 1)).toMatchObject({ phase: 'timeout', running: false, at: 'pulling' });
+    const q = await start(quick, 'webhook');
+    await settleRedeploy(quick, q, { ok: true, sync: false }, T0 + 300);
+    expect(await redeployView(quick, all('sha-aaaaaaa'), T0 + 60_000, BEFORE)).toMatchObject({ phase: 'pulling' });
+    expect(await redeployView(quick, all('sha-aaaaaaa'), T0 + REDEPLOY_TIMEOUT_MS + 1, BEFORE)).toMatchObject({ phase: 'unchanged' });
   });
 
-  it('nothing recorded: null', async () => {
+  it('timeout: unchanged only when it never got past pulling; stuck later (or no answer at all) is a timeout naming the phase', async () => {
+    const ctx = ctxOf();
+    const id = await start(ctx);
+    await settleRedeploy(ctx, id, { ok: true, sync: false }, T0 + 1_000);
+    const stuck = all('sha-aaaaaaa', { gateway: svc('gateway', 'sha-bbbbbbb', 'running', 'unhealthy') });
+    expect(await redeployView(ctx, stuck, T0 + 60_000, BEFORE)).toMatchObject({ phase: 'recreating' });
+    expect(await redeployView(ctx, stuck, T0 + REDEPLOY_TIMEOUT_MS + 1, BEFORE)).toMatchObject({ phase: 'timeout', running: false, at: 'recreating' });
+    const silent = ctxOf();
+    await start(silent);
+    expect(await redeployView(silent, null, T0 + REDEPLOY_TIMEOUT_MS + 1, BEFORE)).toMatchObject({ phase: 'timeout', running: false, at: 'pulling' });
+  });
+
+  it('a stored value of another shape is ignored; nothing recorded: null', async () => {
+    const kv = new MemoryKV();
+    await kv.set(REDEPLOY_KEY, JSON.stringify({ id: 'x', mode: 'api', final: 'done' }), 60);
+    expect(await redeployView(ctxOf(OLD, kv), null)).toBeNull();
+    await kv.set(REDEPLOY_KEY, '{not json', 60);
+    expect(await redeployView(ctxOf(OLD, kv), null)).toBeNull();
     expect(await redeployView(ctxOf(), null)).toBeNull();
   });
 });
