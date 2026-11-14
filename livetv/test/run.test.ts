@@ -68,6 +68,28 @@ describe('createRun', () => {
     expect(r).toEqual({ code: 0, stdout: Buffer.from('Nordlicht TV:200012'), stderr: '' });
   });
 
+  it('audioStdin arrives on descriptor 3, next to stdin on descriptor 0', async () => {
+    async function* chunks(...c: string[]) { for (const x of c) yield Buffer.from(x); }
+    const prog = 'const fs = require("fs"); const a = fs.readFileSync(0, "utf8"); const b = fs.readFileSync(3, "utf8"); process.stdout.write(a + "|" + b)';
+    const r = await run('ffmpeg', ['-e', prog], { timeoutMs: 5_000, stdin: chunks('video-', 'bytes'), audioStdin: chunks('audio-', 'bytes') });
+    expect(r.stdout.toString()).toBe('video-bytes|audio-bytes');
+  });
+
+  it('a child that exits without reading descriptor 3: the run ends, the endless audio input is let go (no hang, no EPIPE)', async () => {
+    let pulled = 0;
+    let closed = false;
+    async function* endless() {
+      try {
+        for (;;) { pulled++; yield Buffer.alloc(65_536, 1); await new Promise((r) => setTimeout(r, 5)); }
+      } finally { closed = true; }
+    }
+    const r = await run('ffmpeg', ['-e', 'setTimeout(() => process.exit(0), 50)'], { timeoutMs: 5_000, stdin: endless(), audioStdin: endless() });
+    expect(r.code).toBe(0);
+    await new Promise((res) => setTimeout(res, 100));
+    expect(closed).toBe(true);
+    expect(pulled).toBeGreaterThan(0);
+  });
+
   it('without stdin the child reads EOF at once (stdin is not piped)', async () => {
     const r = await run('ffprobe', ['-e', 'let n = 0; process.stdin.on("data", (c) => { n += c.length; }); process.stdin.on("end", () => process.stdout.write("eof:" + n))'], { timeoutMs: 5_000 });
     expect(r.stdout.toString()).toBe('eof:0');

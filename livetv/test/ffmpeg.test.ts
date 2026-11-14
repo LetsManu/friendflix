@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import type { FetchOptions, GuardDeps, GuardedResponse } from '../src/fetch.js';
-import { SCRUB_MAX_CHARS, audioFor, ffmpegArgs, pipeInput, scrubLine, segmentFormat, urlFormat, videoArgs } from '../src/ffmpeg.js';
+import { guardedFetch, type FetchOptions, type GuardDeps, type GuardedResponse } from '../src/fetch.js';
+import { SCRUB_MAX_CHARS, audioFor, audioPassable, ffmpegArgs, pipeInput, scrubLine, segmentFormat, urlFormat, videoArgs } from '../src/ffmpeg.js';
 import { openInput } from '../src/inputs.js';
 import { createRun, stderrLine } from '../src/run.js';
 import { ENCODERS } from '../src/system.js';
@@ -52,6 +52,7 @@ async function read(src: AsyncIterable<Uint8Array>, n: number): Promise<Buffer> 
 describe('ffmpegArgs', () => {
   it('transcode args per encoder', () => {
     // audio: AAC and MP3 are copied, anything else (MP2, AC-3) becomes stereo AAC
+    expect(['aac', 'mp3', 'mp2', 'ac3', 'eac3', 'aac_latm', undefined].map(audioPassable)).toEqual([true, true, false, false, false, false, false]);
     expect([audioFor('aac'), audioFor('mp3'), audioFor('mp2'), audioFor('ac3')]).toEqual(['copy', 'copy', 'aac', 'aac']);
     for (const encoder of ENCODERS) {
       const a = args({ encoder, audio: audioFor('mp2') });
@@ -175,6 +176,53 @@ describe('inputs', () => {
     expect(has(a, ['-protocol_whitelist', 'pipe', '-f', 'mov', '-format_whitelist', 'mov', '-i', 'pipe:0'])).toBe(true);
   });
 
+  it('a separate HLS audio rendition: fetched by livetv through the guard and followed as a second pipe', async () => {
+    const base = 'http://iptv.example.com/live/nordlicht';
+    const v = Buffer.alloc(188, 1);
+    const au = Buffer.alloc(100, 2);
+    const master = ['#EXTM3U', '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="Deutsch",DEFAULT=YES,URI="audio/de.m3u8"',
+      '#EXT-X-STREAM-INF:BANDWIDTH=3000000,CODECS="avc1.4d401f,mp4a.40.2",AUDIO="a"', 'video/index.m3u8'].join('\n');
+    const pl = (seg: string) => ['#EXTM3U', '#EXT-X-TARGETDURATION:4', '#EXT-X-MEDIA-SEQUENCE:7', '#EXTINF:4.000,', seg].join('\n');
+    const routes = new Map<string, Served>([
+      [`${base}/master.m3u8`, master], [`${base}/video/index.m3u8`, pl('v7.ts')], [`${base}/video/v7.ts`, v],
+      [`${base}/audio/de.m3u8`, pl('a7.aac')], [`${base}/audio/a7.aac`, au],
+    ]);
+    const ff = fakeFetch(routes);
+    const g = guard();
+    const { ffInput } = await openInput({ url: `${base}/master.m3u8`, kind: 'hls', allowLan: false }, { guard: g, fetch: ff.fetch });
+    if (ffInput.kind !== 'pipe' || !ffInput.audio) throw new Error('an audio pipe is expected');
+    expect([ffInput.format, ffInput.audio.format]).toEqual(['mpegts', 'aac']);
+    expect(await read(ffInput.stdin, 188)).toEqual(v);
+    expect(await read(ffInput.audio.stdin, 100)).toEqual(au);
+    expect(ff.calls.map((c) => c.url)).toEqual(expect.arrayContaining([`${base}/audio/de.m3u8`, `${base}/audio/a7.aac`]));
+    const a = ffmpegArgs({ mode: 'remux', input: { kind: 'pipe', format: ffInput.format }, audioInput: { format: ffInput.audio.format }, encoder: 'libx264', audio: 'aac', srcHeight: 720, dir: DIR, startNumber: 0 });
+    expect(has(a, ['-protocol_whitelist', 'pipe', '-f', 'mpegts', '-format_whitelist', 'mpegts', '-i', 'pipe:0'])).toBe(true);
+    expect(has(a, ['-protocol_whitelist', 'pipe', '-f', 'aac', '-format_whitelist', 'aac', '-i', 'pipe:3'])).toBe(true);
+    // optional: a rendition without an audio stream still gives the picture
+    expect(has(a, ['-map', '0:v:0', '-map', '1:a:0?'])).toBe(true);
+    // no URL of any scheme reaches ffmpeg's arguments
+    expect(a.some((x) => /[a-z][a-z0-9+.-]*:\/\//i.test(x))).toBe(false);
+  });
+
+  it('a refused address of the audio playlist: AudioUnavailable, fatal (the driver goes on without it, never fetches it)', async () => {
+    const base = 'http://iptv.example.com/live/nordlicht';
+    const master = ['#EXTM3U', '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",DEFAULT=YES,URI="http://audio.example.com/de.m3u8"',
+      '#EXT-X-STREAM-INF:BANDWIDTH=3000000,AUDIO="a"', 'video.m3u8'].join('\n');
+    const pl = ['#EXTM3U', '#EXT-X-TARGETDURATION:4', '#EXTINF:4.000,', 'v.ts'].join('\n');
+    const routes = new Map<string, Served>([[`${base}/master.m3u8`, master], [`${base}/video.m3u8`, pl]]);
+    const ff = fakeFetch(routes);
+    // the real guard decides for the audio host, which resolves to a private address
+    const g = guard();
+    g.lookup = async (h) => (h === 'audio.example.com' ? ['10.0.0.5'] : ['192.0.2.40']);
+    const fetch = (u: string, o: FetchOptions) => (new URL(u).hostname === 'audio.example.com' ? guardedFetch(u, o, g) : ff.fetch(u, o));
+    await expect(openInput({ url: `${base}/master.m3u8`, kind: 'hls', allowLan: false }, { guard: g, fetch }))
+      .rejects.toMatchObject({ message: 'audio_unavailable', fatal: true });
+    // noAudio: the rendition is not even looked at
+    const { ffInput } = await openInput({ url: `${base}/master.m3u8`, kind: 'hls', allowLan: false }, { guard: g, fetch, noAudio: true });
+    expect(ffInput.kind === 'pipe' && ffInput.audio).toBeFalsy();
+    expect(ff.calls.map((c) => c.url)).not.toContain('http://audio.example.com/de.m3u8');
+  });
+
   it('srt inputs carry the IP literal', async () => {
     const g = guard(['192.0.2.40']);
     const fetch = async (): Promise<GuardedResponse> => { throw new Error('an SRT input is never fetched'); };
@@ -193,10 +241,24 @@ describe('inputs', () => {
   });
 });
 
+describe('a separate audio rendition aligned by date-time', () => {
+  it('the later input is moved by -itsoffset (a number), placed before its own -i', () => {
+    const later = args({ mode: 'remux', audioInput: { format: 'aac', shift: 0.25 } });
+    expect(has(later, ['-itsoffset', '0.250', '-protocol_whitelist', 'pipe', '-f', 'aac', '-format_whitelist', 'aac', '-i', 'pipe:3'])).toBe(true);
+    expect(later.filter((x) => x === '-itsoffset')).toHaveLength(1);
+    const earlier = args({ mode: 'remux', audioInput: { format: 'aac', shift: -1.5 } });
+    expect(has(earlier, ['-itsoffset', '1.500', '-protocol_whitelist', 'pipe', '-f', 'mpegts', '-format_whitelist', 'mpegts', '-i', 'pipe:0'])).toBe(true);
+    expect(earlier.filter((x) => x === '-itsoffset')).toHaveLength(1);
+    for (const shift of [0, undefined, Number.NaN]) expect(args({ mode: 'remux', audioInput: { format: 'aac', ...(shift === undefined ? {} : { shift }) } })).not.toContain('-itsoffset');
+  });
+});
+
 describe('pipe formats (L5)', () => {
   it('HLS: the first segment decides', () => {
     const f = (uri: string, map?: string) => segmentFormat(uri, map);
     expect([f('a.ts'), f('a.aac'), f('a.mp3'), f('a.m4s'), f('a.mp4?x=1'), f('a'), f('a.bin'), f('a.ts', 'init.mp4')]).toEqual(['mpegts', 'aac', 'mp3', 'mov', 'mov', 'mpegts', 'mpegts', 'mov']);
+    // packed AC-3 / E-AC-3 audio renditions get their own demuxer (as MPEG-TS no audio would be found in them)
+    expect([f('a.ac3'), f('a.ec3'), f('a.EAC3?t=1')]).toEqual(['ac3', 'eac3', 'eac3']);
   });
   it('direct URLs by extension', () => {
     const f = (p: string) => urlFormat(p);
@@ -204,7 +266,7 @@ describe('pipe formats (L5)', () => {
       .toEqual(['aac', 'mp3', 'mov', 'mov', 'mov', 'matroska', 'matroska', 'flv', 'mpegts', 'mpegts', 'mpegts']);
   });
   it('-f and the matching -format_whitelist', () => {
-    for (const [fmt, wl] of [['mpegts', 'mpegts'], ['mov', 'mov'], ['aac', 'aac'], ['mp3', 'mp3'], ['matroska', 'matroska,webm'], ['flv', 'flv']] as const)
+    for (const [fmt, wl] of [['mpegts', 'mpegts'], ['mov', 'mov'], ['aac', 'aac'], ['ac3', 'ac3'], ['eac3', 'eac3'], ['mp3', 'mp3'], ['matroska', 'matroska,webm'], ['flv', 'flv']] as const)
       expect(has(pipeInput(fmt), ['-f', fmt, '-format_whitelist', wl, '-i', 'pipe:0'])).toBe(true);
   });
 });

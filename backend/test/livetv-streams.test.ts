@@ -189,11 +189,18 @@ describe('pure rules', () => {
     expect(resolveEncoder('software', 'qsv', all)).toBe('libx264');
   });
 
-  it('expectedMode: hls passthrough, ts by its probe, srt by a fresh probe else transcode', () => {
+  it('expectedMode: hls passthrough (remux on unplayable or separate audio), ts by its probe, srt by a fresh probe else transcode', () => {
     const now = Date.parse('2026-11-12T20:00:00Z');
     const probe = (needs: ProbeRec['needs'], hoursAgo: number, ok = true): ProbeRec => ({ at: new Date(now - hoursAgo * 3_600_000).toISOString(), ok, needs });
     expect(expectedMode({ streamKind: 'hls', probe: null }, now)).toBe('passthrough');
     expect(expectedMode({ streamKind: 'hls', probe: probe('transcode', 1) }, now)).toBe('passthrough');
+    const withAudio = (codec: string): ProbeRec => ({ ...probe('passthrough', 1), video: { codec: 'h264', width: 1280, height: 720, fps: 25 }, audio: { codec, channels: 2 } });
+    expect(expectedMode({ streamKind: 'hls', probe: withAudio('mp2') }, now)).toBe('remux');
+    expect(expectedMode({ streamKind: 'hls', probe: withAudio('ac3') }, now)).toBe('remux');
+    expect(expectedMode({ streamKind: 'hls', probe: withAudio('aac') }, now)).toBe('passthrough');
+    // audio in a playlist of its own: the probe says remux although the codec is AAC
+    expect(expectedMode({ streamKind: 'hls', probe: { ...withAudio('aac'), needs: 'remux' } }, now)).toBe('remux');
+    expect(expectedMode({ streamKind: 'hls', probe: probe('passthrough', 1) }, now)).toBe('passthrough');
     expect(expectedMode({ streamKind: 'ts', probe: null }, now)).toBe('remux');
     expect(expectedMode({ streamKind: 'ts', probe: probe('transcode', 100) }, now)).toBe('transcode');
     expect(expectedMode({ streamKind: 'srt', probe: null }, now)).toBe('transcode');
