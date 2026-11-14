@@ -316,9 +316,10 @@ export default {
       newFile: 'Neue Datei hochladen',
       tooLarge: 'Die Datei ist größer als 300 MB.',
       importRunning: 'Der Programmführer wird gerade eingelesen – versuche es gleich noch einmal.',
-      fileInvalid: 'Das ist keine gültige XMLTV-Datei.',
+      fileInvalid: 'Diese Datei ist kein XMLTV-Programmführer (.xml oder .xml.gz).',
       fileChosen: 'Gewählt',
       fileLater: 'Gespeichert wurde der Programmführer, die Datei fehlt noch.',
+      refreshNoFile: 'Noch keine Datei hochgeladen.',
     },
   },
   push: {

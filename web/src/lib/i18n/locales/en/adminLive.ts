@@ -318,9 +318,10 @@ const dict: Translation<typeof de> = {
       newFile: 'Upload new file',
       tooLarge: 'The file is larger than 300 MB.',
       importRunning: 'The guide is being read in right now – try again in a moment.',
-      fileInvalid: 'That is not a valid XMLTV file.',
+      fileInvalid: 'This file is not an XMLTV guide (.xml or .xml.gz).',
       fileChosen: 'Chosen',
       fileLater: 'The guide was saved, the file is still missing.',
+      refreshNoFile: 'No file uploaded yet.',
     },
   },
   push: {

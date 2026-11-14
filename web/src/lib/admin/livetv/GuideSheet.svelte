@@ -44,7 +44,7 @@
   /** opened by *Aktivieren* on a guide left without a scope: saving the new scope turns it on too */
   export let enable = false;
 
-  const dispatch = createEventDispatcher<{ close: void; saved: SourceView; list: void; own: void; created: SourceView }>();
+  const dispatch = createEventDispatcher<{ close: void; saved: SourceView; list: void; own: void; created: SourceView; uploaded: SourceView }>();
   const id = uid('gs');
   const HTTP = ['http:', 'https:'];
   const SAMPLES = 8;
@@ -113,8 +113,9 @@
   function patchOf(s: SourceView): GuidePatch {
     const p: GuidePatch = {};
     if (name.trim() !== s.name) p.name = name.trim();
-    if (epgUrl.trim()) p.epgUrl = epgUrl.trim();
-    if (refresh !== s.refresh) p.refresh = refresh;
+    // a file guide has no link and no interval (the backend refuses both)
+    if (!isFile && epgUrl.trim()) p.epgUrl = epgUrl.trim();
+    if (!isFile && refresh !== s.refresh) p.refresh = refresh;
     if (epgShiftMin !== s.epgShiftMin) p.epgShiftMin = epgShiftMin;
     if (scopeKey(scope) !== scopeKey(s.guideScope)) p.guideScope = scope;
     if (enable && !s.enabled) p.enabled = true;
@@ -143,7 +144,8 @@
         dispatch('created', v);
         uploading = true;
         try { await uploadGuideFile(v.id, file); } finally { uploading = false; }
-        v = { ...v, fileName: file.name, fileBytes: file.size };
+        // 202: the import runs on the server; the page follows the list and shows name, size and outcome when it is done
+        dispatch('uploaded', v);
       }
       done = true;
       dispatch('saved', v);

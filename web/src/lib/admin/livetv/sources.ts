@@ -206,12 +206,13 @@ export function fileLine(s: Pick<SourceView, 'fileName' | 'fileBytes'>): string 
 }
 /** the card's / the chip's word for where a guide comes from */
 export const guideProviderLabel = (s: Pick<SourceView, 'guideProvider'>): string => tr(s.guideProvider === 'xmltv_file' ? 'adminLive.src.guide.fromFile' : 'adminLive.src.guide.fromLink');
-/** the upload's refusals in words: 413 too_large, 409 import_running, 400 invalid; the rest as any source failure */
+/** the upload's refusals in words: 413 too_large, 409 import_running / livetv_off, 400 invalid (file), 404 gone; the rest as any source failure */
 export function fileFailText(e: unknown): string {
   const code = e instanceof ApiError && typeof e.body?.error === 'string' ? e.body.error : null;
   if (e instanceof ApiError && code === 'too_large' && e.status === 413) return tr('adminLive.src.guide.tooLarge');
   if (e instanceof ApiError && code === 'import_running' && e.status === 409) return tr('adminLive.src.guide.importRunning');
-  if (e instanceof ApiError && code === 'invalid' && e.status === 400) return tr('adminLive.src.guide.fileInvalid');
+  if (e instanceof ApiError && code === 'livetv_off' && e.status === 409) return tr('adminLive.src.refreshOff');
+  if (e instanceof ApiError && code === 'invalid' && e.status === 400 && e.body?.field === 'file') return tr('adminLive.src.guide.fileInvalid');
   return sourceFailText(e);
 }
 /** a bigger file never leaves the browser: the server's limit */

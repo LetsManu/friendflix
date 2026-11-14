@@ -225,12 +225,13 @@ test.describe('admin: Live-TV, Programmführer aus Datei (desktop)', () => {
     expect(post).toHaveLength(1);
     expect(post[0]!.body).toEqual({ kind: 'guide', guideProvider: 'xmltv_file', name: 'UK Guide', guideScope: null, epgShiftMin: 0, enabled: true });
     const a = api.admin.livetv.area;
-    expect(a.filePuts).toEqual([{ id: post.length ? a.sources.at(-1)!.id : '', type: 'application/xml', bytes: XML.length }]);
+    expect(a.filePuts).toEqual([{ id: a.sources.at(-1)!.id, type: 'application/octet-stream', bytes: XML.length, name: 'guide-uk.xml' }]);
+    // the name shows only after the (simulated) import finished
     await expect(card(page, 'UK Guide').locator('[data-file-line]')).toContainText('guide-uk.xml · ');
     await expect(card(page, 'UK Guide').getByRole('button', { name: 'Neue Datei hochladen' })).toBeVisible();
   });
 
-  test.use({ allowedConsole: /status of (413|409)/ });
+  test.use({ allowedConsole: /status of (413|409|400)/ });
   test('too big: the 413 copy, the guide stays and the retry only uploads', async ({ page, api }) => {
     const a = api.admin.livetv.area;
     const dlg = await fileSheet(page);
@@ -243,7 +244,8 @@ test.describe('admin: Live-TV, Programmführer aus Datei (desktop)', () => {
     await expect(dlg).toHaveCount(0);
     expect(writes(api, 'POST', /\/sources$/)).toHaveLength(1);
     expect(a.filePuts).toHaveLength(2);
-    expect(a.filePuts[0]!.type).toBe('application/gzip');
+    expect(a.filePuts[0]!.type).toBe('application/octet-stream');
+    expect(a.filePuts[0]!.name).toBe('huge.xml.gz');
   });
 
   test('an import already running: the 409 copy', async ({ page, api }) => {
@@ -261,9 +263,40 @@ test.describe('admin: Live-TV, Programmführer aus Datei (desktop)', () => {
     const c = card(page, 'UK Guide');
     await expect(c.locator('[data-file-line]')).toHaveText('guide-uk.xml.gz · 48 MB');
     await expect(c.getByLabel('Aktualisieren', { exact: true })).toHaveCount(0);
-    await c.locator('input[type=file]').setInputFiles({ name: 'neu.xml', mimeType: 'application/xml', buffer: XML });
+    await c.locator('input[type=file]').setInputFiles({ name: 'neu ü.xml', mimeType: 'application/xml', buffer: XML });
     await expect(toasts(page).getByText('Datei hochgeladen. Der Programmführer wird eingelesen.')).toBeVisible();
-    expect(a.filePuts).toEqual([{ id: 'g-file', type: 'application/xml', bytes: XML.length }]);
-    await expect(c.locator('[data-file-line]')).toHaveText(/^upload\.xml · /); // the mock's own name; the page re-reads the list
+    expect(a.filePuts).toEqual([{ id: 'g-file', type: 'application/octet-stream', bytes: XML.length, name: 'neu ü.xml' }]);
+    // 202 changes nothing on the card; name and size arrive with the finished import (the page polls the list)
+    await expect(c.locator('[data-file-line]')).toHaveText(/^neu ü\.xml · /);
+    await expect(toasts(page).getByText(/^Aktualisiert\./)).toBeVisible();
+  });
+
+  test('a failed import keeps the old file and shows its error', async ({ page, api }) => {
+    const a = api.admin.livetv.area;
+    a.sources.push(ltvFileGuideMock({ id: 'g-file', name: 'UK Guide', position: 2 }));
+    a.refreshOutcome = { error: 'invalid' };
+    await page.goto('/admin/livetv');
+    const c = card(page, 'UK Guide');
+    await c.locator('input[type=file]').setInputFiles({ name: 'kaputt.xml', mimeType: 'application/xml', buffer: XML });
+    await expect(toasts(page).getByText(/Aktualisieren fehlgeschlagen/)).toBeVisible();
+    await expect(c.locator('[data-file-line]')).toHaveText('guide-uk.xml.gz · 48 MB');
+    expect(a.pendingFile).toEqual({});
+  });
+
+  test('an invalid file: the 400 copy', async ({ page, api }) => {
+    const a = api.admin.livetv.area;
+    a.sources.push(ltvFileGuideMock({ id: 'g-file', name: 'UK Guide', position: 2 }));
+    await page.goto('/admin/livetv');
+    const c = card(page, 'UK Guide');
+    a.fileAnswer = { status: 400, error: 'invalid' };
+    await c.locator('input[type=file]').setInputFiles({ name: 'x.xml', mimeType: 'application/xml', buffer: XML });
+    await expect(toasts(page).getByText('Diese Datei ist kein XMLTV-Programmführer (.xml oder .xml.gz).')).toBeVisible();
+  });
+
+  test('a file guide without a file says so', async ({ page, api }) => {
+    const a = api.admin.livetv.area;
+    a.sources.push(ltvFileGuideMock({ id: 'g-file', name: 'UK Guide', position: 2, fileName: null, fileBytes: null }));
+    await page.goto('/admin/livetv');
+    await expect(card(page, 'UK Guide').locator('[data-file-line]')).toHaveText('Noch keine Datei hochgeladen');
   });
 });

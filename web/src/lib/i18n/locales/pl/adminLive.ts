@@ -318,9 +318,10 @@ const dict: Translation<typeof de> = {
       newFile: 'Wgraj nowy plik',
       tooLarge: 'Plik jest większy niż 300 MB.',
       importRunning: 'Przewodnik jest właśnie wczytywany – spróbuj ponownie za chwilę.',
-      fileInvalid: 'To nie jest prawidłowy plik XMLTV.',
+      fileInvalid: 'Ten plik nie jest przewodnikiem XMLTV (.xml lub .xml.gz).',
       fileChosen: 'Wybrano',
       fileLater: 'Przewodnik zapisano, ale brakuje jeszcze pliku.',
+      refreshNoFile: 'Nie wgrano jeszcze pliku.',
     },
   },
   push: {

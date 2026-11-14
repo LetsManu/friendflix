@@ -318,9 +318,10 @@ const dict: Translation<typeof de> = {
       newFile: 'Yeni dosya yükle',
       tooLarge: 'Dosya 300 MB’tan büyük.',
       importRunning: 'Rehber şu anda okunuyor – birazdan tekrar dene.',
-      fileInvalid: 'Bu geçerli bir XMLTV dosyası değil.',
+      fileInvalid: 'Bu dosya bir XMLTV rehberi değil (.xml veya .xml.gz).',
       fileChosen: 'Seçildi',
       fileLater: 'Rehber kaydedildi, dosya hâlâ eksik.',
+      refreshNoFile: 'Henüz dosya yüklenmedi.',
     },
   },
   push: {

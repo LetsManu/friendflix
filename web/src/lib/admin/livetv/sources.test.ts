@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
-import { hasKey, setLocale } from '#lib/i18n';
+import { hasKey, setLocale, tr } from '#lib/i18n';
 import type { SourceView } from './api';
 import { ApiError } from '#lib/api';
 import { detectKind, fileFailText, fileLine, guideProviderLabel, isFileGuide, guideMoves, guideScopeLabel, guideStateLine, portRange, portsLine, refreshDone, refreshResult, scopeOptions, sourceError, sourceFailText, stateLine, tabOf, urlShapeOk } from './sources';
@@ -236,6 +236,8 @@ describe('guides from an uploaded file', () => {
   it('fileFailText: 413, 409 and 400 in words', () => {
     expect(fileFailText(new ApiError(413, { error: 'too_large' }))).toBe('Die Datei ist größer als 300 MB.');
     expect(fileFailText(new ApiError(409, { error: 'import_running' }))).toBe('Der Programmführer wird gerade eingelesen – versuche es gleich noch einmal.');
-    expect(fileFailText(new ApiError(400, { error: 'invalid' }))).toBe('Das ist keine gültige XMLTV-Datei.');
+    expect(fileFailText(new ApiError(400, { error: 'invalid', field: 'file' }))).toBe('Diese Datei ist kein XMLTV-Programmführer (.xml oder .xml.gz).');
+    expect(fileFailText(new ApiError(409, { error: 'livetv_off' }))).toBe(tr('adminLive.src.refreshOff'));
+    expect(fileFailText(new ApiError(404, { error: 'not_found' }))).toBe(tr('adminLive.src.gone'));
   });
 });

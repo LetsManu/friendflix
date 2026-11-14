@@ -97,7 +97,7 @@ export interface GuideBody {
   guideScope: string[] | null;
   enabled?: boolean;
 }
-/** A file guide (Stage 2): POST sends no link (the interval is fixed `manual`); the file follows with `uploadGuideFile` */
+/** A file guide (Stage 2): POST sends no link, agent, LAN switch or interval (the backend refuses them, 400); the file follows with `uploadGuideFile` */
 export interface FileGuideBody {
   kind: 'guide';
   guideProvider: 'xmltv_file';
@@ -106,6 +106,7 @@ export interface FileGuideBody {
   epgShiftMin?: number;
   enabled?: boolean;
 }
+/** a file guide's PATCH never carries `epgUrl` / `refresh` (nor agent / LAN switch) */
 export type GuidePatch = Partial<Pick<GuideBody, 'name' | 'epgUrl' | 'refresh' | 'epgShiftMin' | 'guideScope' | 'enabled'>> & { position?: number };
 /**
  * POST /sources/test: a missing `url` / `epgUrl` / `userAgent` with `sourceId` uses the stored one; `epgUrl: null` = no guide. Refusals:
@@ -178,11 +179,12 @@ export const createSource = (b: SourceBody) => api<SourceView>(`${B}/sources`, {
 export const createGuide = (b: GuideBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
 export const createFileGuide = (b: FileGuideBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
 /**
- * PUT the file as is (raw body: CSRF and 401 handling stay in `api()`). 202 = the import started; 413 `too_large` (300 MB), 409
- * `import_running`, 400 `invalid`. fetch gives no upload progress, so the pages show an indeterminate bar.
+ * PUT the file as is (raw `application/octet-stream` body: CSRF and 401 handling stay in `api()`), `?name=` = the original file name
+ * (the card shows it). 202 `{ started: true }` = received; the import runs in the background and `fileName` / `fileBytes` change only
+ * after a good one (the page follows `GET /sources`). Refusals: 413 `too_large` (300 MB), 409 `import_running` / `livetv_off`,
+ * 404 `not_found`, 400 `invalid` (field `file`). fetch gives no upload progress, so the pages show an indeterminate bar.
  */
-export const uploadGuideFile = (id: string, file: Blob) => api<unknown>(`${B}/sources/${enc(id)}/file`, { method: 'PUT', raw: file.type ? file : new Blob([file], { type: guideFileType(file) }) });
-const guideFileType = (f: Blob & { name?: string }): string => (/\.gz$/i.test(f.name ?? '') ? 'application/gzip' : 'application/xml');
+export const uploadGuideFile = (id: string, file: File) => api<{ started: boolean }>(`${B}/sources/${enc(id)}/file?name=${enc(file.name)}`, { method: 'PUT', raw: new Blob([file], { type: 'application/octet-stream' }) });
 export const updateGuide = (id: string, patch: GuidePatch) => api<SourceView>(`${B}/sources/${enc(id)}`, { method: 'PATCH', body: patch });
 export const testGuide = (b: GuideTestBody) => api<GuideTest>(`${B}/sources/test`, { method: 'POST', body: b });
 export const updateSource = (id: string, patch: SourcePatch) => api<SourceView>(`${B}/sources/${enc(id)}`, { method: 'PATCH', body: patch });

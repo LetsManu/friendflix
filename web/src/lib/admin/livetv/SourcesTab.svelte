@@ -106,11 +106,19 @@
       },
       error: false,
     });
+    settle(r);
+  }
+  /** a file guide's upload was accepted (202): its import is the refresh to wait for; the card keeps its spinner and then shows the outcome */
+  async function followImport(s: SourceView) {
+    const since = refreshedAt(s);
+    settle(await runAction({ key: `ltv-src-refresh:${s.id}`, run: () => untilRefreshed(s.id, since), error: false }));
+  }
+  function settle(r: { skipped?: boolean; ok: boolean; error?: unknown; value?: SourceView | null }) {
     if (r.skipped || gone) return;
     void refreshSummary(); // the nav badge counts failed sources
     if (!r.ok) {
       const c = r.error instanceof ApiError && r.error.status === 409 ? r.error.body?.error : null;
-      toast.error(c === 'livetv_off' ? tr('adminLive.src.refreshOff') : c === 'no_list' ? tr('adminLive.src.refreshNoList') : errorText(r.error));
+      toast.error(c === 'livetv_off' ? tr('adminLive.src.refreshOff') : c === 'no_list' ? tr('adminLive.src.refreshNoList') : c === 'no_file' ? tr('adminLive.src.guide.refreshNoFile') : errorText(r.error));
       return;
     }
     if (!r.value) { toast.info(tr('adminLive.src.refreshSlow')); return; }
@@ -150,7 +158,8 @@
     void refreshSummary();
   }
 
-  // ---- Neue Datei hochladen: PUT the file, the card shows its name and size at once; the import runs on the server
+  // ---- Neue Datei hochladen: PUT the file (202 = received); the import runs on the server, name and size appear on the card once it is
+  // done (a failed import keeps the old file and shows its error), so the page follows the list like after *Aktualisieren*
   async function upload(s: SourceView, file: File) {
     if (file.size > GUIDE_FILE_MAX) { toast.error(tr('adminLive.src.guide.tooLarge')); return; }
     const r = await runAction({
@@ -160,9 +169,8 @@
     });
     if (r.skipped) return;
     if (!r.ok) { toast.error(fileFailText(r.error)); return; }
-    replace({ ...s, fileName: file.name, fileBytes: file.size });
     toast.success(tr('adminLive.src.guide.uploaded'));
-    void load();
+    await followImport(s);
   }
 
   // ---- the order among the guides: one PATCH with the neighbour's position (the backend swaps the two); shown at once, then the
@@ -220,7 +228,7 @@
   <SourceSheet source={sheet.source} trigger={sheet.trigger} autoTest={sheet.autoTest ?? false} on:close={() => (sheet = null)} on:saved={saved} on:own={() => toOwn(sheet)} on:guide={toGuide} />
 {/if}
 {#if guideSheet}
-  <GuideSheet source={guideSheet.source} sources={sources ?? []} trigger={guideSheet.trigger} enable={guideSheet.enable ?? false} on:close={() => (guideSheet = null)} on:saved={saved} on:created={(e) => replace(e.detail)} on:list={toList} on:own={() => toOwn(guideSheet)} />
+  <GuideSheet source={guideSheet.source} sources={sources ?? []} trigger={guideSheet.trigger} enable={guideSheet.enable ?? false} on:close={() => (guideSheet = null)} on:saved={saved} on:created={(e) => replace(e.detail)} on:uploaded={(e) => void followImport(e.detail)} on:list={toList} on:own={() => toOwn(guideSheet)} />
 {/if}
 {#if stream}
   <StreamSheet result={stream.result} trigger={stream.trigger} on:close={() => (stream = null)} on:created={streamCreated} />
