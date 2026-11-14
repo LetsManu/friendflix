@@ -209,6 +209,19 @@ export function liveUrisOk(text: string): boolean {
 }
 
 /**
+ * livetv's URL of one live file (code-scanning alert #63): both parts are re-checked against their allowlists right where the
+ * URL is built, not only where they entered (the key at the authz answer, the file at LIVE_ROUTE): the key against livetv's own
+ * shape (32 lowercase hex, `randomBytes(16).toString('hex')` in livetv/src/streams.ts), the file against `index.m3u8` | LIVE_FILE.
+ * Each part is encoded as one path segment and the result must keep the base's origin. null = refuse (never fetched).
+ */
+export function liveTarget(base: URL, streamKey: string, file: string): URL | null {
+  if (!LIVE_STREAM_KEY.test(streamKey)) return null;
+  if (file !== 'index.m3u8' && !LIVE_FILE.test(file)) return null;
+  const target = new URL(`/s/${encodeURIComponent(streamKey)}/${encodeURIComponent(file)}`, base);
+  return target.origin === base.origin && target.pathname === `/s/${streamKey}/${file}` ? target : null;
+}
+
+/**
  * Direct (original) streams bypass the transcoder, so the resolution cap and the download flag cannot be enforced on them.
  * Roles with a height cap or without download rights get HLS only; every direct stream request is refused.
  */
@@ -982,8 +995,8 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       return fail(auth, auth === 401 ? 'unauthorized' : auth === 403 ? 'forbidden' : 'gone');
     }
     if (!liveBase) return fail(503, 'unavailable', { 'retry-after': '5' });
-    const target = new URL(`/s/${auth.streamKey}/${file}`, liveBase);
-    if (target.origin !== liveBase.origin) return fail(503, 'unavailable'); // defence in depth: key and file are allowlisted above
+    const target = liveTarget(liveBase, auth.streamKey, file);
+    if (!target) return fail(503, 'unavailable'); // unreachable: the authz answer and the route already allowlisted key and file
 
     // no client header goes to livetv (no range, cookie, conditional or forwarding header): its answer depends on the path only
     // a playlist within 15 s (headers and body); a segment's headers within 15 s, its body then streams as long as the client reads

@@ -10,7 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { networkInterfaces } from 'node:os';
-import { createGateway, liveUrisOk, tagUriValues } from '../src/gateway.js';
+import { createGateway, liveTarget, liveUrisOk, tagUriValues } from '../src/gateway.js';
 import { isTrustedPeer, setUntrustedPeers } from '../src/peers.js';
 
 const SECRET = 'internal-secret-for-tests';
@@ -470,5 +470,20 @@ describe('live playlist URI scan (code-scanning #62: linear, no regex backtracki
       expect(performance.now() - t0, l.slice(0, 12)).toBeLessThan(1500);
     }
     expect(liveUrisOk(`#X:${'uRi = "init-1.mp4",'.repeat(MB / 20)}`)).toBe(true);
+  });
+});
+
+describe('live upstream URL (code-scanning #63: key and file re-checked where the URL is built)', () => {
+  const base = new URL('http://livetv:8090/');
+  it('builds /s/<key>/<file> on the base origin', () => {
+    expect(liveTarget(base, KEY, 'index.m3u8')?.href).toBe(`http://livetv:8090/s/${KEY}/index.m3u8`);
+    expect(liveTarget(base, KEY, 'init-3.mp4')?.href).toBe(`http://livetv:8090/s/${KEY}/init-3.mp4`);
+    expect(liveTarget(new URL('https://lv.internal:9/x/y'), KEY, '12.m4s')?.href).toBe(`https://lv.internal:9/s/${KEY}/12.m4s`);
+  });
+  it('refuses any key that is not 32 lowercase hex and any file outside the route allowlist', () => {
+    for (const k of ['../v1/streams', KEY.toUpperCase(), `${KEY}0`, KEY.slice(1), '//evil.example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', `${KEY.slice(0, 31)}/`, ''])
+      expect(liveTarget(base, k, 'index.m3u8'), k).toBeNull();
+    for (const f of ['../x', 'index.m3u8?x', '//evil/1.ts', 'init.mp4', '01.ts', '1.mp4', '1.ts/..', 'https://evil/1.ts', '1.ts#', '%2e%2e', ''])
+      expect(liveTarget(base, KEY, f), f).toBeNull();
   });
 });
