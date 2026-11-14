@@ -75,10 +75,13 @@ export const coreCheck: GroupCheck = {
   ids: ['core.publicUrl', 'core.database', 'core.redis', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env'],
   timeoutMs: CHECK_TIMEOUT_MS,
   async run(env) {
+    // the direct probes start with the snapshot wait, not after it: when the snapshot misses its limit they have long answered, so the
+    // group keeps its margin to the limit (two cheap reads per run; unused when the snapshot comes)
+    const fallback = Promise.all([ownProbe('postgres', async () => (await env.ctx.db.query('select 1'), true)), ownProbe('redis', () => env.ctx.kv.ping())]);
     const [pub, s] = await Promise.all([publicUrlLine(env), env.snapshot()]);
     if (!s) {
-      // no snapshot within its limit: the database and Redis are asked directly, the rest is not known this time
-      const [db, redis] = await Promise.all([ownProbe('postgres', async () => (await env.ctx.db.query('select 1'), true)), ownProbe('redis', () => env.ctx.kv.ping())]);
+      // no snapshot within its limit: the database and Redis answer from their direct probes, the rest is not known this time
+      const [db, redis] = await fallback;
       const unknown = (id: CheckId) => bad(id, 'unknown', 'check_unavailable');
       return [
         pub,

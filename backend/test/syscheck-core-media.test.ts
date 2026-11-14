@@ -3,9 +3,9 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DiskHealth, HealthSnapshot, ServiceHealth, ServiceId } from '../src/health.js';
-import { levelToStatus } from '../src/syscheck/checks/core.js';
+import { coreCheck, levelToStatus } from '../src/syscheck/checks/core.js';
 import { buildSystemcheck } from '../src/syscheck/engine.js';
-import type { CheckId, SystemcheckResult } from '../src/syscheck/types.js';
+import { CHECK_TIMEOUT_MS, SNAPSHOT_TIMEOUT_MS, type CheckId, type SystemcheckResult } from '../src/syscheck/types.js';
 import { ADMIN, cfg, fakeHttp, makeEnv, type TestEnv } from './helpers.js';
 
 // Systemcheck Stage 1, Task 2: the core and media lines, read from the health snapshot (plus the public-URL and request-service probes).
@@ -222,6 +222,24 @@ describe('one hung dependency', () => {
       }
     } finally {
       kv.get = orig;
+    }
+  }, 15_000);
+
+  it('no snapshot and the database stalled: core still answers with ≥ 500 ms to spare before its limit', async () => {
+    stallDb();
+    try {
+      const t0 = performance.now();
+      const lines = await coreCheck.run({
+        ctx: env.ctx, fresh: false, timeoutMs: CHECK_TIMEOUT_MS,
+        // the snapshot wait runs out at its full limit
+        snapshot: () => new Promise((res) => setTimeout(() => res(null), SNAPSHOT_TIMEOUT_MS)),
+        login: () => new Promise(() => undefined),
+      });
+      expect(performance.now() - t0).toBeLessThan(CHECK_TIMEOUT_MS - 500);
+      expect(lines.find((l) => l.id === 'core.database')).toMatchObject({ status: 'problem', cause: 'db_down' });
+      expect(lines.find((l) => l.id === 'core.redis')?.status).toBe('ok');
+    } finally {
+      unstallDb();
     }
   }, 15_000);
 
