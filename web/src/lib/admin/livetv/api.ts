@@ -55,6 +55,9 @@ export interface SourceView {
    * source was deleted (the guide is then disabled: "Gilt für keine Quelle mehr")
    */
   guideScope: string[] | null;
+  /** an uploaded guide (`guideProvider: 'xmltv_file'`): the file's name and size, null before the first upload / for every other source */
+  fileName: string | null;
+  fileBytes: number | null;
   /** channels currently matched to this source's guide (`epg_source_id`) */
   servedChannels: number;
   state: SourceState;
@@ -92,6 +95,15 @@ export interface GuideBody {
   refresh?: Refresh;
   epgShiftMin?: number;
   guideScope: string[] | null;
+  enabled?: boolean;
+}
+/** A file guide (Stage 2): POST sends no link (the interval is fixed `manual`); the file follows with `uploadGuideFile` */
+export interface FileGuideBody {
+  kind: 'guide';
+  guideProvider: 'xmltv_file';
+  name: string;
+  guideScope: string[] | null;
+  epgShiftMin?: number;
   enabled?: boolean;
 }
 export type GuidePatch = Partial<Pick<GuideBody, 'name' | 'epgUrl' | 'refresh' | 'epgShiftMin' | 'guideScope' | 'enabled'>> & { position?: number };
@@ -164,6 +176,13 @@ const enc = encodeURIComponent;
 export const listSources = () => api<SourceView[]>(`${B}/sources`);
 export const createSource = (b: SourceBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
 export const createGuide = (b: GuideBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
+export const createFileGuide = (b: FileGuideBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
+/**
+ * PUT the file as is (raw body: CSRF and 401 handling stay in `api()`). 202 = the import started; 413 `too_large` (300 MB), 409
+ * `import_running`, 400 `invalid`. fetch gives no upload progress, so the pages show an indeterminate bar.
+ */
+export const uploadGuideFile = (id: string, file: Blob) => api<unknown>(`${B}/sources/${enc(id)}/file`, { method: 'PUT', raw: file.type ? file : new Blob([file], { type: guideFileType(file) }) });
+const guideFileType = (f: Blob & { name?: string }): string => (/\.gz$/i.test(f.name ?? '') ? 'application/gzip' : 'application/xml');
 export const updateGuide = (id: string, patch: GuidePatch) => api<SourceView>(`${B}/sources/${enc(id)}`, { method: 'PATCH', body: patch });
 export const testGuide = (b: GuideTestBody) => api<GuideTest>(`${B}/sources/test`, { method: 'POST', body: b });
 export const updateSource = (id: string, patch: SourcePatch) => api<SourceView>(`${B}/sources/${enc(id)}`, { method: 'PATCH', body: patch });

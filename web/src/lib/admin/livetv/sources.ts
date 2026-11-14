@@ -7,6 +7,7 @@
 import { ApiError } from '#lib/api';
 import { fmtDateTime, fmtTime, tr, type TKey } from '#lib/i18n';
 import { errorText } from '#lib/ui/action';
+import { fmtBytes } from '#lib/ui/format';
 import type { SourceView, StreamKind } from './api';
 
 export const TABS = ['sources', 'channels', 'groups', 'guide', 'status'] as const;
@@ -194,3 +195,24 @@ export function guideMoves(guides: readonly SourceView[], id: string, dir: 1 | -
   if (!me || !other) return null;
   return { patch: { id: me.id, position: other.position }, swap: [{ id: me.id, position: other.position }, { id: other.id, position: me.position }] };
 }
+
+// ---- uploaded guide files (Stage 2)
+
+export const isFileGuide = (s: Pick<SourceView, 'kind' | 'guideProvider'>): boolean => s.kind === 'guide' && s.guideProvider === 'xmltv_file';
+/** "guide-uk.xml.gz · 48 MB": the card's line of a file guide; "Noch keine Datei" before the first upload */
+export function fileLine(s: Pick<SourceView, 'fileName' | 'fileBytes'>): string {
+  if (!s.fileName) return tr('adminLive.src.guide.noFile');
+  return tr('adminLive.src.guide.fileLine', { name: s.fileName, size: fmtBytes(s.fileBytes) });
+}
+/** the card's / the chip's word for where a guide comes from */
+export const guideProviderLabel = (s: Pick<SourceView, 'guideProvider'>): string => tr(s.guideProvider === 'xmltv_file' ? 'adminLive.src.guide.fromFile' : 'adminLive.src.guide.fromLink');
+/** the upload's refusals in words: 413 too_large, 409 import_running, 400 invalid; the rest as any source failure */
+export function fileFailText(e: unknown): string {
+  const code = e instanceof ApiError && typeof e.body?.error === 'string' ? e.body.error : null;
+  if (e instanceof ApiError && code === 'too_large' && e.status === 413) return tr('adminLive.src.guide.tooLarge');
+  if (e instanceof ApiError && code === 'import_running' && e.status === 409) return tr('adminLive.src.guide.importRunning');
+  if (e instanceof ApiError && code === 'invalid' && e.status === 400) return tr('adminLive.src.guide.fileInvalid');
+  return sourceFailText(e);
+}
+/** a bigger file never leaves the browser: the server's limit */
+export const GUIDE_FILE_MAX = 300 * 1024 * 1024;

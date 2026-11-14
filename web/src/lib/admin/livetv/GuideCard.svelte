@@ -18,7 +18,7 @@
   import Button from '#lib/ui/Button.svelte';
   import Select from '#lib/ui/Select.svelte';
   import { REFRESHES, type Refresh, type SourceView } from './api';
-  import { guideScopeLabel, guideStateLine, scopeOptions } from './sources';
+  import { fileLine, guideProviderLabel, guideScopeLabel, guideStateLine, isFileGuide, scopeOptions } from './sources';
 
   export let source: SourceView;
   /** every source of the page: the scope names come from them */
@@ -30,8 +30,17 @@
   export let first = false;
   export let last = false;
 
-  const dispatch = createEventDispatcher<{ refresh: void; edit: HTMLElement | null; enable: HTMLElement | null; toggle: void; remove: void; interval: Refresh; move: 1 | -1 }>();
+  const dispatch = createEventDispatcher<{ upload: File; refresh: void; edit: HTMLElement | null; enable: HTMLElement | null; toggle: void; remove: void; interval: Refresh; move: 1 | -1 }>();
   let card: HTMLDivElement | undefined;
+  let picker: HTMLInputElement | undefined;
+  export let uploading = false;
+  $: isFile = isFileGuide(source);
+  function picked(e: Event) {
+    const el = e.currentTarget as HTMLInputElement;
+    const f = el.files?.[0];
+    el.value = '';
+    if (f) dispatch('upload', f);
+  }
   const menuButton = (): HTMLElement | null => card?.querySelector<HTMLElement>('[data-guide-menu] button') ?? null;
 
   $: scopeLine = guideScopeLabel(source.guideScope, sources);
@@ -57,15 +66,25 @@
     </svelte:fragment>
     <p class="chips">
       <span class="chip">{$t('adminLive.src.kindGuide')}</span>
+      {#if isFile}<span class="chip">{guideProviderLabel(source)}</span>{/if}
       {#if !source.enabled}<span class="chip off"><Icon name="pause" size={14} />{$t('adminLive.src.off')}</span>{/if}
     </p>
-    <p class="url"><code>{source.epgHint ?? '–'}</code></p>
+    {#if isFile}
+      <p class="url" data-file-line><code>{fileLine(source)}</code></p>
+    {:else}
+      <p class="url"><code>{source.epgHint ?? '–'}</code></p>
+    {/if}
     <p class="scope" class:none={noScope} data-scope>{#if noScope}<Icon name="alert" size={18} />{/if}<span>{scopeLine}</span></p>
     <p class="state" class:failed data-state>{#if failed}<Icon name="alert" size={18} />{/if}<span>{line}</span></p>
     <p class="served" data-served>{$t('adminLive.src.guide.served', { n: source.servedChannels })}</p>
     <div class="row">
-      <div class="iv"><Select label={$t('adminLive.src.interval.label')} value={source.refresh} options={intervals} disabled={busy} on:change={onInterval} /></div>
-      <Button variant="secondary" icon="refresh" class="rf" pending={refreshing} disabled={!source.enabled} on:click={() => dispatch('refresh')}>{$t('adminLive.src.refreshNow')}</Button>
+      {#if isFile}
+        <input type="file" class="pick" accept=".xml,.xml.gz,.gz" bind:this={picker} on:change={picked} tabindex="-1" aria-hidden="true" />
+        <Button variant="secondary" icon="arrow-up" class="rf" pending={uploading} disabled={busy} on:click={() => picker?.click()}>{$t('adminLive.src.guide.newFile')}</Button>
+      {:else}
+        <div class="iv"><Select label={$t('adminLive.src.interval.label')} value={source.refresh} options={intervals} disabled={busy} on:change={onInterval} /></div>
+        <Button variant="secondary" icon="refresh" class="rf" pending={refreshing} disabled={!source.enabled} on:click={() => dispatch('refresh')}>{$t('adminLive.src.refreshNow')}</Button>
+      {/if}
       <span class="order">
         <button type="button" class="mv" aria-label={$t('adminLive.src.guide.moveUp', { name: source.name })} title={$t('adminLive.src.guide.moveUp', { name: source.name })}
           disabled={first || busy} on:click={() => dispatch('move', -1)}><Icon name="arrow-up" size={20} /></button>
@@ -78,6 +97,7 @@
 
 <style>
   .gc { min-width: 0; }
+  .pick { display: none; }
   .menu { display: contents; }
   p { margin: 0 0 .45rem; min-width: 0; overflow-wrap: anywhere; }
   .chips { display: flex; flex-wrap: wrap; gap: .4rem; margin: -.4rem 0 .6rem; }

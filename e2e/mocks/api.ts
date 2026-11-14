@@ -554,7 +554,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       // Live TV: the offer is hidden by the LIVETV_OFFER_HIDDEN setting (the "Nicht mehr anzeigen" save and the Settings switch)
       st.admin.livetv.offerHidden = st.settings.groups.flatMap((g) => g.items).find((i) => i.key === 'LIVETV_OFFER_HIDDEN')?.value === true;
       // the logo upload is a raw image body (Task 19, ruling 32): the route sees its type and size instead of a JSON body
-      const logoPut = m === 'PUT' && /^\/api\/admin\/livetv\/channels\/[^/]+\/logo$/.test(p);
+      const logoPut = m === 'PUT' && /^\/api\/admin\/livetv\/(channels\/[^/]+\/logo|sources\/[^/]+\/file)$/.test(p);
       const r = adminRoute(st.admin, m, p, sp, logoPut ? { contentType: req.headers()['content-type'] ?? '', bytes: req.postDataBuffer()?.length ?? 0 } : body(), J); if (r) return r; }
 
     st.unmocked.add(`${m} ${p}${u.search ? '?…' : ''}`);

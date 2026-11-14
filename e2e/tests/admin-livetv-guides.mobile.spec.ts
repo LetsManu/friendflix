@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Locator } from '@playwright/test';
-import { ltvGuideMock } from '../mocks/admin.js';
+import { ltvFileGuideMock, ltvGuideMock } from '../mocks/admin.js';
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
 
@@ -20,6 +20,7 @@ test.describe('admin: Live-TV, Programmführer (phone, 375 px)', () => {
     Object.assign(api.admin.livetv, { installed: true, wanted: true, ltState: 'enabled' });
     api.admin.livetv.area.sources.push(
       ltvGuideMock({ id: 'g-a', name: 'Weltempfang', position: 2, servedChannels: 37 }),
+      ltvFileGuideMock({ id: 'g-f', name: 'UK Guide', position: 4, fileName: 'guide-uk-with-a-rather-long-file-name.xml.gz' }),
       ltvGuideMock({ id: 'g-b', name: 'Hafen Guide', position: 3, guideScope: ['src-nordlicht', 'src-feeds'] }),
     );
     return page.setViewportSize({ width: W, height: 812 });
@@ -53,6 +54,22 @@ test.describe('admin: Live-TV, Programmführer (phone, 375 px)', () => {
     await dlg.getByRole('button', { name: 'Prüfen' }).click();
     await expect(dlg.locator('[data-test-result]')).toHaveText('2.140 Sender im Programmführer');
     await fits(dlg.locator('[data-test-result]'), 'result');
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+  });
+
+  test('the file guide card and the Datei sheet fit', async ({ page }) => {
+    await page.goto('/admin/livetv');
+    const c = page.getByRole('region', { name: 'UK Guide', exact: true });
+    await expect(c.locator('[data-file-line]')).toContainText('· 48 MB');
+    await fits(c, 'file guide card');
+    await fits(c.getByRole('button', { name: 'Neue Datei hochladen' }), 'Neue Datei hochladen', 44);
+    await page.getByRole('button', { name: 'Quelle hinzufügen' }).click();
+    await page.getByRole('dialog', { name: 'Quelle hinzufügen' }).getByRole('radio', { name: 'Programmführer', exact: true }).click();
+    const dlg = page.getByRole('dialog', { name: 'Programmführer hinzufügen' });
+    await dlg.getByRole('radio', { name: 'Datei', exact: true }).click();
+    await fits(dlg, 'guide sheet');
+    for (const name of ['Link', 'Datei']) await fits(dlg.getByRole('radio', { name, exact: true }), name, 44);
+    await fits(dlg.getByRole('button', { name: 'Datei wählen' }), 'Datei wählen', 44);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 });

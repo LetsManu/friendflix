@@ -181,6 +181,8 @@ export interface LtvSourceMock {
   epgShiftMin: number; maxStreams: number | null; enabled: boolean; position: number; channelCount: number; pendingGroups: number;
   /** extra programme guides (extra-guides plan Task 1): kind `guide` only; `guideScope` null = all channels, `[]` = every scoped source deleted */
   guideProvider: 'xmltv_url' | 'xmltv_file' | null; guideScope: string[] | null; servedChannels: number;
+  /** a file guide (Stage 2): the uploaded file */
+  fileName: string | null; fileBytes: number | null;
   state: {
     lastRefreshAt: string | null; lastOkAt: string | null; lastError: string | null; counts: { channels: number; added: number; removed: number } | null;
     epg: { lastRefreshAt: string | null; lastOkAt: string | null; lastError: string | null; programmes: number | null };
@@ -226,6 +228,9 @@ export interface LivetvAreaMock {
   chPreview: boolean;
   /** the raw logo uploads that reached the server */
   logoPuts: Array<{ id: string; type: string; bytes: number }>;
+  /** the raw guide-file uploads (PUT /sources/:id/file) that reached the server; `fileAnswer` makes the next one fail (413 too_large, 409 import_running, 400 invalid) */
+  filePuts: Array<{ id: string; type: string; bytes: number }>;
+  fileAnswer: { status: number; error: string } | null;
   feeds: LtvFeedMock[];
   /** *Gruppen & Rechte* (Task 25): the groups, and the per-person exceptions by user id (livetv_group_users) */
   groups: LtvGroupMock[];
@@ -258,7 +263,11 @@ const ltvState = (o: Partial<LtvSourceMock['state']> = {}): LtvSourceMock['state
 });
 const ltvSource = (o: Partial<LtvSourceMock> & Pick<LtvSourceMock, 'id' | 'kind' | 'name'>): LtvSourceMock => ({
   urlHint: null, epgHint: null, userAgent: null, allowLan: false, refresh: '24h', skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0,
-  maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0, guideProvider: null, guideScope: null, servedChannels: 0, state: ltvState(), ...o,
+  maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0, guideProvider: null, guideScope: null, servedChannels: 0, fileName: null, fileBytes: null, state: ltvState(), ...o,
+});
+/** an uploaded guide (`xmltv_file`): no link, the interval is fixed manual */
+export const ltvFileGuideMock = (o: Partial<LtvSourceMock> & Pick<LtvSourceMock, 'id' | 'name' | 'position'>): LtvSourceMock => ltvSource({
+  kind: 'guide', guideProvider: 'xmltv_file', refresh: 'manual', fileName: 'guide-uk.xml.gz', fileBytes: 48 * 1024 * 1024, ...o,
 });
 /** an extra programme guide (a link guide) as `GET /sources` answers it; tests add them to `area.sources` */
 export const ltvGuideMock = (o: Partial<LtvSourceMock> & Pick<LtvSourceMock, 'id' | 'name' | 'position'>): LtvSourceMock => ltvSource({
@@ -336,6 +345,8 @@ export function livetvAreaMock(): LivetvAreaMock {
     chTestBusy: false,
     chPreview: false,
     logoPuts: [],
+    filePuts: [],
+    fileAnswer: null,
     calls: [],
     seq: 0,
   };
@@ -899,6 +910,13 @@ function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: st
   }
   /** `guideScope`: null or a non-empty list of list / own-feeds ids (extra-guides plan Task 1) */
   const scopeBad = (v: unknown) => v !== null && (!Array.isArray(v) || v.length === 0 || v.some((id) => !a.sources.some((x) => x.id === id && x.kind !== 'guide')));
+  if (p === '/api/admin/livetv/sources' && m === 'POST' && body?.kind === 'guide' && body.guideProvider === 'xmltv_file') {
+    if (typeof body.name !== 'string' || !body.name.trim()) return J({ error: 'invalid', field: 'name' }, 400);
+    if (body.epgUrl !== undefined || scopeBad(body.guideScope)) return J({ error: 'invalid', field: body.epgUrl !== undefined ? 'epgUrl' : 'guideScope' }, 400);
+    const s = ltvGuideMock({ id: `src-${++a.seq}`, name: body.name, epgHint: null, guideProvider: 'xmltv_file', refresh: 'manual', epgShiftMin: body.epgShiftMin ?? 0, guideScope: body.guideScope, enabled: body.enabled ?? true, position: a.sources.length });
+    a.sources.push(s);
+    return J(s, 201);
+  }
   if (p === '/api/admin/livetv/sources' && m === 'POST' && body?.kind === 'guide') {
     const u = httpUrl(body.epgUrl);
     if (!u) return J({ error: 'invalid', field: 'epgUrl' }, 400);
@@ -924,6 +942,15 @@ function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: st
     });
     a.sources.push(s);
     return J(s, 201);
+  }
+  if ((mm = p.match(/^\/api\/admin\/livetv\/sources\/([^/]+)\/file$/)) && m === 'PUT') {
+    const s = a.sources.find((x) => x.id === mm![1]);
+    if (!s) return J({ error: 'not_found' }, 404);
+    const up = body as { contentType: string; bytes: number };
+    a.filePuts.push({ id: s.id, type: up.contentType, bytes: up.bytes });
+    if (a.fileAnswer) { const f = a.fileAnswer; a.fileAnswer = null; return J({ error: f.error }, f.status); }
+    s.fileName = 'upload.xml'; s.fileBytes = up.bytes;
+    return J({ started: true }, 202);
   }
   if ((mm = p.match(/^\/api\/admin\/livetv\/sources\/([^/]+)(\/refresh)?$/))) {
     const s = a.sources.find((x) => x.id === mm![1]);

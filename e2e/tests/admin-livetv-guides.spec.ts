@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Page } from '@playwright/test';
-import { ltvGuideMock } from '../mocks/admin.js';
+import { ltvFileGuideMock, ltvGuideMock } from '../mocks/admin.js';
 import type { MockState } from '../mocks/api.js';
 import { expect, test } from '../fixtures.js';
 
@@ -193,5 +193,77 @@ test.describe('admin: Live-TV, Programmführer (desktop)', () => {
     await page.keyboard.press('ArrowLeft');
     await expect(page.getByRole('dialog', { name: 'Quelle hinzufügen' })).toBeVisible();
     await expect(dlg).toHaveCount(0);
+  });
+});
+
+// Stage 2: a guide from an uploaded XMLTV file
+const XML = Buffer.from('<?xml version="1.0"?><tv><channel id="a"/></tv>');
+test.describe('admin: Live-TV, Programmführer aus Datei (desktop)', () => {
+  test.beforeEach(({ api }) => { api.asAdmin = true; Object.assign(api.admin.livetv, { installed: true, wanted: true, ltState: 'enabled' }); });
+
+  async function fileSheet(page: Page) {
+    const dlg = await openGuideSheet(page);
+    await dlg.getByRole('radio', { name: 'Datei', exact: true }).click();
+    await expect(dlg.getByLabel('Programmführer (XMLTV-Adresse)')).toHaveCount(0);
+    await expect(dlg.getByLabel('Aktualisieren', { exact: true })).toHaveCount(0);
+    await expect(dlg.getByRole('button', { name: 'Prüfen' })).toHaveCount(0);
+    await expect(dlg.locator('[data-file-input]')).toHaveAttribute('accept', '.xml,.xml.gz,.gz');
+    await dlg.getByRole('textbox', { name: 'Name', exact: true }).fill('UK Guide');
+    return dlg;
+  }
+
+  test('add a file guide: create, then PUT the file body', async ({ page, api }) => {
+    const dlg = await fileSheet(page);
+    await dlg.getByRole('button', { name: 'Speichern' }).click();
+    await expect(dlg.locator('[data-file-error]')).toHaveText('Wähle eine Datei.');
+    expect(writes(api, 'POST', /\/sources$/)).toHaveLength(0);
+    await dlg.locator('[data-file-input]').setInputFiles({ name: 'guide-uk.xml', mimeType: 'application/xml', buffer: XML });
+    await expect(dlg.locator('[data-file-name]')).toHaveText(/^guide-uk\.xml · /);
+    await dlg.getByRole('button', { name: 'Speichern' }).click();
+    await expect(dlg).toHaveCount(0);
+    const post = writes(api, 'POST', /\/sources$/);
+    expect(post).toHaveLength(1);
+    expect(post[0]!.body).toEqual({ kind: 'guide', guideProvider: 'xmltv_file', name: 'UK Guide', guideScope: null, epgShiftMin: 0, enabled: true });
+    const a = api.admin.livetv.area;
+    expect(a.filePuts).toEqual([{ id: post.length ? a.sources.at(-1)!.id : '', type: 'application/xml', bytes: XML.length }]);
+    await expect(card(page, 'UK Guide').locator('[data-file-line]')).toContainText('guide-uk.xml · ');
+    await expect(card(page, 'UK Guide').getByRole('button', { name: 'Neue Datei hochladen' })).toBeVisible();
+  });
+
+  test.use({ allowedConsole: /status of (413|409)/ });
+  test('too big: the 413 copy, the guide stays and the retry only uploads', async ({ page, api }) => {
+    const a = api.admin.livetv.area;
+    const dlg = await fileSheet(page);
+    await dlg.locator('[data-file-input]').setInputFiles({ name: 'huge.xml.gz', mimeType: 'application/gzip', buffer: XML });
+    a.fileAnswer = { status: 413, error: 'too_large' };
+    await dlg.getByRole('button', { name: 'Speichern' }).click();
+    await expect(dlg.locator('[data-file-error]')).toHaveText('Die Datei ist größer als 300 MB.');
+    await expect(dlg).toBeVisible();
+    await dlg.getByRole('button', { name: 'Speichern' }).click();
+    await expect(dlg).toHaveCount(0);
+    expect(writes(api, 'POST', /\/sources$/)).toHaveLength(1);
+    expect(a.filePuts).toHaveLength(2);
+    expect(a.filePuts[0]!.type).toBe('application/gzip');
+  });
+
+  test('an import already running: the 409 copy', async ({ page, api }) => {
+    const dlg = await fileSheet(page);
+    await dlg.locator('[data-file-input]').setInputFiles({ name: 'g.xml', mimeType: 'application/xml', buffer: XML });
+    api.admin.livetv.area.fileAnswer = { status: 409, error: 'import_running' };
+    await dlg.getByRole('button', { name: 'Speichern' }).click();
+    await expect(dlg.locator('[data-file-error]')).toHaveText('Der Programmführer wird gerade eingelesen – versuche es gleich noch einmal.');
+  });
+
+  test('the card shows file name and size; Neue Datei hochladen sends a PUT', async ({ page, api }) => {
+    const a = api.admin.livetv.area;
+    a.sources.push(ltvFileGuideMock({ id: 'g-file', name: 'UK Guide', position: 2 }));
+    await page.goto('/admin/livetv');
+    const c = card(page, 'UK Guide');
+    await expect(c.locator('[data-file-line]')).toHaveText('guide-uk.xml.gz · 48 MB');
+    await expect(c.getByLabel('Aktualisieren', { exact: true })).toHaveCount(0);
+    await c.locator('input[type=file]').setInputFiles({ name: 'neu.xml', mimeType: 'application/xml', buffer: XML });
+    await expect(toasts(page).getByText('Datei hochgeladen. Der Programmführer wird eingelesen.')).toBeVisible();
+    expect(a.filePuts).toEqual([{ id: 'g-file', type: 'application/xml', bytes: XML.length }]);
+    await expect(c.locator('[data-file-line]')).toHaveText(/^upload\.xml · /); // the mock's own name; the page re-reads the list
   });
 });
