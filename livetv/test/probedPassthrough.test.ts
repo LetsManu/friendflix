@@ -3,7 +3,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FetchError, type GuardDeps } from '../src/fetch.js';
 import { START_PROBE_MS, type ProbeResult, type StreamInput } from '../src/probe.js';
-import { AUDIO_TRIES, probedPassthrough, remuxDriver } from '../src/remux.js';
+import { AUDIO_FAULTS, AUDIO_FAULT_WINDOW_MS, AUDIO_HEALTHY_SEGMENTS, AUDIO_TRIES, probedPassthrough, remuxDriver } from '../src/remux.js';
 import type { Driver, DriverContext } from '../src/streams.js';
 import { fakeFetch, type Served } from './streams-helpers.js';
 
@@ -80,6 +80,14 @@ describe('probedPassthrough', () => {
       expect(pass).not.toHaveBeenCalled();
       expect(media).toHaveBeenCalledWith(c, expect.objectContaining({ ok: false }));
     }
+  });
+
+  it('4: a failed start probe is logged once, in fixed words (its code, no URL)', async () => {
+    const s = setup({ ok: false, needs: 'transcode', error: 'timeout' });
+    const logs: string[] = [];
+    await s.driver({ ...ctx().c, log: (m: string) => logs.push(m) } as unknown as DriverContext);
+    expect(logs).toEqual(['start probe failed (timeout), passing through']);
+    expect(s.pass).toHaveBeenCalledTimes(1);
   });
 
   it('a stop while the probe is still running ends the driver without starting either one', async () => {
@@ -165,13 +173,13 @@ describe('remuxDriver: a separate audio rendition that fails (I3, M3)', () => {
     `#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:${from}\n${Array.from({ length: n }, (_, i) => `#EXTINF:4.0,\n${prefix}${from + i}.ts`).join('\n')}\n`;
   const MASTER = (audio: string) => `#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",DEFAULT=YES,URI="${audio}"\n#EXT-X-STREAM-INF:BANDWIDTH=3000000,AUDIO="a"\nv.m3u8\n`;
   /** a driver context that stops after `runs` ffmpeg runs; logs, sleeps and segments are recorded */
-  function setup(routes: Map<string, Served>, runs: number, answer: (n: number, o: RunOpts) => Promise<string> = async () => '') {
+  function setup(routes: Map<string, Served>, runs: number, answer: (n: number, o: RunOpts & { args?: string[] }) => Promise<string> = async () => '') {
     const ff = fakeFetch(routes);
     const seen: { args: string[]; audio: boolean }[] = [];
     const ac = new AbortController();
     const run = vi.fn(async (_c: string, args: string[], o: RunOpts) => {
       seen.push({ args, audio: o.audioStdin !== undefined });
-      const stdout = await answer(seen.length, o);
+      const stdout = await answer(seen.length, { ...o, args });
       if (stdout) o.onStdout?.(Buffer.from(stdout));
       return { code: stdout ? 0 : 1, stdout: Buffer.alloc(0), stderr: '' };
     });
@@ -188,7 +196,7 @@ describe('remuxDriver: a separate audio rendition that fails (I3, M3)', () => {
   }
   type RunOpts = { stdin?: AsyncIterable<Uint8Array>; audioStdin?: AsyncIterable<Uint8Array>; onStdout?: (c: Buffer) => void };
   const videoOnly = (args: string[]) => !args.includes('pipe:3') && args.join(' ').includes('-map 0:v:0 -map 0:a:0?') && args.join(' ').includes('-c:a aac');
-  const NO_AUDIO = 'separate audio rendition unavailable, playing the video without it';
+  const NO_AUDIO = 'separate audio rendition unavailable, playing the video without it; trying it again in 3 min';
 
   it('a refused rendition (fatal): the video runs at once without it, its own audio made AAC; logged once, no URL', async () => {
     const routes = new Map<string, Served>([[`${base}/master.m3u8`, MASTER('de.m3u8')], [`${base}/v.m3u8`, pl('v')], [`${base}/v1.ts`, Buffer.alloc(188, 1)],
@@ -213,16 +221,100 @@ describe('remuxDriver: a separate audio rendition that fails (I3, M3)', () => {
     expect(s.sleeps[0]).toBe(2_000);
   });
 
-  it('runs with the rendition that deliver no segment: after AUDIO_TRIES the next run is without it; a working run tries it again', async () => {
-    const routes = new Map<string, Served>([[`${base}/master.m3u8`, MASTER('de.m3u8')], [`${base}/v.m3u8`, pl('v')], [`${base}/v1.ts`, Buffer.alloc(188, 1)],
-      [`${base}/de.m3u8`, pl('a')], [`${base}/a1.ts`, Buffer.alloc(100, 2)]]);
-    // runs 1 and 2 (with audio) fail, run 3 (without) delivers a segment, run 4 has the audio again
-    const s = setup(routes, 4, async (n) => (n === 3 ? '0.ts,0.0,4.0\n' : ''));
+  /** a run: ffmpeg reads both inputs to their end, then `segs` segment lines (numbered from the run's start number) */
+  const delivering = (segs: (n: number) => number) => async (n: number, o: RunOpts & { args?: string[] }) => {
+    // a paired run reads until one side fails and ends both; a video-only one (it would follow the playlist forever) just stops
+    if (o.audioStdin) await Promise.all([drainQuiet(o.stdin), drainQuiet(o.audioStdin)]);
+    const from = Number(o.args?.[o.args.indexOf('-segment_start_number') + 1] ?? 0);
+    return Array.from({ length: segs(n) }, (_, i) => `${from + i}.ts,0.0,4.0\n`).join('');
+  };
+  async function drainQuiet(src?: AsyncIterable<Uint8Array>) {
+    try { if (src) for await (const _ of src) { /* read */ } } catch { /* ended by failing */ }
+  }
+  const routesWith = (fail: 'audio' | 'video') => {
+    const r = new Map<string, Served>([[`${base}/master.m3u8`, MASTER('de.m3u8')], [`${base}/v.m3u8`, pl('v')], [`${base}/de.m3u8`, pl('a')]]);
+    for (let n = 1; n <= 3; n++) { r.set(`${base}/v${n}.ts`, Buffer.alloc(188, n)); r.set(`${base}/a${n}.ts`, Buffer.alloc(100, n)); }
+    r.set(fail === 'audio' ? `${base}/a2.ts` : `${base}/v2.ts`, new FetchError('unreachable'));
+    return r;
+  };
+
+  it('1a: runs the VIDEO ends (its segment failing) never count against the rendition: it is kept', async () => {
+    const s = setup(routesWith('video'), 4, delivering(() => 0));
     await s.driver(s.c, AAC);
-    expect(s.seen.map((r) => r.audio)).toEqual([true, true, false, true]);
+    expect(s.seen.map((r) => r.audio)).toEqual([true, true, true, true]);
+    expect(s.logs).toEqual([]);
+  });
+
+  it('2: a rendition that fails after a segment or two each run is left out after AUDIO_TRIES runs (the count is not reset by them)', async () => {
+    const s = setup(routesWith('audio'), 3, delivering(() => 1));
+    await s.driver(s.c, AAC);
+    expect(s.seen.map((r) => r.audio)).toEqual([true, true, false]);
     expect(videoOnly(s.seen[2]!.args)).toBe(true);
-    expect(s.seen[3]!.args.join(' ')).toContain('-map 0:v:0 -map 1:a:0?');
     expect(s.logs).toEqual([NO_AUDIO]);
+  });
+
+  it(`2: a run with ${AUDIO_HEALTHY_SEGMENTS} segments starts the count again; ${AUDIO_FAULTS} blamed runs within ${AUDIO_FAULT_WINDOW_MS / 60_000} min leave it out anyway`, async () => {
+    // 1 segment + fault, 5 + fault (count back to 1), 1 + fault (2: out)
+    const a = setup(routesWith('audio'), 4, delivering((n) => (n === 2 ? AUDIO_HEALTHY_SEGMENTS : 1)));
+    await a.driver(a.c, AAC);
+    expect(a.seen.map((r) => r.audio)).toEqual([true, true, true, false]);
+    // healthy runs that each end by an audio fault: out after AUDIO_FAULTS of them
+    const b = setup(routesWith('audio'), AUDIO_FAULTS + 1, delivering(() => AUDIO_HEALTHY_SEGMENTS));
+    await b.driver(b.c, AAC);
+    expect(b.seen.map((r) => r.audio)).toEqual([...Array(AUDIO_FAULTS).fill(true), false]);
+  });
+
+  it('1b: a left-out rendition is tried again after 3 min, again after 6 more when it still fails; the video-only run is ended for it (no backoff)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    try {
+      let usable = false;
+      const ENCRYPTED = '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="k"\n#EXTINF:4.0,\na1.ts\n';
+      const routes = new Map<string, Served>([[`${base}/master.m3u8`, MASTER('de.m3u8')], [`${base}/v.m3u8`, pl('v')], [`${base}/de.m3u8`, () => (usable ? pl('a') : ENCRYPTED)]]);
+      for (let n = 1; n <= 3; n++) { routes.set(`${base}/v${n}.ts`, Buffer.alloc(188, n)); routes.set(`${base}/a${n}.ts`, Buffer.alloc(100, n)); }
+      const seen: boolean[] = [];
+      const run = vi.fn(async (_c: string, args: string[], o: RunOpts & { signal?: AbortSignal }) => {
+        seen.push(o.audioStdin !== undefined);
+        // a working run: a segment every 4 s until it is ended
+        let n = Number(args[args.indexOf('-segment_start_number') + 1]);
+        const t = setInterval(() => o.onStdout?.(Buffer.from(`${n++}.ts,0.0,4.0\n`)), 4_000);
+        await new Promise<void>((r) => { if (o.signal?.aborted) r(); else o.signal?.addEventListener('abort', () => r(), { once: true }); });
+        clearInterval(t);
+        return { code: 1, stdout: Buffer.alloc(0), stderr: '' };
+      });
+      const ac = new AbortController();
+      const logs: string[] = [];
+      const sleeps: number[] = [];
+      const segment = vi.fn(async (_s: { discontinuity?: boolean }) => 0);
+      const c = {
+        ...ctx(ac.signal).c, input: { url: `${base}/master.m3u8`, kind: 'hls', allowLan: false }, mode: 'remux', window: vi.fn(), back: vi.fn(),
+        lost: () => 2_000, sleep: async (ms: number) => { sleeps.push(ms); return false; }, bitrate: vi.fn(), encoder: 'libx264',
+        dir: '/cache/k', segment, log: (m: string) => logs.push(m),
+      } as unknown as DriverContext;
+      const done = remuxDriver({ run: run as never, guard: GUARD, fetch: fakeFetch(routes).fetch, size: async () => 100 })(c, AAC);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(seen).toEqual([false]);
+      // 3 min: tried again, still encrypted: out again, now for 6 min
+      await vi.advanceTimersByTimeAsync(3 * 60_000);
+      expect(seen).toEqual([false, false]);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(seen).toEqual([false, false]);
+      usable = true;
+      await vi.advanceTimersByTimeAsync(66_000);
+      expect(seen).toEqual([false, false, true]);
+      expect(run.mock.calls[2]![1].join(' ')).toContain('-map 0:v:0 -map 1:a:0?');
+      expect(logs).toEqual([
+        NO_AUDIO, 'separate audio: trying the rendition again',
+        'separate audio rendition unavailable, playing the video without it; trying it again in 6 min', 'separate audio: trying the rendition again',
+      ]);
+      // ended on purpose: no outage, no backoff; each new run starts with a discontinuity
+      expect(sleeps).toEqual([]);
+      expect(segment.mock.calls.filter(([x]) => x.discontinuity)).toHaveLength(2);
+      ac.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      await done;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('an audio segment failing mid-run ends the video pipe too; ffmpeg restarts with a discontinuity', async () => {

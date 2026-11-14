@@ -28,6 +28,13 @@ export interface OpenedInput {
   ffInput: FfmpegInput;
   /** ends every fetch of this input (an unread body included) */
   close(): void;
+  /**
+   * with a separate audio rendition: whether the audio side ended this run, read once the run is over. True when the audio failed
+   * on its own (a fetch or playlist error, a skip that broke the lockstep; not an abort because the video failed first), or when
+   * the run `stalled` (no segment for the watchdog's time) while the audio had given nothing and the video had (ffmpeg waits
+   * for both). A video failure, a video stall or a quick ffmpeg exit is never the audio's fault.
+   */
+  audioFault?(stalled: boolean): boolean;
 }
 export interface InputDeps {
   guard: GuardDeps; fetch?: FetchFn; signal?: AbortSignal; maxBitrate?: number; ingest?: IngestReader;
@@ -246,12 +253,20 @@ function openPush(channelId: string, deps: InputDeps): OpenedInput {
   return { ffInput: { kind: 'pipe', format: 'mpegts', stdin: watched({ [Symbol.asyncIterator]: () => it }, STREAM_IDLE_MS, close) }, close };
 }
 
-/** `gen`, but a failure of it ends the whole input (`end`), so its sibling pipe ends too */
-async function* linked(gen: AsyncGenerator<Uint8Array>, end: () => void): AsyncGenerator<Uint8Array> {
+/**
+ * `gen`, but a failure of it ends the whole input (`end`), so its sibling pipe ends too. `onOwnFail` is told when it failed on its
+ * own (the input was not already ended by the sibling or a stop); `onBytes` counts what it gave.
+ */
+async function* linked(gen: AsyncGenerator<Uint8Array>, end: () => void, signal: AbortSignal, o: { onOwnFail?: () => void; onBytes?: (n: number) => void } = {}): AsyncGenerator<Uint8Array> {
   try {
-    yield* gen;
+    for await (const c of gen) {
+      o.onBytes?.(c.length);
+      yield c;
+    }
   } catch (e) {
+    const own = !signal.aborted;
     end();
+    if (own) o.onOwnFail?.();
     throw e;
   }
 }
@@ -326,11 +341,20 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     const video = hlsBytes({ text, base, url }, get, ac.signal, { from: al?.video ?? null, strict: true, onSkip });
     // re-polled at the rendition's own URL (a redirect target may carry a token that expires), like the video playlist
     const audio = hlsBytes({ text: ar.text, base: ar.url, url: audioUri }, get, ac.signal, { from: al?.audio ?? null, strict: true, onSkip });
+    let videoBytes = 0;
+    let audioBytes = 0;
+    let audioFailed = false;
     return {
       ffInput: {
-        kind: 'pipe', format, stdin: linked(video, close), audio: { format: aformat, stdin: linked(audio, close), ...(al?.shift ? { shift: al.shift } : {}) },
+        kind: 'pipe', format, stdin: linked(video, close, ac.signal, { onBytes: (n) => { videoBytes += n; } }),
+        audio: {
+          format: aformat,
+          stdin: linked(audio, close, ac.signal, { onOwnFail: () => { audioFailed = true; }, onBytes: (n) => { audioBytes += n; } }),
+          ...(al?.shift ? { shift: al.shift } : {}),
+        },
       },
       close,
+      audioFault: (stalled) => audioFailed || (stalled && audioBytes === 0 && videoBytes > 0),
     };
   } catch (e) {
     close();

@@ -200,7 +200,8 @@ describe('inputs', () => {
     expect(has(a, ['-protocol_whitelist', 'pipe', '-f', 'aac', '-format_whitelist', 'aac', '-i', 'pipe:3'])).toBe(true);
     // optional: a rendition without an audio stream still gives the picture
     expect(has(a, ['-map', '0:v:0', '-map', '1:a:0?'])).toBe(true);
-    expect(a.some((x) => x.includes('iptv.example.com'))).toBe(false);
+    // no URL of any scheme reaches ffmpeg's arguments
+    expect(a.some((x) => /[a-z][a-z0-9+.-]*:\/\//i.test(x))).toBe(false);
   });
 
   it('a refused address of the audio playlist: AudioUnavailable, fatal (the driver goes on without it, never fetches it)', async () => {

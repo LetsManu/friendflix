@@ -343,6 +343,35 @@ describe('probe', () => {
     expect(most).toBe(2);
   });
 
+  it('the rendition sample has its own abort: the end of the probe (or a stop) ends its ffprobe, whatever is still running', async () => {
+    const s = await renditionSource('ok');
+    const input = { url: `http://iptv.example.com:${s.port}/nl/master.m3u8`, kind: 'hls' as const, allowLan: false };
+    for (const stop of [false, true]) {
+      const audioRun: { signal?: AbortSignal; ended?: boolean } = {};
+      const ac = new AbortController();
+      const run = (async (_c, args, o) => {
+        if (o.stdin) for await (const _ of o.stdin) { /* drained */ }
+        if (!args.includes('aac')) {
+          if (stop) setTimeout(() => ac.abort(), 50);
+          return { code: 0, stdout: Buffer.from(VIDEO_ONLY), stderr: '' };
+        }
+        // a hanging audio ffprobe: it ends only by its signal (or after 5 s)
+        audioRun.signal = o.signal;
+        await new Promise<void>((r) => { const t = setTimeout(r, 5_000); o.signal?.addEventListener('abort', () => { clearTimeout(t); r(); }); });
+        audioRun.ended = true;
+        return { code: 1, stdout: Buffer.alloc(0), stderr: '' };
+      }) as Run;
+      const t0 = Date.now();
+      const r = await probe(input, { run, guard: guard(), budgetMs: 600, ...(stop ? { signal: ac.signal } : {}) });
+      expect(r).toMatchObject({ ok: true, needs: 'remux' });
+      expect(r).not.toHaveProperty('audio');
+      expect(Date.now() - t0).toBeLessThan(2_000);
+      await new Promise((res) => setTimeout(res, 20));
+      expect(audioRun.signal?.aborted).toBe(true);
+      expect(audioRun.ended).toBe(true);
+    }
+  });
+
   it('I4/M4: the budget and the variant limit of the caller are used', async () => {
     const hang: http.ServerResponse[] = [];
     const s = await serve({

@@ -230,6 +230,12 @@ export async function probe(input: StreamInput, deps: ProbeDeps): Promise<ProbeR
   const deadline = Date.now() + (deps.budgetMs ?? PROBE_BUDGET_MS);
   const left = () => Math.max(1, deadline - Date.now());
   const abort = deps.signal ? { signal: deps.signal } : {};
+  // the separate audio rendition's sample (its fetches and its ffprobe) has a controller of its own: a stop aborts it like the rest,
+  // and so does the end of the probe, whatever ended it (the video answered first, failed, or the budget ran out)
+  const renditionAc = new AbortController();
+  const stopRendition = () => renditionAc.abort();
+  if (deps.signal?.aborted) renditionAc.abort();
+  else deps.signal?.addEventListener('abort', stopRendition, { once: true });
   // every response body opened here is closed when the probe ends, read or not (an init segment whose media segment failed, a
   // body ffprobe never asked for)
   const opened: AsyncIterable<Uint8Array>[] = [];
@@ -268,8 +274,8 @@ export async function probe(input: StreamInput, deps: ProbeDeps): Promise<ProbeR
       const ip = await within(resolveChecked(c.url.hostname, input.allowLan, deps.guard), left());
       result = await deps.run('ffprobe', srtArgs(ipLiteralUrl(c.url, ip)), { timeoutMs: left(), ...abort });
     } else {
-      const get = async (url: string, maxBytes: number) => {
-        const res = await guardedFetch(url, { allowLan: input.allowLan, userAgent: input.userAgent, timeoutMs: left(), maxBytes, ...abort }, deps.guard);
+      const get = async (url: string, maxBytes: number, signal?: AbortSignal) => {
+        const res = await guardedFetch(url, { allowLan: input.allowLan, userAgent: input.userAgent, timeoutMs: left(), maxBytes, ...(signal ? { signal } : abort) }, deps.guard);
         opened.push(res.body);
         return res;
       };
@@ -287,15 +293,15 @@ export async function probe(input: StreamInput, deps: ProbeDeps): Promise<ProbeR
           try { deps.onSeparateAudio?.(); } catch { /* a listener's bug never breaks the probe */ }
         }
         // the first segment of a media playlist (with its init segment) as ffprobe's stdin
-        const sample = async (text: string, from: string, onError: (e: unknown) => void) => {
+        const sample = async (text: string, from: string, onError: (e: unknown) => void, signal?: AbortSignal) => {
           const lines = text.split(/\r?\n/).map((l) => l.trim());
           const seg = lines.find((l) => l !== '' && !l.startsWith('#'));
           if (!seg) throw new ProbeFail('invalid');
           const mapLine = lines.find((l) => l.startsWith('#EXT-X-MAP:'));
           const init = mapLine && mapLine.length <= ATTR_LINE_MAX ? attrList(mapLine.slice(11)).get('URI') || undefined : undefined;
-          const initBody = init ? (await get(resolveUri(init, from), SEGMENT_MAX_BYTES)).body : null;
+          const initBody = init ? (await get(resolveUri(init, from), SEGMENT_MAX_BYTES, signal)).body : null;
           const fmt = segmentFormat(seg, init);
-          const segBody = (await get(resolveUri(seg, from), SEGMENT_MAX_BYTES)).body;
+          const segBody = (await get(resolveUri(seg, from), SEGMENT_MAX_BYTES, signal)).body;
           const body = (async function* () {
             if (initBody) yield* upTo(initBody, SEGMENT_MAX_BYTES, onError);
             yield* upTo(segBody, SEGMENT_MAX_BYTES, onError);
@@ -308,11 +314,12 @@ export async function probe(input: StreamInput, deps: ProbeDeps): Promise<ProbeR
           // its facts unknown but never fails the probe or turns it into a passthrough: the answer is remux either way
           const audioUri = resolveUri(variant.audio.uri, master.url);
           renditionDone = (async () => {
-            const list = await get(audioUri, PLAYLIST_MAX_BYTES);
+            const signal = renditionAc.signal;
+            const list = await get(audioUri, PLAYLIST_MAX_BYTES, signal);
             const text = await readText(list.body);
             if (!text.trimStart().startsWith('#EXTM3U')) return;
-            const a = await sample(text, list.url, () => {});
-            const r = await deps.run('ffprobe', pipeArgs(a.fmt), { timeoutMs: left(), stdin: a.body, ...abort });
+            const a = await sample(text, list.url, () => {}, signal);
+            const r = await deps.run('ffprobe', pipeArgs(a.fmt), { timeoutMs: left(), stdin: a.body, signal });
             if (r.code !== TIMEOUT_CODE) separate = streamsOf(r.stdout).audio;
           })().catch(() => {});
         }
@@ -353,6 +360,8 @@ export async function probe(input: StreamInput, deps: ProbeDeps): Promise<ProbeR
     if (e instanceof FetchError) return fail(fromFetch(e.code));
     return fail('invalid');
   } finally {
+    renditionAc.abort();
+    deps.signal?.removeEventListener('abort', stopRendition);
     for (const b of opened) void Promise.resolve(b[Symbol.asyncIterator]().return?.()).catch(() => {});
   }
 }

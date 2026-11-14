@@ -211,3 +211,52 @@ describe('openInput with a separate audio rendition (I1)', () => {
     expect(p.calls).toContain(`${EDGE}/a10.ts`);
   });
 });
+
+describe('openInput: whose fault a paired run\'s end is (audioFault)', () => {
+  const open = async (routes: Map<string, Route>) => {
+    const opened = await openInput({ url: `${BASE}/master.m3u8`, kind: 'hls', allowLan: false }, { guard: GUARD, fetch: provider(routes).fetch });
+    const ff = opened.ffInput;
+    if (ff.kind !== 'pipe' || !ff.audio || !opened.audioFault) throw new Error('an audio pipe is expected');
+    return { opened, video: ff.stdin, audio: ff.audio.stdin, fault: opened.audioFault };
+  };
+  const base = () => {
+    const routes = new Map<string, Route>([[`${BASE}/master.m3u8`, MASTER], [`${BASE}/video/index.m3u8`, pl(10, 6, { prefix: 'v' })], [`${BASE}/audio/de.m3u8`, pl(10, 6, { prefix: 'a' })]]);
+    segments(routes, 10, 15);
+    return routes;
+  };
+
+  it('the audio failing on its own is its fault; the video failing (the audio then ended by it) is not', async () => {
+    const a = base();
+    a.set(`${BASE}/audio/a13.ts`, new FetchError('unreachable'));
+    const x = await open(a);
+    expect((await drain(x.audio)).error).toBeInstanceOf(FetchError);
+    await drain(x.video);
+    expect([x.fault(false), x.fault(true)]).toEqual([true, true]);
+
+    const v = base();
+    v.set(`${BASE}/video/v13.ts`, new FetchError('unreachable'));
+    const y = await open(v);
+    expect((await drain(y.video)).error).toBeInstanceOf(FetchError);
+    await drain(y.audio);
+    expect([y.fault(false), y.fault(true)]).toEqual([false, false]);
+  });
+
+  it('an audio side that gives nothing while the video flows is its fault only when the run stalled', async () => {
+    const routes = base();
+    // the audio segment never arrives (the fetch hangs until the input is closed)
+    const p = provider(routes);
+    const fetch = async (url: string, o: FetchOptions) => {
+      if (url.endsWith('/a13.ts')) return new Promise<GuardedResponse>((_, rej) => o.signal?.addEventListener('abort', () => rej(new FetchError('unreachable'))));
+      return p.fetch(url, o);
+    };
+    const opened = await openInput({ url: `${BASE}/master.m3u8`, kind: 'hls', allowLan: false }, { guard: GUARD, fetch });
+    const ff = opened.ffInput;
+    if (ff.kind !== 'pipe' || !ff.audio || !opened.audioFault) throw new Error('an audio pipe is expected');
+    const pending = ff.audio.stdin[Symbol.asyncIterator]().next().catch(() => undefined);
+    expect(await first(ff.stdin)).toBe('v13;');
+    // the stall watchdog ends the run: the input is closed (as remux does), the pending audio read ends without blame of its own
+    opened.close();
+    await pending;
+    expect([opened.audioFault(false), opened.audioFault(true)]).toEqual([false, true]);
+  });
+});
