@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { hasKey } from '#lib/i18n';
-import { HEVC_STATES, hevcLineText, ENCODER_ADVICE, REASONS, SERVICE_IDS, adviceKeys, TC_REASONS, cleanCode, diskLabelKey, emptyHintOnTop, isEmptyMediaError, levelTone, reasonKey, serviceText, sortServices, tcKey, type ServiceHealth } from './health';
+import { HEVC_STATES, hevcLineText, ENCODER_ADVICE, REASONS, SERVICE_IDS, TC_REASONS, cleanCode, diskLabelKey, emptyHintOnTop, isEmptyMediaError, levelTone, reasonKey, serviceText, tcKey, type ServiceHealth } from './health';
 
 describe('health view helpers', () => {
   it('levelTone maps all four levels', () => {
@@ -10,15 +10,6 @@ describe('health view helpers', () => {
     expect(levelTone('warn')).toBe('warn');
     expect(levelTone('err')).toBe('err');
     expect(levelTone('off')).toBe('muted');
-  });
-
-  it('sortServices puts err before warn before ok before off and keeps the order inside a level', () => {
-    const s: ServiceHealth[] = [
-      { id: 'tmdb', level: 'off' }, { id: 'postgres', level: 'ok' }, { id: 'requests', level: 'warn', reason: 'down' },
-      { id: 'media', level: 'err', reason: 'down' }, { id: 'redis', level: 'ok' }, { id: 'omdb', level: 'warn', reason: 'budget' },
-    ];
-    expect(sortServices(s).map((x) => x.id)).toEqual(['media', 'requests', 'omdb', 'postgres', 'redis', 'tmdb']);
-    expect(s[0]!.id).toBe('tmdb'); // input untouched
   });
 
   it('reasonKey covers every Reason with an existing text (exhaustive)', () => {
@@ -41,16 +32,15 @@ describe('health view helpers', () => {
     expect(hasKey('adminContent.health.tc.serverBusy')).toBe(true);
   });
 
-  it('encoder advice: every code has a long text, unknown codes are dropped, order kept', () => {
-    for (const a of ENCODER_ADVICE) expect(hasKey(`adminContent.health.advice.${a}`), a).toBe(true);
-    expect(adviceKeys({ advice: ['no_throttle', 'bogus' as never, 'no_hw_accel'] })).toEqual(['adminContent.health.advice.no_throttle', 'adminContent.health.advice.no_hw_accel']);
-    expect(adviceKeys({})).toEqual([]);
+  it('encoder advice: every code has a cause and a fix sentence in the Systemcheck, and a short reason', () => {
+    for (const a of ENCODER_ADVICE) for (const k of ['cause', 'fix']) expect(hasKey(`syscheck.${k}.${a}`), `${k}.${a}`).toBe(true);
     expect(serviceText({ id: 'encoder', level: 'warn', reason: 'no_tonemap' })).toBe('Ohne Tone-Mapping');
   });
 
   it('the HEVC line: every state has a text; speed and time only when known; an unknown state gives nothing', () => {
     for (const st of HEVC_STATES) expect(hasKey(`adminContent.health.hevc.state.${st}`), st).toBe(true);
-    for (const k of ['line', 'speed', 'checked', 'check', 'busy', 'running', 'failed']) expect(hasKey(`adminContent.health.hevc.${k}`), k).toBe(true);
+    for (const k of ['line', 'speed', 'checked', 'busy', 'running', 'failed']) expect(hasKey(`adminContent.health.hevc.${k}`), k).toBe(true);
+    expect(hasKey('syscheck.action.hevc')).toBe(true); // the button moved onto the Systemcheck's encoder line
     expect(hevcLineText({ state: 'unproven' })).toBe('HEVC-Umwandlung: noch nicht getestet');
     expect(hevcLineText({ state: 'ready', speed: 2.4, at: '2026-11-10T03:10:00Z' })).toMatch(/^HEVC-Umwandlung: bereit · 2,4-fache Echtzeit · geprüft um \d/);
     expect(hevcLineText({ state: 'bogus' as never })).toBe('');

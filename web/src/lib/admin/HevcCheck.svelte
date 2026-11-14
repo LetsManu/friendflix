@@ -46,11 +46,17 @@
 </script>
 
 <div class="hevc">
-  {#if text}<span class="hl">{text}</span>{/if}
+  <span class="hl">{text}</span>
   <Button variant="secondary" icon="refresh" pending={busy} on:click={run}>{$t('syscheck.action.hevc')}</Button>
 </div>
 
 <style>
+  /* fixed shape (CheckLine reserves it while loading): one row on wide screens, the state line above the button on a phone */
   .hevc { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .8rem; }
-  .hl { color: var(--mut); font-size: .85rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .hl { color: var(--mut); font-size: .85rem; line-height: 1.4; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .hl:empty { display: none; }
+  @media (max-width: 560px) {
+    .hevc { flex-direction: column; align-items: stretch; flex-wrap: nowrap; }
+    .hl, .hl:empty { display: block; min-height: calc(.85rem * 1.4); }
+  }
 </style>

@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
-import { syscheckOk, syscheckTroubled, syscheckWith } from '../mocks/syscheck.js';
+import { syscheckHealthy, syscheckOk, syscheckTroubled, syscheckTroubledEncoder, syscheckWith } from '../mocks/syscheck.js';
+import { gateSyscheck, listHoldsNothingBelow } from './syscheck-helpers.js';
 
 /** the catalogue in display order (backend/src/syscheck/types.ts CHECK_IDS) */
 const CATALOGUE = [
@@ -107,11 +108,9 @@ test.describe('Systemcheck on Admin → Status', () => {
     });
   });
 
-  test('skeleton and loaded list have the same height', async ({ page, api }) => {
-    api.syscheck.result = syscheckOk();
-    let release!: () => void;
-    const gate = new Promise<void>((r) => { release = r; });
-    await page.route('**/api/admin/systemcheck', async (r) => { await gate; await r.fallback(); });
+  test('skeleton and loaded list have the same height (healthy install, HEVC row held from the start)', async ({ page, api }) => {
+    api.syscheck.result = syscheckHealthy();
+    const release = await gateSyscheck(page);
     await page.goto('/admin/status');
     const sc = page.locator('#systemcheck');
     await expect(sc.locator('li[data-id] .skeleton').first()).toBeVisible();
@@ -119,10 +118,45 @@ test.describe('Systemcheck on Admin → Status', () => {
     const before = (await sc.boundingBox())!;
     release();
     await expect(sc.locator('li[data-id="core.database"] .pill.ok')).toBeVisible();
+    await expect(sc.locator('li[data-id="media.encoder"]').getByRole('button', { name: 'HEVC jetzt prüfen' })).toBeVisible();
     await expect(sc.locator('li[data-id] .skeleton')).toHaveCount(0);
     const after = (await sc.boundingBox())!;
     expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(1);
     expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(1);
+  });
+
+  test('cold load with problems and the HEVC row: nothing below the list renders before it, then the disks never move', async ({ page, api }) => {
+    api.syscheck.result = syscheckTroubledEncoder();
+    await listHoldsNothingBelow(page);
+  });
+
+  test('a second visit shows the last answer at once and revalidates without moving anything', async ({ page, api }) => {
+    api.syscheck.result = syscheckTroubledEncoder();
+    await page.goto('/admin');
+    await expect(page.getByRole('region', { name: 'Systemzustand' }).getByRole('link', { name: /Systemcheck/ })).toContainText('2 Probleme');
+    const release = await gateSyscheck(page);
+    await page.getByRole('region', { name: 'Systemzustand' }).getByRole('link', { name: /Systemcheck/ }).click();
+    const sc = page.locator('#systemcheck');
+    // still waiting for the server: the remembered answer is on screen, the cards below too
+    await expect(sc.locator('li[data-id="signin.authentik"] .pill.err')).toBeVisible();
+    const disks = page.getByRole('region', { name: 'Speicher' });
+    await expect(disks.getByRole('listitem').first()).toBeVisible();
+    const top = (await disks.boundingBox())!.y;
+    release();
+    await expect.poll(() => api.syscheck.calls.length).toBe(2);
+    await page.waitForLoadState('networkidle');
+    expect(Math.abs((await disks.boundingBox())!.y - top)).toBeLessThanOrEqual(1);
+  });
+
+  test('every encoder advice says what is wrong and how to fix it', async ({ page, api }) => {
+    api.syscheck.result = syscheckTroubledEncoder();
+    await page.goto('/admin/status');
+    const enc = page.locator('#systemcheck li[data-id="media.encoder"]');
+    await expect(enc).toContainText('Der HEVC-Test hat kein HEVC-Video geliefert.');
+    await expect(enc.locator('.adv li')).toHaveCount(2);
+    await expect(enc.locator('.adv li').nth(0)).toContainText('Tone-Mapping ist aus');
+    await expect(enc.locator('.adv li').nth(0)).toContainText('„Tone-Mapping aktivieren“ einschalten');
+    await expect(enc.locator('.adv li').nth(1)).toContainText('Dave750');
   });
 
   test('Details of a sign-in line scrolls to the sign-in card (#login)', async ({ page }) => {

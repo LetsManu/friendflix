@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
-import { syscheckTroubled, syscheckWith } from '../mocks/syscheck.js';
+import { syscheckHealthy, syscheckTroubled, syscheckTroubledEncoder, syscheckWith } from '../mocks/syscheck.js';
+import { gateSyscheck, listHoldsNothingBelow } from './syscheck-helpers.js';
 
 test.describe('Systemcheck (phone)', () => {
   test.beforeEach(({ api }) => {
@@ -35,11 +36,34 @@ test.describe('Systemcheck (phone)', () => {
     const enc = page.locator('#systemcheck li[data-id="media.encoder"]');
     await expect(enc).toContainText('Der HEVC-Test hat kein HEVC-Video geliefert.');
     await expect(enc).toContainText('Tone-Mapping ist aus');
+    await expect(enc).toContainText('„Tone-Mapping aktivieren“ einschalten'); // a further advice keeps its fix
+    await expect(enc).toContainText('Dave750');
     const hevc = enc.getByRole('button', { name: 'HEVC jetzt prüfen' });
     await expect(hevc).toBeVisible();
     expect((await hevc.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await expect(page.locator('#systemcheck li[data-id="core.disk.downloads"]')).toContainText('Gleiches Laufwerk wie die Vorschauen.');
     await page.waitForLoadState('networkidle');
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+  });
+
+  test('cold load at 375 px: nothing below the list renders before it, then the disks never move', async ({ page, api }) => {
+    api.syscheck.result = syscheckTroubledEncoder();
+    await page.setViewportSize({ width: 375, height: 812 });
+    await listHoldsNothingBelow(page);
+  });
+
+  test('skeleton and loaded list have the same height at 375 px', async ({ page, api }) => {
+    api.syscheck.result = syscheckHealthy();
+    await page.setViewportSize({ width: 375, height: 812 });
+    const release = await gateSyscheck(page);
+    await page.goto('/admin/status');
+    const sc = page.locator('#systemcheck');
+    await expect(sc.locator('li[data-id] .skeleton').first()).toBeVisible();
+    const before = (await sc.boundingBox())!;
+    release();
+    await expect(sc.locator('li[data-id] .skeleton')).toHaveCount(0);
+    await expect(sc.locator('li[data-id="media.encoder"]').getByRole('button', { name: 'HEVC jetzt prüfen' })).toBeVisible();
+    const after = (await sc.boundingBox())!;
+    expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(1);
   });
 });

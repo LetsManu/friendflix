@@ -60,6 +60,20 @@ export function syscheckTroubled(at?: string): MockResult {
   ], at);
 }
 
+/** the troubled answer plus an encoder line with three advices and the HEVC check row */
+export function syscheckTroubledEncoder(at?: string): MockResult {
+  const r = syscheckTroubled(at);
+  r.lines = r.lines.map((l) => (l.id === 'media.encoder'
+    ? { ...l, status: 'warning' as const, cause: 'hevc_failed', fix: 'hevc_failed', settingKey: 'HEVC_STREAMS', settingGroup: 'playback', params: { advice: 'hevc_failed,no_tonemap,downmix_plain', hevc: 'failed' } }
+    : l));
+  return result(r.lines, r.at);
+}
+
+/** every line ok, the encoder with its HEVC check row (a healthy Jellyfin install) */
+export function syscheckHealthy(at?: string): MockResult {
+  return syscheckWith([{ id: 'media.encoder', status: 'ok', params: { hevc: 'ready', speed: 2.4 } }], at);
+}
+
 export function syscheckState(): SyscheckMock {
   return { result: syscheckOk(), refreshed: null, calls: [], status: null, refreshStatus: null };
 }

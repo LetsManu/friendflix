@@ -47,8 +47,43 @@ export interface CheckLine {
 }
 export interface SystemcheckResult { at: string; lines: CheckLine[]; counts: Record<CheckStatus, number> }
 
-/** GET /api/admin/systemcheck (cached on the server); `refresh` is "Jetzt prüfen" (rate limited: 429 rate_limited) */
-export const loadSystemcheck = (refresh = false): Promise<SystemcheckResult> => api<SystemcheckResult>(`/api/admin/systemcheck${refresh ? '?refresh=1' : ''}`);
+const STORE_KEY = 'ff-syscheck';
+let last: SystemcheckResult | null = null;
+const atOf = (r: SystemcheckResult | null): number => (r ? Date.parse(r.at) : NaN);
+/** a stored or received answer of the right shape (codes only: nothing in it is secret) */
+const validResult = (r: unknown): r is SystemcheckResult =>
+  !!r && typeof r === 'object' && typeof (r as SystemcheckResult).at === 'string' && Array.isArray((r as SystemcheckResult).lines) && !!(r as SystemcheckResult).counts && typeof (r as SystemcheckResult).counts === 'object';
+
+/** true when `next` may replace `cur`: an answer never gives way to an older one (a slow cached read after a fresh run) */
+export const isNewer = (next: SystemcheckResult, cur: SystemcheckResult | null): boolean => !cur || !(atOf(next) < atOf(cur));
+
+/** Keeps the latest answer for this tab (module + sessionStorage): the next visit renders it at once and revalidates. */
+export function rememberSystemcheck(r: SystemcheckResult): void {
+  if (!validResult(r) || !isNewer(r, last)) return;
+  last = r;
+  try { sessionStorage.setItem(STORE_KEY, JSON.stringify(r)); } catch { /* private mode, quota, no storage */ }
+}
+/** the last answer this tab saw (null on a cold start) */
+export function cachedSystemcheck(): SystemcheckResult | null {
+  if (last) return last;
+  try {
+    const v: unknown = JSON.parse(sessionStorage.getItem(STORE_KEY) ?? 'null');
+    if (validResult(v)) last = v;
+  } catch { /* nothing stored, unreadable, or no storage */ }
+  return last;
+}
+/** Tests: forget the remembered answer. */
+export function forgetSystemcheck(): void {
+  last = null;
+  try { sessionStorage.removeItem(STORE_KEY); } catch { /* no storage */ }
+}
+
+/** GET /api/admin/systemcheck (cached on the server); `refresh` is "Jetzt prüfen" (rate limited: 429 rate_limited). Remembers the answer. */
+export async function loadSystemcheck(refresh = false): Promise<SystemcheckResult> {
+  const r = await api<SystemcheckResult>(`/api/admin/systemcheck${refresh ? '?refresh=1' : ''}`);
+  rememberSystemcheck(r);
+  return r;
+}
 
 const GROUP_OF = (id: string): CheckGroup => id.slice(0, id.indexOf('.')) as CheckGroup;
 const CODE = /^[a-z][a-z0-9_]{0,59}$/;
@@ -100,6 +135,13 @@ export function lineText(l: CheckLine): LineText {
   if (shared) notes.push(tr('syscheck.sharedWith', { name: shared }));
   if (l.id === 'signin.flows' && l.status !== 'ok' && num(l.params?.n) > 1) notes.push(tr('syscheck.more', { n: num(l.params?.n) - 1 }));
   return { label, cause, fix, note: notes.join(' ') };
+}
+
+/** The encoder line's further advice (the first one is its cause and fix): each with its own cause and fix sentence; unknown codes are dropped. */
+export function adviceTexts(l: CheckLine): Array<{ cause: string; fix: string }> {
+  const list = l.id === 'media.encoder' && typeof l.params?.advice === 'string' ? l.params.advice.split(',').slice(1) : [];
+  const params = textParams(l);
+  return list.map((a) => ({ cause: codeText('cause', a, params), fix: codeText('fix', a, params) })).filter((x) => x.cause);
 }
 
 /** "Zur Einstellung": Live-TV settings live on their own page; a key of another form opens the settings page only */

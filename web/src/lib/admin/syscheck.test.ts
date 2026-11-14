@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync, readdirSync } from 'node:fs';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { hasKey, setLocale } from '#lib/i18n';
 import de from '#lib/i18n/locales/de/index';
 import en from '#lib/i18n/locales/en/index';
@@ -11,7 +11,8 @@ import it_ from '#lib/i18n/locales/it/index';
 import pl from '#lib/i18n/locales/pl/index';
 import tr_ from '#lib/i18n/locales/tr/index';
 import {
-  CHECK_GROUPS, CHECK_IDS, BROWSER_IDS, docsHref, lineText, mergeLines, settingHref, statusIcon, statusTone, summaryOf, type CheckLine, type CheckStatus,
+  CHECK_GROUPS, CHECK_IDS, BROWSER_IDS, adviceTexts, cachedSystemcheck, docsHref, forgetSystemcheck, isNewer, lineText, mergeLines, rememberSystemcheck, settingHref, statusIcon,
+  statusTone, summaryOf, type CheckLine, type CheckStatus, type SystemcheckResult,
 } from './syscheck';
 
 afterEach(async () => { await setLocale('de'); });
@@ -64,6 +65,52 @@ describe('Systemcheck texts', () => {
       expect(hasKey(`syscheck.status.${s}`), s).toBe(true);
       expect(statusIcon(s)).not.toBe('');
     }
+  });
+});
+
+describe('encoder advice', () => {
+  it('every further advice item has its own cause and fix sentence; the first is the line\'s own; unknown codes are dropped', () => {
+    const l = ln({ id: 'media.encoder', status: 'warning', cause: 'hevc_failed', fix: 'hevc_failed', params: { advice: 'hevc_failed,no_tonemap,bogus_code,downmix_plain' } });
+    const a = adviceTexts(l);
+    expect(a).toHaveLength(2);
+    expect(a[0]!.cause).toContain('Tone-Mapping ist aus');
+    expect(a[0]!.fix).toContain('Tone-Mapping aktivieren');
+    expect(a[1]!.cause).toContain('Stereo-Downmix');
+    expect(a[1]!.fix).toContain('Dave750');
+    expect(adviceTexts(ln({ id: 'media.encoder', status: 'ok' }))).toEqual([]);
+    expect(adviceTexts(ln({ id: 'core.env', status: 'warning', params: { advice: 'a,no_tonemap' } }))).toEqual([]);
+  });
+});
+
+describe('remembered answer (stale-while-revalidate)', () => {
+  const res = (at: string): SystemcheckResult => ({ at, lines: [ln({ id: 'core.database', status: 'problem', cause: 'db_down' })], counts: counts({ problem: 1 }) });
+  afterEach(() => { forgetSystemcheck(); vi.unstubAllGlobals(); });
+
+  it('keeps the newest answer and never goes back to an older one', () => {
+    expect(cachedSystemcheck()).toBeNull();
+    rememberSystemcheck(res('2026-11-14T09:00:00.000Z'));
+    rememberSystemcheck(res('2026-11-14T08:00:00.000Z'));
+    expect(cachedSystemcheck()?.at).toBe('2026-11-14T09:00:00.000Z');
+    expect(isNewer(res('2026-11-14T08:59:00.000Z'), res('2026-11-14T09:00:00.000Z'))).toBe(false);
+    expect(isNewer(res('2026-11-14T09:00:00.000Z'), null)).toBe(true);
+    rememberSystemcheck({ at: 5 } as unknown as SystemcheckResult); // wrong shape: ignored
+    expect(cachedSystemcheck()?.at).toBe('2026-11-14T09:00:00.000Z');
+  });
+
+  it('survives a reload through sessionStorage; a broken or missing storage is no error', () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('sessionStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) });
+    rememberSystemcheck(res('2026-11-14T09:00:00.000Z'));
+    const saved = store.get('ff-syscheck')!;
+    forgetSystemcheck();
+    store.set('ff-syscheck', saved);
+    expect(cachedSystemcheck()?.lines[0]?.id).toBe('core.database');
+    forgetSystemcheck();
+    store.set('ff-syscheck', '{not json');
+    expect(cachedSystemcheck()).toBeNull();
+    vi.stubGlobal('sessionStorage', { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); }, removeItem: () => { throw new Error('denied'); } });
+    expect(() => rememberSystemcheck(res('2026-11-14T10:00:00.000Z'))).not.toThrow();
+    expect(cachedSystemcheck()?.at).toBe('2026-11-14T10:00:00.000Z');
   });
 });
 

@@ -6,7 +6,7 @@
    * waits for a fresh run), disks, active / failed playbacks and the top errors of 24 h, the sign-in card (#login), then the numbers.
    * Snapshot and Systemcheck every 30 s, streams every 10 s while visible.
    */
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import Icon from '#lib/Icon.svelte';
   import { fmtNumber, fmtRelative, t, type TFn } from '#lib/i18n';
   import { poll } from '#lib/adminContent/poll';
@@ -54,13 +54,27 @@
     stops = [poll(slow, 30_000), poll(loadStr, 10_000)];
   });
   onDestroy(() => stops.forEach((f) => f()));
+
+  /**
+   * Nothing below the Systemcheck renders before its list has its final height (a remembered answer: at once; a cold load: when the
+   * answer or the failure is in), so the cards below never move when the lines fill in. Their data still loads from the start.
+   */
+  let listReady = false;
+  let scrolled = false;
+  // a deep link to a card below (e.g. /admin/status#login) finds its target only once it is rendered
+  $: if (listReady && !scrolled) { scrolled = true; void tick().then(scrollToHash); }
+  function scrollToHash() {
+    const id = location.hash.slice(1);
+    if (id && id !== 'systemcheck' && /^[a-z-]+$/.test(id)) document.getElementById(id)?.scrollIntoView();
+  }
 </script>
 
 <p class="intro muted">{$t('adminContent.health.intro')}</p>
 
 <!-- "Jetzt prüfen" there also refreshed the health snapshot on the server: the disks and errors below read it again -->
-<SystemCheck on:checked={loadSnap} />
+<SystemCheck bind:ready={listReady} on:checked={loadSnap} />
 
+{#if listReady}
 {#if snapErr && !snap}
   <div class="state" role="alert"><Icon name="alert" size={22} /><p>{$t('adminContent.health.loadFailed')}</p><Button variant="secondary" icon="refresh" on:click={loadSnap}>{$t('ui.retry')}</Button></div>
 {/if}
@@ -96,6 +110,7 @@
 <p class="foot"><Button variant="ghost" icon="refresh" pending={refreshing} on:click={() => { void reloadSummary(); slow(); void loadStr(); }}>{$t('admin.playback.refresh')}</Button></p>
 
 <SuggestionsCard />
+{/if}
 
 <style>
   .intro { margin: 0 0 1rem; }
