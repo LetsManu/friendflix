@@ -734,6 +734,7 @@ describe('logos (ruling 32)', () => {
     expect(r.headers['content-type']).toBe('image/png');
     expect(r.headers['x-content-type-options']).toBe('nosniff');
     expect(r.headers['content-security-policy']).toBe("default-src 'none'");
+    expect(r.headers['cross-origin-resource-policy']).toBe('same-origin'); // only the signed cast URL is opened to other origins
     expect(r.rawPayload.equals(PNG)).toBe(true);
     for (const h of ['0'.repeat(64), 'nope', hash.toUpperCase()]) {
       const miss = await env.app.inject({ method: 'GET', url: `/api/livetv/logos/${h}`, cookies: admin.cookies });

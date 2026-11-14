@@ -92,6 +92,9 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/livetv/logos/:hash', { preHandler: logoAuth }, async (req, reply) => {
     const logo = await readLogo(ctx, String((req.params as { hash?: string }).hash ?? ''));
     if (!logo) return reply.code(404).send({ error: 'not_found' });
+    // the signed URL is for a Cast receiver, which may be another origin (Google's Default Media Receiver): without this the
+    // app-wide Cross-Origin-Resource-Policy same-origin (app.ts) would block the channel logo there. The cookie route stays same-origin.
+    if ((req.query as { sig?: unknown } | undefined)?.sig !== undefined) reply.header('cross-origin-resource-policy', 'cross-origin');
     return reply.header('content-type', logo.mime).header('cache-control', LOGO_CACHE).header('content-security-policy', "default-src 'none'").send(logo.bytes);
   });
 
