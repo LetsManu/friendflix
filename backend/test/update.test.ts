@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Ctx } from '../src/ctx.js';
 import { readFileSync } from 'node:fs';
 import { makeEnv, type TestEnv } from './helpers.js';
+import { REDEPLOY_KEY, REDEPLOY_LOCK } from '../src/redeploy.js';
 
 const VERSION_JSON = JSON.parse(readFileSync(new URL('../../version.json', import.meta.url), 'utf8')) as { version: string; codename: string };
 
@@ -12,26 +13,31 @@ const NEW = 'd'.repeat(40);
 const HOOK = 'https://portainer.example.com/api/stacks/webhooks/secret-token-uuid';
 const KEY = 'ptr_supersecretkey';
 
-interface Seen { method: string; url: string; headers: Record<string, string>; body: any }
+interface Seen { method: string; url: string; headers: Record<string, string>; body: any; redirect?: RequestRedirect }
 let env: TestEnv;
 let seen: Seen[];
 let stack: any;
+/** Portainer answers every call with a 301 to another origin */
+let redirect = false;
+/** the body of Portainer's answer to the redeploy PUT (null: 204 without a body) */
+let putAnswer: unknown = null;
 /** GitHub releases/latest answer; null = no release published (404) */
 let release: any;
 const host = (u: string) => new URL(u).host;
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
 const mockFetch = (gh: 'ok' | 'fail' = 'ok') => vi.fn(async (input: any, init: RequestInit = {}) => {
   const url = String(input);
-  seen.push({ method: init.method ?? 'GET', url, headers: (init.headers ?? {}) as Record<string, string>, body: init.body ? JSON.parse(String(init.body)) : undefined });
+  seen.push({ method: init.method ?? 'GET', url, headers: (init.headers ?? {}) as Record<string, string>, body: init.body ? JSON.parse(String(init.body)) : undefined, redirect: init.redirect });
   if (host(url) === 'api.github.com') {
     if (gh === 'fail') return json({}, 500);
     if (url.endsWith('/releases/latest')) return release ? json(release) : json({ message: 'Not Found' }, 404);
     if (url.includes('/actions/workflows/ci.yml/runs')) return json({ workflow_runs: [{ head_sha: NEW, updated_at: '2026-01-02T00:00:00Z', html_url: 'https://github.com/x/runs/1' }] });
     if (url.includes(`/compare/${CUR}...${NEW}`)) return json({ ahead_by: 2, commits: [1, 2].map((n) => ({ sha: `s${n}`, html_url: `https://github.com/c/${n}`, commit: { message: `msg ${n}\n\nbody`, author: { name: 'Ann', date: '2026-01-01T00:00:00Z' } } })) });
   }
+  if (redirect && host(url) === 'portainer.example.com') return new Response(null, { status: 301, headers: { location: `https://elsewhere.example.net${new URL(url).pathname}` } });
   if (url.endsWith('/api/stacks/7/file')) return json({ StackFileContent: 'services: {}' });
   if (url.includes('/api/stacks/7') && (init.method ?? 'GET') === 'GET') return json(stack);
-  if (host(url) === 'portainer.example.com') return new Response(null, { status: 204 });
+  if (host(url) === 'portainer.example.com') return putAnswer === null ? new Response(null, { status: 204 }) : json(putAnswer);
   return json({}, 404);
 });
 
@@ -45,7 +51,7 @@ async function setup(cfg: Record<string, unknown> = {}, gh: 'ok' | 'fail' = 'ok'
 }
 const ghCalls = () => seen.filter((s) => host(s.url) === 'api.github.com').length;
 
-beforeEach(() => { seen = []; release = null; stack = { Env: [{ name: 'A', value: '1' }, { name: 'B', value: 'x y' }], GitConfig: null }; });
+beforeEach(() => { seen = []; release = null; redirect = false; putAnswer = null; stack = { Env: [{ name: 'A', value: '1' }, { name: 'B', value: 'x y' }], GitConfig: null }; });
 afterEach(() => env?.close());
 
 describe('admin update', () => {
@@ -60,7 +66,7 @@ describe('admin update', () => {
     expect(b.current).toEqual({ sha: CUR, builtAt: '2026-01-01T00:00:00Z', ...VERSION_JSON }); // no APP_VERSION: read from version.json
     expect(b.release).toBeNull();
     expect(b.updateAvailable).toBeNull();
-    expect(b.portainer).toEqual({ configured: false, mode: null });
+    expect(b.portainer).toEqual({ configured: false, mode: null, missing: [] });
     expect(ghCalls()).toBe(4); // release, CI run, compare, tag commit of the installed version
     await get();
     expect(ghCalls()).toBe(4);
@@ -165,7 +171,7 @@ describe('admin update', () => {
   it('webhook mode posts to the URL, audits, and leaks no secret', async () => {
     const { post, get } = await setup({ PORTAINER_WEBHOOK_URL: HOOK });
     const g = await get();
-    expect(g.json().portainer).toEqual({ configured: true, mode: 'webhook' });
+    expect(g.json().portainer).toEqual({ configured: true, mode: 'webhook', missing: [] });
     const r = await post();
     expect(r.statusCode).toBe(202);
     expect(r.json()).toEqual({ ok: true, mode: 'webhook' });
@@ -227,6 +233,135 @@ describe('admin update', () => {
     const put = seen.find((s) => s.method === 'PUT')!;
     expect(put.url).toBe('https://portainer.example.com/api/stacks/7?endpointId=3');
     expect(put.body).toMatchObject({ stackFileContent: 'services: {}', env: [...stack.Env, { name: 'FF_TAG', value: 'latest' }], pullImage: true, prune: false });
+  });
+
+  it('api mode redeploys on the stack\'s own environment: Portainer moves a stack to whatever endpointId is named', async () => {
+    stack.EndpointId = 2;
+    const { post } = await setup(api); // PORTAINER_ENDPOINT_ID 3 (or the default 1) would move the stack to another environment
+    expect((await post()).statusCode).toBe(202);
+    expect(seen.find((s) => s.method === 'PUT')!.url).toBe('https://portainer.example.com/api/stacks/7?endpointId=2');
+  });
+
+  it('a redirect from Portainer (e.g. to another origin) is never followed: the key and the webhook token stay with the host entered', async () => {
+    redirect = true;
+    const a = await setup(api);
+    const r = await a.post();
+    expect([r.statusCode, r.json()]).toEqual([502, { error: 'portainer', status: 301, step: 'stack' }]);
+    expect(seen.filter((s) => host(s.url) !== 'api.github.com').map((s) => [host(s.url), s.redirect])).toEqual([['portainer.example.com', 'manual']]);
+    expect(seen.some((s) => host(s.url) === 'elsewhere.example.net')).toBe(false);
+    await env.close(); seen = [];
+    const w = await setup({ PORTAINER_WEBHOOK_URL: HOOK });
+    expect((await w.post()).json()).toMatchObject({ error: 'portainer', status: 301, step: 'webhook' });
+    expect(seen.filter((s) => host(s.url) !== 'api.github.com').map((s) => s.redirect)).toEqual(['manual']);
+  });
+
+  it('api mode, git stack with stored credentials: authentication on with the stored user and an empty password (Portainer keeps the stored one)', async () => {
+    stack.GitConfig = { ReferenceName: 'refs/heads/main', Authentication: { Username: 'deploy-bot', Password: '' } };
+    const { post } = await setup(api);
+    expect((await post()).statusCode).toBe(202);
+    expect(seen.find((s) => s.method === 'PUT')!.body).toMatchObject({ repositoryAuthentication: true, repositoryUsername: 'deploy-bot', repositoryPassword: '' });
+  });
+
+  it('api mode, git stack with an empty Authentication (no user name: nothing stored to keep): no authentication fields sent', async () => {
+    stack.GitConfig = { ReferenceName: 'refs/heads/main', Authentication: {} };
+    const { post } = await setup(api);
+    expect((await post()).statusCode).toBe(202);
+    const body = seen.find((s) => s.method === 'PUT')!.body;
+    expect(body).not.toHaveProperty('repositoryAuthentication');
+    expect(body).not.toHaveProperty('repositoryUsername');
+    expect(body).not.toHaveProperty('repositoryPassword');
+  });
+
+  it('one redeploy at a time: a second POST while one runs is refused (busy) and nothing is sent', async () => {
+    putAnswer = { Id: 7, Status: 3 }; // Portainer from 2.36: answers at once, still deploying
+    const { post, admin } = await setup(api);
+    expect((await post()).statusCode).toBe(202);
+    const rec = await env.kv.get(REDEPLOY_KEY);
+    // the API answered "deploying": the page keeps waiting (no "unchanged" yet)
+    expect((await env.app.inject({ url: '/api/admin/updater', cookies: admin.cookies })).json().redeploy).toMatchObject({ phase: 'pulling', running: true });
+    const puts = seen.filter((s) => s.method === 'PUT').length;
+    // a second admin (the rate limit is per portal, so a fresh app with the same stored redeploy)
+    await env.close();
+    const again = await setup(api);
+    await env.kv.set(REDEPLOY_KEY, rec!, 3600);
+    await env.kv.set(REDEPLOY_LOCK, JSON.parse(rec!).id, 3600);
+    const r = await again.post();
+    expect([r.statusCode, r.json()]).toEqual([409, { error: 'busy' }]);
+    expect(seen.filter((s) => s.method === 'PUT').length).toBe(puts);
+    expect(await env.kv.get(REDEPLOY_KEY)).toBe(rec);
+  });
+
+  it('api mode answered "done" (Portainer before 2.36: redeploys, then answers) and nothing changed: unchanged at once', async () => {
+    putAnswer = { Id: 7, Status: 1 };
+    const { post, admin } = await setup(api);
+    expect((await post()).statusCode).toBe(202);
+    expect((await env.app.inject({ url: '/api/admin/updater', cookies: admin.cookies })).json().redeploy).toMatchObject({ phase: 'unchanged', running: false });
+  });
+
+  it('api mode, a 2xx without a readable stack waits (no "unchanged" from it); a stack in error (Status 4) is a refusal at step deploy', async () => {
+    const { post, admin } = await setup(api); // PUT answers 204 without a body
+    expect((await post()).statusCode).toBe(202);
+    expect((await env.app.inject({ url: '/api/admin/updater', cookies: admin.cookies })).json().redeploy).toMatchObject({ phase: 'pulling', running: true });
+    await env.close(); seen = [];
+    putAnswer = { Id: 7, Status: 4 };
+    const bad = await setup(api);
+    const r = await bad.post();
+    expect([r.statusCode, r.json()]).toEqual([502, { error: 'portainer', status: null, step: 'deploy' }]);
+    expect((await env.app.inject({ url: '/api/admin/updater', cookies: bad.admin.cookies })).json().redeploy).toMatchObject({ phase: 'failed', step: 'deploy', status: null });
+    expect(await env.kv.get(REDEPLOY_LOCK)).toBeNull();
+  });
+
+  it('a redeploy that cannot be recorded (the store\'s mutex taken) is refused before anything is sent, and the slot is free again', { timeout: 15_000 }, async () => {
+    const { post } = await setup(api);
+    await env.kv.set('update:portainer:redeploy:mutex', 'someone-else', 60);
+    const r = await post();
+    expect([r.statusCode, r.json()]).toEqual([503, { error: 'busy' }]);
+    expect(seen.filter((s) => s.method === 'PUT')).toHaveLength(0);
+    expect(await env.kv.get(REDEPLOY_LOCK)).toBeNull();
+    expect(await env.kv.get(REDEPLOY_KEY)).toBeNull();
+  });
+
+  it('the slot is given back when the update info or the audit throws before anything is sent', async () => {
+    await setup(api);
+    const { redeployViaPortainer } = await import('../src/updates.js');
+    const broken = { get current(): never { throw new Error('boom'); } } as unknown as Parameters<typeof redeployViaPortainer>[3];
+    await expect(redeployViaPortainer(env.ctx, null, 'api', broken)).rejects.toThrow('boom');
+    expect(await env.kv.get(REDEPLOY_LOCK)).toBeNull();
+    expect(seen.filter((s) => host(s.url) === 'portainer.example.com')).toHaveLength(0);
+  });
+
+  it('api set up only in part: GET names the missing settings (never a value), POST refuses as not configured', async () => {
+    const { post, get } = await setup({ PORTAINER_URL: 'https://portainer.example.com', PORTAINER_API_KEY: KEY });
+    const g = await get();
+    expect(g.json().portainer).toEqual({ configured: false, mode: null, missing: ['PORTAINER_STACK_ID'] });
+    expect(g.body).not.toContain(KEY);
+    expect((await post()).statusCode).toBe(409);
+    expect(seen.filter((s) => host(s.url) === 'portainer.example.com')).toHaveLength(0);
+  });
+
+  it('api mode: Portainer answers only after "started" went out; a proxy giving up (504) is no verdict, a refusal (500) ends the redeploy as failed', { timeout: 20_000 }, async () => {
+    const { admin } = await setup(api);
+    const { redeployViaPortainer } = await import('../src/updates.js');
+    const base = env.ctx.fetchImpl;
+    let answer!: (r: Response) => void;
+    env.ctx.fetchImpl = (async (i: any, init: RequestInit = {}) => (init.method === 'PUT' ? new Promise<Response>((res) => { answer = res; }) : base(i, init))) as typeof fetch;
+    const view = async () => (await env.app.inject({ url: '/api/admin/updater', cookies: admin.cookies })).json().redeploy;
+    const late = async (status: number) => {
+      const r = await redeployViaPortainer(env.ctx, null, 'api');
+      expect(r).toEqual({ ok: true, mode: 'api', pending: true }); // no answer within the grace window: started
+      answer(new Response('{"message":"compose up failed: secret detail"}', { status }));
+      await new Promise((res) => setTimeout(res, 50));
+      return view();
+    };
+    expect(await late(504)).toMatchObject({ phase: 'pulling', running: true, error: null });
+    // one redeploy at a time: forget the first (it would end by its timeout) before the second
+    await env.kv.del(REDEPLOY_LOCK); await env.kv.del(REDEPLOY_KEY);
+    const v = await late(500);
+    expect(v).toMatchObject({ phase: 'failed', running: false, error: 'portainer', step: 'redeploy', status: 500 });
+    expect(JSON.stringify(v)).not.toContain('secret detail');
+    const a = await env.pool.query("select meta from audit_log where action='system.update_result' order by id");
+    expect(a.rows.at(-1).meta).toMatchObject({ result: 'failed', late: true, status: 500, step: 'redeploy' });
+    expect(JSON.stringify(a.rows)).not.toContain(KEY);
   });
 
   it('nightly channel: webhook gets ?FF_TAG=nightly (existing query kept), the token never leaks', async () => {

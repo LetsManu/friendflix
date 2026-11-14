@@ -4,6 +4,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
+import { REDEPLOY_KEY, REDEPLOY_LOCK } from '../src/redeploy.js';
 import { autoUpdateTick, parseStatus, signUpdater, updaterKey } from '../src/updater.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 
@@ -24,9 +25,11 @@ const fake = {
   stack: undefined as 'own' | 'foreign' | undefined,
   /** newest GitHub release tag; Portainer webhook answer status */
   release: 'v2.0.0', portainerStatus: 204,
+  /** what the updater lists as running (null: the backend alone, on sha-aaaaaaa) */
+  services: null as unknown[] | null,
   calls: [] as Array<{ method: string; path: string; body: string; sigOk: boolean }>,
   portainer: [] as Array<{ method: string; url: string }>,
-  reset() { Object.assign(this, { up: true, busy: false, previous: 'sha-aaaaaaa', status: 200, jobState: 'running', answer: null, stack: undefined, release: 'v2.0.0', portainerStatus: 204, calls: [], portainer: [] }); },
+  reset() { Object.assign(this, { up: true, busy: false, previous: 'sha-aaaaaaa', status: 200, jobState: 'running', answer: null, stack: undefined, release: 'v2.0.0', portainerStatus: 204, services: null, calls: [], portainer: [] }); },
 };
 const HOOK = 'https://portainer.example.com/api/stacks/webhooks/0e1d2c3b-hook';
 const job = () => ({ id: JOB_ID, action: 'update', state: fake.jobState, step: fake.jobState === 'running' ? 'pull' : null, from: 'sha-aaaaaaa', to: 'latest',
@@ -55,7 +58,7 @@ const updaterFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
   if (!ok) return j({ error: 'bad_signature' }, 401);
   if (fake.status !== 200) return j({ error: 'x' }, fake.status);
   if (u.pathname === '/v1/status') return j(fake.answer ?? { updater: { version: '1.1.0', sha: null }, channel: 'stable', version: null, targetTag: 'latest', current: 'latest', previous: fake.previous,
-    busy: fake.busy, job: job(), log: ['2026-10-18T04:00:00.000Z step pull'], services: [{ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-aaaaaaa', version: '1.1.0', extra: '<script>' }],
+    busy: fake.busy, job: job(), log: ['2026-10-18T04:00:00.000Z step pull'], services: fake.services ?? [{ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-aaaaaaa', version: '1.1.0', extra: '<script>' }],
     ...(fake.stack ? { stack: fake.stack } : {}) });
   if (u.pathname === '/v1/channel') return fake.busy ? j({ error: 'busy' }, 409) : j({ ...JSON.parse(body), targetTag: 'latest' });
   if (fake.busy) return j({ error: 'busy' }, 409);
@@ -67,6 +70,8 @@ let env: TestEnv, admin: Sess;
 const as = (s: Sess, method: string, url: string, payload?: unknown) => env.app.inject({ method: method as 'GET', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: payload as object });
 const audits = async (action: string) => (await env.pool.query<{ actor: string | null; meta: Record<string, unknown> }>('select actor, meta from audit_log where action=$1 order by id', [action])).rows;
 const setCfg = (patch: Record<string, unknown>) => { env.ctx.cfg = { ...env.ctx.cfg, ...patch } as typeof env.ctx.cfg; };
+/** the last Portainer redeploy ended (here: forgotten), so the next one may start (one at a time, redeploy.ts) */
+const endRedeploy = async (e: TestEnv = env) => { await e.kv.del(REDEPLOY_LOCK); await e.kv.del(REDEPLOY_KEY); };
 
 beforeAll(async () => {
   env = await makeEnv({}, { ctxPatch: (c) => { c.fetchImpl = updaterFetch as typeof fetch; c.cfg = { ...c.cfg, UPDATER_URL: 'http://updater:7070' }; } });
@@ -118,7 +123,17 @@ describe('GET /api/admin/updater', () => {
     expect(b).toMatchObject({ present: true, status: { channel: 'stable', current: 'latest', previous: 'sha-aaaaaaa', job: { id: JOB_ID, state: 'running' } }, autoUpdate: { mode: 'off', time: '04:00', locked: [] } });
     expect(JSON.stringify(b)).not.toContain('<script>');
     expect(fake.calls).toEqual([{ method: 'GET', path: '/v1/status', body: '', sigOk: true }]);
-    expect(b.portainer).toEqual({ configured: false, mode: null });
+    expect(b.portainer).toEqual({ configured: false, mode: null, missing: [] });
+    expect(b.redeploy).toBeNull();
+  });
+
+  it('the Portainer API set up only in part: the page is told which setting is missing (names only, never a value)', async () => {
+    fake.stack = 'foreign';
+    setCfg({ PORTAINER_URL: 'https://portainer.example.com', PORTAINER_API_KEY: 'ptr_secret_value' });
+    const b = (await as(admin, 'GET', '/api/admin/updater')).json();
+    expect(b.portainer).toEqual({ configured: false, mode: null, missing: ['PORTAINER_STACK_ID'] });
+    expect(JSON.stringify(b)).not.toContain('ptr_secret_value');
+    setCfg({ PORTAINER_URL: undefined, PORTAINER_API_KEY: undefined });
   });
 
   it('a foreign stack: the status says so, with whether Portainer is set up (the page explains it up front)', async () => {
@@ -194,26 +209,31 @@ describe('settings and automatic updates', () => {
     // the next nights: a version that was redeployed is not redeployed again (also when the stack pins another tag)
     expect(await tick(at(2, 1, 24))).toBe('done');
     expect(fake.portainer.length).toBe(1);
-    // Portainer refuses: logged (never the URL), audited as failed, one attempt per night, tried again the next night
+    // a redeploy still running is never doubled by the next night: busy, nothing sent
     fake.release = 'v99.0.1';
+    expect(await tick(at(2, 1, 25))).toBe('busy');
+    expect(fake.portainer.length).toBe(1);
+    await endRedeploy();
+    // Portainer refuses: logged (never the URL), audited as failed, one attempt per night, tried again the next night
     fake.portainerStatus = 500;
-    expect(await tick(at(2, 1, 25))).toBe('failed');
-    expect(await tick(at(2, 5, 25))).toBe('done');
+    expect(await tick(at(2, 1, 26))).toBe('failed');
+    expect(await tick(at(2, 5, 26))).toBe('done');
     expect(warns).toEqual([[{ mode: 'webhook', step: 'webhook', status: 500 }, 'automatic update through Portainer failed']]);
     expect(JSON.stringify(warns)).not.toContain('0e1d2c3b');
     expect((await audits('system.update_result')).at(-1)).toMatchObject({ actor: null, meta: { toVersion: '99.0.1', result: 'failed', error: 'portainer', step: 'webhook', status: 500 } });
     fake.portainerStatus = 204;
-    expect(await tick(at(2, 1, 26))).toBe('started');
-    expect(await tick(at(2, 1, 27))).toBe('done');
+    expect(await tick(at(2, 1, 27))).toBe('started');
+    expect(await tick(at(2, 1, 28))).toBe('done');
     expect(fake.portainer.length).toBe(3);
   });
 
   it('an updater from before the stack field on a Portainer-configured install: the update goes through Portainer, never the old updater', async () => {
+    await endRedeploy();
     const at = (h: number, m: number, d: number) => new Date(2026, 9, d, h, m);
     setCfg({ AUTO_UPDATE: 'nightly-window', AUTO_UPDATE_TIME: '02:00', PORTAINER_WEBHOOK_URL: HOOK });
     fake.stack = undefined;
     fake.release = 'v98.0.0';
-    expect(await autoUpdateTick(env.ctx, at(2, 1, 28))).toBe('started');
+    expect(await autoUpdateTick(env.ctx, at(2, 1, 29))).toBe('started');
     expect(fake.portainer).toEqual([{ method: 'POST', url: `${HOOK}?FF_TAG=latest` }]); // the stable channel rides along
     expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
   });
@@ -337,10 +357,35 @@ describe('POST /api/admin/updater/:action', () => {
     expect(fake.calls.map((c) => [c.method, c.path])).toEqual([['GET', '/v1/status']]); // no channel sync, no /v1/update
     const userId = (await e2.pool.query("select id from users where authentik_sub='sub-admin'")).rows[0].id;
     expect((await e2.pool.query('select actor, meta from audit_log where action=$1', ['system.update'])).rows).toEqual([{ actor: userId, meta: expect.objectContaining({ mode: 'webhook' }) }]);
+    // a second start while it runs: refused (busy), nothing sent, the record stays
+    const running = await e2.kv.get(REDEPLOY_KEY);
+    const twice = await post('update');
+    expect([twice.statusCode, twice.json()]).toEqual([409, { error: 'busy' }]);
+    expect(fake.portainer.length).toBe(1);
+    expect(await e2.kv.get(REDEPLOY_KEY)).toBe(running);
     // Portainer refuses: the error comes back
+    await endRedeploy(e2);
     fake.portainerStatus = 500;
     const f = await post('update');
     expect([f.statusCode, f.json()]).toEqual([502, { error: 'portainer', status: 500, step: 'webhook' }]);
+  });
+
+  it('the redeploy handed to Portainer is followed on the page: pulling, recreating n of 3, the new backend: health, done (kept across the restart)', async () => {
+    await stamp();
+    fake.stack = 'foreign';
+    e2.ctx.cfg = { ...e2.ctx.cfg, PORTAINER_WEBHOOK_URL: HOOK, GIT_SHA: 'a'.repeat(40) };
+    expect((await post('update')).statusCode).toBe(202);
+    const view = async () => (await e2.app.inject({ url: '/api/admin/updater', cookies: a2.cookies })).json().redeploy;
+    const svc = (service: string, sha: string, state = 'running', health = 'healthy') => ({ service, state, health, sha, version: null });
+    expect(await view()).toMatchObject({ mode: 'webhook', tag: 'latest', phase: 'pulling', running: true, services: { updated: 0, total: 1 } });
+    fake.services = [svc('backend', 'sha-aaaaaaa'), svc('gateway', 'sha-bbbbbbb'), svc('web', 'sha-aaaaaaa', 'exited', '')];
+    expect(await view()).toMatchObject({ phase: 'recreating', services: { updated: 1, total: 3 } });
+    // Portainer recreated this backend: the new one (another build) reads the same record from the kv store
+    e2.ctx.cfg = { ...e2.ctx.cfg, GIT_SHA: 'b'.repeat(40) };
+    fake.services = [svc('backend', 'sha-bbbbbbb'), svc('gateway', 'sha-bbbbbbb'), svc('web', 'sha-bbbbbbb', 'running', 'starting')];
+    expect(await view()).toMatchObject({ phase: 'health', running: true, services: { updated: 3, total: 3 } });
+    fake.services = [svc('backend', 'sha-bbbbbbb'), svc('gateway', 'sha-bbbbbbb'), svc('web', 'sha-bbbbbbb')];
+    expect(await view()).toMatchObject({ phase: 'done', running: false });
   });
 
   it('a foreign stack without Portainer: refused with foreign_stack before the updater runs anything; rollback and self-update too', async () => {
@@ -362,6 +407,18 @@ describe('POST /api/admin/updater/:action', () => {
     expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
     for (const a of ['rollback', 'self-update']) expect((await post(a)).json(), a).toEqual({ error: 'foreign_stack' });
     expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
+  });
+
+  it('an updater that cannot tell the stack and the Portainer API set up only in part: refused (foreign_stack), never an updater job that fails with compose_config', async () => {
+    await stamp();
+    e2.ctx.cfg = { ...e2.ctx.cfg, PORTAINER_URL: 'https://portainer.example.com', PORTAINER_API_KEY: 'ptr_secret_value' };
+    const r = await post('update');
+    expect([r.statusCode, r.json()]).toEqual([409, { error: 'foreign_stack' }]);
+    expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
+    expect(fake.portainer).toEqual([]);
+    // the updater confirms its own stack: the job runs as before
+    fake.stack = 'own';
+    expect((await post('update')).statusCode).toBe(202);
   });
 
   it('our own stack: unchanged, the updater runs the job (also with Portainer configured)', async () => {
