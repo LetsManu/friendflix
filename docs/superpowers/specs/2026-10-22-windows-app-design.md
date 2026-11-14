@@ -60,6 +60,9 @@ desktop/
   - `app` reads the session cookie for the server origin from WebView2's cookie manager.
   - It sets mpv's `http-header-fields` (Cookie, the profile header `x-ff-profile`) over the pipe before `loadfile`, never on
     the command line.
+  - Before the headers it turns off HTTP redirects for the player (`curl-max-redirects=0`, `stream-lavf-o=max_redirects=0`):
+    mpv sends the headers with every request, and FFmpeg's http protocol follows a redirect to any host or to plain http
+    with them. When mpv refuses either option, no header is set and the title fails.
 
 ## 3. Web change
 

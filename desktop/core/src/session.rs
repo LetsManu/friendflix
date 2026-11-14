@@ -331,6 +331,20 @@ fn max_streams_text(n: u32) -> String {
     }
 }
 
+/// mpv options that stop the player from following any HTTP redirect, set before the cookie header (`set_headers`).
+/// mpv sends `http-header-fields` with every request, and a redirect would carry the session cookie to wherever the
+/// `Location` points. The FriendFlix gateway never redirects a media request (an upstream 3xx becomes a 502), so no
+/// stream, playlist, segment or subtitle the player loads needs one.
+/// - `curl-max-redirects`: mpv's libcurl backend, which the pinned build (mpv.lock) uses first; libcurl already drops a
+///   `Cookie` header on a cross-origin redirect, but forwards every other custom header (`x-ff-profile`).
+/// - `stream-lavf-o` `max_redirects` (FFmpeg 8.1 and later): FFmpeg's http protocol, used when curl is off or failed,
+///   which sends the custom headers to every redirect target, any host or scheme. mpv hands these options to the
+///   nested HLS / DASH requests too (`demuxer-lavf-propagate-opts`, on by default).
+const NO_REDIRECTS: [(&str, &str); 2] = [
+    ("curl-max-redirects", "0"),
+    ("stream-lavf-o", "max_redirects=0"),
+];
+
 fn header_safe(v: &str) -> bool {
     !v.is_empty() && !v.chars().any(|c| c == '\r' || c == '\n' || c == '\0')
 }
@@ -808,7 +822,9 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
         self.report = ReportClock::new();
         self.started = false;
         self.reloads = 0;
-        self.set_headers();
+        if !self.set_headers() {
+            return self.fail(GENERIC.into());
+        }
         for (k, v) in mpv_style(&self.prefs.subtitle_style) {
             let _ = self.player.command(json!(["set_property", k, v]));
         }
@@ -823,7 +839,17 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
     /// The cookie and the profile header go to mpv only here, before any `loadfile`. mpv sends these headers with every
     /// HTTP request it makes, so it must only ever be given server URLs: the stream, subtitle (`sub-add`) and trickplay
     /// URLs are all resolved with `Origin::resolve` (on-origin only) first; nothing else is loaded.
-    fn set_headers(&self) {
+    ///
+    /// A redirect would still take the headers elsewhere (lavf's http protocol sends them to every redirect target, any
+    /// host or scheme), so `NO_REDIRECTS` goes first; when mpv refuses any of it no header is set and the caller fails
+    /// the title (`false`). A closed pipe is left to the crash handling, as for every other command.
+    fn set_headers(&self) -> bool {
+        for (k, v) in NO_REDIRECTS {
+            if let Err(PlayerError::Failed(_)) = self.player.command(json!(["set_property", k, v]))
+            {
+                return false;
+            }
+        }
         let mut h = vec![];
         if header_safe(&self.cfg.cookie) {
             h.push(format!("Cookie: {}", self.cfg.cookie));
@@ -834,6 +860,7 @@ impl<P: Player, A: Api, H: Host, C: Clock> Session<P, A, H, C> {
         let _ = self
             .player
             .command(json!(["set_property", "http-header-fields", h]));
+        true
     }
 
     fn load(&mut self, url: &str, start_ms: u64) {
@@ -1605,6 +1632,8 @@ mod tests {
         tracks: Value,
         rx: RefCell<Option<Receiver<MpvEvent>>>,
         clean_exit: Cell<bool>,
+        /// a property mpv answers `set_property` on with an error (an option this mpv build doesn't have)
+        refuse: RefCell<Option<&'static str>>,
     }
 
     impl FakePlayer {
@@ -1620,6 +1649,7 @@ mod tests {
                 tracks,
                 rx: RefCell::new(Some(rx)),
                 clean_exit: Cell::new(false),
+                refuse: RefCell::new(None),
             };
             (p, tx)
         }
@@ -1653,6 +1683,9 @@ mod tests {
     impl Player for FakePlayer {
         fn command(&self, v: Value) -> Result<Value, PlayerError> {
             self.log.borrow_mut().push(v.clone());
+            if v[0] == "set_property" && self.refuse.borrow().is_some_and(|p| v[1] == p) {
+                return Err(PlayerError::Failed("property not found".into()));
+            }
             if v == json!(["get_property", "track-list"]) {
                 return Ok(self.tracks.clone());
             }
@@ -2573,6 +2606,52 @@ mod tests {
             "friendflix",
             "ff-preview-hide"
         ])));
+    }
+
+    #[test]
+    fn no_redirects_before_the_cookie() {
+        let rig = Rig::new(FakeApi::new());
+        let mut s = rig.session(req("e1"));
+        s.start();
+        let header = rig
+            .player
+            .position(|c| c[0] == "set_property" && c[1] == "http-header-fields")
+            .expect("headers set");
+        for guard in [
+            json!(["set_property", "curl-max-redirects", "0"]),
+            json!(["set_property", "stream-lavf-o", "max_redirects=0"]),
+        ] {
+            let at = rig
+                .player
+                .position(|c| *c == guard)
+                .expect(&guard.to_string());
+            assert!(at < header, "{guard} before the cookie header");
+        }
+        assert_eq!(rig.player.loadfiles().len(), 1);
+    }
+
+    #[test]
+    fn no_cookie_when_mpv_refuses_a_redirect_guard() {
+        for (key, _) in NO_REDIRECTS {
+            let rig = Rig::new(FakeApi::new());
+            *rig.player.refuse.borrow_mut() = Some(key);
+            let mut s = rig.session(req("e1"));
+            s.start();
+            let cmds = rig.player.commands();
+            assert!(
+                cmds.iter().all(|c| !c.to_string().contains("SECRETCOOKIE")),
+                "{key}: {cmds:?}"
+            );
+            assert!(!cmds.iter().any(|c| c[1] == "http-header-fields"), "{key}");
+            assert!(rig.player.loadfiles().is_empty(), "{key}");
+            assert_eq!(s.outcome(), Some(&Outcome::Failed(GENERIC.into())), "{key}");
+            assert!(rig
+                .host
+                .events
+                .borrow()
+                .iter()
+                .any(|(e, _)| e == "ff-player-error"));
+        }
     }
 
     #[test]
