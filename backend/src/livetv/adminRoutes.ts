@@ -22,7 +22,7 @@ import { isHomeRequest } from '../netaddr.js';
 import { clearJoinMark, startOrJoin } from './streams.js';
 import { adminStopKey, liveSidHash, mintLiveToken, revokeLiveToken } from './tokens.js';
 import { epgSummary } from './epg.js';
-import { refreshRunning, refreshSource, refreshSourceEpg } from './refresh.js';
+import { refreshRunning, refreshSource, schedulePinImport } from './refresh.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
 import { FeedError, createFeed, deleteFeed, feedCreate, ingestView, reassignPort, regenerateCredentials, syncIngest } from './ownfeeds.js';
 import { SourceRefusal, SourceTestError, anyTestBody, createSource, deleteSource, isGuide, listSources, sourceCreate, sourcePatch, testGuide, testSource, updateSource } from './sources.js';
@@ -548,11 +548,14 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       const c = await setEpgPin(ctx, req.user!.id, cid, b.value);
       if (!c) return reply.code(404).send({ error: 'not_found' });
-      const due = livetvInstalled(ctx) ? await importDueFor(ctx, cid) : null;
-      if (due) {
-        const log = req.log;
-        void refreshSourceEpg(ctx, due).catch((e: unknown) => { log.warn({ sourceId: due, error: e instanceof Error ? e.name : 'unknown' }, 'livetv pin import failed'); });
-      }
+      // after the commit: a failure here must not turn the saved pin into a 500
+      try {
+        const due = livetvInstalled(ctx) ? await importDueFor(ctx, cid) : null;
+        if (due) {
+          const log = req.log;
+          void schedulePinImport(ctx, due).catch((e: unknown) => { log.warn({ sourceId: due, error: e instanceof Error ? e.name : 'unknown' }, 'livetv pin import failed'); });
+        }
+      } catch (e) { req.log.warn({ channelId: cid, error: e instanceof Error ? e.name : 'unknown' }, 'livetv pin import not scheduled'); }
       return c;
     } catch (e) { return channelRefused(e, reply); }
   });

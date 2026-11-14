@@ -335,6 +335,10 @@ export type EpgSearchQuery = z.output<typeof epgSearchQuery>;
 type EpgHit = { xmlId: string; names: string[] };
 const byFirstName = (a: EpgHit, b: EpgHit) => (a.names[0] ?? a.xmlId).toLowerCase().localeCompare((b.names[0] ?? b.xmlId).toLowerCase()) || a.xmlId.localeCompare(b.xmlId);
 
+const NORM_INDEX_TTL_MS = 60_000;
+const NORM_INDEX_MAX = 8;
+const normIndex = new Map<string, { stamp: number; at: number; rows: Array<{ hit: EpgHit; norms: string[] }> }>();
+
 /**
  * `GET /epg/channels?source=&q=`: the XMLTV channels of one guide (a list with a guide or an enabled extra guide, else ChannelRefusal
  * 400 `source`) whose display name or id contains `q` (case-insensitive); without such a hit, those whose normName contains normName(q)
@@ -351,9 +355,17 @@ export async function searchEpgChannels(ctx: Pick<Ctx, 'db'>, q: EpgSearchQuery)
   let hits: EpgHit[] = rows.map((r) => ({ xmlId: r.xml_id, names: r.names }));
   const norm = normName(text);
   if (hits.length === 0 && norm) {
-    // the fallback reads the guide's whole index (at most 100 000 channels, admin only, only when the plain search found nothing)
-    const all = (await ctx.db.query<{ xml_id: string; names: string[] }>('select xml_id, names from livetv_epg_channels where source_id = $1', [q.source])).rows;
-    hits = all.filter((r) => r.names.some((n) => normName(n).includes(norm))).map((r) => ({ xmlId: r.xml_id, names: r.names })).sort(byFirstName);
+    // the fallback needs normName (JS), so the guide's normalised index is kept for a minute, keyed by the guide's last EPG refresh
+    const stamp = (await ctx.db.query<{ t: Date | null }>('select epg_last_refresh_at as t from livetv_sources where id = $1', [q.source])).rows[0]?.t?.getTime() ?? 0;
+    let idx = normIndex.get(q.source);
+    if (!idx || idx.stamp !== stamp || Date.now() - idx.at > NORM_INDEX_TTL_MS) {
+      const all = (await ctx.db.query<{ xml_id: string; names: string[] }>('select xml_id, names from livetv_epg_channels where source_id = $1', [q.source])).rows;
+      idx = { stamp, at: Date.now(), rows: all.map((r) => ({ hit: { xmlId: r.xml_id, names: r.names }, norms: r.names.map(normName) })) };
+      normIndex.delete(q.source);
+      normIndex.set(q.source, idx);
+      for (const k of normIndex.keys()) { if (normIndex.size <= NORM_INDEX_MAX) break; normIndex.delete(k); }
+    }
+    hits = idx.rows.filter((r) => r.norms.some((n) => n.includes(norm))).map((r) => r.hit).sort(byFirstName);
   }
   return { channels: hits.slice(0, EPG_SEARCH_MAX), more: hits.length > EPG_SEARCH_MAX };
 }

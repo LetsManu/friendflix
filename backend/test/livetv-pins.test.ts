@@ -89,7 +89,7 @@ async function createGuide(name = 'Sternwarte Guide', url = GUIDE_URL): Promise<
 async function settle(sourceId: string): Promise<void> {
   for (let i = 0; i < 100; i++) {
     await new Promise((r) => setTimeout(r, 20));
-    if (!(await refreshRunning(env.ctx, sourceId))) return;
+    if (!(await refreshRunning(env.ctx, sourceId)) && (await env.kv.get(`ltv:pinimport:${sourceId}`)) === null) return;
   }
   throw new Error('import still running');
 }
@@ -103,6 +103,8 @@ beforeEach(async () => {
   await env.pool.query(`delete from livetv_programmes; delete from livetv_programmes_stage; delete from livetv_epg_channels; delete from livetv_channels;
     delete from livetv_group_map; delete from livetv_groups; delete from livetv_logos; delete from livetv_sources; delete from audit_log`);
   for (const k of await env.kv.keys('ltv')) await env.kv.del(k);
+  env.ctx.pinImportDelayMs = 60;
+  env.ctx.pinImportPollMs = 20;
   calls.length = 0;
   guides.clear();
   env.ctx.fetchImpl = fakeHttp({
@@ -146,6 +148,29 @@ describe('hand pins (Task 7)', () => {
     expect((await pin(ch, { sourceId: g, xmlId: 'hk.de' })).statusCode).toBe(200);
     await settle(g);
     expect(xmltvCalls()).toHaveLength(0);
+  });
+
+  it('pins made in quick succession share one import; a pin during a running import gets one trailing import', async () => {
+    const list = await addList('Nordlicht Paket');
+    const [a, b, c, d] = await Promise.all(['Eins', 'Zwei', 'Drei', 'Vier'].map((n) => addChannel(list, n)));
+    const g = await createGuide();
+    guides.set(GUIDE_URL, guide([['a.de', 'A'], ['b.de', 'B'], ['c.de', 'C'], ['d.de', 'D']]));
+    await refreshEpg(env.ctx, await src(g));
+    calls.length = 0;
+    for (const [ch, x] of [[a, 'a.de'], [b, 'b.de'], [c, 'c.de']] as const) expect((await pin(ch, { sourceId: g, xmlId: x })).statusCode).toBe(200);
+    await settle(g);
+    expect(xmltvCalls()).toHaveLength(1);
+    expect([...(xmltvCalls()[0]!.body as { channels: string[] }).channels].sort()).toEqual(['a.de', 'b.de', 'c.de']);
+    // the guide's lock is held (an import running): the pin waits, then one trailing import sees it
+    calls.length = 0;
+    await env.kv.setnx(`ltv:refresh:${g}`, 'other', 60);
+    expect((await pin(d, { sourceId: g, xmlId: 'd.de' })).statusCode).toBe(200);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(xmltvCalls()).toHaveLength(0);
+    await env.kv.del(`ltv:refresh:${g}`);
+    await settle(g);
+    expect(xmltvCalls()).toHaveLength(1);
+    expect((xmltvCalls()[0]!.body as { channels: string[] }).channels).toContain('d.de');
   });
 
   it('a pin beats a list match; a list with a guide is a pin target too', async () => {

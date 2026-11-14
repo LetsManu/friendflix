@@ -226,15 +226,45 @@ async function epgStep(ctx: Ctx, source: SourceRow, token: string): Promise<void
  * Refreshes only the EPG of a source (the tick's 24-h due check), under the same single-flight lock as refreshSource. The own-feeds
  * source and a source without an EPG URL are skipped (F16).
  */
-export async function refreshSourceEpg(ctx: Ctx, id: string): Promise<void> {
+export async function refreshSourceEpg(ctx: Ctx, id: string, opts: { onStart?: () => Promise<void> } = {}): Promise<boolean> {
   const token = randomBytes(12).toString('hex');
-  if (!(await ctx.kv.setnx(lockKey(id), token, LOCK_TTL_S))) return;
+  if (!(await ctx.kv.setnx(lockKey(id), token, LOCK_TTL_S))) return false;
   try {
+    await opts.onStart?.();
     const source = (await ctx.db.query<SourceRow>('select * from livetv_sources where id = $1', [id])).rows[0];
-    if (!source || !hasEpg(source)) return;
+    if (!source || !hasEpg(source)) return true;
     await epgStep(ctx, source, token);
+    return true;
   } finally {
     await ctx.kv.delIfEquals(lockKey(id), token);
+  }
+}
+
+const pinImportKey = (id: string) => `ltv:pinimport:${id}`;
+const PIN_IMPORT_WINDOW_S = 30;
+const PIN_IMPORT_DELAY_MS = 4000;
+const PIN_IMPORT_POLL_MS = 2000;
+const sleepUnref = (ms: number) => new Promise<void>((res) => { setTimeout(res, ms).unref(); });
+
+/**
+ * The background import after a hand pin, coalesced per source: the first call within 30 s sets `ltv:pinimport:<id>` and runs one
+ * EPG import after ~4 s (ctx.pinImportDelayMs); later calls only return. At run time a busy single-flight lock is polled (at most
+ * the lock's TTL) until free, so the run reads the filter after every pin made meanwhile; the key is cleared when the run starts.
+ * Resolves when the run ended (callers do not await it in production).
+ */
+export async function schedulePinImport(ctx: Ctx, id: string): Promise<void> {
+  if (!(await ctx.kv.setnx(pinImportKey(id), '1', PIN_IMPORT_WINDOW_S))) return;
+  let started = false;
+  try {
+    await sleepUnref(ctx.pinImportDelayMs ?? PIN_IMPORT_DELAY_MS);
+    const poll = ctx.pinImportPollMs ?? PIN_IMPORT_POLL_MS;
+    const until = Date.now() + LOCK_TTL_S * 1000;
+    while (!(await refreshSourceEpg(ctx, id, { onStart: async () => { started = true; await ctx.kv.del(pinImportKey(id)); } }))) {
+      if (Date.now() >= until) return;
+      await sleepUnref(poll);
+    }
+  } finally {
+    if (!started) await ctx.kv.del(pinImportKey(id)).catch(() => undefined); // gave up: a later pin may schedule again
   }
 }
 
