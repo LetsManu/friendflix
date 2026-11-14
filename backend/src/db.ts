@@ -1088,6 +1088,13 @@ export const MIGRATIONS: string[] = [
   alter table livetv_sources drop constraint if exists livetv_sources_guide_check;
   alter table livetv_sources add constraint livetv_sources_guide_check check ((kind = 'guide') = (guide_provider is not null));
   `,
+  // 53: Live TV extra guides Stage 2 (uploaded XMLTV files): what the admin card shows of a file guide's stored file, set together with
+  // guide_file when an upload's import succeeded: the name it was uploaded with (cut, control characters dropped) and its size in
+  // bytes. Rerunnable.
+  `
+  alter table livetv_sources add column if not exists guide_file_name text;
+  alter table livetv_sources add column if not exists guide_file_bytes bigint;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

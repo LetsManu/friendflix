@@ -1,14 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, randomUUID } from 'node:crypto';
+import { stat } from 'node:fs/promises';
 import type pg from 'pg';
 import type { Ctx } from '../ctx.js';
 import type { Db } from '../db.js';
 import { EFFECTIVE_SHIFT_SQL, isOwnFeeds } from './channels.js';
 import { LivetvError, dropLivetvProof, livetvStream } from './client.js';
+import { fileSha256, headThenFile, storedGuideFile } from './guidefiles.js';
 import { importLogos } from './logos.js';
 import { invalidateLivetvRights } from './rights.js';
-import { GUIDE_KIND, isGuide, sourceSecrets, type SourceRow } from './sources.js';
+import { GUIDE_KIND, isFileGuide, isGuide, sourceSecrets, type SourceRow } from './sources.js';
 import type { XmlItem } from './wire.js';
 
 /**
@@ -34,6 +36,11 @@ import type { XmlItem } from './wire.js';
  * 2 000 ids or 48 KB (livetv's body cap is 64 KB) is omitted, and that run then replaces the index as well. An empty filter downloads
  * nothing. A channel the provider adds to its XMLTV is invisible to matching until the next index run (up to 7 days; also a guide that
  * had no channels is looked at only that often).
+ *
+ * An uploaded guide (guide_provider 'xmltv_file', extra guides Stage 2) is read the same way from its stored file, which is posted to
+ * livetv's `POST /v1/parse/xmltv` (guidefiles.ts; the backend never parses XML). Its index runs again when the file's SHA-256 changed
+ * (instead of the URL), and a fresh index is stored only together with the programmes of a successful run: a failed import keeps the
+ * old file's programmes and index.
  */
 
 /** livetv's own XMLTV timeout is 10 min; the backend waits a little longer so livetv answers the code */
@@ -373,14 +380,45 @@ function readItem(raw: Record<string, unknown>): XmlItem | null {
   return null;
 }
 
+/** the item filter of an XMLTV request (livetv/src/routes/fetch.ts xmltvFilter) */
+type Filter = { channels?: string[]; from: number; to: number };
 /**
- * Streams `/v1/fetch/xmltv` and hands each item to `onItem`. Complete only with the `end` line; anything else is a fixed code. The
- * body is cancelled whenever reading stops early (livetv then stops the provider download; client.ts clears its timer at once).
+ * where a refresh reads its XMLTV: `key` is what the stored index was built from (the link's or the file's hash), `open` asks livetv
+ * for the items of a filter (throws LivetvError), `deferIndex` = a fresh index is stored only with a successful programme run (files)
  */
-async function readXmltv(ctx: Ctx, body: Record<string, unknown>, onItem: OnItem): Promise<StreamEnd> {
+interface Feed { key: string; deferIndex: boolean; open(f: Filter): Promise<Response> }
+
+/** a guide link (a list's or an extra guide's): `POST /v1/fetch/xmltv` */
+function linkFeed(ctx: Ctx, source: SourceRow, url: string): Feed {
+  const base = { url, allowLan: source.allow_lan, ...(source.user_agent ? { userAgent: source.user_agent } : {}) };
+  return { key: sha256(url), deferIndex: false, open: (f) => livetvStream(ctx, '/v1/fetch/xmltv', { ...base, ...f }, { timeoutMs: XMLTV_TIMEOUT_MS }) };
+}
+
+/**
+ * an uploaded guide's file: `POST /v1/parse/xmltv` with the filter line and the file's bytes, signed by their SHA-256 (read once to hash,
+ * once to send; the file is replaced only under the source's lock, so both reads see the same bytes)
+ */
+function fileFeed(ctx: Ctx, file: { path: string; sha256: string }): Feed {
+  return {
+    key: `file:${file.sha256}`,
+    deferIndex: true,
+    open: async (f) => {
+      const head = Buffer.from(`${JSON.stringify(f)}\n`);
+      const size = (await stat(file.path)).size;
+      const raw = { raw: headThenFile(head, file.path), sha256: await fileSha256(file.path, head), length: head.length + size };
+      return livetvStream(ctx, '/v1/parse/xmltv', raw, { timeoutMs: XMLTV_TIMEOUT_MS });
+    },
+  };
+}
+
+/**
+ * Streams the feed's NDJSON answer and hands each item to `onItem`. Complete only with the `end` line; anything else is a fixed code.
+ * The body is cancelled whenever reading stops early (livetv then stops the provider download; client.ts clears its timer at once).
+ */
+async function readXmltv(ctx: Ctx, feed: Feed, filter: Filter, onItem: OnItem): Promise<StreamEnd> {
   let r: Response;
   try {
-    r = await livetvStream(ctx, '/v1/fetch/xmltv', body, { timeoutMs: XMLTV_TIMEOUT_MS });
+    r = await feed.open(filter);
   } catch (e) {
     // (a failed connection already withdrew the proof, client.ts signedFetch)
     if (e instanceof LivetvError) return { error: e.status === null ? 'livetv_unreachable' : e.code };
@@ -490,10 +528,12 @@ async function stageProgrammes(db: Tx, sourceId: string, runId: string, batch: r
  * the request filter: every stored xml id of this source any auto channel (or a manual mapping) could use; undefined = too big. For an
  * extra guide only the auto channels in its scope that no list's guide matches count (it only fills those), plus its manual mappings.
  */
-async function filterIds(ctx: Ctx, source: Pick<SourceRow, 'id' | 'kind' | 'guide_scope'>): Promise<string[] | undefined> {
+async function filterIds(ctx: Ctx, source: Pick<SourceRow, 'id' | 'kind' | 'guide_scope'>, fresh?: Map<string, string[]>): Promise<string[] | undefined> {
   const sourceId = source.id;
   const guide = isGuide(source.kind);
-  const s = buildEpgIndex(await indexRows(ctx, sourceId)).sources.get(sourceId);
+  // `fresh`: an index just read and not stored yet (an uploaded file's)
+  const index = fresh ? [...fresh].map(([xmlId, names]) => ({ sourceId, xmlId, names })) : await indexRows(ctx, sourceId);
+  const s = buildEpgIndex(index).sources.get(sourceId);
   if (!s) return [];
   const lists = guide ? (await matchIndexes(ctx.db)).lists : null;
   const out = new Set<string>();
@@ -512,42 +552,43 @@ async function filterIds(ctx: Ctx, source: Pick<SourceRow, 'id' | 'kind' | 'guid
   return ids;
 }
 
-async function importEpg(ctx: Ctx, source: SourceRow, url: string, icons: Map<string, string>): Promise<{ channels: number; programmes: number } | { error: string }> {
-  const base = { url, allowLan: source.allow_lan, ...(source.user_agent ? { userAgent: source.user_agent } : {}) };
-  const urlHash = sha256(url);
+async function importEpg(ctx: Ctx, source: SourceRow, feed: Feed, icons: Map<string, string>): Promise<{ channels: number; programmes: number } | { error: string }> {
   const keepIcon = (it: Extract<XmlItem, { t: 'channel' }>) => { if (it.icon) icons.set(iconKey(source.id, it.id), it.icon); };
   const pool = ctx.db as pg.Pool;
   const storedCount = async () => (await ctx.db.query<{ n: number }>('select count(*)::int as n from livetv_epg_channels where source_id = $1', [source.id])).rows[0]!.n;
 
-  // the index of the source's XMLTV channels: from a run without programmes when it is older than 7 days or the URL changed (a guide
-  // without channels is looked at again only then, too)
-  if ((await ctx.kv.get(indexKey(source.id))) !== urlHash) {
+  // the index of the source's XMLTV channels: from a run without programmes when it is older than 7 days or the URL (the file) changed
+  // (a guide without channels is looked at again only then, too). A file's fresh index waits for the programme run (`fresh`).
+  let fresh: Map<string, string[]> | undefined;
+  if ((await ctx.kv.get(indexKey(source.id))) !== feed.key) {
     const chans = new Map<string, string[]>();
-    const r = await readXmltv(ctx, { ...base, from: 0, to: 1 }, (it) => {
+    const r = await readXmltv(ctx, feed, { from: 0, to: 1 }, (it) => {
       if (it.t !== 'channel') return;
       if (!chans.has(it.id) && chans.size >= MAX_EPG_CHANNELS) return 'too_big';
       chans.set(it.id, it.names);
       keepIcon(it);
     });
     if ('error' in r) return r;
-    const c = await pool.connect();
-    try {
-      await c.query('begin');
-      await storeEpgChannels(c, source.id, chans, true);
-      await c.query('commit');
-    } catch (e) {
-      await c.query('rollback').catch(() => undefined);
-      throw e;
-    } finally {
-      c.release();
+    if (feed.deferIndex) fresh = chans;
+    else {
+      await inTx(pool, (c) => storeEpgChannels(c, source.id, chans, true));
+      await ctx.kv.set(indexKey(source.id), feed.key, INDEX_TTL_S);
     }
-    await ctx.kv.set(indexKey(source.id), urlHash, INDEX_TTL_S);
   }
 
-  const filter = await filterIds(ctx, source);
+  const filter = await filterIds(ctx, source, fresh);
   if (filter?.length === 0) {
-    // no channel could use this guide: nothing to download; the source's programmes go (one statement)
-    await ctx.db.query('delete from livetv_programmes where source_id = $1', [source.id]);
+    // no channel could use this guide: nothing to download; the source's programmes go (one statement; with a file's fresh index)
+    if (fresh) {
+      const index = fresh;
+      await inTx(pool, async (c) => {
+        await c.query('delete from livetv_programmes where source_id = $1', [source.id]);
+        await storeEpgChannels(c, source.id, index, true);
+      });
+      await ctx.kv.set(indexKey(source.id), feed.key, INDEX_TTL_S);
+    } else {
+      await ctx.db.query('delete from livetv_programmes where source_id = $1', [source.id]);
+    }
     return { channels: await storedCount(), programmes: 0 };
   }
   const now = Date.now();
@@ -557,7 +598,7 @@ async function importEpg(ctx: Ctx, source: SourceRow, url: string, icons: Map<st
     let batch: ProgItem[] = [];
     let programmes = 0;
     // the batches are staged with short autocommitted inserts: no transaction and no connection is held while the stream is read
-    const r = await readXmltv(ctx, { ...base, ...(filter ? { channels: filter } : {}), from: now - WINDOW_BACK_MS, to: now + WINDOW_AHEAD_MS }, async (it) => {
+    const r = await readXmltv(ctx, feed, { ...(filter ? { channels: filter } : {}), from: now - WINDOW_BACK_MS, to: now + WINDOW_AHEAD_MS }, async (it) => {
       if (it.t === 'channel') {
         if (!chans.has(it.id) && chans.size >= MAX_EPG_CHANNELS) return 'too_big';
         chans.set(it.id, it.names);
@@ -586,8 +627,10 @@ async function importEpg(ctx: Ctx, source: SourceRow, url: string, icons: Map<st
            is_new, previously_shown, rating)
          select source_id, xml_channel, start_at, end_at, title, subtitle, description, categories, episode, series_key,
            is_new, previously_shown, rating from livetv_programmes_stage where run_id = $1`, [runId]);
+      // a file's fresh index replaces the stored one now, with the programmes it belongs to
+      if (fresh) await storeEpgChannels(c, source.id, fresh, true);
       // filtered: only the listed channels came, the others stay in the index; unfiltered: the run is a complete index
-      await storeEpgChannels(c, source.id, chans, filter === undefined);
+      await storeEpgChannels(c, source.id, chans, filter === undefined && !fresh);
       await c.query('commit');
     } catch (e) {
       await c.query('rollback').catch(() => undefined);
@@ -595,11 +638,26 @@ async function importEpg(ctx: Ctx, source: SourceRow, url: string, icons: Map<st
     } finally {
       c.release();
     }
-    if (filter === undefined) await ctx.kv.set(indexKey(source.id), urlHash, INDEX_TTL_S);
+    if (filter === undefined || fresh) await ctx.kv.set(indexKey(source.id), feed.key, INDEX_TTL_S);
     return { channels: chans.size, programmes };
   } finally {
     // success or failure: the run's staging rows go (a crashed process leaves them to the daily prune)
     await ctx.db.query('delete from livetv_programmes_stage where run_id = $1', [runId]).catch(() => undefined);
+  }
+}
+
+/** one short transaction */
+async function inTx(pool: pg.Pool, fn: (c: pg.PoolClient) => Promise<void>): Promise<void> {
+  const c = await pool.connect();
+  try {
+    await c.query('begin');
+    await fn(c);
+    await c.query('commit');
+  } catch (e) {
+    await c.query('rollback').catch(() => undefined);
+    throw e;
+  } finally {
+    c.release();
   }
 }
 
@@ -618,11 +676,30 @@ async function record(ctx: Ctx, id: string, at: Date, error: string | null, coun
  * memory, so their logos are fetched in the same refresh (F17). The own-feeds source and a source without an EPG URL have nothing to
  * refresh (`no_epg`, nothing recorded). `heartbeat` is called every minute on a timer while the import runs (the caller's lock).
  * Unexpected errors are recorded as `internal` and rethrown.
+ *
+ * An uploaded guide reads its stored file (`no_file` when it has none yet, nothing recorded; recorded when the stored file is gone), or,
+ * with `file`, a just received upload; `onSuccess` runs after the swap committed and before the outcome is recorded (the upload makes
+ * its file the current one there; refresh.ts).
  */
-export async function refreshEpg(ctx: Ctx, source: SourceRow, o: { heartbeat?: () => Promise<unknown> } = {}): Promise<{ channels: number; programmes: number } | { error: string }> {
-  if (isOwnFeeds(source.kind) || !source.epg_url_enc) return { error: 'no_epg' };
-  const { epgUrl } = await sourceSecrets(ctx, source.id);
-  if (!epgUrl) return { error: 'no_epg' };
+export async function refreshEpg(
+  ctx: Ctx, source: SourceRow,
+  o: { heartbeat?: () => Promise<unknown>; file?: { path: string; sha256: string }; onSuccess?: () => Promise<void> } = {},
+): Promise<{ channels: number; programmes: number } | { error: string }> {
+  if (isOwnFeeds(source.kind)) return { error: 'no_epg' };
+  let feed: Feed;
+  if (isFileGuide(source)) {
+    const file = o.file ?? (source.guide_file ? await storedGuideFile(ctx, source.guide_file) : null);
+    if (!file) {
+      if (source.guide_file) await record(ctx, source.id, new Date(), 'no_file', null); // the stored file is gone (a wiped volume)
+      return { error: 'no_file' };
+    }
+    feed = fileFeed(ctx, file);
+  } else {
+    if (!source.epg_url_enc) return { error: 'no_epg' };
+    const { epgUrl } = await sourceSecrets(ctx, source.id);
+    if (!epgUrl) return { error: 'no_epg' };
+    feed = linkFeed(ctx, source, epgUrl);
+  }
   const at = new Date();
   const icons = new Map<string, string>();
   let r: { channels: number; programmes: number } | { error: string };
@@ -630,7 +707,8 @@ export async function refreshEpg(ctx: Ctx, source: SourceRow, o: { heartbeat?: (
   const timer = o.heartbeat ? setInterval(() => { void o.heartbeat!().catch(() => undefined); }, HEARTBEAT_MS) : undefined;
   timer?.unref();
   try {
-    r = await importEpg(ctx, source, epgUrl, icons);
+    r = await importEpg(ctx, source, feed, icons);
+    if (!('error' in r) && o.onSuccess) await o.onSuccess();
     await record(ctx, source.id, at, 'error' in r ? r.error : null, 'error' in r ? null : r);
   } catch (e) {
     await record(ctx, source.id, at, 'internal', null).catch(() => undefined);

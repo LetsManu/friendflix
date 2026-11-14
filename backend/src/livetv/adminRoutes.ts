@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
@@ -22,10 +23,14 @@ import { isHomeRequest } from '../netaddr.js';
 import { clearJoinMark, startOrJoin } from './streams.js';
 import { adminStopKey, liveSidHash, mintLiveToken, revokeLiveToken } from './tokens.js';
 import { epgSummary } from './epg.js';
-import { refreshRunning, refreshSource } from './refresh.js';
+import { refreshRunning, refreshSource, uploadGuideFile } from './refresh.js';
+import { GUIDE_FILE_MAX_BYTES } from './guidefiles.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
 import { FeedError, createFeed, deleteFeed, feedCreate, ingestView, reassignPort, regenerateCredentials, syncIngest } from './ownfeeds.js';
-import { SourceRefusal, SourceTestError, anyTestBody, createSource, deleteSource, isGuide, listSources, sourceCreate, sourcePatch, testGuide, testSource, updateSource } from './sources.js';
+import {
+  SourceRefusal, SourceTestError, anyTestBody, createSource, deleteSource, isFileGuide, isGuide, listSources, sourceCreate, sourcePatch, testGuide, testSource,
+  updateSource,
+} from './sources.js';
 
 /** the line for an install without the updater (spec §4.3); the page shows it with the compose commands */
 const ENV_LINE = 'COMPOSE_PROFILES=livetv';
@@ -61,6 +66,8 @@ const orderBody = z.object({ ids: z.array(id).max(5000) }).strict();
 const mergeBody = z.object({ ids: z.array(id).min(1).max(500), into: id }).strict();
 
 type Reply = { code(n: number): { send(b: unknown): unknown } };
+/** what an XMLTV file upload may be sent as (a browser names `.xml` text/xml or application/xml, `.gz` application/gzip or x-gzip) */
+const GUIDE_FILE_TYPES: readonly string[] = ['application/octet-stream', 'application/xml', 'text/xml', 'application/gzip', 'application/x-gzip'];
 /** Zod safeParse with the fixed refusal `{ error: 'invalid', field }` (the input is never echoed) */
 function parse<T>(schema: z.ZodType<T>, body: unknown, reply: Reply): T | undefined {
   const p = schema.safeParse(body ?? {});
@@ -321,16 +328,21 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
    * *Aktualisieren*: starts the refresh and answers 202 `{ started: true }` at once; the page polls `GET /sources` for `state`
    * (lastRefreshAt, lastError, counts). A refresh already running for the source is not started again (`{ started: false }`; the single
    * flight in refresh.ts also covers the race). A disabled guide answers 409 `disabled`. The own-feeds source has no list (409 `no_list`); while livetv is not installed nothing
-   * could be fetched (409 `livetv_off`, nothing recorded on the source).
+   * could be fetched (409 `livetv_off`, nothing recorded on the source). An uploaded guide re-imports its stored file; without one yet
+   * it answers 409 `no_file`.
    */
   app.post('/api/admin/livetv/sources/:id/refresh', admin, async (req, reply) => {
     const sid = paramId(req);
-    const s = sid ? (await ctx.db.query<{ kind: string; enabled: boolean }>('select kind, enabled from livetv_sources where id = $1', [sid])).rows[0] : undefined;
+    const s = sid
+      ? (await ctx.db.query<{ kind: string; enabled: boolean; guide_provider: string | null; guide_file: string | null }>(
+        'select kind, enabled, guide_provider, guide_file from livetv_sources where id = $1', [sid])).rows[0]
+      : undefined;
     if (!sid || !s) return reply.code(404).send({ error: 'not_found' });
     if (isOwnFeeds(s.kind)) return reply.code(409).send({ error: 'no_list' });
     if (!livetvInstalled(ctx)) return reply.code(409).send({ error: 'livetv_off' });
     if (isGuide(s.kind) && !s.enabled) return reply.code(409).send({ error: 'disabled' }); // a disabled guide is not refreshed
     if (await refreshRunning(ctx, sid)) return reply.code(202).send({ started: false });
+    if (isFileGuide(s) && !s.guide_file) return reply.code(409).send({ error: 'no_file' }); // (its first upload may be importing: above)
     await audit(ctx, req.user!.id, 'livetv.source.refresh', sid, { fields: [] });
     const log = req.log;
     // failures are recorded on the source (fixed code, event, notice); only an unexpected error is logged, by its name only
@@ -560,6 +572,52 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
       try {
         return (await setLogo(ctx, req.user!.id, cid, type, req.body)) ?? reply.code(404).send({ error: 'not_found' });
       } catch (e) { return channelRefused(e, reply); }
+    });
+  });
+
+  // ---- the file of an uploaded guide (extra guides Stage 2) ----
+
+  /**
+   * `PUT /api/admin/livetv/sources/:id/file`: the raw bytes of an XMLTV file (`.xml` or gzip, recognised by its first bytes; no
+   * multipart), at most 300 MB, streamed to disk (refresh.ts uploadGuideFile). `?name=` may carry the file's own name for the card.
+   * Answers 202 `{ started: true }` once the file is received; its import runs on and the page polls `GET /sources` (`state.epg`,
+   * `fileName`, `fileBytes`). Refusals: 404 `not_found`; 400 `invalid` (`field: 'file'`) for a source that is not an uploaded guide, another
+   * content type or an empty body; 413 `too_large` (declared or counted); 409 `livetv_off` (nothing could import it), 409
+   * `import_running` (an upload or a refresh of this guide is running). The admin check runs before the body is read (onRequest), the
+   * CSRF hook before the handler reads it; the file is never parsed here and never served back.
+   */
+  void app.register(async (sub) => {
+    // the body stays a stream: the handler reads it (after the admin and CSRF checks)
+    sub.addContentTypeParser('*', (_req, payload, done) => done(null, payload));
+    // a body the framework itself parses (JSON) and refuses: fixed codes instead of its messages
+    sub.setErrorHandler((err, _req, reply) => {
+      const code = (err as { code?: string }).code;
+      if (code === 'FST_ERR_CTP_BODY_TOO_LARGE') return reply.code(413).send({ error: 'too_large' });
+      if (typeof code === 'string' && code.startsWith('FST_ERR_CTP_')) return reply.code(400).send({ error: 'invalid', field: 'file' });
+      throw err;
+    });
+    sub.put('/api/admin/livetv/sources/:id/file', { onRequest: requireAdmin(ctx) }, async (req, reply) => {
+      reply.header('cache-control', 'no-store');
+      const sid = paramId(req);
+      const s = sid
+        ? (await ctx.db.query<{ kind: string; guide_provider: string | null }>('select kind, guide_provider from livetv_sources where id = $1', [sid])).rows[0]
+        : undefined;
+      if (!sid || !s) return reply.code(404).send({ error: 'not_found' });
+      const type = String(req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+      const body = req.body as Readable | undefined;
+      if (!isFileGuide(s) || !GUIDE_FILE_TYPES.includes(type) || !(body instanceof Readable)) return reply.code(400).send({ error: 'invalid', field: 'file' });
+      if (Number(req.headers['content-length'] ?? 0) > GUIDE_FILE_MAX_BYTES) return reply.code(413).send({ error: 'too_large' });
+      if (!livetvInstalled(ctx)) return reply.code(409).send({ error: 'livetv_off' });
+      const name = (req.query as { name?: unknown } | undefined)?.name;
+      const r = await uploadGuideFile(ctx, sid, body, { name: typeof name === 'string' ? name : undefined, log: req.log });
+      if ('started' in r) {
+        await audit(ctx, req.user!.id, 'livetv.source.file', sid, { fields: ['file'] });
+        return reply.code(202).send(r);
+      }
+      if (r.error === 'import_running') return reply.code(409).send({ error: 'import_running' });
+      if (r.error === 'too_large') return reply.code(413).send({ error: 'too_large' });
+      if (r.error === 'not_found') return reply.code(404).send({ error: 'not_found' });
+      return reply.code(400).send({ error: 'invalid', field: 'file' }); // empty, or the upload broke off
     });
   });
 

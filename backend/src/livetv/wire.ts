@@ -60,13 +60,14 @@ export type XmlItem =
     seriesId?: string; isNew?: boolean; prevShown?: boolean; rating?: string;
   };
 /**
- * One line of the `POST /v1/fetch/xmltv` NDJSON answer (livetv/src/routes/fetch.ts `XmltvLine`); the last line is `end` (complete) or
- * `error` (failed), never both. A stream without its `end` line failed.
+ * One line of the `POST /v1/fetch/xmltv` (and `/v1/parse/xmltv`) NDJSON answer (livetv/src/routes/fetch.ts `XmltvLine`); the last line
+ * is `end` (complete) or `error` (failed), never both. A stream without its `end` line failed. `bad_signature`: a posted file whose bytes
+ * were not the signed ones.
  */
 export type XmltvLine =
   | XmlItem
   | { t: 'end'; programmes: number; channels: number }
-  | { t: 'error'; code: FetchErrorCode | XmltvErrorCode };
+  | { t: 'error'; code: FetchErrorCode | XmltvErrorCode | 'bad_signature' };
 
 /** the input of `POST /v1/probe` (body `{ input }`; livetv/src/probe.ts `StreamInput`); `{ push }` names the channel id of a push feed */
 export type StreamInput = { url: string; kind: 'hls' | 'ts' | 'srt'; userAgent?: string; allowLan: boolean } | { push: string };
