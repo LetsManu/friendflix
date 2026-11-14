@@ -117,7 +117,7 @@ jobs:
             e2e/playwright-report/
             e2e/test-results/
           retention-days: 7
-  # OWASP ZAP baseline (passive) scan against the built web app, started like in `e2e` (node web/build, no backend).
+  # OWASP ZAP baseline (passive) scan against the built web app, started like in `e2e` (node web/server, no backend).
   # Fails on High-risk alerts, Medium/Low become warnings. Suppressions with reasons: .zap/rules.tsv. Report: artifact `zap-report`.
   dast:
     runs-on: ubuntu-latest
@@ -134,7 +134,7 @@ jobs:
       - run: npm run build -w web
       - name: Start web app
         run: |
-          PORT=4173 HOST=127.0.0.1 ORIGIN="$TARGET" nohup node web/build > "$RUNNER_TEMP/web.log" 2>&1 &
+          PORT=4173 HOST=127.0.0.1 ORIGIN="$TARGET" nohup node web/server > "$RUNNER_TEMP/web.log" 2>&1 &
           for _ in $(seq 1 60); do curl -fsS -o /dev/null "$TARGET/offline" && exit 0; sleep 1; done
           cat "$RUNNER_TEMP/web.log"; exit 1
       - name: ZAP baseline scan
