@@ -295,7 +295,7 @@ describe('normalizePath', () => {
 describe('baseHeaders', () => {
   it('nosniff everywhere; CORP same-origin, cross-origin only on the cast and live paths', () => {
     expect(baseHeaders(`/media/Items/${ID}/Images/Primary`)).toEqual({ 'x-content-type-options': 'nosniff', 'cross-origin-resource-policy': 'same-origin' });
-    for (const u of ['/health', '/media/d/x', '/media/joined/master.m3u8', '/x/media/c/t/a']) expect(baseHeaders(u)['cross-origin-resource-policy'], u).toBe('same-origin');
+    for (const u of ['/health', '/media/d/x', '/media/joined/master.m3u8', '/x/media/c/t/a', `/media/c/x/../../Items/${ID}/Images/Primary`]) expect(baseHeaders(u)['cross-origin-resource-policy'], u).toBe('same-origin');
     for (const u of [`/media/c/${CT}/x.m3u8`, '/media/l/tok/index.m3u8', '/media/./c/t/a']) expect(baseHeaders(u)['cross-origin-resource-policy'], u).toBe('cross-origin');
   });
 });

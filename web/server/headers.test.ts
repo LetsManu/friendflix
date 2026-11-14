@@ -51,6 +51,9 @@ describe('cspWithSocketHost', () => {
     expect(cspWithSocketHost("connect-src 'self'", new URL('http://[::1]:3000/'))).toBe("connect-src 'self' wss://[::1]:3000 ws://[::1]:3000");
   });
   it('leaves a policy without connect-src, and a host that is no plain host name, as it is', () => {
+    expect(cspWithSocketHost("connect-src 'self'", new URL('https://friend.example.com./x'))).toBe("connect-src 'self' wss://friend.example.com ws://friend.example.com");
+    expect(cspWithSocketHost("connect-src 'self'", new URL('https://friend.example.com.:8443/x'))).toBe("connect-src 'self' wss://friend.example.com:8443 ws://friend.example.com:8443");
+    expect(cspWithSocketHost("connect-src 'self'", new URL('https://a..b/'))).toBe("connect-src 'self'");
     expect(cspWithSocketHost("default-src 'self'", new URL('https://p.example/'))).toBe("default-src 'self'");
     expect(cspWithSocketHost(csp, new URL("https://a;script-src'*/"))).toBe(csp);
   });

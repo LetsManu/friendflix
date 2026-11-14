@@ -1422,8 +1422,9 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
  */
 export function baseHeaders(rawUrl: string): Record<string, string> {
   let path = rawUrl;
-  try { path = new URL(rawUrl, 'http://x').pathname; } catch { /* the raw path, as handle() dispatches live paths */ }
-  const cast = [rawUrl, path].some((p) => p.startsWith(CAST_PREFIX) || p.startsWith(LIVE_PREFIX));
+  try { path = new URL(rawUrl, 'http://x').pathname; } catch { /* the raw path */ }
+  // exactly as handle() routes: the cast prefix on the normalised path, the live prefix on the normalised or the raw one
+  const cast = path.startsWith(CAST_PREFIX) || path.startsWith(LIVE_PREFIX) || rawUrl.startsWith(LIVE_PREFIX);
   return { 'x-content-type-options': 'nosniff', 'cross-origin-resource-policy': cast ? 'cross-origin' : 'same-origin' };
 }
 

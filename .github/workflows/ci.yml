@@ -460,6 +460,25 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
           skip-setup-trivy: true
+      # web only: the image starts without any backend and serves its static files with the security headers (web/server/index.js)
+      - name: Smoke test (web image serves static files with security headers)
+        if: matrix.service == 'web'
+        env:
+          IMAGE: ${{ env.PUBLISHABLE == 'true' && format('{0}@{1}', steps.img.outputs.name, steps.build.outputs.digest) || 'friendflix-web:ci' }}
+        run: |
+          set -euo pipefail
+          docker run -d --name web-smoke -e PROTOCOL_HEADER=x-forwarded-proto -p 127.0.0.1:3000:3000 "$IMAGE"
+          trap 'docker logs web-smoke || true; docker rm -f web-smoke > /dev/null' EXIT
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://127.0.0.1:3000/ && break
+            [ "$i" -lt 30 ] || { echo "::error::web image did not answer within 30 s"; exit 1; }
+            sleep 1
+          done
+          headers=$(curl -fsSI http://127.0.0.1:3000/favicon.svg)
+          echo "$headers"
+          for h in x-content-type-options:nosniff cross-origin-resource-policy:; do
+            grep -iq "^${h}" <<< "$headers" || { echo "::error::missing header ${h%%:*} on /favicon.svg"; exit 1; }
+          done
   # Reproducible builds (OpenSSF build_reproducible, docs/reproducible-builds.md): each image is rebuilt from scratch by
   # scripts/reproduce-image.sh (fresh docker-container builder with BUILDKIT_IMAGE, --no-cache, context = git archive,
   # SOURCE_DATE_EPOCH = commit time, rewrite-timestamp, no SBOM/provenance) and its image manifest digest must match:

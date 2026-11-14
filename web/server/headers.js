@@ -90,11 +90,14 @@ const PLAIN_HOST = /^(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])(?::\d{1,5})
  * through 'self'; older engines (the TV browsers the Tizen and webOS shells run the app in) only through an explicit source, which
  * used to be the scheme-wide `ws: wss:` (any host). Both schemes: the request's scheme is only as right as the proxy's
  * X-Forwarded-Proto (adapter-node assumes https without it), and a page served over https cannot open ws:// anyway (mixed content).
- * Unchanged when the policy has no connect-src or the host is not a plain host name (a forged Host header never reaches the policy).
+ * Unchanged when the policy has no connect-src or the host is not a plain host name: only a plain host name is reflected into the
+ * policy. One trailing dot (an absolute DNS name) is dropped first. A public port other than 443 must be in the Host header
+ * (the proxy has to forward it) for the websocket origin to carry it.
  */
 export function cspWithSocketHost(/** @type {string} */ csp, /** @type {URL} */ url) {
-  if (!PLAIN_HOST.test(url.host)) return csp;
-  const src = `wss://${url.host} ws://${url.host}`;
+  const host = url.host.replace(/\.(?=:\d+$|$)/, '');
+  if (!PLAIN_HOST.test(host)) return csp;
+  const src = `wss://${host} ws://${host}`;
   return csp.replace(/(^|;\s*)connect-src\b([^;]*)/, (_m, pre, list) => `${pre}connect-src${list.trimEnd()} ${src}`);
 }
 
