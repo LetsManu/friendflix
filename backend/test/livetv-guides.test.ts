@@ -8,7 +8,9 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { decrypt, encrypt, keyFromBase64 } from '../src/crypto.js';
 import { detectLivetv } from '../src/livetv/detect.js';
+import { buildEpgIndex, matchGuides, matchIds, nowNext, refreshEpg } from '../src/livetv/epg.js';
 import { livetvRefreshTick } from '../src/livetv/refresh.js';
+import type { SourceRow } from '../src/livetv/sources.js';
 import { ENC_KEY, fakeHttp, makeEnv, type Call, type TestEnv } from './helpers.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
@@ -242,5 +244,144 @@ describe('guide sources (Task 1)', () => {
     expect(v).toMatchObject({ servedChannels: 2 });
     await call('DELETE', `/api/admin/livetv/sources/${list}`);
     expect(await row(g)).toMatchObject({ enabled: true, guide_scope: null });
+  });
+});
+
+describe('fill-only matching across guides (Task 2)', () => {
+  /** a stored XMLTV channel of a source's index (as an index run leaves it) */
+  const addEpg = (sourceId: string, xmlId: string, ...names: string[]) =>
+    env.pool.query('insert into livetv_epg_channels(source_id, xml_id, names) values ($1, $2, $3)', [sourceId, xmlId, names]);
+  const mapped = async (id: string) => {
+    const c = await chan(id);
+    return c.epg_source_id === null ? null : [c.epg_source_id, c.epg_channel_id];
+  };
+
+  it('matchGuides: the passes in order, the first guide with a hit decides, scope filters', () => {
+    const idx = (rows: Array<[string, string]>) => buildEpgIndex(rows.map(([xmlId, name]) => ({ sourceId: 'g', xmlId, names: [name] }))).sources.get('g')!;
+    const ch = { sourceId: 'L', tvgId: 'sternwarte.int', tvgName: null, importName: 'Sternwarte 24' };
+    const byName = idx([['sw-a', 'Sternwarte 24']]);
+    const byId = idx([['sternwarte.int', 'Andere']]);
+    // pass 1 in a later guide beats pass 3 in an earlier one
+    expect(matchGuides(ch, [{ sourceId: 'g1', scope: null, index: byName }, { sourceId: 'g2', scope: null, index: byId }])).toEqual({ sourceId: 'g2', xmlId: 'sternwarte.int', pass: 1 });
+    // same pass: the first guide wins
+    const byName2 = idx([['sw-b', 'Sternwarte 24']]);
+    expect(matchGuides(ch, [{ sourceId: 'g1', scope: null, index: byName }, { sourceId: 'g2', scope: null, index: byName2 }])).toEqual({ sourceId: 'g1', xmlId: 'sw-a', pass: 3 });
+    // several hits in the first guide with a hit: that pass is ambiguous (a later guide is not asked), the next pass decides
+    const twoIds = idx([['Sternwarte.INT', 'Sternwarte 24'], ['sternwarte.int', 'Sternwarte Zwei']]);
+    expect(matchGuides(ch, [{ sourceId: 'g1', scope: null, index: twoIds }, { sourceId: 'g2', scope: null, index: byId }])).toEqual({ sourceId: 'g1', xmlId: 'Sternwarte.INT', pass: 3 });
+    const dup = idx([['d1', 'Sternwarte 24'], ['d2', 'Sternwarte 24']]);
+    expect(matchGuides(ch, [{ sourceId: 'g1', scope: null, index: dup }, { sourceId: 'g2', scope: null, index: byName2 }])).toBeNull();
+    // a scope without the channel's source skips the guide
+    expect(matchGuides(ch, [{ sourceId: 'g1', scope: ['X'], index: byName }, { sourceId: 'g2', scope: ['L'], index: byName2 }])).toEqual({ sourceId: 'g2', xmlId: 'sw-b', pass: 3 });
+    expect(matchGuides(ch, [{ sourceId: 'g1', scope: ['X'], index: byName }])).toBeNull();
+  });
+
+  it('a guide fills a channel no list guide matches', async () => {
+    const list = await addList('Nordlicht Paket', { epg: LIST_EPG });
+    await addEpg(list, 'nordlicht.de', 'Nordlicht TV');
+    const g = (await createGuide()).json().id;
+    await addEpg(g, 'sternwarte.int', 'Sternwarte 24');
+    const nord = await addChannel(list, 'Nordlicht TV');
+    const stern = await addChannel(list, 'Sternwarte 24');
+    const none = await addChannel(list, 'Kanal Wolkenlos');
+    expect(await matchIds(env.pool)).toEqual({ matched: 2, total: 3 });
+    expect(await mapped(nord)).toEqual([list, 'nordlicht.de']);
+    expect(await mapped(stern)).toEqual([g, 'sternwarte.int']);
+    expect(await mapped(none)).toBeNull();
+  });
+
+  it("a channel matched by its own list's guide keeps that match when a guide also knows it", async () => {
+    const list = await addList('Nordlicht Paket', { epg: LIST_EPG });
+    await addEpg(list, 'nl-own', 'Nordlicht TV'); // a name match (pass 3)
+    const g = (await createGuide()).json().id;
+    await addEpg(g, 'nordlicht.de', 'Nordlicht'); // an id match (pass 1) in the guide
+    const ch = await addChannel(list, 'Nordlicht TV', { tvgId: 'nordlicht.de' });
+    await matchIds(env.pool);
+    expect(await mapped(ch)).toEqual([list, 'nl-own']);
+  });
+
+  it("a channel matched by another list's pooled guide keeps that match", async () => {
+    const a = await addList('Nordlicht Paket', { epg: LIST_EPG, position: 0 });
+    const b = await addList('Hafen Paket', { epg: 'https://iptv.example.com/hafen.xml', position: 1 });
+    await addEpg(b, 'hafenkanal.de', 'Hafenkanal');
+    const g = (await createGuide()).json().id;
+    await addEpg(g, 'hafen.int', 'Hafenkanal');
+    const ch = await addChannel(a, 'Hafenkanal');
+    await matchIds(env.pool);
+    expect(await mapped(ch)).toEqual([b, 'hafenkanal.de']);
+  });
+
+  it("a guide outside a channel's scope is never used", async () => {
+    guides.set(GUIDE_URL, guide([['sternwarte.int', 'Sternwarte 24'], ['hafen.int', 'Hafenkanal']]));
+    const a = await addList('Nordlicht Paket');
+    const b = await addList('Hafen Paket');
+    const inScope = await addChannel(b, 'Hafenkanal');
+    const outside = await addChannel(a, 'Sternwarte 24');
+    const g = (await createGuide({ guideScope: [b] })).json().id;
+    await refreshEpg(env.ctx, (await env.pool.query<SourceRow>('select * from livetv_sources where id = $1', [g])).rows[0]!);
+    expect(await mapped(inScope)).toEqual([g, 'hafen.int']);
+    expect(await mapped(outside)).toBeNull();
+    // the request filter asks only for what the channels in its scope could use
+    const main = xmltvCalls().filter((c) => c.body.from !== 0);
+    expect(main).toHaveLength(1);
+    expect(main[0]!.body.channels).toEqual(['hafen.int']);
+    // all channels: both
+    await call('PATCH', `/api/admin/livetv/sources/${g}`, { guideScope: null });
+    expect(await mapped(outside)).toEqual([g, 'sternwarte.int']);
+  });
+
+  it('the lower position guide wins; after reordering the other one wins on the next pass', async () => {
+    const list = await addList();
+    const g1 = (await createGuide({ name: 'Erster' })).json();
+    const g2 = (await createGuide({ name: 'Zweiter', epgUrl: GUIDE_URL_2 })).json();
+    expect(g1.position).toBeLessThan(g2.position);
+    await addEpg(g1.id, 'sw-1', 'Sternwarte 24');
+    await addEpg(g2.id, 'sw-2', 'Sternwarte 24');
+    const ch = await addChannel(list, 'Sternwarte 24');
+    await matchIds(env.pool);
+    expect(await mapped(ch)).toEqual([g1.id, 'sw-1']);
+    // moving the second guide up (to the first one's place) swaps the two and matches again
+    const r = await call('PATCH', `/api/admin/livetv/sources/${g2.id}`, { position: g1.position });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ position: g1.position });
+    expect((await row(g1.id)).position).toBe(g2.position);
+    expect(await mapped(ch)).toEqual([g2.id, 'sw-2']);
+    await matchIds(env.pool);
+    expect(await mapped(ch)).toEqual([g2.id, 'sw-2']);
+  });
+
+  it('a disabled guide is not used and now/next ignores it', async () => {
+    const list = await addList();
+    const g = (await createGuide()).json().id;
+    await addEpg(g, 'sternwarte.int', 'Sternwarte 24');
+    await env.pool.query('insert into livetv_programmes(source_id, xml_channel, title, start_at, end_at) values ($1, $2, $3, $4, $5)',
+      [g, 'sternwarte.int', 'Sternstunde', new Date(now - 10 * 60_000), new Date(now + 50 * 60_000)]);
+    const auto = await addChannel(list, 'Sternwarte 24');
+    const pinned = await addChannel(list, 'Sternwarte Pin', { map: [g, 'sternwarte.int'] });
+    await matchIds(env.pool);
+    expect(await mapped(auto)).toEqual([g, 'sternwarte.int']);
+    expect((await nowNext(env.ctx, [auto, pinned])).get(auto)?.now?.title).toBe('Sternstunde');
+    expect((await call('PATCH', `/api/admin/livetv/sources/${g}`, { enabled: false })).statusCode).toBe(200);
+    expect(await mapped(auto)).toBeNull();
+    await matchIds(env.pool);
+    expect(await mapped(auto)).toBeNull();
+    // a hand pin stays set, but no programme is served from the disabled guide
+    expect(await mapped(pinned)).toEqual([g, 'sternwarte.int']);
+    const nn = await nowNext(env.ctx, [auto, pinned]);
+    expect(nn.get(pinned)?.now).toBeUndefined();
+    expect(nn.get(auto)?.now).toBeUndefined();
+    // on again: used again
+    await call('PATCH', `/api/admin/livetv/sources/${g}`, { enabled: true });
+    expect(await mapped(auto)).toEqual([g, 'sternwarte.int']);
+  });
+
+  it('matching 20 000 channels against 3 guides stays fast', async () => {
+    const idx = (n: number, tag: string) => buildEpgIndex(Array.from({ length: n }, (_, i) => ({ sourceId: tag, xmlId: `${tag}-${i}`, names: [`Kanal ${tag} ${i}`] }))).sources.get(tag)!;
+    const gs = ['g1', 'g2', 'g3'].map((t) => ({ sourceId: t, scope: null, index: idx(30_000, t) }));
+    const t0 = performance.now();
+    let hits = 0;
+    for (let i = 0; i < 20_000; i++) if (matchGuides({ sourceId: 'L', tvgId: `x${i}`, tvgName: null, importName: `Kanal g3 ${i}` }, gs)) hits++;
+    expect(hits).toBe(20_000);
+    expect(performance.now() - t0).toBeLessThan(2_000);
   });
 });

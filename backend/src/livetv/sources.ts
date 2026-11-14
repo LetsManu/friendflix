@@ -379,6 +379,8 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
     if (guide) for (const k of LIST_ONLY) if (patch[k] !== undefined) throw new SourceRefusal('invalid', k);
     if (guide && patch.epgUrl === null) throw new SourceRefusal('invalid', 'epgUrl');
     if (!guide && patch.guideScope !== undefined) throw new SourceRefusal('invalid', 'guideScope');
+    // a guide whose scoped sources were all deleted ([]) is switched on again only together with a new scope
+    if (guide && patch.enabled === true && patch.guideScope === undefined && s.guide_scope?.length === 0) throw new SourceRefusal('invalid', 'guideScope');
     if (own && patch.url !== undefined) throw new SourceRefusal('invalid', 'url');
     if (own && patch.epgUrl !== undefined && patch.epgUrl !== null) throw new SourceRefusal('invalid', 'epgUrl');
     const allowLan = patch.allowLan ?? s.allow_lan;
