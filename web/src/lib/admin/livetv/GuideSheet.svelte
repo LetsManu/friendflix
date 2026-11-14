@@ -11,8 +11,14 @@
    * /sources/test` with `kind: 'guide'` and shows "{n} Sender im Programmführer" and up to eight names in a box that keeps its height;
    * *Speichern* waits for a good *Prüfen* whenever the link (or, adding, the LAN switch / user agent) changed. Closing with unsaved input
    * asks first; the focus goes back to `trigger`.
+   *
+   * Stage 2: a new guide chooses *Link* / *Datei*. *Datei* has a file picker (`.xml,.xml.gz,.gz`) with the chosen name and size, no link,
+   * no interval and no *Prüfen*; *Speichern* creates the guide, then PUTs the file (an indeterminate bar in a reserved line: fetch has no
+   * upload progress). A failed upload keeps the created guide: the sheet stays, the next *Speichern* only uploads again. Editing a file
+   * guide can pick a new file too. The PUT itself is the page's (`upload`): closing the sheet while it runs does not lose the import's
+   * outcome, the page still follows it and says how it went.
    */
-  import { createEventDispatcher, onMount, tick } from 'svelte';
+  import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
   import { ApiError } from '#lib/api';
   import { dialogKeys } from '#lib/actions';
   import { scrimFade, sheetSlide, twoWay } from '#lib/glass/fx';
@@ -24,11 +30,12 @@
   import { uid } from '#lib/ui/ids';
   import Select from '#lib/ui/Select.svelte';
   import Toggle from '#lib/ui/Toggle.svelte';
-  import { createGuide, REFRESHES, testGuide, updateGuide, type GuidePatch, type GuideTest, type Refresh, type SourceView } from './api';
+  import { createFileGuide, createGuide, REFRESHES, testGuide, updateGuide, type GuidePatch, type GuideTest, type Refresh, type SourceView } from './api';
   import { confirmDiscard, guardLeave } from './discard';
   import { SHIFT_MAX, SHIFT_MIN, shiftLabel, stepShift } from './picker';
   import SecretInput from './SecretInput.svelte';
-  import { scopeOptions, sourceFailText, urlShapeOk } from './sources';
+  import { fileFailText, fileLine, GUIDE_FILE_MAX, isFileGuide, scopeOptions, sourceFailText, urlShapeOk } from './sources';
+  import { fmtBytes } from '#lib/ui/format';
 
   /** null = a new guide */
   export let source: SourceView | null = null;
@@ -37,14 +44,22 @@
   export let trigger: HTMLElement | null = null;
   /** opened by *Aktivieren* on a guide left without a scope: saving the new scope turns it on too */
   export let enable = false;
+  /** PUTs a file guide's file (resolves on the 202, rejects with the refusal); the page owns it and follows the import afterwards */
+  export let upload: (s: SourceView, f: File) => Promise<unknown>;
 
-  const dispatch = createEventDispatcher<{ close: void; saved: SourceView; list: void; own: void }>();
+  const dispatch = createEventDispatcher<{ close: void; saved: SourceView; list: void; own: void; created: SourceView }>();
   const id = uid('gs');
   const HTTP = ['http:', 'https:'];
   const SAMPLES = 8;
 
   let name = source?.name ?? '';
   let epgUrl = '';
+  /** where a new guide comes from; an existing one keeps its provider */
+  let mode: 'link' | 'file' = source && isFileGuide(source) ? 'file' : 'link';
+  $: isFile = mode === 'file';
+  let file: File | null = null, fileInput: HTMLInputElement | undefined, fileErr = '', uploading = false;
+  /** the guide a failed upload left behind: the next save uploads again instead of creating a second one */
+  let made: SourceView | null = null;
   let allowLan = source?.allowLan ?? false;
   let userAgent = source?.userAgent ?? '';
   let refresh: Refresh = source?.refresh ?? '24h';
@@ -56,21 +71,23 @@
   $: scope = scopeAll ? null : options.filter((o) => picked.has(o.id)).map((o) => o.id);
   const scopeKey = (s: string[] | null) => (s === null ? '*' : [...s].sort().join(','));
   const start = JSON.stringify({ name, allowLan, userAgent, refresh, epgShiftMin, scope: scopeKey(source ? source.guideScope : null) });
-  $: dirty = Boolean(epgUrl) || JSON.stringify({ name, allowLan, userAgent, refresh, epgShiftMin, scope: scopeKey(scope) }) !== start;
+  $: dirty = Boolean(epgUrl) || Boolean(file) || JSON.stringify({ name, allowLan, userAgent, refresh, epgShiftMin, scope: scopeKey(scope) }) !== start;
 
   // ---- Prüfen: a result counts only for the inputs it was made with
   let test: GuideTest | null = null, testErr = '', testing = false, testedSig = '';
   $: sig = JSON.stringify([epgUrl.trim(), allowLan, userAgent.trim()]);
-  $: fetchChanged = !source || Boolean(epgUrl.trim());
+  $: fetchChanged = !isFile && (!source || Boolean(epgUrl.trim()));
   $: tested = Boolean(test) && testedSig === sig;
   $: needsTest = fetchChanged && !tested;
 
   let nameErr = '', urlErr = '', scopeErr = '', saveErr = '', saving = false;
   function validate(forTest: boolean): boolean {
     nameErr = !forTest && !name.trim() ? tr('adminLive.src.nameMissing') : '';
-    urlErr = !source && !epgUrl.trim() ? tr('adminLive.src.guide.urlMissing') : epgUrl.trim() && !urlShapeOk(epgUrl, HTTP) ? tr('adminLive.src.urlBad') : '';
+    urlErr = isFile ? '' : !source && !epgUrl.trim() ? tr('adminLive.src.guide.urlMissing') : epgUrl.trim() && !urlShapeOk(epgUrl, HTTP) ? tr('adminLive.src.urlBad') : '';
     scopeErr = !forTest && scope !== null && scope.length === 0 ? tr('adminLive.src.guide.scopeMissing') : '';
-    return !nameErr && !urlErr && !scopeErr;
+    const noFile = !forTest && isFile && !file && !source?.fileName && !made;
+    if (!forTest) fileErr = noFile ? tr('adminLive.src.guide.fileMissing') : '';
+    return !nameErr && !urlErr && !scopeErr && !noFile;
   }
   $: if (scopeErr && (scope === null || scope.length > 0)) scopeErr = '';
 
@@ -99,28 +116,51 @@
   function patchOf(s: SourceView): GuidePatch {
     const p: GuidePatch = {};
     if (name.trim() !== s.name) p.name = name.trim();
-    if (epgUrl.trim()) p.epgUrl = epgUrl.trim();
-    if (refresh !== s.refresh) p.refresh = refresh;
+    // a file guide has no link and no interval (the backend refuses both)
+    if (!isFile && epgUrl.trim()) p.epgUrl = epgUrl.trim();
+    if (!isFile && refresh !== s.refresh) p.refresh = refresh;
     if (epgShiftMin !== s.epgShiftMin) p.epgShiftMin = epgShiftMin;
     if (scopeKey(scope) !== scopeKey(s.guideScope)) p.guideScope = scope;
     if (enable && !s.enabled) p.enabled = true;
     return p;
   }
 
+  function pickFile(e: Event) {
+    const f = (e.currentTarget as HTMLInputElement).files?.[0] ?? null;
+    if (!f) return;
+    file = f;
+    fileErr = f.size > GUIDE_FILE_MAX ? tr('adminLive.src.guide.tooLarge') : '';
+  }
+
   async function save() {
     if (saving || needsTest || !validate(false)) return;
-    saving = true; saveErr = '';
+    if (isFile && file && file.size > GUIDE_FILE_MAX) { fileErr = tr('adminLive.src.guide.tooLarge'); return; }
+    saving = true; saveErr = ''; fileErr = '';
     try {
-      const v = source
-        ? await updateGuide(source.id, patchOf(source))
-        : await createGuide({ kind: 'guide', name: name.trim(), epgUrl: epgUrl.trim(), userAgent: userAgent.trim() || null, allowLan, refresh, epgShiftMin, guideScope: scope, enabled: true });
+      let v: SourceView;
+      if (made) v = made;
+      else if (source) v = await updateGuide(source.id, patchOf(source));
+      else if (isFile) v = await createFileGuide({ kind: 'guide', guideProvider: 'xmltv_file', name: name.trim(), guideScope: scope, epgShiftMin, enabled: true });
+      else v = await createGuide({ kind: 'guide', name: name.trim(), epgUrl: epgUrl.trim(), userAgent: userAgent.trim() || null, allowLan, refresh, epgShiftMin, guideScope: scope, enabled: true });
+      if (isFile && file) {
+        made = v;
+        dispatch('created', v);
+        uploading = true;
+        // 202: the import runs on the server; the page follows the list and shows name, size and outcome when it is done
+        try { await upload(v, file); } finally { uploading = false; }
+      }
+      // closed while the PUT ran: the page already follows the upload; a late close would shut whatever sheet is open now
+      if (destroyed) return;
       done = true;
       dispatch('saved', v);
       close(true);
     } catch (e) {
-      const field = e instanceof ApiError ? e.body?.field : null;
-      const text = sourceFailText(e);
-      if (field === 'epgUrl') urlErr = text; else if (field === 'name') nameErr = tr('adminLive.src.nameMissing'); else if (field === 'guideScope') scopeErr = text; else saveErr = text;
+      if (made && isFile) { fileErr = fileFailText(e); saveErr = source ? '' : tr('adminLive.src.guide.fileLater'); }
+      else {
+        const field = e instanceof ApiError ? e.body?.field : null;
+        const text = sourceFailText(e);
+        if (field === 'epgUrl') urlErr = text; else if (field === 'name') nameErr = tr('adminLive.src.nameMissing'); else if (field === 'guideScope') scopeErr = text; else saveErr = text;
+      }
     } finally { saving = false; }
   }
 
@@ -160,6 +200,13 @@
     scopeAll = !scopeAll;
     void tick().then(() => group?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus());
   }
+  function modeArrow(e: KeyboardEvent) {
+    if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(e.key)) return;
+    e.preventDefault();
+    const group = e.currentTarget instanceof HTMLElement ? e.currentTarget.parentElement : null;
+    mode = mode === 'file' ? 'link' : 'file';
+    void tick().then(() => group?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus());
+  }
   function tickSource(sid: string, on: boolean) {
     const n = new Set(picked);
     if (on) n.add(sid); else n.delete(sid);
@@ -169,6 +216,8 @@
   function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
   const slide = (node: Element) => twoWay((dir) => sheetSlide(node, { dir, side: 'right' }));
   onMount(() => { document.getElementById(`${id}-name`)?.focus({ preventScroll: true }); });
+  let destroyed = false;
+  onDestroy(() => { destroyed = true; });
 
   $: intervals = REFRESHES.map((r) => ({ value: r, label: $t(`adminLive.src.interval.${r}`) }));
 </script>
@@ -196,14 +245,37 @@
         </div>
       {/if}
 
+      {#if !source}
+        <div class="ctl" role="group" aria-labelledby="{id}-m">
+          <span class="lbl" id="{id}-m">{$t('adminLive.src.guide.from')}</span>
+          <div class="seg" role="radiogroup" aria-labelledby="{id}-m">
+            <button type="button" role="radio" aria-checked={!isFile} tabindex={isFile ? -1 : 0} class:on={!isFile} disabled={saving || Boolean(made)} on:click={() => (mode = 'link')} on:keydown={modeArrow}>{$t('adminLive.src.guide.fromLink')}</button>
+            <button type="button" role="radio" aria-checked={isFile} tabindex={isFile ? 0 : -1} class:on={isFile} disabled={saving || Boolean(made)} on:click={() => (mode = 'file')} on:keydown={modeArrow}>{$t('adminLive.src.guide.fromFile')}</button>
+          </div>
+        </div>
+      {/if}
+
       <Field label={$t('adminLive.src.name')} id="{id}-name" bind:value={name} maxlength={60} required error={nameErr} />
 
-      <Field label={$t('adminLive.src.epg')} id="{id}-url" required={!source} error={urlErr} hint={source?.epgHint ? $t('adminLive.src.current', { hint: source.epgHint }) : ''} let:describedby let:invalid>
-        <SecretInput id="{id}-url" bind:value={epgUrl} placeholder={source ? $t('adminLive.src.unchanged') : 'https://epg.example.com/…'} {describedby} {invalid} />
-      </Field>
+      {#if isFile}
+        <div class="ctl file" role="group" aria-labelledby="{id}-f" data-file-pick>
+          <span class="lbl" id="{id}-f">{$t('adminLive.src.guide.fromFile')}</span>
+          <input type="file" class="pick" accept=".xml,.xml.gz,.gz" bind:this={fileInput} on:change={pickFile} tabindex="-1" aria-hidden="true" data-file-input />
+          <div class="fbox">
+            <Button variant="secondary" icon="arrow-up" disabled={saving || uploading} on:click={() => fileInput?.click()}>{file || source?.fileName ? $t('adminLive.src.guide.pickOther') : $t('adminLive.src.guide.pickFile')}</Button>
+            <p class="fname" data-file-name>{#if file}{$t('adminLive.src.guide.fileLine', { name: file.name, size: fmtBytes(file.size) })}{:else if source}{fileLine(source)}{:else}{$t('adminLive.src.guide.noFile')}{/if}</p>
+          </div>
+          <p class="help">{$t('adminLive.src.guide.fileHint')}</p>
+          <p class="ferr" role={fileErr ? 'alert' : undefined} data-file-error>{#if fileErr}<Icon name="alert" size={16} /><span>{fileErr}</span>{/if}</p>
+        </div>
+      {:else}
+        <Field label={$t('adminLive.src.epg')} id="{id}-url" required={!source} error={urlErr} hint={source?.epgHint ? $t('adminLive.src.current', { hint: source.epgHint }) : ''} let:describedby let:invalid>
+          <SecretInput id="{id}-url" bind:value={epgUrl} placeholder={source ? $t('adminLive.src.unchanged') : 'https://epg.example.com/…'} {describedby} {invalid} />
+        </Field>
 
-      {#if !source}<Toggle label={$t('adminLive.src.lan')} hint={$t('adminLive.src.lanHint')} bind:checked={allowLan} />{/if}
-      <Select label={$t('adminLive.src.interval.label')} bind:value={refresh} options={intervals} />
+        {#if !source}<Toggle label={$t('adminLive.src.lan')} hint={$t('adminLive.src.lanHint')} bind:checked={allowLan} />{/if}
+        <Select label={$t('adminLive.src.interval.label')} bind:value={refresh} options={intervals} />
+      {/if}
 
       <div class="ctl" role="group" aria-labelledby="{id}-s">
         <span class="lbl" id="{id}-s">{$t('adminLive.src.epgShift')}</span>
@@ -233,7 +305,7 @@
         <p class="serr" id="{id}-se" role={scopeErr ? 'alert' : undefined}>{#if scopeErr}<Icon name="alert" size={16} /><span>{scopeErr}</span>{/if}</p>
       </section>
 
-      {#if !source}
+      {#if !source && !isFile}
         <details class="adv">
           <summary><Icon name="chevron-down" size={18} /><span>{$t('adminLive.src.advanced')}</span></summary>
           <div class="adv-body">
@@ -244,7 +316,13 @@
 
       <!-- the Prüfen outcome keeps its box, so the buttons below never move -->
       <div class="result" aria-live="polite">
-        {#if testErr}
+        {#if isFile}
+          <!-- the upload line keeps its place whether it runs or not -->
+          <div class="up" class:run={uploading} data-upload>
+            <p class="msg muted">{#if uploading}<Icon name="arrow-up" size={18} /><span>{$t('adminLive.src.guide.uploading')}</span>{/if}</p>
+            <div class="bar" role={uploading ? 'progressbar' : undefined} aria-label={uploading ? $t('adminLive.src.guide.uploading') : undefined} aria-busy={uploading}><i></i></div>
+          </div>
+        {:else if testErr}
           <p class="msg err" role="alert"><Icon name="alert" size={18} /><span>{testErr}</span></p>
         {:else if test && tested}
           <p class="msg ok" data-test-result><Icon name="check" size={18} /><span>{$t('adminLive.src.guide.testResult', { n: test.epgChannels })}</span></p>
@@ -257,7 +335,7 @@
      </div>
 
       <div class="foot">
-        <Button variant="secondary" icon="search" pending={testing} on:click={runTest}>{$t('adminLive.src.test')}</Button>
+        {#if !isFile}<Button variant="secondary" icon="search" pending={testing} on:click={runTest}>{$t('adminLive.src.test')}</Button>{/if}
         <Button type="submit" icon="check" pending={saving} disabled={needsTest}>{$t('adminLive.src.save')}</Button>
         <Button variant="ghost" on:click={() => close()}>{$t('adminLive.src.cancel')}</Button>
       </div>
@@ -298,6 +376,18 @@
   /* one line is reserved for the "at least one" error */
   .serr { display: flex; gap: .35rem; align-items: flex-start; margin: 0; min-height: 1.4em; font-size: .88rem; font-weight: 600; overflow-wrap: anywhere; }
   .serr :global(svg) { flex: none; margin-top: .15rem; color: var(--err); }
+  .pick { display: none; }
+  .fbox { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .9rem; min-width: 0; max-width: 100%; }
+  .fname { margin: 0; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+  .ferr { display: flex; gap: .35rem; align-items: flex-start; margin: .3rem 0 0; min-height: 1.4em; font-size: .88rem; font-weight: 600; overflow-wrap: anywhere; }
+  .ferr :global(svg) { flex: none; margin-top: .15rem; color: var(--err); }
+  .up { display: flex; flex-direction: column; gap: .4rem; min-height: 2.6rem; }
+  .up .msg { min-height: 1.4em; }
+  .bar { position: relative; height: 6px; border-radius: 3px; overflow: hidden; background: rgba(255, 255, 255, .12); opacity: 0; }
+  .up.run .bar { opacity: 1; }
+  .bar i { position: absolute; inset: 0; width: 40%; border-radius: 3px; background: #fff; transform: translateX(-100%); }
+  .up.run .bar i { animation: gs-indet 1.2s ease-in-out infinite; }
+  @keyframes gs-indet { to { transform: translateX(250%); } }
   .adv { border-top: 1px solid rgba(255, 255, 255, .12); padding-top: .4rem; }
   .adv summary { list-style: none; display: flex; align-items: center; gap: .4rem; min-height: 44px; cursor: pointer; font-weight: 600; }
   .adv summary::-webkit-details-marker { display: none; }

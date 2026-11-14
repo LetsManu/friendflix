@@ -7,7 +7,8 @@
    * exists, *Quelle hinzufügen* (SourceSheet; its kind *Programmführer* opens GuideSheet, *Eigene Streams* opens StreamSheet, which
    * creates the own-feeds source on first use). *Jetzt aktualisieren* posts the refresh (202 `{ started }`; 409 `livetv_off` / `no_list` have their own
    * text) and asks `GET /sources` every REFRESH_POLL_MS until the
-   * source's `lastRefreshAt` moved, then says the outcome in a toast; the button keeps its spinner meanwhile. Deleting names how
+   * source's `lastRefreshAt` moved, then says the outcome in a toast; the button keeps its spinner meanwhile (a file guide's upload is
+   * followed the same way, also when it came from the sheet and the sheet was closed meanwhile). Deleting names how
    * many channels go. Loading keeps the cards' place with skeletons of their height.
    */
   import { onDestroy, onMount } from 'svelte';
@@ -21,14 +22,14 @@
   import { confirm } from '#lib/ui/confirm';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import { toast } from '#lib/ui/toast';
-  import { deleteSource, listSources, refreshSource, updateGuide, updateSource, type PushResult, type Refresh, type SourceView } from './api';
+  import { deleteSource, listSources, refreshSource, updateGuide, uploadGuideFile, updateSource, type PushResult, type Refresh, type SourceView } from './api';
   import GuideCard from './GuideCard.svelte';
   import GuideSheet from './GuideSheet.svelte';
   import OwnFeedsCard from './OwnFeedsCard.svelte';
   import SourceCard from './SourceCard.svelte';
   import SourceSheet from './SourceSheet.svelte';
   import StreamSheet from './StreamSheet.svelte';
-  import { guideMoves, REFRESH_POLL_MS, REFRESH_POLLS, refreshDone, refreshedAt, refreshResult } from './sources';
+  import { fileFailText, GUIDE_FILE_MAX, guideMoves, REFRESH_POLL_MS, REFRESH_POLLS, refreshDone, refreshedAt, refreshResult } from './sources';
 
   let sources: SourceView[] | null = null, failed = false, gone = false;
   let now = new Date();
@@ -106,11 +107,19 @@
       },
       error: false,
     });
+    settle(r);
+  }
+  /** a file guide's upload was accepted (202): its import is the refresh to wait for; the card keeps its spinner and then shows the outcome */
+  async function followImport(s: SourceView) {
+    const since = refreshedAt(s);
+    settle(await runAction({ key: `ltv-src-refresh:${s.id}`, run: () => untilRefreshed(s.id, since), error: false }));
+  }
+  function settle(r: { skipped?: boolean; ok: boolean; error?: unknown; value?: SourceView | null }) {
     if (r.skipped || gone) return;
     void refreshSummary(); // the nav badge counts failed sources
     if (!r.ok) {
       const c = r.error instanceof ApiError && r.error.status === 409 ? r.error.body?.error : null;
-      toast.error(c === 'livetv_off' ? tr('adminLive.src.refreshOff') : c === 'no_list' ? tr('adminLive.src.refreshNoList') : errorText(r.error));
+      toast.error(c === 'livetv_off' ? tr('adminLive.src.refreshOff') : c === 'no_list' ? tr('adminLive.src.refreshNoList') : c === 'no_file' ? tr('adminLive.src.guide.refreshNoFile') : errorText(r.error));
       return;
     }
     if (!r.value) { toast.info(tr('adminLive.src.refreshSlow')); return; }
@@ -148,6 +157,38 @@
       success: tr('adminLive.src.deleted'),
     });
     void refreshSummary();
+  }
+
+  // ---- Neue Datei hochladen: PUT the file (202 = received); the import runs on the server, name and size appear on the card once it is
+  // done (a failed import keeps the old file and shows its error), so the page follows the list like after *Aktualisieren*
+  async function upload(s: SourceView, file: File) {
+    if (file.size > GUIDE_FILE_MAX) { toast.error(tr('adminLive.src.guide.tooLarge')); return; }
+    const r = await runAction({
+      key: `ltv-src-upload:${s.id}`,
+      run: () => uploadGuideFile(s.id, file),
+      error: false,
+    });
+    if (r.skipped) return;
+    if (!r.ok) { toast.error(fileFailText(r.error)); return; }
+    toast.success(tr('adminLive.src.guide.uploaded'));
+    await followImport(s);
+  }
+  /**
+   * the GuideSheet's upload: the PUT runs here, not in the sheet, so a sheet closed while it runs (Abbrechen, Escape) does not lose the
+   * outcome: the import is followed all the same, and a refusal the closed sheet can no longer show becomes a toast. The sheet awaits
+   * it (its bar, its error line, *Speichern* uploading again).
+   */
+  async function sheetUpload(s: SourceView, file: File): Promise<void> {
+    const owner = guideSheet;
+    const closed = () => guideSheet !== owner || gone;
+    const r = await runAction({ key: `ltv-src-upload:${s.id}`, run: () => uploadGuideFile(s.id, file), error: false });
+    if (r.skipped) throw new ApiError(409, { error: 'import_running' }); // the card's upload of this guide runs
+    if (!r.ok) {
+      if (closed()) toast.error(fileFailText(r.error));
+      throw r.error;
+    }
+    if (closed()) toast.success(tr('adminLive.src.guide.uploaded'));
+    void followImport(s);
   }
 
   // ---- the order among the guides: one PATCH with the neighbour's position (the backend swaps the two); shown at once, then the
@@ -190,7 +231,7 @@
     {/each}
     {#each guides as s, i (s.id)}
       <GuideCard source={s} sources={sources} {now} first={i === 0} last={i === guides.length - 1} refreshing={$busyKeys.has(`ltv-src-refresh:${s.id}`)} busy={$busyKeys.has(`ltv-src:${s.id}`)}
-        on:refresh={() => refresh(s)} on:edit={(e) => (guideSheet = { source: s, trigger: e.detail })} on:enable={(e) => (guideSheet = { source: s, trigger: e.detail, enable: true })} on:toggle={() => toggle(s)} on:remove={() => remove(s)}
+        uploading={$busyKeys.has(`ltv-src-upload:${s.id}`)} on:upload={(e) => upload(s, e.detail)} on:refresh={() => refresh(s)} on:edit={(e) => (guideSheet = { source: s, trigger: e.detail })} on:enable={(e) => (guideSheet = { source: s, trigger: e.detail, enable: true })} on:toggle={() => toggle(s)} on:remove={() => remove(s)}
         on:interval={(e) => setInterval_(s, e.detail)} on:move={(e) => move(s, e.detail)} />
     {/each}
     {#if feedsSource}
@@ -205,7 +246,7 @@
   <SourceSheet source={sheet.source} trigger={sheet.trigger} autoTest={sheet.autoTest ?? false} on:close={() => (sheet = null)} on:saved={saved} on:own={() => toOwn(sheet)} on:guide={toGuide} />
 {/if}
 {#if guideSheet}
-  <GuideSheet source={guideSheet.source} sources={sources ?? []} trigger={guideSheet.trigger} enable={guideSheet.enable ?? false} on:close={() => (guideSheet = null)} on:saved={saved} on:list={toList} on:own={() => toOwn(guideSheet)} />
+  <GuideSheet source={guideSheet.source} sources={sources ?? []} trigger={guideSheet.trigger} enable={guideSheet.enable ?? false} on:close={() => (guideSheet = null)} on:saved={saved} on:created={(e) => replace(e.detail)} upload={sheetUpload} on:list={toList} on:own={() => toOwn(guideSheet)} />
 {/if}
 {#if stream}
   <StreamSheet result={stream.result} trigger={stream.trigger} on:close={() => (stream = null)} on:created={streamCreated} />

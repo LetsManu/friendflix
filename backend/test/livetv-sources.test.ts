@@ -81,7 +81,7 @@ describe('stored encrypted, answered masked', () => {
     expect(list.json()).toEqual([{
       id: s.id, kind: 'm3u', name: 'Anbieter', urlHint: HINT, epgHint: HINT, userAgent: null, allowLan: false, refresh: '24h', skipGroups: [],
       numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0, maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0,
-      guideProvider: null, guideScope: null, servedChannels: 0,
+      guideProvider: null, guideScope: null, servedChannels: 0, fileName: null, fileBytes: null,
       state: { lastRefreshAt: null, lastOkAt: null, lastError: null, counts: null, epg: { lastRefreshAt: null, lastOkAt: null, lastError: null, programmes: null } },
     }]);
   });

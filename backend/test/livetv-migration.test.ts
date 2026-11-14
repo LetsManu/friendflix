@@ -216,6 +216,18 @@ describe('migration 52 (extra guides)', () => {
   });
 });
 
+describe('migration 53 (uploaded guide files)', () => {
+  it('a file guide keeps the uploaded name and size of its stored file; reruns', async () => {
+    const g = await addSource({ kind: 'guide', name: 'Datei', url_enc: null, guide_provider: 'xmltv_file', guide_file: 'x.xml.gz', guide_file_name: 'international.xml.gz', guide_file_bytes: 300 * 1024 * 1024 });
+    expect((await q('select guide_file_name, guide_file_bytes from livetv_sources where id = $1', [g])).rows[0])
+      .toEqual({ guide_file_name: 'international.xml.gz', guide_file_bytes: String(300 * 1024 * 1024) });
+    await q('delete from schema_migrations where version = 53');
+    await migrate(pool());
+    expect((await q('select count(*)::int n from schema_migrations where version = 53')).rows[0].n).toBe(1);
+    expect(MIGRATIONS[52]).toContain('guide_file_bytes bigint');
+  });
+});
+
 describe('effective values', () => {
   it('number, name and group', async () => {
     const sid = await addSource({ name: 'Zahlenliste' });

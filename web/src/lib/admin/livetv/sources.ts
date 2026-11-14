@@ -7,6 +7,7 @@
 import { ApiError } from '#lib/api';
 import { fmtDateTime, fmtTime, tr, type TKey } from '#lib/i18n';
 import { errorText } from '#lib/ui/action';
+import { fmtBytes } from '#lib/ui/format';
 import type { SourceView, StreamKind } from './api';
 
 export const TABS = ['sources', 'channels', 'groups', 'guide', 'status', 'settings'] as const;
@@ -45,7 +46,8 @@ export function whenText(d: Date, now: Date): string {
  * list over 2 000 groups or 200 000 entries; `incomplete` = a stream that ended without its end line; `livetv_unreachable` = the
  * backend did not reach the livetv service (503), not the provider.
  */
-type ErrKey = 'unreachable' | 'denied' | 'timeout' | 'too_big' | 'too_large' | 'invalid' | 'empty' | 'refused' | 'lan_required' | 'incomplete' | 'livetv_unreachable';
+type ErrKey = 'unreachable' | 'denied' | 'timeout' | 'too_big' | 'too_large' | 'invalid' | 'empty' | 'refused' | 'lan_required' | 'incomplete' | 'livetv_unreachable'
+  | 'no_file' | 'bad_signature' | 'ratio';
 const ERR: Record<string, ErrKey> = {
   unreachable: 'unreachable', not_found: 'unreachable', http_error: 'unreachable', redirects: 'unreachable', scheme: 'unreachable',
   livetv_unreachable: 'livetv_unreachable', incomplete: 'incomplete',
@@ -56,6 +58,8 @@ const ERR: Record<string, ErrKey> = {
   empty: 'empty',
   refused: 'refused', address_refused: 'refused',
   lan_required: 'lan_required',
+  // an uploaded guide (Stage 2): its stored file is gone, its bytes did not reach livetv as signed, or a gzip bomb
+  no_file: 'no_file', bad_signature: 'bad_signature', ratio: 'ratio',
 };
 /** the list limits livetv refuses as `too_big` besides the 50 MB (formatted for the language by `tr`) */
 const LIMITS = { groups: 2_000, entries: 200_000 };
@@ -124,11 +128,16 @@ export function portsLine(ports: number[] | { from: number; to: number } | null)
   return range ? tr('adminLive.push.portsLine', { range }) : '';
 }
 
+/** a guide's import error in words: an uploaded file livetv could not read as XMLTV says so (not "no channel list") */
+function guideError(s: SourceView, code: string): string {
+  return isFileGuide(s) && (code === 'invalid' || code === 'doctype') ? tr('adminLive.src.guide.xmltvInvalid') : sourceError(code);
+}
+
 /** the result toast of *Jetzt aktualisieren*: the error in words, or the new counts (a guide: its programmes) */
 export function refreshResult(s: SourceView): { ok: boolean; text: string } {
   if (s.kind === 'guide') {
     const e = s.state.epg;
-    if (e.lastError) return { ok: false, text: tr('adminLive.src.refreshFailed', { err: sourceError(e.lastError) }) };
+    if (e.lastError) return { ok: false, text: tr('adminLive.src.refreshFailed', { err: guideError(s, e.lastError) }) };
     return { ok: true, text: e.programmes !== null ? tr('adminLive.src.guide.refreshed', { n: e.programmes }) : tr('adminLive.src.refreshedPlain') };
   }
   if (s.state.lastError) return { ok: false, text: tr('adminLive.src.refreshFailed', { err: sourceError(s.state.lastError) }) };
@@ -176,7 +185,7 @@ export function guideScopeLabel(scope: readonly string[] | null, sources: readon
 export function guideStateLine(s: SourceView, now: Date): string {
   const e = s.state.epg;
   const parts: string[] = [];
-  if (e.lastError) parts.push(tr('adminLive.src.stateEpgErr', { err: sourceError(e.lastError) }));
+  if (e.lastError) parts.push(tr('adminLive.src.stateEpgErr', { err: guideError(s, e.lastError) }));
   const ok = validDate(e.lastOkAt);
   if (ok) parts.push(tr('adminLive.src.guide.updated', { when: whenText(ok, now) }));
   if (!e.lastError && e.programmes !== null) parts.push(tr('adminLive.src.stateEpg', { n: e.programmes }));
@@ -194,3 +203,28 @@ export function guideMoves(guides: readonly SourceView[], id: string, dir: 1 | -
   if (!me || !other) return null;
   return { patch: { id: me.id, position: other.position }, swap: [{ id: me.id, position: other.position }, { id: other.id, position: me.position }] };
 }
+
+// ---- uploaded guide files (Stage 2)
+
+export const isFileGuide = (s: Pick<SourceView, 'kind' | 'guideProvider'>): boolean => s.kind === 'guide' && s.guideProvider === 'xmltv_file';
+/** "guide-uk.xml.gz · 48 MB": the card's line of a file guide; "Noch keine Datei" before the first upload */
+export function fileLine(s: Pick<SourceView, 'fileName' | 'fileBytes'>): string {
+  if (!s.fileName) return tr('adminLive.src.guide.noFile');
+  return tr('adminLive.src.guide.fileLine', { name: s.fileName, size: fmtBytes(s.fileBytes) });
+}
+/** the card's / the chip's word for where a guide comes from */
+export const guideProviderLabel = (s: Pick<SourceView, 'guideProvider'>): string => tr(s.guideProvider === 'xmltv_file' ? 'adminLive.src.guide.fromFile' : 'adminLive.src.guide.fromLink');
+/**
+ * the upload's refusals in words: 413 too_large, 409 import_running / livetv_off, 400 invalid (file: the upload broke off or was empty;
+ * the content is only read by the import, whose errors show on the card), 404 gone; the rest as any source failure
+ */
+export function fileFailText(e: unknown): string {
+  const code = e instanceof ApiError && typeof e.body?.error === 'string' ? e.body.error : null;
+  if (e instanceof ApiError && code === 'too_large' && e.status === 413) return tr('adminLive.src.guide.tooLarge');
+  if (e instanceof ApiError && code === 'import_running' && e.status === 409) return tr('adminLive.src.guide.importRunning');
+  if (e instanceof ApiError && code === 'livetv_off' && e.status === 409) return tr('adminLive.src.refreshOff');
+  if (e instanceof ApiError && code === 'invalid' && e.status === 400 && e.body?.field === 'file') return tr('adminLive.src.guide.fileInvalid');
+  return sourceFailText(e);
+}
+/** a bigger file never leaves the browser: the server's limit */
+export const GUIDE_FILE_MAX = 300 * 1024 * 1024;

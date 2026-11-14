@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
 import { log as defaultLog, type Log } from './log.js';
 import { dnsLookup, ownSubnets } from './netguard.js';
-import { ReplayCache, healthProof, isNonce, verify, type Verifier } from './protocol.js';
+import { HEADER_BODY_SHA, ReplayCache, healthProof, isBodySha, isNonce, verify, type Verifier } from './protocol.js';
 import { clearStale } from './cache.js';
 import { passthroughDriver } from './passthrough.js';
 import { Previews } from './preview.js';
@@ -16,6 +16,7 @@ import { benchmarkRoutes } from './routes/benchmark.js';
 import { fetchRoutes } from './routes/fetch.js';
 import { fileRoutes } from './routes/files.js';
 import { ingestRoutes } from './routes/ingest.js';
+import { parseRoutes } from './routes/parse.js';
 import { streamRoutes } from './routes/streams.js';
 import { createRun } from './run.js';
 import { IngestHub, srtgateSpawner } from './srtingest.js';
@@ -25,7 +26,7 @@ import { encoders, systemView, type Encoder, type SystemView } from './system.js
 /**
  * livetv's internal API (spec §3.2; only on the internal `livetv` network, port 8090). `/healthz` is open (with `?n=<nonce>` it
  * adds the proof of key, protocol.ts); every `/v1/*` request
- * is signed (protocol.ts), JSON only, at most 64 KB; `/s/*` (stream files for the gateway, Task 27) is unsigned and addressed by
+ * is signed (protocol.ts), JSON only, at most 64 KB (one route takes a streamed file instead, `rawBody`); `/s/*` (stream files for the gateway, Task 27) is unsigned and addressed by
  * a random stream key. Later tasks add their routes to the table (`AppDeps.routes`). `start()` also runs the SRT push ingest
  * (Task 29): one `srtgate` helper on LIVETV_SRT_PORTS, its set from `PUT /v1/ingest`, its feeds readable by the stream drivers.
  */
@@ -33,6 +34,11 @@ export const API_VERSION = 1;
 export const MAX_BODY = 64 * 1024;
 /** the one route with a larger cap: POST /v1/fetch/m3u carries the skip list (2 000 names of up to 200 characters) */
 export const MAX_BODY_M3U = 512 * 1024;
+/**
+ * a request must be received completely within this (from the moment it is routed), unless its route says otherwise
+ * (`bodyTimeoutMs`); a request still sending after that is cut off. The answer may take longer (an XMLTV stream runs for minutes).
+ */
+export const REQUEST_TIMEOUT_MS = 10_000;
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 export interface RouteCall {
@@ -40,8 +46,10 @@ export interface RouteCall {
   res: ServerResponse;
   /** the capture groups of a RegExp path */
   params: string[];
-  /** the parsed JSON body (null when there is none) */
+  /** the parsed JSON body (null when there is none, and for a `rawBody` route) */
   json: unknown;
+  /** `rawBody` routes: the body's SHA-256 the signature covers; the route reads `req` itself and must compare the bytes with it */
+  bodySha256?: string;
 }
 /** a JSON answer; a route that streams (NDJSON, images, segments) writes `res` itself and returns nothing */
 export interface Answer { status: number; json?: unknown }
@@ -51,6 +59,13 @@ export interface Route {
   path: string | RegExp;
   /** the signed body cap in bytes when it is not MAX_BODY */
   maxBody?: number;
+  /**
+   * the body is a stream (`application/octet-stream`), not JSON, and is not read before the route runs: the signature covers its
+   * declared SHA-256 (protocol.ts HEADER_BODY_SHA), a declared length over `maxBody` is refused with 413 first
+   */
+  rawBody?: true;
+  /** how long receiving the request may take when it is not REQUEST_TIMEOUT_MS (a streamed body is read as fast as it is parsed) */
+  bodyTimeoutMs?: number;
   handle(c: RouteCall): Promise<Answer | void>;
 }
 
@@ -111,6 +126,33 @@ export function logPath(route: Route | undefined, path: string): string {
   return '/' + seg.map((x, i) => (i < keep && /^[a-z0-9-]{1,40}$/.test(x) ? x : '*')).join('/');
 }
 
+/**
+ * the answer to a streamed (raw) body that is refused before it is read: `Connection: close`, and the request is destroyed once the
+ * answer is out, so livetv never reads (drains) a body of up to the route's cap it has refused
+ */
+function sendClosing(res: ServerResponse, status: number, body: unknown): void {
+  res.setHeader('connection', 'close');
+  res.once('finish', () => res.req.destroy());
+  send(res, status, body);
+}
+
+/** a refused signature: 401 with the code, logged with method, path (logPath) and code only; a raw body is not read (sendClosing) */
+function refuse(res: ServerResponse, route: Route, method: string, path: string, error: string, warn?: Log): void {
+  warn?.(`refused ${method} ${logPath(route, path)}: ${error}`);
+  if (route.rawBody) return sendClosing(res, 401, { error });
+  res.req.resume(); // a JSON body was read already; anything left is dropped, so the answer still reaches the caller
+  send(res, 401, { error });
+}
+
+/** a request not received completely within `ms` is cut off (Node's own requestTimeout is only the outer bound, start()) */
+function cutOffAfter(req: IncomingMessage, ms: number): void {
+  if (req.complete) return;
+  const t = setTimeout(() => { if (!req.complete) req.destroy(); }, ms);
+  const clear = () => clearTimeout(t);
+  req.once('end', clear);
+  req.once('close', clear);
+}
+
 const matches = (r: Route, path: string): string[] | null => {
   if (typeof r.path === 'string') return r.path === path ? [] : null;
   const m = r.path.exec(path);
@@ -147,23 +189,31 @@ export function createApp(deps: AppDeps): (req: IncomingMessage, res: ServerResp
       }
       if (!known) return send(res, 404, { error: 'not_found' });
       if (!route || !params) return send(res, 405, { error: 'method_not_allowed' });
+      cutOffAfter(req, route.bodyTimeoutMs ?? REQUEST_TIMEOUT_MS);
       let json: unknown = null;
-      if (signed) {
+      let bodySha256: string | undefined;
+      if (signed && route.rawBody) {
+        if (Number(req.headers['content-length'] ?? 0) > (route.maxBody ?? MAX_BODY)) return sendClosing(res, 413, { error: 'too_large' });
+        const declared = req.headers[HEADER_BODY_SHA];
+        if (declared === undefined) return refuse(res, route, method, path, 'missing', deps.warn);
+        if (!isBodySha(declared)) return refuse(res, route, method, path, 'malformed', deps.warn);
+        const auth = verify(deps.verifier, { method, path: target, headers: req.headers, bodySha256: declared });
+        if (!auth.ok) return refuse(res, route, method, path, auth.error, deps.warn);
+        if (!String(req.headers['content-type'] ?? '').startsWith('application/octet-stream')) return sendClosing(res, 415, { error: 'binary_required' });
+        bodySha256 = declared;
+      } else if (signed) {
         const read = await readBody(req, route.maxBody);
         if ('error' in read) return read.error === 'too_large' ? send(res, 413, { error: 'too_large' }) : send(res, 400, { error: 'bad_request' });
         const body = read.body;
         // the whole request target is signed: a query string cannot be changed or added on the way
         const auth = verify(deps.verifier, { method, path: target, headers: req.headers, body });
-        if (!auth.ok) {
-          deps.warn?.(`refused ${method} ${logPath(route, path)}: ${auth.error}`);
-          return send(res, 401, { error: auth.error });
-        }
+        if (!auth.ok) return refuse(res, route, method, path, auth.error, deps.warn);
         if (body !== '') {
           if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) return send(res, 415, { error: 'json_required' });
           try { json = JSON.parse(body); } catch { return send(res, 400, { error: 'invalid_body' }); }
         }
       }
-      const answer = await route.handle({ req, res, params, json });
+      const answer = await route.handle({ req, res, params, json, ...(bodySha256 ? { bodySha256 } : {}) });
       if (answer) send(res, answer.status, answer.json);
     } catch {
       deps.warn?.(`route ${method} ${logPath(route, path)} failed`);
@@ -205,12 +255,13 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
     onSegment: (id, path) => previews.segment(id, path), onStop: (id) => previews.drop(id),
   });
   const routes = [
-    ...fetchRoutes({ guard, run, ingest }), ...streamRoutes(streams, { encoders: listEncoders, previews }),
+    ...fetchRoutes({ guard, run, ingest }), ...parseRoutes(), ...streamRoutes(streams, { encoders: listEncoders, previews }),
     ...benchmarkRoutes({ run, encoders: listEncoders, log }), ...fileRoutes(streams), ...ingestRoutes(ingest, { ports: cfg.srtPorts }),
   ];
   const app = createApp({ verifier, version: cfg.version, bootId: randomBytes(8).toString('hex'), system, routes, warn: log });
   const server = createServer((req, res) => { void app(req, res); });
-  server.requestTimeout = 10_000;
+  // the outer bound for receiving a request: the longest route's own (createApp cuts every other request off after REQUEST_TIMEOUT_MS)
+  server.requestTimeout = Math.max(REQUEST_TIMEOUT_MS, ...routes.map((r) => r.bodyTimeoutMs ?? 0)) + 5_000;
   server.headersTimeout = 5_000;
   server.on('close', () => ingest.close());
   await new Promise<void>((resolve) => server.listen(cfg.port, o.host ?? '0.0.0.0', resolve));

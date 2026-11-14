@@ -55,6 +55,9 @@ export interface SourceView {
    * source was deleted (the guide is then disabled: "Gilt für keine Quelle mehr")
    */
   guideScope: string[] | null;
+  /** an uploaded guide (`guideProvider: 'xmltv_file'`): the file's name and size, null before the first upload / for every other source */
+  fileName: string | null;
+  fileBytes: number | null;
   /** channels currently matched to this source's guide (`epg_source_id`) */
   servedChannels: number;
   state: SourceState;
@@ -94,6 +97,16 @@ export interface GuideBody {
   guideScope: string[] | null;
   enabled?: boolean;
 }
+/** A file guide (Stage 2): POST sends no link, agent, LAN switch or interval (the backend refuses them, 400); the file follows with `uploadGuideFile` */
+export interface FileGuideBody {
+  kind: 'guide';
+  guideProvider: 'xmltv_file';
+  name: string;
+  guideScope: string[] | null;
+  epgShiftMin?: number;
+  enabled?: boolean;
+}
+/** a file guide's PATCH never carries `epgUrl` / `refresh` (nor agent / LAN switch) */
 export type GuidePatch = Partial<Pick<GuideBody, 'name' | 'epgUrl' | 'refresh' | 'epgShiftMin' | 'guideScope' | 'enabled'>> & { position?: number };
 /**
  * POST /sources/test: a missing `url` / `epgUrl` / `userAgent` with `sourceId` uses the stored one; `epgUrl: null` = no guide. Refusals:
@@ -164,6 +177,15 @@ const enc = encodeURIComponent;
 export const listSources = () => api<SourceView[]>(`${B}/sources`);
 export const createSource = (b: SourceBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
 export const createGuide = (b: GuideBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
+export const createFileGuide = (b: FileGuideBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
+/**
+ * PUT /sources/:id/file: the file's bytes as they are; its name in the header `x-ff-file-name` (percent-encoded UTF-8; a header, not the
+ * query, so it stays out of proxy access logs). 202 `{ started }`; refusals: 400 `invalid` (`field: 'file'`: an empty or broken-off
+ * upload), 404, 409 `import_running` / `livetv_off`, 413 `too_large`.
+ */
+export const uploadGuideFile = (id: string, file: File) => api<{ started: boolean }>(`${B}/sources/${enc(id)}/file`, {
+  method: 'PUT', raw: new Blob([file], { type: 'application/octet-stream' }), headers: { 'x-ff-file-name': encodeURIComponent(file.name) },
+});
 export const updateGuide = (id: string, patch: GuidePatch) => api<SourceView>(`${B}/sources/${enc(id)}`, { method: 'PATCH', body: patch });
 export const testGuide = (b: GuideTestBody) => api<GuideTest>(`${B}/sources/test`, { method: 'POST', body: b });
 export const updateSource = (id: string, patch: SourcePatch) => api<SourceView>(`${B}/sources/${enc(id)}`, { method: 'PATCH', body: patch });
