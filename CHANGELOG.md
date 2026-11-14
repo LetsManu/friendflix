@@ -4,6 +4,10 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Security
+- **Windows app: plain `http://` only for a server in your home network.** Setup and the stored settings accept `http://` only for a private, loopback, link-local or Tailscale (`100.64–127.x.x`) IP address or a local name (`nas`, `*.local`, `*.lan`, `*.home.arpa`, `*.internal`); a public host needs `https`, as the docs already said. Setup says so instead of "not a valid server address". If you had set up the app with `http://` and a public name, it opens setup once: enter the `https` address (or the server's home-network IP).
+- **Live TV relay hardening (code scanning).** The gateway re-checks the stream key and the file name right where it builds the address it fetches from the Live TV service, and reads the playlist's `URI=` attributes in one linear pass instead of a regular expression. Nothing changes for viewers.
+
 ## [3.4.0] – Churros – 2026-11-12
 
 ### Upgrade notes

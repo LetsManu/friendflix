@@ -38,7 +38,7 @@ Danach findest du FriendFlix im Startmenü. Zum Deinstallieren nimm *Einstellung
 
 ## Erster Start
 
-1. Gib die Adresse deines FriendFlix-Servers ein, zum Beispiel `friend.example.com` (`https://` wird ergänzt). Reine `http://`-Adressen gehen auch, für einen Server im Heimnetz wie in der Android-App, aber `https` wird dringend empfohlen: über `http` geht das Sitzungs-Cookie unverschlüsselt durchs Netz.
+1. Gib die Adresse deines FriendFlix-Servers ein, zum Beispiel `friend.example.com` (`https://` wird ergänzt). Reines `http://` wird nur für einen Server im Heimnetz angenommen: eine IP-Adresse aus einem privaten Bereich (`192.168.x.x`, `10.x.x.x`, `172.16–31.x.x`, Tailscales `100.64–127.x.x`, IPv6 `fd…`/`fe80…`, Loopback) oder ein lokaler Name (`nas`, `*.local`, `*.lan`, `*.home.arpa`, `*.internal`). Jede andere Adresse braucht `https`, und `https` wird auch im Heimnetz empfohlen: über `http` geht das Sitzungs-Cookie unverschlüsselt durchs Netz. Ein öffentlicher Name, der auf eine Heimnetz-Adresse zeigt, wird über `http` abgelehnt; nimm die IP-Adresse oder `https`.
 2. Die App prüft, ob die Adresse wie ein passender FriendFlix-Server antwortet (`GET /api/version`). Wenn nicht, sagt sie warum.
 3. Melde dich genau wie im Browser an, in der App: mit der Anmeldung in der App oder mit der Anmeldeseite deines Servers bei seinem Identity-Provider (zum Beispiel Authentik unter `auth.example.com`), mit Passkey, wo dein Provider ihn anbietet. Gibt dein Server neue Geräte frei, erscheint der PC als neues Gerät zur Freigabe durch den Admin.
 
@@ -162,7 +162,7 @@ Unit-Tests und CI decken die Logik ab und dass die App baut; diese Punkte brauch
 2. Über *Installierte Apps* deinstallieren und neu installieren: es klappt, `friendflix://` öffnet weiter die App.
 
 **Erster Start und Anmeldung**
-3. Die Einrichtung akzeptiert `friend.example.com` und lehnt `http://`, einen falschen Host und einen Server mit selbstsigniertem Zertifikat mit der richtigen Meldung ab.
+3. Die Einrichtung akzeptiert `friend.example.com` und `http://<LAN-IP>:<Port>` und lehnt `http://friend.example.com` (reines http zu einem öffentlichen Host), einen falschen Host und einen Server mit selbstsigniertem Zertifikat mit der richtigen Meldung ab.
 4. Melde dich mit der Anmeldung in der App und mit Authentik an; melde dich mit einem Passkey an. Externe Links öffnen im Standardbrowser. Die Einstellungsseite und der Server-Eintrag im Tray zeigen die Adresse.
 
 **Abspielen und Sync**

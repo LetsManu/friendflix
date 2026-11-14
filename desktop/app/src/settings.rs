@@ -291,11 +291,11 @@ mod tests {
         let p = dir.path().join("settings.json");
         std::fs::write(
             &p,
-            r#"{"server":"http://192.0.2.5:8096","future":{"x":1},"hwdec":false}"#,
+            r#"{"server":"http://192.168.1.5:8096","future":{"x":1},"hwdec":false}"#,
         )
         .unwrap();
         let s = Settings::load_from(&p);
-        assert_eq!(s.server.as_deref(), Some("http://192.0.2.5:8096"));
+        assert_eq!(s.server.as_deref(), Some("http://192.168.1.5:8096"));
         assert!(!s.hwdec);
         assert!(s.start_fullscreen, "missing fields keep their defaults");
     }
@@ -314,6 +314,14 @@ mod tests {
             (s.server, s.auth_origin, s.last_profile),
             (None, None, None)
         );
+        std::fs::write(
+            &p,
+            r#"{"server":"http://friend.example.com","authOrigin":"https://auth.example.com"}"#,
+        )
+        .unwrap();
+        let s = Settings::load_from(&p);
+        assert_eq!(s.server, None, "plain http to a public host is dropped");
+        assert_eq!(s.auth_origin.as_deref(), Some("https://auth.example.com"));
         std::fs::write(&p, r#"{"server":"https://FRIEND.example.com:443/x","authOrigin":"https://auth.example.com"}"#).unwrap();
         let s = Settings::load_from(&p);
         assert_eq!(s.server.as_deref(), Some("https://friend.example.com"));
