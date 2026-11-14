@@ -11,7 +11,7 @@ import { HEADER_BODY_SHA, ReplayCache, healthProof, isBodySha, isNonce, verify, 
 import { clearStale } from './cache.js';
 import { passthroughDriver } from './passthrough.js';
 import { Previews } from './preview.js';
-import { remuxDriver } from './remux.js';
+import { probedPassthrough, remuxDriver } from './remux.js';
 import { benchmarkRoutes } from './routes/benchmark.js';
 import { fetchRoutes } from './routes/fetch.js';
 import { fileRoutes } from './routes/files.js';
@@ -249,9 +249,10 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   // the SRT push ingest: srtgate listens on every port of the range; its feed set arrives with PUT /v1/ingest
   const ingest = new IngestHub({ spawn: srtgateSpawner(cfg.srtPorts), now: Date.now, log });
   const previews = new Previews({ run, log });
-  const media = remuxDriver({ run, guard, log, ingest });
+  const mediaDeps = { run, guard, log, ingest };
+  const media = remuxDriver(mediaDeps);
   const streams = new Streams({
-    root: cfg.cacheDir, maxBytes: cfg.cacheMaxBytes, drivers: { passthrough: passthroughDriver({ guard }), remux: media, transcode: media }, log,
+    root: cfg.cacheDir, maxBytes: cfg.cacheMaxBytes, drivers: { passthrough: probedPassthrough(mediaDeps, media, passthroughDriver({ guard })), remux: media, transcode: media }, log,
     onSegment: (id, path) => previews.segment(id, path), onStop: (id) => previews.drop(id),
   });
   const routes = [

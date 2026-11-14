@@ -78,14 +78,36 @@ function untilAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T | null> {
 
 const fileSize = (p: string): Promise<number> => stat(p).then((s) => s.size, () => 0);
 
-export function remuxDriver(d: RemuxDeps): Driver {
-  const probeFn = d.probe ?? ((input: StreamInput, signal: AbortSignal) => probe(input, { run: d.run, guard: d.guard, signal, ingest: d.ingest }));
+const probeOf = (d: RemuxDeps) => d.probe ?? ((input: StreamInput, signal: AbortSignal) => probe(input, { run: d.run, guard: d.guard, signal, ingest: d.ingest }));
+
+/** a media driver that can take the probe facts a caller already has (then it does not probe again) */
+export type MediaDriver = (ctx: Parameters<Driver>[0], known?: ProbeResult) => Promise<void>;
+
+/**
+ * The passthrough driver behind a probe: an HLS channel is passed through only when a browser can play its audio. The probe runs
+ * once, first (it adds its time, at most the probe's own timeout, to the first segment of a passthrough start): `needs: remux`
+ * (audio a browser cannot play) runs the media driver as `remux` with these facts; anything else, also a failed probe or a
+ * `transcode` verdict (non-H264 HLS: as before, no slot was taken for it), runs the passthrough driver, so a probe outage never
+ * breaks a working channel.
+ */
+export function probedPassthrough(d: RemuxDeps, media: MediaDriver, pass: Driver): Driver {
+  const probeFn = probeOf(d);
+  return async (ctx) => {
+    const facts = await untilAbort(probeFn(ctx.input, ctx.signal).catch(() => PROBE_FAILED), ctx.signal);
+    if (facts === null || ctx.signal.aborted) return;
+    if (facts.ok && facts.needs === 'remux') return media(ctx, facts);
+    return pass(ctx);
+  };
+}
+
+export function remuxDriver(d: RemuxDeps): MediaDriver {
+  const probeFn = probeOf(d);
   const size = d.size ?? fileSize;
   const log: Log = d.log ?? (() => {});
   const now = d.now ?? Date.now;
-  return async (ctx) => {
+  return async (ctx, known) => {
     const input = ctx.input;
-    const facts = await untilAbort(probeFn(input, ctx.signal).catch(() => PROBE_FAILED), ctx.signal);
+    const facts = known ?? (await untilAbort(probeFn(input, ctx.signal).catch(() => PROBE_FAILED), ctx.signal));
     if (facts === null || ctx.signal.aborted) return;
     const mode = chooseMode(ctx.mode, facts);
     if (mode !== ctx.mode) ctx.runsAs(mode);
