@@ -156,7 +156,7 @@ describe('admin glass: text contrast (B′)', () => {
   });
 
   it('hovers move only opacity: no colour property in any transition of the admin glass', () => {
-    const files = ['./AdminShell.svelte', '../ui/StatTile.svelte', './ServiceLights.svelte', '../../routes/admin/+page.svelte', '../ui/DataTable.svelte', '../ui/Field.svelte', '../ui/Select.svelte', '../ui/StatusPill.svelte'];
+    const files = ['./AdminShell.svelte', '../ui/StatTile.svelte', './SystemCheck.svelte', './CheckLine.svelte', './HevcCheck.svelte', '../../routes/admin/+page.svelte', '../ui/DataTable.svelte', '../ui/Field.svelte', '../ui/Select.svelte', '../ui/StatusPill.svelte'];
     for (const f of files) for (const m of read(f).matchAll(/transition:([^;}]*)/g)) expect(m[1], f).not.toMatch(/color|background|border|shadow/);
     expect(appCss).toMatch(/\.fill-hover::after \{[^}]*opacity: 0;[^}]*transition: opacity var\(--t-fast\); \}/);
     // calm mode / reduced motion (html.m-still): the hover layers switch at once
