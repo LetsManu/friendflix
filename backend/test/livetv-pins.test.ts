@@ -173,6 +173,50 @@ describe('hand pins (Task 7)', () => {
     expect((xmltvCalls()[0]!.body as { channels: string[] }).channels).toContain('d.de');
   });
 
+  it('several pins while the lock is held: one owner keeps the key, one import after the lock frees', async () => {
+    const list = await addList('Nordlicht Paket');
+    const [a, b, c] = await Promise.all(['Eins', 'Zwei', 'Drei'].map((n) => addChannel(list, n)));
+    const g = await createGuide();
+    guides.set(GUIDE_URL, guide([['a.de', 'A'], ['b.de', 'B'], ['c.de', 'C']]));
+    await refreshEpg(env.ctx, await src(g));
+    calls.length = 0;
+    const pk = `ltv:pinimport:${g}`;
+    await env.kv.setnx(`ltv:refresh:${g}`, 'other', 60);
+    expect((await pin(a, { sourceId: g, xmlId: 'a.de' })).statusCode).toBe(200);
+    const owner = await env.kv.get(pk);
+    expect(owner).not.toBeNull();
+    expect(owner).not.toBe('1');
+    for (const [ch, x] of [[b, 'b.de'], [c, 'c.de']] as const) {
+      await new Promise((r) => setTimeout(r, 120)); // longer than the delay: the owner is polling now
+      expect((await pin(ch, { sourceId: g, xmlId: x })).statusCode).toBe(200);
+      expect(await env.kv.get(pk)).toBe(owner); // still the first owner's key; no second poller
+    }
+    expect(xmltvCalls()).toHaveLength(0);
+    await env.kv.del(`ltv:refresh:${g}`);
+    await settle(g);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(xmltvCalls()).toHaveLength(1);
+    expect([...(xmltvCalls()[0]!.body as { channels: string[] }).channels].sort()).toEqual(['a.de', 'b.de', 'c.de']);
+  });
+
+  it('a pin import never deletes a key another owner holds', async () => {
+    const list = await addList('Nordlicht Paket');
+    const a = await addChannel(list, 'Eins');
+    const g = await createGuide();
+    guides.set(GUIDE_URL, guide([['a.de', 'A']]));
+    await refreshEpg(env.ctx, await src(g));
+    calls.length = 0;
+    const pk = `ltv:pinimport:${g}`;
+    await env.kv.setnx(`ltv:refresh:${g}`, 'other', 60);
+    expect((await pin(a, { sourceId: g, xmlId: 'a.de' })).statusCode).toBe(200);
+    await env.kv.set(pk, 'newer-owner', 60); // our key expired and a newer pin took over
+    await new Promise((r) => setTimeout(r, 200)); // the poller notices the key is not its own and stops
+    await env.kv.del(`ltv:refresh:${g}`);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(await env.kv.get(pk)).toBe('newer-owner');
+    expect(xmltvCalls()).toHaveLength(0); // the newer owner runs the import, not this poller
+  });
+
   it('a pin beats a list match; a list with a guide is a pin target too', async () => {
     const list = await addList('Nordlicht Paket', { epg: LIST_EPG });
     const ch = await addChannel(list, 'Nordlicht TV');
@@ -304,6 +348,19 @@ describe('hand pins (Task 7)', () => {
     await call('PATCH', `/api/admin/livetv/sources/${g}`, { enabled: false });
     await refused(g);
     expect((await call('GET', `/api/admin/livetv/epg/channels?source=${list}&q=${'x'.repeat(101)}`)).json()).toEqual({ error: 'invalid', field: 'q' });
+  });
+
+  it('the search sees a changed normName index after the guide was refreshed again', async () => {
+    const g = await createGuide();
+    guides.set(GUIDE_URL, guide([['nl.hd', 'Nordlicht HD']]));
+    await refreshEpg(env.ctx, await src(g));
+    expect((await search(g, 'Nordlicht-HD')).json().channels).toEqual([{ xmlId: 'nl.hd', names: ['Nordlicht HD'] }]);
+    await env.pool.query("update livetv_epg_channels set names = array['Sternwarte HD'] where source_id = $1", [g]);
+    // index unchanged (kept for a minute, same refresh stamp)
+    expect((await search(g, 'Nordlicht-HD')).json().channels).toHaveLength(1);
+    await env.pool.query("update livetv_sources set epg_last_refresh_at = now() + interval '1 minute' where id = $1", [g]);
+    expect((await search(g, 'Nordlicht-HD')).json().channels).toEqual([]);
+    expect((await search(g, 'Sternwarte-HD')).json().channels).toEqual([{ xmlId: 'nl.hd', names: ['Sternwarte HD'] }]);
   });
 
   it('admin only', async () => {
