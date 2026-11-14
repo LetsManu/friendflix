@@ -32,6 +32,12 @@ export interface ComposeSettings {
   dockerHost: string;
   /** whether the optional livetv service is enabled (the updater's state): every compose command then adds `--profile livetv` */
   livetv?: () => boolean;
+  /**
+   * the updater's own container (HOSTNAME: Docker sets it to the container id). Only used to tell whose stack it is when the
+   * compose files cannot be read: on a Portainer stack the bind of `.` is an empty directory on the host (Portainer keeps the
+   * files in its own volume), so `compose ps` fails there and the stack would stay "unknown".
+   */
+  self?: string;
 }
 
 export type ServiceState = { service: string; name: string; state: string; health: string };
@@ -69,10 +75,38 @@ export class Docker {
    */
   async origin(): Promise<StackOrigin & { labels: Record<string, unknown> | null }> {
     const rows = await this.psRows(this.s.files); // the configured files find the same project's containers
-    if (rows === null) throw new StepError('compose_config');
+    if (rows === null) {
+      // the files are not readable here. A Portainer stack is the usual reason (its files live in Portainer's volume, the bind
+      // of `.` is an empty host directory): tell it from the labels alone, so the page and the backend take the Portainer way
+      // instead of a job that can only fail with compose_config. Our own stack with unreadable files stays compose_config.
+      const o = await this.originFromLabels();
+      if (!o || o.stack === 'own') throw new StepError('compose_config');
+      return o;
+    }
     const st = rows.find((p) => p.service === 'backend');
     const labels = st ? await this.labels(st.name) : null;
     return { ...classifyStack(labels, this.s.projectDir), labels };
+  }
+
+  /**
+   * Whose stack it is without the compose files: the compose project on the updater's own container, then that project's
+   * backend container (never a one-off) and its labels. null when any of it cannot be read. A working directory under
+   * Portainer's /data/compose/ counts as Portainer here even when it equals projectDir (the files are not there to read).
+   */
+  private async originFromLabels(): Promise<(StackOrigin & { labels: Record<string, unknown> | null }) | null> {
+    const self = this.s.self;
+    if (!self || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(self)) return null;
+    const project = (await this.labels(self))?.['com.docker.compose.project'];
+    if (typeof project !== 'string' || !PROJECT_RE.test(project)) return null;
+    const r = await this.run('docker', ['ps', '--all', '--format', '{{.Names}}', '--filter', `label=com.docker.compose.project=${project}`,
+      '--filter', 'label=com.docker.compose.service=backend', '--filter', 'label=com.docker.compose.oneoff=False'], { env: this.env(), timeoutMs: MIN });
+    if (r.code !== 0) return null;
+    const name = r.stdout.split('\n').map((l) => l.trim()).find((l) => /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(l));
+    const labels = name ? await this.labels(name) : null;
+    if (!labels) return null;
+    const o = classifyStack(labels, this.s.projectDir);
+    if (o.stack === 'own' && o.workingDir && /^\/data\/compose\/[^/]+/.test(o.workingDir)) return { stack: 'foreign', manager: 'portainer', reason: 'portainer', workingDir: o.workingDir, labels };
+    return { ...o, labels };
   }
 
   /** own / foreign and why, for the status (null = could not tell: compose or Docker did not answer) */

@@ -19,6 +19,8 @@ export interface UpdaterConfig {
   backendHealthUrl: string;
   version: string | null;
   gitSha: string | null;
+  /** the updater's own container (HOSTNAME, set by Docker to the container id); undefined when it is not a plain name */
+  self?: string;
 }
 
 /** a compose file name inside the project directory (no path) */
@@ -64,5 +66,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): UpdaterConfig {
     port, secret: secret(env), projectDir, composeFiles, composeFilesAuto, projectName, repo, dockerHost,
     stateDir: env.UPDATER_STATE_DIR || '/state', backendHealthUrl,
     version: env.APP_VERSION && /^[0-9]+\.[0-9]+\.[0-9]+$/.test(env.APP_VERSION) ? env.APP_VERSION : null, gitSha: sha,
+    ...(env.HOSTNAME && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(env.HOSTNAME) ? { self: env.HOSTNAME } : {}),
   };
 }

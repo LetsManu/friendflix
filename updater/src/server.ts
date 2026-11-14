@@ -202,7 +202,7 @@ export function start(env: NodeJS.ProcessEnv = process.env): Server {
   // the livetv profile follows the updater's state (set below; read on every compose command)
   let livetvEnabled = (): boolean => false;
   const docker = new Docker({ projectDir: cfg.projectDir, files: cfg.composeFiles, autoFiles: cfg.composeFilesAuto, projectName: cfg.projectName, repo: cfg.repo, dockerHost: cfg.dockerHost,
-    livetv: () => livetvEnabled() }, execRunner);
+    livetv: () => livetvEnabled(), self: cfg.self }, execRunner);
   const updater = new Updater(dockerOps(docker, cfg.backendHealthUrl), fileStore(cfg.stateDir));
   livetvEnabled = () => updater.livetv === 'enabled';
   const verifier: Verifier = { key: deriveKey(cfg.secret), cache: new ReplayCache(), notBefore: Date.now() };
