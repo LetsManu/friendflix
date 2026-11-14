@@ -30,6 +30,12 @@ export interface M3uResult {
   /** every live entry (skipped groups and entries over the limit included) */
   listed: number;
   skipped: { vod: number; invalid: number; overLimit: number; groups: number };
+  /**
+   * the `tvg-chno` numbers of every live entry (skipped groups and entries over the limit included): how many entries carry one and
+   * how many different numbers they are. The backend decides from it whether the list's own numbers can number it, for the whole list,
+   * so a changed group selection never changes that decision. Absent from an older livetv.
+   */
+  chnos?: { count: number; distinct: number };
 }
 
 export class M3uError extends Error {
@@ -156,7 +162,8 @@ type Pending = { info?: Map<string, string>; title?: string; group?: string; use
  * An entry is `#EXTINF` (+ `#EXTGRP`, `#EXTVLCOPT:http-user-agent=`) and its URL line. Invalid (counted, dropped): a line over
  * 8 KB anywhere in the entry, a URL without `#EXTINF`, a URL that is not http/https/srt, no name. VOD (§3.4) is counted apart.
  * Every other entry is live: it counts in `listed`, `groups` and `pos`, gets its key (duplicates `:2`, `:3`, counted over all live
- * entries so a selection never changes a key); then entries of `skipGroups` are dropped, and past `max` kept ones `overLimit`.
+ * entries so a selection never changes a key) and counts in `chnos`; then entries of `skipGroups` are dropped, and past `max` kept
+ * ones `overLimit`.
  * More than MAX_LISTED live entries or MAX_GROUPS distinct groups (counted before skipping) → `too_big`.
  */
 export async function parseM3u(lines: AsyncIterable<string>, o: { max: number; skipGroups?: ReadonlySet<string> }): Promise<M3uResult> {
@@ -164,6 +171,8 @@ export async function parseM3u(lines: AsyncIterable<string>, o: { max: number; s
   const groups = new Map<string, number>();
   const skipped = { vod: 0, invalid: 0, overLimit: 0, groups: 0 };
   const seenKeys = new Map<string, number>();
+  const chnos = new Set<number>();
+  let chnoCount = 0;
   let listed = 0;
   let header = false;
   let defaultShift: number | undefined;
@@ -197,10 +206,12 @@ export async function parseM3u(lines: AsyncIterable<string>, o: { max: number; s
     const base = entryKey({ tvgId, name, url: url.href });
     const n = (seenKeys.get(base) ?? 0) + 1;
     seenKeys.set(base, n);
-    if (group !== undefined && o.skipGroups?.has(group)) { skipped.groups++; return; }
-    if (entries.length >= o.max) { skipped.overLimit++; return; }
+    // counted over every live entry, like the keys: a selection never changes what the list's numbers look like
     const chnoRaw = cur.info.get('tvg-chno');
     const chno = chnoRaw && /^\d{1,6}$/.test(chnoRaw) ? Number(chnoRaw) : undefined;
+    if (chno !== undefined) { chnoCount++; chnos.add(chno); }
+    if (group !== undefined && o.skipGroups?.has(group)) { skipped.groups++; return; }
+    if (entries.length >= o.max) { skipped.overLimit++; return; }
     const shiftMin = parseShift(cur.info.get('tvg-shift')) ?? defaultShift;
     const kind = url.protocol === 'srt:' ? 'srt' : url.pathname.toLowerCase().endsWith('.m3u8') ? 'hls' : 'ts';
     const logo = nonEmpty(cur.info.get('tvg-logo'));
@@ -241,5 +252,7 @@ export async function parseM3u(lines: AsyncIterable<string>, o: { max: number; s
     }
   }
   if (!header) throw new M3uError('not_m3u');
-  return { entries, groups: [...groups].map(([name, channels]) => ({ name, channels })), listed, skipped };
+  return {
+    entries, groups: [...groups].map(([name, channels]) => ({ name, channels })), listed, skipped, chnos: { count: chnoCount, distinct: chnos.size },
+  };
 }

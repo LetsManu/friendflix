@@ -119,6 +119,34 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
     await expect(card(page, 'Nordlicht Plus')).toContainText('https://iptv.example.com/…');
   });
 
+  test('a list whose numbers repeat says under Nummern that the list order numbers it; the field keeps its room', async ({ page, api }) => {
+    api.admin.livetv.area.sources[0]!.chnoFallback = true;
+    await page.goto('/admin/livetv');
+    await menu(page, 'Nordlicht Paket', 'Bearbeiten');
+    const dlg = page.getByRole('dialog', { name: 'Quelle bearbeiten' });
+    const note = dlg.getByText('Die Nummern der Liste wiederholen sich – Sender werden nach der Reihenfolge der Liste nummeriert.');
+    await expect(dlg.getByRole('radio', { name: 'Aus der Liste (tvg-chno)' })).toHaveAttribute('aria-checked', 'true');
+    await expect(note).toBeVisible();
+    // the gap from the numbering choice to the next section (the sheet may scroll, so measured from one to the other)
+    const gap = async () => (await dlg.getByText('Senderlogos', { exact: true }).boundingBox())!.y - (await dlg.getByRole('radio', { name: 'Nach Reihenfolge ab' }).boundingBox())!.y;
+    const before = await gap();
+    // the list order chosen by hand: the first-number field takes the room, nothing below moves
+    await dlg.getByRole('radio', { name: 'Nach Reihenfolge ab' }).click();
+    await expect(note).toBeHidden();
+    await expect(dlg.getByRole('spinbutton', { name: 'Erste Nummer' })).toBeVisible();
+    expect(await gap()).toBe(before);
+    await dlg.getByRole('radio', { name: 'Aus der Liste (tvg-chno)' }).click();
+    await expect(note).toBeVisible();
+  });
+
+  test('a list whose own numbers are used shows no such note', async ({ page }) => {
+    await page.goto('/admin/livetv');
+    await menu(page, 'Nordlicht Paket', 'Bearbeiten');
+    const dlg = page.getByRole('dialog', { name: 'Quelle bearbeiten' });
+    await expect(dlg.getByRole('spinbutton', { name: 'Erste Nummer' })).toBeHidden();
+    await expect(dlg.locator('[data-chno-fallback]')).toHaveCount(0);
+  });
+
   test('Jetzt aktualisieren shows the spinner and a toast', async ({ page, api }) => {
     await page.goto('/admin/livetv');
     const c = card(page, 'Nordlicht Paket');

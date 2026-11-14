@@ -325,6 +325,7 @@ export default {
       refreshNoFile: 'Noch keine Datei hochgeladen.',
       xmltvInvalid: 'Diese Datei ist kein XMLTV-Programmführer (.xml oder .xml.gz).',
     },
+    numFallback: 'Die Nummern der Liste wiederholen sich – Sender werden nach der Reihenfolge der Liste nummeriert.',
   },
   push: {
     add: 'Stream hinzufügen',

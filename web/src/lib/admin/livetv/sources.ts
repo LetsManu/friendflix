@@ -8,7 +8,7 @@ import { ApiError } from '#lib/api';
 import { fmtDateTime, fmtTime, tr, type TKey } from '#lib/i18n';
 import { errorText } from '#lib/ui/action';
 import { fmtBytes } from '#lib/ui/format';
-import type { SourceView, StreamKind } from './api';
+import type { Numbering, SourceView, StreamKind } from './api';
 
 export const TABS = ['sources', 'channels', 'groups', 'guide', 'status', 'settings'] as const;
 export type Tab = (typeof TABS)[number];
@@ -228,3 +228,10 @@ export function fileFailText(e: unknown): string {
 }
 /** a bigger file never leaves the browser: the server's limit */
 export const GUIDE_FILE_MAX = 300 * 1024 * 1024;
+
+/**
+ * the sheet's note under *Nummern* ("Die Nummern der Liste wiederholen sich …"): shown while *Aus der Liste (tvg-chno)* is chosen for a
+ * list whose last import found its tvg-chno numbers repeating (`chnoFallback`), as then the list order numbers its channels
+ */
+export const chnoFallbackShown = (numbering: Numbering, source: Pick<SourceView, 'chnoFallback'> | null): boolean =>
+  numbering === 'chno' && source?.chnoFallback === true;

@@ -11,7 +11,7 @@ import { LivetvError, livetvCall } from './client.js';
 import { livetvInstalled } from './detect.js';
 import { autoMatch, LOGO_BUDGET_MS, refreshEpg } from './epg.js';
 import { pushEvent } from './events.js';
-import { mergeImport, type ImportResult } from './import.js';
+import { mergeImport, type ChnoStats, type ImportResult } from './import.js';
 import { importLogos } from './logos.js';
 import { invalidateLivetvRights } from './rights.js';
 import { dropPendingFile, fileLabel, promoteGuideFile, receiveGuideFile, removeGuideFiles, removeOtherKind, type PendingFile } from './guidefiles.js';
@@ -71,9 +71,18 @@ function readEntry(v: unknown): M3uEntry | null {
   return e;
 }
 
-function readAnswer(a: FetchM3uAnswer | undefined): { entries: M3uEntry[]; listed: number } {
+/** the whole list's tvg-chno counts (import.ts chnoFallback); undefined when absent (an older livetv) or not a sound pair */
+function readChnos(v: unknown): ChnoStats | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  if (!int(o.count) || !int(o.distinct) || o.distinct < 0 || o.distinct > o.count) return undefined;
+  return { count: o.count, distinct: o.distinct };
+}
+
+function readAnswer(a: FetchM3uAnswer | undefined): { entries: M3uEntry[]; listed: number; chnos?: ChnoStats } {
   if (!a || !Array.isArray(a.entries) || !int(a.listed) || a.listed < 0) throw new LivetvError(200, 'invalid_answer');
-  return { entries: a.entries.map(readEntry).filter((e): e is M3uEntry => e !== null), listed: a.listed };
+  const chnos = readChnos(a.chnos);
+  return { entries: a.entries.map(readEntry).filter((e): e is M3uEntry => e !== null), listed: a.listed, ...(chnos ? { chnos } : {}) };
 }
 
 /** the source was edited while its list was fetched (importList): not a failure, nothing is recorded */
@@ -112,7 +121,7 @@ async function storeLogos(ctx: Ctx, source: SourceRow, entries: readonly M3uEntr
 
 /** the list step: fetch, merge, logos. Throws RefreshFailed with the fixed code. */
 async function importList(ctx: Ctx, source: SourceRow, url: string, rev: string): Promise<ImportResult> {
-  let fetched: { entries: M3uEntry[]; listed: number };
+  let fetched: ReturnType<typeof readAnswer>;
   try {
     const a = await livetvCall<FetchM3uAnswer>(ctx, 'POST', '/v1/fetch/m3u', {
       url, allowLan: source.allow_lan, ...(source.user_agent ? { userAgent: source.user_agent } : {}), skipGroups: source.skip_groups,

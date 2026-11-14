@@ -79,4 +79,18 @@ test.describe('admin: Live-TV, Quellen (phone, 375 px)', () => {
     await fits(res.getByRole('button', { name: 'Fertig' }), 'Fertig', 44);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
+
+  test('the note of a list whose numbers repeat fits 375 px', async ({ page, api }) => {
+    api.admin.livetv.area.sources[0]!.chnoFallback = true;
+    await page.goto('/admin/livetv');
+    await page.getByRole('button', { name: 'Aktionen für Nordlicht Paket' }).click();
+    await page.getByRole('dialog', { name: 'Nordlicht Paket' }).getByRole('button', { name: 'Bearbeiten' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Quelle bearbeiten' });
+    const note = dlg.locator('[data-chno-fallback]');
+    await note.scrollIntoViewIfNeeded();
+    await expect(note).toBeVisible();
+    await fits(note, 'numbering note');
+    for (const r of await dlg.getByRole('radio', { name: /tvg-chno|Nach Reihenfolge/ }).all()) await fits(r, 'numbering choice', 44);
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+  });
 });

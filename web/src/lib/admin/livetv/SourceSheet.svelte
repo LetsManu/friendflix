@@ -255,7 +255,7 @@
         </div>
       </details>
 
-      <ImportOptions bind:numbering bind:numberBase bind:logoPref bind:epgShiftMin {baseErr} />
+      <ImportOptions bind:numbering bind:numberBase bind:logoPref bind:epgShiftMin {baseErr} {source} />
 
       <!-- the Prüfen outcome keeps its box, so the buttons below never move -->
       <div class="result" aria-live="polite">

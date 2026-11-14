@@ -327,6 +327,7 @@ const dict: Translation<typeof de> = {
       refreshNoFile: 'Nie wgrano jeszcze pliku.',
       xmltvInvalid: 'Ten plik nie jest przewodnikiem XMLTV (.xml lub .xml.gz).',
     },
+    numFallback: 'Numery na liście się powtarzają – kanały są numerowane według kolejności na liście.',
   },
   push: {
     add: 'Dodaj strumień',

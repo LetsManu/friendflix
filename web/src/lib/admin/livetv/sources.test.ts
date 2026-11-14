@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { hasKey, setLocale, tr } from '#lib/i18n';
 import type { SourceView } from './api';
 import { ApiError } from '#lib/api';
-import { detectKind, fileFailText, fileLine, guideProviderLabel, isFileGuide, guideMoves, guideScopeLabel, guideStateLine, portRange, portsLine, refreshDone, refreshResult, scopeOptions, sourceError, sourceFailText, stateLine, tabOf, urlShapeOk } from './sources';
+import { chnoFallbackShown, detectKind, fileFailText, fileLine, guideProviderLabel, isFileGuide, guideMoves, guideScopeLabel, guideStateLine, portRange, portsLine, refreshDone, refreshResult, scopeOptions, sourceError, sourceFailText, stateLine, tabOf, urlShapeOk } from './sources';
 
 const at = (h: number, min: number, dayShift = 0) => new Date(2026, 10, 12 + dayShift, h, min).toISOString();
 const NOW = new Date(2026, 10, 12, 9, 30);
@@ -12,7 +12,7 @@ const NOW = new Date(2026, 10, 12, 9, 30);
 const view = (state: Partial<SourceView['state']> = {}, over: Partial<SourceView> = {}): SourceView => ({
   id: 's1', kind: 'm3u', name: 'Nordlicht Paket', urlHint: 'https://iptv.example.com/…', epgHint: 'https://iptv.example.com/…', userAgent: null, allowLan: false,
   refresh: '24h', skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0, maxStreams: null, enabled: true, position: 0,
-  channelCount: 412, pendingGroups: 0, guideProvider: null, guideScope: null, fileName: null, fileBytes: null, servedChannels: 380,
+  channelCount: 412, pendingGroups: 0, guideProvider: null, guideScope: null, fileName: null, fileBytes: null, chnoFallback: false, servedChannels: 380,
   state: {
     lastRefreshAt: at(6, 12), lastOkAt: at(6, 12), lastError: null, counts: { channels: 412, added: 3, removed: 1 },
     epg: { lastRefreshAt: at(6, 12), lastOkAt: at(6, 12), lastError: null, programmes: 6812 },
@@ -250,5 +250,25 @@ describe('guides from an uploaded file', () => {
     expect(refreshResult(failed('invalid', { guideProvider: 'xmltv_url' })).text).not.toContain('Datei');
     expect(refreshResult(failed('no_file')).text).toBe('Aktualisieren fehlgeschlagen: Die gespeicherte Datei fehlt – lade sie neu hoch.');
     for (const code of ['no_file', 'bad_signature', 'ratio']) expect(sourceError(code)).not.toBe(tr('adminLive.err.generic'));
+  });
+});
+
+describe('chnoFallbackShown (the note under Nummern)', () => {
+  it('shows only while the list\'s own numbers are chosen for a list whose numbers repeat', () => {
+    expect(chnoFallbackShown('chno', view({}, { chnoFallback: true }))).toBe(true);
+    expect(chnoFallbackShown('order', view({}, { chnoFallback: true }))).toBe(false);
+    expect(chnoFallbackShown('chno', view())).toBe(false);
+    expect(chnoFallbackShown('chno', null)).toBe(false); // a new source: no import has judged it yet
+  });
+  it('says so in every language', async () => {
+    const de = 'Die Nummern der Liste wiederholen sich – Sender werden nach der Reihenfolge der Liste nummeriert.';
+    expect(hasKey('adminLive.src.numFallback')).toBe(true);
+    expect(tr('adminLive.src.numFallback')).toBe(de);
+    for (const l of ['en', 'es', 'fr', 'it', 'pl', 'tr']) {
+      await setLocale(l);
+      expect(tr('adminLive.src.numFallback')).not.toBe(de); // translated, not the German fallback
+    }
+    await setLocale('en');
+    expect(tr('adminLive.src.numFallback')).toBe('The list’s numbers repeat – channels are numbered in list order.');
   });
 });

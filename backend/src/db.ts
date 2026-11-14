@@ -1095,6 +1095,12 @@ export const MIGRATIONS: string[] = [
   alter table livetv_sources add column if not exists guide_file_name text;
   alter table livetv_sources add column if not exists guide_file_bytes bigint;
   `,
+  // 54: Live TV numbering fallback (livetv/import.ts chnoFallback): whether a list's own tvg-chno numbers repeat too much to number it,
+  // so its channels are numbered by list order instead. Decided over the whole provider list (skipped groups included) and kept per
+  // source, so ticking or unticking groups never renumbers channels; null = not decided yet (no import since, or a new URL). Rerunnable.
+  `
+  alter table livetv_sources add column if not exists chno_fallback boolean;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

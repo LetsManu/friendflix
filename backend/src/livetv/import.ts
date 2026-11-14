@@ -30,14 +30,33 @@ export function importNumber(e: Pick<M3uEntry, 'chno' | 'pos'>, src: { numbering
   return src.numbering === 'chno' ? e.chno ?? derived : derived;
 }
 
-/**
- * whether a list's own channel numbers (`tvg-chno`) can number it: not when most of them repeat (some lists give every channel
- * `tvg-chno="1"`, or the same few numbers). Then the list order numbers the import, as `numbering: 'order'` would.
- */
-export function chnoUsable(entries: readonly Pick<M3uEntry, 'chno'>[]): boolean {
+/** the `tvg-chno` numbers among `entries`: how many entries carry one and how many different numbers they are */
+export function chnoStats(entries: readonly Pick<M3uEntry, 'chno'>[]): ChnoStats {
   const nums = entries.map((e) => e.chno).filter((n): n is number => n !== undefined);
-  if (nums.length === 0) return true; // nothing to judge: entries without a number fall back to the order one by one
-  return new Set(nums).size >= nums.length * 0.9;
+  return { count: nums.length, distinct: new Set(nums).size };
+}
+export interface ChnoStats { count: number; distinct: number }
+
+/**
+ * whether a list's own channel numbers (`tvg-chno`) repeat too much to number it: fewer than 90 % of them are different (some lists give
+ * every channel `tvg-chno="1"`, or the same few numbers). Then *Aus der Liste (tvg-chno)* numbers by list order, as `numbering: 'order'`
+ * would (`number_base` + position, the owner's "provider order first, then A-Z": channels with the same number sort by name). Judged
+ * over the WHOLE provider list (livetv's `chnos`, skipped groups included), never over the picked groups, so ticking or unticking groups
+ * never flips it and never renumbers channels (spec ruling 18). A list without any `tvg-chno` is not a fallback: each entry without a
+ * number falls back to its position one by one.
+ */
+export function chnoFallback(stats: ChnoStats): boolean {
+  return stats.count > 0 && stats.distinct < stats.count * 0.9;
+}
+
+/**
+ * The fallback verdict an import uses: the whole list's (livetv's `chnos`) whenever livetv sends it, so a changed provider list can
+ * change it but a changed selection cannot; else (an older livetv) the source's stored verdict, and only when there is none yet the
+ * imported entries' own, which is then kept (stored) so later selection changes still do not flip it.
+ */
+export function fallbackVerdict(full: ChnoStats | undefined, stored: boolean | null, entries: readonly Pick<M3uEntry, 'chno'>[]): boolean {
+  if (full) return chnoFallback(full);
+  return stored ?? chnoFallback(chnoStats(entries));
 }
 
 /** a group name as stored (1-40 characters, spec §6.1); '' = no group */
@@ -119,12 +138,13 @@ async function mapGroups(c: pg.PoolClient, sourceId: string, groups: readonly st
 
 /**
  * Merges a fetched list into the source's channels (spec §10, see the module comment). `fetched.entries` are the live entries livetv
- * kept (skipped groups and entries over the limit dropped), `fetched.listed` every live entry of the list. `{ error: 'empty' }` = the
+ * kept (skipped groups and entries over the limit dropped), `fetched.listed` every live entry of the list, `fetched.chnos` the whole
+ * list's tvg-chno numbers (the numbering fallback, fallbackVerdict; absent from an older livetv). `{ error: 'empty' }` = the
  * shrink guard tripped and nothing changed. `rev` is the source's `updated_at::text` when `source` was read: when the row has moved by the
  * time the lock is held (an admin edit while the list was fetched), nothing is written and `{ error: 'changed' }` is answered.
  */
 export async function mergeImport(
-  ctx: Ctx, source: SourceRow, fetched: { entries: M3uEntry[]; listed: number }, now: Date = new Date(), rev?: string,
+  ctx: Ctx, source: SourceRow, fetched: { entries: M3uEntry[]; listed: number; chnos?: ChnoStats }, now: Date = new Date(), rev?: string,
 ): Promise<ImportResult | { error: 'empty' | 'changed' }> {
   if (shrunk(fetched.listed, previousListed(source))) return { error: 'empty' };
 
@@ -141,10 +161,15 @@ export async function mergeImport(
 
   return inTx(ctx, async (c) => {
     // one import of a source at a time (the refresh lock is in KV; this also covers a lock that ran out)
-    const cur = (await c.query<{ same: boolean }>(
-      'select ($2::text is null or updated_at::text = $2) as same from livetv_sources where id = $1 for update', [source.id, rev ?? null])).rows[0];
+    const cur = (await c.query<{ same: boolean; chno_fallback: boolean | null }>(
+      'select ($2::text is null or updated_at::text = $2) as same, chno_fallback from livetv_sources where id = $1 for update',
+      [source.id, rev ?? null])).rows[0];
     if (!cur) return { error: 'changed' }; // deleted meanwhile
     if (!cur.same) return { error: 'changed' };
+    // the numbering fallback for the whole list (fallbackVerdict), stored on the source (the sheet shows it; updated_at stays, it is not
+    // an admin edit)
+    const fallback = fallbackVerdict(fetched.chnos, cur.chno_fallback, entries);
+    if (fallback !== cur.chno_fallback) await c.query('update livetv_sources set chno_fallback = $2 where id = $1', [source.id, fallback]);
     // provider-list order (new groups get their positions in that order). Two imports that create the same new groups are serialised
     // here instead of sorting, so they never take the unique-index entries in opposite orders (no deadlock, 40P01)
     const groups = [...new Set(entries.map((e) => e.group).filter((g): g is string => !!g))];
@@ -161,8 +186,10 @@ export async function mergeImport(
     const inserts: Row[] = [];
     const updates: Row[] = [];
     let returned = 0;
-    // a list whose tvg-chno numbers mostly repeat is numbered by its order (chnoUsable)
-    const numbering = source.numbering === 'chno' && !chnoUsable(entries) ? { numbering: 'order' as const, number_base: source.number_base } : source;
+    // a list whose tvg-chno numbers mostly repeat is numbered by its order (chnoFallback). Every entry, new or known, gets the number
+    // of the same rule from values the selection does not change (its tvg-chno or its position in the whole list), so a changed group
+    // selection adds and drops channels but never renumbers the others
+    const numbering = source.numbering === 'chno' && fallback ? { numbering: 'order' as const, number_base: source.number_base } : source;
     for (const e of entries) {
       const num = importNumber(e, numbering);
       const group = e.group || null;

@@ -58,6 +58,11 @@ export interface SourceView {
   /** an uploaded guide (`guideProvider: 'xmltv_file'`): the file's name and size, null before the first upload / for every other source */
   fileName: string | null;
   fileBytes: number | null;
+  /**
+   * a list whose tvg-chno numbers repeat too much: *Aus der Liste (tvg-chno)* numbers its channels by list order instead (judged over
+   * the whole list at its imports); false until its first import and for every other source
+   */
+  chnoFallback: boolean;
   /** channels currently matched to this source's guide (`epg_source_id`) */
   servedChannels: number;
   state: SourceState;

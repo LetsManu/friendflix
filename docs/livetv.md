@@ -71,7 +71,7 @@ Other settings: `LIVETV_CACHE_MAX_GB` (default 6, the disposable segment cache),
 
 *Quelle hinzufügen* takes a name, the M3U URL (for example `https://iptv.example.com/list.m3u`), an optional XMLTV URL, a user agent (advanced), *Heimnetz erlauben* (only then may the address be in a private range such as 192.0.2.x; loopback and link-local addresses never work), the refresh interval, an optional *Max. gleichzeitige Sender* and the **Import** options:
 
-- **Nummern:** *Aus der Liste (tvg-chno)* (default) or *Nach Reihenfolge ab* a number you pick (1 to 99 999). Numbers you set yourself under *Kanäle* are kept.
+- **Nummern:** *Aus der Liste (tvg-chno)* (default) or *Nach Reihenfolge ab* a number you pick (1 to 99 999). Numbers you set yourself under *Kanäle* are kept. When most of a list's `tvg-chno` numbers repeat (fewer than 90 % different, judged over the whole list including unticked groups), *Aus der Liste* numbers by list order instead and the sheet says so; ticking or unticking groups never renumbers the other channels.
 - **Senderlogos:** *Aus der Senderliste zuerst* (default) or *Aus dem Programmführer zuerst*. A logo you upload yourself always wins.
 - **Programm-Zeit verschieben:** moves the programme times of the source by −12 to +14 hours in steps of 0.5 (default 0), for guides that are hours off. A `tvg-shift` from the list and a value set on a single channel (row menu *Programm-Zeit verschieben…*) take precedence.
 - **Max. gleichzeitige Sender** is for providers that allow only one or two connections: FriendFlix then refuses a start early, with the list of channels that are already running, instead of letting the extra one fail (see [Release on switch](#release-on-switch)).

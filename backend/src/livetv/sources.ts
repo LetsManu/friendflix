@@ -77,6 +77,11 @@ export interface SourceRow {
   /** the stored file's name as uploaded (cut) and its size (bigint: pg answers a string) (migration 53) */
   guide_file_name: string | null;
   guide_file_bytes: string | null;
+  /**
+   * a list's tvg-chno numbers repeat too much to number it: its channels are numbered by list order (migration 54; import.ts
+   * chnoFallback); decided over the whole list, null until an import decided it
+   */
+  chno_fallback: boolean | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -113,6 +118,11 @@ export interface SourceView {
   /** an uploaded guide's current file: the name it was uploaded with and its size; null until an upload was imported, and for others */
   fileName: string | null;
   fileBytes: number | null;
+  /**
+   * a list: its tvg-chno numbers repeat too much, so *Aus der Liste (tvg-chno)* numbers its channels by list order (the sheet says so);
+   * false for a list whose numbers are used and until its first import, and for every other source
+   */
+  chnoFallback: boolean;
   state: {
     lastRefreshAt: string | null;
     lastOkAt: string | null;
@@ -256,7 +266,8 @@ function checkUrl(raw: string, allowLan: boolean, field: 'url' | 'epgUrl'): void
 const VIEW_COLUMNS = `src.id, src.kind, src.name, src.url_hint, src.epg_hint, src.user_agent, src.allow_lan, src.refresh, src.skip_groups,
   src.numbering, src.number_base, src.logo_pref, src.epg_shift_min, src.max_streams, src.enabled, src.position,
   src.last_refresh_at, src.last_ok_at, src.last_error, src.last_counts, src.epg_last_refresh_at, src.epg_last_ok_at, src.epg_last_error,
-  src.epg_counts, src.guide_provider, src.guide_scope, src.guide_file, src.guide_file_name, src.guide_file_bytes`;
+  src.epg_counts, src.guide_provider, src.guide_scope, src.guide_file, src.guide_file_name, src.guide_file_bytes,
+  src.chno_fallback`;
 const VIEW_SQL = `
   select ${VIEW_COLUMNS},
     coalesce(n.channels, 0)::int as channel_count,
@@ -304,6 +315,7 @@ function toView(r: ViewRow): SourceView {
     servedChannels: r.served_channels,
     fileName: isFileGuide(r) && r.guide_file ? r.guide_file_name ?? 'guide.xml' : null,
     fileBytes: isFileGuide(r) && r.guide_file ? num(Number(r.guide_file_bytes)) : null,
+    chnoFallback: r.kind === 'm3u' && r.chno_fallback === true,
     state: {
       lastRefreshAt: iso(r.last_refresh_at),
       lastOkAt: iso(r.last_ok_at),
@@ -488,7 +500,8 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
       || (patch.url !== undefined && (s.url_enc === null || decrypt(ctx.encKey, s.url_enc) !== patch.url));
     if (due) set.push('last_refresh_at = null');
     // another list: the 20 % shrink guard must not compare it with the old one (it would refuse a smaller list for ever)
-    if (patch.url !== undefined) set.push("last_counts = last_counts - 'listed'");
+    // ... and its numbers are judged afresh (import.ts chnoFallback)
+    if (patch.url !== undefined) set.push("last_counts = last_counts - 'listed'", 'chno_fallback = null');
     set.push('updated_at = now()');
     vals.push(id);
     await c.query(`update livetv_sources set ${set.join(', ')} where id = $${vals.length}`, vals);
