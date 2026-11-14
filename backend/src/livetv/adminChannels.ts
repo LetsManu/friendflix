@@ -7,10 +7,11 @@ import type { Ctx } from '../ctx.js';
 import type { Db } from '../db.js';
 import { CHANNEL_COLUMNS, CHANNEL_FROM, type EffectiveRow, type EpgShiftFrom, type Ingest, type ProbeRec, type StreamKind } from './channels.js';
 import { LivetvError, livetvCall } from './client.js';
-import { matchIds, nowNext, type Prog } from './epg.js';
+import { matchIds, normName, nowNext, type Prog } from './epg.js';
 import { sniffImage, storeLogo } from './logos.js';
 // ownfeeds.ts imports adminChannel from here and this module calls srtPorts / syncIngest from there: neither is used at module load
 import { INGEST_DIRTY_KEY, srtPorts, syncIngest } from './ownfeeds.js';
+import { GUIDE_KIND } from './sources.js';
 import { livetvWrite } from './tx.js';
 import type { ProbeResult, StreamInput } from './wire.js';
 
@@ -36,6 +37,14 @@ export interface AdminChannel {
   missing: boolean;
   /** an EPG mapping is set */
   epg: boolean;
+  /** how the mapping is made: automatically, by hand (*Programm zuordnen…*), or none (*Kein Programm*) */
+  epgMatch: 'auto' | 'manual' | 'none';
+  /**
+   * the hand pin (`epgMatch` 'manual'), else null: the guide (a provider list with a guide or an extra guide) by id and name, the XMLTV
+   * channel and its first display name (the id while the guide's index no longer has it); `guideDisabled` = the extra guide is switched
+   * off: the pin stays set, no programme comes from it ("Programmführer ausgeschaltet")
+   */
+  epgPin: { sourceId: string; sourceName: string; xmlId: string; name: string; guideDisabled: boolean } | null;
   /** F7: spec §10's Prog, the effective EPG offset applied (nowNext); null without a programme now */
   now: Prog | null;
   /** from the last stream test; null = not tested or the test failed */
@@ -118,7 +127,7 @@ export const orderBody = z.object({ ids: z.array(uuid).min(1).max(MAX_ORDER) }).
 /** CHANNEL_COLUMNS plus what the admin view needs (import values, push facts, sort keys); never an encrypted column */
 const ADMIN_COLUMNS = `${CHANNEL_COLUMNS}, c.import_name, c.import_number, c.name_override, c.number_override, c.group_override,
   (select m.group_id from livetv_group_map m where m.source_id = c.source_id and m.provider_group = c.import_group) as import_group_id,
-  c.logo_override_hash, c.push_port, c.push_stream_id_hint, c.tvg_id, s.position as source_position, s.created_at as source_created`;
+  c.logo_override_hash, c.push_port, c.push_stream_id_hint, c.tvg_id, c.epg_match, s.position as source_position, s.created_at as source_created`;
 /** the effective rows as a relation `a`, so filters and sorting can use the aliases (CHANNEL_SELECT's note) */
 const ADMIN_ROWS = `(select ${ADMIN_COLUMNS} from ${CHANNEL_FROM}) a`;
 /**
@@ -134,8 +143,25 @@ const ADMIN_PAGE = `(with d as (
 type AdminRow = EffectiveRow & {
   import_name: string; import_number: number | null; name_override: string | null; number_override: number | null;
   group_override: string | null; import_group_id: string | null; logo_override_hash: string | null;
-  push_port: number | null; push_stream_id_hint: string | null; dup_number: boolean;
+  push_port: number | null; push_stream_id_hint: string | null; dup_number: boolean; epg_match: 'auto' | 'manual' | 'none';
 };
+
+type Pin = NonNullable<AdminChannel['epgPin']>;
+/** the hand pins among `rows`: their guide's name and state and the XMLTV channel's first name, in one query */
+async function pinsOf(ctx: Pick<Ctx, 'db'>, rows: readonly AdminRow[]): Promise<Map<string, Pin>> {
+  const ids = rows.filter((r) => r.epg_match === 'manual' && r.epg_source_id !== null && r.epg_channel_id !== null).map((r) => r.id);
+  const out = new Map<string, Pin>();
+  if (ids.length === 0) return out;
+  const found = (await ctx.db.query<{ id: string; source_id: string; xml_id: string; name: string; off: boolean; names: string[] | null }>(
+    `select c.id, c.epg_source_id as source_id, c.epg_channel_id as xml_id, s.name, (s.kind = $2 and not s.enabled) as off, e.names
+       from livetv_channels c join livetv_sources s on s.id = c.epg_source_id
+       left join livetv_epg_channels e on e.source_id = c.epg_source_id and e.xml_id = c.epg_channel_id
+      where c.id = any($1::uuid[])`, [ids, GUIDE_KIND])).rows;
+  for (const r of found) {
+    out.set(r.id, { sourceId: r.source_id, sourceName: r.name, xmlId: r.xml_id, name: r.names?.[0] ?? r.xml_id, guideDisabled: r.off });
+  }
+  return out;
+}
 
 /**
  * The push facts of one channel: the port, the stored hint ('ff-' + 6 characters, no ellipsis; the web adds "…") and whether the
@@ -150,6 +176,7 @@ export function pushInfo(port: number, hint: string | null, ports: readonly numb
 async function toAdmin(ctx: Ctx, rows: AdminRow[]): Promise<AdminChannel[]> {
   if (rows.length === 0) return [];
   const nn = await nowNext(ctx, rows.map((r) => r.id));
+  const pins = await pinsOf(ctx, rows);
   const ports = rows.some((r) => r.ingest === 'push' && r.push_port !== null) ? await srtPorts(ctx).catch(() => null) : null;
   const synced = rows.some((r) => r.ingest === 'push' && r.push_port !== null) ? await ingestSynced(ctx) : true;
   return rows.map((r) => {
@@ -162,6 +189,7 @@ async function toAdmin(ctx: Ctx, rows: AdminRow[]): Promise<AdminChannel[]> {
     const out: AdminChannel = {
       id: r.id, number: r.number, name: r.name, groupId: r.group_id, sourceId: r.source_id, streamKind: r.stream_kind, ingest: r.ingest,
       logoHash: r.logo_hash, hidden: r.hidden, missing: r.missing_since !== null, epg: r.epg_source_id !== null && r.epg_channel_id !== null,
+      epgMatch: r.epg_match, epgPin: pins.get(r.id) ?? null,
       now: nn.get(r.id)?.now ?? null,
       mode: probe?.ok ? (probe.needs ?? null) : null,
       probeError: probe && !probe.ok ? (probe.error ?? 'failed') : null,
@@ -229,6 +257,105 @@ export async function listChannels(ctx: Ctx, q: ChannelQuery): Promise<{ channel
 /** the automatic match (epg.ts matchIds) of explicitly given `ids`, missing ones included, inside the caller's transaction; a changed mapping drops the EPG logo */
 async function rematch(c: Db, ids: readonly string[]): Promise<void> {
   await matchIds(c, { ids, includeMissing: true, dropLogo: true });
+}
+
+/** `PUT /channels/:id/epg` (spec §10, extra guides *Programm zuordnen…*): a hand pin, no programme, or `null` = automatic again */
+const pinTo = z.object({ sourceId: uuid, xmlId: z.string().min(1).max(500) }).strict();
+const pinNone = z.object({ none: z.literal(true) }).strict();
+export type EpgPinBody = z.output<typeof pinTo> | z.output<typeof pinNone> | null;
+/** the body read by its shape, so a refusal names the field (`sourceId`, `xmlId`, `none`, or `body`) */
+export function readEpgPin(body: unknown): { ok: true; value: EpgPinBody } | { ok: false; field: string } {
+  if (body === null) return { ok: true, value: null };
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false, field: 'body' };
+  const p = ('none' in body ? pinNone : pinTo).safeParse(body);
+  return p.success ? { ok: true, value: p.data } : { ok: false, field: String(p.error.issues[0]?.path[0] ?? 'body') };
+}
+
+/**
+ * may a channel be pinned to this source's guide (and its index searched)? A provider list with a guide link, or an enabled extra guide
+ * (a disabled guide keeps its pins but takes no new ones; the picker lists enabled guides only). Never the own-feeds source.
+ */
+async function pinTarget(db: Db, sourceId: string): Promise<boolean> {
+  const r = (await db.query<{ ok: boolean }>(
+    "select (case when kind = $2 then enabled else kind = 'm3u' and epg_url_enc is not null end) as ok from livetv_sources where id = $1",
+    [sourceId, GUIDE_KIND])).rows[0];
+  return r?.ok === true;
+}
+
+/**
+ * *Programm zuordnen…*: `{ sourceId, xmlId }` pins the channel by hand (`epg_match 'manual'`, which beats the lists' and the guides'
+ * automatic matching); the source must be a list with a guide or an enabled extra guide and `xmlId` one of its stored XMLTV channels
+ * (ChannelRefusal 400 `sourceId` / `xmlId`). `{ none: true }` = no programme; `null` = automatic again, matched at once. A changed
+ * mapping drops the EPG logo. Audited `livetv.channel.update` with the field and the mode only. null = no such channel.
+ */
+export async function setEpgPin(ctx: Ctx, actor: string, id: string, b: EpgPinBody): Promise<AdminChannel | null> {
+  const found = await livetvWrite(ctx, async (c) => {
+    if (!(await c.query('select 1 from livetv_channels where id = $1 for update', [id])).rowCount) return false;
+    let mode: 'manual' | 'none' | 'auto';
+    if (b === null) {
+      mode = 'auto';
+      await c.query("update livetv_channels set epg_match = 'auto' where id = $1", [id]);
+      await rematch(c, [id]);
+    } else if ('none' in b) {
+      mode = 'none';
+      await c.query("update livetv_channels set epg_match = 'none', epg_source_id = null, epg_channel_id = null, epg_logo_hash = null where id = $1", [id]);
+    } else {
+      mode = 'manual';
+      if (!(await pinTarget(c, b.sourceId))) throw invalid('sourceId');
+      if (!(await c.query('select 1 from livetv_epg_channels where source_id = $1 and xml_id = $2', [b.sourceId, b.xmlId])).rowCount) throw invalid('xmlId');
+      await c.query(
+        `update livetv_channels set epg_match = 'manual', epg_source_id = $2, epg_channel_id = $3,
+           epg_logo_hash = case when epg_source_id is not distinct from $2 and epg_channel_id is not distinct from $3 then epg_logo_hash end
+          where id = $1`, [id, b.sourceId, b.xmlId]);
+    }
+    await auditInTx({ db: c }, actor, 'livetv.channel.update', id, { fields: ['epg'], epg: mode });
+    return true;
+  });
+  return found ? adminChannel(ctx, id) : null;
+}
+
+/**
+ * the guide whose EPG a changed mapping needs imported now, or null: the channel is mapped (a pin, or the automatic match of `null`) to a
+ * pin target that has no stored programme of that XMLTV channel (the guide's last import filter did not hold it, ruling 27's filtered
+ * runs), so it would show no programme until the guide's next refresh
+ */
+export async function importDueFor(ctx: Pick<Ctx, 'db'>, channelId: string): Promise<string | null> {
+  const r = (await ctx.db.query<{ source_id: string }>(
+    `select c.epg_source_id as source_id from livetv_channels c join livetv_sources s on s.id = c.epg_source_id
+      where c.id = $1 and c.epg_channel_id is not null and (case when s.kind = $2 then s.enabled else s.kind = 'm3u' and s.epg_url_enc is not null end)
+        and not exists (select 1 from livetv_programmes p where p.source_id = c.epg_source_id and p.xml_channel = c.epg_channel_id)`,
+    [channelId, GUIDE_KIND])).rows[0];
+  return r?.source_id ?? null;
+}
+
+/** the search of *Programm zuordnen…* answers at most this many XMLTV channels */
+export const EPG_SEARCH_MAX = 50;
+export const epgSearchQuery = z.object({ source: uuid, q: z.string().trim().max(100).optional() });
+export type EpgSearchQuery = z.output<typeof epgSearchQuery>;
+type EpgHit = { xmlId: string; names: string[] };
+const byFirstName = (a: EpgHit, b: EpgHit) => (a.names[0] ?? a.xmlId).toLowerCase().localeCompare((b.names[0] ?? b.xmlId).toLowerCase()) || a.xmlId.localeCompare(b.xmlId);
+
+/**
+ * `GET /epg/channels?source=&q=`: the XMLTV channels of one guide (a list with a guide or an enabled extra guide, else ChannelRefusal
+ * 400 `source`) whose display name or id contains `q` (case-insensitive); without such a hit, those whose normName contains normName(q)
+ * (so "Nordlicht-HD" finds "Nordlicht HD"). No `q`: the first ones by name. At most 50, by first name; `more` = there are further hits.
+ */
+export async function searchEpgChannels(ctx: Pick<Ctx, 'db'>, q: EpgSearchQuery): Promise<{ channels: EpgHit[]; more: boolean }> {
+  if (!(await pinTarget(ctx.db, q.source))) throw invalid('source');
+  const text = q.q ?? '';
+  const rows = (await ctx.db.query<{ xml_id: string; names: string[] }>(
+    `select xml_id, names from livetv_epg_channels
+      where source_id = $1 and ($2::text = '' or xml_id ilike $3 or exists (select 1 from unnest(names) n where n ilike $3))
+      order by lower(coalesce(names[1], xml_id)), xml_id limit $4`,
+    [q.source, text, `%${likeEscape(text)}%`, EPG_SEARCH_MAX + 1])).rows;
+  let hits: EpgHit[] = rows.map((r) => ({ xmlId: r.xml_id, names: r.names }));
+  const norm = normName(text);
+  if (hits.length === 0 && norm) {
+    // the fallback reads the guide's whole index (at most 100 000 channels, admin only, only when the plain search found nothing)
+    const all = (await ctx.db.query<{ xml_id: string; names: string[] }>('select xml_id, names from livetv_epg_channels where source_id = $1', [q.source])).rows;
+    hits = all.filter((r) => r.names.some((n) => normName(n).includes(norm))).map((r) => ({ xmlId: r.xml_id, names: r.names })).sort(byFirstName);
+  }
+  return { channels: hits.slice(0, EPG_SEARCH_MAX), more: hits.length > EPG_SEARCH_MAX };
 }
 
 // ---- writing ----

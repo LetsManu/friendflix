@@ -13,8 +13,8 @@ import { detectLivetv, enableBenchmark, livetvInstalled, livetvSystem } from './
 import { LivetvError } from './client.js';
 import { gpuAdvice } from './gpu.js';
 import {
-  ChannelRefusal, LOGO_MAX_BYTES, LOGO_MIMES, MAX_BULK_TEST, adminChannel, bulkBody, bulkChannels, bulkTest, channelPatch, channelQuery, dropLogo, listChannels,
-  orderBody as channelOrderBody, orderChannels, patchChannel, setLogo, testChannel,
+  ChannelRefusal, LOGO_MAX_BYTES, LOGO_MIMES, MAX_BULK_TEST, adminChannel, bulkBody, bulkChannels, bulkTest, channelPatch, channelQuery, dropLogo, epgSearchQuery,
+  listChannels, orderBody as channelOrderBody, orderChannels, patchChannel, importDueFor, readEpgPin, searchEpgChannels, setEpgPin, setLogo, testChannel,
 } from './adminChannels.js';
 import { liveStatus, readHwAccel, stopStream } from './status.js';
 import { CHANNEL_SELECT, isOwnFeeds, toEffective, type EffectiveRow } from './channels.js';
@@ -22,7 +22,7 @@ import { isHomeRequest } from '../netaddr.js';
 import { clearJoinMark, startOrJoin } from './streams.js';
 import { adminStopKey, liveSidHash, mintLiveToken, revokeLiveToken } from './tokens.js';
 import { epgSummary } from './epg.js';
-import { refreshRunning, refreshSource } from './refresh.js';
+import { refreshRunning, refreshSource, refreshSourceEpg } from './refresh.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
 import { FeedError, createFeed, deleteFeed, feedCreate, ingestView, reassignPort, regenerateCredentials, syncIngest } from './ownfeeds.js';
 import { SourceRefusal, SourceTestError, anyTestBody, createSource, deleteSource, isGuide, listSources, sourceCreate, sourcePatch, testGuide, testSource, updateSource } from './sources.js';
@@ -530,6 +530,40 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
         const preview = await testPreview(req, cid);
         return preview ? { ...facts, preview } : facts;
       });
+    } catch (e) { return channelRefused(e, reply); }
+  });
+
+  /**
+   * *Programm zuordnen…* (spec §10's Phase 2 route, brought forward by the extra guides): `{ sourceId, xmlId }` pins the channel by hand,
+   * `{ none: true }` = no programme, `null` = automatic again. A mapping to an XMLTV channel its guide has no programmes of yet (the
+   * guide's import filter did not hold it) imports that guide's EPG in the background at once (its single flight), instead of at its
+   * next refresh.
+   */
+  app.put('/api/admin/livetv/channels/:id/epg', admin, async (req, reply) => {
+    const cid = paramId(req);
+    if (!cid) return reply.code(404).send({ error: 'not_found' });
+    const b = readEpgPin(req.body === undefined ? {} : req.body);
+    if (!b.ok) return reply.code(400).send({ error: 'invalid', field: b.field });
+    reply.header('cache-control', 'no-store');
+    try {
+      const c = await setEpgPin(ctx, req.user!.id, cid, b.value);
+      if (!c) return reply.code(404).send({ error: 'not_found' });
+      const due = livetvInstalled(ctx) ? await importDueFor(ctx, cid) : null;
+      if (due) {
+        const log = req.log;
+        void refreshSourceEpg(ctx, due).catch((e: unknown) => { log.warn({ sourceId: due, error: e instanceof Error ? e.name : 'unknown' }, 'livetv pin import failed'); });
+      }
+      return c;
+    } catch (e) { return channelRefused(e, reply); }
+  });
+
+  // the picker's search over one guide's XMLTV channels (at most 50, by name)
+  app.get('/api/admin/livetv/epg/channels', admin, async (req, reply) => {
+    const q = parse(epgSearchQuery, req.query, reply);
+    if (!q) return reply;
+    reply.header('cache-control', 'no-store');
+    try {
+      return await searchEpgChannels(ctx, q);
     } catch (e) { return channelRefused(e, reply); }
   });
 
