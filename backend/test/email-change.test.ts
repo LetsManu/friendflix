@@ -138,7 +138,9 @@ describe('e-mail change', () => {
     const userId = (await env.pool.query<{ id: string }>("select id from users where authentik_sub='sub-admin'")).rows[0]!.id;
     const blob = (await env.kv.get(`emailchange:${userId}`))!;
     expect(blob).toBeTruthy();
-    expect(blob).not.toMatch(/neu|example/i);
+    // the plaintext address never appears (base64 ciphertext can contain any short letter run like 'neu', but never a '.' or '@')
+    expect(blob).not.toContain(NEW_ADDRESS.trim());
+    expect(blob).not.toMatch(/@|example\.com/i);
     expect((await env.app.inject({ url: '/api/account', cookies: s.cookies })).json().emailChangePending).toBe('N•••@example.com');
     expect((await env.app.inject({ url: '/api/account/security', cookies: s.cookies })).json().emailChangePending).toBe('N•••@example.com');
     expect(await emailOf()).toBe('admin@example.com');

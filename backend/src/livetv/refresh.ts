@@ -13,7 +13,7 @@ import { pushEvent } from './events.js';
 import { mergeImport, type ImportResult } from './import.js';
 import { importLogos } from './logos.js';
 import { invalidateLivetvRights } from './rights.js';
-import { sourceSecrets, type Refresh, type SourceRow } from './sources.js';
+import { isGuide, sourceSecrets, type Refresh, type SourceRow } from './sources.js';
 import type { FetchM3uAnswer, M3uEntry } from './wire.js';
 
 /**
@@ -168,6 +168,11 @@ export async function refreshSource(ctx: Ctx, id: string, trigger: 'tick' | 'adm
   try {
     // `rev` = the row's version (updated_at as text, microseconds kept) the whole refresh is based on (an edit moves it)
     const source = (await ctx.db.query<SourceRow & { rev: string }>('select *, updated_at::text as rev from livetv_sources where id = $1', [id])).rows[0];
+    // an extra guide has no list: *Aktualisieren* runs only its EPG import (the list import never runs for it)
+    if (source && isGuide(source.kind)) {
+      if (hasEpg(source)) await epgStep(ctx, source, token);
+      return;
+    }
     if (!source || isOwnFeeds(source.kind) || !source.url_enc) return;
     const rev = source.rev;
     const now = new Date();
@@ -233,9 +238,15 @@ export async function refreshSourceEpg(ctx: Ctx, id: string): Promise<void> {
   }
 }
 
-/** EPG due: never refreshed or older than 24 h (1 h after a failed one, like the list), whatever the source's list refresh is (also 'manual') */
-const epgDue = (s: { epg_last_refresh_at: Date | null; epg_last_error: string | null }, now: number) =>
-  s.epg_last_refresh_at === null || now - s.epg_last_refresh_at.getTime() >= (s.epg_last_error === null ? EPG_MAX_AGE_MS : RETRY_MS);
+/**
+ * EPG due: never refreshed or older than 24 h (1 h after a failed one, like the list), whatever the source's list refresh is (also
+ * 'manual'). An extra guide has no list, so its own interval applies to its EPG, but never rarer than every 24 h (and 1 h after a failure).
+ */
+function epgDue(s: { kind: string; refresh: Refresh; epg_last_refresh_at: Date | null; epg_last_error: string | null }, now: number): boolean {
+  if (s.epg_last_refresh_at === null) return true;
+  const every = isGuide(s.kind) && s.refresh !== 'manual' ? Math.min(REFRESH_INTERVAL_MS[s.refresh], EPG_MAX_AGE_MS) : EPG_MAX_AGE_MS;
+  return now - s.epg_last_refresh_at.getTime() >= (s.epg_last_error === null ? every : Math.min(every, RETRY_MS));
+}
 
 /**
  * due: never refreshed (or marked due by an edit, Task 15), or the last attempt is older than the source's interval; after a failed
@@ -283,6 +294,7 @@ export async function livetvRefreshTick(ctx: Ctx): Promise<void> {
 
     // EPG due (spec §10 jobs): never rarer than every 24 h, also for 'manual' sources and for sources whose list just failed; read again,
     // since the list refreshes above ran their EPG step already. No EPG URL or the own-feeds source: skipped, never an error (F16).
+    // Extra guides (no list, so skipped above) are refreshed here, on their own interval; a disabled one never.
     for (const s of (await ctx.db.query<TickRow>(sql)).rows) {
       if (!hasEpg(s) || !s.enabled || !epgDue(s, Date.now())) continue;
       try { await refreshSourceEpg(ctx, s.id); } catch (e) { first ??= e; }

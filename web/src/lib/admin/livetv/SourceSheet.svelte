@@ -3,7 +3,8 @@
 <script lang="ts">
   /**
    * *Quelle hinzufügen* / *Quelle bearbeiten* (spec §9.1): a right-hand glass sheet (`sheetSlide`, the page dimmed behind). Adding
-   * first asks the kind (*Anbieterliste* / *Eigene Streams*; own streams hand over to the stream sheet). A list has a name, the M3U
+   * first asks the kind (*Anbieterliste* / *Programmführer* / *Eigene Streams*; a guide hands over to GuideSheet, own streams to the
+   * stream sheet). A list has a name, the M3U
    * URL in a password-type field with *anzeigen* (on edit it starts empty, "unverändert lassen", with the stored `urlHint`), an
    * optional XMLTV URL (likewise; *Programmführer entfernen* sends `epgUrl: null`), *Heimnetz erlauben*, the interval, and under
    * *Erweitert* the user agent and the provider's channel limit, then the *Import* section (ImportOptions: numbering, logo preference,
@@ -42,7 +43,7 @@
   /** run *Prüfen* as the sheet opens and show the group picker (the card's *Auswahl ändern*) */
   export let autoTest = false;
 
-  const dispatch = createEventDispatcher<{ close: void; saved: SourceView; own: void }>();
+  const dispatch = createEventDispatcher<{ close: void; saved: SourceView; own: void; guide: void }>();
   const id = uid('ss');
   const HTTP = ['http:', 'https:'];
   let panel: HTMLDivElement | undefined;
@@ -184,18 +185,19 @@
     if (autoTest) void runTest();
   });
 
-  // ---- the kind (a new source only): own streams have their own sheet; typed input asks first
+  // ---- the kind (a new source only): guides and own streams have their own sheets; typed input asks first
   let kindBtns: HTMLButtonElement[] = [];
-  async function toOwn() {
+  async function toKind(k: 'guide' | 'own') {
     if (!(await mayLeave())) { kindBtns[0]?.focus(); return; }
     done = true;
-    dispatch('own');
+    dispatch(k);
   }
   function kindKey(e: KeyboardEvent) {
-    if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(e.key)) return;
+    const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+    if (!d) return;
     e.preventDefault();
-    kindBtns[1]?.focus();
-    void toOwn();
+    kindBtns[d === 1 ? 1 : 2]?.focus();
+    void toKind(d === 1 ? 'guide' : 'own');
   }
 
   $: intervals = REFRESHES.map((r) => ({ value: r, label: $t(`adminLive.src.interval.${r}`) }));
@@ -220,7 +222,8 @@
           <span class="lbl" id="{id}-k">{$t('adminLive.src.kind')}</span>
           <div class="seg" role="radiogroup" aria-labelledby="{id}-k">
             <button type="button" role="radio" aria-checked="true" tabindex="0" class="on" bind:this={kindBtns[0]} on:keydown={kindKey}>{$t('adminLive.src.kindList')}</button>
-            <button type="button" role="radio" aria-checked="false" tabindex="-1" bind:this={kindBtns[1]} on:click={toOwn}>{$t('adminLive.src.kindOwn')}</button>
+            <button type="button" role="radio" aria-checked="false" tabindex="-1" bind:this={kindBtns[1]} on:click={() => toKind('guide')}>{$t('adminLive.src.kindGuide')}</button>
+            <button type="button" role="radio" aria-checked="false" tabindex="-1" bind:this={kindBtns[2]} on:click={() => toKind('own')}>{$t('adminLive.src.kindOwn')}</button>
           </div>
         </div>
       {/if}

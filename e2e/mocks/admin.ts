@@ -176,9 +176,11 @@ export interface LivetvMock {
 }
 /** a source as `GET /api/admin/livetv/sources` answers it (backend SourceView, Task 15): never a URL, only `urlHint` / `epgHint` */
 export interface LtvSourceMock {
-  id: string; kind: 'm3u' | 'feeds'; name: string; urlHint: string | null; epgHint: string | null; userAgent: string | null; allowLan: boolean;
+  id: string; kind: 'm3u' | 'feeds' | 'guide'; name: string; urlHint: string | null; epgHint: string | null; userAgent: string | null; allowLan: boolean;
   refresh: '6h' | '12h' | '24h' | 'weekly' | 'manual'; skipGroups: string[]; numbering: 'chno' | 'order'; numberBase: number; logoPref: 'm3u' | 'xmltv';
   epgShiftMin: number; maxStreams: number | null; enabled: boolean; position: number; channelCount: number; pendingGroups: number;
+  /** extra programme guides (extra-guides plan Task 1): kind `guide` only; `guideScope` null = all channels, `[]` = every scoped source deleted */
+  guideProvider: 'xmltv_url' | 'xmltv_file' | null; guideScope: string[] | null; servedChannels: number;
   state: {
     lastRefreshAt: string | null; lastOkAt: string | null; lastError: string | null; counts: { channels: number; added: number; removed: number } | null;
     epg: { lastRefreshAt: string | null; lastOkAt: string | null; lastError: string | null; programmes: number | null };
@@ -235,6 +237,8 @@ export interface LivetvAreaMock {
   host: string | null;
   /** the answer of POST /sources/test: the result, or a 422 code */
   test: { channels: number; groups: Array<{ name: string; channels: number }>; samples: string[]; epgChannels: number | null; epgError: string | null } | { error: string; status?: number };
+  /** the answer of POST /sources/test with `kind: 'guide'`: the guide's channel count and up to 8 names, or a 422 code */
+  guideTest: { epgChannels: number; samples: string[] } | { error: string; status?: number };
   /** the next POST /sources/test answers 409 test_running once (another check of this admin still runs) */
   testBusy: boolean;
   /** whether livetv takes the new ingest set on push writes (`synced` of Task 20's answers) */
@@ -254,7 +258,11 @@ const ltvState = (o: Partial<LtvSourceMock['state']> = {}): LtvSourceMock['state
 });
 const ltvSource = (o: Partial<LtvSourceMock> & Pick<LtvSourceMock, 'id' | 'kind' | 'name'>): LtvSourceMock => ({
   urlHint: null, epgHint: null, userAgent: null, allowLan: false, refresh: '24h', skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0,
-  maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0, state: ltvState(), ...o,
+  maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0, guideProvider: null, guideScope: null, servedChannels: 0, state: ltvState(), ...o,
+});
+/** an extra programme guide (a link guide) as `GET /sources` answers it; tests add them to `area.sources` */
+export const ltvGuideMock = (o: Partial<LtvSourceMock> & Pick<LtvSourceMock, 'id' | 'name' | 'position'>): LtvSourceMock => ltvSource({
+  kind: 'guide', epgHint: 'https://epg.example.com/…', guideProvider: 'xmltv_url', ...o,
 });
 /** the provider's 18 groups as `POST /sources/test` lists them (Task 22's picker): 412 channels, "Erwachsene" 100 of them */
 export const LTV_GROUPS: Array<{ name: string; channels: number }> = [
@@ -315,6 +323,7 @@ export function livetvAreaMock(): LivetvAreaMock {
     portsKnown: true,
     host: 'friend.example.com',
     test: { channels: 412, groups: LTV_GROUPS, samples: ['Nordlicht TV', 'Hafenkanal', 'Bergblick Sport', 'Kinderinsel', 'Sternwarte 24'], epgChannels: 398, epgError: null },
+    guideTest: { epgChannels: 2140, samples: ['Nordlicht TV', 'Hafenkanal', 'Sternwarte 24', 'Kanal Wolkenlos', 'Bergblick Sport', 'Wetterkanal Küste', 'Kids Insel', 'Regionalkanal 12', 'Regionalkanal 13'] },
     refreshPolls: 1,
     refreshOutcome: { counts: { channels: 415, added: 3, removed: 0 } },
     refreshing: {},
@@ -859,13 +868,25 @@ function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: st
       const s = a.sources.find((x) => x.id === id);
       if (!s) continue;
       const at = nowIso(), o = a.refreshOutcome;
-      if ('error' in o) s.state = { ...s.state, lastRefreshAt: at, lastError: o.error };
+      if (s.kind === 'guide') {
+        // a guide has no list: its refresh is its guide import (refreshEpg → the epg_* status)
+        s.state = { ...s.state, epg: 'error' in o ? { ...s.state.epg, lastRefreshAt: at, lastError: o.error } : { ...s.state.epg, lastRefreshAt: at, lastOkAt: at, lastError: null } };
+      } else if ('error' in o) s.state = { ...s.state, lastRefreshAt: at, lastError: o.error };
       else { s.state = { ...s.state, lastRefreshAt: at, lastOkAt: at, lastError: null, counts: o.counts }; s.channelCount = o.counts.channels; }
     }
     return J(a.sources); // a bare array (backend adminRoutes.ts → listSources)
   }
   if (p === '/api/admin/livetv/sources/test' && m === 'POST') {
     if (a.testBusy) { a.testBusy = false; return J({ error: 'test_running' }, 409); }
+    if (body?.kind === 'guide') {
+      if (body.epgUrl === undefined && !body.sourceId) return J({ error: 'invalid', field: 'epgUrl' }, 400);
+      if (body.epgUrl !== undefined) {
+        const u = httpUrl(body.epgUrl);
+        if (!u) return J({ error: 'invalid', field: 'epgUrl' }, 400);
+        if (singleLabel(u)) return J({ error: 'refused', field: 'epgUrl' }, 400);
+      }
+      return 'error' in a.guideTest ? J({ error: a.guideTest.error }, a.guideTest.status ?? 422) : J(a.guideTest);
+    }
     for (const field of ['url', 'epgUrl'] as const) {
       if (body?.[field] === undefined || (field === 'epgUrl' && (body.epgUrl === null || body.epgUrl === ''))) continue; // null / '' = no guide
       const u = httpUrl(body[field]);
@@ -875,6 +896,21 @@ function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: st
     if (body?.url === undefined && !body?.sourceId) return J({ error: 'invalid', field: 'url' }, 400);
     // livetv's refusals answer 422 { error }, an unreached livetv 503 livetv_unreachable (Task 15 as built)
     return 'error' in a.test ? J({ error: a.test.error }, a.test.status ?? 422) : J(a.test);
+  }
+  /** `guideScope`: null or a non-empty list of list / own-feeds ids (extra-guides plan Task 1) */
+  const scopeBad = (v: unknown) => v !== null && (!Array.isArray(v) || v.length === 0 || v.some((id) => !a.sources.some((x) => x.id === id && x.kind !== 'guide')));
+  if (p === '/api/admin/livetv/sources' && m === 'POST' && body?.kind === 'guide') {
+    const u = httpUrl(body.epgUrl);
+    if (!u) return J({ error: 'invalid', field: 'epgUrl' }, 400);
+    if (singleLabel(u)) return J({ error: 'refused', field: 'epgUrl' }, 400);
+    if (typeof body.name !== 'string' || !body.name.trim()) return J({ error: 'invalid', field: 'name' }, 400);
+    if (scopeBad(body.guideScope)) return J({ error: 'invalid', field: 'guideScope' }, 400);
+    const s = ltvGuideMock({
+      id: `src-${++a.seq}`, name: body.name, epgHint: maskUrl(u.href), userAgent: body.userAgent ?? null, allowLan: Boolean(body.allowLan), refresh: body.refresh ?? '24h',
+      epgShiftMin: body.epgShiftMin ?? 0, guideScope: body.guideScope, enabled: body.enabled ?? true, position: a.sources.length,
+    });
+    a.sources.push(s);
+    return J(s, 201);
   }
   if (p === '/api/admin/livetv/sources' && m === 'POST') {
     const u = httpUrl(body?.url);
@@ -902,6 +938,16 @@ function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: st
     }
     if (!mm[2] && m === 'PATCH') {
       const b = body ?? {};
+      if (s.kind === 'guide') {
+        // list-only fields and removing the link are refused for a guide (Task 1 as built)
+        const bad = ['url', 'skipGroups', 'numbering', 'numberBase', 'logoPref', 'maxStreams'].find((k) => b[k] !== undefined) ?? (b.epgUrl === null ? 'epgUrl' : null);
+        if (bad) return J({ error: 'invalid', field: bad }, 400);
+        // a guide left without a scope cannot be turned on without a new one
+        if (b.enabled === true && b.guideScope === undefined && s.guideScope?.length === 0) return J({ error: 'invalid', field: 'guideScope' }, 400);
+      }
+      if (b.guideScope !== undefined) { if (s.kind !== 'guide' || scopeBad(b.guideScope)) return J({ error: 'invalid', field: 'guideScope' }, 400); s.guideScope = b.guideScope; }
+      // a guide's `position` = a neighbour's: the backend swaps the two guides
+      if (b.position !== undefined) { const o = a.sources.find((x) => x !== s && x.position === b.position); if (o) o.position = s.position; s.position = b.position; }
       if (b.url !== undefined) { const u = httpUrl(b.url); if (!u) return J({ error: 'invalid', field: 'url' }, 400); s.urlHint = maskUrl(u.href); }
       if (b.epgUrl === null || b.epgUrl === '') s.epgHint = null; else if (b.epgUrl !== undefined) s.epgHint = maskUrl(b.epgUrl);
       for (const k of ['name', 'userAgent', 'allowLan', 'refresh', 'skipGroups', 'numbering', 'numberBase', 'logoPref', 'epgShiftMin', 'maxStreams', 'enabled'] as const) {
@@ -911,6 +957,12 @@ function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: st
     }
     if (!mm[2] && m === 'DELETE') {
       a.sources = a.sources.filter((x) => x.id !== s.id);
+      // a deleted source leaves every guide's scope; a guide whose scope becomes empty is disabled (Task 1)
+      for (const g of a.sources) {
+        if (g.kind !== 'guide' || !g.guideScope?.includes(s.id)) continue;
+        g.guideScope = g.guideScope.filter((x) => x !== s.id);
+        if (!g.guideScope.length) g.enabled = false;
+      }
       return J({ channels: s.channelCount });
     }
   }

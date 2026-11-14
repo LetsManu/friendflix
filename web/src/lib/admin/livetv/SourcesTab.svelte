@@ -2,9 +2,10 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /**
-   * Admin → Live-TV → *Quellen* (spec §9.1): one card per provider list (SourceCard), the *Eigene Streams* card (OwnFeedsCard) once
-   * that source exists, *Quelle hinzufügen* (SourceSheet; its kind *Eigene Streams* opens StreamSheet, which creates the own-feeds
-   * source on first use). *Jetzt aktualisieren* posts the refresh (202 `{ started }`; 409 `livetv_off` / `no_list` have their own
+   * Admin → Live-TV → *Quellen* (spec §9.1): one card per provider list (SourceCard), then one per extra programme guide (GuideCard, in
+   * their `position` order, moved up / down by swapping two positions), the *Eigene Streams* card (OwnFeedsCard) once that source
+   * exists, *Quelle hinzufügen* (SourceSheet; its kind *Programmführer* opens GuideSheet, *Eigene Streams* opens StreamSheet, which
+   * creates the own-feeds source on first use). *Jetzt aktualisieren* posts the refresh (202 `{ started }`; 409 `livetv_off` / `no_list` have their own
    * text) and asks `GET /sources` every REFRESH_POLL_MS until the
    * source's `lastRefreshAt` moved, then says the outcome in a toast; the button keeps its spinner meanwhile. Deleting names how
    * many channels go. Loading keeps the cards' place with skeletons of their height.
@@ -20,12 +21,14 @@
   import { confirm } from '#lib/ui/confirm';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import { toast } from '#lib/ui/toast';
-  import { deleteSource, listSources, refreshSource, updateSource, type PushResult, type Refresh, type SourceView } from './api';
+  import { deleteSource, listSources, refreshSource, updateGuide, updateSource, type PushResult, type Refresh, type SourceView } from './api';
+  import GuideCard from './GuideCard.svelte';
+  import GuideSheet from './GuideSheet.svelte';
   import OwnFeedsCard from './OwnFeedsCard.svelte';
   import SourceCard from './SourceCard.svelte';
   import SourceSheet from './SourceSheet.svelte';
   import StreamSheet from './StreamSheet.svelte';
-  import { REFRESH_POLL_MS, REFRESH_POLLS, refreshDone, refreshResult } from './sources';
+  import { guideMoves, REFRESH_POLL_MS, REFRESH_POLLS, refreshDone, refreshedAt, refreshResult } from './sources';
 
   let sources: SourceView[] | null = null, failed = false, gone = false;
   let now = new Date();
@@ -39,18 +42,30 @@
   onMount(load);
 
   $: lists = (sources ?? []).filter((s) => s.kind === 'm3u').sort((a, b) => a.position - b.position);
+  $: guides = (sources ?? []).filter((s) => s.kind === 'guide').sort((a, b) => a.position - b.position);
   $: feedsSource = (sources ?? []).find((s) => s.kind === 'feeds') ?? null;
   const replace = (v: SourceView) => { sources = sources ? (sources.some((s) => s.id === v.id) ? sources.map((s) => (s.id === v.id ? v : s)) : [...sources, v]) : [v]; };
 
   // ---- the sheets
   let sheet: { source: SourceView | null; trigger: HTMLElement | null; autoTest?: boolean } | null = null;
+  let guideSheet: { source: SourceView | null; trigger: HTMLElement | null; enable?: boolean } | null = null;
   let stream: { result: { name: string; push: PushResult; synced?: boolean } | null; trigger: HTMLElement | null } | null = null;
   let feedsCard: OwnFeedsCard | undefined;
   const openAdd = (e: MouseEvent) => { sheet = { source: null, trigger: e.currentTarget instanceof HTMLElement ? e.currentTarget : null }; };
-  function toOwn() {
+  function toOwn(from: { trigger: HTMLElement | null } | null) {
+    const trigger = from?.trigger ?? null;
+    sheet = null; guideSheet = null;
+    stream = { result: null, trigger };
+  }
+  function toGuide() {
     const trigger = sheet?.trigger ?? null;
     sheet = null;
-    stream = { result: null, trigger };
+    guideSheet = { source: null, trigger };
+  }
+  function toList() {
+    const trigger = guideSheet?.trigger ?? null;
+    guideSheet = null;
+    sheet = { source: null, trigger };
   }
   function saved(e: CustomEvent<SourceView>) {
     const isNew = !sources?.some((s) => s.id === e.detail.id);
@@ -80,7 +95,7 @@
     return null;
   }
   async function refresh(s: SourceView) {
-    const since = s.state.lastRefreshAt;
+    const since = refreshedAt(s);
     const r = await runAction({
       key: `ltv-src-refresh:${s.id}`,
       run: async () => {
@@ -109,7 +124,7 @@
     void runAction({
       key: `ltv-src:${s.id}`,
       apply: () => { const prev = s; replace({ ...s, refresh }); return () => replace(prev); },
-      run: () => updateSource(s.id, { refresh }),
+      run: () => (s.kind === 'guide' ? updateGuide(s.id, { refresh }) : updateSource(s.id, { refresh })),
       success: tr('adminLive.src.saved'),
     }).then((r) => { if (r.ok && r.value) replace(r.value); });
   }
@@ -118,12 +133,13 @@
     void runAction({
       key: `ltv-src:${s.id}`,
       apply: () => { const prev = s; replace({ ...s, enabled }); return () => replace(prev); },
-      run: () => updateSource(s.id, { enabled }),
+      run: () => (s.kind === 'guide' ? updateGuide(s.id, { enabled }) : updateSource(s.id, { enabled })),
       success: enabled ? tr('adminLive.src.enabled') : tr('adminLive.src.disabled'),
     }).then((r) => { if (r.ok && r.value) replace(r.value); void refreshSummary(); });
   }
   async function remove(s: SourceView) {
-    const ok = await confirm({ title: tr('adminLive.src.deleteTitle', { name: s.name }), body: tr('adminLive.src.deleteBody', { n: s.channelCount }), danger: true, confirmLabel: tr('adminLive.src.delete') });
+    const body = s.kind === 'guide' ? tr('adminLive.src.guide.deleteBody', { n: s.servedChannels }) : tr('adminLive.src.deleteBody', { n: s.channelCount });
+    const ok = await confirm({ title: tr('adminLive.src.deleteTitle', { name: s.name }), body, danger: true, confirmLabel: tr('adminLive.src.delete') });
     if (!ok) return;
     await runAction({
       key: `ltv-src:${s.id}`,
@@ -132,6 +148,24 @@
       success: tr('adminLive.src.deleted'),
     });
     void refreshSummary();
+  }
+
+  // ---- the order among the guides: one PATCH with the neighbour's position (the backend swaps the two); shown at once, then the
+  // page asks GET /sources for the truth
+  async function move(s: SourceView, dir: 1 | -1) {
+    const mv = guideMoves(guides, s.id, dir);
+    if (!mv) return;
+    const r = await runAction({
+      key: `ltv-src:${s.id}`,
+      apply: () => {
+        const prev = sources;
+        sources = (sources ?? []).map((x) => { const m = mv.swap.find((y) => y.id === x.id); return m ? { ...x, position: m.position } : x; });
+        return () => { sources = prev; };
+      },
+      run: () => updateGuide(mv.patch.id, { position: mv.patch.position }),
+      success: tr('adminLive.src.guide.moved'),
+    });
+    if (!r.skipped) await load();
   }
 </script>
 
@@ -147,12 +181,17 @@
       <AdminCard><div class="sk" aria-hidden="true"><Skeleton w="12rem" h="1.3rem" /><Skeleton w="16rem" /><Skeleton lines={2} /><Skeleton w="20rem" h="2.8rem" /></div></AdminCard>
     {/each}
     <p class="sr-only" role="status">{$t('ui.table.loading')}</p>
-  {:else if !lists.length && !feedsSource}
+  {:else if !lists.length && !guides.length && !feedsSource}
     <AdminCard><p class="empty">{$t('adminLive.src.empty')}</p></AdminCard>
   {:else}
     {#each lists as s (s.id)}
       <SourceCard source={s} {now} refreshing={$busyKeys.has(`ltv-src-refresh:${s.id}`)} busy={$busyKeys.has(`ltv-src:${s.id}`)}
         on:refresh={() => refresh(s)} on:edit={(e) => (sheet = { source: s, trigger: e.detail })} on:pick={(e) => (sheet = { source: s, trigger: e.detail, autoTest: true })} on:toggle={() => toggle(s)} on:remove={() => remove(s)} on:interval={(e) => setInterval_(s, e.detail)} />
+    {/each}
+    {#each guides as s, i (s.id)}
+      <GuideCard source={s} sources={sources} {now} first={i === 0} last={i === guides.length - 1} refreshing={$busyKeys.has(`ltv-src-refresh:${s.id}`)} busy={$busyKeys.has(`ltv-src:${s.id}`)}
+        on:refresh={() => refresh(s)} on:edit={(e) => (guideSheet = { source: s, trigger: e.detail })} on:enable={(e) => (guideSheet = { source: s, trigger: e.detail, enable: true })} on:toggle={() => toggle(s)} on:remove={() => remove(s)}
+        on:interval={(e) => setInterval_(s, e.detail)} on:move={(e) => move(s, e.detail)} />
     {/each}
     {#if feedsSource}
       {#key feedsSource.id}
@@ -163,7 +202,10 @@
 </div>
 
 {#if sheet}
-  <SourceSheet source={sheet.source} trigger={sheet.trigger} autoTest={sheet.autoTest ?? false} on:close={() => (sheet = null)} on:saved={saved} on:own={toOwn} />
+  <SourceSheet source={sheet.source} trigger={sheet.trigger} autoTest={sheet.autoTest ?? false} on:close={() => (sheet = null)} on:saved={saved} on:own={() => toOwn(sheet)} on:guide={toGuide} />
+{/if}
+{#if guideSheet}
+  <GuideSheet source={guideSheet.source} sources={sources ?? []} trigger={guideSheet.trigger} enable={guideSheet.enable ?? false} on:close={() => (guideSheet = null)} on:saved={saved} on:list={toList} on:own={() => toOwn(guideSheet)} />
 {/if}
 {#if stream}
   <StreamSheet result={stream.result} trigger={stream.trigger} on:close={() => (stream = null)} on:created={streamCreated} />

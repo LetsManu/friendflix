@@ -8,7 +8,7 @@ import { EFFECTIVE_SHIFT_SQL, isOwnFeeds } from './channels.js';
 import { LivetvError, dropLivetvProof, livetvStream } from './client.js';
 import { importLogos } from './logos.js';
 import { invalidateLivetvRights } from './rights.js';
-import { sourceSecrets, type SourceRow } from './sources.js';
+import { GUIDE_KIND, isGuide, sourceSecrets, type SourceRow } from './sources.js';
 import type { XmlItem } from './wire.js';
 
 /**
@@ -118,7 +118,7 @@ export function buildEpgIndex(rows: Array<{ sourceId: string; xmlId: string; nam
   return { sources };
 }
 
-type MatchInput = { sourceId: string; tvgId: string | null; tvgName: string | null; importName: string };
+export type MatchInput = { sourceId: string; tvgId: string | null; tvgName: string | null; importName: string };
 type Pass = { pass: 1 | 2 | 3 | 4; map: keyof EpgSourceIndex; key: (ch: MatchInput) => string };
 /** spec §9.4, in this order; an empty key skips the pass */
 const PASSES: readonly Pass[] = [
@@ -157,6 +157,33 @@ export function matchChannel(ch: MatchInput, idx: EpgIndex): { sourceId: string;
   return null;
 }
 
+/** one enabled extra guide for the fill pass: its "Gilt für" (null = all channels) and its XMLTV channel index */
+export type GuideIndex = { sourceId: string; scope: readonly string[] | null; index: EpgSourceIndex };
+type ScopedGuide = { g: GuideIndex; scope: ReadonlySet<string> | null };
+/** each guide's scope as a Set, once per run (matchIds builds it once for all channels) */
+export const scopeGuides = (guides: ReadonlyArray<GuideIndex>): ScopedGuide[] => guides.map((g) => ({ g, scope: g.scope === null ? null : new Set(g.scope) }));
+
+/**
+ * The fill pass of the extra guides (extra guides design, *Matching*): only for a channel matchChannel left without a match. The four
+ * passes in order; per pass the guides in the given order (their `position`), skipping a guide whose scope does not hold the channel's
+ * source; the first guide with any hit decides (exactly one hit -> match, several -> next pass). Never a similarity match.
+ */
+export function matchGuides(ch: MatchInput, guides: ReadonlyArray<GuideIndex> | ReadonlyArray<ScopedGuide>): { sourceId: string; xmlId: string; pass: 1 | 2 | 3 | 4 } | null {
+  for (const p of PASSES) {
+    const key = p.key(ch);
+    if (!key) continue;
+    for (const x of guides) {
+      const { g, scope } = 'g' in x ? x : { g: x, scope: x.scope === null ? null : new Set(x.scope) };
+      if (scope !== null && !scope.has(ch.sourceId)) continue;
+      const a = g.index[p.map].get(key);
+      if (!a || a.length === 0) continue;
+      if (a.length === 1) return { sourceId: g.sourceId, xmlId: a[0]!, pass: p.pass };
+      break; // ambiguous in the deciding guide: the next pass
+    }
+  }
+  return null;
+}
+
 /** every xml id of one source index that any pass could hit for `ch` (the request filter) */
 function candidates(ch: MatchInput, s: EpgSourceIndex, out: Set<string>): void {
   for (const p of PASSES) {
@@ -165,24 +192,54 @@ function candidates(ch: MatchInput, s: EpgSourceIndex, out: Set<string>): void {
   }
 }
 
-/** the stored XMLTV channels of the sources that still have an EPG URL (one of them: `sourceId`) */
+/**
+ * the stored XMLTV channels of the provider lists that still have an EPG URL and of the enabled extra guides (a disabled guide is not
+ * matched against); one of them: `sourceId`
+ */
 export async function indexRows(ctx: Pick<Ctx, 'db'>, sourceId?: string): Promise<Array<{ sourceId: string; xmlId: string; names: string[] }>> {
   const rows = (await ctx.db.query<{ source_id: string; xml_id: string; names: string[] }>(
     `select e.source_id, e.xml_id, e.names from livetv_epg_channels e join livetv_sources s on s.id = e.source_id
-      where s.epg_url_enc is not null and ($1::uuid is null or e.source_id = $1)`, [sourceId ?? null])).rows;
+      where (case when s.kind = $2 then s.enabled else s.epg_url_enc is not null end) and ($1::uuid is null or e.source_id = $1)`,
+    [sourceId ?? null, GUIDE_KIND])).rows;
   return rows.map((r) => ({ sourceId: r.source_id, xmlId: r.xml_id, names: r.names }));
+}
+
+/** every extra guide in fill order (position), enabled or not */
+async function guideRows(db: Db): Promise<Array<{ id: string; scope: string[] | null; enabled: boolean }>> {
+  return (await db.query<{ id: string; scope: string[] | null; enabled: boolean }>(
+    'select id, guide_scope as scope, enabled from livetv_sources where kind = $1 order by position, created_at, id', [GUIDE_KIND])).rows;
+}
+
+/**
+ * The two matching indexes: the provider lists' guides (matchChannel, as before extra guides) and the enabled extra guides in fill order
+ * (matchGuides). A guide's rows never land in the list index, also when it was switched off between the two reads.
+ */
+async function matchIndexes(db: Db): Promise<{ lists: EpgIndex; guides: GuideIndex[] }> {
+  const gs = await guideRows(db);
+  const rows = await indexRows({ db });
+  const isGuideId = new Set(gs.map((g) => g.id));
+  const lists = buildEpgIndex(rows.filter((r) => !isGuideId.has(r.sourceId)));
+  const byGuide = buildEpgIndex(rows.filter((r) => isGuideId.has(r.sourceId))).sources;
+  const guides = gs.flatMap((g) => {
+    const index = g.enabled ? byGuide.get(g.id) : undefined;
+    return index ? [{ sourceId: g.id, scope: g.scope, index }] : [];
+  });
+  return { lists, guides };
 }
 
 // ---- matching and logos ----
 
 /**
  * The shared matching pass: every `epg_match = 'auto'` channel of the latest import (missing ones keep their mapping), or, with `ids`,
+ * those channels only. First matchChannel over the provider lists' guides (unchanged by extra guides), then, only for a channel still
+ * without a match, matchGuides over the enabled extra guides: a guide fills, it never replaces a list match.
  * those channels only. `includeMissing` (the admin's re-match of explicitly given ids) also handles missing ones, and `dropLogo` clears
  * `epg_logo_hash` of a changed mapping (the next refresh fetches the new XMLTV channel's icon). `db` may be a transaction client.
  */
 export async function matchIds(db: Db, o: { ids?: readonly string[]; includeMissing?: boolean; dropLogo?: boolean } = {}): Promise<{ matched: number; total: number }> {
   if (o.ids && o.ids.length === 0) return { matched: 0, total: 0 };
-  const idx = buildEpgIndex(await indexRows({ db }));
+  const { lists, guides } = await matchIndexes(db);
+  const scoped = scopeGuides(guides);
   const rows = (await db.query<{ id: string; source_id: string; tvg_id: string | null; tvg_name: string | null; import_name: string; epg_source_id: string | null; epg_channel_id: string | null }>(
     `select id, source_id, tvg_id, tvg_name, import_name, epg_source_id, epg_channel_id from livetv_channels
       where epg_match = 'auto' and ($2::boolean or missing_since is null) and ($1::uuid[] is null or id = any($1::uuid[]))`,
@@ -192,7 +249,8 @@ export async function matchIds(db: Db, o: { ids?: readonly string[]; includeMiss
   const srcs: Array<string | null> = [];
   const xmls: Array<string | null> = [];
   for (const r of rows) {
-    const m = matchChannel({ sourceId: r.source_id, tvgId: r.tvg_id, tvgName: r.tvg_name, importName: r.import_name }, idx);
+    const ch = { sourceId: r.source_id, tvgId: r.tvg_id, tvgName: r.tvg_name, importName: r.import_name };
+    const m = matchChannel(ch, lists) ?? (guides.length > 0 ? matchGuides(ch, scoped) : null);
     if (m) matched++;
     const src = m?.sourceId ?? null;
     const xml = m?.xmlId ?? null;
@@ -428,17 +486,26 @@ async function stageProgrammes(db: Tx, sourceId: string, runId: string, batch: r
     [sourceId, JSON.stringify(rows), runId]);
 }
 
-/** the request filter: every stored xml id of this source any auto channel (or a manual mapping) could use; undefined = too big */
-async function filterIds(ctx: Ctx, sourceId: string): Promise<string[] | undefined> {
+/**
+ * the request filter: every stored xml id of this source any auto channel (or a manual mapping) could use; undefined = too big. For an
+ * extra guide only the auto channels in its scope that no list's guide matches count (it only fills those), plus its manual mappings.
+ */
+async function filterIds(ctx: Ctx, source: Pick<SourceRow, 'id' | 'kind' | 'guide_scope'>): Promise<string[] | undefined> {
+  const sourceId = source.id;
+  const guide = isGuide(source.kind);
   const s = buildEpgIndex(await indexRows(ctx, sourceId)).sources.get(sourceId);
   if (!s) return [];
+  const lists = guide ? (await matchIndexes(ctx.db)).lists : null;
   const out = new Set<string>();
   const rows = (await ctx.db.query<{ source_id: string; tvg_id: string | null; tvg_name: string | null; import_name: string; epg_match: string; epg_source_id: string | null; epg_channel_id: string | null }>(
     `select source_id, tvg_id, tvg_name, import_name, epg_match, epg_source_id, epg_channel_id from livetv_channels
-      where (epg_match = 'auto' and missing_since is null) or (epg_match = 'manual' and epg_source_id = $1)`, [sourceId])).rows;
+      where (epg_match = 'auto' and missing_since is null and ($2::uuid[] is null or source_id = any($2::uuid[])))
+         or (epg_match = 'manual' and epg_source_id = $1)`, [sourceId, guide ? source.guide_scope : null])).rows;
   for (const r of rows) {
     if (r.epg_match === 'manual') { if (r.epg_channel_id) out.add(r.epg_channel_id); continue; }
-    candidates({ sourceId: r.source_id, tvgId: r.tvg_id, tvgName: r.tvg_name, importName: r.import_name }, s, out);
+    const ch = { sourceId: r.source_id, tvgId: r.tvg_id, tvgName: r.tvg_name, importName: r.import_name };
+    if (lists && matchChannel(ch, lists)) continue;
+    candidates(ch, s, out);
   }
   const ids = [...out];
   if (ids.length > FILTER_MAX_IDS || Buffer.byteLength(JSON.stringify(ids)) > FILTER_MAX_BYTES) return undefined;
@@ -477,7 +544,7 @@ async function importEpg(ctx: Ctx, source: SourceRow, url: string, icons: Map<st
     await ctx.kv.set(indexKey(source.id), urlHash, INDEX_TTL_S);
   }
 
-  const filter = await filterIds(ctx, source.id);
+  const filter = await filterIds(ctx, source);
   if (filter?.length === 0) {
     // no channel could use this guide: nothing to download; the source's programmes go (one statement)
     await ctx.db.query('delete from livetv_programmes where source_id = $1', [source.id]);
@@ -587,7 +654,7 @@ export interface Prog { title: string; start: string; end: string; subtitle?: st
  * Now and next of each mapped channel at `at` (default now), in one query. Per channel the programme covering `at − offset` (the
  * effective offset: channel override, else the list's tvg-shift, else the source's) is `now`, the first one starting after it is
  * `next`, and the offset is added to the times answered (ruling 42). Overlaps: the later start wins (spec §19). A channel without a
- * mapping or without programmes is absent or has neither.
+ * mapping or without programmes is absent or has neither; so is one mapped to a disabled extra guide (a hand pin to it stays set).
  */
 export async function nowNext(ctx: Pick<Ctx, 'db'>, channelIds: string[], at: Date = new Date()): Promise<Map<string, { now?: Prog; next?: Prog }>> {
   const out = new Map<string, { now?: Prog; next?: Prog }>();
@@ -599,6 +666,7 @@ export async function nowNext(ctx: Pick<Ctx, 'db'>, channelIds: string[], at: Da
             x.title as x_title, x.subtitle as x_sub, x.start_at as x_start, x.end_at as x_end
        from (select c.id, c.epg_source_id, c.epg_channel_id, ${EFFECTIVE_SHIFT_SQL} as shift
                from livetv_channels c join livetv_sources s on s.id = c.source_id
+                    join livetv_sources es on es.id = c.epg_source_id and (es.kind <> $3 or es.enabled) -- never from a disabled guide
               where c.id = any($1::uuid[]) and c.epg_source_id is not null and c.epg_channel_id is not null) ch
        cross join lateral (select $2::timestamptz - make_interval(mins => ch.shift) as t) q
        left join lateral (select p.title, p.subtitle, p.start_at, p.end_at from livetv_programmes p
@@ -608,7 +676,7 @@ export async function nowNext(ctx: Pick<Ctx, 'db'>, channelIds: string[], at: Da
        left join lateral (select p.title, p.subtitle, p.start_at, p.end_at from livetv_programmes p
                            where p.source_id = ch.epg_source_id and p.xml_channel = ch.epg_channel_id and p.start_at > q.t
                            order by p.start_at limit 1) x on true`,
-    [channelIds, at])).rows;
+    [channelIds, at, GUIDE_KIND])).rows;
   const prog = (title: string | null, sub: string | null, start: Date | null, end: Date | null, shift: number): Prog | undefined => {
     if (title === null || start === null || end === null) return undefined;
     const p: Prog = { title, start: new Date(start.getTime() + shift * MINUTE).toISOString(), end: new Date(end.getTime() + shift * MINUTE).toISOString() };

@@ -192,6 +192,30 @@ describe('migration 48', () => {
   });
 });
 
+describe('migration 52 (extra guides)', () => {
+  it('a guide source: kind guide with its provider, scope and file name; no list URL', async () => {
+    const g = await addSource({ kind: 'guide', name: 'Sternwarte Guide', url_enc: null, epg_url_enc: 'enc-epg', guide_provider: 'xmltv_url', guide_scope: [randomUUID()] });
+    expect((await q('select kind, guide_provider, guide_file, cardinality(guide_scope) n from livetv_sources where id = $1', [g])).rows[0])
+      .toEqual({ kind: 'guide', guide_provider: 'xmltv_url', guide_file: null, n: 1 });
+    await addSource({ kind: 'guide', name: 'Datei', url_enc: null, guide_provider: 'xmltv_file', guide_file: 'x.xml.gz' });
+    await expect(addSource({ kind: 'guide', url_enc: null })).rejects.toThrow(/check constraint/); // a guide names its provider
+    await expect(addSource({ kind: 'guide', url_enc: null, guide_provider: 'api' })).rejects.toThrow(/check constraint/);
+    await expect(addSource({ guide_provider: 'xmltv_url' })).rejects.toThrow(/check constraint/); // only guides have one
+    await expect(addSource({ kind: 'guide', guide_provider: 'xmltv_url' })).rejects.toThrow(/check constraint/); // and no list URL
+    await expect(addSource({ kind: 'xtream', url_enc: null })).rejects.toThrow(/check constraint/);
+  });
+
+  it('runs twice', async () => {
+    await q('delete from schema_migrations where version = 52');
+    await migrate(pool());
+    await q('delete from schema_migrations where version = 52');
+    await migrate(pool());
+    expect((await q('select count(*)::int n from schema_migrations where version = 52')).rows[0].n).toBe(1);
+    expect(MIGRATIONS[51]).toContain('guide_scope uuid[]');
+    expect((await q("select count(*)::int n from pg_constraint where conname = 'livetv_sources_kind_check'")).rows[0].n).toBe(1);
+  });
+});
+
 describe('effective values', () => {
   it('number, name and group', async () => {
     const sid = await addSource({ name: 'Zahlenliste' });
