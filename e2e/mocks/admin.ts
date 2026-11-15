@@ -1725,6 +1725,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     // a ROLE_TEMPLATES key the catalogue cannot hold has no row for the name or the invitable switch
     if (!role.stored && (body?.label !== undefined || body?.invitable !== undefined)) return J({ error: 'not_in_catalogue' }, 400);
     if (role.base === 'admin' && body?.perms) return J({ error: 'admin_perms_locked' }, 400);
+    if (role.key === 'admin' && Array.isArray(body?.libraries) && !body.libraries.length) return J({ error: 'admin_library_required' }, 400);
     // backend setRoleGroupsIn: the released groups the role sees (grants on unreleased groups stay); admin and env-only roles refused
     const groupsBefore = ltvSorted(st.livetv.area).filter((g) => g.released).sort((x, y) => x.position - y.position);
     const wantGroups: unknown = body?.livetvGroups;

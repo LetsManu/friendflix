@@ -83,6 +83,8 @@ export async function writeRole(ctx: Ctx, actor: string | null, key: string, pat
   if (key === 'admin' && patch.perms !== undefined) throw new HttpError(400, 'admin_perms_locked');
   if (key === 'admin' && patch.invitable === true) throw new HttpError(400, 'admin_not_invitable');
   if (key === 'admin' && patch.livetvGroups !== undefined) throw new HttpError(400, 'admin_groups_locked'); // admin sees every released group
+  // admin keeps the Mediathek (its areas are all on and locked, roles redesign §2.4, §4.3); its library list stays editable otherwise
+  if (key === 'admin' && Array.isArray(patch.libraries) && patch.libraries.length === 0) throw new HttpError(400, 'admin_library_required');
   const libraries = Array.isArray(patch.libraries) ? await knownLibraries(ctx, patch.libraries) : patch.libraries;
   const touchesSettings = Object.keys(patch).some((k) => k !== 'label' && k !== 'invitable' && k !== 'livetvGroups');
   const touchesCatalogue = patch.label !== undefined || patch.invitable !== undefined;

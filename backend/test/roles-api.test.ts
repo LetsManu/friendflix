@@ -426,6 +426,17 @@ describe('PUT /api/admin/roles/:role', () => {
     for (const c of sent) expect(c.body).toMatchObject({ EnableAllFolders: false, EnabledFolders: [] });
   });
 
+  it('the admin role keeps a library: libraries [] → 400 admin_library_required, nothing stored', async () => {
+    const r = await put('admin', { libraries: [], maxStreams: 5 });
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toEqual({ error: 'admin_library_required' });
+    expect(await row('admin')).toBeUndefined();
+    expect((await roleOf('admin')).areas.library).toBe(true);
+    // a named list is still fine for admin
+    expect((await put('admin', { libraries: ['Filme'] })).statusCode).toBe(200);
+    expect((await row('admin')).template).toEqual({ libraries: ['Filme'] });
+  });
+
   it('libraries [] while the media server cannot list libraries still saves', async () => {
     folders = null as never; // the fake answers garbage: the list fails
     forgetLibraries(env.ctx);
