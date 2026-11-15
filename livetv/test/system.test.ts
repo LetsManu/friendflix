@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { FsLike, Run } from '../src/run.js';
-import { CACHE_USAGE_TTL_MS, cacheUsage, cpuInfo, encoders, gpuInfo, parseSrtPorts, systemView } from '../src/system.js';
+import { CACHE_USAGE_TTL_MS, RECORDINGS_USAGE_TTL_MS, cacheUsage, cpuInfo, encoders, gpuInfo, parseSrtPorts, systemView } from '../src/system.js';
 
 /**
  * a fake file system: directory listings, link targets and file contents by path; anything else is ENOENT. accessSync: render
@@ -207,6 +207,29 @@ describe('cacheUsage and systemView', () => {
     t += 1;
     expect((await view()).cache.usedBytes).toBe(150);
     expect(CACHE_USAGE_TTL_MS).toBe(30_000);
+  });
+
+  it('system reports recordings used and free bytes', async () => {
+    let t = 5_000_000;
+    const rec = mkdtempSync(join(dir, 'rec-'));
+    mkdirSync(join(rec, '0f000000-0000-4000-a000-0000000000d1'));
+    writeFileSync(join(rec, '0f000000-0000-4000-a000-0000000000d1', '0.ts'), Buffer.alloc(300));
+    let free = 7n * 1024n ** 3n;
+    const asked: string[] = [];
+    const statfs = async (p: string) => { asked.push(p); if (p.includes('missing')) throw new Error('ENOENT'); return { bavail: free / 4096n, bsize: 4096 }; };
+    const view = systemView({ fs: fakeFs({}), run: runOf(ENCODERS), cacheDir: dir, cacheMaxBytes: 1, srtPorts: [9000], now: () => t, recordingsDir: rec, statfs });
+    expect((await view()).recordings).toEqual({ usedBytes: 300, freeBytes: 7 * 1024 ** 3 });
+    // the walk is reused for 60 s; the free bytes are asked every time
+    writeFileSync(join(rec, '0f000000-0000-4000-a000-0000000000d1', '1.ts'), Buffer.alloc(200));
+    free = 6n * 1024n ** 3n;
+    t += RECORDINGS_USAGE_TTL_MS - 1;
+    expect((await view()).recordings).toEqual({ usedBytes: 300, freeBytes: 6 * 1024 ** 3 });
+    t += 1;
+    expect((await view()).recordings).toEqual({ usedBytes: 500, freeBytes: 6 * 1024 ** 3 });
+    expect(asked).toEqual([rec, rec, rec]);
+    expect(RECORDINGS_USAGE_TTL_MS).toBe(60_000);
+    // not mounted or not readable: null
+    expect((await systemView({ fs: fakeFs({}), run: runOf(ENCODERS), cacheDir: dir, cacheMaxBytes: 1, srtPorts: [9000], recordingsDir: join(rec, 'missing'), statfs })()).recordings).toBeNull();
   });
 
   it('a failed encoder probe is asked again next time', async () => {

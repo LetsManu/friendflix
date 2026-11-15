@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { constants } from 'node:fs';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, readdir, statfs } from 'node:fs/promises';
 import * as nodeOs from 'node:os';
 import { basename, join } from 'node:path';
 import type { FsLike, Run } from './run.js';
@@ -12,7 +12,7 @@ export type Encoder = (typeof ENCODERS)[number];
 
 export interface CpuInfo { model: string; cores: number; loadPct: number }
 export interface GpuInfo { devices: string[]; driver: string | null; readable: boolean; busyPct: number | null; nvidia: boolean }
-/** `GET /v1/system` (spec §3.2) + `srt.ports`; recordings arrive with Phase 3 */
+/** `GET /v1/system` (spec §3.2) + `srt.ports`; `recordings` (Phase 3): the recordings volume's used and free bytes, null when unreadable */
 export interface SystemView {
   cpu: CpuInfo;
   gpu: GpuInfo;
@@ -111,8 +111,16 @@ export async function cacheUsage(dir: string): Promise<number> {
 
 /** how long a measured cache size is reused (the walk lstats every DVR segment) */
 export const CACHE_USAGE_TTL_MS = 30_000;
+/** how long the measured size of `/recordings` is reused (a walk over every recording's segments) */
+export const RECORDINGS_USAGE_TTL_MS = 60_000;
 
-export interface SystemDeps { fs: FsLike; run: Run; cacheDir: string; cacheMaxBytes: number; srtPorts: number[]; now?: () => number }
+export type StatFs = (dir: string) => Promise<{ bavail: number | bigint; bsize: number | bigint }>;
+export interface SystemDeps {
+  fs: FsLike; run: Run; cacheDir: string; cacheMaxBytes: number; srtPorts: number[]; now?: () => number;
+  /** the recordings volume (Phase 3); without it `recordings` is null */
+  recordingsDir?: string;
+  statfs?: StatFs;
+}
 
 /**
  * `GET /v1/system`. The encoder list is asked once per process (a failed probe is asked again next time); the cache size is
@@ -122,6 +130,21 @@ export function systemView(d: SystemDeps): () => Promise<SystemView> {
   const now = d.now ?? Date.now;
   let enc: Encoder[] | null = null;
   let used: { at: number; bytes: number } | null = null;
+  let recUsed: { at: number; bytes: number } | null = null;
+  const sfs: StatFs = d.statfs ?? ((dir) => statfs(dir));
+  /** the volume's free bytes (asked every time: cheap) and its used bytes (walked at most every 60 s); null when not readable */
+  const recordings = async (): Promise<SystemView['recordings']> => {
+    if (!d.recordingsDir) return null;
+    let freeBytes: number;
+    try {
+      const st = await sfs(d.recordingsDir);
+      freeBytes = Number(st.bavail) * Number(st.bsize);
+    } catch {
+      return null;
+    }
+    if (!recUsed || now() - recUsed.at >= RECORDINGS_USAGE_TTL_MS) recUsed = { at: now(), bytes: await cacheUsage(d.recordingsDir) };
+    return { usedBytes: recUsed.bytes, freeBytes };
+  };
   return async () => {
     if (!enc) {
       const list = await encoders(d.run);
@@ -133,7 +156,7 @@ export function systemView(d: SystemDeps): () => Promise<SystemView> {
       gpu: gpuInfo(d.fs),
       encoders: enc ?? [],
       cache: { usedBytes: used.bytes, maxBytes: d.cacheMaxBytes },
-      recordings: null,
+      recordings: await recordings(),
       srt: { ports: d.srtPorts },
     };
   };

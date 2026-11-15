@@ -18,6 +18,8 @@ import { fileRoutes } from './routes/files.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { parseRoutes } from './routes/parse.js';
 import { streamRoutes } from './routes/streams.js';
+import { Recorder } from './recorder.js';
+import { recordingRoutes } from './routes/recordings.js';
 import { createRun } from './run.js';
 import { IngestHub, srtgateSpawner } from './srtingest.js';
 import { Streams } from './streams.js';
@@ -40,7 +42,7 @@ export const MAX_BODY_M3U = 512 * 1024;
  */
 export const REQUEST_TIMEOUT_MS = 10_000;
 
-export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
+export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 export interface RouteCall {
   req: IncomingMessage;
   res: ServerResponse;
@@ -232,7 +234,7 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   if (env.INTERNAL_SECRET || env.INTERNAL_SECRET_FILE) log('INTERNAL_SECRET is set in the environment of livetv but never used: remove it there');
   const verifier: Verifier = { key: cfg.key, cache: new ReplayCache(), notBefore: Date.now() };
   const run = createRun();
-  const system = systemView({ fs, run, cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts });
+  const system = systemView({ fs, run, cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts, recordingsDir: cfg.recordingsDir });
   // the encoders /v1/system lists, asked once (a failed or empty answer is asked again next time)
   let encoderList: Encoder[] | null = null;
   const listEncoders = async (): Promise<Encoder[]> => {
@@ -251,20 +253,25 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   const previews = new Previews({ run, log });
   const mediaDeps = { run, guard, log, ingest };
   const media = remuxDriver(mediaDeps);
+  // the recorder (Phase 3) taps the shared streams: every segment of a recorded channel is copied into /recordings/<dir>/
+  let recorder: Recorder | null = null;
   const streams = new Streams({
     root: cfg.cacheDir, maxBytes: cfg.cacheMaxBytes, drivers: { passthrough: probedPassthrough(mediaDeps, media, passthroughDriver({ guard })), remux: media, transcode: media }, log,
-    onSegment: (id, path) => previews.segment(id, path), onStop: (id) => previews.drop(id),
+    onSegment: (id, seg) => { previews.segment(id, seg.path); recorder?.segment(id, seg); },
+    onStop: (id) => { previews.drop(id); recorder?.streamStopped(id); },
   });
+  recorder = new Recorder({ root: cfg.recordingsDir, streams, log });
   const routes = [
     ...fetchRoutes({ guard, run, ingest }), ...parseRoutes(), ...streamRoutes(streams, { encoders: listEncoders, previews }),
     ...benchmarkRoutes({ run, encoders: listEncoders, log }), ...fileRoutes(streams), ...ingestRoutes(ingest, { ports: cfg.srtPorts }),
+    ...recordingRoutes(recorder),
   ];
   const app = createApp({ verifier, version: cfg.version, bootId: randomBytes(8).toString('hex'), system, routes, warn: log });
   const server = createServer((req, res) => { void app(req, res); });
   // the outer bound for receiving a request: the longest route's own (createApp cuts every other request off after REQUEST_TIMEOUT_MS)
   server.requestTimeout = Math.max(REQUEST_TIMEOUT_MS, ...routes.map((r) => r.bodyTimeoutMs ?? 0)) + 5_000;
   server.headersTimeout = 5_000;
-  server.on('close', () => ingest.close());
+  server.on('close', () => { ingest.close(); recorder?.close(); });
   await new Promise<void>((resolve) => server.listen(cfg.port, o.host ?? '0.0.0.0', resolve));
   const srt = cfg.srtPorts.length === 1 ? `${cfg.srtPorts[0]}` : `${cfg.srtPorts[0]}-${cfg.srtPorts.at(-1)}`;
   log(`listening on :${cfg.port} (api ${API_VERSION}, version ${cfg.version ?? 'dev'}, SRT ports ${srt}, cache ${(cfg.cacheMaxBytes / 1024 ** 3).toFixed(1)} GB)`);
