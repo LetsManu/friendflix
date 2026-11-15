@@ -6,6 +6,7 @@ import { PLAYLIST_TIMEOUT_MS, PlaylistRefused, SEGMENT_TIMEOUT_MS, START_SEGMENT
 import { segmentFormat, urlFormat, type PipeFormat } from './ffmpeg.js';
 import { DEFAULT_MAX_BITRATE, PLAYLIST_MAX_BYTES, SEGMENT_MAX_BYTES, pickVariant, type StreamInput } from './probe.js';
 import type { IngestReader } from './srtingest.js';
+import { TsClock, ptsDelta } from './tsclock.js';
 
 /**
  * What ffmpeg reads for a remux or transcode (plan ruling 3): never a provider URL. HTTP(S) inputs are fetched by livetv
@@ -19,7 +20,8 @@ export type FfmpegInput =
     kind: 'pipe'; format: PipeFormat; stdin: AsyncIterable<Uint8Array>;
     /**
      * a separate HLS audio rendition (descriptor 3), started at the same media time as the video (alignStart); `shift`: seconds
-     * its timestamps are moved against the video's (an alignment by program date-time; ffmpegArgs `audioInput.shift`)
+     * its timestamps are moved against the video's (measured from the first timestamps of both, or by program date-time;
+     * ffmpegArgs `audioInput.shift`)
      */
     audio?: { format: PipeFormat; stdin: AsyncIterable<Uint8Array>; shift?: number };
   }
@@ -273,6 +275,8 @@ export interface Aligned {
    */
   shift: number;
   by: 'sequence' | 'pdt';
+  /** by sequence although only one side carries a date-time (they could not be checked against each other): logged as a code */
+  note?: 'pdt_one_sided';
 }
 
 /**
@@ -301,7 +305,10 @@ export function alignStart(v: MediaPlaylist, a: MediaPlaylist, after: { video?: 
     const from = resuming ? Math.max(lo, after.video ?? -Infinity, after.audio ?? -Infinity) : Math.max(hi - START_SEGMENTS + 1, lo);
     const vp = vs.find((s) => s.seq === from)?.pdt;
     const ap = as.find((s) => s.seq === from)?.pdt;
-    if (vp === undefined || ap === undefined || Math.abs(vp - ap) <= v.targetDuration * 500) return { video: from, audio: from, shift: 0, by: 'sequence' };
+    if (vp === undefined || ap === undefined || Math.abs(vp - ap) <= v.targetDuration * 500) {
+      const oneSided = (vs.some((x) => x.pdt !== undefined)) !== (as.some((x) => x.pdt !== undefined));
+      return { video: from, audio: from, shift: 0, by: 'sequence', ...(oneSided ? { note: 'pdt_one_sided' as const } : {}) };
+    }
   }
   const order: number[] = [];
   let aMin: number;
@@ -332,6 +339,68 @@ export function alignStart(v: MediaPlaylist, a: MediaPlaylist, after: { video?: 
     if (best) return { video: vs[i]!.seq, audio: best.seq, shift: Math.round(best.pdt! - t) / 1000, by: 'pdt' };
   }
   return null;
+}
+
+/** the most of a rendition's first segment held back to read its first timestamps before ffmpeg starts */
+const MEASURE_MAX_BYTES = 4 * 1024 * 1024;
+/**
+ * how long openInput waits for the first bytes of both renditions before it starts ffmpeg without the measured offset (the
+ * playlist alignment then): the stall watchdog only runs once ffmpeg does, and the backend waits 15 s for a stream's first segment
+ */
+export const MEASURE_MS = 5_000;
+
+/**
+ * Reads `gen` (a rendition's byte stream) until `clock` knows where it starts, its first segment was all read (`firstDone`),
+ * MEASURE_MAX_BYTES or `deadline`; answers whether it got there, and the same stream with the bytes read put back in front
+ * (nothing is lost or reordered; a read still pending at the deadline is handed on as it arrives). Held bytes are not handed on
+ * once `signal` aborted (the pair was ended meanwhile).
+ */
+async function measured(gen: AsyncGenerator<Uint8Array>, clock: TsClock, firstDone: () => boolean, signal: AbortSignal, deadline: Promise<'late'>): Promise<{ late: boolean; stream: AsyncGenerator<Uint8Array> }> {
+  const held: Uint8Array[] = [];
+  let n = 0;
+  let ended = false;
+  let pending: Promise<IteratorResult<Uint8Array>> | null = null;
+  while (!clock.ready && !firstDone() && n < MEASURE_MAX_BYTES) {
+    const next = gen.next();
+    // a read that outlives the deadline is awaited later by the stream (or never, if ffmpeg never reads): no unhandled rejection
+    next.catch(() => {});
+    const r = await Promise.race([next, deadline]);
+    if (r === 'late') { pending = next; break; }
+    if (r.done) { ended = true; break; }
+    held.push(r.value);
+    n += r.value.length;
+    clock.push(r.value);
+  }
+  const stream = (async function* () {
+    for (const c of held) {
+      if (signal.aborted) return;
+      yield c;
+    }
+    if (ended) return;
+    if (pending) {
+      const r = await pending;
+      if (r.done) return;
+      yield r.value;
+    }
+    yield* gen;
+  })();
+  return { late: pending !== null, stream };
+}
+
+/**
+ * The audio's shift against the video measured from their first timestamps (seconds, 3 decimals), when it fits what the playlists
+ * say within a target duration: the expected offset is the date-time difference of the two start segments, or 0 for equal
+ * sequence numbers; with no alignment at all anything within max(30 s, 3 target durations) is taken. Two encoders' clocks are
+ * unrelated, so their difference is almost never that small: null then (the caller keeps the playlist alignment).
+ */
+function clockShift(v: { start: number | null; seg?: Numbered }, a: { start: number | null; seg?: Numbered }, al: Aligned | null, target: number): number | null | 'mismatch' {
+  if (v.start === null || a.start === null) return null;
+  const shift = Math.round((ptsDelta(a.start, v.start) / 90_000) * 1000) / 1000;
+  let expected: number | null = null;
+  if (v.seg?.pdt !== undefined && a.seg?.pdt !== undefined) expected = (a.seg.pdt - v.seg.pdt) / 1000;
+  else if (al?.by === 'sequence' && v.seg && a.seg) expected = 0;
+  const fits = expected === null ? Math.abs(shift) <= Math.max(30, 3 * target) : Math.abs(shift - expected) <= target;
+  return fits ? shift : 'mismatch';
 }
 
 /**
@@ -474,29 +543,59 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
       }
       return m?.discontinuity === true;
     };
+    // the first segment of each was read through (for measuring its first timestamps)
+    const firstDone = { video: false, audio: false };
     const followOf = (side: 'video' | 'audio', from: number | null) => ({
       from, strict: true, side, onSkip, log, peerDisc: peerDisc(side), onPlaylist: (l: Numbered[]) => { seen[side] = l; },
-      onTaken: (seq: number) => { if (resume) resume[side] = seq; },
+      onTaken: (seq: number) => { firstDone[side] = true; if (resume) resume[side] = seq; },
     });
+    if (al?.note) log(`separate audio: aligned by sequence, date-time on one side only (${al.note})`);
     // without an alignment each starts at its own resume point, else at its own live edge
-    const video = hlsBytes({ text, base, url }, get, ac.signal, followOf('video', al?.video ?? (rv === null ? null : rv + 1)));
+    const vFrom = al?.video ?? (rv === null ? null : rv + 1);
+    const aFrom = al?.audio ?? (ra === null ? null : ra + 1);
+    let video = hlsBytes({ text, base, url }, get, ac.signal, followOf('video', vFrom));
     // re-polled at the rendition's own URL (a redirect target may carry a token that expires), like the video playlist
-    const audio = hlsBytes({ text: ar.text, base: ar.url, url: audioUri }, get, ac.signal, followOf('audio', al?.audio ?? (ra === null ? null : ra + 1)));
+    let audio = hlsBytes({ text: ar.text, base: ar.url, url: audioUri }, get, ac.signal, followOf('audio', aFrom));
+    let shift = al?.shift ?? 0;
+    if (format === 'mpegts' && aformat === 'mpegts') {
+      // H1 item 5: both are MPEG-TS, so the offset is read from their first timestamps before ffmpeg starts (the playlists only
+      // say which segments to start with; the encoder's clock says where they really are against each other)
+      const vc = new TsClock();
+      const acl = new TsClock();
+      let timer: NodeJS.Timeout | undefined;
+      const deadline = new Promise<'late'>((r) => { timer = setTimeout(() => r('late'), MEASURE_MS); });
+      const [vm, am] = await Promise.all([
+        measured(video, vc, () => firstDone.video, ac.signal, deadline),
+        measured(audio, acl, () => firstDone.audio, ac.signal, deadline).catch((e: unknown) => { throw ac.signal.aborted ? e : new AudioUnavailable(isFatal(e)); }),
+      ]).finally(() => clearTimeout(timer));
+      video = vm.stream;
+      audio = am.stream;
+      const segOf = (l: Numbered[], from: number | null) => l.find((x) => x.seq === (from ?? l.at(-START_SEGMENTS)?.seq));
+      const c = clockShift({ start: vc.start, seg: segOf(number(media), vFrom) }, { start: acl.start, seg: segOf(number(amedia), aFrom) }, al, media.targetDuration);
+      const by = al?.by ?? 'live edge';
+      if (vm.late || am.late) log(`separate audio: first timestamps not read in time (timestamps_late), aligned by ${by}`);
+      else if (c === 'mismatch') log(`separate audio: timestamps do not fit the playlists (clock_mismatch), aligned by ${by}`);
+      else if (c !== null) {
+        shift = c;
+        log(`separate audio: aligned by timestamps, offset ${Math.round(c * 1000)} ms`);
+      }
+    }
     let videoBytes = 0;
     let audioBytes = 0;
     let audioFailed = false;
+    let videoFailed = false;
     return {
       ffInput: {
-        kind: 'pipe', format, stdin: linked(video, close, ac.signal, { onBytes: (n) => { videoBytes += n; } }),
+        kind: 'pipe', format, stdin: linked(video, close, ac.signal, { onOwnFail: () => { videoFailed = true; }, onBytes: (n) => { videoBytes += n; } }),
         audio: {
           format: aformat,
           // a provider event (its sequence went back, a discontinuity in this rendition only) is no fault of the rendition
           stdin: linked(audio, close, ac.signal, { onOwnFail: (e) => { if (!(e instanceof InputEnd && NOT_A_FAULT.has(e.code))) audioFailed = true; }, onBytes: (n) => { audioBytes += n; } }),
-          ...(al?.shift ? { shift: al.shift } : {}),
+          ...(shift ? { shift } : {}),
         },
       },
       close,
-      audioFault: (stalled) => audioFailed || (stalled && audioBytes === 0 && videoBytes > 0),
+      audioFault: (stalled) => audioFailed || (stalled && !videoFailed && audioBytes === 0 && videoBytes > 0),
     };
   } catch (e) {
     close();
