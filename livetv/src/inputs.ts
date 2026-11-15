@@ -55,9 +55,13 @@ export class AudioUnavailable extends Error {
 
 /**
  * Why an HLS input ended its run by itself (fixed codes; the driver logs them): `restart` the provider's sequence went back
- * (follow), `gap` segments were missed, both in a strict pair only (a single playlist starts again at the edge instead).
+ * (follow), `gap` segments were missed, `discontinuity` one rendition of a pair has one the other does not carry (these three in
+ * a strict pair only: a single playlist starts again at the edge, ffmpeg smooths its timestamps), `segments_failed`
+ * SEGMENT_FAILS segments in a row could not be loaded.
  */
-export type InputEndCode = 'restart' | 'gap';
+export type InputEndCode = 'restart' | 'gap' | 'discontinuity' | 'segments_failed';
+/** ends of a run that are the provider's doing, not a broken rendition: the separate audio is not blamed for them (audioFault) */
+const NOT_A_FAULT: ReadonlySet<InputEndCode> = new Set(['restart', 'discontinuity']);
 export class InputEnd extends Error {
   constructor(readonly code: InputEndCode) { super(code); }
 }
@@ -112,22 +116,49 @@ async function* watched(body: AsyncIterable<Uint8Array>, ms: number, onIdle: () 
 }
 
 type Get = (url: string, maxBytes: number, timeoutMs: number) => Promise<GuardedResponse>;
+type Numbered = MediaSegment & { seq: number };
+
+/** a segment that failed to load is asked for once more after this long; failing again, it is skipped (a gap in the input) */
+export const SEGMENT_RETRY_MS = 250;
+/** this many segments in a row skipped end the run (the provider is gone, the driver's backoff takes over) */
+export const SEGMENT_FAILS = 3;
+/**
+ * In a pair, the time skipped in a row stays at or under this many seconds. ffmpeg closes a timestamp hole of more than 10 s
+ * (its `dts_delta_threshold`) in the one input that has it, which would move that rendition against the other for the rest of
+ * the run; a shorter hole stays a hole in both timelines, so the two stay together.
+ */
+export const MAX_HOLE_S = 8;
 
 interface Follow {
   /** the media sequence to start at (an aligned start, alignStart); null or missing: the newest START_SEGMENTS */
   from?: number | null;
   /**
-   * one of two paired renditions (video and a separate audio): anything that is not the next segment in order (missed segments,
-   * a segment gone at the provider, a sequence that went back, a discontinuity after the start) ends this input instead of jumping
-   * on, so the pair never drifts apart: `linked` ends the sibling, ffmpeg restarts and alignStart lines both up again
+   * one of two paired renditions (video and a separate audio): a sequence that went back, missed segments, or a discontinuity the
+   * other rendition does not carry (`peerDisc`) ends this input instead of jumping on, so the pair never drifts apart: `linked`
+   * ends the sibling, ffmpeg restarts and alignStart lines both up again. A skipped segment is allowed while the hole stays short.
    */
   strict?: boolean;
+  /** which rendition, for the log ('video' / 'audio'); none for a single playlist */
+  side?: 'video' | 'audio';
+  /** whether the other rendition of the pair carries the discontinuity at `s` too (then the run goes on) */
+  peerDisc?: (s: Numbered) => Promise<boolean>;
+  /** every playlist read (parsed and numbered), for the other rendition's `peerDisc` */
+  onPlaylist?: (segs: Numbered[]) => void;
   onSkip?: () => void;
+  /** fixed texts only */
+  log?: (m: string) => void;
 }
 
+const codeOf = (e: unknown): string => (e instanceof FetchError ? e.code : 'unreachable');
+/** retrying cannot help: the stream fails (a refused address or scheme, a playlist that can never be served) */
+const number = (p: MediaPlaylist): Numbered[] => p.segments.map((s, i) => ({ ...s, seq: p.mediaSequence + i }));
+const isFatal = (e: unknown): boolean => e instanceof PlaylistRefused || (e instanceof FetchError && (e.code === 'address_refused' || e.code === 'scheme'));
+/** retrying cannot help: the stream fails (a refused address or scheme, a playlist that can never be served) */
+
 /**
- * an HLS input as one byte stream: the newest segments first (or from `o.from`), then every new one (a segment gone at the provider
- * is skipped; in a strict pair it ends the input instead)
+ * An HLS input as one byte stream: the newest segments first (or from `o.from`), then every new one in order. A stale read is no
+ * update (follow). A segment that fails is asked for once more, then skipped; SEGMENT_FAILS in a row (in a pair also a hole over
+ * MAX_HOLE_S) end the input (`segments_failed`). A failed playlist poll is tried again at the next poll.
  */
 async function* hlsBytes(first: { text: string; base: string; url: string }, get: Get, signal: AbortSignal, o: Follow = {}): AsyncGenerator<Uint8Array> {
   let pl = { text: first.text, base: first.base };
@@ -136,17 +167,35 @@ async function* hlsBytes(first: { text: string; base: string; url: string }, get
   let started = false;
   /** stale reads in a row (follow) */
   const stale = { stale: 0 };
-  const skip = (code: InputEndCode | null = null) => { o.onSkip?.(); return code ? new InputEnd(code) : new FetchError('unreachable'); };
+  /** segments skipped in a row and their seconds */
+  let failed = 0;
+  let hole = 0;
+  const side = o.side ? `${o.side} ` : '';
+  /** `onSkip`: the pair broke its order and is aligned again; a rendition that could not be loaded is not that */
+  const end = (code: InputEndCode) => { if (code !== 'segments_failed') o.onSkip?.(); return new InputEnd(code); };
+  /** the segment's response, or the code it failed with twice */
+  const load = async (url: string): Promise<GuardedResponse | { failed: string }> => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await get(url, SEGMENT_MAX_BYTES, SEGMENT_TIMEOUT_MS);
+      } catch (e) {
+        if (signal.aborted || isFatal(e)) throw e;
+        if (attempt === 1 || !(await wait(SEGMENT_RETRY_MS, signal))) return { failed: codeOf(e) };
+      }
+    }
+  };
   while (!signal.aborted) {
     const p = parseMedia(pl.text);
     if (!p) throw new FetchError('unreachable');
     const segs = p.segments.map((s, i) => ({ ...s, seq: p.mediaSequence + i }));
+    o.onPlaylist?.(segs);
     // a stale read (a CDN node a little behind) takes nothing, in a pair too
     const f = follow(segs, last, stale);
-    if (o.strict && f.jump !== 'none') throw skip(f.jump);
+    if (o.strict && f.jump !== 'none') throw end(f.jump);
     for (const s of f.take) {
       if (signal.aborted) return;
-      if (o.strict && started && s.discontinuity) throw skip();
+      if (o.strict && started && s.discontinuity && !(await (o.peerDisc?.(s) ?? Promise.resolve(false)))) throw end('discontinuity');
+      if (signal.aborted) return;
       started = true;
       if (s.map) {
         const u = resolveRef(s.map, pl.base);
@@ -155,27 +204,31 @@ async function* hlsBytes(first: { text: string; base: string; url: string }, get
           initUrl = u;
         }
       }
-      let r: GuardedResponse;
-      try {
-        r = await get(resolveRef(s.uri, pl.base), SEGMENT_MAX_BYTES, SEGMENT_TIMEOUT_MS);
-      } catch (e) {
-        if (e instanceof FetchError && e.code === 'not_found') {
-          if (o.strict) throw skip();
-          last = s.seq;
-          continue;
-        }
-        throw e;
+      const r = await load(resolveRef(s.uri, pl.base));
+      if ('failed' in r) {
+        failed++;
+        hole += s.duration;
+        if (failed >= SEGMENT_FAILS || (o.strict && hole > MAX_HOLE_S)) throw end('segments_failed');
+        o.log?.(`${side}segment skipped after a retry (${r.failed})`);
+        last = s.seq;
+        continue;
       }
+      failed = 0;
+      hole = 0;
       yield* r.body;
       last = s.seq;
     }
     if (!(await wait(Math.min(MAX_POLL_S, Math.max(MIN_POLL_S, p.targetDuration / 2)) * 1000, signal))) return;
-    const r = await get(first.url, PLAYLIST_MAX_BYTES, PLAYLIST_TIMEOUT_MS);
-    pl = { text: await readText(r.body), base: r.url };
+    try {
+      const r = await get(first.url, PLAYLIST_MAX_BYTES, PLAYLIST_TIMEOUT_MS);
+      pl = { text: await readText(r.body), base: r.url };
+    } catch (e) {
+      // one failed poll is not the end: the playlist read before is looked at again (nothing new in it), then polled again
+      if (signal.aborted || isFatal(e)) throw e;
+    }
   }
 }
 
-type Numbered = MediaSegment & { seq: number };
 export interface Aligned {
   /** the media sequence each rendition starts at */
   video: number;
@@ -199,7 +252,6 @@ export interface Aligned {
  * - else null: the sequences do not correspond and there is no date-time to go by; each starts at its own live edge (as before).
  */
 export function alignStart(v: MediaPlaylist, a: MediaPlaylist): Aligned | null {
-  const number = (p: MediaPlaylist): Numbered[] => p.segments.map((s, i) => ({ ...s, seq: p.mediaSequence + i }));
   const vs = number(v);
   const as = number(a);
   if (vs.length === 0 || as.length === 0) return null;
@@ -234,7 +286,6 @@ export function alignStart(v: MediaPlaylist, a: MediaPlaylist): Aligned | null {
   return null;
 }
 
-const isFatal = (e: unknown): boolean => e instanceof PlaylistRefused || (e instanceof FetchError && (e.code === 'address_refused' || e.code === 'scheme'));
 
 /** a push feed's ring as ffmpeg's stdin: no address, no URL; closed by the stop, by `close()` or by 20 s without data */
 function openPush(channelId: string, deps: InputDeps): OpenedInput {
@@ -258,7 +309,7 @@ function openPush(channelId: string, deps: InputDeps): OpenedInput {
  * `gen`, but a failure of it ends the whole input (`end`), so its sibling pipe ends too. `onOwnFail` is told when it failed on its
  * own (the input was not already ended by the sibling or a stop); `onBytes` counts what it gave.
  */
-async function* linked(gen: AsyncGenerator<Uint8Array>, end: () => void, signal: AbortSignal, o: { onOwnFail?: () => void; onBytes?: (n: number) => void } = {}): AsyncGenerator<Uint8Array> {
+async function* linked(gen: AsyncGenerator<Uint8Array>, end: () => void, signal: AbortSignal, o: { onOwnFail?: (e: unknown) => void; onBytes?: (n: number) => void } = {}): AsyncGenerator<Uint8Array> {
   try {
     for await (const c of gen) {
       o.onBytes?.(c.length);
@@ -267,7 +318,7 @@ async function* linked(gen: AsyncGenerator<Uint8Array>, end: () => void, signal:
   } catch (e) {
     const own = !signal.aborted;
     end();
-    if (own) o.onOwnFail?.();
+    if (own) o.onOwnFail?.(e);
     throw e;
   }
 }
@@ -288,6 +339,7 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
   const fetchFn: FetchFn = deps.fetch ?? ((url, o) => guardedFetch(url, o, deps.guard));
   const get: Get = (url, maxBytes, timeoutMs) =>
     fetchFn(url, { allowLan: input.allowLan, userAgent: input.userAgent, timeoutMs, maxBytes, signal: ac.signal });
+  const log = (m: string) => deps.log?.(m);
   try {
     if (input.kind === 'ts') {
       const res = await get(input.url, Number.MAX_SAFE_INTEGER, FOREVER_MS);
@@ -320,9 +372,9 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     // the demuxer follows the playlist's first segment (L5, see segmentFormat)
     const first = media.segments[0];
     const format: PipeFormat = first ? segmentFormat(first.uri, first.map) : 'mpegts';
-    if (audioUri === null || audioList === null) return { ffInput: { kind: 'pipe', format, stdin: hlsBytes({ text, base, url }, get, ac.signal) }, close };
+    if (audioUri === null || audioList === null) return { ffInput: { kind: 'pipe', format, stdin: hlsBytes({ text, base, url }, get, ac.signal, { log }) }, close };
     // audio in a playlist of its own: fetched and followed like the video one (same guard, same limits), as a second pipe. Either
-    // one failing or skipping ends both (ffmpeg sees EOF, the driver backs off, restarts and aligns them again), so a stream never
+    // one ending its run ends both (ffmpeg sees EOF, the driver backs off, restarts and aligns them again), so a stream never
     // runs video-only or out of sync unnoticed. A rendition that cannot be opened is AudioUnavailable: the driver decides.
     const ar = await audioList;
     let amedia: MediaPlaylist | null;
@@ -337,11 +389,34 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     const afirst = amedia.segments[0];
     const aformat: PipeFormat = afirst ? segmentFormat(afirst.uri, afirst.map) : 'mpegts';
     const al = alignStart(media, amedia);
-    if (!al) deps.log?.('separate audio: no common media sequence or program date-time, each rendition starts at its live edge');
-    const onSkip = () => deps.log?.('separate audio: a rendition skipped, both restart to align again');
-    const video = hlsBytes({ text, base, url }, get, ac.signal, { from: al?.video ?? null, strict: true, onSkip });
+    if (!al) log('separate audio: no common media sequence or program date-time, each rendition starts at its live edge');
+    const onSkip = () => log('separate audio: a rendition skipped, both restart to align again');
+    // what each rendition's playlist showed last, so the other can tell whether a discontinuity is in both
+    const seen: Record<'video' | 'audio', Numbered[]> = { video: number(media), audio: number(amedia) };
+    const urls = { video: url, audio: audioUri };
+    const peerDisc = (side: 'video' | 'audio') => async (s: Numbered): Promise<boolean> => {
+      if (!al) return false;
+      const other = side === 'video' ? 'audio' : 'video';
+      // the same media time: the same number in a pair aligned by sequence, the same date-time (within half a segment) by PDT
+      const match = (l: Numbered[]) => (al.by === 'sequence'
+        ? l.find((x) => x.seq === s.seq)
+        : s.pdt === undefined ? undefined : l.find((x) => x.pdt !== undefined && Math.abs(x.pdt - s.pdt!) < x.duration * 500));
+      let m = match(seen[other]);
+      if (!m) {
+        // the other playlist was read before this segment was listed: once more now
+        try {
+          const p = parseMedia(await readText((await get(urls[other], PLAYLIST_MAX_BYTES, PLAYLIST_TIMEOUT_MS)).body));
+          if (p) m = match(number(p));
+        } catch { /* not known: one-sided */ }
+      }
+      return m?.discontinuity === true;
+    };
+    const followOf = (side: 'video' | 'audio', from: number | null) => ({
+      from, strict: true, side, onSkip, log, peerDisc: peerDisc(side), onPlaylist: (l: Numbered[]) => { seen[side] = l; },
+    });
+    const video = hlsBytes({ text, base, url }, get, ac.signal, followOf('video', al?.video ?? null));
     // re-polled at the rendition's own URL (a redirect target may carry a token that expires), like the video playlist
-    const audio = hlsBytes({ text: ar.text, base: ar.url, url: audioUri }, get, ac.signal, { from: al?.audio ?? null, strict: true, onSkip });
+    const audio = hlsBytes({ text: ar.text, base: ar.url, url: audioUri }, get, ac.signal, followOf('audio', al?.audio ?? null));
     let videoBytes = 0;
     let audioBytes = 0;
     let audioFailed = false;
@@ -350,7 +425,8 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
         kind: 'pipe', format, stdin: linked(video, close, ac.signal, { onBytes: (n) => { videoBytes += n; } }),
         audio: {
           format: aformat,
-          stdin: linked(audio, close, ac.signal, { onOwnFail: () => { audioFailed = true; }, onBytes: (n) => { audioBytes += n; } }),
+          // a provider event (its sequence went back, a discontinuity in this rendition only) is no fault of the rendition
+          stdin: linked(audio, close, ac.signal, { onOwnFail: (e) => { if (!(e instanceof InputEnd && NOT_A_FAULT.has(e.code))) audioFailed = true; }, onBytes: (n) => { audioBytes += n; } }),
           ...(al?.shift ? { shift: al.shift } : {}),
         },
       },

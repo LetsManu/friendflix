@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it, vi } from 'vitest';
 import { FetchError, type GuardDeps } from '../src/fetch.js';
+import { SEGMENT_FAILS, SEGMENT_RETRY_MS } from '../src/inputs.js';
 import { START_PROBE_MS, type ProbeResult, type StreamInput } from '../src/probe.js';
 import { AUDIO_FAULTS, AUDIO_FAULT_WINDOW_MS, AUDIO_HEALTHY_SEGMENTS, AUDIO_TRIES, probedPassthrough, remuxDriver } from '../src/remux.js';
 import type { Driver, DriverContext } from '../src/streams.js';
@@ -231,38 +232,50 @@ describe('remuxDriver: a separate audio rendition that fails (I3, M3)', () => {
   async function drainQuiet(src?: AsyncIterable<Uint8Array>) {
     try { if (src) for await (const _ of src) { /* read */ } } catch { /* ended by failing */ }
   }
+  /** the failing side lists 1..6 (the other 1..3, so both start at 1) and fails 2..4: SEGMENT_FAILS in a row end its run */
   const routesWith = (fail: 'audio' | 'video') => {
-    const r = new Map<string, Served>([[`${base}/master.m3u8`, MASTER('de.m3u8')], [`${base}/v.m3u8`, pl('v')], [`${base}/de.m3u8`, pl('a')]]);
-    for (let n = 1; n <= 3; n++) { r.set(`${base}/v${n}.ts`, Buffer.alloc(188, n)); r.set(`${base}/a${n}.ts`, Buffer.alloc(100, n)); }
-    r.set(fail === 'audio' ? `${base}/a2.ts` : `${base}/v2.ts`, new FetchError('unreachable'));
+    const r = new Map<string, Served>([[`${base}/master.m3u8`, MASTER('de.m3u8')], [`${base}/v.m3u8`, pl('v', 1, fail === 'video' ? 6 : 3)], [`${base}/de.m3u8`, pl('a', 1, fail === 'audio' ? 6 : 3)]]);
+    for (let n = 1; n <= 6; n++) { r.set(`${base}/v${n}.ts`, Buffer.alloc(188, n)); r.set(`${base}/a${n}.ts`, Buffer.alloc(100, n)); }
+    for (let n = 2; n <= 1 + SEGMENT_FAILS; n++) r.set(fail === 'audio' ? `${base}/a${n}.ts` : `${base}/v${n}.ts`, new FetchError('unreachable'));
     return r;
   };
+  /** `p` with fake timers moved on until it settles (a failed segment is asked for again after SEGMENT_RETRY_MS) */
+  async function settled<T>(p: Promise<T>): Promise<T> {
+    let done = false;
+    void p.finally(() => { done = true; }).catch(() => undefined);
+    for (let i = 0; i < 2_000 && !done; i++) await vi.advanceTimersByTimeAsync(SEGMENT_RETRY_MS);
+    return p;
+  }
+  const faked = (fn: () => Promise<void>) => async () => {
+    vi.useFakeTimers();
+    try { await fn(); } finally { vi.useRealTimers(); }
+  };
 
-  it('1a: runs the VIDEO ends (its segment failing) never count against the rendition: it is kept', async () => {
+  it('1a: runs the VIDEO ends (its segments failing) never count against the rendition: it is kept', faked(async () => {
     const s = setup(routesWith('video'), 4, delivering(() => 0));
-    await s.driver(s.c, AAC);
+    await settled(s.driver(s.c, AAC));
     expect(s.seen.map((r) => r.audio)).toEqual([true, true, true, true]);
-    expect(s.logs).toEqual([]);
-  });
+    expect(s.logs.filter((l) => !l.includes('segment skipped'))).toEqual([]);
+  }));
 
-  it('2: a rendition that fails after a segment or two each run is left out after AUDIO_TRIES runs (the count is not reset by them)', async () => {
+  it('2: a rendition that fails after a segment or two each run is left out after AUDIO_TRIES runs (the count is not reset by them)', faked(async () => {
     const s = setup(routesWith('audio'), 3, delivering(() => 1));
-    await s.driver(s.c, AAC);
+    await settled(s.driver(s.c, AAC));
     expect(s.seen.map((r) => r.audio)).toEqual([true, true, false]);
     expect(videoOnly(s.seen[2]!.args)).toBe(true);
-    expect(s.logs).toEqual([NO_AUDIO]);
-  });
+    expect(s.logs.filter((l) => !l.includes('segment skipped'))).toEqual([NO_AUDIO]);
+  }));
 
-  it(`2: a run with ${AUDIO_HEALTHY_SEGMENTS} segments starts the count again; ${AUDIO_FAULTS} blamed runs within ${AUDIO_FAULT_WINDOW_MS / 60_000} min leave it out anyway`, async () => {
+  it(`2: a run with ${AUDIO_HEALTHY_SEGMENTS} segments starts the count again; ${AUDIO_FAULTS} blamed runs within ${AUDIO_FAULT_WINDOW_MS / 60_000} min leave it out anyway`, faked(async () => {
     // 1 segment + fault, 5 + fault (count back to 1), 1 + fault (2: out)
     const a = setup(routesWith('audio'), 4, delivering((n) => (n === 2 ? AUDIO_HEALTHY_SEGMENTS : 1)));
-    await a.driver(a.c, AAC);
+    await settled(a.driver(a.c, AAC));
     expect(a.seen.map((r) => r.audio)).toEqual([true, true, true, false]);
     // healthy runs that each end by an audio fault: out after AUDIO_FAULTS of them
     const b = setup(routesWith('audio'), AUDIO_FAULTS + 1, delivering(() => AUDIO_HEALTHY_SEGMENTS));
-    await b.driver(b.c, AAC);
+    await settled(b.driver(b.c, AAC));
     expect(b.seen.map((r) => r.audio)).toEqual([...Array(AUDIO_FAULTS).fill(true), false]);
-  });
+  }));
 
   it('1b: a left-out rendition is tried again after 3 min, again after 6 more when it still fails; the video-only run is ended for it (no backoff)', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
@@ -317,10 +330,8 @@ describe('remuxDriver: a separate audio rendition that fails (I3, M3)', () => {
     }
   });
 
-  it('an audio segment failing mid-run ends the video pipe too; ffmpeg restarts with a discontinuity', async () => {
-    const routes = new Map<string, Served>([[`${base}/master.m3u8`, MASTER('de.m3u8')], [`${base}/v.m3u8`, pl('v')],
-      [`${base}/de.m3u8`, pl('a')], [`${base}/a1.ts`, Buffer.alloc(100, 2)], [`${base}/a2.ts`, new FetchError('unreachable')], [`${base}/a3.ts`, Buffer.alloc(100, 2)]]);
-    for (let n = 1; n <= 3; n++) routes.set(`${base}/v${n}.ts`, Buffer.alloc(188, n));
+  it('audio segments failing mid-run end the video pipe too; ffmpeg restarts with a discontinuity', faked(async () => {
+    const routes = routesWith('audio');
     const ended: string[] = [];
     const s = setup(routes, 2, async (n, o) => {
       if (n === 2) return '0.ts,0.0,4.0\n';
@@ -332,9 +343,9 @@ describe('remuxDriver: a separate audio rendition that fails (I3, M3)', () => {
       ended.push(r === 'hangs' ? 'video hangs' : (r as IteratorResult<Uint8Array>).done ? 'video ended' : 'video goes on');
       return '';
     });
-    await s.driver(s.c, AAC);
+    await settled(s.driver(s.c, AAC));
     expect(ended).toEqual(['audio failed', 'video ended']);
     expect(s.seen.map((r) => r.audio)).toEqual([true, true]);
     expect(s.segment).toHaveBeenCalledWith(expect.objectContaining({ file: '0.ts', discontinuity: true }));
-  });
+  }));
 });

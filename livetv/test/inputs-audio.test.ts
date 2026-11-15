@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { FetchError, type FetchOptions, type GuardDeps, type GuardedResponse } from '../src/fetch.js';
-import { alignStart, openInput } from '../src/inputs.js';
+import { InputEnd, alignStart, openInput } from '../src/inputs.js';
 import { parseMedia } from '../src/passthrough.js';
 
 const GUARD: GuardDeps = { own: [], lookup: async () => ['192.0.2.40'] };
@@ -154,25 +154,26 @@ describe('openInput with a separate audio rendition (I1)', () => {
     opened.close();
   });
 
-  it('a segment gone (404) in one rendition ends BOTH pipes (no silent skip), so the driver restarts and aligns again', async () => {
-    const routes = new Map<string, Route>([[`${BASE}/master.m3u8`, MASTER], [`${BASE}/video/index.m3u8`, pl(10, 6, { prefix: 'v' })], [`${BASE}/audio/de.m3u8`, pl(10, 6, { prefix: 'a' })]]);
-    segments(routes, 10, 15);
-    routes.delete(`${BASE}/audio/a14.ts`);
+  it('segments gone (404) in a row in one rendition end BOTH pipes, so the driver restarts and aligns again (one alone is skipped)', async () => {
+    const routes = new Map<string, Route>([[`${BASE}/master.m3u8`, MASTER], [`${BASE}/video/index.m3u8`, pl(10, 6, { prefix: 'v' })], [`${BASE}/audio/de.m3u8`, pl(10, 7, { prefix: 'a' })]]);
+    segments(routes, 10, 16);
+    // 13 is in both; the audio's 14..16 are gone (its window is one ahead): 14 and 15 are skipped, 16 ends the run
+    for (const n of [14, 15, 16]) routes.delete(`${BASE}/audio/a${n}.ts`);
     const logs: string[] = [];
     const opened = await openInput({ url: `${BASE}/master.m3u8`, kind: 'hls', allowLan: false }, { guard: GUARD, fetch: provider(routes).fetch, log: (m) => logs.push(m) });
     const ff = opened.ffInput;
     if (ff.kind !== 'pipe' || !ff.audio) throw new Error('an audio pipe is expected');
     const audio = await drain(ff.audio.stdin);
     expect(audio.text).toBe('a13;');
-    expect(audio.error).toBeInstanceOf(FetchError);
+    expect((audio.error as InputEnd).code).toBe('segments_failed');
     // the sibling ends too (at once, not after its next poll)
     const video = await drain(ff.stdin);
     expect(video.text).toBe('');
-    expect(logs).toEqual(['separate audio: a rendition skipped, both restart to align again']);
+    expect(logs).toEqual(['audio segment skipped after a retry (not_found)', 'audio segment skipped after a retry (not_found)']);
   });
 
   it('missed segments or a discontinuity on a later poll end both pipes too', async () => {
-    for (const [later, code] of [[pl(18, 6, { prefix: 'a', dur: 2 }), 'gap'], [pl(11, 6, { prefix: 'a', dur: 2, disc: [16] }), 'unreachable']] as const) {
+    for (const [later, code] of [[pl(18, 6, { prefix: 'a', dur: 2 }), 'gap'], [pl(11, 6, { prefix: 'a', dur: 2, disc: [16] }), 'discontinuity']] as const) {
       let polls = 0;
       const routes = new Map<string, Route>([[`${BASE}/master.m3u8`, MASTER], [`${BASE}/video/index.m3u8`, pl(10, 6, { prefix: 'v', dur: 2 })],
         [`${BASE}/audio/de.m3u8`, () => (++polls === 1 ? pl(10, 6, { prefix: 'a', dur: 2 }) : later)]]);
@@ -227,16 +228,16 @@ describe('openInput: whose fault a paired run\'s end is (audioFault)', () => {
 
   it('the audio failing on its own is its fault; the video failing (the audio then ended by it) is not', async () => {
     const a = base();
-    a.set(`${BASE}/audio/a13.ts`, new FetchError('unreachable'));
+    for (const n of [13, 14, 15]) a.set(`${BASE}/audio/a${n}.ts`, new FetchError('unreachable'));
     const x = await open(a);
-    expect((await drain(x.audio)).error).toBeInstanceOf(FetchError);
+    expect((await drain(x.audio)).error).toBeInstanceOf(InputEnd);
     await drain(x.video);
     expect([x.fault(false), x.fault(true)]).toEqual([true, true]);
 
     const v = base();
-    v.set(`${BASE}/video/v13.ts`, new FetchError('unreachable'));
+    for (const n of [13, 14, 15]) v.set(`${BASE}/video/v${n}.ts`, new FetchError('unreachable'));
     const y = await open(v);
-    expect((await drain(y.video)).error).toBeInstanceOf(FetchError);
+    expect((await drain(y.video)).error).toBeInstanceOf(InputEnd);
     await drain(y.audio);
     expect([y.fault(false), y.fault(true)]).toEqual([false, false]);
   });
