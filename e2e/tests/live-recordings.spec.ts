@@ -251,6 +251,22 @@ test.describe('Aufnahmen row and Meine Aufnahmen', () => {
   });
 });
 
+test('the loading rows have the height of real rows (nothing jumps when the list arrives)', async ({ page, api }) => {
+  const r = mockRecording({ title: 'Die Leuchtturmwärter', start: at(11, 20), end: at(11, 21) });
+  await arm(page, api, [r]);
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((x) => { release = x; });
+  await page.route('**/api/livetv/recordings?*', async (route) => { await held; await route.fallback(); });
+  await page.goto('/live/recordings');
+  const sk = page.locator('li.sk').first();
+  await expect(sk).toBeVisible();
+  const hs = (await box(sk)).height;
+  release();
+  const item = page.locator('li.ritem').first();
+  await expect(item).toBeVisible();
+  expect(Math.abs((await box(item)).height - hs)).toBeLessThanOrEqual(8);
+});
+
 test.describe('Meine Aufnahmen on a TV', () => {
   test('arrow keys move between tiles and OK plays', async ({ page, api }) => {
     const a = mockRecording({ title: 'Die Leuchtturmwärter', start: at(11, 20), end: at(11, 21) });
@@ -263,6 +279,8 @@ test.describe('Meine Aufnahmen on a TV', () => {
     await expect(tv).toHaveCount(2);
     await expect(tv.nth(0)).toBeFocused();
     expect((await box(tv.nth(0))).height).toBeGreaterThanOrEqual(54);
+    // TV text at least 28 px (at 1920 px)
+    expect(parseFloat(await tv.nth(0).locator('.meta').evaluate((e) => getComputedStyle(e).fontSize))).toBeGreaterThanOrEqual(28);
     await page.keyboard.press('ArrowRight');
     await expect(tv.nth(1)).toBeFocused();
     expect(await tv.nth(1).evaluate((e) => getComputedStyle(e).transform)).toMatch(/matrix\(1\.08/);

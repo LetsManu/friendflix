@@ -44,6 +44,8 @@
   let ruleId: string | null = null;
   let busy = false;
   let conflict: Forecast | null = null;
+  /** the conflict came from a series rule: the rule is on already, *Trotzdem planen* would force-plan only this programme */
+  let conflictRule = false;
   let more = false;
   let pad = { ...PAD_DEFAULT };
   let padTouched = false;
@@ -84,7 +86,7 @@
     try {
       const body: ScheduleBody = { channelId: channel.id, start: programme.start, ...(padTouched ? { padBefore: pad.before, padAfter: pad.after } : {}), ...(force ? { force: true } : {}) };
       const r = await schedule(body);
-      if (!r.ok) { conflict = r.forecast; return; }
+      if (!r.ok) { conflict = r.forecast; conflictRule = false; return; }
       conflict = null;
       recId = r.recording.id;
       toast.success($t('live.rec.planned'));
@@ -115,7 +117,7 @@
       });
       rule = r.rule;
       ruleId = r.rule.id;
-      if (r.forecast?.conflict) conflict = r.forecast;
+      if (r.forecast?.conflict) { conflict = r.forecast; conflictRule = true; }
       toast.success($t('live.rec.seriesOn'));
       dispatch('changed');
     } catch (e) {
@@ -194,7 +196,7 @@
       <div class="cslot" aria-live="polite">
         {#if conflict}
           <p class="cline"><Icon name="alert" size={18} /><span>{conflictText(conflict)}</span></p>
-          {#if !recId}<button type="button" class="frost-btn act force" aria-busy={busy} on:click={() => record(true)}>{$t('live.rec.planAnyway')}</button>{/if}
+          {#if !recId && !conflictRule}<button type="button" class="frost-btn act force" aria-busy={busy} on:click={() => record(true)}>{$t('live.rec.planAnyway')}</button>{/if}
         {/if}
       </div>
 

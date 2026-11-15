@@ -112,6 +112,6 @@
   .tv .tiles > li { width: calc(var(--u) * 360); }
   .tv.wrap .tiles { grid-template-columns: repeat(auto-fill, calc(var(--u) * 360)); }
   .tv .rtile, .tv .rtile:hover:not(:disabled) { min-height: 54px; transition: none; grid-template-rows: auto calc(var(--u) * 38) calc(var(--u) * 34) 4px; font-size: calc(var(--u) * 28); }
-  .tv .meta { font-size: calc(var(--u) * 26); }
+  .tv .meta { font-size: calc(var(--u) * 28); }
   .tv .rtile:focus-visible { position: relative; z-index: 2; transform: scale(1.08); }
 </style>

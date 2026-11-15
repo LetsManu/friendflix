@@ -97,6 +97,18 @@ test.describe('recording from the live player', () => {
     });
   });
 
+  test('a series rule with a forecast conflict shows the line without Trotzdem planen', async ({ page, api }) => {
+    api.livetv.recConflict = { slots: { used: 3, limit: 2 }, parallel: { used: 2, max: 4 }, provider: null, conflict: true };
+    await arm(page, api);
+    await openPanel(page);
+    await panel(page).getByRole('button', { name: 'Aufnehmen' }).first().click();
+    const s = sheet(page, 'Die Leuchtturmwärter');
+    await s.getByRole('button', { name: 'Serie aufnehmen' }).click();
+    await expect(s.getByText('Zu dieser Zeit sind schon 2 von 2 Umwandlungsplätzen für Aufnahmen verplant. Diese Aufnahme kann ausfallen.')).toBeVisible();
+    await expect(s.getByRole('button', { name: 'Trotzdem planen' })).toHaveCount(0); // the rule is on; nothing to force
+    expect(api.livetv.recCalls.filter((c) => c.startsWith('POST /api/livetv/recordings'))).toEqual([]);
+  });
+
   test('Serie aufnehmen sends the rule', async ({ page, api }) => {
     await arm(page, api);
     await openPanel(page);

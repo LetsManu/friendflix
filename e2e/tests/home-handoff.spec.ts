@@ -191,3 +191,14 @@ test.describe('kids profile', () => {
     await expect(region(page)).toHaveCount(0);
   });
 });
+
+test('a recording without a channel logo shows the placeholder, never an empty image', async ({ page, api }) => {
+  const id = '0b3c6a6e-1f2d-4c1e-9a55-3f7d2c1b0a99';
+  api.handoff.home = offer({ id: 'hd-rec', itemId: `rec:${id}`, type: 'Recording', title: 'Die Leuchtturmwärter', channel: 'Nordlicht TV', seriesName: undefined, season: undefined, episode: undefined, imageId: '', logo: undefined });
+  await page.goto('/');
+  const r = region(page);
+  await expect(r).toBeVisible();
+  await expect(r.locator('img')).toHaveCount(0);
+  await expect(r.locator('.thumb.ph')).toBeVisible();
+  await expect(r.getByRole('link', { name: /^Hier weiterschauen/ })).toHaveAttribute('href', new RegExp(`^/live/recordings/${id}`));
+});

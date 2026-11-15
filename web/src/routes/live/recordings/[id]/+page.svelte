@@ -79,4 +79,6 @@
   .rchip, .rchip:hover:not(:disabled), .rchip:active:not(:disabled) { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 0; border-radius: 999px; background: rgba(0, 0, 0, .55); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .3); color: #fff; font-weight: 700; transform: none; white-space: nowrap; }
   .rdot { width: 10px; height: 10px; border-radius: 50%; background: var(--err-mark); }
   @media (max-width: 520px) { .recslot { min-width: 0; } .rchip { padding: 0 10px; font-size: .85rem; } }
+  /* wider screens: the player's own title block names it (like /watch); the space stays so the chip keeps its place */
+  @media (min-width: 721px) { .ttl { visibility: hidden; } }
 </style>

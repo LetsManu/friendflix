@@ -106,7 +106,7 @@
 </ModalShell>
 
 <style>
-  .trs { display: grid; gap: 12px; width: 100%; max-height: calc(100dvh - 7rem); overflow-y: auto; box-sizing: border-box; }
+  .trs { display: grid; gap: 12px; width: 100%; max-height: calc(100vh - 7rem); max-height: calc(100dvh - 7rem); overflow-y: auto; box-sizing: border-box; }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   h2 { margin: 0; font-size: 1.2rem; }
   .x { width: 44px; height: 44px; padding: 0; border-radius: 50%; background: transparent; color: #fff; }

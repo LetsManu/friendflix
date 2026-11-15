@@ -277,7 +277,7 @@
   .seg button, .seg button:hover:not(:disabled), .seg button:active:not(:disabled) { min-height: 44px; padding: 0 1.1rem; border-radius: 999px; background: transparent; color: #fff; transform: none; }
   .seg button[aria-pressed='true'] { background: var(--fr-sel); font-weight: 700; }
   .list { display: grid; gap: 10px; margin: 0 0 12px; padding: 0; list-style: none; }
-  .sk { height: 84px; border-radius: var(--fr-r-card); background: rgba(255, 255, 255, .06); list-style: none; }
+  .sk { height: 98px; border-radius: var(--fr-r-card); background: rgba(255, 255, 255, .06); list-style: none; }
   .group { margin: 0 0 1.4rem; }
   .group h2, .rule h2 { margin: 0 0 .6rem; font-size: 1.15rem; }
   .cnt { margin-left: .4rem; font-size: .9rem; font-weight: 400; color: rgba(255, 255, 255, .72); }

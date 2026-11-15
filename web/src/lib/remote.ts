@@ -86,13 +86,14 @@ export const castToTv = (itemId: string, startSec?: number) => sendToTv({ t: 'ca
 /** a recording's item id in casts, hand-off rows and the TV's commands (Live TV Phase 3): `rec:<uuid>` */
 export const REC_ITEM = /^rec:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 /**
- * Where an item plays: a recording on /live/recordings/<id>, anything else on /watch/<id>; `startSec` as `?t=` (the TV's "cast"
+ * Where an item plays: a recording on /live/recordings/<id> (a malformed `rec:` id on the list), anything else on /watch/<id>; `startSec` as `?t=` (the TV's "cast"
  * command, "Weiter auf dem Fernseher", the cast bar's "open", the hand-off card).
  */
 export function itemPath(itemId: string, startSec?: number): string {
   const m = REC_ITEM.exec(itemId);
   const t = startSec !== undefined ? `?t=${Math.max(0, Math.floor(startSec))}` : '';
-  return m ? `/live/recordings/${m[1]}${t}` : `/watch/${itemId}${t}`;
+  if (m) return `/live/recordings/${m[1]}${t}`;
+  return itemId.startsWith('rec:') ? '/live/recordings' : `/watch/${itemId}${t}`; // a malformed recording id: the list, never /watch
 }
 
 /** Cheap one-off check (no websocket) used on detail pages to decide whether to offer "play on TV". */

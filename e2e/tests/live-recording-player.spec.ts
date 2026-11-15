@@ -33,6 +33,10 @@ test.describe('recording playback', () => {
     expect(api.livetv.recPlays).toEqual([{ id: r.id, via: '' }]);
     await expect(page.getByRole('button', { name: /Umgewandelt|Original/ })).toHaveCount(0);
     await expect(page.getByRole('heading', { level: 1, name: 'Die Leuchtturmwärter' })).toHaveCount(1);
+    // on a desktop the title stands once (the player's title block), not also in the top bar
+    await wake(page);
+    await expect(page.getByRole('heading', { level: 1, name: 'Die Leuchtturmwärter' })).toBeVisible();
+    await expect(page.locator('.top .ttl')).toBeHidden();
     // no film-only parts: no quality chip, no cast & info, no episodes
     await expect(page.getByRole('button', { name: 'Besetzung & Infos' })).toHaveCount(0);
     // a pause reports the position at once
