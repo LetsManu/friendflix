@@ -414,6 +414,11 @@ export const MATRIX_FIELDS_MOCK: Array<Record<string, unknown>> = [
   { key: 'liveTv', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv' },
   { key: 'liveRecord', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv', planned: 'recordings' },
 ];
+/** backend/src/areas.ts areasOf: the areas of a set of effective values (roles redesign §2.1) */
+export const areasOfMock = (v: Record<string, unknown>) => ({
+  library: v.libraries === 'all' || (Array.isArray(v.libraries) && v.libraries.length > 0),
+  livetv: v.liveTv === true, requests: v.requests === true, together: v.party === true || v.comments === true, downloads: v.download === true,
+});
 const PERM_KEYS_MOCK = ['requests', 'cast', 'party', 'partySchedule', 'comments', 'liveTv', 'liveRecord'];
 const MEDIA_KEYS_MOCK = ['libraries', 'maxParentalRating', 'maxStreams', 'maxBitrate', 'transcoding', 'maxHeight', 'download'];
 const MATRIX_BASE_VALUES: Record<string, unknown> = {
@@ -1623,16 +1628,25 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     const mx = st.matrix;
     // env-only roles come after the stored ones (listRoles appends them), the rest in table order
     const rows = [...mx.roles.filter((r) => r.stored), ...mx.roles.filter((r) => !r.stored)];
+    // backend roleGroupIds / roleGroupNames: the released groups a role sees (the admin: all), in group order
+    const released = ltvSorted(st.livetv.area).filter((g) => g.released).sort((x, y) => x.position - y.position);
+    const seen = (key: string) => released.filter((g) => key === 'admin' || g.roles.includes(key));
     return J({
       roles: ROLES, invitable: ['friend', 'family', 'guest'],
       limits: Object.entries(ROLES).map(([role, r], i) => ({ role, label: r.label, builtinLabel: true, requestsPerMonth: i === 0 ? null : 3, isDefault: i === 2, transcoding: i !== 3, maxHeight: i === 1 ? 1080 : null, download: i < 2, maxDownloads: 5, downloadMaxHeight: 720, downloadDays: 30, maxBitrate: role === 'guest' ? 2_000_000 * 4 : 40_000_000, remoteMaxBitrate: role === 'family' ? 12_000_000 : role === 'guest' ? 4_000_000 : 8_000_000, remoteDefault: role === 'guest' ? 4_000_000 : 8_000_000, remoteIsDefault: role !== 'family' })),
       matrix: {
         fields: MATRIX_FIELDS_MOCK, features: mx.features, libraries: mx.libraries,
+        // backend releasedGroupsSummary while Live TV is installed (features.livetv), else null
+        livetv: mx.features.livetv
+          ? { groups: released.map((g) => ({ id: g.id, name: g.name, kidFriendly: g.kidFriendly, channels: g.channels })), pending: st.livetv.area.groups.filter((g) => !g.released).length }
+          : null,
         roles: rows.map((r, position) => ({
           key: r.key, label: r.label, builtinLabel: r.builtinLabel, base: r.base, origin: r.origin, invitable: r.invitable, position,
           envGone: r.envGone, stored: r.stored, accounts: r.accounts, profiles: r.profiles, kidsProfiles: r.kidsProfiles, values: r.values, sources: r.sources, missingLibraries: r.missingLibraries,
           // backend roleGroupNames: the released groups the role sees (the admin: all), in group order
-          livetvGroups: ltvSorted(st.livetv.area).filter((g) => g.released && (r.key === 'admin' || g.roles.includes(r.key))).sort((x, y) => x.position - y.position).map((g) => g.name),
+          livetvGroups: seen(r.key).map((g) => g.name),
+          livetvGroupIds: seen(r.key).map((g) => g.id),
+          areas: areasOfMock(r.values),
           // the value without the role's own row (the backend's roleRights(ctx, key, null))
           defaults: Object.fromEntries(MATRIX_FIELDS_MOCK.map((f) => [f.key as string, inheritedValue(r, f.key as string)])),
         })),
@@ -1674,6 +1688,14 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     // a ROLE_TEMPLATES key the catalogue cannot hold has no row for the name or the invitable switch
     if (!role.stored && (body?.label !== undefined || body?.invitable !== undefined)) return J({ error: 'not_in_catalogue' }, 400);
     if (role.base === 'admin' && body?.perms) return J({ error: 'admin_perms_locked' }, 400);
+    // backend setRoleGroupsIn: the released groups the role sees (grants on unreleased groups stay); admin and env-only roles refused
+    const groupsBefore = ltvSorted(st.livetv.area).filter((g) => g.released).sort((x, y) => x.position - y.position);
+    const wantGroups: unknown = body?.livetvGroups;
+    if (wantGroups !== undefined) {
+      if (role.key === 'admin') return J({ error: 'admin_groups_locked' }, 400);
+      if (!role.stored) return J({ error: 'not_in_catalogue' }, 400);
+      if (!Array.isArray(wantGroups) || wantGroups.some((id) => !groupsBefore.some((g) => g.id === id))) return J({ error: 'invalid', field: 'livetvGroups' }, 400);
+    }
     st.matrix.puts.push({ role: role.key, body });
     const media = Object.keys(body ?? {}).some((k) => MEDIA_KEYS_MOCK.includes(k));
     const set = (k: string, v: unknown) => {
@@ -1683,6 +1705,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     const before = { ...role.values };
     const was = { label: role.builtinLabel ? null : role.label, invitable: role.invitable };
     for (const [k, v] of Object.entries(body ?? {})) {
+      if (k === 'livetvGroups') continue;
       if (k === 'label') { if (v === null) { role.label = null; role.builtinLabel = role.origin === 'code'; } else { role.label = String(v); role.builtinLabel = false; } } else if (k === 'invitable') role.invitable = Boolean(v);
       else if (k === 'perms' && v && typeof v === 'object') for (const [pk, pv] of Object.entries(v)) { if (PERM_KEYS_MOCK.includes(pk)) set(pk, pv); } else set(k, v);
     }
@@ -1692,6 +1715,16 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     const now = { label: role.builtinLabel ? null : role.label, invitable: role.invitable };
     if (now.label !== was.label) { from.label = was.label; to.label = now.label; }
     if (now.invitable !== was.invitable) { from.invitable = was.invitable; to.invitable = now.invitable; }
+    if (Array.isArray(wantGroups)) {
+      const had = groupsBefore.filter((g) => g.roles.includes(role.key));
+      for (const g of groupsBefore) {
+        const want = wantGroups.includes(g.id);
+        if (want && !g.roles.includes(role.key)) g.roles = [...g.roles, role.key];
+        if (!want && g.roles.includes(role.key)) g.roles = g.roles.filter((x) => x !== role.key);
+      }
+      const now = groupsBefore.filter((g) => g.roles.includes(role.key));
+      if (had.map((g) => g.id).join() !== now.map((g) => g.id).join()) { from.livetvGroups = had.map((g) => g.name); to.livetvGroups = now.map((g) => g.name); }
+    }
     if (Object.keys(to).length) log('role.update', role.key, { from, to });
     const identities = role.accounts + role.profiles;
     if (media && st.matrix.policyPartial) return J({ error: 'policy_partial', failed: st.matrix.failed, identities }, 502);

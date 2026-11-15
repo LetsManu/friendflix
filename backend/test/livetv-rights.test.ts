@@ -481,3 +481,117 @@ describe('fix round 1', () => {
     expect((await me()).features.livetv).toBe(false);
   });
 });
+
+// Roles redesign Task 3: a role's released channel groups are written with the role (PUT /api/admin/roles/:role { livetvGroups }) and
+// read back from GET /api/admin/roles (livetvGroupIds, matrix.livetv)
+describe('role write: livetvGroups', () => {
+  const putRole = (role: string, body: object) => call('PUT', `/api/admin/roles/${role}`, body);
+  const matrix = async () => (await call('GET', '/api/admin/roles')).json().matrix;
+  const roleOf = async (k: string) => (await matrix()).roles.find((r: { key: string }) => r.key === k);
+  const grants = async (role: string) => (await env.pool.query<{ group_id: string }>('select group_id from livetv_group_roles where role = $1 order by group_id', [role])).rows.map((r) => r.group_id);
+  const roleAudits = async (role: string) => (await env.pool.query<{ meta: Record<string, unknown> }>("select meta from audit_log where action = 'role.update' and target = $1 order by id", [role])).rows.map((r) => r.meta);
+
+  it('PUT livetvGroups sets the released groups of the role; GET shows livetvGroupIds in group order', async () => {
+    const nord = await group('Nordlicht TV', { roles: ['friend'] });
+    const hafen = await group('Hafenkanal');
+    const sport = await group('Sport', { roles: ['family'] });
+    const r = await putRole('friend', { livetvGroups: [hafen, nord] });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ ok: true, reapplied: { identities: 0, failed: 0 } });
+    expect((await grants('friend')).sort()).toEqual([nord, hafen].sort());
+    const friend = await roleOf('friend');
+    expect(friend.livetvGroupIds).toEqual([nord, hafen]);
+    expect(friend.livetvGroups).toEqual(['Nordlicht TV', 'Hafenkanal']);
+    expect((await roleOf('family')).livetvGroupIds).toEqual([sport]);
+    expect((await roleOf('admin')).livetvGroupIds).toEqual([nord, hafen, sport]);
+    // a groups-only write stores no role settings
+    expect((await env.pool.query("select 1 from role_settings where role = 'friend'")).rowCount).toBe(0);
+    // the empty set removes every released grant
+    expect((await putRole('friend', { livetvGroups: [] })).statusCode).toBe(200);
+    expect(await grants('friend')).toEqual([]);
+  });
+
+  it("PUT livetvGroups keeps the role's grant on an unreleased group", async () => {
+    const nord = await group('Nordlicht TV');
+    const neu = await group('DE | Neu', { released: false, roles: ['friend'] });
+    await channel('Hafenkanal Eins', { override: neu });
+    expect((await putRole('friend', { livetvGroups: [nord] })).statusCode).toBe(200);
+    expect((await grants('friend')).sort()).toEqual([nord, neu].sort());
+    expect((await roleOf('friend')).livetvGroupIds).toEqual([nord]);
+    // released later (keeping its roles): the role sees it
+    expect((await call('PATCH', `/api/admin/livetv/groups/${neu}`, { released: true })).statusCode).toBe(200);
+    expect(await sees(who.ben())).toEqual(['Hafenkanal Eins']);
+  });
+
+  it('PUT livetvGroups with an unreleased or unknown id → 400 invalid livetvGroups, nothing stored', async () => {
+    const nord = await group('Nordlicht TV', { roles: ['friend'] });
+    const neu = await group('DE | Neu', { released: false });
+    for (const ids of [[neu], [nord, '0d000000-0000-4000-a000-0000000000aa']]) {
+      const r = await putRole('friend', { livetvGroups: ids, maxStreams: 3 });
+      expect(r.statusCode).toBe(400);
+      expect(r.json()).toEqual({ error: 'invalid', field: 'livetvGroups' });
+    }
+    expect((await putRole('friend', { livetvGroups: ['nope'] })).statusCode).toBe(400);
+    expect(await grants('friend')).toEqual([nord]);
+    expect((await env.pool.query("select 1 from role_settings where role = 'friend'")).rowCount).toBe(0);
+    expect(await roleAudits('friend')).toEqual([]);
+  });
+
+  it('PUT livetvGroups on admin → 400 admin_groups_locked; on an env-only role → 400 not_in_catalogue', async () => {
+    const nord = await group('Nordlicht TV');
+    const r = await putRole('admin', { livetvGroups: [nord] });
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toEqual({ error: 'admin_groups_locked' });
+    const saved = env.ctx.roles;
+    env.ctx.roles = { ...saved, 'Crew.X': { ...saved.friend!, label: 'Crew' } }; // not a valid key: it cannot be stored
+    invalidateRoles(env.ctx);
+    try {
+      const e = await putRole('Crew.X', { livetvGroups: [nord] });
+      expect(e.statusCode).toBe(400);
+      expect(e.json()).toEqual({ error: 'not_in_catalogue' });
+    } finally {
+      env.ctx.roles = saved;
+      invalidateRoles(env.ctx);
+    }
+    expect((await env.pool.query('select 1 from livetv_group_roles')).rowCount).toBe(0);
+  });
+
+  it('the role.update audit carries livetvGroups as names (Nordlicht TV → Nordlicht TV, Hafenkanal); an unchanged set writes no entry', async () => {
+    const nord = await group('Nordlicht TV', { roles: ['friend'] });
+    const hafen = await group('Hafenkanal');
+    expect((await putRole('friend', { livetvGroups: [hafen, nord] })).statusCode).toBe(200);
+    expect(await roleAudits('friend')).toEqual([{ from: { livetvGroups: ['Nordlicht TV'] }, to: { livetvGroups: ['Nordlicht TV', 'Hafenkanal'] } }]);
+    expect((await putRole('friend', { livetvGroups: [nord, hafen] })).statusCode).toBe(200);
+    expect(await roleAudits('friend')).toHaveLength(1);
+    // with a field in the same write: one entry with both
+    expect((await putRole('friend', { livetvGroups: [hafen], maxDownloads: 3 })).statusCode).toBe(200);
+    expect((await roleAudits('friend'))[1]).toEqual({ from: { maxDownloads: 15, livetvGroups: ['Nordlicht TV', 'Hafenkanal'] }, to: { maxDownloads: 3, livetvGroups: ['Hafenkanal'] } });
+    await env.pool.query("delete from role_settings where role = 'friend'");
+  });
+
+  it('a person of the role sees the new group\'s channels at once', async () => {
+    const nord = await group('Nordlicht TV');
+    await channel('Nordlicht Eins', { override: nord });
+    expect(await sees(who.ben())).toEqual([]); // primed (cached 60 s)
+    expect((await putRole('friend', { livetvGroups: [nord] })).statusCode).toBe(200);
+    expect(await sees(who.ben())).toEqual(['Nordlicht Eins']);
+  });
+
+  it('GET matrix.livetv is null without Live TV; with it lists released groups with channel counts and pending', async () => {
+    const nord = await group('Nordlicht TV', { kid: true });
+    const hafen = await group('Hafenkanal');
+    await group('DE | Neu', { released: false });
+    await channel('Nordlicht Eins', { override: nord });
+    await channel('Nordlicht Zwei', { override: nord });
+    await channel('Nordlicht Alt', { override: nord, missing: true });
+    expect((await matrix()).livetv).toEqual({
+      groups: [{ id: nord, name: 'Nordlicht TV', kidFriendly: true, channels: 2 }, { id: hafen, name: 'Hafenkanal', kidFriendly: false, channels: 0 }],
+      pending: 1,
+    });
+    installed.v = false;
+    expect((await matrix()).livetv).toBeNull();
+    // the field is still accepted without Live TV (groups may exist from an earlier install)
+    expect((await putRole('friend', { livetvGroups: [hafen] })).statusCode).toBe(200);
+    expect(await grants('friend')).toEqual([hafen]);
+  });
+});

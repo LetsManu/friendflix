@@ -165,6 +165,23 @@ describe('GET /api/admin/roles', () => {
     expect(m.roles.find((r: { key: string }) => r.key === 'family').missingLibraries).toEqual([]);
   });
 
+  it('matrix.roles[].areas: family all true; a role with libraries [] has library false', async () => {
+    const all = { library: true, livetv: true, requests: true, together: true, downloads: true };
+    expect((await roleOf('family')).areas).toEqual(all);
+    expect((await roleOf('admin')).areas).toEqual(all);
+    expect((await roleOf('friend')).areas).toEqual({ ...all, downloads: false });
+    expect((await put('family', { libraries: [] })).statusCode).toBe(200);
+    expect((await roleOf('family')).areas).toEqual({ ...all, library: false });
+  });
+
+  it('matrix.livetv is null without Live TV; fields carry their area', async () => {
+    const m = (await get()).matrix;
+    expect(m.livetv).toBeNull();
+    expect(m.fields.find((f: { key: string }) => f.key === 'liveRecord')).toMatchObject({ area: 'livetv', planned: 'recordings' });
+    expect(m.fields.find((f: { key: string }) => f.key === 'cast')).toMatchObject({ area: 'general' });
+    expect(m.roles.every((r: { livetvGroupIds: unknown }) => Array.isArray(r.livetvGroupIds))).toBe(true);
+  });
+
   it('legacy fields stay', async () => {
     const g = await get();
     expect(g.invitable).toEqual(['family', 'friend', 'guest']);
