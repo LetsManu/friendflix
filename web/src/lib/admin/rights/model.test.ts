@@ -36,12 +36,14 @@ describe('cellText', () => {
     ['maxBitrate', 8_000_000, '8 Mbit/s'], ['maxBitrate', 1_500_000, '1,5 Mbit/s'], ['maxBitrate', 20_000_000, '20 Mbit/s'],
     ['maxHeight', 1080, '1080p'], ['maxHeight', null, 'alle'], ['maxParentalRating', 12, 'ab 12'], ['maxParentalRating', null, 'alle'],
     ['libraries', 'all', 'alle'], ['libraries', ['a', 'b', 'c'], '3 Bibliotheken'], ['libraries', ['a'], '1 Bibliothek'],
+    ['libraries', [], 'Keine Bibliothek'],
   ])('%s %j -> %s', (k, v, out) => { expect(cellText(f(k), v)).toBe(out); });
   it('english', async () => {
     await setLocale('en');
     expect(cellText(f('maxBitrate'), 1_500_000)).toBe('1.5 Mbit/s');
     expect(cellText(f('maxParentalRating'), 16)).toBe('from 16');
     expect(cellText(f('maxHeight'), null)).toBe('all');
+    expect(cellText(f('libraries'), [])).toBe('No library');
   });
 });
 

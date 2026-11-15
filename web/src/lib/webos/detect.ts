@@ -59,7 +59,10 @@ export function exitLgApp(win: LgWin | undefined = pageWin()): void {
   try { win.close?.(); } catch { /* nothing more to try */ }
 }
 
-/** Back on the TV home screen leaves the app, but only when nothing else wants the key (modal, dropdown, text field) */
-export function shouldExitOnBack(s: { path: string; modalId: unknown; dropdownOpen: boolean; editable: boolean }): boolean {
-  return s.path === '/' && !s.modalId && !s.dropdownOpen && !s.editable;
+/**
+ * Back on the TV home screen leaves the app, but only when nothing else wants the key (modal, dropdown, text field). `home`: the
+ * person's home (Live TV for a person without libraries, gate.ts homePath); `/` by default.
+ */
+export function shouldExitOnBack(s: { path: string; home?: string; modalId: unknown; dropdownOpen: boolean; editable: boolean }): boolean {
+  return s.path === (s.home ?? '/') && !s.modalId && !s.dropdownOpen && !s.editable;
 }

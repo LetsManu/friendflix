@@ -298,5 +298,9 @@ const en: Translation<typeof de> = {
     already: 'Already requested',
     wishFailed: 'The request could not be made.',
   },
+  noAccess: {
+    title: 'Nothing has been shared with you yet',
+    body: 'Ask the person who runs FriendFlix.',
+  },
 };
 export default en;

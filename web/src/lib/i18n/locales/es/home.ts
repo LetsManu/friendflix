@@ -299,5 +299,9 @@ const es: Translation<typeof de> = {
     already: 'Ya pedido',
     wishFailed: 'No se pudo hacer la petición.',
   },
+  noAccess: {
+    title: 'Todavía no se ha compartido nada contigo',
+    body: 'Pregunta a la persona que gestiona FriendFlix.',
+  },
 };
 export default es;

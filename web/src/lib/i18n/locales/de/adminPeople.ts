@@ -295,6 +295,7 @@ export default {
     livetvNone: 'Keine',
     livetvRemove: 'Ausnahme für {name} aufheben',
     livetvSaved: 'Ausnahmen von {name} gespeichert.',
+    libsNoneLine: 'Ohne Bibliothek sieht {name} nur Live-TV.',
   },
   roles: {
     intro: 'Was jede Rolle darf. Änderungen gelten erst nach „Speichern“ und werden auch auf bestehende Konten angewendet.',
@@ -414,7 +415,8 @@ export default {
     errRange: 'Bitte eine Zahl von {min} bis {max} eingeben.',
     cellTitle: '{role} · {field}',
     cellNameUnsaved: '{role}, {field}: {value}, nicht gespeichert',
-    libsMin: 'Mindestens eine Bibliothek bleibt freigegeben.',
+    libsNone: 'Keine Bibliothek',
+    libsNoneHint: 'Keine Bibliothek – die Person sieht nur Live-TV.',
     retryDone: { one: '{n} fehlgeschlagene Rolle gespeichert.', other: '{n} fehlgeschlagene Rollen gespeichert.' },
     fLabel: 'Name',
     fInvitable: 'Für Einladungen wählbar',

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { LOCALES, setLocale, tr } from '#lib/i18n';
-import { FOOTER_COLUMNS, HEADER_TABS, LIVE_HEADER, LIVE_RAIL, MENU_LINKS, TV_RAIL, groupLinks, isRailTop, isTabActive, linksFor, liveTabs, navLabel } from './menu';
+import { FOOTER_COLUMNS, HEADER_TABS, LIVE_HEADER, LIVE_RAIL, MENU_LINKS, TV_RAIL, groupLinks, isRailTop, isTabActive, libraryTabs, linksFor, liveTabs, navLabel } from './menu';
 
 describe('menu', () => {
   it('every account link stays reachable on /me (grouped)', () => {
@@ -86,5 +86,19 @@ describe('liveTabs (the Live-TV entry only while the feature is on)', () => {
     expect(isRailTop('/live', '')).toBe(true);
     expect(isRailTop('/live', '?play=last')).toBe(false);
     expect(isTabActive('/live', '/live/watch/abc')).toBe(true);
+  });
+});
+
+describe('libraryTabs (a person without libraries: Live only, roles redesign §6)', () => {
+  it('drops every library entry, Live joins as before', () => {
+    expect(libraryTabs(HEADER_TABS, false)).toEqual([]);
+    expect(liveTabs(libraryTabs(HEADER_TABS, false), LIVE_HEADER, true).map((t) => t[0])).toEqual(['/live']);
+    expect(libraryTabs(TV_RAIL, false)).toEqual([]); // search too: it searches the library
+    expect(liveTabs(libraryTabs(TV_RAIL, false), LIVE_RAIL, true)).toEqual([LIVE_RAIL]);
+    expect(libraryTabs(liveTabs(TV_RAIL, LIVE_RAIL, true), false)).toEqual([LIVE_RAIL]);
+  });
+  it('with a library: the very same entries', () => {
+    expect(libraryTabs(HEADER_TABS, true)).toBe(HEADER_TABS);
+    expect(libraryTabs(TV_RAIL, true)).toBe(TV_RAIL);
   });
 });
