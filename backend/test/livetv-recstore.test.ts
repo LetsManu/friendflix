@@ -117,7 +117,9 @@ beforeEach(async () => {
 describe('space and retention (spec §15.5)', () => {
   it('usage over 90 % schedules the oldest unprotected for deletion with a 24-h notice', async () => {
     env.ctx.cfg = { ...cfg, LIVETV_RECORD_LIMIT_GB: 1 };
-    const now = Date.now();
+    // noon UTC of today: the admin's storage notice is deduplicated per UTC day, so "again within the day" (now + 1 h) must not
+    // cross midnight; with the wall clock this failed every day between 23:00 and 24:00 UTC
+    const now = new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00.000Z').getTime();
     const a = await row({ bytes: 0.4 * GB, start_at: new Date(now - 9 * DAY), end_at: new Date(now - 9 * DAY + HOUR), title: 'Die Leuchtturmwärter' });
     const kept = await row({ bytes: 0.3 * GB, keep: true, start_at: new Date(now - 8 * DAY), end_at: new Date(now - 8 * DAY + HOUR) });
     const c = await row({ bytes: 0.3 * GB, start_at: new Date(now - 7 * DAY), end_at: new Date(now - 7 * DAY + HOUR) });

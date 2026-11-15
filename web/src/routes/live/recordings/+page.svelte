@@ -17,12 +17,13 @@
   import RecordingsRow from '#lib/live/RecordingsRow.svelte';
   import TimeRecordSheet from '#lib/live/TimeRecordSheet.svelte';
   import {
-    deleteRecording, deleteRule, finished, groupBySeries, listRecordings, patchRecording, patchRule, planned, stepKeep, toLibrary, type Recording, type Rule, type Visibility,
+    deleteRecording, deleteRule, finished, groupBySeries, listRecordings, patchRecording, patchRule, planned, stepKeep, stopRecording, toLibrary, type Recording, type Rule, type Visibility,
   } from '#lib/live/recordings';
 
   /**
    * *Meine Aufnahmen* (spec §15.7, plan Phase 3 Task 8): a segmented *Fertig* / *Geplant* / *Serien*. *Fertig* is grouped by series
-   * with episode lists, singles by date; each item plays, keeps (*Behalten*), shares (*Teilen…*) and deletes (*Löschen*: gone at once,
+   * with episode lists, singles by date; each item plays, keeps (*Behalten*), shares (*Teilen…*), ends a running one early and keeps it
+   * (*Jetzt beenden*) and deletes (*Löschen*: gone at once,
    * the DELETE waits 5 s behind an undo toast; leaving the page sends it at once). *Geplant* cancels and shows the *Konflikt* chip,
    * *Serien* the rules with their settings. *Neue Aufnahme* plans by time. A TV gets the finished recordings as a tile grid: D-pad,
    * OK plays, Back; the tiles take the entry focus. Live TV off (or not for this person) sends the page home.
@@ -44,6 +45,9 @@
   let chans: LiveChannel[] | null = null;
   /** *Behalten → in Bibliothek* is possible on this server (mode `both` with a library) */
   let libraryExport = false;
+  /** recordings that ran while this page showed them: their *Jetzt beenden* slot stays after they finished (until the page is left) */
+  let seenRunning = new Set<string>();
+  $: if (recs?.some((r) => r.state === 'recording' && !seenRunning.has(r.id))) seenRunning = new Set([...seenRunning, ...recs.filter((r) => r.state === 'recording').map((r) => r.id)]);
 
   $: canRecord = $perms.liveRecord && !$kidsMode;
   $: if ($featuresKnown && !$features.livetv) void goto('/', { replaceState: true });
@@ -100,6 +104,23 @@
   }
   const keep = (r: Recording) => write(r, () => patchRecording(r.id, { keep: !r.keep }), { keep: !r.keep });
   const share = (r: Recording, visibility: Visibility) => write(r, () => patchRecording(r.id, { visibility }), { visibility });
+  /**
+   * *Jetzt beenden*: a running recording ends now and stays. The chip says *Fertig* at once (optimistic), the answer and a fresh list
+   * follow; one that had recorded nothing is gone (the answer is null) and the toast says so.
+   */
+  async function stop(r: Recording): Promise<void> {
+    await write(r, async () => {
+      const next = await stopRecording(r.id);
+      if (!next) {
+        if (recs) recs = recs.filter((x) => x.id !== r.id);
+        toast.success($t('live.rec.nothingRecorded'));
+        return null;
+      }
+      toast.success($t('live.rec.stopped'));
+      return next;
+    }, { state: 'done', growing: false });
+    void load();
+  }
   async function cancel(r: Recording): Promise<void> {
     if (!recs) return;
     busy = new Set(busy).add(r.id);
@@ -208,13 +229,13 @@
               <h2 id="lmr-{g.key}">{g.title} <span class="cnt">{$t('live.mine.episodes', { n: g.items.length })}</span></h2>
               <ul class="list">
                 {#each g.items as r (r.id)}
-                  <RecordingItem rec={r} {canRecord} {libraryExport} busy={busy.has(r.id)} on:play={(e) => play(e.detail)} on:keep={(e) => void keep(e.detail)} on:share={(e) => void share(e.detail.rec, e.detail.visibility)} on:delete={(e) => remove(e.detail)} on:library={(e) => void keepInLibrary(e.detail)} />
+                  <RecordingItem rec={r} {canRecord} {libraryExport} reserveStop={seenRunning.has(r.id)} busy={busy.has(r.id)} on:play={(e) => play(e.detail)} on:keep={(e) => void keep(e.detail)} on:share={(e) => void share(e.detail.rec, e.detail.visibility)} on:delete={(e) => remove(e.detail)} on:library={(e) => void keepInLibrary(e.detail)} on:stop={(e) => void stop(e.detail)} />
                 {/each}
               </ul>
             </section>
           {:else}
             <ul class="list single">
-              <RecordingItem rec={g.item} {canRecord} {libraryExport} busy={busy.has(g.item.id)} on:play={(e) => play(e.detail)} on:keep={(e) => void keep(e.detail)} on:share={(e) => void share(e.detail.rec, e.detail.visibility)} on:delete={(e) => remove(e.detail)} on:library={(e) => void keepInLibrary(e.detail)} />
+              <RecordingItem rec={g.item} {canRecord} {libraryExport} reserveStop={seenRunning.has(g.item.id)} busy={busy.has(g.item.id)} on:play={(e) => play(e.detail)} on:keep={(e) => void keep(e.detail)} on:share={(e) => void share(e.detail.rec, e.detail.visibility)} on:delete={(e) => remove(e.detail)} on:library={(e) => void keepInLibrary(e.detail)} on:stop={(e) => void stop(e.detail)} />
             </ul>
           {/if}
         {/each}

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { LOCALES, setLocale, tr } from '#lib/i18n';
-import { FOOTER_COLUMNS, HEADER_TABS, LIVE_HEADER, LIVE_RAIL, MENU_LINKS, TV_RAIL, groupLinks, isRailTop, isTabActive, libraryTabs, linksFor, liveTabs, navLabel } from './menu';
+import { FOOTER_COLUMNS, HEADER_TABS, LIVE_HEADER, LIVE_HEADERS, LIVE_RAIL, LIVE_RAILS, MENU_LINKS, REC_HEADER, REC_RAIL, TV_RAIL, activeTab, groupLinks, isRailTop, isTabActive, libraryTabs, linksFor, liveTabs, navLabel } from './menu';
+import { ALL_AREAS, ALL_CAPS, ALL_FEATURES, linkShown } from './capabilities';
 
 describe('menu', () => {
   it('every account link stays reachable on /me (grouped)', () => {
@@ -86,6 +87,46 @@ describe('liveTabs (the Live-TV entry only while the feature is on)', () => {
     expect(isRailTop('/live', '')).toBe(true);
     expect(isRailTop('/live', '?play=last')).toBe(false);
     expect(isTabActive('/live', '/live/watch/abc')).toBe(true);
+  });
+});
+
+describe('Aufnahmen entries (DVR follow-ups: recordings reachable from every menu)', () => {
+  it('Aufnahmen follows Live-TV in the header and the TV rail, only while Live TV is on', () => {
+    expect(REC_HEADER).toEqual(['/live/recordings', 'shell.nav.recordings']);
+    expect(REC_RAIL).toEqual(['/live/recordings', 'shell.nav.recordings', 'record']);
+    expect(liveTabs(HEADER_TABS, LIVE_HEADERS, true).map((t) => t[0])).toEqual(['/', '/browse/series', '/browse/movies', '/live', '/live/recordings', '/new', '/watchlist']);
+    expect(liveTabs(TV_RAIL, LIVE_RAILS, true).map((t) => t[0])).toEqual(['/search', '/', '/browse/series', '/browse/movies', '/live', '/live/recordings', '/new', '/watchlist']);
+    expect(liveTabs(HEADER_TABS, LIVE_HEADERS, false)).toEqual(HEADER_TABS);
+    // without the Mediathek both stay
+    expect(liveTabs(libraryTabs(HEADER_TABS, false), LIVE_HEADERS, true)).toEqual([LIVE_HEADER, REC_HEADER]);
+    expect(libraryTabs(liveTabs(TV_RAIL, LIVE_RAILS, true), false)).toEqual([LIVE_RAIL, REC_RAIL]);
+    // a second call adds nothing twice
+    const once = liveTabs(HEADER_TABS, LIVE_HEADERS, true);
+    expect(liveTabs(once, LIVE_HEADERS, true)).toEqual(once);
+  });
+  it('one entry is active: the most specific one (Aufnahmen on its pages, Live-TV elsewhere under /live)', () => {
+    const hrefs = liveTabs(HEADER_TABS, LIVE_HEADERS, true).map((t) => t[0]);
+    expect(activeTab(hrefs, '/live/recordings')).toBe('/live/recordings');
+    expect(activeTab(hrefs, '/live/recordings/abc')).toBe('/live/recordings');
+    expect(activeTab(hrefs, '/live')).toBe('/live');
+    expect(activeTab(hrefs, '/live/watch/abc')).toBe('/live');
+    expect(activeTab(hrefs, '/')).toBe('/');
+    expect(activeTab(hrefs, '/me')).toBeNull();
+    // without the Aufnahmen entry, Live-TV stays active on its pages
+    expect(activeTab(['/live'], '/live/recordings')).toBe('/live');
+  });
+  it('the recordings page is a rail destination for the TV Back key', () => {
+    expect(isRailTop('/live/recordings', '')).toBe(true);
+    expect(isRailTop('/live/recordings/abc', '')).toBe(false);
+  });
+  it('Mein Bereich (the phone\'s more page) lists Aufnahmen under Meine Sachen, only with Live TV', () => {
+    const groups = groupLinks(linksFor(false));
+    expect(groups[1]!.items.map((l) => l[0])).toContain('/live/recordings');
+    expect(MENU_LINKS.find((l) => l[0] === '/live/recordings')).toEqual(['/live/recordings', 'shell.menu.recordings', 'record']);
+    expect(linkShown(ALL_CAPS, '/live/recordings', { ...ALL_FEATURES, livetv: true }, undefined, ALL_AREAS)).toBe(true);
+    expect(linkShown(ALL_CAPS, '/live/recordings', { ...ALL_FEATURES, livetv: false }, undefined, ALL_AREAS)).toBe(false);
+    // a person without the Mediathek keeps it
+    expect(linkShown(ALL_CAPS, '/live/recordings', { ...ALL_FEATURES, livetv: true }, undefined, { ...ALL_AREAS, library: false })).toBe(true);
   });
 });
 

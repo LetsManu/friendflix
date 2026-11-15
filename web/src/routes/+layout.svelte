@@ -34,7 +34,7 @@
   import Intro from '#lib/Intro.svelte';
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
-  import { isRailTop, isTabActive, libraryTabs, LIVE_RAIL, liveTabs, TV_RAIL } from '#lib/menu';
+  import { activeTab, isRailTop, libraryTabs, LIVE_RAILS, liveTabs, TV_RAIL } from '#lib/menu';
   import { deskGuardBudget, tvGuardBudget, deskPagePlan, frameGuard, framesIdle, framesResume, isDetailPage, motionLevel, motionTripped, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
@@ -531,8 +531,8 @@
 
   // ---- TV page transitions (spec 5.2; plan in lib/tv/motion.ts): artwork -> detail backdrop morph, rail pages slide, else crossfade ----
   let pageFadeIn = false; // no View Transitions API (TV, desktop detail): the new page fades in (afterNavigate)
-  $: tvRail = liveTabs(libraryTabs(TV_RAIL, $areas.library), LIVE_RAIL, $features.livetv);
-  const railAt = (p: string) => tvRail.findIndex(([href]) => isTabActive(href, p));
+  $: tvRail = liveTabs(libraryTabs(TV_RAIL, $areas.library), LIVE_RAILS, $features.livetv);
+  const railAt = (p: string) => ((a) => tvRail.findIndex(([href]) => href === a))(activeTab(tvRail.map(([href]) => href), p));
   const onScreen = (el: Element | null | undefined): el is HTMLElement => {
     const r = el?.getBoundingClientRect();
     return !!r && r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;

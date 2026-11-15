@@ -229,6 +229,59 @@ test.describe('Aufnahmen row and Meine Aufnahmen', () => {
     expect(body).toEqual({ channelId: 'ch-stern', start: new Date(2026, 10, 13, 6, 30).toISOString(), end: new Date(2026, 10, 13, 8, 0).toISOString(), title: 'Sternwarte 24' });
   });
 
+  test('Jetzt beenden ends a running recording early and keeps it', async ({ page, api }) => {
+    const running = mockRecording({ title: 'Sternstunde Physik', seriesKey: 'sternstunde physik', state: 'recording', growing: true, start: at(12, 20, 15), end: at(12, 21) });
+    const done = mockRecording({ start: at(11, 20), end: at(11, 21) });
+    await arm(page, api, [running, done]);
+    await page.goto('/live/recordings');
+    const it = items(page).filter({ hasText: 'Sternstunde Physik' });
+    await expect(it.getByText('Läuft', { exact: true })).toBeVisible();
+    // only a running recording has it; one that was finished when the list loaded has no slot at all
+    const other = items(page).filter({ hasText: 'Die Leuchtturmwärter' });
+    await expect(other.getByRole('button', { name: 'Jetzt beenden' })).toHaveCount(0);
+    await expect(other.locator('button.stopb')).toHaveCount(0);
+    // finishing while watched: the actions keep their place and the item its size (its slot stays, hidden and unreachable)
+    const parts = () => Promise.all([box(it), box(it.getByRole('button', { name: 'Behalten' })), box(it.getByRole('button', { name: 'Löschen' })), box(it.locator('button.stopb'))]);
+    const before = await parts();
+    await it.getByRole('button', { name: 'Jetzt beenden' }).click();
+    await expect.poll(() => api.livetv.recCalls).toEqual([`POST /api/livetv/recordings/${running.id}/stop`]);
+    await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Aufnahme beendet. Das Aufgenommene bleibt erhalten.')).toBeVisible();
+    // kept: finished and playable, still in the list
+    await expect(it.getByText('Fertig', { exact: true })).toBeVisible();
+    await expect(it.getByRole('button', { name: 'Jetzt beenden' })).toHaveCount(0);
+    await expect(it.getByRole('button', { name: /^Abspielen/ })).toBeEnabled();
+    await expect(items(page)).toHaveCount(2);
+    const after = await parts();
+    for (let i = 0; i < 4; i++) for (const k of ['x', 'y', 'width', 'height'] as const) expect(after[i]![k], `${i} ${k}`).toBeCloseTo(before[i]![k], 0);
+    await expect(it.locator('button.stopb')).toBeHidden();
+    expect(await it.locator('button.stopb').evaluate((b) => [b.getAttribute('aria-hidden'), b.tabIndex, (b as HTMLButtonElement).disabled])).toEqual(['true', -1, true]);
+    // a reload (the page shown anew): it was finished when the list loaded, so no slot any more
+    await page.reload();
+    await expect(it.getByText('Fertig', { exact: true })).toBeVisible();
+    await expect(it.locator('button.stopb')).toHaveCount(0);
+    // the list was asked again after the stop
+    expect(api.livetv.recLists.length).toBeGreaterThan(1);
+  });
+
+  test.describe('refusals in words', () => {
+    test.use({ allowedConsole: /Failed to load resource: the server responded with a status of 400/ });
+    test('Neue Aufnahme starting too far back says so in the reserved slot; the sheet stays open', async ({ page, api }) => {
+      await arm(page, api, []);
+      await page.goto('/live/recordings');
+      await page.getByRole('button', { name: 'Neue Aufnahme' }).click();
+      const s = page.getByRole('dialog', { name: 'Neue Aufnahme' });
+      await s.getByLabel('Datum').fill('2026-11-12');
+      await s.getByLabel('Beginn').fill('20:15');
+      const save = s.getByRole('button', { name: 'Aufnahme planen' });
+      const y = (await box(save)).y;
+      await save.click();
+      await expect(s.getByRole('alert')).toHaveText('Der Beginn liegt zu weit zurück. Wähle eine Zeit ab jetzt.');
+      await expect(s).toBeVisible();
+      expect((await box(save)).y).toBeCloseTo(y, 0);
+      await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Das hat nicht geklappt.')).toHaveCount(0);
+    });
+  });
+
   test('kids row shows only shared recordings, no actions', async ({ page, api }) => {
     await page.route('**/api/me', (r) => r.fulfill({ json: KID }));
     await page.addInitScript(noIntro);

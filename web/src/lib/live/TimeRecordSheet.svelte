@@ -10,35 +10,45 @@
   import Select from '#lib/ui/Select.svelte';
   import { toast } from '#lib/ui/toast';
   import { channelHead } from './progress';
-  import { conflictText, createRule, hhmm, schedule, type Forecast } from './recordings';
+  import { conflictText, createRule, hhmm, schedule, scheduleProblem, type Forecast } from './recordings';
 
   /**
    * *Neue Aufnahme* (spec §15.1 time-based, plan Phase 3 Task 8): channel, date, start, duration and the weekday chips, for own feeds
    * without a programme guide. Without a weekday it plans one recording (`POST /api/livetv/recordings` with `end` + `title`); with
    * weekdays it is a weekly time rule in the browser's time zone (`POST /api/livetv/rules`). A conflict shows the §20 line in a slot
    * that is reserved from the start, with *Trotzdem planen*. The UI kit's modal frame (focus trap, Escape, focus back to the trigger).
+   * Opened from a programme (the live player's *Eigenen Zeitraum aufnehmen …*, DVR follow-ups) it starts with `preset`: that channel,
+   * start, end and the programme's title, so a person records only part of it (the next 30 minutes, the second half).
    */
   export let channels: Array<{ id: string; number: number | null; name: string }>;
   export let trigger: HTMLElement | null = null;
+  /** the first values (channel, start, end, title); without it: the first channel, the next full five minutes, 60 minutes */
+  export let preset: { channelId: string; start: Date; end: Date; title: string } | null = null;
+  /** the stacking layer of the modal (the live player sits above the page) */
+  export let layer = 100;
 
   const dispatch = createEventDispatcher<{ close: void; saved: void }>();
   const two = (n: number) => String(n).padStart(2, '0');
   const now = new Date();
-  // the next full five minutes
-  const first = new Date(Math.ceil(now.getTime() / 300_000) * 300_000);
-  let channelId = channels[0]?.id ?? '';
+  // the next full five minutes, or the preset's start
+  const first = preset?.start ?? new Date(Math.ceil(now.getTime() / 300_000) * 300_000);
+  let channelId = preset && channels.some((c) => c.id === preset!.channelId) ? preset.channelId : channels[0]?.id ?? '';
   let date = `${first.getFullYear()}-${two(first.getMonth() + 1)}-${two(first.getDate())}`;
   let start = hhmm(first);
-  let duration: string | number = 60;
-  let title = '';
+  let duration: string | number = preset ? Math.max(1, Math.round((preset.end.getTime() - first.getTime()) / 60_000)) : 60;
+  let title = preset?.title ?? '';
+  /** the person typed a title: it stays whatever channel is chosen */
   let titleTouched = false;
   let days: number[] = [];
   let busy = false;
   let conflict: Forecast | null = null;
+  /** a refusal the person can act on (a start too far back, another recording at the same start), in the reserved slot */
+  let problem: string | null = null;
 
   $: options = channels.map((c) => ({ value: c.id, label: channelHead(c) }));
   $: chName = channels.find((c) => c.id === channelId)?.name ?? '';
-  $: if (!titleTouched) title = chName;
+  // the title follows the channel until the person types one: the programme's title on its own channel, else the channel's name
+  $: if (!titleTouched) title = preset?.title && channelId === preset.channelId ? preset.title : chName;
   /** 1 = Monday … 7 = Sunday, named in the person's language (2026-11-09 is a Monday) */
   const WEEK = [1, 2, 3, 4, 5, 6, 7].map((d) => ({ d, label: fmtDate(new Date(2026, 10, 8 + d), { weekday: 'short' }).replace(/\.$/, '') }));
   const toggleDay = (d: number) => { days = days.includes(d) ? days.filter((x) => x !== d) : [...days, d].sort((a, b) => a - b); };
@@ -58,18 +68,20 @@
         const [h, mi] = start.split(':').map(Number) as [number, number];
         const from = new Date(y, mo - 1, d, h, mi);
         const r = await schedule({ channelId, start: from.toISOString(), end: new Date(from.getTime() + minutes * 60_000).toISOString(), title: title.trim(), ...(force ? { force: true } : {}) });
-        if (!r.ok) { conflict = r.forecast; return; }
+        if (!r.ok) { conflict = r.forecast; problem = null; return; }
         toast.success($t('live.rec.planned'));
       }
       dispatch('saved');
       dispatch('close');
     } catch (e) {
-      toast.error(errorText(e));
+      problem = scheduleProblem(e);
+      if (problem) conflict = null;
+      else toast.error(errorText(e));
     } finally { busy = false; }
   }
 </script>
 
-<ModalShell labelledby="ltr-title" focus="select" {trigger} locked={busy} on:close={() => dispatch('close')}>
+<ModalShell labelledby="ltr-title" focus={preset ? 'input[type="number"]' : 'select'} {trigger} {layer} locked={busy} on:close={() => dispatch('close')}>
   <form class="trs" on:submit|preventDefault={() => save(false)}>
     <header>
       <h2 id="ltr-title">{$t('live.time.title')}</h2>
@@ -96,6 +108,8 @@
       {#if conflict}
         <p class="cline"><Icon name="alert" size={18} /><span>{conflictText(conflict)}</span></p>
         <button type="button" class="frost-btn force" on:click={() => save(true)}>{$t('live.rec.planAnyway')}</button>
+      {:else if problem}
+        <p class="cline" role="alert"><Icon name="alert" size={18} /><span>{problem}</span></p>
       {/if}
     </div>
     <div class="row">

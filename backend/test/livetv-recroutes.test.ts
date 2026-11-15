@@ -34,12 +34,19 @@ const calls: Call[] = [];
 /** every line the app logged (A-M12) */
 const logLines: string[] = [];
 const recorders = new Set<string>();
+/** what GET /v1/recordings lists (a DELETE ends a listed recorder `done`, like livetv's stop) */
+const listed = new Map<string, Record<string, unknown>>();
 function fakeLivetv() {
   env.ctx.fetchImpl = fakeHttp({
     'GET /v1/system': () => ({ json: { cpu: { model: 'x', cores: 4, loadPct: 1 }, gpu: { devices: [], driver: null, readable: false, busyPct: null, nvidia: false }, encoders: ['libx264'], cache: { usedBytes: 0, maxBytes: 1 }, recordings: { usedBytes: 0, freeBytes: 54_000_000_000 }, srt: { ports: [9000] } } }),
     'GET /v1/streams': () => ({ json: [] }),
-    'GET /v1/recordings': () => ({ json: [] }),
-    'DELETE /v1/recordings/[0-9a-f-]+': (u) => (recorders.has(u.pathname.split('/').pop()!) ? { status: 204 } : { status: 404, json: { error: 'not_found' } }),
+    'GET /v1/recordings': () => ({ json: [...listed.values()] }),
+    'DELETE /v1/recordings/[0-9a-f-]+': (u) => {
+      const id = u.pathname.split('/').pop()!;
+      const l = listed.get(id);
+      if (l) l.state = 'done';
+      return recorders.has(id) ? { status: 204 } : { status: 404, json: { error: 'not_found' } };
+    },
     'POST /v1/recordings/[0-9a-f-]+/delete': (u) => { const id = u.pathname.split('/')[3]!; return recorders.delete(id) ? { status: 204 } : { status: 404, json: { error: 'not_found' } }; },
   }, calls);
 }
@@ -112,6 +119,7 @@ beforeEach(async () => {
   for (const p of ['ltv', 'conv:']) for (const k of await env.kv.keys(p)) await env.kv.del(k);
   calls.length = 0;
   recorders.clear();
+  listed.clear();
   fakeLivetv();
   await detectLivetv(env.ctx, 0, { strict: true });
   invalidateLiveConversions();
@@ -167,6 +175,7 @@ describe('rights', () => {
     const shared = await row({ state: 'done', visibility: 'account' });
     expect((await call(kid, 'DELETE', `/api/livetv/recordings/${shared}`)).statusCode).toBe(403);
     expect((await call(kid, 'PATCH', `/api/livetv/recordings/${shared}`, { keep: true })).statusCode).toBe(403);
+    expect((await call(kid, 'POST', `/api/livetv/recordings/${shared}/stop`, {})).statusCode).toBe(403);
     // but it sees and watches the shared kid-friendly recording
     expect((await call(kid, 'GET', '/api/livetv/recordings')).json().recordings.map((r: { id: string }) => r.id)).toEqual([shared]);
     expect((await call(kid, 'POST', `/api/livetv/recordings/${shared}/progress`, { positionS: 30 })).statusCode).toBe(200);
@@ -321,6 +330,148 @@ describe('scheduling', () => {
     expect((await call(ben, 'DELETE', `/api/livetv/rules/${r.json().rule.id}`)).statusCode).toBe(404);
     expect((await call(anna, 'DELETE', `/api/livetv/rules/${r.json().rule.id}`)).statusCode).toBe(204);
     expect((await env.pool.query("select count(*)::int n from livetv_recordings where state = 'scheduled' and series_key is not null")).rows[0].n).toBe(0);
+  });
+});
+
+describe('less than a whole programme (DVR follow-ups)', () => {
+  it('record now of a running programme: planned from the programme start, it records from the request on and ends with the programme', async () => {
+    const start = Date.now() - 20 * MIN;
+    await prog('Nordlicht TV.de', start, { minutes: 60 });
+    const r = await call(anna, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(start) });
+    expect(r.statusCode, r.body).toBe(201);
+    expect(r.json().recording).toMatchObject({ title: 'Die Leuchtturmwärter', start: iso(start), end: iso(start + HOUR), state: 'scheduled' });
+    const db = (await env.pool.query('select follow_epg, created_at from livetv_recordings where id = $1', [r.json().recording.id])).rows[0];
+    // it follows its programme; the late-start rule counts from the request (created_at), so the minutes before it are no gap (A-I5)
+    expect(db.follow_epg).toBe(true);
+    expect(Math.abs(db.created_at.getTime() - Date.now())).toBeLessThan(60_000);
+  });
+
+  it('a time span inside a programme keeps its own end and title; the programme\'s own end is the programme', async () => {
+    await prog('Nordlicht TV.de', T(), { minutes: 90 });
+    // the first half: it starts with the programme but ends earlier
+    const a = await call(anna, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(T()), end: iso(T() + 30 * MIN), title: 'Die Leuchtturmwärter (Anfang)' });
+    expect(a.statusCode, a.body).toBe(201);
+    expect(a.json().recording).toMatchObject({ title: 'Die Leuchtturmwärter (Anfang)', start: iso(T()), end: iso(T() + 30 * MIN), seriesKey: null });
+    // the second half: it starts inside the programme
+    const b = await call(anna, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(T() + 45 * MIN), end: iso(T() + 90 * MIN), title: 'Zweite Hälfte' });
+    expect(b.statusCode, b.body).toBe(201);
+    expect(b.json().recording).toMatchObject({ title: 'Zweite Hälfte', start: iso(T() + 45 * MIN), end: iso(T() + 90 * MIN) });
+    const spans = (await env.pool.query('select follow_epg from livetv_recordings where id = any($1::uuid[])', [[a.json().recording.id, b.json().recording.id]])).rows;
+    expect(spans.map((x) => x.follow_epg)).toEqual([false, false]);
+    // the programme's start and end: that is the programme (it follows the guide, keeps its title)
+    const c = await call(ben, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(T()), end: iso(T() + 90 * MIN), title: 'egal' });
+    expect(c.statusCode, c.body).toBe(201);
+    expect(c.json().recording).toMatchObject({ title: 'Die Leuchtturmwärter', end: iso(T() + 90 * MIN), seriesKey: 'die leuchtturmwärter' });
+  });
+
+  it('a time span starts at most 5 minutes in the past, lasts at most 24 hours and ends after it starts', async () => {
+    const body = { channelId: nordlicht, end: iso(Date.now() + 30 * MIN), title: 'Hafenrunde' };
+    expect((await call(anna, 'POST', '/api/livetv/recordings', { ...body, start: iso(Date.now() - 10 * MIN) })).json()).toEqual({ error: 'invalid', field: 'start' });
+    const ok = await call(anna, 'POST', '/api/livetv/recordings', { ...body, start: iso(Date.now() - MIN) });
+    expect(ok.statusCode, ok.body).toBe(201);
+    expect((await call(anna, 'POST', '/api/livetv/recordings', { ...body, start: iso(T()), end: iso(T() + 24 * HOUR + MIN) })).json()).toEqual({ error: 'invalid', field: 'end' });
+    expect((await call(anna, 'POST', '/api/livetv/recordings', { ...body, start: iso(T()), end: iso(T()) })).json()).toEqual({ error: 'invalid', field: 'end' });
+  });
+
+  it('stop early keeps what was recorded: done and playable, the files stay', async () => {
+    const start = Date.now() - 30 * MIN;
+    const id = await row({ state: 'recording', mode: 'passthrough', segments: 'ts', follow_epg: true, prog_key: 'die leuchtturmwärter|', start_at: new Date(start), end_at: new Date(start + HOUR), bytes: 5000, duration_s: 1800 });
+    const dir = (await env.pool.query<{ dir: string }>('select dir from livetv_recordings where id = $1', [id])).rows[0]!.dir;
+    recorders.add(id);
+    listed.set(id, { id, channelId: nordlicht, dir, state: 'recording', segments: 'ts', bytes: 5000, durationS: 1800, gaps: [], error: null, since: start });
+    // somebody else's recording is unknown to this profile
+    expect((await call(ben, 'POST', `/api/livetv/recordings/${id}/stop`, {})).statusCode).toBe(404);
+    const r = await call(anna, 'POST', `/api/livetv/recordings/${id}/stop`, {});
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().recording).toMatchObject({ id, state: 'done', growing: false, durationS: 1800 });
+    // the recorder was stopped; its folder was not removed
+    expect(calls.filter((c) => c.path.startsWith(`/v1/recordings/${id}`)).map((c) => `${c.method} ${c.path}`)).toEqual([`DELETE /v1/recordings/${id}`]);
+    const db = (await env.pool.query('select state, end_at, pad_after_s, follow_epg from livetv_recordings where id = $1', [id])).rows[0];
+    expect([db.state, db.pad_after_s, db.follow_epg]).toEqual(['done', 0, false]);
+    expect(Math.abs(db.end_at.getTime() - Date.now())).toBeLessThan(60_000);
+    // it plays like any finished recording
+    const p = await call(anna, 'POST', `/api/livetv/recordings/${id}/play`, {});
+    expect(p.statusCode, p.body).toBe(200);
+    // a second stop, or one of a planned recording, is refused (a planned one is cancelled with DELETE)
+    expect((await call(anna, 'POST', `/api/livetv/recordings/${id}/stop`, {})).json()).toEqual({ error: 'not_recording' });
+    const planned = await row({});
+    const s = await call(anna, 'POST', `/api/livetv/recordings/${planned}/stop`, {});
+    expect([s.statusCode, s.json()]).toEqual([409, { error: 'not_recording' }]);
+  });
+
+  it('a time span that starts with an already planned whole programme is refused (409 same_start), never answered with the other one', async () => {
+    await prog('Nordlicht TV.de', T(), { minutes: 90 });
+    const whole = await call(anna, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(T()) });
+    expect(whole.statusCode, whole.body).toBe(201);
+    const part = await call(anna, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(T()), end: iso(T() + 30 * MIN), title: 'Nur der Anfang' });
+    expect([part.statusCode, part.json()]).toEqual([409, { error: 'same_start' }]);
+    // the other way round too: a planned part, then the whole programme
+    await prog('Nordlicht TV.de', T() + 2 * HOUR, { minutes: 60 });
+    const p2 = await call(anna, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(T() + 2 * HOUR), end: iso(T() + 2 * HOUR + 20 * MIN), title: 'Anfang' });
+    expect(p2.statusCode, p2.body).toBe(201);
+    expect((await call(anna, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(T() + 2 * HOUR) })).json()).toEqual({ error: 'same_start' });
+    // the very same request again still answers what it planned
+    const again = await call(anna, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(T()) });
+    expect([again.statusCode, again.json().recording.id]).toEqual([200, whole.json().recording.id]);
+    expect((await env.pool.query("select count(*)::int n from livetv_recordings where state = 'scheduled'")).rows[0].n).toBe(2);
+  });
+
+  it('stop needs Live-TV but not liveRecord (like DELETE): a person whose role cannot record ends their own recording; others are refused', async () => {
+    const start = Date.now() - 30 * MIN;
+    const own = await row({ profile_id: gastId, user_id: gastId, state: 'recording', mode: 'passthrough', segments: 'ts', start_at: new Date(start), end_at: new Date(start + HOUR), bytes: 5000, duration_s: 1800, visibility: 'everyone' });
+    recorders.add(own);
+    const r = await call(gast, 'POST', `/api/livetv/recordings/${own}/stop`, {});
+    expect(r.statusCode, r.body).toBe(200);
+    expect((await env.pool.query('select pad_after_s from livetv_recordings where id = $1', [own])).rows[0].pad_after_s).toBe(0);
+    // a recording another profile sees (shared with everyone) but does not own: 403
+    const annas = await row({ state: 'recording', mode: 'passthrough', segments: 'ts', start_at: new Date(start), end_at: new Date(start + HOUR), bytes: 5000, visibility: 'everyone' });
+    expect((await call(gast, 'POST', `/api/livetv/recordings/${annas}/stop`, {})).json()).toEqual({ error: 'forbidden' });
+    expect((await call(ben, 'POST', `/api/livetv/recordings/${annas}/stop`, {})).statusCode).toBe(403);
+    expect((await env.pool.query('select pad_after_s from livetv_recordings where id = $1', [annas])).rows[0].pad_after_s).toBe(300);
+  });
+
+  it('stop during the padding before the start ends at its start (plus a second) and keeps what the padding recorded', async () => {
+    const start = Date.now() + MIN; // the programme starts in a minute; the 2-minute padding is recording
+    const id = await row({ state: 'recording', mode: 'passthrough', segments: 'ts', start_at: new Date(start), end_at: new Date(start + HOUR), bytes: 900, duration_s: 60 });
+    const dir = (await env.pool.query<{ dir: string }>('select dir from livetv_recordings where id = $1', [id])).rows[0]!.dir;
+    recorders.add(id);
+    listed.set(id, { id, channelId: nordlicht, dir, state: 'recording', segments: 'ts', bytes: 900, durationS: 60, gaps: [], error: null, since: Date.now() - MIN });
+    const r = await call(anna, 'POST', `/api/livetv/recordings/${id}/stop`, {});
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().recording).toMatchObject({ state: 'done', durationS: 60 });
+    const db = (await env.pool.query('select start_at, end_at from livetv_recordings where id = $1', [id])).rows[0];
+    expect(db.end_at.getTime() - db.start_at.getTime()).toBe(1000);
+  });
+
+  it('stop before anything was recorded removes it like a cancel: no empty "done", no notice', async () => {
+    const start = Date.now() - 10_000;
+    const id = await row({ state: 'recording', mode: 'passthrough', start_at: new Date(start), end_at: new Date(start + HOUR) });
+    const dir = (await env.pool.query<{ dir: string }>('select dir from livetv_recordings where id = $1', [id])).rows[0]!.dir;
+    recorders.add(id);
+    listed.set(id, { id, channelId: nordlicht, dir, state: 'recording', segments: null, bytes: 0, durationS: 0, gaps: [], error: null, since: start });
+    const r = await call(anna, 'POST', `/api/livetv/recordings/${id}/stop`, {});
+    expect([r.statusCode, r.json()]).toEqual([200, { recording: null }]);
+    expect((await call(anna, 'GET', `/api/livetv/recordings/${id}`)).statusCode).toBe(404);
+    expect(calls.filter((c) => c.path.startsWith(`/v1/recordings/${id}`)).map((c) => `${c.method} ${c.path.slice(15 + 36) || '/'}`)).toContain('POST /delete');
+    expect((await env.pool.query("select count(*)::int n from notifications where kind like 'livetv.rec.%'")).rows[0].n).toBe(0);
+  });
+
+  it('stop early while livetv has not finished it yet: the end is now, the tick collects it later', async () => {
+    const start = Date.now() - 30 * MIN;
+    const id = await row({ state: 'recording', mode: 'passthrough', segments: 'ts', start_at: new Date(start), end_at: new Date(start + HOUR), bytes: 5000, duration_s: 1800 });
+    recorders.add(id);
+    const r = await call(anna, 'POST', `/api/livetv/recordings/${id}/stop`, {});
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().recording.state).toBe('recording');
+    const db = (await env.pool.query('select end_at, pad_after_s from livetv_recordings where id = $1', [id])).rows[0];
+    expect(db.pad_after_s).toBe(0);
+    expect(db.end_at.getTime()).toBeLessThanOrEqual(Date.now());
+    // the recorder reports it finished: the reconcile collects it as done
+    const dir = (await env.pool.query<{ dir: string }>('select dir from livetv_recordings where id = $1', [id])).rows[0]!.dir;
+    listed.set(id, { id, channelId: nordlicht, dir, state: 'done', segments: 'ts', bytes: 5000, durationS: 1800, gaps: [], error: null, since: start });
+    await env.kv.del('ltv:rectick');
+    await livetvRecordTick(env.ctx);
+    expect((await call(anna, 'GET', `/api/livetv/recordings/${id}`)).json().recording.state).toBe('done');
   });
 });
 
