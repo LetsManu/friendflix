@@ -398,6 +398,16 @@ test.describe('compare', () => {
       await expect(page).toHaveURL(/\/admin\/users$/);
     });
 
+    test('a reload with staged changes asks the browser first (beforeunload)', async ({ page }) => {
+      await page.goto('/admin/roles?view=compare');
+      await stageGuestRating(page);
+      let asked = '';
+      page.on('dialog', (d) => { asked = d.type(); void d.dismiss(); });
+      await page.evaluate(() => { location.reload(); });
+      await expect.poll(() => asked).toBe('beforeunload');
+      await expect(bar(page)).toContainText('1 Änderung');
+    });
+
     test('leaving by Back with staged changes: Verwerfen goes back once, the next Back goes back again', async ({ page }) => {
       await page.goto('/admin');
       const nav = page.getByRole('navigation', { name: 'Admin-Bereiche' });

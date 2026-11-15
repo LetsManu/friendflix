@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { stagedJobs, storeJob } from './save';
+import { groupsChanged, keepKnownGroups, stagedJobs, storeJob } from './save';
+import { ApiError } from '#lib/api';
 import { stageSet, type MatrixRole, type RoleMatrix } from './model';
 
 const role = (key: string, values: Record<string, unknown>, extra: Partial<MatrixRole> = {}): MatrixRole => ({
@@ -45,5 +46,17 @@ describe('the shared save (role page and compare view)', () => {
     const [job] = stagedJobs(s1, m);
     const s2 = stageSet(s1, m, 'friend', 'maxStreams', 5); // edited again while the write ran
     expect(storeJob(m, s2, job!).stage).toEqual({ friend: { maxStreams: 5 } });
+  });
+  it('groupsChanged: only a 400 invalid on livetvGroups', () => {
+    expect(groupsChanged(new ApiError(400, { error: 'invalid', field: 'livetvGroups' }))).toBe(true);
+    expect(groupsChanged(new ApiError(400, { error: 'invalid', field: 'libraries' }))).toBe(false);
+    expect(groupsChanged(new ApiError(500, { error: 'invalid', field: 'livetvGroups' }))).toBe(false);
+  });
+  it('keepKnownGroups: staged group ids the re-read list no longer has go; what is left unstages when it equals the loaded set', () => {
+    const m = matrix();
+    const s = stageSet(stageSet({}, m, 'friend', 'livetvGroups', ['g-hafen']), m, 'guest', 'livetvGroups', ['g-nord', 'g-hafen']);
+    const reread: RoleMatrix = { ...m, livetv: { groups: [m.livetv!.groups[0]!], pending: 1 } };
+    // friend: [] (still a change from Nordlicht TV); guest: [g-nord] (guest's loaded groups are [g-nord]: unstaged)
+    expect(keepKnownGroups(s, reread)).toEqual({ friend: { livetvGroups: [] } });
   });
 });

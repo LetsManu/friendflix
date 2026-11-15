@@ -12,22 +12,22 @@
    */
   import { tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api, ApiError } from '#lib/api';
+  import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { locale, t, tr } from '#lib/i18n';
   import { pageStore } from '#lib/page';
-  import { PERM_KEYS } from '#lib/perms';
   import { leaveGuard, leavesRoute } from '#lib/admin/leaveGuard';
   import AreaGrid from '#lib/admin/rights/AreaGrid.svelte';
   import AreaSection from '#lib/admin/rights/AreaSection.svelte';
-  import { areaLabel, fieldsOfArea, stageArea, stagedAreas, stageField, type AreaKey } from '#lib/admin/rights/areas';
+  import { AREA_ICON, AREA_KEYS, areaLabel, fieldsOfArea, stageArea, stagedAreas, stageField, type AreaKey, type Areas } from '#lib/admin/rights/areas';
   import DeleteRoleDialog from '#lib/admin/rights/DeleteRoleDialog.svelte';
   import GroupChips from '#lib/admin/rights/GroupChips.svelte';
-  import { peopleLine, policyLine, reviewLines, roleName, saveBarText, stageCounts, stageSet, type MatrixField, type MatrixRole, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
+  import { PERM_SET, peopleLine, policyLine, reviewLines, roleName, saveBarText, stageCounts, stageSet, type MatrixField, type MatrixRole, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
   import NameDialog from '#lib/admin/rights/NameDialog.svelte';
   import ReviewSheet from '#lib/admin/rights/ReviewSheet.svelte';
   import RoleHistory from '#lib/admin/rights/RoleHistory.svelte';
-  import { createSave } from '#lib/admin/rights/save';
+  import { canDelete, copyRole, deleteMoving, deleteRole, moveTargetsOf } from '#lib/admin/rights/roleDelete';
+  import { createSave, keepKnownGroups } from '#lib/admin/rights/save';
   import SaveBar from '#lib/admin/rights/SaveBar.svelte';
   import { reducedMotion } from '#lib/ui/motion';
   import ActionMenu from '#lib/ui/ActionMenu.svelte';
@@ -40,7 +40,6 @@
 
   const page$ = pageStore();
   $: key = $page$.params.key ?? '';
-  const PERM_SET: ReadonlySet<string> = new Set(PERM_KEYS);
 
   let matrix: RoleMatrix | null = null, error: string | null = null, loadedKey = '';
   let stage: Stage = {};
@@ -64,7 +63,23 @@
   $: counts = matrix ? stageCounts(stage, matrix) : null;
   $: dirty = counts?.roles ?? 0;
   const toggleArea = (a: AreaKey, on: boolean) => { if (matrix && role) stage = stageArea(stage, matrix, role, a, on); };
-  const setField = (k: string, v: unknown) => { if (matrix && role) stage = stageField(stage, matrix, role, k, v); };
+  function setField(k: string, v: unknown) {
+    if (!matrix || !role) return;
+    const before = stagedAreas(stage, role);
+    stage = stageField(stage, matrix, role, k, v);
+    void keepFocus(before);
+  }
+  /**
+   * A press that switched its own area off (the last library unticked, the last of Watch-Partys and Kommentare off) removes the
+   * section with the focused control in it: the focus goes to that area's card, where it can be switched on again (WCAG 2.4.3).
+   */
+  async function keepFocus(before: Areas) {
+    const at = document.activeElement instanceof HTMLElement ? document.activeElement.closest<HTMLElement>('[data-section]') : null;
+    const a = at?.dataset.section as AreaKey | undefined;
+    if (!a || !role || !before[a] || stagedAreas(stage, role)[a] || a === 'livetv') return;
+    await tick();
+    document.querySelector<HTMLElement>(`[data-area="${a}"] [role="switch"]`)?.focus();
+  }
   const put = (k: string, v: unknown) => { if (matrix && role) stage = stageSet(stage, matrix, role.key, k, v); };
   const staged = (s: Stage, r: MatrixRole, k: string): unknown => (Object.hasOwn(s[r.key] ?? {}, k) ? s[r.key]![k] : undefined);
 
@@ -72,9 +87,10 @@
   const fieldsOf = (m: RoleMatrix, r: MatrixRole, a: AreaKey | 'general'): MatrixField[] => fieldsOfArea(m, a).filter((f) => !(r.base === 'admin' && PERM_SET.has(f.key)));
   /** the sections below the grid, in the fixed order: the areas that are on (Live-TV while installed, its groups dormant when off), then Allgemein */
   $: sections = matrix && role && areas
-    ? (['library', 'livetv', 'requests', 'together', 'downloads'] as AreaKey[]).filter((a) => (a === 'livetv' ? matrix!.features.livetv : areas![a] && (a !== 'requests' || matrix!.features.requests)))
+    ? AREA_KEYS.filter((a) => (a === 'livetv' ? matrix!.features.livetv
+      // a section with nothing to edit is not shown (the admin role's Gemeinsam: only switches, all locked on)
+      : areas![a] && (a !== 'requests' || matrix!.features.requests) && fieldsOf(matrix!, role!, a).length > 0))
     : [];
-  const ICON: Record<AreaKey, string> = { library: 'film', livetv: 'tv', requests: 'gift', together: 'users', downloads: 'download' };
 
   // ---- the name: staged once it is 1-30 characters (the role write's bounds); a bad text shows the error and stages nothing
   let typed: string | null = null;
@@ -94,14 +110,25 @@
 
   // ---- save: the review sheet and the shared sequential save (one PUT for this role)
   // a saved name is the loaded one now: the field shows it (a name typed meanwhile stays)
-  const save = createSave({ matrix: () => matrix, stage: () => stage, stored: (m, s) => { matrix = m; stage = s; if (!Object.hasOwn(s[key] ?? {}, 'label') && !nameErr) typed = null; } });
+  const save = createSave({
+    matrix: () => matrix, stage: () => stage,
+    stored: (m, s) => { matrix = m; stage = s; if (!Object.hasOwn(s[key] ?? {}, 'label') && !nameErr) typed = null; },
+    // a group was taken back or merged meanwhile: the groups are read again, what still exists stays staged for a check
+    groupsChanged: async () => {
+      try {
+        const r = await api<{ matrix?: RoleMatrix }>('/api/admin/roles');
+        if (r.matrix) { matrix = r.matrix; stage = keepKnownGroups(stage, r.matrix); }
+      } catch { /* the stale list stays; the message still asks to check it */ }
+    },
+  });
   $: saving = $save.saving;
   let reviewing = false, reviewBtn: HTMLElement | null = null, bar: SaveBar | undefined;
   function openReview() { reviewBtn = document.activeElement instanceof HTMLElement ? document.activeElement : null; reviewing = true; }
   async function saveReviewed() { reviewing = false; await tick(); bar?.focus(); await save.apply(); }
   function discardAll() { stage = {}; typed = null; save.discard(); }
 
-  leaveGuard((nav) => leavesRoute(nav) && dirty > 0, () => ({ title: tr('adminPeople.roles.leaveTitle'), body: tr('adminPeople.roles.leaveBody', { n: dirty }), danger: true, confirmLabel: tr('adminPeople.roles.leaveConfirm') }));
+  // a reload or a closed tab asks too (the browser's own question)
+  leaveGuard((nav) => (nav.willUnload || leavesRoute(nav)) && dirty > 0, () => leaveQuestion());
 
   // ---- ?field=<key>: that control is focused and centred (an area's own switch: its card); no smooth scroll with reduced motion
   const AREA_OF_SWITCH: Record<string, AreaKey> = { liveTv: 'livetv', requests: 'requests', download: 'downloads' };
@@ -122,48 +149,50 @@
   let dup: { trigger: HTMLElement | null } | null = null, dupBusy = false, dupErr = '';
   let history: { trigger: HTMLElement | null } | null = null;
   let del: { trigger: HTMLElement | null; accounts: number; invites: number } | null = null, delBusy = false, delErr = '';
-  $: canDelete = !!role && (role.origin === 'admin' || role.envGone);
+  $: deletable = !!role && canDelete(role);
+  const leaveQuestion = () => ({ title: tr('adminPeople.roles.leaveTitle'), body: tr('adminPeople.roles.leaveBody', { n: dirty }), danger: true, confirmLabel: tr('adminPeople.roles.leaveConfirm') });
+  /** *Duplizieren* opens the copy's page: with staged edits it asks first, before anything is created (they are dropped on Verwerfen) */
+  async function startDuplicate(trigger: HTMLElement | null) {
+    if (dirty > 0) {
+      if (!(await confirm(leaveQuestion()))) { void tick().then(() => trigger?.focus({ preventScroll: true })); return; }
+      discardAll();
+    }
+    dup = { trigger }; dupErr = ''; dupBusy = false;
+  }
   /** a menu item runs after the menu closed and gave the focus back to its button: that is where the focus returns to */
-  const itemsOf = (busy: boolean, deletable: boolean, _l: unknown) => [
-    { id: 'duplicate', label: tr('adminPeople.roles.duplicate'), icon: 'copy', disabled: busy, run: () => { dup = { trigger: here() }; dupErr = ''; dupBusy = false; } },
+  const itemsOf = (busy: boolean, canGo: boolean, _l: unknown) => [
+    { id: 'duplicate', label: tr('adminPeople.roles.duplicate'), icon: 'copy', disabled: busy, run: () => void startDuplicate(here()) },
     { id: 'history', label: tr('adminPeople.roles.history'), icon: 'clock', run: () => { history = { trigger: here() }; } },
-    ...(deletable ? [{ id: 'delete', label: tr('adminPeople.roles.delete'), icon: 'x', danger: true, disabled: busy, run: () => void removeRole(here()) }] : []),
+    ...(canGo ? [{ id: 'delete', label: tr('adminPeople.roles.delete'), icon: 'x', danger: true, disabled: busy, run: () => void removeRole(here()) }] : []),
   ];
-  $: items = itemsOf(saving, canDelete, $locale);
+  $: items = itemsOf(saving, deletable, $locale);
 
   async function duplicate(label: string) {
     if (!role || dupBusy) return;
     dupBusy = true; dupErr = '';
     let made: string;
-    try { made = (await api<{ key: string }>('/api/admin/roles', { method: 'POST', body: { label, from: role.key } })).key; } catch (e) { dupErr = errorText(e); dupBusy = false; return; }
+    try { made = await copyRole(label, role.key); } catch (e) { dupErr = errorText(e); dupBusy = false; return; }
     dup = null; dupBusy = false;
     toast.success(tr('adminPeople.roles.duplicated', { name: label }));
     await goto(`/admin/roles/${encodeURIComponent(made)}`);
   }
-  const inUse = (e: unknown) => (e instanceof ApiError && e.status === 409 && e.body?.error === 'role_in_use' ? { accounts: Number(e.body.accounts) || 0, invites: Number(e.body.invites) || 0 } : null);
+  /** the delete (roleDelete.ts): nobody holds the role → a confirm; people do → the server's 409 role_in_use opens the dialog */
   async function removeRole(trigger: HTMLElement | null) {
     if (!role) return;
     const name = roleName(role);
-    if (role.accounts === 0 && !(await confirm({ title: tr('adminPeople.roles.deleteTitle', { name }), body: tr('adminPeople.roles.deleteNone'), danger: true, confirmLabel: tr('adminPeople.roles.delete') }))) { void tick().then(() => trigger?.focus({ preventScroll: true })); return; }
-    try { await api(`/api/admin/roles/${encodeURIComponent(role.key)}`, { method: 'DELETE' }); } catch (e) {
-      const n = inUse(e);
-      if (n) { del = { trigger, ...n }; delErr = ''; delBusy = false; } else toast.error(errorText(e));
-      return;
-    }
-    await gone(name);
+    const r = await deleteRole(role, trigger);
+    if (r === 'deleted') await gone(name);
+    else if (r !== 'kept') { del = { trigger, ...r }; delErr = ''; delBusy = false; }
   }
   async function removeMoved(to: string) {
     if (!role || !del || delBusy) return;
     delBusy = true; delErr = '';
     const name = roleName(role);
-    try { await api(`/api/admin/roles/${encodeURIComponent(role.key)}`, { method: 'DELETE', body: { moveTo: to } }); } catch (e) {
-      const n = inUse(e);
-      if (n && del) del = { ...del, ...n };
-      delErr = errorText(e); delBusy = false;
-      return;
-    }
+    const r = await deleteMoving(role.key, to);
     delBusy = false;
-    await gone(name);
+    if (r.ok) { await gone(name); return; }
+    if (r.counts && del) del = { ...del, ...r.counts };
+    delErr = r.error;
   }
   /** the role is gone: its staged edits with it (nothing to ask about), back to the list */
   async function gone(name: string) {
@@ -171,7 +200,7 @@
     toast.success(tr('adminPeople.roles.deleted', { name }));
     await goto('/admin/roles');
   }
-  $: moveTargets = (matrix?.roles ?? []).filter((r) => r.key !== role?.key && r.base !== 'admin').map((r) => ({ key: r.key, name: roleName(r) }));
+  $: moveTargets = moveTargetsOf(matrix?.roles ?? [], role?.key);
 </script>
 
 <div class="rp">
@@ -211,12 +240,12 @@
   <div class="secs">
     {#each sections as a (a)}
       {#if a === 'livetv'}
-        <AreaSection title={areaLabel(a)} icon={ICON[a]} fields={fieldsOf(matrix, role, a)} {role} {stage} {matrix} disabled={saving} on:change={(e) => setField(e.detail.key, e.detail.value)}>
+        <AreaSection area={a} title={areaLabel(a)} icon={AREA_ICON[a]} fields={fieldsOf(matrix, role, a)} {role} {stage} {matrix} disabled={saving} on:change={(e) => setField(e.detail.key, e.detail.value)}>
           <GroupChips roleName={shownName} groups={matrix.livetv?.groups ?? []} chosen={chosenGroups} pending={matrix.livetv?.pending ?? 0}
             mode={role.key === 'admin' ? 'admin' : role.stored ? 'edit' : 'env'} dormant={!areas.livetv} disabled={saving} on:change={(e) => put('livetvGroups', e.detail)} />
         </AreaSection>
       {:else}
-        <AreaSection title={areaLabel(a)} icon={ICON[a]} fields={fieldsOf(matrix, role, a)} {role} {stage} {matrix} disabled={saving} on:change={(e) => setField(e.detail.key, e.detail.value)} />
+        <AreaSection area={a} title={areaLabel(a)} icon={AREA_ICON[a]} fields={fieldsOf(matrix, role, a)} {role} {stage} {matrix} disabled={saving} on:change={(e) => setField(e.detail.key, e.detail.value)} />
       {/if}
     {/each}
     <AreaSection title={$t('adminPeople.roles.areas.general')} icon="settings" fields={fieldsOf(matrix, role, 'general')} {role} {stage} {matrix} disabled={saving} on:change={(e) => setField(e.detail.key, e.detail.value)}>

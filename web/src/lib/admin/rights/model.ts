@@ -75,8 +75,8 @@ export interface RoleMatrix {
   templates?: RoleTemplateInfo[];
 }
 
-/** switches the role write takes under `perms` */
-const PERM_SET: ReadonlySet<string> = new Set<PermKey>(PERM_KEYS);
+/** switches the role write takes under `perms` (the admin role's are locked on) */
+export const PERM_SET: ReadonlySet<string> = new Set<PermKey>(PERM_KEYS);
 /** fields the media server policy carries (backend rights.ts MEDIA_FIELDS): a change re-applies the policy of the role's accounts */
 const MEDIA_FIELDS: ReadonlySet<string> = new Set(['libraries', 'maxParentalRating', 'maxStreams', 'maxBitrate', 'transcoding', 'maxHeight', 'download']);
 /** a null value means "no cap" here; the role write spells it 'unlimited' (null there = back to the inherited value) */

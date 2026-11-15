@@ -13,14 +13,13 @@
    */
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api, ApiError } from '#lib/api';
+  import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
   import { errorText } from '#lib/ui/action';
   import { SCRIM_BAR } from '#lib/glass/tone';
   import SlidePill from '#lib/glass/SlidePill.svelte';
   import Button from '#lib/ui/Button.svelte';
-  import { confirm } from '#lib/ui/confirm';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import { toast } from '#lib/ui/toast';
   import { pageStore } from '#lib/page';
@@ -28,6 +27,7 @@
   import CompareView from '#lib/admin/rights/CompareView.svelte';
   import DeleteRoleDialog from '#lib/admin/rights/DeleteRoleDialog.svelte';
   import { policyLine, reviewLines, roleName as roleLabel, saveBarText, stageCounts, type MatrixRole, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
+  import { copyRole, deleteMoving, deleteRole, moveTargetsOf } from '#lib/admin/rights/roleDelete';
   import { createSave } from '#lib/admin/rights/save';
   import NameDialog from '#lib/admin/rights/NameDialog.svelte';
   import ReviewSheet from '#lib/admin/rights/ReviewSheet.svelte';
@@ -134,7 +134,6 @@
     dupErr = ''; dupBusy = false;
   }
   let del: (Ask & { accounts: number; invites: number }) | null = null, delBusy = false, delErr = '';
-  const inUse = (e: unknown) => (e instanceof ApiError && e.status === 409 && e.body?.error === 'role_in_use' ? { accounts: Number(e.body.accounts) || 0, invites: Number(e.body.invites) || 0 } : null);
 
   /** the matrix again after a write that went through: a failed read must not look like a failed write (the stale matrix stays, the person is told) */
   async function reload(): Promise<boolean> {
@@ -149,25 +148,19 @@
     if (!from || dupBusy) return;
     dupBusy = true; dupErr = '';
     let key: string;
-    try { key = (await api<{ key: string }>('/api/admin/roles', { method: 'POST', body: { label, from } })).key; } catch (e) { dupErr = errorText(e); dupBusy = false; return; }
+    try { key = await copyRole(label, from); } catch (e) { dupErr = errorText(e); dupBusy = false; return; }
     dup = null; fresh = null; dupBusy = false;
     toast.success(tr('adminPeople.roles.duplicated', { name: label }));
     if (open) { await goto(`/admin/roles/${encodeURIComponent(key)}`); return; }
     if (await reload()) await focusRole(key);
   }
 
-  /** the delete of a role: nobody holds it → a confirm; people do → the server's 409 role_in_use opens the dialog with its counts */
+  /** the delete of a role (roleDelete.ts): nobody holds it → a confirm; people do → the server's 409 role_in_use opens the dialog with its counts */
   async function removeRole(a: Ask) {
     const name = roleLabel(a.role);
-    if (a.role.accounts === 0 && !(await confirm({ title: tr('adminPeople.roles.deleteTitle', { name }), body: tr('adminPeople.roles.deleteNone'), danger: true, confirmLabel: tr('adminPeople.roles.delete') }))) { void tick().then(() => a.trigger?.focus({ preventScroll: true })); return; }
-    try {
-      await api(`/api/admin/roles/${encodeURIComponent(a.role.key)}`, { method: 'DELETE' });
-    } catch (e) {
-      const n = inUse(e);
-      if (n) { del = { ...a, ...n }; delErr = ''; delBusy = false; } else toast.error(errorText(e));
-      return;
-    }
-    await deleted(name);
+    const r = await deleteRole(a.role, a.trigger);
+    if (r === 'deleted') await deleted(name);
+    else if (r !== 'kept') { del = { ...a, ...r }; delErr = ''; delBusy = false; }
   }
   /** the role is gone: say so first, then read the matrix again */
   async function deleted(name: string) {
@@ -179,19 +172,13 @@
     if (!del || delBusy) return;
     delBusy = true; delErr = '';
     const name = roleLabel(del.role);
-    try {
-      await api(`/api/admin/roles/${encodeURIComponent(del.role.key)}`, { method: 'DELETE', body: { moveTo: to } });
-    } catch (e) {
-      const n = inUse(e);
-      if (n && del) del = { ...del, ...n };
-      delErr = errorText(e);
-      delBusy = false;
-      return;
-    }
+    const r = await deleteMoving(del.role.key, to);
     delBusy = false;
-    await deleted(name);
+    if (r.ok) { await deleted(name); return; }
+    if (r.counts && del) del = { ...del, ...r.counts };
+    delErr = r.error;
   }
-  $: moveTargets = (matrix?.roles ?? []).filter((r) => r.key !== del?.role.key && r.base !== 'admin').map((r) => ({ key: r.key, name: roleLabel(r) }));
+  $: moveTargets = moveTargetsOf(matrix?.roles ?? [], del?.role.key);
 
   /** a column to a new place: shown at once, written with PUT /order (every key, the server ignores env-only ones), then read back */
   async function moveRole({ key, to }: { key: string; to: number }) {
@@ -219,7 +206,8 @@
   }
   let orderQueue: Promise<void> = Promise.resolve(), movesOpen = 0;
 
-  leaveGuard((nav) => leavesRoute(nav) && dirtyCount > 0, () => ({ title: tr('adminPeople.roles.leaveTitle'), body: tr('adminPeople.roles.leaveBody', { n: dirtyCount }), danger: true, confirmLabel: tr('adminPeople.roles.leaveConfirm') }));
+  // a reload or a closed tab asks too (the browser's own question); switching the view keeps the page and never asks
+  leaveGuard((nav) => (nav.willUnload || leavesRoute(nav)) && dirtyCount > 0, () => ({ title: tr('adminPeople.roles.leaveTitle'), body: tr('adminPeople.roles.leaveBody', { n: dirtyCount }), danger: true, confirmLabel: tr('adminPeople.roles.leaveConfirm') }));
 
 </script>
 

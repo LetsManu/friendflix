@@ -66,6 +66,26 @@ export interface SaveDeps {
   stage: () => Stage;
   /** a role was written: the page takes the new matrix and stage */
   stored: (matrix: RoleMatrix, stage: Stage) => void;
+  /**
+   * the server refused a role's channel groups (`400 invalid livetvGroups`: a group was taken back or merged meanwhile): the page
+   * reads the groups again and keeps what still exists staged (`keepKnownGroups`). Nothing is resent on its own.
+   */
+  groupsChanged?: () => Promise<void>;
+}
+
+/** `400 { error: 'invalid', field: 'livetvGroups' }`: a staged group is no longer released (or gone) */
+export const groupsChanged = (e: unknown): boolean => e instanceof ApiError && e.status === 400 && e.body?.error === 'invalid' && e.body?.field === 'livetvGroups';
+
+/** after the groups were read again: staged group ids the list no longer has go; a choice left equal to the loaded one unstages */
+export function keepKnownGroups(s: Stage, m: RoleMatrix): Stage {
+  const known = new Set((m.livetv?.groups ?? []).map((g) => g.id));
+  let out = s;
+  for (const [role, fields] of Object.entries(s)) {
+    if (!Object.hasOwn(fields, 'livetvGroups')) continue;
+    const ids = (Array.isArray(fields.livetvGroups) ? (fields.livetvGroups as string[]) : []).filter((id) => known.has(id));
+    out = stageSet(out, m, role, 'livetvGroups', ids);
+  }
+  return out;
 }
 
 export interface Save extends Readable<SaveState> {
@@ -93,7 +113,7 @@ export function createSave(deps: SaveDeps): Save {
     set({ saving: true, error: null });
     const stored = (j: Job) => { const m = deps.matrix(); if (m) { const r = storeJob(m, deps.stage(), j); deps.stored(r.matrix, r.stage); } };
     const failed: SaveState['failures'] = [];
-    let hard: string | null = null, i = 0;
+    let hard: string | null = null, changed = false, i = 0;
     for (; i < jobs.length; i++) {
       const j = jobs[i]!;
       set({ progress: tr('adminPeople.roles.applying', { i: i + 1, n: jobs.length }) });
@@ -104,15 +124,21 @@ export function createSave(deps: SaveDeps): Save {
         if (e instanceof ApiError && e.status === 502 && e.body?.error === 'policy_partial') {
           stored(j); // stored either way
           failed.push({ role: j.role, body: j.body, fields: null, failed: Number(e.body?.failed) || 0 });
-        } else { hard = errorText(e); break; }
+        } else if (groupsChanged(e) && j.fields && deps.groupsChanged) { changed = true; break; } else { hard = errorText(e); break; }
       }
     }
-    // a hard error stops the run: what it did not send stays to be sent again (staged values also stay staged)
-    const rest = jobs.slice(i);
+    // a hard error stops the run: what it did not send stays to be sent again (staged values also stay staged). Changed groups stop
+    // it too, but nothing is kept to resend: the groups are read again and the edits stay staged for the person to check
+    const rest = changed ? jobs.slice(i).filter((j) => !j.fields) : jobs.slice(i);
     const failures = [...failed, ...rest.filter((j) => !j.fields).map((j) => st.failures.find((f) => f.role === j.role && f.body === j.body)!).filter(Boolean)];
     // a role written twice (failed before, staged again) counts with its latest answer
     const error = hard ?? (failures.length ? partialText(failedAccounts(failures)) : null);
     set({ saving: false, progress: null, failures, pending: rest.filter((j) => j.fields), error });
+    if (changed) {
+      await deps.groupsChanged?.();
+      toast.error(tr('adminPeople.roles.groups.changed'));
+      return;
+    }
     // all written: "Änderungen gespeichert." only when nothing is left staged (a retry leaves newer edits staged)
     if (!error) {
       const roles = new Set(jobs.map((j) => j.role)).size;

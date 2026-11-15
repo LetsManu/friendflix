@@ -18,6 +18,8 @@
   import { changedFromText, type MatrixField, type MatrixRole, type RoleMatrix, type Stage } from './model';
 
   export let title: string;
+  /** the area this section belongs to (`data-section`: the page moves the focus to its card when a press removes the section) */
+  export let area = '';
   export let icon = '';
   export let fields: MatrixField[] = [];
   export let role: MatrixRole;
@@ -41,12 +43,12 @@
   const appear = (node: Element) => fade(node, { duration: fxMode() === 'full' ? 180 : 0 });
 </script>
 
-<section class="sec panel" aria-labelledby="{id}-t" in:appear>
+<section class="sec panel" aria-labelledby="{id}-t" data-section={area || undefined} in:appear>
   <h3 id="{id}-t">{#if icon}<Icon name={icon} size={18} />{/if}<span>{title}</span></h3>
   {#if fields.length}<div class="fields">
   {#each fields as f (f.key)}
     <div class="fr" class:staged={isStaged(stage, f)} data-field={f.key}>
-      <FieldControl field={f} value={valueOf(stage, f)} libraries={matrix.libraries} {disabled} keepOne={role.base === 'admin'}
+      <FieldControl field={f} value={valueOf(stage, f)} libraries={matrix.libraries} {disabled} keepOne={role.base === 'admin'} reserveNone={false}
         on:change={(e) => dispatch('change', { key: f.key, value: e.detail })} />
       <p class="mark" class:on={mark(stage, f, $locale) !== ''}>{mark(stage, f, $locale)}</p>
     </div>

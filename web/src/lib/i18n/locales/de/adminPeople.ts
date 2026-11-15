@@ -333,7 +333,7 @@ export default {
     leaveTitle: 'Änderungen verwerfen?',
     leaveBody: { one: '{n} Rolle hat ungespeicherte Änderungen. Sie gehen verloren, wenn du die Seite verlässt.', other: '{n} Rollen haben ungespeicherte Änderungen. Sie gehen verloren, wenn du die Seite verlässt.' },
     leaveConfirm: 'Verwerfen',
-    groups: { access: 'Zugang', playback: 'Wiedergabe', downloads: 'Downloads', requests: 'Wünsche', together: 'Gemeinsam', cast: 'Übertragen', livetv: 'Live-TV', title: 'Kanalgruppen', all: 'Alle', none: 'Keine', empty: 'Ohne Kanalgruppe sieht diese Rolle kein Live-TV.', dormant: 'Gespeichert, wirkt wenn Live-TV an ist', pending: { one: '{n} Gruppe wartet auf Freigabe', other: '{n} Gruppen warten auf Freigabe' }, manage: 'Gruppen verwalten', adminAll: 'Alle freigegebenen Gruppen', channels: { one: '{n} Kanal', other: '{n} Kanäle' }, review: 'Live-TV-Gruppen', label: 'Kanalgruppen von {role}' },
+    groups: { access: 'Zugang', playback: 'Wiedergabe', downloads: 'Downloads', requests: 'Wünsche', together: 'Gemeinsam', cast: 'Übertragen', livetv: 'Live-TV', title: 'Kanalgruppen', all: 'Alle', none: 'Keine', empty: 'Ohne Kanalgruppe sieht diese Rolle kein Live-TV.', dormant: 'Gespeichert, wirkt wenn Live-TV an ist', pending: { one: '{n} Gruppe wartet auf Freigabe', other: '{n} Gruppen warten auf Freigabe' }, manage: 'Gruppen verwalten', adminAll: 'Alle freigegebenen Gruppen', channels: { one: '{n} Kanal', other: '{n} Kanäle' }, review: 'Live-TV-Gruppen', label: 'Kanalgruppen von {role}', changed: 'Die Kanalgruppen haben sich geändert. Bitte prüfe die Auswahl und speichere noch einmal.' },
     f: {
       libraries: 'Bibliotheken',
       maxParentalRating: 'Altersfreigabe',

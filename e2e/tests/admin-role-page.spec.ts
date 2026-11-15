@@ -98,6 +98,29 @@ test.describe('Rollen & Rechte: the role page', () => {
     await expect(page.getByRole('region', { name: 'Mediathek' }).getByRole('checkbox', { name: 'Musik' })).toBeDisabled();
   });
 
+  test('a key press that removes its own section moves the focus to that area\'s card', async ({ page, api }) => {
+    Object.assign(values(api, 'friend'), { libraries: ['Musik'] });
+    await page.goto('/admin/roles/friend');
+    // the role page never shows the "no library" hint: its line is not reserved under the checkboxes
+    await expect(page.locator('[data-field="libraries"] p.min')).toHaveCount(0);
+    await page.getByRole('region', { name: 'Mediathek' }).getByRole('checkbox', { name: 'Musik' }).focus();
+    await page.keyboard.press('Space');
+    await expect(page.getByRole('region', { name: 'Mediathek', exact: true })).toHaveCount(0);
+    await expect(area(page, 'Mediathek')).toBeFocused();
+    await page.keyboard.press('Space'); // the card switches it back on
+    await expect(bar(page)).toHaveCount(0);
+    // Gemeinsam: the last of Watch-Partys and Kommentare switched off
+    const together = page.getByRole('region', { name: 'Gemeinsam', exact: true });
+    await together.getByRole('switch', { name: 'Watch-Partys' }).focus();
+    await page.keyboard.press('Space');
+    await expect(together).toBeVisible();
+    await expect(together.getByRole('switch', { name: 'Watch-Partys' })).toBeFocused();
+    await together.getByRole('switch', { name: 'Kommentare' }).focus();
+    await page.keyboard.press('Space');
+    await expect(together).toHaveCount(0);
+    await expect(area(page, 'Gemeinsam')).toBeFocused();
+  });
+
   test('Live-TV groups: tick Hafenkanal → review "Live-TV-Gruppen: Nordlicht TV → Nordlicht TV, Hafenkanal" → PUT body livetvGroups [ids]', async ({ page, api }) => {
     liveTv(api);
     await page.goto('/admin/roles/friend');
@@ -158,6 +181,7 @@ test.describe('Rollen & Rechte: the role page', () => {
     liveTv(api);
     await page.goto('/admin/roles/admin');
     for (const n of ['Mediathek', 'Live-TV', 'Wünsche', 'Gemeinsam', 'Downloads']) {
+      await expect(area(page, n)).toBeChecked();
       await expect(area(page, n)).toBeDisabled();
       await expect(area(page, n)).toHaveAccessibleDescription(/Admins dürfen immer alles/);
     }
@@ -169,6 +193,9 @@ test.describe('Rollen & Rechte: the role page', () => {
     await expect(page.getByRole('spinbutton', { name: 'Gleichzeitige Streams' })).toBeEnabled();
     await expect(page.getByRole('switch', { name: 'Watch-Partys' })).toHaveCount(0);
     await expect(page.getByRole('switch', { name: 'Für Einladungen wählbar' })).toHaveCount(0);
+    // Gemeinsam has only switches, all locked for admin: no empty panel
+    await expect(page.getByRole('region', { name: 'Gemeinsam', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Wünsche', exact: true })).toBeVisible();
   });
 
   test('env-only role: name and groups locked with "Steht in der .env"', async ({ page, api }) => {
@@ -263,6 +290,74 @@ test.describe('Rollen & Rechte: the role page', () => {
     await expect(page.getByRole('spinbutton', { name: 'Gleichzeitige Streams' })).toBeFocused();
     await page.goto('/admin/roles/guest?field=liveTv');
     await expect(page.getByRole('heading', { level: 2, name: 'Gast' })).toBeVisible(); // Live TV not installed: nothing to focus, no error
+  });
+
+  test('a reload or a closed tab with staged changes asks the browser first; without changes it does not', async ({ page }) => {
+    await page.goto('/admin/roles/friend');
+    let asked = '';
+    page.on('dialog', (d) => { asked = d.type(); void d.dismiss(); });
+    await page.reload();
+    expect(asked).toBe('');
+    await area(page, 'Gemeinsam').click();
+    await expect(bar(page)).toBeVisible();
+    await page.evaluate(() => { location.reload(); });
+    await expect.poll(() => asked).toBe('beforeunload');
+    // dismissed: the page and its staged change stay
+    await expect(bar(page)).toContainText('2 Änderungen');
+  });
+
+  test('Duplizieren with staged changes asks before it creates anything', async ({ page, api }) => {
+    await page.goto('/admin/roles/crew');
+    await area(page, 'Gemeinsam').click();
+    const before = api.admin.matrix.roles.length;
+    const ask = async () => {
+      await page.getByRole('button', { name: 'Aktionen für Crew' }).click();
+      await page.getByRole('dialog', { name: 'Crew' }).getByRole('button', { name: 'Duplizieren' }).click();
+      return page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' });
+    };
+    await (await ask()).getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(page.getByRole('dialog', { name: 'Rolle „Crew“ duplizieren' })).toHaveCount(0);
+    await expect(bar(page)).toBeVisible();
+    await (await ask()).getByRole('button', { name: 'Verwerfen' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Rolle „Crew“ duplizieren' });
+    await dlg.getByRole('textbox', { name: 'Name' }).fill('Hafencrew');
+    await dlg.getByRole('button', { name: 'Anlegen' }).click();
+    await expect(page).toHaveURL(/\/admin\/roles\/hafencrew$/);
+    await expect(page.getByRole('alertdialog')).toHaveCount(0); // asked once, before the copy
+    expect(api.admin.matrix.roles.length).toBe(before + 1);
+    expect(api.admin.matrix.puts).toEqual([]);
+  });
+
+  test('a channel group that changed meanwhile: the groups are read again, a specific message, nothing is resent', async ({ page, api }) => {
+    liveTv(api);
+    await page.goto('/admin/roles/friend');
+    const g = chips(page, 'Freund');
+    await g.getByRole('button', { name: /^Nordlicht TV/ }).click();
+    await g.getByRole('button', { name: /^Hafenkanal/ }).click();
+    // another admin takes Hafenkanal back meanwhile: the write answers 400 invalid livetvGroups
+    api.admin.livetv.area.groups.find((x) => x.id === 'g-hafen')!.released = false;
+    await (await review(page)).getByRole('button', { name: 'Speichern' }).click();
+    await expect(toasts(page).getByText('Die Kanalgruppen haben sich geändert. Bitte prüfe die Auswahl und speichere noch einmal.')).toBeVisible();
+    // the list is read again: Hafenkanal is gone, the choice without it stays staged (Nordlicht TV off)
+    await expect(g.getByRole('button', { name: /^Hafenkanal/ })).toHaveCount(0);
+    await expect(g.getByRole('button', { name: /^Nordlicht TV/ })).toHaveAttribute('aria-pressed', 'false');
+    await expect(bar(page)).toContainText('1 Änderung');
+    await expect(bar(page).getByRole('button', { name: 'Erneut anwenden' })).toHaveCount(0);
+    expect(api.admin.matrix.puts).toEqual([]); // the mock logs only accepted bodies: one refused write, never resent
+    const sheet = await review(page);
+    await expect(sheet.getByRole('listitem')).toHaveText(['Freund · Live-TV-Gruppen: Nordlicht TV → Keine']);
+  });
+
+  test('a lock reason wraps instead of being cut off at mid widths, and the cards keep their size', async ({ page }) => {
+    await page.setViewportSize({ width: 610, height: 900 });
+    await page.goto('/admin/roles/friend');
+    const card = page.locator('[data-area="requests"]');
+    const before = await pageBox(card);
+    await area(page, 'Mediathek').click();
+    const why = card.locator('.why');
+    await expect(why).toHaveText('Braucht die Mediathek');
+    expect(await why.evaluate((el) => el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight)).toBe(true);
+    expect(await pageBox(card)).toEqual(before);
   });
 
   test('the name stages; Duplizieren opens the copy\'s page; Löschen goes back to the list', async ({ page, api }) => {

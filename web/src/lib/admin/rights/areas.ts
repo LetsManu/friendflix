@@ -30,6 +30,9 @@ export function areasOf(v: Record<string, unknown>): Areas {
   };
 }
 
+/** the icon of each area (its card and its section) */
+export const AREA_ICON: Readonly<Record<AreaKey, string>> = { library: 'film', livetv: 'tv', requests: 'gift', together: 'users', downloads: 'download' };
+
 /** the areas that need the Mediathek */
 export const NEEDS_LIBRARY: ReadonlySet<AreaKey> = new Set<AreaKey>(['requests', 'together', 'downloads']);
 /** the switches those areas consist of: none of them goes on without a library */
