@@ -3,7 +3,7 @@
 import type pg from 'pg';
 import { auditInTx } from '../audit.js';
 import type { Ctx } from '../ctx.js';
-import { HttpError } from '../users.js';
+import { HttpError, InvalidField } from '../users.js';
 import { CHANNEL_SELECT } from './channels.js';
 import { invalidateLivetvRights } from './rights.js';
 
@@ -277,11 +277,6 @@ export async function roleGroups(ctx: Pick<Ctx, 'db'>): Promise<Map<string, Grou
 }
 
 // ---- the groups of a role, written with the role (roles redesign §4.2, §4.3) ----
-
-/** 400 `{ error: 'invalid', field }`: the route answers the field with the code */
-export class InvalidField extends HttpError {
-  constructor(readonly field: string) { super(400, 'invalid'); }
-}
 
 /**
  * Inside the caller's transaction (writeRole: the role lock and the role's catalogue row FOR NO KEY UPDATE are held): the role sees

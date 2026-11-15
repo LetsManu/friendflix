@@ -7,7 +7,7 @@ import { forgetLibraries } from '../src/libraries.js';
 import { DEFAULT_PERMS, MATRIX_FIELDS } from '../src/perms.js';
 import { roleLimitFor } from '../src/requestlimit.js';
 import { accountsWithout } from '../src/rights.js';
-import { ROLE_KEY_RE, deleteRole, invitableRoles, slugKey, syncRoles } from '../src/rolecat.js';
+import { ROLE_KEY_RE, createRoleFromTemplate, deleteRole, invitableRoles, slugKey, syncRoles } from '../src/rolecat.js';
 import { invalidateRoles } from '../src/roles.js';
 import { writeRole } from '../src/roleWrite.js';
 import { TEST_DB, makeEnv, type TestEnv } from './helpers.js';
@@ -625,6 +625,8 @@ describe('catalogue writes', () => {
     const r = await fromTemplate('Nur Fernsehen', 'liveOnly');
     expect(r.statusCode).toBe(400);
     expect(r.json()).toEqual({ error: 'template_unavailable' });
+    // the function itself enforces it too (the route passes whether Live TV is installed)
+    await expect(createRoleFromTemplate(env.ctx, null, 'Nur Fernsehen', 'liveOnly', false)).rejects.toMatchObject({ statusCode: 400, message: 'template_unavailable' });
     expect((await env.pool.query("select 1 from roles where origin = 'admin'")).rowCount).toBe(0);
     const templates = (await get()).matrix.templates as Array<{ key: string; base: string; patch: object; areas: object }>;
     expect(templates.map((t) => t.key)).toEqual(['family', 'friend', 'guest', 'empty']);

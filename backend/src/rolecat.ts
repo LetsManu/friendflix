@@ -205,10 +205,11 @@ export async function createRole(ctx: Ctx, actor: string | null, label: string, 
 /**
  * A new admin role from a start point (roles redesign §4.4): the catalogue row with the preset's base (invitable), and a role_settings
  * row only for a preset that changes something (Nur Live-TV, Leer); Familie/Freund/Gast store nothing and read "Standard". No channel
- * groups. Audited `role.create { template, label }`. The route refuses Nur Live-TV while Live TV is not installed (400
- * template_unavailable; this module stays clear of the Live TV detection, which would close an import cycle).
+ * groups. Audited `role.create { template, label }`. `livetv`: Live TV is installed (the caller asks the detection; importing it here
+ * would close an import cycle); without it Nur Live-TV is refused with 400 template_unavailable.
  */
-export async function createRoleFromTemplate(ctx: Ctx, actor: string | null, label: string, template: RolePresetKey): Promise<string> {
+export async function createRoleFromTemplate(ctx: Ctx, actor: string | null, label: string, template: RolePresetKey, livetv: boolean): Promise<string> {
+  if (template === 'liveOnly' && !livetv) throw new HttpError(400, 'template_unavailable');
   const { base, patch } = ROLE_PRESETS[template];
   const c = await (ctx.db as pg.Pool).connect();
   try {

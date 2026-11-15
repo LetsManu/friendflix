@@ -30,7 +30,6 @@ import { portainerMode, redeployViaPortainer, updateInfo } from '../updates.js';
 import { updaterView } from '../updater.js';
 import { MAX_FEATURED } from '../lists.js';
 import { livetvInstalled } from '../livetv/detect.js';
-import { InvalidField } from '../livetv/groups.js';
 import { stopLiveSession } from '../livetv/tokens.js';
 import { accountSerial, getUserById } from '../users.js';
 import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, isLanguage, roleLabel, setInstanceLanguage } from '../i18n.js';
@@ -288,14 +287,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.put('/api/admin/roles/:role', admin, async (req, reply) => {
     const role = (req.params as { role: string }).role;
     if (!(await roleExists(ctx, role))) return reply.code(404).send({ error: 'not_found' });
-    let res: Awaited<ReturnType<typeof writeRole>>;
-    try {
-      res = await writeRole(ctx, req.user!.id, role, rolePatch.parse(req.body));
-    } catch (e) {
-      if (e instanceof InvalidField) return reply.code(400).send({ error: 'invalid', field: e.field }); // an unknown or unreleased group
-      throw e;
-    }
-    const { changed, reapplied } = res;
+    // an unknown or unreleased group: 400 { error: 'invalid', field: 'livetvGroups' } (InvalidField, answered by the error handler)
+    const { changed, reapplied } = await writeRole(ctx, req.user!.id, role, rolePatch.parse(req.body));
     if (changed.includes('party')) await dropPartyDenied(ctx); // the role's accounts that lost `party` lose their open party sockets
     if (reapplied.failed) return reply.code(502).send({ error: 'policy_partial', failed: reapplied.failed, identities: reapplied.identities });
     return { ok: true, reapplied };
@@ -308,10 +301,9 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       z.object({ label: roleLabelInput, from: z.string().min(1).max(64) }).strict(),
       z.object({ label: roleLabelInput, template: z.enum(ROLE_PRESET_KEYS) }).strict(),
     ]).parse(req.body);
-    if ('template' in body && body.template === 'liveOnly' && !livetvInstalled(ctx)) return reply.code(400).send({ error: 'template_unavailable' });
     const key = 'from' in body
       ? await createRole(ctx, req.user!.id, body.label, body.from)
-      : await createRoleFromTemplate(ctx, req.user!.id, body.label, body.template);
+      : await createRoleFromTemplate(ctx, req.user!.id, body.label, body.template, livetvInstalled(ctx));
     return reply.code(201).send({ key });
   });
 
