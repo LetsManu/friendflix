@@ -45,11 +45,11 @@ interface Rec {
   /** an updater listed the services when the redeploy began (else this backend's build decides alone) */
   updater: boolean;
   /**
-   * "reload anyway" of the same build: without a listing a restart of this backend is then the change; with one, every service
-   * must be on the new build or seen restarted (optional: older records lack it)
+   * "reload anyway" of the same build: a restart of this backend is then the change; with a listing it ends once that restart was
+   * seen and a later poll finds every service running and healthy (optional: older records lack it)
    */
   forced?: boolean;
-  /** the listed services seen not running since the start (optional: only once one was) */
+  /** forced with a listing: the services seen restarted since the start (today only "backend", by its own boot time; optional) */
   restarted?: string[];
   /** Portainer's answer to the final call: none yet, 2xx (`answeredAt`), or a refusal */
   answer: 'pending' | 'ok' | 'failed'; answeredAt: number | null;
@@ -215,21 +215,21 @@ async function judge(ctx: Ctx, services: readonly ServiceSeen[] | null | undefin
     // none: judge by this backend alone; down: an updater that listed the services at the start does not answer now
     const listing = services === undefined || !r.updater ? 'none' : seen.length ? 'list' : 'down';
     const changedNow = listing === 'list' && seen.some((s) => s.state !== 'running' || onNew(s));
-    const known = r.restarted ?? [];
-    const down = listing === 'list' ? seen.filter((s) => s.state !== 'running' && !known.includes(s.service)).map((s) => s.service) : [];
-    const restartedSet = [...known, ...down];
     const newBuild = ctx.cfg.GIT_SHA !== r.from;
     const restarted = bootedAt > r.startedAt;
-    // a forced reload of the same build: this backend recreated is the change (without a listing nothing else could show it); with
-    // a listing it ends only once every service is on the new build or was seen restarted (this backend: its own restart)
+    // a forced reload of the same build: this backend recreated is the change. With a listing (no per-service start times to prove
+    // each one was recreated), it ends once the backend restarted and, on a later poll, every service runs healthy: the first read
+    // that sees the restart only notes it (`restarted` gets "backend"), so web and gateway recreated between two polls still end done
+    const known = r.restarted ?? [];
+    const noteRestart = r.forced === true && restarted && listing === 'list' && !known.includes('backend');
+    const restartedSet = noteRestart ? [...known, 'backend'] : known;
     const changed = r.changed || changedNow || (r.forced === true && restarted);
-    const allRecreated = seen.every((s) => onNew(s) || restartedSet.includes(s.service) || (s.service === 'backend' && restarted));
     const finished = r.answer === 'ok' && r.sync;
     // a restart of the same build alone proves nothing (a crash, a reboot): only with a change seen, or Portainer saying done
     if (newBuild || (changed && (restarted || finished))) {
       if (listing === 'list') {
         const pending = seen.filter((s) => !healthy(s) || (newBuild && fromTag !== null && s.sha === fromTag));
-        phase = !pending.length ? (r.forced === true && !newBuild && !allRecreated ? 'recreating' : 'done')
+        phase = !pending.length ? (r.forced === true && !newBuild && !known.includes('backend') ? 'recreating' : 'done')
           : pending.some((s) => s.state !== 'running' || (newBuild && s.sha === fromTag)) ? 'recreating' : 'health';
       } else {
         phase = listing === 'none' ? 'done' : 'health';
@@ -246,7 +246,7 @@ async function judge(ctx: Ctx, services: readonly ServiceSeen[] | null | undefin
       if (r.answer === 'ok' && phase === 'pulling') phase = 'unchanged';
       else { at = phase; phase = 'timeout'; }
     }
-    if (FINAL.includes(phase) || (changedNow && !r.changed) || down.length) {
+    if (FINAL.includes(phase) || (changedNow && !r.changed) || noteRestart) {
       const stored = await locked(ctx, async () => {
         const cur = await read(ctx);
         // a late answer got in between (failed): that one stands

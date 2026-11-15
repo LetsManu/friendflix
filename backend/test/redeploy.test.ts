@@ -205,21 +205,22 @@ describe('Portainer redeploy phases', () => {
     expect(await redeployView(ctxOf(OLD, kv), undefined)).toBeNull();
   });
 
-  it('a forced redeploy with a services listing ends done only when every service is on the new build or was seen restarted; the backend restarting alone is not enough', async () => {
+  it('a forced redeploy with a services listing: done once the backend restarted and, on a later poll, every service runs healthy (web / gateway recreated between polls is not a timeout)', async () => {
     const kv = new MemoryKV();
     const id = (await claimRedeploy(ctxOf(OLD, kv), T0))!;
     expect(await beginRedeploy(ctxOf(OLD, kv), id, 'api', 'latest', true, T0, 3_000, true)).toBe(true);
     const old = all('sha-aaaaaaa');
-    // this backend was recreated (younger than the redeploy), web and gateway still run their old, healthy containers
+    // before the backend restarted: nothing proves the reload yet
+    expect(await redeployView(ctxOf(OLD, kv), old, T0 + 10_000, BEFORE)).toMatchObject({ phase: 'pulling', running: true });
+    // the first poll that sees the restarted backend only notes it: web and gateway may not be recreated yet
     expect(await redeployView(ctxOf(OLD, kv), old, T0 + 30_000, T0 + 20_000)).toMatchObject({ phase: 'recreating', running: true });
-    // web seen down: still not all of them
-    expect(await redeployView(ctxOf(OLD, kv), all('sha-aaaaaaa', { web: svc('web', 'sha-aaaaaaa', 'exited', '') }), T0 + 35_000, T0 + 20_000)).toMatchObject({ running: true });
-    expect(await redeployView(ctxOf(OLD, kv), old, T0 + 40_000, T0 + 20_000)).toMatchObject({ phase: 'recreating', running: true });
-    expect(JSON.parse((await kv.get(REDEPLOY_KEY))!).restarted).toEqual(['web']);
-    // gateway seen restarting too, then everything up: done
-    expect(await redeployView(ctxOf(OLD, kv), all('sha-aaaaaaa', { gateway: svc('gateway', 'sha-aaaaaaa', 'running', 'starting') }), T0 + 45_000, T0 + 20_000)).toMatchObject({ running: true });
-    expect(await redeployView(ctxOf(OLD, kv), all('sha-aaaaaaa', { gateway: svc('gateway', 'sha-aaaaaaa', 'restarting', '') }), T0 + 47_000, T0 + 20_000)).toMatchObject({ running: true });
-    expect(await redeployView(ctxOf(OLD, kv), old, T0 + 50_000, T0 + 20_000)).toMatchObject({ phase: 'done', running: false });
+    expect(JSON.parse((await kv.get(REDEPLOY_KEY))!).restarted).toEqual(['backend']);
+    // a later poll with a service not healthy yet waits
+    expect(await redeployView(ctxOf(OLD, kv), all('sha-aaaaaaa', { gateway: svc('gateway', 'sha-aaaaaaa', 'running', 'starting') }), T0 + 35_000, T0 + 20_000)).toMatchObject({ phase: 'health', running: true });
+    // web and gateway were recreated between two polls (never seen down): every service running and healthy ends it done
+    const done = await redeployView(ctxOf(OLD, kv), old, T0 + 40_000, T0 + 20_000);
+    expect(done).toMatchObject({ phase: 'done', running: false });
+    expect(await redeployView(ctxOf(OLD, kv), old, T0 + REDEPLOY_TIMEOUT_MS + 1, T0 + 20_000)).toMatchObject({ phase: 'done' });
     // a stored list of anything but those services is not trusted
     const r = JSON.parse((await kv.get(REDEPLOY_KEY))!);
     await kv.set(REDEPLOY_KEY, JSON.stringify({ ...r, restarted: ['db'] }), 60);
