@@ -46,6 +46,7 @@ import { seerrRoutes } from './routes/seerr.js';
 import { setupRoutes } from './routes/setup.js';
 import { statsRoutes } from './routes/stats.js';
 import { publicArtRoutes } from './routes/publicArt.js';
+import { brandRoutes } from './brand/routes.js';
 import { tvRoutes } from './routes/tv.js';
 import { clientErrorRoutes } from './clientErrors.js';
 import { recoRoutes } from './routes/reco.js';
@@ -79,15 +80,17 @@ export interface Extra {
 
 /**
  * routes whose bodies hold secrets or one-time credentials (spec Part E3; the in-app sign-in's passwords and codes; Live TV provider
- * URLs, F13): never logged with an error
+ * URLs, F13; the brand's image bytes and admin ids, branding plan Task 1): never logged with an error
  */
-const SENSITIVE_BODY = /^\/(api\/(setup\/|admin\/settings|admin\/authentik\/|admin\/livetv\/(sources|channels))|auth\/flow\/)/;
+const SENSITIVE_BODY = /^\/(api\/(setup\/|admin\/settings|admin\/authentik\/|admin\/livetv\/(sources|channels)|admin\/brand)|auth\/flow\/)/;
 
 /**
  * What answers while setup is incomplete (spec Part E1, rulings D23): matched by the route pattern, so an unknown or encoded path is
  * gated too. /auth/login and /auth/callback additionally need a setup session (the first admin's sign-in).
  */
-const SETUP_OPEN_GET: ReadonlySet<string> = new Set(['/health', '/api/version']);
+const SETUP_OPEN_GET: ReadonlySet<string> = new Set(['/health', '/api/version',
+  // the brand (branding plan Task 1): the setup wizard and the first sign-in already show the instance's name, colours and images
+  '/api/public/brand', '/api/public/brand/img/:file']);
 const SETUP_OPEN: ReadonlySet<string> = new Set(['/internal/gateway-config']);
 const SETUP_LOGIN: ReadonlySet<string> = new Set(['/auth/login', '/auth/callback']);
 
@@ -261,6 +264,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   authRoutes(app, ctx);
   authFlowRoutes(app, ctx);
   publicArtRoutes(app, ctx);
+  brandRoutes(app, ctx);
   accountRoutes(app, ctx);
   accountSecurityRoutes(app, ctx);
   mediaRoutes(app, ctx);

@@ -1299,6 +1299,27 @@ export const MIGRATIONS: string[] = [
   drop trigger if exists livetv_recordings_purge_queue on livetv_recordings;
   create trigger livetv_recordings_purge_queue before delete on livetv_recordings for each row execute function livetv_recording_purge_queue();
   `,
+  // 56: Branding stage A (brand/repo.ts): the instance's brand as one row (`data` = the fields of brand/schema.ts, validated on every
+  // read and write; no row = the defaults, rev 0) whose `rev` moves with every change (the public route's ETag, the conflict check of
+  // a save), and the uploaded images by the sha256 of their sanitized bytes (brand/images.ts). Images no row refers to are deleted on a
+  // save once an hour old. Rerunnable.
+  `
+  create table if not exists brand (
+    id smallint primary key check (id = 1),
+    data jsonb not null,
+    rev bigint not null default 0,
+    updated_at timestamptz,
+    updated_by uuid references users(id) on delete set null
+  );
+  create table if not exists brand_images (
+    hash text primary key check (hash ~ '^[0-9a-f]{64}$'),
+    mime text not null check (mime in ('image/png','image/webp')),
+    width int not null check (width > 0),
+    height int not null check (height > 0),
+    bytes bytea not null,
+    created_at timestamptz not null default now()
+  );
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
