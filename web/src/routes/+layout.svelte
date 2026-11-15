@@ -250,6 +250,14 @@
   $: unread = notes.filter((n) => !n.read).length;
   $: if (path) { catOpen = false; catGone(); closePreview(); }
   $: chips = $mobile && showsChips(path) && !kidsUi && $areas.library;
+  /**
+   * The page the chips row was laid out on while the hint guessed a library: a stale guess keeps the row's room (unseen) there until
+   * the redirect to Live TV lands, so the early page never moves (`--nav-h`, roles redesign §6).
+   */
+  let chipsHeldOn: string | null = null;
+  $: if (libHeld && chips) chipsHeldOn = path;
+  $: if (chipsHeldOn !== null && !libHeld && path !== chipsHeldOn) chipsHeldOn = null; // (once the page changed: only the real chips)
+  $: chipsRoom = chips || (chipsHeldOn !== null && chipsHeldOn === path);
   // a person without libraries stays on Live TV and the account pages, kids profiles stay on kids routes, new profiles go through
   // /welcome once (all also checked in boot() before the page mounts)
   $: if (me && !pending && !publicPage) {
@@ -257,7 +265,7 @@
     if (to) void goto(to, { replaceState: true });
   }
   $: if (typeof document !== 'undefined') {
-    document.documentElement.classList.toggle('m-chips', chips && !watchPage && !profilesPage);
+    document.documentElement.classList.toggle('m-chips', chipsRoom && !watchPage && !profilesPage);
     document.documentElement.style.overflow = catOpen ? 'hidden' : ($previewSheet ? 'hidden' : ''); // no page scroll behind the overlay / sheet
   }
   // the web app manifest (name, shortcuts) follows the UI language
@@ -415,9 +423,19 @@
     const nth = sameSpot(href, sec).indexOf(el!);
     if (nth >= 0) memo.set(from.url.pathname + from.url.search, { href, nth, sec });
   });
-  /** waits for the page content (lazy rows, fetched lists), then focuses the remembered link, [data-autofocus] or the first element */
+  /**
+   * waits for the page content (lazy rows, fetched lists), then focuses the remembered link, [data-autofocus] or the first element.
+   * `html[data-focus-settled]` marks that the latest one has finished (tests wait for it before a key).
+   */
   let settleSeq = 0;
   async function settleFocus(want?: Spot, put: (el: HTMLElement) => void = focusEl) {
+    const root = document.documentElement;
+    delete root.dataset.focusSettled;
+    const done = settleFocusNow(want, put), mine = settleSeq;
+    await done;
+    if (mine === settleSeq) root.dataset.focusSettled = '';
+  }
+  async function settleFocusNow(want?: Spot, put: (el: HTMLElement) => void = focusEl) {
     const start = document.activeElement, my = ++settleSeq;
     for (let i = 0; i < 16; i++) {
       await new Promise((r) => setTimeout(r, i ? 150 : 30));
@@ -861,7 +879,7 @@
     {#if tv}
       <TvRail {path} {home} {who} {faceStyle} bind:open={railOpen} />
     {:else if $mobile}
-      <header class="nav m" class:solid={mSolid || !heroPage} class:chips class:tuck={chips && mTucked}>
+      <header class="nav m" class:solid={mSolid || !heroPage} class:chips={chipsRoom} class:tuck={chipsRoom && mTucked}>
         <span class="mbg" aria-hidden="true"></span>
         <div class="mrow">
           <a class="mlogo" href={home} aria-label={$t('shell.nav.homeLink')} aria-current={path === home ? 'page' : undefined}><Logo size={28} label="" /><span class="wm" aria-hidden="true">FriendFlix</span></a>
@@ -869,8 +887,8 @@
           {#if $areas.library}<a class="icon-btn" class:lib-held={libHeld} class:lib-in={libIn} href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>{/if}
           <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
         </div>
-        {#if chips}
-          <nav class="chipbar" class:tucked={mTucked} class:lib-held={libHeld} class:lib-in={libIn} aria-label={$t('shell.cats.title')} inert={mTucked || undefined}>
+        {#if chipsRoom}
+          <nav class="chipbar" class:tucked={mTucked} class:lib-held={libHeld || !chips} class:lib-in={libIn} aria-label={$t('shell.cats.title')} inert={mTucked || undefined}>
             <a class="chip" href="/browse/series" class:on={path.startsWith('/browse/series')} aria-current={path.startsWith('/browse/series') ? 'page' : undefined}>{$t('shell.nav.series')}</a>
             <a class="chip" href="/browse/movies" class:on={path.startsWith('/browse/movies')} aria-current={path.startsWith('/browse/movies') ? 'page' : undefined}>{$t('shell.nav.movies')}</a>
             {#if $features.livetv}<a class="chip" href="/live" class:on={path.startsWith('/live')} aria-current={path.startsWith('/live') ? 'page' : undefined}>{$t('shell.nav.live')}</a>{/if}

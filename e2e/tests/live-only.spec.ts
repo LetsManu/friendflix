@@ -171,7 +171,7 @@ test.describe('a person without libraries (desktop)', () => {
     // the list puts the focus on the last watched channel once it has loaded; a Back before that races the focus move
     await expect(page.locator(':focus')).toHaveAccessibleName(/^12 Kinderinsel/);
     // ... and the layout's boot focus check (every 150 ms until the content holds the focus) has seen it and stopped
-    await page.waitForTimeout(400);
+    await expect(page.locator('html')).toHaveAttribute('data-focus-settled', '');
     await press(page, 461);
     await expect(rail).toHaveClass(/open/);
     await expect(rail.locator(':focus')).toHaveCount(1);
@@ -280,5 +280,17 @@ test.describe('a person without libraries (desktop)', () => {
     await expect(page).toHaveURL((u) => u.pathname === '/live');
     expect(onboarded).toBe(true);
     expect(lib).toEqual([]);
+  });
+});
+
+test.describe('a library hint and a failing /api/me', () => {
+  test.use({ allowedConsole: /status of 500/ });
+  test('the held tabs fall back to visible: nothing stays unseen', async ({ page }) => {
+    await page.addInitScript(() => { localStorage.setItem('ff-boot-hint', JSON.stringify({ approved: true, multi: false, tv: false, profile: 'p1', lang: 'de' })); localStorage.setItem('ff-intro:p1', JSON.stringify({ show: false, sound: false })); });
+    await page.route('**/api/me', (r) => r.fulfill({ status: 500, json: { error: 'boom' } }));
+    await page.goto('/settings');
+    await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
+    await expect(nav(page).getByRole('link', { name: 'Filme' })).toBeVisible();
+    await expect(page.locator('.lib-held')).toHaveCount(0);
   });
 });

@@ -39,4 +39,33 @@ test.describe('a person without libraries (phone)', () => {
     await expect(page.getByRole('button', { name: 'Überrasch mich' })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Weiterschauen' })).toHaveCount(0);
   });
+
+  test('a stale hint (library): nothing moves on the early page before the redirect to Live TV', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('ff-boot-hint', JSON.stringify({ approved: true, multi: false, tv: false, profile: 'p1', lang: 'de' }));
+      // every frame on the early start page: the header room (--nav-h) and where the content starts
+      const w = window as unknown as { __geo: Array<{ nav: string; top: number }> };
+      w.__geo = [];
+      const look = () => {
+        const first = document.querySelector('main')?.firstElementChild;
+        if (location.pathname === '/' && first) w.__geo.push({ nav: getComputedStyle(document.documentElement).getPropertyValue('--nav-h').trim(), top: Math.round(first.getBoundingClientRect().top) });
+        requestAnimationFrame(look);
+      };
+      requestAnimationFrame(look);
+    });
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route('**/api/me', async (r) => { await held; await r.fallback(); });
+    await page.goto('/');
+    await expect(page.locator('html.m-chips')).toHaveCount(1); // the chips' room is there (the chips themselves wait unseen)
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __geo: unknown[] }).__geo.length)).toBeGreaterThan(5);
+    // the Live page's code takes a moment to arrive (as on a real network): the early page stays on screen meanwhile
+    await page.route('**/_app/immutable/**', async (r) => { await new Promise((d) => setTimeout(d, 300)); await r.fallback(); });
+    release();
+    await expect(page).toHaveURL((u) => u.pathname === '/live');
+    await expect(page.getByRole('heading', { level: 1, name: 'Live-TV' })).toBeVisible();
+    const geo = await page.evaluate(() => (window as unknown as { __geo: Array<{ nav: string; top: number }> }).__geo);
+    expect(new Set(geo.map((g) => g.nav)), 'header room on the early page').toEqual(new Set(['104px']));
+    expect(new Set(geo.map((g) => g.top)).size, 'content top on the early page').toBe(1);
+  });
 });
