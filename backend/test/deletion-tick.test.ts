@@ -194,6 +194,28 @@ describe('deletionTick', () => {
     await env.pool.query('delete from livetv_sources where id=$1', [src]);
   });
 
+  it('N7: the final deletion queues the files of the account\'s recordings for purging; plans and other accounts\' recordings are not queued', async () => {
+    const d = await doomed();
+    const other = (await env.pool.query<{ id: string }>('select id from profiles where user_id=$1 and is_owner', [adminId])).rows[0]!.id;
+    const kid = (await env.pool.query<{ id: string }>('select id from profiles where user_id=$1 and not is_owner', [d.id])).rows[0]!.id;
+    const rec = async (profile: string, user: string, o: { state: string; bytes: number; mode: string | null }) => {
+      const r = await env.pool.query<{ id: string; dir: string }>(
+        `insert into livetv_recordings(id, profile_id, user_id, channel_id, channel_name, title, start_at, end_at, pad_before_s, pad_after_s, state, storage, dir, bytes, mode)
+         values (gen_random_uuid(), $1, $2, null, 'Nordlicht TV', 'Sternstunde Physik', now() - interval '1 day', now() - interval '23 hours', 0, 0, $3, 'ff', gen_random_uuid(), $4, $5)
+         returning id, dir`, [profile, user, o.state, o.bytes, o.mode]);
+      return r.rows[0]!;
+    };
+    const own = await rec(d.id, d.id, { state: 'done', bytes: 5000, mode: 'passthrough' });
+    const kids = await rec(kid, d.id, { state: 'partial', bytes: 700, mode: 'transcode' });
+    await rec(d.id, d.id, { state: 'scheduled', bytes: 0, mode: null });
+    const keep = await rec(other, adminId, { state: 'done', bytes: 900, mode: 'passthrough' });
+    await deletionTick(env.ctx);
+    expect((await env.pool.query('select recording_id, dir, bytes::int from livetv_recording_purges order by bytes')).rows)
+      .toEqual([{ recording_id: kids.id, dir: kids.dir, bytes: 700 }, { recording_id: own.id, dir: own.dir, bytes: 5000 }]);
+    expect((await env.pool.query('select id from livetv_recordings')).rows).toEqual([{ id: keep.id }]);
+    await env.pool.query('delete from livetv_recordings; delete from livetv_recording_purges');
+  });
+
   it('a failing step 1 is retried next tick; steps run once; started audit and failure notice once', async () => {
     const d = await doomed();
     fail.jfDelete = 500;

@@ -35,6 +35,8 @@ export interface GatewayOptions {
   onJoinedSegment?: (e: JoinedSegment) => void;
   /** base URL of the `livetv` service (its unsigned `/s/<streamKey>/<file>` files); without it `/media/l/` answers 503 */
   livetvUrl?: string;
+  /** the recordings volume, mounted read-only (Live TV Phase 3, `RECORDINGS_DIR`); without it `/media/r/` answers 503 */
+  recordingsDir?: string;
 }
 
 /** a token's progress goes to the backend at once when its part changes, else at most this often */
@@ -136,6 +138,16 @@ const CAST_CORS: Record<string, string> = {
   'access-control-expose-headers': 'Content-Length, Content-Range, Accept-Ranges',
   'cross-origin-resource-policy': 'cross-origin',
 };
+
+// ---- Live TV recordings: /media/r/<token>/<file> (plan Phase 3 Task 5) ----
+
+/** a recording's files: its EVENT playlist, init versions and numbered segments; anything else (`../`, other names) is refused */
+export const REC_FILE = /^(index\.m3u8|init-[0-9]{1,4}\.mp4|[0-9]{1,10}\.(ts|m4s))$/;
+export const REC_ROUTE = /^\/media\/r\/([A-Za-z0-9_-]{43})\/([^/?#]{1,40})$/;
+const REC_PREFIX = '/media/r/';
+const REC_DIR = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const REC_MEMO_MS = 2_000;
+type RecAuthz = { dir: string; growing: boolean } | 401 | 403 | 410;
 
 // ---- Live TV: /media/l/<token>/<file> (spec §7.3) ----
 /**
@@ -510,7 +522,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
   const castFails = new Map<string, { start: number; hashes: Set<string>; blockedUntil: number }>();
   const dlOpen = new Map<string, number>();
   const dlCache = new Map<string, { exp: number; v: DownloadAuthz | 401 | 404 }>();
-  const m = { dlBytes: 0, bytes: 0, active: 0, req: new Map<string, number>(), cast: new Map<string, number>(), live: new Map<string, number>() };
+  const m = { dlBytes: 0, bytes: 0, active: 0, req: new Map<string, number>(), cast: new Map<string, number>(), live: new Map<string, number>(), rec: new Map<string, number>() };
   const count = (k: string) => m.req.set(k, (m.req.get(k) ?? 0) + 1);
 
   const metrics = () =>
@@ -527,6 +539,8 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       ...[...m.cast].map(([k, v]) => `friendflix_gateway_cast_requests_total{code="${k}"} ${v}`),
       '# TYPE friendflix_gateway_live_requests_total counter',
       ...[...m.live].map(([k, v]) => `friendflix_gateway_live_requests_total{code="${k}"} ${v}`),
+      '# TYPE friendflix_gateway_rec_requests_total counter',
+      ...[...m.rec].map(([k, v]) => `friendflix_gateway_rec_requests_total{code="${k}"} ${v}`),
     ].join('\n') + '\n';
 
   /**
@@ -622,6 +636,8 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     // live TV does not need the media server: before the "no media server yet" answer. Dispatched on the raw path too, so a
     // `/media/l/<t>/../x` that URL normalisation would turn into another route is refused here.
     if (url.pathname.startsWith(LIVE_PREFIX) || (req.url ?? '').startsWith(LIVE_PREFIX)) return handleLive(req, res);
+    // recordings neither (files of the read-only recordings mount); dispatched on the raw path as well, like live
+    if (url.pathname.startsWith(REC_PREFIX) || (req.url ?? '').startsWith(REC_PREFIX)) return handleRec(req, res);
     // the Systemcheck's buffering probe needs no media server either
     if (url.pathname === DRIP_PATH) return handleDrip(req, res);
     // no media server yet (setup not done): 503 before any backend call; /health stays 200 so the container is not restarted
@@ -743,45 +759,34 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     return serveFile(req, res, t);
   }
 
-  async function serveFile(req: IncomingMessage, res: ServerResponse, t: Extract<DownloadTarget, { kind: 'file' }>) {
-    const fail = (code: number, body: string, extra: Record<string, string> = {}) => {
-      count(String(code));
-      return end(res, code, body, 'text/plain', { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...extra });
-    };
-    if (!opts.downloadDir) return fail(503, 'unavailable');
-    if (!DL_FILE.test(t.file) || !DL_ETAG.test(t.etag) || !Number.isSafeInteger(t.size) || t.size < 0) return fail(500, 'error');
-    const root = await realpath(resolve(opts.downloadDir)).catch(() => null);
-    if (!root) return fail(503, 'unavailable');
-    const full = resolve(root, t.file);
-    if (!full.startsWith(root + sep)) return fail(500, 'error');
+  /**
+   * One file of a read-only mount, the way both file routes serve it (B-I6): its real path must be `full` below `root`, it is opened
+   * without following a link (a file that is gone answers 404 before any byte), one range at most (If-Range with `etag`), then streamed.
+   * `expectSize`: a download not prepared completely yet answers 503. A client that left meanwhile gets nothing and costs no slot (B-M5).
+   */
+  async function sendFile(req: IncomingMessage, res: ServerResponse, o: {
+    full: string; headers: Record<string, string>; etag?: string; expectSize?: number;
+    count: (code: string) => void; fail: (code: number, body: string, extra?: Record<string, string>) => void; onBytes: (n: number) => void;
+  }) {
     let fh;
     try {
-      fh = await open(full, fsc.O_RDONLY | fsc.O_NOFOLLOW);
+      fh = await open(o.full, fsc.O_RDONLY | fsc.O_NOFOLLOW);
     } catch {
-      return fail(404, 'not found');
+      return o.fail(404, 'not found');
     }
     let handedOver = false;
     try {
       const st = await fh.stat();
-      const real = await realpath(full).catch(() => null);
-      if (!st.isFile() || real !== full) return fail(404, 'not found');
-      if (st.size !== t.size) return fail(503, 'not ready', { 'retry-after': '30' });
+      const real = await realpath(o.full).catch(() => null);
+      if (!st.isFile() || real !== o.full) return o.fail(404, 'not found');
+      if (o.expectSize !== undefined && st.size !== o.expectSize) return o.fail(503, 'not ready', { 'retry-after': '30' });
       const size = st.size;
-      const etag = `"${t.etag}"`;
-      const base: Record<string, string> = {
-        'content-type': 'video/mp4',
-        'accept-ranges': 'bytes',
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-        etag,
-        vary: 'Cookie',
-      };
       let start = 0;
       let endB = size - 1;
       let partial = false;
       const rh = req.headers.range;
       const ifRange = req.headers['if-range'];
-      if (typeof rh === 'string' && (ifRange === undefined || ifRange === etag)) {
+      if (typeof rh === 'string' && (o.etag === undefined || ifRange === undefined || ifRange === o.etag)) {
         const r = /^bytes=(\d*)-(\d*)$/.exec(rh.trim()); // exactly one range; lists and other units are refused
         let ok = false;
         if (r && (r[1] || r[2])) {
@@ -794,18 +799,19 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
             ok = start < size && start <= endB;
           }
         }
-        if (!ok) return fail(416, 'range not satisfiable', { 'content-range': `bytes */${size}` });
+        if (!ok) return o.fail(416, 'range not satisfiable', { 'content-range': `bytes */${size}` });
         partial = true;
       }
+      if (res.destroyed) return; // the client left during the checks: nothing to send, not counted
       const len = size === 0 ? 0 : endB - start + 1;
-      const hdr = { ...base, 'content-length': String(len), ...(partial ? { 'content-range': `bytes ${start}-${endB}/${size}` } : {}) };
-      count(partial ? '206' : '200');
+      const hdr = { ...o.headers, 'accept-ranges': 'bytes', 'content-length': String(len), ...(partial ? { 'content-range': `bytes ${start}-${endB}/${size}` } : {}) };
+      o.count(partial ? '206' : '200');
       res.writeHead(partial ? 206 : 200, hdr);
       if (req.method === 'HEAD' || len === 0) return void res.end();
       handedOver = true;
       m.active++;
       const rs = fh.createReadStream({ start, end: endB, autoClose: true });
-      rs.on('data', (c) => (m.dlBytes += c.length));
+      rs.on('data', (c) => o.onBytes(c.length));
       rs.on('error', () => res.destroy());
       res.once('close', () => {
         m.active--;
@@ -815,6 +821,24 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     } finally {
       if (!handedOver) await fh.close().catch(() => {});
     }
+  }
+
+  async function serveFile(req: IncomingMessage, res: ServerResponse, t: Extract<DownloadTarget, { kind: 'file' }>) {
+    const fail = (code: number, body: string, extra: Record<string, string> = {}) => {
+      count(String(code));
+      return end(res, code, body, 'text/plain', { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...extra });
+    };
+    if (!opts.downloadDir) return fail(503, 'unavailable');
+    if (!DL_FILE.test(t.file) || !DL_ETAG.test(t.etag) || !Number.isSafeInteger(t.size) || t.size < 0) return fail(500, 'error');
+    const root = await realpath(resolve(opts.downloadDir)).catch(() => null);
+    if (!root) return fail(503, 'unavailable');
+    const full = resolve(root, t.file);
+    if (!full.startsWith(root + sep)) return fail(500, 'error');
+    const etag = `"${t.etag}"`;
+    return sendFile(req, res, {
+      full, etag, expectSize: t.size, count, fail, onBytes: (n) => { m.dlBytes += n; },
+      headers: { 'content-type': 'video/mp4', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', etag, vary: 'Cookie' },
+    });
   }
 
   const tooLong = (url: URL) => url.search.length > 2049 || [...url.searchParams].length > 40;
@@ -1437,6 +1461,99 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       else res.destroy();
     });
   });
+  // ---- Live TV recordings: /media/r/<token>/<file> -> ${recordingsDir}/<dir>/<file> ----
+  const recCount = (k: string) => m.rec.set(k, (m.rec.get(k) ?? 0) + 1);
+  /** keyed `sha256(token)|client` (never the raw token); 2 s for grants and denials alike, backend trouble is not memoised */
+  const recCache = new Map<string, { exp: number; v: RecAuthz }>();
+  const recInflight = new Map<string, Promise<RecAuthz | 'error'>>();
+
+  /** POST /internal/authz/rec { token, ip } -> { dir, growing, maxAgeS }. Single flight per key, as for live. */
+  function authorizeRec(token: string, ip: string): Promise<RecAuthz | 'error'> {
+    const key = `${sha256(token)}|${ip}`;
+    const hit = recCache.get(key);
+    if (hit && hit.exp > Date.now()) return Promise.resolve(hit.v);
+    const running = recInflight.get(key);
+    if (running) return running;
+    const p = (async (): Promise<RecAuthz | 'error'> => {
+      let v: RecAuthz;
+      try {
+        const r = await f(new URL('/internal/authz/rec', opts.backendUrl), {
+          method: 'POST',
+          headers: { 'x-internal-secret': opts.internalSecret, 'content-type': 'application/json' },
+          body: JSON.stringify({ token, ip }),
+          signal: AbortSignal.timeout(5000),
+        });
+        noteRev(r);
+        if (r.ok) {
+          const j = (await r.json()) as { dir?: unknown; growing?: unknown };
+          // the folder becomes a path segment: only the backend's uuid shape is accepted
+          if (typeof j?.dir !== 'string' || !REC_DIR.test(j.dir) || typeof j.growing !== 'boolean') return 'error';
+          v = { dir: j.dir, growing: j.growing };
+        } else if (r.status === 401 || r.status === 403 || r.status === 410) {
+          await r.body?.cancel().catch(() => {});
+          v = r.status;
+        } else {
+          await r.body?.cancel().catch(() => {});
+          return 'error';
+        }
+      } catch {
+        return 'error';
+      }
+      recCache.set(key, { exp: Date.now() + REC_MEMO_MS, v });
+      if (recCache.size > 5000) recCache.clear();
+      return v;
+    })().finally(() => recInflight.delete(key));
+    recInflight.set(key, p);
+    return p;
+  }
+
+  /**
+   * GET/HEAD/OPTIONS `/media/r/<token>/<file>`: the file allowlist, no query, the cast limiter for failing tokens, the recording authz,
+   * then the file from `<recordingsDir>/<dir>/` with the download path's checks (real path under the root, opened without following a
+   * link, one range at most). The playlist is `no-store` while the recording grows, else `private, max-age=60`; segments and init files
+   * `private, max-age=3600`. A file that is gone is a 404 before any byte. CORS of the cast path; nothing is logged, metrics count codes.
+   */
+  async function handleRec(req: IncomingMessage, res: ServerResponse) {
+    const fail = (code: number, body: string, extra: Record<string, string> = {}) => {
+      recCount(String(code));
+      return end(res, code, body, 'text/plain', { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...CAST_CORS, ...extra });
+    };
+    const rawUrl = req.url ?? '';
+    const q = rawUrl.indexOf('?');
+    const mm = REC_ROUTE.exec(q === -1 ? rawUrl : rawUrl.slice(0, q));
+    if (!mm || !REC_FILE.test(mm[2]!)) return fail(403, 'forbidden');
+    if (req.method === 'OPTIONS') {
+      recCount('204');
+      res.writeHead(204, { ...CAST_CORS, 'access-control-allow-methods': 'GET, HEAD, OPTIONS', 'access-control-allow-headers': 'Range, Content-Type', 'access-control-max-age': '600' });
+      return void res.end();
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') return fail(405, 'method not allowed', { allow: 'GET, HEAD, OPTIONS' });
+    if (q !== -1) return fail(403, 'forbidden');
+    const ip = clientKey(req);
+    if (isBlocked(ip)) return fail(429, 'too many requests', { 'retry-after': '300' });
+    const token = mm[1]!;
+    const file = mm[2]!;
+    const auth = await authorizeRec(token, ip);
+    if (res.destroyed) return;
+    if (auth === 'error') return fail(503, 'unavailable', { 'retry-after': '2' });
+    if (typeof auth === 'number') {
+      if (auth === 401) noteFail(ip, sha256(token));
+      return fail(auth, auth === 401 ? 'unauthorized' : auth === 403 ? 'forbidden' : 'gone');
+    }
+    if (!opts.recordingsDir) return fail(503, 'unavailable', { 'retry-after': '30' });
+    const root = await realpath(resolve(opts.recordingsDir)).catch(() => null);
+    if (!root) return fail(503, 'unavailable', { 'retry-after': '30' });
+    const full = resolve(root, auth.dir, file);
+    if (!full.startsWith(root + sep + auth.dir + sep)) return fail(403, 'forbidden');
+    const ext = file.slice(file.lastIndexOf('.') + 1);
+    return sendFile(req, res, {
+      full, count: recCount, fail, onBytes: (n) => { m.bytes += n; },
+      headers: {
+        'content-type': LIVE_TYPES[ext]!, 'x-content-type-options': 'nosniff', ...CAST_CORS,
+        'cache-control': ext === 'm3u8' ? (auth.growing ? 'no-store' : 'private, max-age=60') : 'private, max-age=3600',
+      },
+    });
+  }
   server.keepAliveTimeout = 65_000;
   return { server, metrics };
 }
@@ -1451,7 +1568,7 @@ export function baseHeaders(rawUrl: string): Record<string, string> {
   let path = rawUrl;
   try { path = new URL(rawUrl, 'http://x').pathname; } catch { /* the raw path */ }
   // exactly as handle() routes: the cast prefix on the normalised path, the live prefix on the normalised or the raw one
-  const cast = path.startsWith(CAST_PREFIX) || path.startsWith(LIVE_PREFIX) || rawUrl.startsWith(LIVE_PREFIX);
+  const cast = path.startsWith(CAST_PREFIX) || path.startsWith(LIVE_PREFIX) || rawUrl.startsWith(LIVE_PREFIX) || path.startsWith(REC_PREFIX) || rawUrl.startsWith(REC_PREFIX);
   return { 'x-content-type-options': 'nosniff', 'cross-origin-resource-policy': cast ? 'cross-origin' : 'same-origin' };
 }
 

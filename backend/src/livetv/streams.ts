@@ -242,7 +242,9 @@ export async function liveConversions(ctx: Ctx): Promise<ConvEntry[]> {
   const names = ids.length
     ? new Map((await ctx.db.query<{ id: string; name: string }>(`select id, name from (${CHANNEL_SELECT} where c.id = any($1::uuid[])) e`, [ids])).rows.map((r) => [r.id, r.name] as const))
     : new Map<string, string>();
-  return tr.map((s) => ({ kind: 'live', key: convKey(s.channelId), label: names.get(s.channelId) ?? null, since: s.since, device: null, userId: null }));
+  // a transcode a recording uses counts as `record` (Phase 3); its key stays `live:<id>` (one slot per channel, F8)
+  const recorded = ids.length ? await recordedChannels(ctx) : new Set<string>();
+  return tr.map((s) => ({ kind: recorded.has(s.channelId) ? 'record' : 'live', key: convKey(s.channelId), label: names.get(s.channelId) ?? null, since: s.since, device: null, userId: null }));
 }
 
 /**
@@ -437,19 +439,79 @@ async function join(ctx: Ctx, v: StreamView): Promise<Joined | WatchError> {
   return still ? joined(still) : { status: 502, error: 'channel_unreachable' };
 }
 
-async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: LivetvProfile, list: StreamView[], lock: string): Promise<Joined | WatchError> {
-  const unreachable = { status: 502, error: 'channel_unreachable' } as const;
-  const user = { id: who.userId, role: who.role };
+/**
+ * The start steps a watch and a recording share (A-I6): the channel's input row (source enabled), whether a push feed receives, the
+ * source's connection count without this channel, and the post with its first-segment wait. A watch adds the viewer parts (release on
+ * switch, the refusal lists); a recording adds nothing but its admission kind.
+ */
+type StartInput = { row: InputRow; input: StreamInput } | { error: 'channel_unreachable' | 'not_receiving' };
+async function startInput(ctx: Ctx, ch: EffectiveChannel): Promise<StartInput> {
   const row = (await ctx.db.query<InputRow>(
     `select c.ingest, c.stream_kind, c.stream_url_enc, c.allow_lan, s.allow_lan as source_lan, s.user_agent, s.max_streams, s.enabled
        from livetv_channels c join livetv_sources s on s.id = c.source_id where c.id = $1`, [ch.id])).rows[0];
-  if (!row || !row.enabled) return unreachable;
-
+  if (!row || !row.enabled) return { error: 'channel_unreachable' };
   if (row.ingest === 'push') {
     const receiving = await pushReceiving(ctx, ch.id);
-    if (receiving === null) return unreachable;
-    if (!receiving) return { status: 409, error: 'not_receiving' };
+    if (receiving === null) return { error: 'channel_unreachable' };
+    if (!receiving) return { error: 'not_receiving' };
   }
+  const input = inputOf(ctx, ch.id, row);
+  return input ? { row, input } : { error: 'channel_unreachable' };
+}
+
+/** the provider's streams that run now on this channel's source, the channel itself never counted (spec §19) */
+async function sourceStreams(ctx: Ctx, ch: EffectiveChannel, list: readonly StreamView[]): Promise<number> {
+  const ids = list.filter((s) => s.state !== 'failed' && s.channelId !== ch.id && UUID_RE.test(s.channelId)).map((s) => s.channelId);
+  return ids.length
+    ? Number((await ctx.db.query<{ n: string }>('select count(*) as n from livetv_channels where source_id = $1 and id = any($2::uuid[])', [ch.sourceId, ids])).rows[0]?.n ?? 0)
+    : 0;
+}
+
+/**
+ * `POST /v1/streams` under the channel's start lock, then the first segment within 15 s (the lock is refreshed meanwhile). `giveBack`
+ * returns an admitted slot: on every failure, and when livetv's own probe says the stream does not transcode after all. `posted` runs
+ * once livetv lists the stream (a switch's release marker goes then). null = unreachable (the events are noted here).
+ */
+async function postStream(ctx: Ctx, ch: EffectiveChannel, input: StreamInput, mode: Mode, lock: string, giveBack: () => Promise<void>, posted?: () => Promise<void>): Promise<StreamView | null> {
+  const body: StartBody = {
+    channelId: ch.id, input, mode, encoder: await liveEncoder(ctx), dvrSeconds: ctx.cfg.LIVETV_DVR_MINUTES * 60, maxBitrate: ctx.cfg.LIVETV_MAX_BITRATE,
+  };
+  // a slow admission (budget lock, encoder probe) must not let the lock lapse: a second starter would admit too. Lost = somebody else starts it
+  if (!(await ctx.kv.refreshIfEquals(startKey(ch.id), lock, START_LOCK_TTL_S).catch(() => false))) {
+    // the grant key is one per channel (F8): when another starter holds the lock now, it admitted under the same key, and
+    // dropping it here would leave its stream uncounted. Only an orphaned grant (nobody holds the lock) is given back.
+    if ((await ctx.kv.get(startKey(ch.id)).catch(() => 'unknown')) === null) await giveBack();
+    return null;
+  }
+  try {
+    await livetvCall(ctx, 'POST', '/v1/streams', body, { timeoutMs: START_TIMEOUT_MS });
+  } catch (e) {
+    if (!(e instanceof LivetvError)) throw e;
+    await giveBack();
+    await event(ctx, { level: 'error', code: 'start_failed', channelId: ch.id, reason: e.code });
+    return null;
+  }
+  invalidateLiveConversions();
+  await posted?.();
+  // the lock covers the wait for the first segment too (a second watcher joins, never starts again)
+  const ready = await firstSegment(ctx, ch.id, FIRST_SEGMENT_MS, () => ctx.kv.refreshIfEquals(startKey(ch.id), lock, START_LOCK_TTL_S).catch(() => false));
+  if (!ready) {
+    await stopQuietly(ctx, ch.id);
+    await giveBack();
+    await event(ctx, { level: 'error', code: 'start_failed', channelId: ch.id, reason: 'no_segment' });
+    return null;
+  }
+  // livetv's own probe at start decides the real mode (a transcode becomes remux): only a transcode keeps the slot
+  if (ready.mode !== 'transcode') await giveBack();
+  return ready;
+}
+
+async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: LivetvProfile, list: StreamView[], lock: string): Promise<Joined | WatchError> {
+  const unreachable = { status: 502, error: 'channel_unreachable' } as const;
+  const user = { id: who.userId, role: who.role };
+  const si = await startInput(ctx, ch);
+  if ('error' in si) return si.error === 'not_receiving' ? { status: 409, error: 'not_receiving' } : unreachable;
+  const { row, input } = si;
 
   // a channel switch (Task 32): this device's view on another running channel A that nobody else watches; A may be released at once
   // below, but only when one of the two checks passes solely because A is left out
@@ -465,13 +527,9 @@ async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: Live
     return { status: 503, error: 'provider_limit', max: max ?? 0, running };
   };
 
-  // the provider's connection limit (spec §19): the streams of this source that run now (the channel itself never counts against its
-  // own start: after a release marker outlived its wait it may still be listed)
+  // the provider's connection limit (spec §19)
   if (row.max_streams !== null) {
-    const ids = list.filter((s) => s.state !== 'failed' && s.channelId !== ch.id && UUID_RE.test(s.channelId)).map((s) => s.channelId);
-    const n = ids.length
-      ? Number((await ctx.db.query<{ n: string }>('select count(*) as n from livetv_channels where source_id = $1 and id = any($2::uuid[])', [ch.sourceId, ids])).rows[0]?.n ?? 0)
-      : 0;
+    const n = await sourceStreams(ctx, ch, list);
     if (n >= row.max_streams) {
       // A is listed and on this source, so it is one of the n: without it the start would pass
       if (!(old && old.sourceId === ch.sourceId && n - 1 < row.max_streams)) return refusal('provider_limit', row.max_streams);
@@ -479,8 +537,6 @@ async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: Live
     }
   }
 
-  const input = inputOf(ctx, ch.id, row);
-  if (!input) return unreachable;
   const mode = expectedMode(ch, Date.now());
   const key = convKey(ch.id);
   let granted = false;
@@ -521,39 +577,9 @@ async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: Live
   }
 
   try {
-    const body: StartBody = {
-      channelId: ch.id, input, mode, encoder: await liveEncoder(ctx), dvrSeconds: ctx.cfg.LIVETV_DVR_MINUTES * 60, maxBitrate: ctx.cfg.LIVETV_MAX_BITRATE,
-    };
-    // a slow admission (budget lock, encoder probe) must not let the lock lapse: a second starter would admit too. Lost = somebody else starts it
-    if (!(await ctx.kv.refreshIfEquals(startKey(ch.id), lock, START_LOCK_TTL_S).catch(() => false))) {
-      // the grant key is one per channel (F8): when another starter holds the lock now, it admitted under the same key, and
-      // dropping it here would leave its stream uncounted. Only an orphaned grant (nobody holds the lock) is given back.
-      if ((await ctx.kv.get(startKey(ch.id)).catch(() => 'unknown')) === null) await giveBack();
-      return unreachable;
-    }
-    try {
-      await livetvCall(ctx, 'POST', '/v1/streams', body, { timeoutMs: START_TIMEOUT_MS });
-    } catch (e) {
-      if (!(e instanceof LivetvError)) throw e;
-      await giveBack();
-      await event(ctx, { level: 'error', code: 'start_failed', channelId: ch.id, reason: e.code });
-      return unreachable;
-    }
-    invalidateLiveConversions();
     // B is listed: the stopping marker has done its job, a watch of A no longer waits through B's first-segment wait
-    await release?.done();
-    release = null;
-    // the lock covers the wait for the first segment too (a second watcher joins, never starts again)
-    const ready = await firstSegment(ctx, ch.id, FIRST_SEGMENT_MS, () => ctx.kv.refreshIfEquals(startKey(ch.id), lock, START_LOCK_TTL_S).catch(() => false));
-    if (!ready) {
-      await stopQuietly(ctx, ch.id);
-      await giveBack();
-      await event(ctx, { level: 'error', code: 'start_failed', channelId: ch.id, reason: 'no_segment' });
-      return unreachable;
-    }
-    // livetv's own probe at start decides the real mode (a transcode becomes remux): only a transcode keeps the slot
-    if (ready.mode !== 'transcode') await giveBack();
-    return joined(ready);
+    const ready = await postStream(ctx, ch, input, mode, lock, giveBack, async () => { await release?.done(); release = null; });
+    return ready ? joined(ready) : unreachable;
   } catch (e) {
     await giveBack();
     throw e;
@@ -562,11 +588,98 @@ async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: Live
   }
 }
 
+// ---- recordings (Phase 3) ----
+
+export type RecordStartError = 'no_slot' | 'provider_limit' | 'channel_unreachable' | 'not_receiving';
+
+/**
+ * Starts (or joins) a channel's shared stream for a recording (plan Phase 3 Task 3): the same start path as a watch (start lock, input,
+ * push feed receiving?, the source's connection limit, `POST /v1/streams`, the first segment within 15 s), with admission kind `record`
+ * (its own reservation left out) and no viewer: no token, no release on switch. A running stream is joined without the budget (one
+ * stream and one slot per channel, however many recordings use it). A stream that turns out not to transcode gives its slot back.
+ */
+export async function startForRecording(ctx: Ctx, ch: EffectiveChannel, o: { userId: string }): Promise<{ mode: Mode; segments: Segments | null } | { error: RecordStartError }> {
+  const until = Date.now() + JOIN_WAIT_MS;
+  for (;;) {
+    const list = await readStreams(ctx);
+    if (list === null) return { error: 'channel_unreachable' };
+    const cur = activeOf(list, ch.id);
+    if (cur) return { mode: cur.mode, segments: cur.segments };
+    const token = randomUUID();
+    if (await ctx.kv.setnx(startKey(ch.id), token, START_LOCK_TTL_S)) {
+      try {
+        return await startRecordStream(ctx, ch, o.userId, list, token);
+      } finally {
+        await ctx.kv.delIfEquals(startKey(ch.id), token).catch(() => false);
+      }
+    }
+    if (Date.now() >= until) return { error: 'channel_unreachable' };
+    await sleep(POLL_MS);
+  }
+}
+
+async function startRecordStream(ctx: Ctx, ch: EffectiveChannel, userId: string, list: StreamView[], lock: string): Promise<{ mode: Mode; segments: Segments | null } | { error: RecordStartError }> {
+  const si = await startInput(ctx, ch);
+  if ('error' in si) return { error: si.error };
+  if (si.row.max_streams !== null && (await sourceStreams(ctx, ch, list)) >= si.row.max_streams) return { error: 'provider_limit' };
+  const mode = expectedMode(ch, Date.now());
+  const key = convKey(ch.id);
+  let granted = false;
+  if (mode === 'transcode') {
+    const a = await admitConversion(ctx, { kind: 'record', userId, hint: key, label: ch.name, exceptResv: ch.id });
+    if (!a.ok) return { error: 'no_slot' };
+    await bindConvGrant(ctx, key, key, { label: ch.name });
+    granted = true;
+  }
+  const giveBack = async () => {
+    if (!granted) return;
+    granted = false;
+    await dropConvGrant(ctx, key);
+  };
+  try {
+    const ready = await postStream(ctx, ch, si.input, mode, lock, giveBack);
+    return ready ? { mode: ready.mode, segments: ready.segments } : { error: 'channel_unreachable' };
+  } catch (e) {
+    await giveBack();
+    throw e;
+  }
+}
+
 // ---- release on switch (Task 32) ----
 
-/** Phase 3 (recordings) decides this; in Phase 1 no recording ever uses a channel (ruling 38) */
-export function recordingUses(_channelId: string): boolean {
-  return false;
+/** a recording's slot is reserved (and its channel kept) from its start − padding − this */
+export const RECORD_LEAD_MS = 5 * 60_000;
+/** a recording's longest padding before its start (the routes, the settings and the table allow 30 min): bounds the due queries (A-M4) */
+export const MAX_PAD_BEFORE_S = 1800;
+const USES_MEMO_MS = 5_000;
+let usesMemo = new WeakMap<object, { at: number; p: Promise<Set<string>> }>();
+/** drops the memo of recordedChannels (a recording started, ended or was deleted) */
+export function invalidateRecordingUses(): void {
+  usesMemo = new WeakMap();
+}
+
+/**
+ * The channels recordings use now (Phase 3): a row `recording`, or `scheduled` and starting within its padding + 5 min (its slot is
+ * reserved then, and its channel must not be released or idle-stopped meanwhile). One query, memoised 5 s per ctx.
+ */
+export function recordedChannels(ctx: Pick<Ctx, 'db'>): Promise<Set<string>> {
+  const hit = usesMemo.get(ctx);
+  if (hit && Date.now() - hit.at < USES_MEMO_MS) return hit.p;
+  const p = ctx.db.query<{ channel_id: string }>(
+    `select distinct channel_id from livetv_recordings
+      where channel_id is not null
+        and (state in ('starting','recording')
+          or (state = 'scheduled' and start_at <= now() + make_interval(secs => $1::int + $2::int)
+              and start_at - make_interval(secs => pad_before_s) <= now() + make_interval(secs => $1::int)
+              and end_at + make_interval(secs => pad_after_s) > now()))`, [RECORD_LEAD_MS / 1000, MAX_PAD_BEFORE_S])
+    .then((r) => new Set(r.rows.map((x) => x.channel_id)), () => new Set<string>());
+  usesMemo.set(ctx, { at: Date.now(), p });
+  return p;
+}
+
+/** whether a recording uses the channel (ruling 38, Phase 3): release on switch and the idle stop leave it running */
+export async function recordingUses(ctx: Pick<Ctx, 'db'>, channelId: string): Promise<boolean> {
+  return (await recordedChannels(ctx)).has(channelId);
 }
 
 /**
@@ -595,7 +708,7 @@ export async function releasableOld(
   const v = await deviceLiveView(ctx, who.userId, who.deviceId);
   if (!v || v.channelId === target.id || !UUID_RE.test(v.channelId)) return null;
   const s = activeOf(list ?? (await readStreams(ctx)), v.channelId);
-  if (!s || recordingUses(v.channelId)) return null;
+  if (!s || (await recordingUses(ctx, v.channelId))) return null;
   if (((await viewerCounts(ctx, { exceptHash: v.hash })).get(v.channelId) ?? 0) > 0) return null;
   const row = (await ctx.db.query<{ source_id: string }>('select source_id from livetv_channels where id = $1', [v.channelId])).rows[0];
   return row ? { channelId: v.channelId, sourceId: row.source_id, mode: s.mode, hash: v.hash } : null;
@@ -618,7 +731,7 @@ async function beginRelease(ctx: Ctx, old: { channelId: string; hash: string; wh
   let ok = false;
   try {
     await __switchHooks.afterMarker?.(id);
-    if (((await viewerCounts(ctx, { exceptHash: old.hash })).get(id) ?? 0) > 0 || recordingUses(id)) return null;
+    if (((await viewerCounts(ctx, { exceptHash: old.hash })).get(id) ?? 0) > 0 || (await recordingUses(ctx, id))) return null;
     const own = old.who ? joinKey(id, old.who) : null;
     if ((await ctx.kv.keys(joinPrefix(id))).some((k) => k !== own)) return null;
     try {
@@ -722,7 +835,8 @@ export async function livetvTick(ctx: Ctx): Promise<void> {
       await streamEvents(ctx, s);
       if (await ctx.kv.get(startKey(id))) continue;
       if (await ctx.kv.get(stoppingKey(id))) continue; // a switch releases it right now (Task 32)
-      if ((viewers.get(id) ?? 0) > 0) {
+      // a recording keeps its channel (Phase 3): like a viewer, it holds off the idle stop
+      if ((viewers.get(id) ?? 0) > 0 || (await recordingUses(ctx, id))) {
         await ctx.kv.del(zeroKey(id));
         continue;
       }
@@ -737,7 +851,8 @@ export async function livetvTick(ctx: Ctx): Promise<void> {
       const lock = randomUUID();
       if (!(await ctx.kv.setnx(startKey(id), lock, START_LOCK_TTL_S))) continue;
       try {
-        if ((await viewerCounts(ctx)).get(id) || (await ctx.kv.keys(joinPrefix(id))).length || (await ctx.kv.get(stoppingKey(id)))) {
+        invalidateRecordingUses();
+        if ((await viewerCounts(ctx)).get(id) || (await ctx.kv.keys(joinPrefix(id))).length || (await ctx.kv.get(stoppingKey(id))) || (await recordingUses(ctx, id))) {
           await ctx.kv.del(zeroKey(id));
           continue;
         }

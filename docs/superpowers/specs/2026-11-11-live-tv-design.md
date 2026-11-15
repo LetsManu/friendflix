@@ -165,7 +165,7 @@ and `2026-11-11-users-permissions-design.md` (Phase 0).
   provider VOD (M3U entries for films and series are skipped on import). Provider catch-up stays a later item (§25).
 - No ad skipping, no DRM sources, no subtitles/teletext for live in these phases (DVB subtitles are dropped on remux; listed
   as a known limit).
-- No live TV in offline downloads.
+- No live TV in offline downloads. (Narrowed 2026-11-15, §26: live streams still cannot be downloaded; finished recordings can.)
 - Plex installs: Live TV works (it does not need the media server); the budget counts what the Plex adapter reports
   (`transcodeSessions`) plus FriendFlix's own conversions; the *Jellyfin library* recording mode is Jellyfin only.
 
@@ -215,6 +215,7 @@ The phase split (each PR leaves the app working; Live TV stays invisible until e
 | | 2b | The guide for users (§17, G1–G44): grid on desktop, phone (with the *Jetzt/Danach* list) and TV, filters incl. TV, paged *Alle*, time chips and remote time jumps, data states, running progress, *Von Anfang an* markers, genre stripe, search in the guide, detail sheet, reminders, the mini-guide as the extended *Senderliste* panel, performance acceptance. |
 | **3** | 3a | Recordings backend + `livetv` recorder + storage modes (incl. the library sub-folder mount, §15.3) + budget reservation + notifications. Migration at the next free index at merge time. |
 | | 3b | Recording UI (detail sheet actions, Live-TV row, *Meine Aufnahmen*, admin *Aufnahmen*), player source seam for recordings, casting/hand-off of recordings. |
+| | 3c | Downloading finished recordings for offline viewing (§26, owner requirement 2026-11-15). Migration at the next free index at merge time. |
 | | later | Optional H.265 re-encode of recordings (off by default, quiet hours, budget). |
 
 Recommended plans: one implementation plan per phase (Phase 1 plan covering 1a–1e with 1a first, because it changes film
@@ -1971,3 +1972,33 @@ Kept as a list so they are not lost; none is planned or binding:
   *Meine Erinnerungen* filter, audio
   tracks, live hand-off, Chromecast programme metadata, a `max_streams` message naming the devices, the error action
   *Zurück zu …*, Magic Remote hover rules, refresh at a fixed time) stay with the research report until decided.
+
+## 26. Addendum 2026-11-15: recordings can be downloaded (owner requirement)
+
+Owner requirement of 2026-11-15, Phase 3 (new stage 3c); it narrows the non-goal "No live TV in offline downloads":
+
+- **What:** a **finished** recording (`done` or `partial`) can be downloaded for offline viewing with the existing offline
+  downloads (licences per device, `/downloads`, the browser downloader, the Android app's native downloads, check-in and
+  offline progress). Live channels, the time-shift buffer and recordings still running can **not** be downloaded.
+- **Who:** every profile that can see the recording (its own, shared with the account or with everyone, §15.6; kids only
+  shared kid-friendly ones), when the account may use Live TV (`liveTv`) **and** may download (the role's download rights:
+  `download` on, `maxDownloads` > 0, `downloadMaxHeight` > 0, the instance's `DOWNLOADS_ENABLED`; never on TV devices).
+  This must hold for a role that grants Live TV and Downloads but **no library** (a "Live-TV only" role of the roles
+  redesign): no part of the recording download path may require library access. The rights are read only through the
+  existing rights API (`effectiveRights` / `effectiveLimits`, `roleAllowsDownloads`), so area switches added by the roles
+  redesign apply without a second gate.
+- **Limits** are the role's download limits, shared with films: one quota of active licences (`maxDownloads`), the height
+  cap (`downloadMaxHeight`, `maxHeight`, `maxBitrate`), the validity (`downloadDays`, offline grace, check-in).
+- **Quality:** *Original* = the recording as recorded, only remuxed into one MP4 (video copied; audio converted to AAC when
+  a browser cannot play it, which is not a budget conversion, decision 5), offered when its video is H.264 and within the
+  role's caps; otherwise and for the smaller presets (*Niedrig* / *Standard* / *Hoch*, clamped as for films) `livetv`
+  converts it, as budget kind `download` (lowest priority, waits, never refused).
+- **Files:** prepared by `livetv` inside the recording's folder (no new volume, no backend access to `/recordings`), served
+  by the gateway under the existing `/media/d/<licence>` route from the read-only recordings mount; they count towards the
+  recordings storage and are removed with the recording or when no licence needs them any more.
+- **Lifetime:** deleting a recording (by hand, by retention or for space) or losing the right to see it revokes its
+  licences; devices drop their copy at the next check-in (the existing revoke path). *Behalten* protects the recording and
+  so its offline copies.
+- **Library mode:** a recording stored only in the Jellyfin library is a library item and is downloaded like a film
+  (needs access to that library). The *Aufnahmen* admin tab says so when a role with *Darf aufnehmen* cannot see the
+  recordings library.

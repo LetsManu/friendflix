@@ -22,6 +22,8 @@ import { livetvEpgPruneTick } from './livetv/epg.js';
 import { livetvIngestTick } from './livetv/ownfeeds.js';
 import { sweepPendingGuideFiles } from './livetv/guidefiles.js';
 import { livetvRefreshTick, refreshRunning } from './livetv/refresh.js';
+import { livetvRecordTick } from './livetv/recsched.js';
+import { livetvStoreTick } from './livetv/recstore.js';
 import { livetvTick } from './livetv/streams.js';
 import { hevcTick } from './hevcenc.js';
 import { digestTick } from './digest.js';
@@ -172,6 +174,21 @@ timers.push(setInterval(() => {
   void deletionTick(ctx).catch(jobFailed(ctx, app.log, 'account-deletion', 'account deletion tick failed')).finally(() => { deletionBusy = false; });
 }, 60_000)); // final account deletion after the grace period
 if (cfg.BACKGROUND_JOBS === 'true') {
+  // Live TV recordings (Phase 3): reservations, due starts and stops, the reconcile with livetv's recorders (one runner: KV ltv:rectick).
+  // Also while livetv is not installed: due recordings then fail `livetv_off` and their owners are told.
+  let livetvRecordBusy = false;
+  timers.push(setInterval(() => {
+    if (livetvRecordBusy || !op()) return;
+    livetvRecordBusy = true;
+    void livetvRecordTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-record', 'livetv recording tick failed')).finally(() => { livetvRecordBusy = false; });
+  }, 15_000));
+  // the recordings store job (A-I2): library exports, space and retention (spec §15.5); one runner (KV ltv:recstore), apart from the tick
+  let livetvStoreBusy = false;
+  timers.push(setInterval(() => {
+    if (livetvStoreBusy || !op()) return;
+    livetvStoreBusy = true;
+    void livetvStoreTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-store', 'livetv recordings store job failed')).finally(() => { livetvStoreBusy = false; });
+  }, 30_000));
   // always scheduled: DOWNLOADS_ENABLED applies live, each tick checks it
   const downloadsOn = () => op() && ctx.cfg.DOWNLOADS_ENABLED === 'true';
   timers.push(setInterval(() => {

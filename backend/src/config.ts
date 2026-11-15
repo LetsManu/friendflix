@@ -211,6 +211,21 @@ export const configSchema = z.object({
   LIVETV_DVR_MINUTES: z.preprocess(emptyAsUnset, z.coerce.number().int().min(0).max(120).default(30)),
   /** the highest bitrate livetv picks from a provider's HLS variants (spec §3.3), bit/s; read per stream start */
   LIVETV_MAX_BITRATE: z.preprocess(emptyAsUnset, z.coerce.number().int().min(1_000_000).max(40_000_000).default(10_000_000)),
+  /** recordings (spec §6.4, §15.3): ff = the FriendFlix folder (`/recordings`), library = the Jellyfin library folder, both = ff plus *Behalten → in Bibliothek* */
+  LIVETV_RECORD_STORAGE: z.preprocess(emptyAsUnset, z.enum(['ff', 'library', 'both']).default('ff')),
+  /** the Jellyfin library the library modes export into (its id); unset = none chosen yet */
+  LIVETV_RECORD_LIBRARY_ID: z.preprocess(emptyAsUnset, z.string().trim().regex(/^[A-Za-z0-9-]{1,64}$/).optional()),
+  /** the recordings folder as Jellyfin sees it (spec §15.3) */
+  LIVETV_RECORD_LIBRARY_JF_PATH: z.preprocess(emptyAsUnset, z.string().trim().regex(/^\/[^\u0000-\u001f]{0,250}$/).default('/media/Aufnahmen')),
+  /** the recordings limit in GB (spec §15.5): over 90 % the oldest unprotected recordings are scheduled for deletion */
+  LIVETV_RECORD_LIMIT_GB: z.preprocess(emptyAsUnset, z.coerce.number().min(1).max(100_000).default(200)),
+  /** days after a recording was watched until it is deleted (0 = never; *Behalten* protects) */
+  LIVETV_RECORD_RETENTION_DAYS: z.preprocess(emptyAsUnset, z.coerce.number().int().min(0).max(365).default(30)),
+  /** the default padding of a recording in minutes (editable per recording and rule) */
+  LIVETV_RECORD_PAD_BEFORE_MIN: z.preprocess(emptyAsUnset, z.coerce.number().int().min(0).max(30).default(2)),
+  LIVETV_RECORD_PAD_AFTER_MIN: z.preprocess(emptyAsUnset, z.coerce.number().int().min(0).max(120).default(5)),
+  /** how many channels may be recorded at once (spec §15.4: the conflict warning) */
+  LIVETV_RECORD_MAX_PARALLEL: z.preprocess(emptyAsUnset, z.coerce.number().int().min(1).max(8).default(4)),
   /** automatic updates through the updater: off (default) or once a night at AUTO_UPDATE_TIME (server time zone TZ) */
   AUTO_UPDATE: z.preprocess(emptyAsUnset, z.enum(['off', 'nightly-window']).default('off')),
   AUTO_UPDATE_TIME: z.preprocess(emptyAsUnset, z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/).default('04:00')),

@@ -188,6 +188,15 @@ export const SETTINGS: readonly SettingDef[] = [
   setting('LIVETV_SRT_HOST', { kind: 'string', group: 'livetv' }), // read per request (srtHost)
   setting('LIVETV_DVR_MINUTES', { kind: 'int', group: 'livetv' }), // read per stream start and watch answer (livetv/streams.ts)
   setting('LIVETV_MAX_BITRATE', { kind: 'int', group: 'livetv' }), // read per stream start (livetv/streams.ts)
+  // recordings (Phase 3, spec §6.4): read per tick and per request (livetv/recordings.ts recordSettings)
+  setting('LIVETV_RECORD_STORAGE', { kind: 'enum', group: 'livetv' }),
+  setting('LIVETV_RECORD_LIBRARY_ID', { kind: 'string', group: 'livetv' }),
+  setting('LIVETV_RECORD_LIBRARY_JF_PATH', { kind: 'string', group: 'livetv' }),
+  setting('LIVETV_RECORD_LIMIT_GB', { kind: 'number', group: 'livetv' }),
+  setting('LIVETV_RECORD_RETENTION_DAYS', { kind: 'int', group: 'livetv' }),
+  setting('LIVETV_RECORD_PAD_BEFORE_MIN', { kind: 'int', group: 'livetv' }),
+  setting('LIVETV_RECORD_PAD_AFTER_MIN', { kind: 'int', group: 'livetv' }),
+  setting('LIVETV_RECORD_MAX_PARALLEL', { kind: 'int', group: 'livetv' }),
 ];
 
 /** Per container or per deployment, or shared with a container that reads env only: env > default, read-only in Admin -> Settings. */
