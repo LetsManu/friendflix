@@ -23,7 +23,7 @@
   let box: HTMLElement | undefined;
   $: mode = (still ? 'still' : undefined) as FxMode | undefined;
   $: heading = ui.k === 'full' ? $t('live.full.title') : $t('live.providerLimit', { n: ui.max });
-  const fx = (node: Element, p: { dir: 'in' | 'out'; mode?: FxMode }) => (phone ? sheetSlide(node, p) : grow(node, { ...p, origin: '50% 50%' }));
+  const fx = (node: Element, p: { dir: 'in' | 'out'; mode?: FxMode }) => (phone ? sheetSlide(node, p) : grow(node, p));
   onMount(() => { box?.querySelector<HTMLElement>('button')?.focus(); });
 </script>
 
