@@ -84,7 +84,7 @@ beforeAll(async () => {
       const ids = (u.searchParams.get('ids') ?? u.searchParams.get('Ids') ?? '').split(',').filter(Boolean);
       return { json: { Items: ids.map(dto), TotalRecordCount: ids.length } };
     },
-  });
+  }, { seerr: { 'GET /api/v1/discover/movies/upcoming': () => ({ json: { totalPages: 1, results: [{ id: 99, title: 'Bald im Kino', releaseDate: '2027-03-01' }] } }) } });
   admin = await env.login(ADMIN);
   adminId = (await env.pool.query<{ id: string }>("select id from users where role='admin' limit 1")).rows[0]!.id;
   const enc = encrypt(keyFromBase64(ENC_KEY), 'pw');
@@ -334,6 +334,16 @@ describe('requests switch', () => {
     expect((await call(anna, 'GET', '/api/requests/quota')).statusCode).toBe(200);
   });
 
+  it('upcoming without the requests right → 403 requests_forbidden; with it → 200', async () => {
+    expect((await call(ben, 'GET', '/api/seerr/upcoming')).statusCode).toBe(200);
+    await rights(BEN, { requests: false });
+    const before = env.seerrCalls.length;
+    const r = await call(ben, 'GET', '/api/seerr/upcoming');
+    expect([r.statusCode, r.json()]).toEqual([403, { error: 'requests_forbidden' }]);
+    expect(env.seerrCalls.length).toBe(before);
+    expect((await call(anna, 'GET', '/api/seerr/upcoming')).statusCode).toBe(200);
+  });
+
   it('no request service: 404 requests_disabled before the switch', async () => {
     await rights(BEN, { requests: false });
     await env.ctx.settings.save({ REQUESTS_URL: null }, null);
@@ -373,6 +383,24 @@ describe('/api/me.perms', () => {
     const c = await connect('nosuchroom1', kid);
     expect((await c.closed).code).toBe(4403);
     expect((await call(kid, 'POST', '/api/cast/session', { itemId: MOVIE })).json().error).not.toBe('cast_forbidden');
+  });
+});
+
+describe('/api/me.areas', () => {
+  it('friend and guest without Live TV; requests follow the switch and the request service', async () => {
+    const none = { library: true, livetv: false, requests: true, together: true, downloads: false };
+    expect((await call(anna, 'GET', '/api/me')).json().areas).toEqual(none);
+    expect((await call(carla, 'GET', '/api/me')).json().areas).toEqual(none); // guest: parties on, comments off
+    await rights(BEN, { requests: false, party: false, comments: false });
+    expect((await call(ben, 'GET', '/api/me')).json().areas).toEqual({ ...none, requests: false, together: false });
+    await rights(BEN, { comments: true });
+    expect((await call(ben, 'GET', '/api/me')).json().areas.together).toBe(true);
+    await env.ctx.settings.save({ REQUESTS_URL: null }, null);
+    try {
+      expect((await call(anna, 'GET', '/api/me')).json().areas.requests).toBe(false);
+    } finally {
+      await env.ctx.settings.save({ REQUESTS_URL: cfg.REQUESTS_URL, REQUESTS_API_KEY: cfg.REQUESTS_API_KEY }, null);
+    }
   });
 });
 

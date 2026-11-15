@@ -36,6 +36,7 @@ import { isSetupSession, setupSessionHash } from '../setup/code.js';
 import { claimSetup, isSetupComplete, SETUP_EXPIRED, SETUP_STALE } from '../setup/state.js';
 import type { UserRow } from '../types.js';
 import { livetvFeature } from '../livetv/rights.js';
+import { hasLibrary } from '../areas.js';
 import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, profileLanguage, roleLabel } from '../i18n.js';
 
 export { PENDING_COOKIE, RESTORE_COOKIE } from '../loginFinish.js';
@@ -304,6 +305,10 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     const tvId = req.session!.deviceId;
     const startLive = livetv && Boolean(tvId?.startsWith('tv-'))
       && (await ctx.db.query<{ start_live: boolean }>('select start_live from devices where user_id = $1 and device_id = $2', [u.id, tvId])).rows[0]?.start_live === true;
+    const limits = dlRole ?? own(ctx.roles, u.role);
+    const downloads = { allowed: roleAllowsDownloads(ctx, dlRole) && !req.session!.deviceId?.startsWith('tv-'), max: dlRole?.maxDownloads ?? 0 };
+    // roles redesign §4.6: Wünsche, Gemeinsam and Downloads need the Mediathek (§2.3)
+    const library = hasLibrary(limits?.libraries);
     return {
       id: u.id,
       name: u.name,
@@ -316,9 +321,9 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       deviceApproved: req.session!.deviceApproved,
       /** this session belongs to a paired television (device ids of paired TVs start with "tv-") */
       tv: Boolean(req.session!.deviceId?.startsWith('tv-')),
-      limits: dlRole ?? own(ctx.roles, u.role),
+      limits,
       /** offline downloads: allowed for this role (and not on TVs) + max active licenses */
-      downloads: { allowed: roleAllowsDownloads(ctx, dlRole) && !req.session!.deviceId?.startsWith('tv-'), max: dlRole?.maxDownloads ?? 0 },
+      downloads,
       /** the role switches of this account and active profile (kids overlay applied): the client hides what the server refuses */
       perms,
       profile: req.profile ? publicProfile(req.profile) : null,
@@ -351,6 +356,15 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       },
       /** this TV opens Live TV on its start page (`/tv` replaces to `/live?play=last`; spec §11.3) */
       startLive,
+      /** the parts of the app this profile may use (roles redesign §4.6): library = any library; livetv = features.livetv; wishes,
+       *  together (parties, votes, comments) and downloads only with a library. The web's menus and routing follow it. */
+      areas: {
+        library,
+        livetv,
+        requests: requestsEnabled(ctx) && perms.requests && library,
+        together: (perms.party || perms.comments) && library,
+        downloads: downloads.allowed && library,
+      },
     };
   });
 
