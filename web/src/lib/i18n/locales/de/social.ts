@@ -258,7 +258,7 @@ export default {
     top3: 'MEINE TOP 3',
     minutes: '{n} min',
     achievements: '{earned} von {total} Achievements freigeschaltet',
-    shareTitle: 'Mein FriendFlix-Jahresrückblick {year}',
+    shareTitle: 'Mein {app}-Jahresrückblick {year}',
   },
   digest: {
     title: 'Wochenrückblick',

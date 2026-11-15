@@ -23,7 +23,7 @@ export default {
     testBusy: 'Beende zuerst die Übertragung.',
     copyReport: 'Bericht kopieren',
     support: 'Cast-Unterstützung',
-    supportReady: 'Bereit · FriendFlix-Empfänger',
+    supportReady: 'Bereit · {app}-Empfänger',
     supportDefault: 'Bereit · Standard-Empfänger von Google',
     supportNoBrowser: 'In diesem Browser nicht verfügbar (Chrome oder Edge nötig)',
     supportOff: 'Auf diesem Server aus',

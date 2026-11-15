@@ -220,7 +220,7 @@ export default {
     more: 'Weitere Steuerung',
     collapse: 'Einklappen',
     regionExpanded: 'Jetzt auf dem Fernseher, ausgeklappt',
-    nothingThere: 'Auf {device} läuft nichts von FriendFlix.',
+    nothingThere: 'Auf {device} läuft nichts von {app}.',
   },
   castPicker: {
     title: 'Abspielen auf',
@@ -376,7 +376,7 @@ export default {
   tv: {
     pageTitle: 'Fernseher verbinden',
     title: 'Fernseher verbinden',
-    step1: 'Öffne FriendFlix auf deinem Handy und tippe auf <b>Menü › Fernbedienung</b> – oder scanne den QR-Code.',
+    step1: 'Öffne {app} auf deinem Handy und tippe auf <b>Menü › Fernbedienung</b> – oder scanne den QR-Code.',
     step2: 'Gib dort diesen Code ein und bestätige:',
     connected: 'Verbunden …',
     codeAria: 'Kopplungscode {code}',

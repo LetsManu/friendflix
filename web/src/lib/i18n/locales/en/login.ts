@@ -8,7 +8,7 @@ const login: Translation<typeof de> = {
   loading: 'Preparing the sign-in …',
   busy: 'One moment …',
   inviteGone: 'This invite is no longer valid. If you already have an account, just sign in.',
-  stale: { title: 'Sign-in was not confirmed', text: 'Authentik did not ask for your sign-in again, so FriendFlix refused it. Try again in half a minute. If it keeps happening, the clocks of the server and Authentik may differ (an admin can check).', retry: 'Sign in again' },
+  stale: { title: 'Sign-in was not confirmed', text: 'Authentik did not ask for your sign-in again, so {app} refused it. Try again in half a minute. If it keeps happening, the clocks of the server and Authentik may differ (an admin can check).', retry: 'Sign in again' },
   identify: {
     title: 'Welcome back',
     text: 'Sign in to keep watching.',
@@ -33,7 +33,7 @@ const login: Translation<typeof de> = {
     otherMethod: 'Choose another method',
     retry: 'Try again',
     cancelledTitle: 'No passkey confirmed',
-    cancelledText: 'The request was cancelled, or this device has no passkey for FriendFlix. Passkeys made on the sign-in page do not work here.',
+    cancelledText: 'The request was cancelled, or this device has no passkey for {app}. Passkeys made on the sign-in page do not work here.',
     timeoutTitle: 'Time ran out',
     timeoutText: 'Your device’s request timed out. Please try again.',
     unsupportedTitle: 'No passkey here',
@@ -68,8 +68,8 @@ const login: Translation<typeof de> = {
   },
   notice: {
     unavailableTimeout: 'The sign-in service took too long to answer. Try again in a moment.',
-    unavailableUnreachable: 'FriendFlix cannot reach the sign-in service right now. Try again in a moment.',
-    unavailableServiceToken: 'The sign-in service refuses FriendFlix\'s access. An admin can repair it under Admin → Status → Sign-in.',
+    unavailableUnreachable: '{app} cannot reach the sign-in service right now. Try again in a moment.',
+    unavailableServiceToken: 'The sign-in service refuses {app}\'s access. An admin can repair it under Admin → Status → Sign-in.',
     classicTitle: 'Continue on the sign-in page',
     classicText: 'This step only works on the sign-in page.',
     classic: 'Continue on the sign-in page',
@@ -103,15 +103,15 @@ const login: Translation<typeof de> = {
   sec: {
     manageClassic: 'Continue on the sign-in page',
     refused: {
-      classic: 'Sign-in inside FriendFlix is switched off, so this change happens on the sign-in page.',
+      classic: 'Sign-in inside {app} is switched off, so this change happens on the sign-in page.',
       flow_not_configured: 'This is not set up at the sign-in service yet. An admin can set it up under Admin → Status → Sign-in.',
       authentik_user_not_found: 'Your account was not found at the sign-in service. Ask an admin.',
     },
     problem: {
-      service_token: 'Your security settings cannot be read right now: the sign-in service refuses FriendFlix\'s access. An admin can repair it under Admin → Status → Sign-in.',
+      service_token: 'Your security settings cannot be read right now: the sign-in service refuses {app}\'s access. An admin can repair it under Admin → Status → Sign-in.',
       unreachable: 'Your security settings cannot be read right now: the sign-in service is not answering.',
       error: 'Your security settings cannot be read right now.',
-      not_configured: 'FriendFlix is not connected to the sign-in service\'s API, so these settings are managed on the sign-in page.',
+      not_configured: '{app} is not connected to the sign-in service\'s API, so these settings are managed on the sign-in page.',
     },
     username: {
       title: 'Username',
@@ -177,8 +177,8 @@ const login: Translation<typeof de> = {
       unsupported: 'Your browser cannot create a passkey here.',
       add: 'Add a passkey',
       addClassic: 'Add on the sign-in page',
-      note: 'Passkeys you create here apply to FriendFlix.',
-      renew: 'Did you create your passkeys on the sign-in page earlier? Those do not work in FriendFlix. Add a new passkey here once.',
+      note: 'Passkeys you create here apply to {app}.',
+      renew: 'Did you create your passkeys on the sign-in page earlier? Those do not work in {app}. Add a new passkey here once.',
       exists: 'This device already has a passkey for your account. Use it to sign in, or remove it in your passwords app.',
       unsupportedOptions: 'This device cannot meet the requirements for the passkey.',
       failed: 'The passkey could not be created.',
@@ -208,7 +208,7 @@ const login: Translation<typeof de> = {
   confirm: {
     pageTitle: 'Confirm e-mail',
     title: 'Confirm your new e-mail address',
-    text: 'Confirm that this address should belong to your FriendFlix account.',
+    text: 'Confirm that this address should belong to your {app} account.',
     button: 'Confirm address',
     unavailable: 'Not possible right now. Try again in a moment.',
     doneTitle: 'E-mail address changed',

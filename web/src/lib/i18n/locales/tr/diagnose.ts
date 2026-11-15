@@ -25,7 +25,7 @@ const dict: Translation<typeof de> = {
     testBusy: 'Önce yayını durdur.',
     copyReport: 'Raporu kopyala',
     support: 'Cast desteği',
-    supportReady: 'Hazır · FriendFlix alıcısı',
+    supportReady: 'Hazır · {app} alıcısı',
     supportDefault: 'Hazır · Google’ın standart alıcısı',
     supportNoBrowser: 'Bu tarayıcıda kullanılamıyor (Chrome veya Edge gerekir)',
     supportOff: 'Bu sunucuda kapalı',

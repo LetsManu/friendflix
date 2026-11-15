@@ -59,7 +59,7 @@
     <span class="logo"><Logo wordmark size={52} /></span>
     <h1>{$t('player.tv.title')}</h1>
     <ol>
-      <li><Rich text={$t('player.tv.step1')} /></li>
+      <li><Rich key="player.tv.step1" /></li>
       <li>{$t('player.tv.step2')}</li>
     </ol>
     {#if linking}

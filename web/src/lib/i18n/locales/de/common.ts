@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Shared words and building blocks used by every area (buttons, states, units). German = source of truth. */
 export default {
-  appName: 'FriendFlix',
+  appName: '{app}',
   /** browser tab title of a page */
-  pageTitle: '{page} – FriendFlix',
+  pageTitle: '{page} – {app}',
   save: 'Speichern',
   saving: 'Speichere …',
   saved: 'Gespeichert',

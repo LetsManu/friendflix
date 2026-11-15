@@ -218,7 +218,7 @@ const en: Translation<typeof de> = {
     more: 'More controls',
     collapse: 'Collapse',
     regionExpanded: 'Now on TV, expanded',
-    nothingThere: 'Nothing from FriendFlix is playing on {device}.',
+    nothingThere: 'Nothing from {app} is playing on {device}.',
   },
   castPicker: {
     title: 'Play on',
@@ -370,7 +370,7 @@ const en: Translation<typeof de> = {
   tv: {
     pageTitle: 'Connect TV',
     title: 'Connect your TV',
-    step1: 'Open FriendFlix on your phone and tap <b>Menu › Remote control</b> – or scan the QR code.',
+    step1: 'Open {app} on your phone and tap <b>Menu › Remote control</b> – or scan the QR code.',
     step2: 'Enter this code there and confirm:',
     connected: 'Connected …',
     codeAria: 'Pairing code {code}',

@@ -7,7 +7,7 @@ export default {
     label: 'Kids-Navigation',
     home: 'Kids-Start',
     /** the logo link: starts with its visible text (the wordmark and badge) for voice control */
-    homeLink: 'FriendFlix Kids – Start',
+    homeLink: '{app} Kids – Start',
     search: 'Suchen',
     live: 'Fernsehen',
     switchProfile: 'Profil wechseln (gerade: {name})',

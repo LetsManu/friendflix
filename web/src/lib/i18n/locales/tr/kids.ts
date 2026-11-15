@@ -9,7 +9,7 @@ const dict: Translation<typeof de> = {
     label: 'Kids gezinmesi',
     home: 'Kids ana sayfa',
     /** the logo link: starts with its visible text (the wordmark and badge) for voice control */
-    homeLink: 'FriendFlix Kids – ana sayfa',
+    homeLink: '{app} Kids – ana sayfa',
     search: 'Ara',
     live: 'TV',
     switchProfile: 'Profil değiştir (şu an: {name})',

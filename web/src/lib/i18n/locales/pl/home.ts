@@ -52,7 +52,7 @@ const pl: Translation<typeof de> = {
     series: 'Serial',
     movie: 'Film',
     episode: 'Odcinek',
-    shareText: '{title} na FriendFlix',
+    shareText: '{title} na {app}',
     dateOpen: 'Termin nieustalony',
     releasesOn: 'Premiera: {date}',
     watching: {
@@ -132,7 +132,7 @@ const pl: Translation<typeof de> = {
     close: 'Zamknij zwiastun',
   },
   intro: {
-    loading: 'Ładowanie FriendFlix',
+    loading: 'Ładowanie {app}',
   },
   new: {
     title: 'Nowe i nadchodzące',
@@ -321,7 +321,7 @@ const pl: Translation<typeof de> = {
   },
   noAccess: {
     title: 'Nic nie zostało ci jeszcze udostępnione',
-    body: 'Zapytaj osobę, która prowadzi FriendFlix.',
+    body: 'Zapytaj osobę, która prowadzi {app}.',
   },
 };
 export default pl;

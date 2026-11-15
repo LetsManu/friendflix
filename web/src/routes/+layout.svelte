@@ -51,6 +51,7 @@
   import { chipsTucked, SOLID_AFTER } from '#lib/phone/logic';
   import { closePreview, previewSheet } from '#lib/previewSheet';
   import { isLocale, locale, pageEpoch, pickLocale, ready, setLocale, setMediaServer, t, type Locale } from '#lib/i18n';
+  import { brand, loadBrand, refetchOnVisible } from '#lib/brand';
   import Rich from '#lib/i18n/Rich.svelte';
   import LanguageGate from '#lib/LanguageGate.svelte';
   import ToastHost from '#lib/ui/ToastHost.svelte';
@@ -269,8 +270,8 @@
     document.documentElement.classList.toggle('m-chips', chipsRoom && !watchPage && !profilesPage);
     document.documentElement.style.overflow = catOpen ? 'hidden' : ($previewSheet ? 'hidden' : ''); // no page scroll behind the overlay / sheet
   }
-  // the web app manifest (name, shortcuts) follows the UI language
-  $: if (typeof document !== 'undefined') document.querySelector('link[rel="manifest"]')?.setAttribute('href', `/manifest.webmanifest?lang=${$locale}`);
+  // the web app manifest (name, shortcuts) follows the UI language and the brand (its rev makes a changed brand a new URL)
+  $: if (typeof document !== 'undefined') document.querySelector('link[rel="manifest"]')?.setAttribute('href', `/manifest.webmanifest?lang=${$locale}${$brand.rev ? `&rev=${$brand.rev}` : ''}`);
   $: if (!$mobile) { catOpen = false; catGone(); closePreview(); }
   /** desktop shell (pill bar; later the desktop browse pieces): not on TV, phones or kids profiles */
   $: desk = deskUi({ tv, mobile: $mobile, kids: kidsUi });
@@ -772,6 +773,7 @@
     window.addEventListener('online', setOnline); window.addEventListener('offline', setOnline);
     stops.push(() => { window.removeEventListener('online', setOnline); window.removeEventListener('offline', setOnline); });
     if (isFireTvApp()) applyFireTvViewport(); // the Fire TV app lays the TV UI out 1920 px wide, like the LG app
+    stops.push(refetchOnVisible()); // another admin's brand change shows when the tab comes back (no push channel for the brand)
     void boot();
     // Notification clicks (service worker) ask an already open window to navigate in-app.
     const onSwMessage = (e: MessageEvent) => {
@@ -797,6 +799,9 @@
   }
 
   async function boot() {
+    // the brand first, on every page (sign-in and setup included): the cached one is already on screen (lib/brand.ts applies it on
+    // import), this asks the public route for the current one alongside /api/me
+    void loadBrand();
     if (!publicPage) {
       try {
         const m = await api<Me>('/api/me');
@@ -959,7 +964,7 @@
       <div class="hbox" role="dialog" aria-modal="true" aria-labelledby="help-h" use:dialogKeys={{ close: () => (help = false) }}>
         <div class="hhead"><h2 id="help-h">{$t('shell.help.title')}</h2><button type="button" class="icon-btn" aria-label={$t('common.close')} on:click={() => (help = false)} data-autofocus><Icon name="x" size={22} /></button></div>
         <dl>
-          {#each HELP as [dt, dd] (dt)}<dt>{$t(dt)}</dt><dd><Rich text={$t(dd)} onLink={() => (help = false)} /></dd>{/each}
+          {#each HELP as [dt, dd] (dt)}<dt>{$t(dt)}</dt><dd><Rich key={dd} onLink={() => (help = false)} /></dd>{/each}
         </dl>
       </div>
     </div>

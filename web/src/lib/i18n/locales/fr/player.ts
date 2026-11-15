@@ -218,7 +218,7 @@ const fr: Translation<typeof de> = {
     more: 'Plus de commandes',
     collapse: 'Réduire',
     regionExpanded: 'Maintenant sur le téléviseur, développé',
-    nothingThere: 'Rien de FriendFlix n’est en lecture sur {device}.',
+    nothingThere: 'Rien de {app} n’est en lecture sur {device}.',
   },
   castPicker: {
     title: 'Lire sur',
@@ -374,7 +374,7 @@ const fr: Translation<typeof de> = {
   tv: {
     pageTitle: 'Connecter la télévision',
     title: 'Connecter la télévision',
-    step1: 'Ouvrez FriendFlix sur votre téléphone et touchez <b>Menu › Télécommande</b> – ou scannez le QR code.',
+    step1: 'Ouvrez {app} sur votre téléphone et touchez <b>Menu › Télécommande</b> – ou scannez le QR code.',
     step2: 'Saisissez-y ce code et confirmez :',
     connected: 'Connecté …',
     codeAria: 'Code d’association {code}',

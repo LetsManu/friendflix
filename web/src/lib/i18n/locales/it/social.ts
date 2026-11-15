@@ -256,7 +256,7 @@ const it: Translation<typeof de> = {
     top3: 'LA MIA TOP 3',
     minutes: '{n} min',
     achievements: '{earned} traguardi su {total} sbloccati',
-    shareTitle: 'Il mio riepilogo FriendFlix {year}',
+    shareTitle: 'Il mio riepilogo {app} {year}',
   },
   digest: {
     title: 'Riepilogo settimanale',

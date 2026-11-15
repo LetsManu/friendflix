@@ -25,7 +25,7 @@ const dict: Translation<typeof de> = {
     testBusy: 'Najpierw zakończ przesyłanie.',
     copyReport: 'Kopiuj raport',
     support: 'Obsługa Cast',
-    supportReady: 'Gotowe · odbiornik FriendFlix',
+    supportReady: 'Gotowe · odbiornik {app}',
     supportDefault: 'Gotowe · standardowy odbiornik Google',
     supportNoBrowser: 'Niedostępne w tej przeglądarce (wymaga Chrome lub Edge)',
     supportOff: 'Wyłączone na tym serwerze',

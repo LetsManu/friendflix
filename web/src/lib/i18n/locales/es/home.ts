@@ -42,7 +42,7 @@ const es: Translation<typeof de> = {
     series: 'Serie',
     movie: 'Película',
     episode: 'Episodio',
-    shareText: '{title} en FriendFlix',
+    shareText: '{title} en {app}',
     dateOpen: 'Fecha por confirmar',
     releasesOn: 'Se estrena el {date}',
     watching: { one: '{n} persona viendo', many: '{n} personas viendo', other: '{n} personas viendo' },
@@ -117,7 +117,7 @@ const es: Translation<typeof de> = {
     close: 'Cerrar tráiler',
   },
   intro: {
-    loading: 'Cargando FriendFlix',
+    loading: 'Cargando {app}',
   },
   new: {
     title: 'Novedades y próximamente',
@@ -301,7 +301,7 @@ const es: Translation<typeof de> = {
   },
   noAccess: {
     title: 'Todavía no se ha compartido nada contigo',
-    body: 'Pregunta a la persona que gestiona FriendFlix.',
+    body: 'Pregunta a la persona que gestiona {app}.',
   },
 };
 export default es;

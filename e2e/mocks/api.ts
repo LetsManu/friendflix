@@ -15,6 +15,14 @@ export const LOCKED_ID = MOVIE.id;
 export const UNLOCKED_ID = MOVIE2.id;
 export const XSS_COMMENT = '<b>x</b><img src=x onerror=alert(1)>';
 
+/** GET /api/public/brand of an instance nobody branded (backend DEFAULT_BRAND and today's tokens, app.css :root) */
+export const DEFAULT_BRAND_ANSWER = {
+  rev: 0,
+  brand: { name: 'FriendFlix', byline: '', shortName: '', website: '', about: '', header: 'wordmark', accent: '#ff4f6d', glow: 'accentViolet', signInBg: 'posters', logo: null, symbol: null, signInImage: null },
+  tokens: { acc: '#ff4f6d', accHover: '#e63e5c', accFill: '#d6325a', accFillHover: '#c9304d', accText: '#ff4f6d', accLight: '#ff8aa0', accLine: '#ff9cad', adjusted: { text: false, fill: true } },
+  images: {},
+};
+
 export interface MockState {
   lists: MockList[];
   watch: Set<string>;
@@ -97,6 +105,8 @@ export interface MockState {
   setup?: SetupMock;
   /** the sign-in cover wall: GET /api/public/login-art answers this status and image paths (mocks/login.ts ART_IMAGES) */
   loginArt: { status: number; images: string[] };
+  /** GET /api/public/brand (branding): the answer; the default is the shipped brand (today's look) */
+  brand: Record<string, unknown>;
   /** Block 23 phase 3 Task 11: GET /api/account/security; DELETE .../devices/:type/:id answers 401 reauth_required while `securityStale` */
   security: MockSecurity;
   securityStale: boolean;
@@ -171,6 +181,7 @@ export function freshState(): MockState {
     ],
     revokedOthers: 2,
     loginArt: { status: 200, images: [] },
+    brand: DEFAULT_BRAND_ANSWER,
     security: {
       mfa: { totp: true, webauthn: false, static: true },
       devices: [{ id: '11', type: 'totp', name: 'Pixel 8', lastUsed: null }, { id: '21', type: 'static', name: 'Recovery', lastUsed: null }],
@@ -243,6 +254,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
         failed: [...failed].sort(),
       });
     }
+    // the public brand (every page loads it at boot, signed in or not)
+    if (p === '/api/public/brand' && m === 'GET') return J(st.brand);
     // the public cover wall of the sign-in pages (/login, /pending): the list, and the generated image for every path
     if (p === '/api/public/login-art' && m === 'GET') {
       return st.loginArt.status === 200 ? J({ images: st.loginArt.images }) : J({ error: st.loginArt.status === 503 ? 'setup_required' : 'unavailable' }, st.loginArt.status);

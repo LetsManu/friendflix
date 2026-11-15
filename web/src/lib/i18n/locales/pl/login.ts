@@ -8,7 +8,7 @@ const login: Translation<typeof de> = {
   loading: 'Przygotowywanie logowania …',
   busy: 'Chwileczkę …',
   inviteGone: 'To zaproszenie jest już nieważne. Jeśli masz już konto, po prostu się zaloguj.',
-  stale: { title: 'Logowanie niepotwierdzone', text: 'Authentik nie zapytał ponownie o logowanie, więc FriendFlix je odrzucił. Spróbuj ponownie za pół minuty. Jeśli to się powtarza, zegary serwera i Authentika mogą się różnić (administrator może to sprawdzić).', retry: 'Zaloguj się ponownie' },
+  stale: { title: 'Logowanie niepotwierdzone', text: 'Authentik nie zapytał ponownie o logowanie, więc {app} je odrzucił. Spróbuj ponownie za pół minuty. Jeśli to się powtarza, zegary serwera i Authentika mogą się różnić (administrator może to sprawdzić).', retry: 'Zaloguj się ponownie' },
   identify: {
     title: 'Witaj ponownie',
     text: 'Zaloguj się, aby oglądać dalej.',
@@ -33,7 +33,7 @@ const login: Translation<typeof de> = {
     otherMethod: 'Wybierz inną metodę',
     retry: 'Spróbuj ponownie',
     cancelledTitle: 'Nie potwierdzono klucza dostępu',
-    cancelledText: 'Prośba została anulowana albo to urządzenie nie ma klucza dostępu do FriendFlix. Klucze utworzone na stronie logowania tutaj nie działają.',
+    cancelledText: 'Prośba została anulowana albo to urządzenie nie ma klucza dostępu do {app}. Klucze utworzone na stronie logowania tutaj nie działają.',
     timeoutTitle: 'Czas minął',
     timeoutText: 'Prośba urządzenia wygasła. Spróbuj ponownie.',
     unsupportedTitle: 'Klucz dostępu tu niedostępny',
@@ -68,8 +68,8 @@ const login: Translation<typeof de> = {
   },
   notice: {
     unavailableTimeout: 'Usługa logowania zbyt długo nie odpowiadała. Spróbuj ponownie za chwilę.',
-    unavailableUnreachable: 'FriendFlix nie może teraz połączyć się z usługą logowania. Spróbuj ponownie za chwilę.',
-    unavailableServiceToken: 'Usługa logowania odmawia FriendFlix dostępu. Administrator może to naprawić w Admin → Status → Logowanie.',
+    unavailableUnreachable: '{app} nie może teraz połączyć się z usługą logowania. Spróbuj ponownie za chwilę.',
+    unavailableServiceToken: 'Usługa logowania odmawia {app} dostępu. Administrator może to naprawić w Admin → Status → Logowanie.',
     classicTitle: 'Kontynuuj na stronie logowania',
     classicText: 'Ten krok działa tylko na stronie logowania.',
     classic: 'Kontynuuj na stronie logowania',
@@ -103,15 +103,15 @@ const login: Translation<typeof de> = {
   sec: {
     manageClassic: 'Kontynuuj na stronie logowania',
     refused: {
-      classic: 'Logowanie w FriendFlix jest wyłączone, więc tę zmianę wprowadzasz na stronie logowania.',
+      classic: 'Logowanie w {app} jest wyłączone, więc tę zmianę wprowadzasz na stronie logowania.',
       flow_not_configured: 'To nie jest jeszcze skonfigurowane w usłudze logowania. Administrator może to skonfigurować w Admin → Status → Logowanie.',
       authentik_user_not_found: 'Nie znaleziono twojego konta w usłudze logowania. Zapytaj administratora.',
     },
     problem: {
-      service_token: 'Nie można teraz odczytać twoich ustawień bezpieczeństwa: usługa logowania odmawia FriendFlix dostępu. Administrator może to naprawić w Admin → Status → Logowanie.',
+      service_token: 'Nie można teraz odczytać twoich ustawień bezpieczeństwa: usługa logowania odmawia {app} dostępu. Administrator może to naprawić w Admin → Status → Logowanie.',
       unreachable: 'Nie można teraz odczytać twoich ustawień bezpieczeństwa: usługa logowania nie odpowiada.',
       error: 'Nie można teraz odczytać twoich ustawień bezpieczeństwa.',
-      not_configured: 'FriendFlix nie jest połączony z API usługi logowania, więc tymi ustawieniami zarządzasz na stronie logowania.',
+      not_configured: '{app} nie jest połączony z API usługi logowania, więc tymi ustawieniami zarządzasz na stronie logowania.',
     },
     username: {
       title: 'Nazwa użytkownika',
@@ -177,8 +177,8 @@ const login: Translation<typeof de> = {
       unsupported: 'Twoja przeglądarka nie może tu utworzyć klucza dostępu.',
       add: 'Dodaj klucz dostępu',
       addClassic: 'Dodaj na stronie logowania',
-      note: 'Klucze dostępu utworzone tutaj obowiązują w FriendFlix.',
-      renew: 'Klucze dostępu utworzone wcześniej na stronie logowania nie działają w FriendFlix. Dodaj tutaj jednorazowo nowy klucz dostępu.',
+      note: 'Klucze dostępu utworzone tutaj obowiązują w {app}.',
+      renew: 'Klucze dostępu utworzone wcześniej na stronie logowania nie działają w {app}. Dodaj tutaj jednorazowo nowy klucz dostępu.',
       exists: 'To urządzenie ma już klucz dostępu do Twojego konta. Użyj go do logowania albo usuń go w aplikacji z hasłami.',
       unsupportedOptions: 'To urządzenie nie spełnia wymagań dla klucza dostępu.',
       failed: 'Nie udało się utworzyć klucza dostępu.',
@@ -208,7 +208,7 @@ const login: Translation<typeof de> = {
   confirm: {
     pageTitle: 'Potwierdź e-mail',
     title: 'Potwierdź nowy adres e-mail',
-    text: 'Potwierdź, że ten adres ma należeć do Twojego konta FriendFlix.',
+    text: 'Potwierdź, że ten adres ma należeć do Twojego konta {app}.',
     button: 'Potwierdź adres',
     unavailable: 'Teraz to niemożliwe. Spróbuj za chwilę.',
     doneTitle: 'Adres e-mail zmieniony',

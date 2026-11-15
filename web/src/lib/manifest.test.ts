@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { LOCALE_CODES, trIn, loadLocale } from '#lib/i18n';
-import { chooseLang, manifestFor } from './manifest';
+import { DEFAULT_LOADED, parseBrand } from '#lib/brand';
+import { deriveTokens } from '#lib/brandColors';
+import { chooseLang, manifestBrand, manifestFor } from './manifest';
 
 describe('manifest language', () => {
   it('?lang is whitelisted to the supported codes', () => {
@@ -30,5 +32,52 @@ describe('manifest language', () => {
   });
   it('languages differ', async () => {
     expect((await manifestFor('en')).shortcuts[1]!.name).not.toBe((await manifestFor('de')).shortcuts[1]!.name);
+  });
+});
+
+describe('manifest brand', () => {
+  const HASH = 'b'.repeat(64);
+  const answer = (over: Record<string, unknown> = {}, images: Record<string, string> = {}) => ({
+    rev: 4,
+    brand: { name: 'Nordlicht Kino', byline: '', shortName: 'Nordlicht', website: '', about: '', header: 'symbol', accent: '#4c9dff', glow: 'accent', signInBg: 'posters', logo: null, symbol: null, signInImage: null, ...over },
+    tokens: deriveTokens('#4c9dff'), images,
+  });
+
+  it('name, short name and every {app} follow the brand; without a symbol the icons stay', async () => {
+    const m = await manifestFor('en', parseBrand(answer())!);
+    expect([m.name, m.short_name]).toEqual(['Nordlicht Kino', 'Nordlicht']);
+    expect(JSON.stringify(m)).not.toContain('FriendFlix');
+    expect(m.icons.map((i) => i.src)).toEqual(['/favicon.svg', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png']);
+    // the defaults: today's manifest
+    const d = await manifestFor('de');
+    expect([d.name, d.short_name]).toEqual(['FriendFlix', 'FriendFlix']);
+  });
+
+  it('an app symbol becomes the icons (any and maskable) and the shortcut icon', async () => {
+    const url = `/api/public/brand/img/${HASH}.webp`;
+    const m = await manifestFor('de', parseBrand(answer({ symbol: HASH }, { symbol: url }))!);
+    expect(m.icons).toEqual([
+      { src: url, sizes: '512x512', type: 'image/webp', purpose: 'any' }, { src: url, sizes: '512x512', type: 'image/webp', purpose: 'maskable' },
+    ]);
+    expect(m.shortcuts.every((s) => s.icons.length === 1 && s.icons[0]!.src === url)).toBe(true);
+  });
+
+  it('fetches the public brand from the backend, and falls back to the defaults on any error', async () => {
+    const ok = vi.fn(async () => new Response(JSON.stringify(answer())));
+    const b = await manifestBrand('http://backend:3000', ok as unknown as typeof fetch);
+    expect(b.name).toBe('Nordlicht Kino');
+    expect(String((ok.mock.calls[0] as unknown[])[0])).toBe('http://backend:3000/api/public/brand');
+    const fails = [
+      async () => { throw new TypeError('ECONNREFUSED'); },
+      async () => new Response('{"error":"setup_required"}', { status: 503 }),
+      async () => new Response('not json'),
+      async () => new Response('{"rev":"x"}'),
+    ];
+    for (const f of fails) expect(await manifestBrand('http://backend:3000', f as unknown as typeof fetch)).toBe(DEFAULT_LOADED);
+    // no (or no http) backend address: no request at all
+    const never = vi.fn();
+    expect(await manifestBrand(undefined, never as unknown as typeof fetch)).toBe(DEFAULT_LOADED);
+    expect(await manifestBrand('file:///etc/passwd', never as unknown as typeof fetch)).toBe(DEFAULT_LOADED);
+    expect(never).not.toHaveBeenCalled();
   });
 });

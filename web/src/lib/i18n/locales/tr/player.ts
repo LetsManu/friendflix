@@ -218,7 +218,7 @@ const tr: Translation<typeof de> = {
     more: 'Daha fazla denetim',
     collapse: 'Daralt',
     regionExpanded: 'Şimdi televizyonda, genişletilmiş',
-    nothingThere: '{device} üzerinde FriendFlix’ten hiçbir şey oynatılmıyor.',
+    nothingThere: '{device} üzerinde {app}’ten hiçbir şey oynatılmıyor.',
   },
   castPicker: {
     title: 'Şurada oynat',
@@ -370,7 +370,7 @@ const tr: Translation<typeof de> = {
   tv: {
     pageTitle: 'Televizyonu bağla',
     title: 'Televizyonu bağla',
-    step1: 'FriendFlix’i telefonunda aç ve <b>Menü › Kumanda</b>’ya dokun – ya da QR kodunu tara.',
+    step1: '{app}’i telefonunda aç ve <b>Menü › Kumanda</b>’ya dokun – ya da QR kodunu tara.',
     step2: 'Orada bu kodu gir ve onayla:',
     connected: 'Bağlandı …',
     codeAria: 'Eşleştirme kodu {code}',

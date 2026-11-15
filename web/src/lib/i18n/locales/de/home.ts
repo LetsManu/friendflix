@@ -44,7 +44,7 @@ export default {
     series: 'Serie',
     movie: 'Film',
     episode: 'Folge',
-    shareText: '{title} auf FriendFlix',
+    shareText: '{title} auf {app}',
     dateOpen: 'Termin offen',
     releasesOn: 'Erscheint am {date}',
     watching: { one: '{n} Person schaut', other: '{n} Personen schauen' },
@@ -122,7 +122,7 @@ export default {
     close: 'Trailer schließen',
   },
   intro: {
-    loading: 'FriendFlix wird geladen',
+    loading: '{app} wird geladen',
   },
   /** /new */
   new: {
@@ -313,6 +313,6 @@ export default {
   /** the start page of a person with neither a library nor a Live-TV channel (roles redesign §3.2) */
   noAccess: {
     title: 'Für dich ist noch nichts freigegeben',
-    body: 'Frag die Person, die FriendFlix betreibt.',
+    body: 'Frag die Person, die {app} betreibt.',
   },
 } as const;
