@@ -143,6 +143,8 @@ interface Entry {
   timer: NodeJS.Timeout | null;
   outageAt: number | null;
   attempt: number;
+  /** outages so far: `input lost #n` in the log (each is an `input_lost` event, what Live-Status counts as reconnects) */
+  outages: number;
   /** the next segment starts a run (start, outage): without a provider date-time it gets arrival − duration */
   runBreak: boolean;
   /** the playlist writes of this stream, one after the other */
@@ -176,7 +178,7 @@ export class Streams {
     const e: Entry = {
       view: { channelId: b.channelId, streamKey, mode: b.mode, since: now, state: 'starting', bitrate: null, errors: [], lastSegmentAt: null, segments: null },
       dvrSeconds: b.dvrSeconds, dir: join(this.o.root, streamKey), window: null, dropped: [], ac: new AbortController(),
-      done: Promise.resolve(), lastTouch: now, timer: null, outageAt: null, attempt: 0, runBreak: true, writing: Promise.resolve(),
+      done: Promise.resolve(), lastTouch: now, timer: null, outageAt: null, attempt: 0, outages: 0, runBreak: true, writing: Promise.resolve(),
     };
     this.byChannel.set(b.channelId, e);
     this.byKey.set(streamKey, e);
@@ -285,7 +287,7 @@ export class Streams {
         if (e.outageAt === null && live()) {
           e.outageAt = this.now();
           this.event(e, { at: e.outageAt, code: 'input_lost' });
-          this.log(`stream ${id} input lost`);
+          this.log(`stream ${id} input lost #${++e.outages}`);
         }
         e.runBreak = true;
         if (e.view.state !== 'failed') e.view.state = 'reconnecting';

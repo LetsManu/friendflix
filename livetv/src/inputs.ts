@@ -37,6 +37,11 @@ export interface OpenedInput {
    * for both). A video failure, a video stall or a quick ffmpeg exit is never the audio's fault.
    */
   audioFault?(stalled: boolean): boolean;
+  /**
+   * why an HLS input ended the run by itself, read once the run is over: a fixed code (InputEnd, FetchError), with the rendition
+   * in a pair (`audio not_advancing`); null when it did not (a stop, ffmpeg ending on its own). The driver logs it (item 6).
+   */
+  endReason?(): string | null;
 }
 export interface InputDeps {
   guard: GuardDeps; fetch?: FetchFn; signal?: AbortSignal; maxBitrate?: number; ingest?: IngestReader;
@@ -161,12 +166,13 @@ interface Follow {
   onTaken?: (seq: number) => void;
   /** every playlist read (parsed and numbered), for the other rendition's `peerDisc` */
   onPlaylist?: (segs: Numbered[]) => void;
-  onSkip?: () => void;
   /** fixed texts only */
   log?: (m: string) => void;
 }
 
 const codeOf = (e: unknown): string => (e instanceof FetchError ? e.code : 'unreachable');
+/** the fixed code of what ended an input (never its message: that may hold provider text) */
+const endCode = (e: unknown): string => (e instanceof InputEnd || e instanceof FetchError ? e.code : e instanceof PlaylistRefused ? e.code : 'error');
 /** retrying cannot help: the stream fails (a refused address or scheme, a playlist that can never be served) */
 const number = (p: MediaPlaylist): Numbered[] => p.segments.map((s, i) => ({ ...s, seq: p.mediaSequence + i }));
 const isFatal = (e: unknown): boolean => e instanceof PlaylistRefused || (e instanceof FetchError && (e.code === 'address_refused' || e.code === 'scheme'));
@@ -191,8 +197,7 @@ async function* hlsBytes(first: { text: string; base: string; url: string }, get
   /** when the playlist last gave a new segment (taken or skipped), for advanceTimeoutMs */
   let progress = Date.now();
   const side = o.side ? `${o.side} ` : '';
-  /** `onSkip`: the pair broke its order and is aligned again; a rendition that could not be loaded is not that */
-  const end = (code: InputEndCode) => { if (code !== 'segments_failed') o.onSkip?.(); return new InputEnd(code); };
+  const end = (code: InputEndCode) => new InputEnd(code);
   /** the segment's response, or the code it failed with twice */
   const load = async (url: string): Promise<GuardedResponse | { failed: string }> => {
     for (let attempt = 0; ; attempt++) {
@@ -431,6 +436,16 @@ function openPush(channelId: string, deps: InputDeps): OpenedInput {
   return { ffInput: { kind: 'pipe', format: 'mpegts', stdin: watched({ [Symbol.asyncIterator]: () => it }, STREAM_IDLE_MS, close) }, close };
 }
 
+/** `gen`, telling `onFail` what it failed with (not after `signal` aborted: a stop is no failure) */
+async function* recorded(gen: AsyncGenerator<Uint8Array>, signal: AbortSignal, onFail: (e: unknown) => void): AsyncGenerator<Uint8Array> {
+  try {
+    yield* gen;
+  } catch (e) {
+    if (!signal.aborted) onFail(e);
+    throw e;
+  }
+}
+
 /**
  * `gen`, but a failure of it ends the whole input (`end`), so its sibling pipe ends too. `onOwnFail` is told when it failed on its
  * own (the input was not already ended by the sibling or a stop); `onBytes` counts what it gave.
@@ -501,8 +516,10 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     const resume = deps.resume;
     const rv = resumable(media, resume?.video);
     const onVideo = (seq: number) => { if (resume) resume.video = seq; };
+    let reason: string | null = null;
     if (audioUri === null || audioList === null) {
-      return { ffInput: { kind: 'pipe', format, stdin: hlsBytes({ text, base, url }, get, ac.signal, { from: rv === null ? null : rv + 1, log, onTaken: onVideo }) }, close };
+      const one = hlsBytes({ text, base, url }, get, ac.signal, { from: rv === null ? null : rv + 1, log, onTaken: onVideo });
+      return { ffInput: { kind: 'pipe', format, stdin: recorded(one, ac.signal, (e) => { reason ??= endCode(e); }) }, close, endReason: () => reason };
     }
     // audio in a playlist of its own: fetched and followed like the video one (same guard, same limits), as a second pipe. Either
     // one ending its run ends both (ffmpeg sees EOF, the driver backs off, restarts and aligns them again), so a stream never
@@ -522,7 +539,6 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     const ra = resumable(amedia, resume?.audio);
     const al = alignStart(media, amedia, { ...(rv !== null ? { video: rv + 1 } : {}), ...(ra !== null ? { audio: ra + 1 } : {}) });
     if (!al) log('separate audio: no common media sequence or program date-time, each rendition starts at its live edge');
-    const onSkip = () => log('separate audio: a rendition skipped, both restart to align again');
     // what each rendition's playlist showed last, so the other can tell whether a discontinuity is in both
     const seen: Record<'video' | 'audio', Numbered[]> = { video: number(media), audio: number(amedia) };
     const urls = { video: url, audio: audioUri };
@@ -546,7 +562,7 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     // the first segment of each was read through (for measuring its first timestamps)
     const firstDone = { video: false, audio: false };
     const followOf = (side: 'video' | 'audio', from: number | null) => ({
-      from, strict: true, side, onSkip, log, peerDisc: peerDisc(side), onPlaylist: (l: Numbered[]) => { seen[side] = l; },
+      from, strict: true, side, log, peerDisc: peerDisc(side), onPlaylist: (l: Numbered[]) => { seen[side] = l; },
       onTaken: (seq: number) => { firstDone[side] = true; if (resume) resume[side] = seq; },
     });
     if (al?.note) log(`separate audio: aligned by sequence, date-time on one side only (${al.note})`);
@@ -586,16 +602,20 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     let videoFailed = false;
     return {
       ffInput: {
-        kind: 'pipe', format, stdin: linked(video, close, ac.signal, { onOwnFail: () => { videoFailed = true; }, onBytes: (n) => { videoBytes += n; } }),
+        kind: 'pipe', format, stdin: linked(video, close, ac.signal, { onOwnFail: (e) => { videoFailed = true; reason ??= `video ${endCode(e)}`; }, onBytes: (n) => { videoBytes += n; } }),
         audio: {
           format: aformat,
           // a provider event (its sequence went back, a discontinuity in this rendition only) is no fault of the rendition
-          stdin: linked(audio, close, ac.signal, { onOwnFail: (e) => { if (!(e instanceof InputEnd && NOT_A_FAULT.has(e.code))) audioFailed = true; }, onBytes: (n) => { audioBytes += n; } }),
+          stdin: linked(audio, close, ac.signal, {
+            onOwnFail: (e) => { reason ??= `audio ${endCode(e)}`; if (!(e instanceof InputEnd && NOT_A_FAULT.has(e.code))) audioFailed = true; },
+            onBytes: (n) => { audioBytes += n; },
+          }),
           ...(shift ? { shift } : {}),
         },
       },
       close,
       audioFault: (stalled) => audioFailed || (stalled && !videoFailed && audioBytes === 0 && videoBytes > 0),
+      endReason: () => reason,
     };
   } catch (e) {
     close();

@@ -40,6 +40,8 @@ describe('a playlist that stops advancing', () => {
     expect((a.error as InputEnd).code).toBe('not_advancing');
     expect(seqs(a.got)).toEqual([107, 108, 109]);
     expect(o.audioFault?.(false)).toBe(true);
+    // the driver logs it with the restart (item 6)
+    expect(o.endReason?.()).toBe('audio not_advancing');
     o.close();
   });
 
@@ -65,6 +67,7 @@ describe('a playlist that stops advancing', () => {
     const v = reader(o.ffInput.stdin);
     await vi.advanceTimersByTimeAsync(12_500);
     expect((v.error as InputEnd).code).toBe('not_advancing');
+    expect(o.endReason?.()).toBe('not_advancing');
     o.close();
 
     const fine = provider({ master: ONE_MASTER, video: moving('v') });
