@@ -26,7 +26,7 @@
   import { TvWheelStepper, WheelAccumulator } from '#lib/player/wheel';
   import { parseVolume, stepVolume } from '#lib/player/volume';
   import { hlsConfig, loadHls } from '#lib/player/hls';
-  import { airPhase, airPlaySupported, createAirPlay, type AirPlayController, type AirPlayState } from '#lib/player/airplay';
+  import { airPhase, airPlaySupported, AVAILABILITY_EVENT, createAirPlay, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayController, type AirPlayState } from '#lib/player/airplay';
   import { castBackdrops } from '#lib/cast/remoteview';
   import { airLog } from '#lib/player/airplayLog';
   import RemoteScreen from '#lib/cast/RemoteScreen.svelte';
@@ -82,7 +82,7 @@
   import PhoneTitle from '#lib/player/phone/PhoneTitle.svelte';
   import PhoneTopBar from '#lib/player/phone/PhoneTopBar.svelte';
   import ProgressLine from '#lib/player/phone/ProgressLine.svelte';
-  import { jellyfinSource, type PlaybackSource } from '#lib/player/source';
+  import { jellyfinSource, type PlaybackSource, type SourceInfo } from '#lib/player/source';
 
   export let itemId: string;
   /**
@@ -189,7 +189,7 @@
   $: aconn = airPh === 'connecting' && !tvSession && !handedOff;
   /** its picture: the remote screen's candidates (an episode's still, the series backdrop); no backdrop (`poster.backdrop === false`) goes straight to the primary image */
   $: airArt = castBackdrops({ itemId, isEpisode: item?.type === 'Episode', seriesId: item?.seriesId }).filter((_, i, a) => !(i === 0 && poster?.backdrop === false && !(item?.type === 'Episode') && a.length > 1));
-  $: airOn = remote ? $castSession?.kind === 'airplay' : airState.active;
+  $: airOn = remote ? $castSession?.kind === 'airplay' : airState.active || (recAir && recAirWireless);
   let destroyed = false;
 
   // ---- Media Session (lock screen, Control Center, media keys): bound once this page plays locally; a hand-over the player starts
@@ -809,6 +809,7 @@
     if (handedOff) return; // the engine's element: its controller handles errors
     if (airState.ready && !airOn) { if (video?.error && video.error.code !== 1) air?.videoError(video.error.code, video.error.message); return; } // the phone plays the AirPlay token stream: back to normal
     if (airOn) { if (video?.error && video.error.code !== 1) air?.videoError(video.error.code, video.error.message); return; } // the TV's token stream failed: Retry, never the cookie URL
+    if (recAir) return; // a recording's AirPlay token on the element: the route decides (recAirEnd), never a local retry
     if (hls || !video?.error || !info) return; // hls.js reports its own errors
     const kind = kindOfMediaError(video.error.code);
     if (video.error.code === 1) return; // aborted by us
@@ -981,6 +982,7 @@
   /** "Continue here": the cast stopped and the page plays on; the focus goes to the player instead of the body */
   function onContinued() {
     playOnOpen = false; wake();
+    if (recAir) recAirEnd();
     let tries = 0;
     const land = () => {
       const el = stage?.querySelector<HTMLElement>('[data-testid="playon"], .ctl button, .ovl button');
@@ -990,11 +992,13 @@
     void tickDom().then(land);
   }
   /** the AirPlay row: the token-then-picker flow of the controller (the engine's picker while AirPlay already casts) */
-  function airRow() { if (tvSession?.kind === 'airplay') changeAirPlay(); else air?.pick(); }
-  $: airAvail = Boolean(air && (airState.available || airOn || airState.ready || airState.busy)) || tvSession?.kind === 'airplay';
+  function airRow() { if (tvSession?.kind === 'airplay') changeAirPlay(); else if (srcRec) void recAirTap(); else air?.pick(); }
+  /** the picker again (the overlay's buttons): a recording's own flow, else the controller's */
+  function pickAir() { if (recAir) pickRecAir(); else air?.pick(); }
+  $: airAvail = Boolean(air && (airState.available || airOn || airState.ready || airState.busy)) || tvSession?.kind === 'airplay' || Boolean(srcRec && (recAirAvail || recAir));
   /** something to choose from: Cast devices in reach or an AirPlay target (the remote screen has its own chip) */
-  // a recording casts to a Chromecast through the engine (Phase 3 Task 10); AirPlay of a recording is not offered here
-  $: playOnShown = $perms.cast && !partyMode && !remote && (Boolean($castState.available || $castState.connected) || (!srcRec && airAvail));
+  // a recording casts to a Chromecast through the engine (Phase 3 Task 10) and to AirPlay with its own token (recAirTap)
+  $: playOnShown = $perms.cast && !partyMode && !remote && (Boolean($castState.available || $castState.connected) || airAvail);
   $: playOnLabel = $t('player.castPicker.open');
   $: playOnEp = item?.type === 'Episode' || item?.seriesId ? episodeCode({ subtitle: '' }, item, $t) : '';
 
@@ -1031,7 +1035,7 @@
       video.setAttribute('crossorigin', 'use-credentials');
       stage.insertBefore(video, stage.firstChild);
     }
-    if (!air) void initAirPlay();
+    if (srcRec) { if (!airProbe) void initRecAirPlay(); } else if (!air) void initAirPlay();
     // finished on the TV: the page offers what comes next (another episode ended there, e.g. a joined stream's last: that one's page, at its end)
     if (was?.state === 'ended') { if (was.itemId !== itemId) dispatch('episode', { id: was.itemId, t: was.position }); else { paused = true; dispatch('ended'); } return; }
     if (was?.kind === 'airplay' && lastRouteOn) {
@@ -1116,12 +1120,76 @@
     startAirPlay(video);
   }
 
+  /**
+   * AirPlay of a recording (W-I9), like a live channel (LivePlayer): the AirPlay row mints a `via: 'airplay'` token (the backend lets a
+   * second address in), its URL goes on the element (native HLS, never MSE: the TV is handed the element's URL) and the system picker
+   * opens; the token it replaces ends. A route that stays off the TV plays the recording here again with a fresh local token.
+   */
+  let recAirAvail = false, recAir = false, recAirWireless = false, recAirOffT: ReturnType<typeof setTimeout> | undefined, recAirOff: (() => void) | null = null;
+  type AirEl = HTMLVideoElement & { webkitShowPlaybackTargetPicker?: () => void; webkitCurrentPlaybackTargetIsWireless?: boolean };
+  async function initRecAirPlay() {
+    if (partyMode || !get(perms).cast || !video || !airPlaySupported(video) || !(await castConfigEnabled().catch(() => false)) || destroyed || !video) return;
+    const v = video;
+    v.setAttribute('x-webkit-airplay', 'allow');
+    airProbe = document.createElement('video');
+    airProbe.setAttribute('x-webkit-airplay', 'allow');
+    airProbe.muted = true; airProbe.preload = 'none'; airProbe.className = 'airprobe';
+    airProbe.setAttribute('aria-hidden', 'true');
+    stage?.appendChild(airProbe);
+    const probe = airProbe;
+    const onAvail = (e: Event) => { if ((e as Event & { availability?: string }).availability === 'available') recAirAvail = true; };
+    for (const el of [v, probe]) el.addEventListener(AVAILABILITY_EVENT, onAvail);
+    v.addEventListener(WIRELESS_EVENT, onRecWireless);
+    recAirOff = () => { for (const el of [v, probe]) el.removeEventListener(AVAILABILITY_EVENT, onAvail); v.removeEventListener(WIRELESS_EVENT, onRecWireless); };
+  }
+  function pickRecAir() { try { (video as AirEl | undefined)?.webkitShowPlaybackTargetPicker?.(); } catch { /* no picker: the prompt stays */ } }
+  async function recAirTap() {
+    const s = srcRec, v = video;
+    if (!s || !v || destroyed) return;
+    if (recAir) { pickRecAir(); return; }
+    if (castBusy) return;
+    castBusy = true;
+    const pos = v.currentTime, play = !v.paused;
+    let si: SourceInfo;
+    try { si = await s.info(pos, { via: 'airplay' }); } catch (e) {
+      if ((e as { gone?: boolean } | null)?.gone) showGone(); else flash(airErr(e), 4000);
+      return;
+    } finally { castBusy = false; }
+    if (destroyed || srcRec !== s) { void s.stop(); return; }
+    ++attachSeq; clearTimeout(retryT); reconnecting = 0; error = '';
+    cancelFirstFrame(); resetStall();
+    hls?.destroy(); hls = null;
+    if (v.disableRemotePlayback) v.disableRemotePlayback = false; // hls.js sets it for ManagedMediaSource; it would block AirPlay
+    recAir = true; recAirWireless = false;
+    lastPos = pos;
+    v.src = si.url;
+    v.currentTime = pos;
+    if (play) void v.play().catch(() => undefined);
+    pickRecAir(); // WebKit may not open it after the await: the "Fernseher auswählen" prompt opens it from a fresh tap
+  }
+  function onRecWireless() {
+    const on = Boolean((video as AirEl | undefined)?.webkitCurrentPlaybackTargetIsWireless);
+    clearTimeout(recAirOffT);
+    if (on) { recAirWireless = recAir; return; }
+    if (!recAirWireless) return;
+    // a route that stays off (AirPlay ended in the picker, the TV gone): the recording here again
+    recAirOffT = setTimeout(() => { if (!(video as AirEl | undefined)?.webkitCurrentPlaybackTargetIsWireless) recAirEnd(); }, WIRELESS_OFF_GRACE_MS);
+  }
+  function recAirEnd() {
+    if (!recAir || !video || destroyed) return;
+    const pos = video.currentTime || lastPos, play = !video.paused;
+    recAir = false; recAirWireless = false; clearTimeout(recAirOffT);
+    video.removeAttribute('src'); video.load();
+    wantAutoplay = play; started = false; stopped = false;
+    void load(pos); // a fresh local token; the AirPlay token it replaces ends (recordingSource.info)
+  }
+
   // the cast right arrives after the player mounted (a stale boot hint denied it): start what onMount skipped
   let castWasDenied = !$perms.cast;
   $: if ($perms.cast && castWasDenied) {
     castWasDenied = false;
     if (!partyMode) void initCast();
-    if (!air && !airProbe && !remote) void initAirPlay();
+    if (!air && !airProbe && !remote) void (srcRec ? initRecAirPlay() : initAirPlay());
   }
 
   const doPause = () => { if (remote) { if (!paused) castEngine.playPause(); } else video?.pause(); };
@@ -1837,7 +1905,7 @@
     if (!attached) load(startAt);
     castOff = onCastEvent(handleCast);
     if (!partyMode) void initCast();
-    if (!attached && !srcRec) void initAirPlay();
+    if (!attached) void (srcRec ? initRecAirPlay() : initAirPlay());
     if (caps.bookmarks) loadBookmarks();
     if ($serverCaps.chapters && caps.scenes) api(`/api/items/${itemId}/chapters`).then((r) => (chapters = r?.supported ? normalizeChapters(r.chapters) : [])).catch(() => undefined);
     if ($serverCaps.segments.length && caps.credits) api(`/api/items/${itemId}/segments`).then((r) => (segments = (r.segments as typeof segments).map((x) => ({ ...x, type: String(x.type).toLowerCase() })).filter((x) => segmentShown($serverCaps, x.type)))).catch(() => undefined);
@@ -1916,6 +1984,7 @@
     clearTimeout(credOutT);
     // a handed-over cast keeps running (the engine owns token, element, controller and probe); otherwise AirPlay ends here
     if (!handedOff) { air?.destroy(); airProbe?.remove(); } // revokes a live AirPlay token
+    recAirOff?.(); clearTimeout(recAirOffT);
     airInfo = null;
     castOff?.();
     hls?.destroy();
@@ -1977,14 +2046,14 @@
         {:else}<b>{$t('player.airplay.failed')}</b><span class="airhint">{$t('player.airplay.endHint')}</span>
         <button class="btn light ui" on:click|stopPropagation={() => air?.retry()}>{$t('player.error.retry')}</button>{/if}
       {:else}<b>{$t('player.airplay.playing')}</b>{/if}
-      <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.change')}</button>
+      <button class="btn light ui" on:click|stopPropagation={pickAir}>{$t('player.airplay.change')}</button>
     </div></div>
-  {:else if airState.ready}
+  {:else if airState.ready || recAir}
     <!-- the token stream is on the element; the picker may not have opened (no gesture after the await): open it from this tap -->
     <div class="center airready" role="status" data-testid="airplay-ready"><div class="castbox">
       <Icon name="airplay" size={40} />
       <span class="airhint">{$t('player.airplay.chooseHint')}</span>
-      <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.choose')}</button>
+      <button class="btn light ui" on:click|stopPropagation={pickAir}>{$t('player.airplay.choose')}</button>
     </div></div>
   {/if}
   {#if aconn}<AirPlayConnecting art={airArt} onCancel={() => air?.cancel()} />{/if}

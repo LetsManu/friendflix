@@ -98,6 +98,25 @@ describe('recordingSource', () => {
     expect(c.timers).toEqual([]);
   });
 
+  it('an AirPlay mint asks for via airplay and ends the token it replaces', async () => {
+    let n = 0;
+    const f = stub((u) => (u.endsWith('/play') ? { body: { ...PLAY, token: `rtok-${++n}`, url: `/media/r/rtok-${n}/index.m3u8` } } : { body: { ok: true } }));
+    const c = clock();
+    const s = recordingSource('r-1', c.deps);
+    await s.info(0);
+    expect((await s.info(30, { via: 'airplay' })).url).toBe('/media/r/rtok-2/index.m3u8');
+    expect(c.timers.map((x) => x.ms)).toEqual([20_000]); // one heartbeat, for the new token
+    c.timers[0]!.fn();
+    await s.stop();
+    expect(calls(f)).toEqual([
+      'POST /api/livetv/recordings/r-1/play {}',
+      'POST /api/livetv/recordings/r-1/play {"via":"airplay"}',
+      'DELETE /api/livetv/watch {"token":"rtok-1"}',
+      'POST /api/livetv/beat {"token":"rtok-2"}',
+      'DELETE /api/livetv/watch {"token":"rtok-2"}',
+    ]);
+  });
+
   it('a recording that is gone answers the gone state from /play', async () => {
     stub(() => ({ status: 404, body: { error: 'not_found' } }));
     const s = recordingSource('r-x', clock().deps);

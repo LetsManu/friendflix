@@ -20,7 +20,8 @@ export interface PlaybackSource {
   kind: 'item' | 'recording';
   id: string;
   caps: PlaybackCaps;
-  info(startSec?: number): Promise<SourceInfo>;
+  /** `via: 'airplay'`: a token the TV may fetch too (a recording; the token it replaces ends) */
+  info(startSec?: number, o?: { via?: 'airplay' }): Promise<SourceInfo>;
   progress(posS: number, state: SourceState, o?: { keepalive?: boolean }): Promise<void>;
   beat?(): Promise<void>;
   stop(o?: { keepalive?: boolean }): Promise<void>;
@@ -86,10 +87,12 @@ export function recordingSource(id: string, deps: SourceDeps = realDeps): Playba
   const gone = (e: unknown) => e instanceof ApiError && (e.status === 410 || e.status === 404);
   const s: PlaybackSource = {
     kind: 'recording', id, caps: NONE,
-    async info() {
+    async info(_startSec, o) {
       let r: { token: string; url: string; growing: boolean; durationS: number | null; positionS: number };
-      try { r = await api(`/api/livetv/recordings/${enc}/play`, { method: 'POST', body: {} }); } catch (e) { if (gone(e)) throw new GoneError(); throw e; }
+      try { r = await api(`/api/livetv/recordings/${enc}/play`, { method: 'POST', body: o?.via ? { via: o.via } : {} }); } catch (e) { if (gone(e)) throw new GoneError(); throw e; }
+      const prev = token;
       token = r.token;
+      if (prev && prev !== r.token) void api('/api/livetv/watch', { method: 'DELETE', body: { token: prev } }).catch(() => undefined); // one token per player
       stopBeat();
       beatT = deps.setInterval(() => { void s.beat?.(); }, REC_BEAT_MS);
       return { url: r.url, kind: 'hls', growing: r.growing, durationS: r.durationS, positionS: r.positionS };
