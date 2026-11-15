@@ -385,10 +385,14 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     await page.goto('/admin/livetv?tab=groups');
     // the list as it is now: the answer a slow reload brings after a later write has changed things
     const old = await page.evaluate(() => fetch('/api/admin/livetv/groups').then((r) => r.json()));
-    let reads = 0;
+    // the page's own first read has landed before the route counts (else it would hold that one)
+    await expect(row(page, 'g-sport').getByRole('switch', { name: 'Kinderfreundlich: Sport' })).toBeEnabled();
+    // the first reload after the write is held until the test has seen the wait (no fixed delay: a loaded runner cannot race it)
+    let reads = 0, release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
     await page.route(/\/api\/admin\/livetv\/groups$/, async (route) => {
       if (route.request().method() !== 'GET' || ++reads > 1) return route.fallback();
-      await new Promise((r) => setTimeout(r, 600));
+      await held;
       await route.fulfill({ json: old });
     });
     const kid = (id: string, name: string) => row(page, id).getByRole('switch', { name });
@@ -397,6 +401,7 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     // the reload is on its way: the other kid switch waits (disabled), nothing is written on top
     await expect(kid('g-sport', 'Kinderfreundlich: Sport')).toBeDisabled();
     expect(writes(api, 'PATCH', /groups\/g-sport$/)).toHaveLength(0);
+    release();
     await expect(kid('g-sport', 'Kinderfreundlich: Sport')).toBeEnabled();
     await kid('g-sport', 'Kinderfreundlich: Sport').click();
     await expect(kid('g-sport', 'Kinderfreundlich: Sport')).toHaveAttribute('aria-checked', 'true');
@@ -629,7 +634,7 @@ test.describe('admin: Live TV in the people pages (desktop)', () => {
 
   test('role matrix shows the Kanalgruppen row only with Live TV', async ({ page, api }) => {
     api.admin.matrix.features.livetv = false;
-    await page.goto('/admin/roles');
+    await page.goto('/admin/roles?view=compare');
     await expect(page.getByRole('grid', { name: 'Rechte der Rollen' })).toBeVisible();
     await expect(page.getByRole('rowheader', { name: 'Kanalgruppen' })).toHaveCount(0);
     await expect(page.getByRole('rowheader', { name: 'Live-TV', exact: true })).toHaveCount(0);
@@ -645,7 +650,7 @@ test.describe('admin: Live TV in the people pages (desktop)', () => {
   });
 
   test('role sheet lists the role\'s channel groups as chips', async ({ page, api }) => {
-    await page.goto('/admin/roles');
+    await page.goto('/admin/roles?view=compare');
     await page.locator('button.rn', { hasText: 'Familie' }).click();
     const sheet = page.getByRole('dialog', { name: 'Rolle „Familie“' });
     const sec = sheet.getByRole('region', { name: 'Kanalgruppen' });

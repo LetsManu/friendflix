@@ -74,6 +74,12 @@ describe('auditSentence', () => {
     // a name that was not set before reads as the built-in word
     expect(e('role.update', { from: { label: null }, to: { label: 'Besucher' } }, { target: 'guest' }).chips).toEqual([{ label: 'Name', from: 'Gast', to: 'Besucher' }]);
   });
+  it('the role\'s Live-TV groups (audited by name) show from → to, none as "Keine"', () => {
+    expect(e('role.update', { from: { livetvGroups: ['Nordlicht TV'] }, to: { livetvGroups: ['Nordlicht TV', 'Hafenkanal'] } }, { target: 'friend' }).chips)
+      .toEqual([{ label: 'Live-TV-Gruppen', from: 'Nordlicht TV', to: 'Nordlicht TV, Hafenkanal' }]);
+    expect(e('role.update', { from: { livetvGroups: ['Hafenkanal'] }, to: { livetvGroups: [] } }, { target: 'friend' }).chips)
+      .toEqual([{ label: 'Live-TV-Gruppen', from: 'Hafenkanal', to: 'Keine' }]);
+  });
   it('the old role.* entries read as "… changed {field}" without chips', () => {
     expect(e('role.playback', { transcoding: true, maxHeight: 1080 }, { target: 'family' })).toEqual({ text: 'Tester hat „Wiedergabe“ der Rolle Familie geändert', chips: [] });
     expect(e('role.request_limit', { requestsPerMonth: 5 }, { target: 'guest' }).text).toBe('Tester hat „Wunsch-Limit“ der Rolle Gast geändert');

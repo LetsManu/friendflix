@@ -3,7 +3,8 @@
 <script lang="ts">
   /**
    * *Duplizieren*: asks for the name of the copy (1 to 30 characters, the role write's bounds) and hands it to the page, which
-   * creates the role (`busy`, `error` come back from it). A modal dialog: the name field starts focused, Tab stays inside, Escape or
+   * creates the role (`busy`, `error` come back from it). *+ Neue Rolle* adds the role to start from (`sources`, bound `source`)
+   * under the name until the new-role dialog with templates replaces it (roles redesign §5.2). A modal dialog: the name field starts focused, Tab stays inside, Escape or
    * a press on the dimmed page cancels, the focus returns to `trigger`. Mounted while open.
    *   <NameDialog title="…" hint="…" confirmLabel="Anlegen" {busy} {error} on:submit={(e) => create(e.detail)} on:cancel={close} />
    */
@@ -12,6 +13,7 @@
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
   import ModalShell from '#lib/ui/ModalShell.svelte';
+  import Select from '#lib/ui/Select.svelte';
   import { uid } from '#lib/ui/ids';
 
   export let title: string;
@@ -21,6 +23,10 @@
   export let busy = false;
   export let error = '';
   export let trigger: HTMLElement | null = null;
+  /** the roles a new role may start from (a copy): a select under the name; none = a plain name dialog */
+  export let sources: Array<{ value: string; label: string }> = [];
+  export let source = '';
+  export let sourceLabel = '';
 
   const dispatch = createEventDispatcher<{ submit: string; cancel: void }>();
   const id = uid('nd');
@@ -41,6 +47,7 @@
     <h2 id="{id}-t">{title}</h2>
     {#if hint}<p class="body">{hint}</p>{/if}
     <Field {label} bind:value={name} maxlength={30} error={bad || error} disabled={busy} autocomplete="off" />
+    {#if sources.length}<Select label={sourceLabel} options={sources} bind:value={source} disabled={busy} />{/if}
     <div class="acts">
       <Button variant="ghost" disabled={busy} on:click={() => shell.dismiss()}>{$t('common.cancel')}</Button>
       <Button type="submit" pending={busy}>{confirmLabel}</Button>

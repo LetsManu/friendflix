@@ -9,7 +9,7 @@
  */
 import { api } from '#lib/api';
 import { hasKey, tr, trDynamic } from '#lib/i18n';
-import { cellText, FIELD_KINDS, fieldLabel, roleName, type MatrixField, type RoleMatrix } from './model';
+import { cellText, FIELD_KINDS, fieldLabel, roleName, type RoleMatrix } from './model';
 
 export interface AuditChip { label: string; from: string; to: string }
 export interface AuditInput {
@@ -31,11 +31,10 @@ const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typ
 function valueText(key: string, v: unknown): string {
   const kind = FIELD_KINDS[key]!;
   if (kind === 'bool') return tr(v ? 'adminPeople.roles.allowed' : 'adminPeople.roles.denied');
-  const f: MatrixField = { key, group: 'access', kind };
-  return cellText(f, v);
+  return cellText({ kind }, v);
 }
 
-/** one chip per known field that has a before and an after, in matrix order, then the name and the invitable switch (a key of another version is dropped, never shown raw) */
+/** one chip per known field that has a before and an after, in matrix order, then the name, the invitable switch and the Live-TV groups (a key of another version is dropped, never shown raw) */
 function chipsOf(meta: Record<string, unknown>, was: string): AuditChip[] {
   const from = isObject(meta.from) ? meta.from : {}, to = isObject(meta.to) ? meta.to : {};
   const both = (k: string) => Object.hasOwn(to, k) && Object.hasOwn(from, k);
@@ -47,6 +46,9 @@ function chipsOf(meta: Record<string, unknown>, was: string): AuditChip[] {
   const str = (v: unknown, none: string) => (typeof v === 'string' && v ? v : none);
   if (both('label')) chips.push({ label: tr('adminPeople.roles.fLabel'), from: str(from.label, was), to: str(to.label, '–') });
   if (both('invitable')) chips.push({ label: tr('adminPeople.roles.fInvitable'), from: word(from.invitable), to: word(to.invitable) });
+  // the role's Live-TV groups, audited by name (a later rename does not rewrite the history)
+  const names = (v: unknown) => { const l = Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []; return l.length ? l.join(', ') : tr('adminPeople.roles.groups.none'); };
+  if (both('livetvGroups')) chips.push({ label: tr('adminPeople.roles.groups.review'), from: names(from.livetvGroups), to: names(to.livetvGroups) });
   return chips;
 }
 
