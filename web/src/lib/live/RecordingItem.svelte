@@ -13,7 +13,8 @@
    * *Geplant*: the time span, the *Konflikt* chip from the forecast and *Abbrechen*. The state chip, the progress line and the chip
    * slot are reserved, so arriving data moves nothing. 44 px targets; on a phone the actions wrap under the text.
    * A running recording of the owner also offers *Jetzt beenden* (DVR follow-ups): it ends now and stays, playable; *Löschen* still
-   * removes it.
+   * removes it. Its slot is there on every own item (hidden, out of the focus order and the accessibility tree while the recording does
+   * not run), so the actions never change width when a recording finishes.
    */
   export let rec: Recording;
   export let kind: 'done' | 'planned' = 'done';
@@ -31,6 +32,7 @@
   let shareOpen = false;
   const day = (iso: string) => fmtDate(iso, { weekday: 'short', day: 'numeric', month: 'short' });
   $: playable = rec.state === 'recording' || rec.state === 'done' || rec.state === 'partial';
+  $: running = rec.state === 'recording';
   $: tone = rec.state === 'failed' ? 'err' : rec.state === 'partial' ? 'warn' : rec.state === 'recording' ? 'rec' : 'ok';
   const SHARES: Array<{ v: Visibility; k: 'live.mine.sharePrivate' | 'live.mine.shareAccount' | 'live.mine.shareAll' }> = [
     { v: 'private', k: 'live.mine.sharePrivate' }, { v: 'account', k: 'live.mine.shareAccount' }, { v: 'everyone', k: 'live.mine.shareAll' },
@@ -68,9 +70,6 @@
   <div class="acts">
     {#if kind === 'done'}
       {#if rec.mine}
-        {#if rec.state === 'recording'}
-          <button type="button" class="ab" aria-busy={busy} on:click={() => dispatch('stop', rec)}><span class="ic on" aria-hidden="true"><Icon name="stop" size={18} /></span>{$t('live.mine.stop')}</button>
-        {/if}
         {#if canRecord}
           <button type="button" class="ab" class:on={rec.keep} aria-pressed={rec.keep} aria-busy={busy} on:click={() => dispatch('keep', rec)}>
             <span class="ic" aria-hidden="true"><Icon name="lock" size={18} /></span>{$t('live.mine.keep')}
@@ -79,6 +78,9 @@
         {#if exportable}<button type="button" class="ab" aria-busy={busy} on:click={() => dispatch('library', rec)}>{$t('live.mine.toLibrary')}</button>{/if}
         <button type="button" class="ab" aria-expanded={shareOpen} on:click={() => (shareOpen = !shareOpen)}>{$t('live.mine.share')}</button>
         <button type="button" class="ab del" on:click={() => dispatch('delete', rec)}>{$t('live.mine.delete')}</button>
+        <!-- reserved on every own item: shown only while it records -->
+        <button type="button" class="ab stopb" class:hold={!running} aria-hidden={running ? undefined : 'true'} tabindex={running ? undefined : -1} disabled={!running} aria-busy={busy}
+          on:click={() => dispatch('stop', rec)}><span class="ic on" aria-hidden="true"><Icon name="stop" size={18} /></span>{$t('live.mine.stop')}</button>
       {:else}
         <span class="shared">{$t('live.mine.shared')}</span>
       {/if}
@@ -124,6 +126,8 @@
   .ic { display: grid; opacity: .55; }
   .ab.on .ic, .ic.on { opacity: 1; }
   .del { color: #ffa8a8; }
+  /* the reserved Jetzt beenden slot of a recording that does not run: it keeps its width, nobody sees, reaches or presses it */
+  .ab.hold { visibility: hidden; pointer-events: none; }
   .shared { font-size: .85rem; color: rgba(255, 255, 255, .72); }
   .share { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
   @media (max-width: 720px) {

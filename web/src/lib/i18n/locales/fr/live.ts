@@ -103,6 +103,8 @@ const dict: Translation<typeof de> = {
     cancelled: 'Enregistrement annulé',
     stopped: 'Enregistrement arrêté. Ce qui a été enregistré est conservé.',
     deleteBody: 'Ce qui a été enregistré jusqu’ici sera supprimé. Avec « Arrêter l’enregistrement », il est conservé.',
+    sameStart: 'Un enregistrement commence déjà à cette heure sur cette chaîne. Choisis un autre début.',
+    nothingRecorded: 'Rien n’a encore été enregistré. L’enregistrement a été annulé.',
     onlyNew: 'Nouveaux épisodes uniquement',
     thisChannel: 'Cette chaîne uniquement',
     allChannels: 'Toutes les chaînes',
@@ -179,6 +181,7 @@ const dict: Translation<typeof de> = {
     name: 'Titre',
     save: 'Programmer l’enregistrement',
     savedRule: 'Enregistrement par horaire créé',
+    startPast: 'Le début est trop loin dans le passé. Choisis une heure à partir de maintenant.',
   },
   recPlayer: {
     growing: 'Enregistrement en cours',

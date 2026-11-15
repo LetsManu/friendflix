@@ -103,6 +103,8 @@ const dict: Translation<typeof de> = {
     cancelled: 'Recording cancelled',
     stopped: 'Recording stopped. What was recorded is kept.',
     deleteBody: 'What has been recorded so far will be deleted. With “Stop recording” it is kept.',
+    sameStart: 'A recording on this channel already starts at this time. Choose another start.',
+    nothingRecorded: 'Nothing recorded yet. The recording was cancelled.',
     onlyNew: 'Only new episodes',
     thisChannel: 'This channel only',
     allChannels: 'All channels',
@@ -179,6 +181,7 @@ const dict: Translation<typeof de> = {
     name: 'Title',
     save: 'Schedule recording',
     savedRule: 'Recording by time set up',
+    startPast: 'The start is too far in the past. Choose a time from now on.',
   },
   recPlayer: {
     growing: 'Recording in progress',

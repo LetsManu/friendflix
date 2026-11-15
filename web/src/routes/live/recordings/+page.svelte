@@ -101,8 +101,23 @@
   }
   const keep = (r: Recording) => write(r, () => patchRecording(r.id, { keep: !r.keep }), { keep: !r.keep });
   const share = (r: Recording, visibility: Visibility) => write(r, () => patchRecording(r.id, { visibility }), { visibility });
-  /** *Jetzt beenden*: a running recording ends now and stays (done once livetv closed it; the next refresh shows that) */
-  const stop = (r: Recording) => write(r, async () => { const next = await stopRecording(r.id); toast.success($t('live.rec.stopped')); return next; }, {});
+  /**
+   * *Jetzt beenden*: a running recording ends now and stays. The chip says *Fertig* at once (optimistic), the answer and a fresh list
+   * follow; one that had recorded nothing is gone (the answer is null) and the toast says so.
+   */
+  async function stop(r: Recording): Promise<void> {
+    await write(r, async () => {
+      const next = await stopRecording(r.id);
+      if (!next) {
+        if (recs) recs = recs.filter((x) => x.id !== r.id);
+        toast.success($t('live.rec.nothingRecorded'));
+        return null;
+      }
+      toast.success($t('live.rec.stopped'));
+      return next;
+    }, { state: 'done', growing: false });
+    void load();
+  }
   async function cancel(r: Recording): Promise<void> {
     if (!recs) return;
     busy = new Set(busy).add(r.id);

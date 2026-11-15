@@ -113,6 +113,47 @@ test.describe('finding the recordings', () => {
     expect(api.livetv.recLists).toEqual([]);
   });
 
+  test('home: with finished recordings last time the row\'s room is held while it loads, so nothing below jumps', async ({ page, api }) => {
+    await arm(page, api, [mockRecording({ title: 'Sternstunde Physik', start: at(11, 20), end: at(11, 21) })]);
+    await page.addInitScript(() => localStorage.setItem('ff-home-recs:p1', '1'));
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route('**/api/livetv/recordings?*', async (r) => { await held; await r.fallback(); });
+    await page.goto('/');
+    const row = page.getByRole('region', { name: 'Deine Aufnahmen' });
+    await expect(row).toHaveAttribute('aria-busy', 'true');
+    await row.scrollIntoViewIfNeeded();
+    const before = await row.boundingBox();
+    release();
+    await expect(row.getByRole('listitem')).toHaveCount(1);
+    await expect(row).not.toHaveAttribute('aria-busy', 'true');
+    const after = (await row.boundingBox())!;
+    expect(Math.abs(after.y - before!.y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(after.height - before!.height)).toBeLessThanOrEqual(8);
+    // nothing finished any more: the hint goes, next time nothing is held
+    api.livetv.recordings = [];
+    await page.unroute('**/api/livetv/recordings?*');
+    await page.reload();
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('ff-home-recs:p1'))).toBeNull();
+    await expect(row).toHaveCount(0);
+  });
+
+  test('TV: /live never shows the heading\'s Aufnahmen link, not even for a frame', async ({ page, api }) => {
+    await arm(page, api);
+    await page.addInitScript(() => {
+      const w = window as unknown as { __seen: boolean };
+      w.__seen = false;
+      const look = () => { if (document.querySelector('main a.recs')) w.__seen = true; requestAnimationFrame(look); };
+      requestAnimationFrame(look);
+    });
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.goto('/live?tv=1');
+    await expect(page.locator('html.tv')).toHaveCount(1);
+    await expect(page.getByRole('heading', { level: 1, name: 'Live-TV' })).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => (window as unknown as { __seen: boolean }).__seen)).toBe(false);
+  });
+
   test('TV side bar: Aufnahmen follows Live-TV and opens Meine Aufnahmen', async ({ page, api }) => {
     await arm(page, api, [mockRecording({ start: at(11, 20), end: at(11, 21) })]);
     await page.setViewportSize({ width: 1920, height: 1080 });

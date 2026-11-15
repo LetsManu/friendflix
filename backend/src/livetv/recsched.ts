@@ -776,9 +776,10 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
  * *Aufnahme beenden*: a running recording ends now and keeps what it recorded. Its end becomes now (no padding after it, no EPG
  * growth), livetv's recorder is stopped (ENDLIST), and when livetv already reports it finished it is collected at once (done, or
  * partial with its gaps); otherwise the reconcile collects it on a later tick (the due stop is the net for a recorder that missed the
- * stop). During the padding before its start the end is its start plus a second (the row's end stays after its start).
+ * stop). During the padding before its start the end is its start plus a second (the row's end stays after its start). A recorder
+ * that wrote nothing yet ends `empty`: the row is deleted like a cancel.
  */
-export async function stopRecording(ctx: Ctx, id: string, now: number = Date.now()): Promise<'stopped' | 'not_recording'> {
+export async function stopRecording(ctx: Ctx, id: string, now: number = Date.now()): Promise<'stopped' | 'empty' | 'not_recording'> {
   const row = (await ctx.db.query<RecRow>(
     `update livetv_recordings set end_at = greatest($2::timestamptz, start_at + interval '1 second'), pad_after_s = 0, follow_epg = false, end_pending = null
       where id = $1 and state = 'recording' returning *`, [id, new Date(now)])).rows[0];
@@ -786,6 +787,13 @@ export async function stopRecording(ctx: Ctx, id: string, now: number = Date.now
   invalidateRecordingUses();
   await livetvCall(ctx, 'DELETE', `/v1/recordings/${id}`, undefined, { timeoutMs: CALL_TIMEOUT_MS }).catch(() => undefined);
   const e = (await recorderList(ctx))?.find((x) => x.id === id);
+  // stopped before a single segment was written: nothing to keep or play, so it goes like a cancel (no 0-byte "done", no failure
+  // notice); the folder is removed with it
+  if (e && e.state !== 'recording' && !(e.bytes > 0)) {
+    await deleteRecording(ctx, id, 'owner');
+    if (row.channel_id) await releaseReservation(ctx, row.channel_id).catch(() => undefined);
+    return 'empty';
+  }
   if (e && e.state !== 'recording') await collect(ctx, row, e);
   if (row.channel_id) await releaseReservation(ctx, row.channel_id).catch(() => undefined);
   return 'stopped';

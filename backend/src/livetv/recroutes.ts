@@ -129,10 +129,15 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     else return notFound(reply);
     if (!(end > start) || end - start > MAX_SPAN_MS) return reply.code(400).send({ error: 'invalid', field: 'end' });
     if (end <= Date.now() || (!prog && start < Date.now() - SPAN_START_LEAD_MS)) return reply.code(400).send({ error: 'invalid', field: 'start' });
-    const existing = async () => (await ctx.db.query<{ id: string }>(
-      "select id from livetv_recordings where profile_id = $1 and channel_id = $2 and start_at = $3 and state in ('scheduled','starting','recording')", [profile.id, b.data.channelId, new Date(start)])).rows[0];
+    const existing = async () => (await ctx.db.query<{ id: string; end_at: Date }>(
+      "select id, end_at from livetv_recordings where profile_id = $1 and channel_id = $2 and start_at = $3 and state in ('scheduled','starting','recording')", [profile.id, b.data.channelId, new Date(start)])).rows[0];
     const dup = await existing();
-    if (dup) return reply.code(200).send({ recording: await recordingView(ctx, u, profile, dup.id) });
+    // the same request again answers what it planned; another recording that starts at the same instant on this channel (a whole
+    // programme and a part of it) cannot be planned beside it (one per profile, channel and start): 409 `same_start`, never the other one
+    if (dup) {
+      if (dup.end_at.getTime() !== end) return reply.code(409).send({ error: 'same_start' });
+      return reply.code(200).send({ recording: await recordingView(ctx, u, profile, dup.id) });
+    }
     const s = recordSettings(ctx);
     const pad = { padBeforeS: b.data.padBefore !== undefined ? b.data.padBefore * 60 : s.padBeforeS, padAfterS: b.data.padAfter !== undefined ? b.data.padAfter * 60 : s.padAfterS };
     const fc = await forecast(ctx, { channelId: b.data.channelId, from: start - pad.padBeforeS * 1000, to: end + pad.padAfterS * 1000 });
@@ -232,7 +237,10 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /**
    * *Aufnahme beenden* (the owner): a running recording ends now and keeps what it has (done, or partial with its gaps), unlike DELETE,
-   * which removes it. 409 `not_recording` for anything that is not recording (a planned one is cancelled with DELETE).
+   * which removes it. 409 `not_recording` for anything that is not recording (a planned one is cancelled with DELETE). Answers
+   * `{ recording: null }` when nothing was recorded yet (it is removed like a cancel).
+   * Like DELETE and narrowing a share (A-M13) it needs Live-TV but deliberately not `liveRecord`: a person whose role lost the right
+   * to record can still end (and delete) their own recordings; it only ever ends a resource, it never starts one.
    */
   app.post('/api/livetv/recordings/:id/stop', ownerWrite, async (req, reply) => {
     if (!livetvInstalled(ctx)) return off(reply);
@@ -242,8 +250,9 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     const r = await visibleRecording(ctx, u, profile, id);
     if (!r) return notFound(reply);
     if (r.profile_id !== profile.id) return reply.code(403).send({ error: 'forbidden' });
-    if ((await stopRecording(ctx, id)) === 'not_recording') return reply.code(409).send({ error: 'not_recording' });
-    return { recording: await recordingView(ctx, u, profile, id) };
+    const res = await stopRecording(ctx, id);
+    if (res === 'not_recording') return reply.code(409).send({ error: 'not_recording' });
+    return { recording: res === 'empty' ? null : await recordingView(ctx, u, profile, id) };
   });
 
   /** *Behalten → in Bibliothek* (mode `both`, spec §15.3): the owner's finished recording is copied into the Jellyfin library and kept */

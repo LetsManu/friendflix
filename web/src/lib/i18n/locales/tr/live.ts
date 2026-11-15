@@ -103,6 +103,8 @@ const dict: Translation<typeof de> = {
     cancelled: 'Kayıt iptal edildi',
     stopped: 'Kayıt bitirildi. Kaydedilenler saklanır.',
     deleteBody: 'Şimdiye kadar kaydedilenler silinir. “Kaydı bitir” ile saklanır.',
+    sameStart: 'Bu kanalda bu saatte zaten bir kayıt başlıyor. Başka bir başlangıç seç.',
+    nothingRecorded: 'Henüz hiçbir şey kaydedilmedi. Kayıt iptal edildi.',
     onlyNew: 'Yalnızca yeni bölümler',
     thisChannel: 'Yalnızca bu kanal',
     allChannels: 'Tüm kanallar',
@@ -179,6 +181,7 @@ const dict: Translation<typeof de> = {
     name: 'Başlık',
     save: 'Kaydı planla',
     savedRule: 'Saate göre kayıt oluşturuldu',
+    startPast: 'Başlangıç çok geride kalıyor. Şu andan itibaren bir saat seç.',
   },
   recPlayer: {
     growing: 'Kayıt sürüyor',

@@ -103,6 +103,8 @@ const dict: Translation<typeof de> = {
     cancelled: 'Registrazione annullata',
     stopped: 'Registrazione interrotta. Ciò che è stato registrato resta.',
     deleteBody: 'Ciò che è stato registrato finora verrà eliminato. Con “Interrompi registrazione” resta.',
+    sameStart: 'Su questo canale inizia già una registrazione a quest’ora. Scegli un altro inizio.',
+    nothingRecorded: 'Non è stato ancora registrato nulla. La registrazione è stata annullata.',
     onlyNew: 'Solo nuovi episodi',
     thisChannel: 'Solo questo canale',
     allChannels: 'Tutti i canali',
@@ -179,6 +181,7 @@ const dict: Translation<typeof de> = {
     name: 'Titolo',
     save: 'Programma registrazione',
     savedRule: 'Registrazione a orario creata',
+    startPast: 'L’inizio è troppo indietro nel tempo. Scegli un orario da adesso in poi.',
   },
   recPlayer: {
     growing: 'Registrazione in corso',

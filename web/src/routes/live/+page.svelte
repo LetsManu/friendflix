@@ -44,7 +44,8 @@
   let busy = false;
   let filter: LiveFilter = 'all';
   /** the shell turned the TV layout on (html.tv): paired TVs, or the `?tv=1` preview */
-  let tvMode = false;
+  // read at once (no SSR): the heading's Aufnahmen link never shows for a frame on a TV
+  let tvMode = typeof document !== 'undefined' && document.documentElement.classList.contains('tv');
 
   /** the recordings this profile sees (null while loading); a refresh that fails keeps what is on screen */
   let recs: Recording[] | null = null;

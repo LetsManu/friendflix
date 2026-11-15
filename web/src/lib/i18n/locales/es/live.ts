@@ -103,6 +103,8 @@ const dict: Translation<typeof de> = {
     cancelled: 'Grabación cancelada',
     stopped: 'Grabación detenida. Lo grabado se conserva.',
     deleteBody: 'Lo grabado hasta ahora se borrará. Con «Detener grabación» se conserva.',
+    sameStart: 'En este canal ya empieza una grabación a esta hora. Elige otro inicio.',
+    nothingRecorded: 'Aún no se ha grabado nada. La grabación se ha cancelado.',
     onlyNew: 'Solo episodios nuevos',
     thisChannel: 'Solo este canal',
     allChannels: 'Todos los canales',
@@ -179,6 +181,7 @@ const dict: Translation<typeof de> = {
     name: 'Título',
     save: 'Programar grabación',
     savedRule: 'Grabación por horario creada',
+    startPast: 'El inicio queda demasiado atrás. Elige una hora a partir de ahora.',
   },
   recPlayer: {
     growing: 'Grabación en curso',

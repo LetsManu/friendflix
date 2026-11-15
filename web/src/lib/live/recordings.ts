@@ -3,6 +3,7 @@
 import { get } from 'svelte/store';
 import { api, ApiError } from '#lib/api';
 import { t, type TKey } from '#lib/i18n';
+import { errorText } from '#lib/ui/action';
 
 /**
  * Web side of the recordings API (backend: livetv/recroutes.ts, spec §15.8, plan Phase 3 Task 4): the types the routes answer,
@@ -237,3 +238,17 @@ export function spanPreset(p: { title: string; start: string; end: string }, now
   const start = Math.max(minute, Date.parse(p.start));
   return { start: new Date(start), end: new Date(Math.max(Date.parse(p.end), start + 60_000)), title: p.title };
 }
+
+/**
+ * The scheduling refusals a person can act on, in words (DVR follow-ups): a time span that starts too far back (400 `start`), another
+ * recording of this channel at the same start (409 `same_start`); null for anything else (the caller shows `errorText`).
+ */
+export function scheduleProblem(e: unknown): string | null {
+  if (!(e instanceof ApiError)) return null;
+  const b = e.body as { error?: string; field?: string } | null;
+  if (e.status === 400 && b?.error === 'invalid' && b.field === 'start') return get(t)('live.time.startPast');
+  if (e.status === 409 && b?.error === 'same_start') return get(t)('live.rec.sameStart');
+  return null;
+}
+/** `scheduleProblem`, else the generic error text */
+export const scheduleErrorText = (e: unknown): string => scheduleProblem(e) ?? errorText(e);

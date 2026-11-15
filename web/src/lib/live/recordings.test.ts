@@ -4,8 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   conflictText, createRule, deleteRecording, deleteRule, getRecording, groupBySeries, listRecordings, PAD_MAX, patchRecording, patchRule, programme, recordingFor, schedule,
   stateLabel, stepPad, toLibrary, type Recording, finished, hhmm, KEEP_MAX, minutesOf, planned, progressOf, rowRecordings, ROW_MAX, stepKeep,
-  doneRecordings, spanPreset, stopRecording,
+  doneRecordings, scheduleProblem, spanPreset, stopRecording,
 } from './recordings';
+import { ApiError } from '#lib/api';
 
 const at = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
 let n = 0;
@@ -181,5 +182,15 @@ describe('less than a whole programme (DVR follow-ups)', () => {
     ];
     expect(doneRecordings(list).map((r) => r.id)).toEqual(['c', 'a']);
     expect(doneRecordings(Array.from({ length: 20 }, (_, i) => rec({ id: `x${i}`, start: at(1 + i, 20) })))).toHaveLength(ROW_MAX);
+  });
+});
+
+describe('scheduleProblem (the refusals a person can act on, in words)', () => {
+  it('names a start too far back and a recording at the same start; nothing else', () => {
+    expect(scheduleProblem(new ApiError(400, { error: 'invalid', field: 'start' }))).toBe('Der Beginn liegt zu weit zurück. Wähle eine Zeit ab jetzt.');
+    expect(scheduleProblem(new ApiError(409, { error: 'same_start' }))).toBe('Auf diesem Sender beginnt zu dieser Zeit schon eine Aufnahme. Wähle einen anderen Beginn.');
+    expect(scheduleProblem(new ApiError(400, { error: 'invalid', field: 'end' }))).toBeNull();
+    expect(scheduleProblem(new ApiError(409, { error: 'conflict' }))).toBeNull();
+    expect(scheduleProblem(new Error('x'))).toBeNull();
   });
 });

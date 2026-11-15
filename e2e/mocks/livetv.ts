@@ -95,6 +95,8 @@ export interface LivetvMock {
   /** GET /api/livetv/recordings answers these (newest first as given) */
   recordings: MockRecording[];
   rules: MockRule[];
+  /** a recording of a running programme comes back `scheduled` (the backend's tick has not started it yet) instead of `recording` */
+  recStartLate: boolean;
   /** POST /api/livetv/recordings and POST /api/livetv/rules without `force` answer 409 `conflict` with this forecast */
   recConflict: MockForecast | null;
   /** recording writes, "METHOD /path body" */
@@ -171,6 +173,7 @@ export function livetvState(): LivetvMock {
     recordings: [],
     rules: [],
     recConflict: null,
+    recStartLate: false,
     recCalls: [],
     recNow: new Date(2026, 10, 12, 20, 37, 10).getTime(),
     recPlayError: null,
@@ -242,10 +245,15 @@ function recordingRoute(st: LivetvMock, m: string, p: string, body: any, J: Repl
     const found = [c.now, c.next].find((x) => x && Date.parse(x.start) === start);
     const pr = found && (!body.end || !body.title || Date.parse(body.end) === Date.parse(found.end)) ? found : undefined;
     const end = pr ? Date.parse(pr.end) : Date.parse(body.end);
+    // a time span starts at most 5 minutes back; one recording per channel and start (backend recroutes.ts)
+    if (!pr && start < st.recNow - 5 * 60_000) return J({ error: 'invalid', field: 'start' }, 400);
+    const same = st.recordings.find((x) => x.mine && x.channel.id === c.id && Date.parse(x.start) === start && ['scheduled', 'recording'].includes(x.state));
+    if (same && Date.parse(same.end) !== end) return J({ error: 'same_start' }, 409);
+    if (same) return J({ recording: same });
     const running = start <= st.recNow && st.recNow < end;
     const r = mockRecording({
       title: pr?.title ?? body.title, channel: { id: c.id, name: c.name, logo: c.logo }, start: new Date(start).toISOString(), end: new Date(end).toISOString(),
-      state: running ? 'recording' : 'scheduled', growing: running, durationS: running ? 30 : null, bytes: running ? 1 : 0, seriesKey: pr ? keyOf(pr.title) : null,
+      state: running && !st.recStartLate ? 'recording' : 'scheduled', growing: running && !st.recStartLate, durationS: running ? 30 : null, bytes: running ? 1 : 0, seriesKey: pr ? keyOf(pr.title) : null,
       padBefore: body.padBefore ?? 2, padAfter: body.padAfter ?? 5,
     });
     st.recordings = [r, ...st.recordings];

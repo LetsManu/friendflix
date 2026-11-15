@@ -217,6 +217,64 @@ test.describe('recording from the live player', () => {
     await expect(page).toHaveURL((u) => u.pathname === '/live/watch/ch-nord');
   });
 
+  test.describe('record now before the backend started it', () => {
+    test.use({ allowedConsole: /Failed to load resource: the server responded with a status of 409/ });
+    test('record now that the backend has not started yet still offers Aufnahme beenden; stopped before anything was recorded it is cancelled', async ({ page, api }) => {
+      api.livetv.recStartLate = true;
+      await arm(page, api);
+      await openPanel(page);
+      await panel(page).getByRole('button', { name: 'Aufnehmen' }).first().click();
+      const s = sheet(page, 'Die Leuchtturmwärter');
+      await s.getByRole('button', { name: 'Ab jetzt aufnehmen' }).click();
+      await expect.poll(() => api.livetv.recordings.length).toBe(1);
+      const id = api.livetv.recordings[0]!.id;
+      expect(api.livetv.recordings[0]!.state).toBe('scheduled');
+      // never a bare cancel: the running programme's recording ends or is cancelled and deleted after the second ask
+      await expect(s.getByRole('button', { name: 'Aufnahme abbrechen' })).toHaveCount(0);
+      await expect(s.getByRole('button', { name: 'Abbrechen und löschen' })).toBeVisible();
+      await s.getByRole('button', { name: 'Aufnahme beenden' }).click();
+      // the stop is refused (not started yet), the state is asked again, and it is cancelled: nothing was recorded
+      await expect.poll(() => api.livetv.recCalls.slice(-2)).toEqual([`POST /api/livetv/recordings/${id}/stop`, `DELETE /api/livetv/recordings/${id}`]);
+      await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Noch nichts aufgenommen. Die Aufnahme wurde abgebrochen.')).toBeVisible();
+      await expect(s.getByRole('button', { name: 'Ab jetzt aufnehmen' })).toBeVisible();
+    });
+  });
+
+  test('the time-span sheet\'s title follows the channel until it is typed', async ({ page, api }) => {
+    await arm(page, api);
+    await openPanel(page);
+    await panel(page).getByRole('button', { name: 'Aufnehmen' }).first().click();
+    await sheet(page, 'Die Leuchtturmwärter').getByRole('button', { name: 'Eigenen Zeitraum aufnehmen …' }).click();
+    const t = page.getByRole('dialog', { name: 'Neue Aufnahme' });
+    await expect(t.getByLabel('Titel')).toHaveValue('Die Leuchtturmwärter');
+    await t.getByLabel('Sender').selectOption({ label: '4 Hafenkanal' });
+    await expect(t.getByLabel('Titel')).toHaveValue('Hafenkanal');
+    await t.getByLabel('Sender').selectOption({ label: '1 Nordlicht TV' });
+    await expect(t.getByLabel('Titel')).toHaveValue('Die Leuchtturmwärter');
+    await t.getByLabel('Titel').fill('Leuchtturm, Anfang');
+    await t.getByLabel('Sender').selectOption({ label: '4 Hafenkanal' });
+    await expect(t.getByLabel('Titel')).toHaveValue('Leuchtturm, Anfang');
+  });
+
+  test.describe('a span at the start of a planned programme', () => {
+    test.use({ allowedConsole: /Failed to load resource: the server responded with a status of 409/ });
+    test('is refused with the reason in the reserved slot, never answered with the other recording', async ({ page, api }) => {
+      await arm(page, api);
+      await openPanel(page);
+      await panel(page).getByRole('button', { name: 'Aufnehmen' }).nth(1).click();
+      const s = sheet(page, 'Wetter am Hafen');
+      await s.getByRole('button', { name: 'Aufnehmen', exact: true }).click();
+      await expect(s.getByRole('button', { name: 'Aufnahme abbrechen' })).toBeVisible();
+      await s.getByRole('button', { name: 'Eigenen Zeitraum aufnehmen …' }).click();
+      const t = page.getByRole('dialog', { name: 'Neue Aufnahme' });
+      await t.getByLabel('Dauer (Minuten)').fill('5');
+      await t.getByRole('button', { name: 'Aufnahme planen' }).click();
+      await expect(t.getByRole('alert')).toHaveText('Auf diesem Sender beginnt zu dieser Zeit schon eine Aufnahme. Wähle einen anderen Beginn.');
+      await expect(t).toBeVisible();
+      expect(api.livetv.recordings).toHaveLength(1);
+    });
+  });
+
   test('an upcoming programme\'s own span starts at its start; Escape closes the time-span sheet', async ({ page, api }) => {
     await arm(page, api);
     await openPanel(page);

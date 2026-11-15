@@ -236,8 +236,15 @@ test.describe('Aufnahmen row and Meine Aufnahmen', () => {
     await page.goto('/live/recordings');
     const it = items(page).filter({ hasText: 'Sternstunde Physik' });
     await expect(it.getByText('Läuft', { exact: true })).toBeVisible();
-    // only a running recording has it
-    await expect(items(page).filter({ hasText: 'Die Leuchtturmwärter' }).getByRole('button', { name: 'Jetzt beenden' })).toHaveCount(0);
+    // only a running recording has it; a finished one keeps its slot hidden (unseen, unreachable)
+    const other = items(page).filter({ hasText: 'Die Leuchtturmwärter' });
+    await expect(other.getByRole('button', { name: 'Jetzt beenden' })).toHaveCount(0);
+    await expect(other.locator('button.stopb')).toBeHidden();
+    expect(await other.locator('button.stopb').evaluate((b) => [b.getAttribute('aria-hidden'), b.tabIndex, (b as HTMLButtonElement).disabled])).toEqual(['true', -1, true]);
+    // the actions keep their place and the item its size when it finishes (the slot stays)
+    const parts = () => Promise.all([box(it), box(it.getByRole('button', { name: 'Behalten' })), box(it.getByRole('button', { name: 'Löschen' })), box(it.locator('button.stopb'))]);
+    const before = await parts();
+    expect(before[1].y).toBeCloseTo((await box(other.getByRole('button', { name: 'Behalten' }))).y - (await box(other)).y + before[0].y, 0);
     await it.getByRole('button', { name: 'Jetzt beenden' }).click();
     await expect.poll(() => api.livetv.recCalls).toEqual([`POST /api/livetv/recordings/${running.id}/stop`]);
     await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Aufnahme beendet. Das Aufgenommene bleibt erhalten.')).toBeVisible();
@@ -246,6 +253,29 @@ test.describe('Aufnahmen row and Meine Aufnahmen', () => {
     await expect(it.getByRole('button', { name: 'Jetzt beenden' })).toHaveCount(0);
     await expect(it.getByRole('button', { name: /^Abspielen/ })).toBeEnabled();
     await expect(items(page)).toHaveCount(2);
+    const after = await parts();
+    for (let i = 0; i < 4; i++) for (const k of ['x', 'y', 'width', 'height'] as const) expect(after[i]![k], `${i} ${k}`).toBeCloseTo(before[i]![k], 0);
+    // the list was asked again after the stop
+    expect(api.livetv.recLists.length).toBeGreaterThan(1);
+  });
+
+  test.describe('refusals in words', () => {
+    test.use({ allowedConsole: /Failed to load resource: the server responded with a status of 400/ });
+    test('Neue Aufnahme starting too far back says so in the reserved slot; the sheet stays open', async ({ page, api }) => {
+      await arm(page, api, []);
+      await page.goto('/live/recordings');
+      await page.getByRole('button', { name: 'Neue Aufnahme' }).click();
+      const s = page.getByRole('dialog', { name: 'Neue Aufnahme' });
+      await s.getByLabel('Datum').fill('2026-11-12');
+      await s.getByLabel('Beginn').fill('20:15');
+      const save = s.getByRole('button', { name: 'Aufnahme planen' });
+      const y = (await box(save)).y;
+      await save.click();
+      await expect(s.getByRole('alert')).toHaveText('Der Beginn liegt zu weit zurück. Wähle eine Zeit ab jetzt.');
+      await expect(s).toBeVisible();
+      expect((await box(save)).y).toBeCloseTo(y, 0);
+      await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Das hat nicht geklappt.')).toHaveCount(0);
+    });
   });
 
   test('kids row shows only shared recordings, no actions', async ({ page, api }) => {

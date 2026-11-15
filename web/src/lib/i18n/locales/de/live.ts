@@ -102,6 +102,8 @@ export default {
     cancelled: 'Aufnahme abgebrochen',
     stopped: 'Aufnahme beendet. Das Aufgenommene bleibt erhalten.',
     deleteBody: 'Was bisher aufgenommen wurde, wird gelöscht. Mit „Aufnahme beenden“ bleibt es erhalten.',
+    sameStart: 'Auf diesem Sender beginnt zu dieser Zeit schon eine Aufnahme. Wähle einen anderen Beginn.',
+    nothingRecorded: 'Noch nichts aufgenommen. Die Aufnahme wurde abgebrochen.',
     onlyNew: 'Nur neue Folgen',
     thisChannel: 'Nur dieser Sender',
     allChannels: 'Alle Sender',
@@ -179,6 +181,7 @@ export default {
     name: 'Titel',
     save: 'Aufnahme planen',
     savedRule: 'Aufnahme nach Uhrzeit angelegt',
+    startPast: 'Der Beginn liegt zu weit zurück. Wähle eine Zeit ab jetzt.',
   },
   /** eine Aufnahme im Player (Phase 3, spec §15.7, Review Focus 5) */
   recPlayer: {
