@@ -13,6 +13,7 @@ import { LivetvError, livetvBytes } from './client.js';
 import { livetvInstalled } from './detect.js';
 import { nowNext } from './epg.js';
 import { readLogo } from './logos.js';
+import { recordingRoutes } from './recroutes.js';
 import { channelSet } from './rights.js';
 import { clearJoinMark, receivingChannelIds, runningChannelIds, startOrJoin } from './streams.js';
 import { adminStopViewKey, beatLiveToken, deviceLiveSessions, endLiveToken, LIVE_CAP_S, liveSidHash, mintLiveToken, revokeLiveToken, unfetchedLiveSessions } from './tokens.js';
@@ -79,6 +80,7 @@ export const WATCH_IP_MAX = 120;
  * named, also not through its favourites, its recent entries or its preview.
  */
 export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
+  recordingRoutes(app, ctx); // Phase 3: recordings, rules, the programme detail
   const userCheck = requireUser(ctx);
   const user = { preHandler: userCheck };
 

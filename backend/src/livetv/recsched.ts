@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
-import { dropReservation, reserveConversion } from '../convbudget.js';
+import { conversionLimit, dropReservation, holdback, reserveConversion } from '../convbudget.js';
 import type { Ctx } from '../ctx.js';
 import { m } from '../i18n.js';
 import type { MsgKey } from '../messages.js';
@@ -54,7 +54,7 @@ const event = (ctx: Ctx, e: Omit<LiveEvent, 'at'>) => pushEvent(ctx, e).catch(()
 
 // ---- the guide ----
 
-interface Prog {
+export interface Prog {
   sourceId: string; xml: string; start: number; end: number; title: string; subtitle: string | null; description: string | null; episode: string | null;
   seriesKey: string | null; isNew: boolean | null; prevShown: boolean | null;
 }
@@ -106,6 +106,17 @@ async function programmes(ctx: Pick<Ctx, 'db'>, maps: readonly EpgMap[], from: n
     out.set(mp.channelId, list);
   }
   return out;
+}
+
+/** a programme of the channel starting exactly at `start` (effective time, offset applied); null when the guide has none */
+export async function programmeAt(ctx: Pick<Ctx, 'db'>, channelId: string, start: number): Promise<(Prog & { categories: string[] | null }) | null> {
+  const mp = (await epgMaps(ctx, [channelId]))[0];
+  if (!mp) return null;
+  const p = ((await programmes(ctx, [mp], start, start + 1)).get(channelId) ?? [])[0];
+  if (!p) return null;
+  const cats = (await ctx.db.query<{ categories: string[] | null }>(
+    'select categories from livetv_programmes where source_id = $1 and xml_channel = $2 and start_at = $3 limit 1', [mp.sourceId, mp.xml, new Date(start - mp.shift * 60_000)])).rows[0];
+  return { ...p, categories: cats?.categories ?? null };
 }
 
 const episodeKey = (p: { episode?: string | null; subtitle?: string | null }): string | null => {
@@ -574,4 +585,64 @@ export async function releaseReservation(ctx: Ctx, channelId: string): Promise<v
     `select count(*)::int as n from livetv_recordings where channel_id = $1 and (state = 'recording' or (state = 'scheduled'
        and start_at - make_interval(secs => pad_before_s) <= now() + make_interval(secs => $2::int)))`, [channelId, RECORD_LEAD_MS / 1000])).rows[0]?.n ?? 0;
   if (!still) await dropReservation(ctx, channelId);
+}
+
+// ---- the conflict forecast (spec §15.4) ----
+
+export interface Forecast {
+  slots: { used: number; limit: number };
+  parallel: { used: number; max: number };
+  provider: { used: number; max: number } | null;
+  conflict: boolean;
+}
+
+/**
+ * What a new recording of `channelId` over [from, to) (padding included) would meet at its busiest moment: the distinct channels whose
+ * recordings transcode against the conversion limit minus the priority holdback (`slots`), the distinct recorded channels against
+ * LIVETV_RECORD_MAX_PARALLEL (`parallel`) and the channels of the same provider against its connection limit (`provider`). Two
+ * recordings of one channel count once; a recording that needs no conversion never conflicts on slots. `exceptId`: a recording left
+ * out (the one being edited).
+ */
+export async function forecast(ctx: Ctx, o: { channelId: string; from: number; to: number; exceptId?: string }): Promise<Forecast> {
+  const rows = (await ctx.db.query<{ id: string; channel_id: string; mode: string | null; state: RecState; s: Date; e: Date }>(
+    `select id, channel_id, mode, state, start_at - make_interval(secs => pad_before_s) as s, end_at + make_interval(secs => pad_after_s) as e
+       from livetv_recordings
+      where state in ('scheduled','recording') and channel_id is not null and id <> coalesce($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+        and start_at - make_interval(secs => pad_before_s) < $2 and end_at + make_interval(secs => pad_after_s) > $1`,
+    [new Date(o.from), new Date(o.to), o.exceptId ?? null])).rows;
+  const chans = await channelNames(ctx, [o.channelId, ...rows.map((r) => r.channel_id)]);
+  const srcRows = (await ctx.db.query<{ id: string; source_id: string; max_streams: number | null }>(
+    'select c.id, c.source_id, s.max_streams from livetv_channels c join livetv_sources s on s.id = c.source_id where c.id = any($1::uuid[])', [[...chans.keys()]])).rows;
+  const sourceOf = new Map(srcRows.map((r) => [r.id, r] as const));
+  const now = Date.now();
+  const transcodes = (cid: string, mode: string | null, state: RecState) => {
+    if (state === 'recording' && mode) return mode === 'transcode';
+    const ch = chans.get(cid);
+    return ch ? expectedMode(ch, now) === 'transcode' : false;
+  };
+  const mine = { channel: o.channelId, transcode: transcodes(o.channelId, null, 'scheduled') };
+  const lim = await conversionLimit(ctx, { settingsMs: 800, checkLivetv: false });
+  const slotsMax = Math.max(0, lim.limit - holdback(lim.limit, lim.priority));
+  const parallelMax = recordSettings(ctx).maxParallel;
+  const src = sourceOf.get(o.channelId);
+  // the busiest moment: the new recording's start and every other recording's start inside it
+  const points = [o.from, ...rows.map((r) => r.s.getTime()).filter((t) => t > o.from && t < o.to)];
+  let worst = { slots: 0, parallel: 0, provider: 0 };
+  let conflict = false;
+  for (const t of points) {
+    const at = rows.filter((r) => r.s.getTime() <= t && r.e.getTime() > t);
+    const channels = new Set([...at.map((r) => r.channel_id), mine.channel]);
+    const tr = new Set(at.filter((r) => transcodes(r.channel_id, r.mode, r.state)).map((r) => r.channel_id));
+    const shares = tr.has(mine.channel) || at.some((r) => r.channel_id === mine.channel);
+    if (mine.transcode) tr.add(mine.channel);
+    const provider = src ? [...channels].filter((c) => sourceOf.get(c)?.source_id === src.source_id).length : 0;
+    worst = { slots: Math.max(worst.slots, tr.size), parallel: Math.max(worst.parallel, channels.size), provider: Math.max(worst.provider, provider) };
+    if (!shares && ((mine.transcode && tr.size > slotsMax) || channels.size > parallelMax || (src?.max_streams != null && provider > src.max_streams))) conflict = true;
+  }
+  return {
+    slots: { used: worst.slots, limit: slotsMax },
+    parallel: { used: worst.parallel, max: parallelMax },
+    provider: src?.max_streams != null ? { used: worst.provider, max: src.max_streams } : null,
+    conflict,
+  };
 }
