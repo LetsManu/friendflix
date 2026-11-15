@@ -595,6 +595,55 @@ describe('recording tokens (Phase 3)', () => {
     expect(await env.kv.get(adminStopViewKey(ANNA, 'dev-anna-1'))).toBeNull();
   });
 
+  it('B-I7: an expired rec token is 401; a lost right is 403 without a revoke; sign-out and device removal revoke rec tokens', async () => {
+    const r = await rec({ visibility: 'everyone' });
+    const { token } = await annaRec(r.id);
+    expect((await resolveRecToken(env.ctx, token, IP1)).status).toBe(200);
+    // the account loses liveTv: refused (403) on the next authz after the 2-s memo; the token itself stays, and comes back with the right
+    await env.pool.query(`insert into role_settings(role, perms) values ('family', '{"liveTv": false}') on conflict (role) do update set perms = role_settings.perms || excluded.perms`);
+    invalidateRoles(env.ctx);
+    invalidateRights();
+    skipClock(3_000);
+    try {
+      expect((await resolveRecToken(env.ctx, token, IP1)).status).toBe(403);
+    } finally {
+      await env.pool.query(`update role_settings set perms = perms - 'liveTv' where role = 'family'`);
+      invalidateRoles(env.ctx);
+      invalidateRights();
+    }
+    skipClock(3_000);
+    expect((await resolveRecToken(env.ctx, token, IP1)).status).toBe(200);
+    // expired: 401
+    skipClock(7200_000 + 1000);
+    expect((await resolveRecToken(env.ctx, token, IP1)).status).toBe(401);
+    vi.useRealTimers();
+    // sign-out (every session of the account) and the removal of one device revoke rec tokens like live ones
+    const a = (await annaRec(r.id)).token;
+    await revokeSessions(env.ctx, ANNA);
+    expect((await resolveRecToken(env.ctx, a, IP1)).status).toBe(410);
+    const b = (await annaRec(r.id)).token;
+    const { revokeLiveTokens } = await import('../src/livetv/tokens.js');
+    await revokeLiveTokens(env.ctx, ANNA, 'dev-anna-1');
+    expect((await resolveRecToken(env.ctx, b, IP1)).status).toBe(410);
+  });
+
+  it('B-I7: the token never appears in a backend log line of /internal/authz/rec', async () => {
+    const lines: string[] = [];
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((k) => vi.spyOn(console, k).mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); }));
+    const from = logLines.length;
+    try {
+      const r = await rec();
+      const { token } = await annaRec(r.id);
+      expect((await authzRec(token)).statusCode).toBe(200);
+      expect((await authzRec(token, IP2)).statusCode).toBe(403);
+      expect((await env.app.inject({ method: 'POST', url: '/internal/authz/rec', headers: { 'x-internal-secret': 'wrong' }, payload: { token, ip: IP1 } })).statusCode).toBe(403);
+      expect((await authzRec('A'.repeat(43))).json()).toEqual({ error: 'unauthenticated' });
+      const all = [...lines, ...logLines.slice(from)].join('\n');
+      expect(logLines.length).toBeGreaterThan(from);
+      expect(all).not.toContain(token.slice(0, 20));
+    } finally { spies.forEach((x) => x.mockRestore()); }
+  });
+
   it('a recording that now lives only in the library is gone for its tokens', async () => {
     const r = await rec();
     const { token } = await annaRec(r.id);
