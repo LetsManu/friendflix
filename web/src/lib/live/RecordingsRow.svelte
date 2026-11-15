@@ -71,12 +71,12 @@
   .tiles { display: flex; gap: 14px; margin: 0; padding: 4px 2px 10px; list-style: none; overflow-x: auto; scrollbar-width: thin; }
   .tiles > li { flex: none; width: 220px; list-style: none; }
   .wrap .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); overflow: visible; }
-  .wrap .tiles > li { width: auto; }
+  .wrap .tiles > li { width: auto; min-width: 0; }
   .sk { height: 196px; border-radius: var(--fr-r-tile); background: rgba(255, 255, 255, .06); }
   .empty { margin: 0; min-height: 44px; display: flex; align-items: center; color: rgba(255, 255, 255, .78); }
   /* a tile: the global coral button look is restated away, also for hover and press */
   .rtile, .rtile:hover:not(:disabled), .rtile:active:not(:disabled) {
-    display: grid; grid-template-rows: auto 1.4em 1.3em 3px; row-gap: 4px; width: 100%; padding: 0 0 8px; margin: 0; border: 0; border-radius: var(--fr-r-tile);
+    display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1.4em 1.3em 3px; row-gap: 4px; width: 100%; padding: 0 0 8px; margin: 0; border: 0; border-radius: var(--fr-r-tile);
     background: transparent; color: #fff; font: inherit; font-weight: 400; text-align: left; justify-items: stretch; transform: none;
   }
   .rtile { transition: transform 200ms var(--fr-out); }

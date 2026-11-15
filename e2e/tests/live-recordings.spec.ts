@@ -31,14 +31,14 @@ const box = async (l: Locator) => (await l.boundingBox())!;
 test.describe('Aufnahmen row and Meine Aufnahmen', () => {
   test('row shows the latest recordings with a running dot', async ({ page, api }) => {
     const done = Array.from({ length: 13 }, (_, i) => mockRecording({ title: `Folge ${i + 1}`, start: at(11 - Math.floor(i / 3), 18 - (i % 3)), end: at(11 - Math.floor(i / 3), 19 - (i % 3)), durationS: 2700, positionS: i === 0 ? 900 : 0 }));
-    const running = mockRecording({ title: 'Die Leuchtturmwärter', state: 'recording', growing: true, start: at(12, 20, 15), end: at(12, 21) });
+    const running = mockRecording({ title: 'Die Leuchtturmwärter und das Licht der langen Nacht', state: 'recording', growing: true, start: at(12, 20, 15), end: at(12, 21) });
     const planned = mockRecording({ title: 'Wetter am Hafen', state: 'scheduled', start: at(12, 21), end: at(12, 21, 30), bytes: 0, durationS: null });
     await arm(page, api, [planned, running, ...done]);
     await page.goto('/live');
     await expect(row(page).getByRole('heading', { name: 'Aufnahmen' })).toBeVisible();
     await expect(tiles(page)).toHaveCount(12);
     // newest first, the planned one is not a tile
-    await expect(tiles(page).nth(0)).toContainText('Die Leuchtturmwärter');
+    await expect(tiles(page).nth(0)).toContainText('Die Leuchtturmwärter und das Licht der langen Nacht');
     await expect(tiles(page).nth(0)).toContainText('läuft');
     await expect(tiles(page).nth(0).locator('.rdot')).toHaveCount(1);
     await expect(tiles(page).nth(1)).toContainText('Folge 1');
@@ -50,6 +50,8 @@ test.describe('Aufnahmen row and Meine Aufnahmen', () => {
     expect(await tiles(page).nth(1).locator('.pg i').evaluate((e) => getComputedStyle(e).transform)).toMatch(/matrix\(0\.333/);
     const h = await Promise.all([0, 1, 2].map(async (i) => (await box(tiles(page).nth(i))).height));
     expect(new Set(h.map(Math.round)).size).toBe(1);
+    // every tile's picture fills its tile, whatever its title (the grid track is minmax(0, 1fr): the button's centred content never shrinks it)
+    for (const i of [0, 1, 11]) expect(Math.round((await box(tiles(page).nth(i).locator('.pic'))).width), String(i)).toBe(Math.round((await box(tiles(page).nth(i))).width));
   });
 
   test('Alle opens Meine Aufnahmen on Fertig', async ({ page, api }) => {
