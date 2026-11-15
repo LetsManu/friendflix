@@ -70,7 +70,7 @@ describe('status mapping', () => {
 describe('core lines', () => {
   it('a healthy instance: every core and media line ok, in catalogue order', async () => {
     const r = await run();
-    const ids: CheckId[] = ['core.publicUrl', 'core.database', 'core.redis', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env',
+    const ids: CheckId[] = ['core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env',
       'media.server', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder'];
     const mine = r.lines.filter((l) => l.group === 'core' || l.group === 'media');
     expect(mine.map((l) => l.id)).toEqual(ids);
@@ -82,6 +82,23 @@ describe('core lines', () => {
     expect(get(r, 'core.database')).toMatchObject({ status: 'problem', cause: 'db_down', docs: 'operations.md', ms: 3000 });
     expect(get(r, 'core.redis')).toMatchObject({ status: 'warning', cause: 'redis_slow', ms: 450 });
     expect(get(r, 'core.gateway').status).toBe('ok');
+  });
+
+  it('Redis without its append-only file → core.redisPersistence warning redis_not_persistent with the docs; with it → ok; not known → unknown', async () => {
+    try {
+      env.kv.aof = false;
+      const off = await run();
+      expect(get(off, 'core.redisPersistence')).toEqual({
+        id: 'core.redisPersistence', group: 'core', status: 'warning', cause: 'redis_not_persistent', fix: 'redis_not_persistent',
+        docs: 'operations.md#redis-volume-redis-data', runs: 'server',
+      });
+      // Redis itself answers: only the persistence line warns
+      expect(get(off, 'core.redis').status).toBe('ok');
+      env.kv.aof = true;
+      expect(get(await run(), 'core.redisPersistence')).toEqual({ id: 'core.redisPersistence', group: 'core', status: 'ok', runs: 'server' });
+      env.kv.aof = null;
+      expect(get(await run(), 'core.redisPersistence')).toMatchObject({ status: 'unknown', cause: 'check_unavailable' });
+    } finally { env.kv.aof = true; }
   });
 
   it('PUBLIC_URL http → core.publicUrl warning public_url_http, settingKey PUBLIC_URL', async () => {

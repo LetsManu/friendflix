@@ -29,6 +29,24 @@ describe('Systemcheck texts', () => {
     expect(t.fix).not.toContain('{');
   });
 
+  it('Redis persistence: the warning says sign-ins do not survive a restart and links the compose lines; ok has no sentence', async () => {
+    const warn = ln({ id: 'core.redisPersistence', status: 'warning', cause: 'redis_not_persistent', fix: 'redis_not_persistent', docs: 'operations.md#redis-volume-redis-data' });
+    const t = lineText(warn);
+    expect(t.label).toBe('Anmeldungen nach Neustart');
+    expect(t.cause).toMatch(/^Anmeldungen überleben keinen Neustart/);
+    expect(t.fix).toContain('redis-data');
+    expect(docsHref(warn.docs!)).toBe('https://github.com/LetsManu/friendflix/blob/main/docs/operations.md#redis-volume-redis-data');
+    const ok = lineText(ln({ id: 'core.redisPersistence', status: 'ok' }));
+    expect(ok).toMatchObject({ label: 'Anmeldungen nach Neustart', cause: '', fix: '' });
+    for (const lang of ['en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
+      await setLocale(lang);
+      const x = lineText(warn);
+      expect(x.label.length, lang).toBeGreaterThan(5);
+      expect(x.cause.length, lang).toBeGreaterThan(20);
+      expect(x.fix, lang).toContain('redis-data');
+    }
+  });
+
   it('an unknown cause or fix gives an empty text, never the raw code', () => {
     const t = lineText(ln({ id: 'core.database', status: 'problem', cause: 'no_such_code', fix: 'other_unknown' }));
     expect(t.cause).toBe('');
@@ -215,7 +233,7 @@ describe('Systemcheck lines', () => {
 
   it('CHECK_IDS matches the backend catalogue (literal copy of backend/src/syscheck/types.ts)', () => {
     expect([...CHECK_IDS]).toEqual([
-      'core.publicUrl', 'core.database', 'core.redis', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env',
+      'core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env',
       'signin.oidc', 'signin.authentik', 'signin.flows', 'signin.issuerHost', 'signin.passkeys', 'signin.mail',
       'media.server', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder',
       'livetv.container', 'livetv.encoder', 'livetv.sources', 'livetv.guides',

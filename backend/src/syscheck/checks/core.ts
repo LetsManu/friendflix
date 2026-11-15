@@ -12,7 +12,8 @@ export { levelToStatus } from './util.js';
 
 /**
  * Grundlagen: the public URL (the setup probe), the database, Redis and the gateway, the disks and old variable names, all from the health
- * snapshot except the public URL. A line uses the snapshot's own level, so the banner and the Systemcheck never disagree.
+ * snapshot except the public URL. A line uses the snapshot's own level, so the banner and the Systemcheck never disagree. Whether Redis
+ * keeps the sign-ins across a restart is read from Redis itself (INFO persistence, never CONFIG).
  */
 const GiB = 1024 ** 3;
 
@@ -64,6 +65,21 @@ function envLine(): CheckLine {
   return n > 0 ? bad('core.env', 'warning', 'removed_env', { params: { n }, docs: 'operations.md' }) : line('core.env', 'ok');
 }
 
+/** the operations guide's section on the redis-data volume (the compose lines an older install still has to apply) */
+export const REDIS_PERSIST_DOCS = 'operations.md#redis-volume-redis-data';
+
+/**
+ * Redis writes its append-only file (compose: --appendonly yes on the redis-data volume): sign-ins survive a restart and a reboot.
+ * Without it (a compose file or a Portainer stack from before, an own override) every reboot signs everybody out: a warning that
+ * names the compose lines. Not readable (Redis down, a store without INFO): not checked, the core.redis line says why.
+ */
+async function redisPersistLine(env: CheckEnv): Promise<CheckLine> {
+  const id = 'core.redisPersistence';
+  const o = await bounded(() => env.ctx.kv.aofEnabled(), FALLBACK_MS);
+  if (!o.ok || o.v === null || o.v === undefined) return bad(id, 'unknown', 'check_unavailable');
+  return o.v ? line(id, 'ok') : bad(id, 'warning', 'redis_not_persistent', { docs: REDIS_PERSIST_DOCS });
+}
+
 /** a dependency read directly when the snapshot did not come in time (a stalled database holds the snapshot, not this probe) */
 const FALLBACK_MS = 500;
 async function ownProbe(id: 'postgres' | 'redis', fn: () => Promise<unknown>): Promise<ServiceHealth> {
@@ -73,12 +89,13 @@ async function ownProbe(id: 'postgres' | 'redis', fn: () => Promise<unknown>): P
 
 export const coreCheck: GroupCheck = {
   group: 'core',
-  ids: ['core.publicUrl', 'core.database', 'core.redis', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env'],
+  ids: ['core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env'],
   timeoutMs: CHECK_TIMEOUT_MS,
   async run(env) {
     // the direct probes start with the snapshot wait, not after it: when the snapshot misses its limit they have long answered, so the
     // group keeps its margin to the limit (two cheap reads per run; unused when the snapshot comes)
     const fallback = Promise.all([ownProbe('postgres', async () => (await probeQuery(env.ctx.db, 'select 1', [], FALLBACK_MS), true)), ownProbe('redis', () => env.ctx.kv.ping())]);
+    const persist = redisPersistLine(env);
     const [pub, s] = await Promise.all([publicUrlLine(env), env.snapshot()]);
     if (!s) {
       // no snapshot within its limit: the database and Redis answer from their direct probes, the rest is not known this time
@@ -88,6 +105,7 @@ export const coreCheck: GroupCheck = {
         pub,
         timedLine('core.database', db, 'db', { docs: 'operations.md' }),
         timedLine('core.redis', redis, 'redis'),
+        await persist,
         unknown('core.gateway'), unknown('core.disk.downloads'), unknown('core.disk.previews'), unknown('core.disk.database'),
         envLine(),
       ];
@@ -96,6 +114,7 @@ export const coreCheck: GroupCheck = {
       pub,
       timedLine('core.database', service(s, 'postgres'), 'db', { docs: 'operations.md' }),
       timedLine('core.redis', service(s, 'redis'), 'redis'),
+      await persist,
       timedLine('core.gateway', service(s, 'gateway'), 'gateway'),
       ...diskLines(env, s),
       envLine(),
