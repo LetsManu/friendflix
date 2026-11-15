@@ -22,7 +22,7 @@
     if (!shownId) back = document.activeElement as HTMLElement | null;
     shownId = id; typedVal = '';
     await tick();
-    const first = box?.querySelector<HTMLElement>(req?.typed ? 'input' : req?.danger ? '.cancel' : '.ok');
+    const first = box?.querySelector<HTMLElement>(req?.typed ? 'input' : req?.danger ? '.cf-cancel' : '.cf-ok');
     first?.focus();
   }
   function closed() {
@@ -46,8 +46,9 @@
       <!-- the shared status line's room (a confirm has no refusal of its own): the same space above the buttons as every dialog -->
       <div class="dlg-err" aria-hidden="true"></div>
       <div class="dlg-acts">
-        <button type="button" class="frost-btn cancel" on:click={() => answer(false)}>{req.cancelLabel ?? $t('ui.confirm.cancel')}</button>
-        <button type="submit" class="ok" class:danger={req.danger} class:solid={req.danger} disabled={!ok}>{req.confirmLabel ?? (req.danger ? $t('ui.confirm.delete') : $t('ui.confirm.ok'))}</button>
+        <button type="button" class="frost-btn cf-cancel" on:click={() => answer(false)}>{req.cancelLabel ?? $t('ui.confirm.cancel')}</button>
+        <!-- cf-ok, not "ok": the global .ok is the green status colour, it would win over the button's white text -->
+        <button type="submit" class="cf-ok" class:danger={req.danger} class:solid={req.danger} disabled={!ok}>{req.confirmLabel ?? (req.danger ? $t('ui.confirm.delete') : $t('ui.confirm.ok'))}</button>
       </div>
     </form>
   </ModalShell>

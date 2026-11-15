@@ -7,7 +7,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { dialogActs } from '../helpers.js';
-import type { MatrixMockRole } from '../mocks/admin.js';
+import { auid, type MatrixMockRole } from '../mocks/admin.js';
 
 const ACC_FILL = 'rgb(214, 50, 90)'; // --acc-fill
 const DANGER = 'rgb(196, 32, 47)'; // --danger
@@ -151,3 +151,15 @@ test('a dialog over a scrolled page with a classic scrollbar: the fixed header a
   await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(before.y);
 });
 
+test('a plain (not dangerous) confirm: white text on the coral confirm button', async ({ page }) => {
+  await page.goto(`/admin/users/${auid(2)}`);
+  await page.getByRole('button', { name: 'Aktionen', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Anna Beispiel' }).getByRole('button', { name: 'Passwort-Link senden' }).click();
+  const dlg = page.getByRole('alertdialog', { name: 'Passwort-Link an Anna Beispiel senden?' });
+  await sharedRules(dlg, ['Abbrechen', 'Senden'], ACC_FILL);
+  const ok = dlg.getByRole('button', { name: 'Senden' });
+  expect(await ok.evaluate((el) => getComputedStyle(el).color)).toBe('rgb(255, 255, 255)');
+  expect(await dlg.getByRole('button', { name: 'Abbrechen' }).evaluate((el) => getComputedStyle(el).color)).toBe('rgb(255, 255, 255)');
+  await dlg.getByRole('button', { name: 'Abbrechen' }).click();
+  await expect(dlg).toHaveCount(0);
+});
