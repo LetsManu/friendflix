@@ -9,14 +9,22 @@
   import { t } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
   import Errors from './Errors.svelte';
-  import { answer, passkeyCreate, type FlowError, type FlowReply, type FlowStep } from './flow';
+  import { answer, passkeyCreate, passkeyCreateHint, type PasskeyCreateHint, type FlowError, type FlowReply, type FlowStep } from './flow';
   import './auth.css';
+
+  const HINT_KEYS = {
+    cancelled: 'login.sec.passkey.cancelled',
+    exists: 'login.sec.passkey.exists',
+    unsupportedOptions: 'login.sec.passkey.unsupportedOptions',
+    unsupported: 'login.sec.passkey.unsupported',
+    failed: 'login.sec.passkey.failed',
+  } as const;
 
   export let step: Extract<FlowStep, { stage: 'passkey-setup' }> & { errors?: FlowError[] };
   export let classicHref: string;
 
   const dispatch = createEventDispatcher<{ next: FlowReply; done: { next: string } }>();
-  let busy = false, hint: '' | 'cancelled' | 'unsupported' = '';
+  let busy = false, hint: '' | PasskeyCreateHint = '', code = '';
   let heading: HTMLElement;
   onMount(() => heading?.focus());
 
@@ -24,11 +32,12 @@
     if (busy) return;
     busy = true;
     hint = '';
+    code = '';
     let response;
     try {
       response = await passkeyCreate(step.options);
     } catch (e) {
-      hint = (e as Error | null)?.message === 'passkey_unsupported' ? 'unsupported' : 'cancelled';
+      ({ hint, code } = passkeyCreateHint(e));
       busy = false;
       return;
     }
@@ -48,5 +57,11 @@
   <p class="af-sub">{$t('login.sec.passkey.text')}</p>
   <Errors errors={step.errors ?? []} {classicHref} />
   <button class="af-pri" type="button" disabled={busy} on:click={create}><Icon name="key" size={20} />{$t('login.sec.passkey.create')}</button>
-  {#if hint}<p class="af-hint" role="status">{hint === 'unsupported' ? $t('login.sec.passkey.unsupported') : $t('login.sec.passkey.cancelled')}</p>{/if}
+  <!-- a reserved area: the hint appears without moving anything -->
+  <div class="af-hint-area" role="status">
+    {#if hint}
+      <p class="af-hint">{$t(HINT_KEYS[hint])}</p>
+      {#if hint === 'failed' && code}<p class="af-hint af-hint-code">{$t('login.sec.passkey.errorCode', { code })}</p>{/if}
+    {/if}
+  </div>
 </div>
