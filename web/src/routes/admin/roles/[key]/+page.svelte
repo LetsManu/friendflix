@@ -29,7 +29,8 @@
   import ReviewSheet from '#lib/admin/rights/ReviewSheet.svelte';
   import RoleHistory from '#lib/admin/rights/RoleHistory.svelte';
   import { canDelete, deleteMoving, deleteRole, moveTargetsOf } from '#lib/admin/rights/roleDelete';
-  import { createSave, keepKnownGroups } from '#lib/admin/rights/save';
+  import { FOCUSABLE, focusNearest } from '#lib/admin/rights/focusNear';
+  import { createSave, goneGroups, keepKnownGroups } from '#lib/admin/rights/save';
   import SaveBar from '#lib/admin/rights/SaveBar.svelte';
   import { reducedMotion } from '#lib/ui/motion';
   import ActionMenu from '#lib/ui/ActionMenu.svelte';
@@ -75,13 +76,16 @@
   /**
    * A press that switched its own area off (the last library unticked, the last of Watch-Partys and Kommentare off) removes the
    * section with the focused control in it: the focus goes to that area's card, where it can be switched on again (WCAG 2.4.3).
+   * A locked card (it waits for the Mediathek; the admin role's) never takes it: the nearest unlocked control does (focusNear.ts).
    */
+  let pageEl: HTMLElement | undefined;
   async function keepFocus(before: Areas) {
     const at = document.activeElement instanceof HTMLElement ? document.activeElement.closest<HTMLElement>('[data-section]') : null;
     const a = at?.dataset.section as AreaKey | undefined;
     if (!a || !role || !before[a] || stagedAreas(stage, role)[a] || a === 'livetv') return;
     await tick();
-    document.querySelector<HTMLElement>(`[data-area="${a}"] [role="switch"]`)?.focus();
+    const card = document.querySelector<HTMLElement>(`[data-area="${a}"] [role="switch"]`);
+    if (card && pageEl) focusNearest([...pageEl.querySelectorAll<HTMLElement>(FOCUSABLE)], card);
   }
   const put = (k: string, v: unknown) => { if (matrix && role) stage = stageSet(stage, matrix, role.key, k, v); };
   const staged = (s: Stage, r: MatrixRole, k: string): unknown => (Object.hasOwn(s[r.key] ?? {}, k) ? s[r.key]![k] : undefined);
@@ -117,11 +121,15 @@
     matrix: () => matrix, stage: () => stage,
     stored: (m, s) => { matrix = m; stage = s; if (!Object.hasOwn(s[key] ?? {}, 'label') && !nameErr) typed = null; },
     // a group was taken back or merged meanwhile: the groups are read again, what still exists stays staged for a check
+    // the toast names the staged groups that are gone ("Nicht mehr verfügbar: Hafenkanal")
     groupsChanged: async () => {
       try {
         const r = await api<{ matrix?: RoleMatrix }>('/api/admin/roles');
-        if (r.matrix) { matrix = r.matrix; stage = keepKnownGroups(stage, r.matrix); }
-      } catch { /* the stale list stays; the message still asks to check it */ }
+        if (!r.matrix || !matrix) return [];
+        const gone = goneGroups(stage, matrix, r.matrix);
+        matrix = r.matrix; stage = keepKnownGroups(stage, r.matrix);
+        return gone;
+      } catch { return []; /* the stale list stays; the message still asks to check it */ }
     },
   });
   $: saving = $save.saving;
@@ -212,7 +220,7 @@
   $: moveTargets = moveTargetsOf(matrix?.roles ?? [], role?.key);
 </script>
 
-<div class="rp">
+<div class="rp" bind:this={pageEl}>
 <p class="back"><a href="/admin/roles"><Icon name="chevron-left" size={16} />{$t('adminPeople.roles.page.back')}</a></p>
 
 {#if error}

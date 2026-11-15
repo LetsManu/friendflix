@@ -331,7 +331,7 @@ const dict: Translation<typeof de> = {
     leaveTitle: 'Değişiklikler silinsin mi?',
     leaveBody: { one: '{n} rolde kaydedilmemiş değişiklikler var. Sayfadan ayrılırsan kaybolur.', other: '{n} rolde kaydedilmemiş değişiklikler var. Sayfadan ayrılırsan kaybolur.' },
     leaveConfirm: 'Sil',
-    groups: { access: 'Erişim', playback: 'Oynatma', downloads: 'İndirmeler', requests: 'İstekler', together: 'Birlikte', cast: 'Yayınlama', livetv: 'Canlı TV', title: 'Kanal grupları', all: 'Tümü', none: 'Hiçbiri', empty: 'Kanal grubu olmadan bu rol canlı TV görmez.', dormant: 'Kaydedildi, canlı TV açıkken geçerli', pending: { one: '{n} grup yayınlanmayı bekliyor', other: '{n} grup yayınlanmayı bekliyor' }, manage: 'Grupları yönet', adminAll: 'Yayınlanan tüm gruplar', channels: { one: '{n} kanal', other: '{n} kanal' }, review: 'Canlı TV grupları', label: '{role} rolünün kanal grupları', changed: 'Kanal grupları değişti. Lütfen seçimi kontrol edip yeniden kaydet.' },
+    groups: { access: 'Erişim', playback: 'Oynatma', downloads: 'İndirmeler', requests: 'İstekler', together: 'Birlikte', cast: 'Yayınlama', livetv: 'Canlı TV', title: 'Kanal grupları', all: 'Tümü', none: 'Hiçbiri', empty: 'Kanal grubu olmadan bu rol canlı TV görmez.', dormant: 'Kaydedildi, canlı TV açıkken geçerli', pending: { one: '{n} grup yayınlanmayı bekliyor', other: '{n} grup yayınlanmayı bekliyor' }, manage: 'Grupları yönet', adminAll: 'Yayınlanan tüm gruplar', channels: { one: '{n} kanal', other: '{n} kanal' }, review: 'Canlı TV grupları', label: '{role} rolünün kanal grupları', changed: 'Kanal grupları değişti. Lütfen seçimi kontrol edip yeniden kaydet.', gone: 'Artık kullanılamıyor: {names}.' },
     f: {
       libraries: 'Kütüphaneler',
       maxParentalRating: 'Yaş sınırı',

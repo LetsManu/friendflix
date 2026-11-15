@@ -68,13 +68,21 @@ export interface SaveDeps {
   stored: (matrix: RoleMatrix, stage: Stage) => void;
   /**
    * the server refused a role's channel groups (`400 invalid livetvGroups`: a group was taken back or merged meanwhile): the page
-   * reads the groups again and keeps what still exists staged (`keepKnownGroups`). Nothing is resent on its own.
+   * reads the groups again, keeps what still exists staged (`keepKnownGroups`) and answers the names of the staged groups that are
+   * gone (`goneGroups`): the toast names them. Nothing is resent on its own.
    */
-  groupsChanged?: () => Promise<void>;
+  groupsChanged?: () => Promise<string[] | void>;
 }
 
 /** `400 { error: 'invalid', field: 'livetvGroups' }`: a staged group is no longer released (or gone) */
 export const groupsChanged = (e: unknown): boolean => e instanceof ApiError && e.status === 400 && e.body?.error === 'invalid' && e.body?.field === 'livetvGroups';
+
+/** the names of the staged groups (any role) that the re-read list no longer has, in the old list's order (an id it did not name is left out) */
+export function goneGroups(s: Stage, before: RoleMatrix, after: RoleMatrix): string[] {
+  const staged = new Set(Object.values(s).flatMap((f) => (Array.isArray(f.livetvGroups) ? (f.livetvGroups as string[]) : [])));
+  const still = new Set((after.livetv?.groups ?? []).map((g) => g.id));
+  return (before.livetv?.groups ?? []).filter((g) => staged.has(g.id) && !still.has(g.id)).map((g) => g.name);
+}
 
 /** after the groups were read again: staged group ids the list no longer has go; a choice left equal to the loaded one unstages */
 export function keepKnownGroups(s: Stage, m: RoleMatrix): Stage {
@@ -135,8 +143,8 @@ export function createSave(deps: SaveDeps): Save {
     const error = hard ?? (failures.length ? partialText(failedAccounts(failures)) : null);
     set({ saving: false, progress: null, failures, pending: rest.filter((j) => j.fields), error });
     if (changed) {
-      await deps.groupsChanged?.();
-      toast.error(tr('adminPeople.roles.groups.changed'));
+      const gone = (await deps.groupsChanged?.()) ?? [];
+      toast.error(gone.length ? `${tr('adminPeople.roles.groups.changed')} ${tr('adminPeople.roles.groups.gone', { names: gone.join(', ') })}` : tr('adminPeople.roles.groups.changed'));
       return;
     }
     // all written: "Änderungen gespeichert." only when nothing is left staged (a retry leaves newer edits staged)

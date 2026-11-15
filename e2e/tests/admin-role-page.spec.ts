@@ -122,6 +122,19 @@ test.describe('Rollen & Rechte: the role page', () => {
     await expect(area(page, 'Gemeinsam')).toBeFocused();
   });
 
+  test('keepFocus never lands on a locked card: the nearest unlocked control takes the focus', async ({ page }) => {
+    await page.goto('/admin/roles/friend');
+    const together = page.getByRole('region', { name: 'Gemeinsam', exact: true });
+    await together.getByRole('switch', { name: 'Watch-Partys' }).click();
+    // the card the focus would go to is locked meanwhile (as a card that waits for the Mediathek is): a stand-in for that state
+    await page.locator('[data-area="together"] [role="switch"]').evaluate((el) => el.setAttribute('aria-disabled', 'true'));
+    await together.getByRole('switch', { name: 'Kommentare' }).focus();
+    await page.keyboard.press('Space');
+    await expect(together).toHaveCount(0);
+    await expect(area(page, 'Gemeinsam')).not.toBeFocused();
+    await expect(area(page, 'Downloads')).toBeFocused(); // the next card, unlocked
+  });
+
   test('Live-TV groups: tick Hafenkanal → review "Live-TV-Gruppen: Nordlicht TV → Nordlicht TV, Hafenkanal" → PUT body livetvGroups [ids]', async ({ page, api }) => {
     liveTv(api);
     await page.goto('/admin/roles/friend');
@@ -403,7 +416,8 @@ test.describe('Rollen & Rechte: the role page', () => {
     // another admin takes Hafenkanal back meanwhile: the write answers 400 invalid livetvGroups
     api.admin.livetv.area.groups.find((x) => x.id === 'g-hafen')!.released = false;
     await (await review(page)).getByRole('button', { name: 'Speichern' }).click();
-    await expect(toasts(page).getByText('Die Kanalgruppen haben sich geändert. Bitte prüfe die Auswahl und speichere noch einmal.')).toBeVisible();
+    // the toast names the group that is gone
+    await expect(toasts(page).getByText('Die Kanalgruppen haben sich geändert. Bitte prüfe die Auswahl und speichere noch einmal. Nicht mehr verfügbar: Hafenkanal.')).toBeVisible();
     // the list is read again: Hafenkanal is gone, the choice without it stays staged (Nordlicht TV off)
     await expect(g.getByRole('button', { name: /^Hafenkanal/ })).toHaveCount(0);
     await expect(g.getByRole('button', { name: /^Nordlicht TV/ })).toHaveAttribute('aria-pressed', 'false');

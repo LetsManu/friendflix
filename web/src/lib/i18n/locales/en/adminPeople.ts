@@ -331,7 +331,7 @@ const dict: Translation<typeof de> = {
     leaveTitle: 'Discard changes?',
     leaveBody: { one: '{n} role has unsaved changes. They are lost if you leave this page.', other: '{n} roles have unsaved changes. They are lost if you leave this page.' },
     leaveConfirm: 'Discard',
-    groups: { access: 'Access', playback: 'Playback', downloads: 'Downloads', requests: 'Requests', together: 'Together', cast: 'Casting', livetv: 'Live TV', title: 'Channel groups', all: 'All', none: 'None', empty: 'Without a channel group this role sees no live TV.', dormant: 'Saved, applies when Live TV is on', pending: { one: '{n} group is waiting for release', other: '{n} groups are waiting for release' }, manage: 'Manage groups', adminAll: 'All released groups', channels: { one: '{n} channel', other: '{n} channels' }, review: 'Live TV groups', label: 'Channel groups of {role}', changed: 'The channel groups have changed. Please check the selection and save again.' },
+    groups: { access: 'Access', playback: 'Playback', downloads: 'Downloads', requests: 'Requests', together: 'Together', cast: 'Casting', livetv: 'Live TV', title: 'Channel groups', all: 'All', none: 'None', empty: 'Without a channel group this role sees no live TV.', dormant: 'Saved, applies when Live TV is on', pending: { one: '{n} group is waiting for release', other: '{n} groups are waiting for release' }, manage: 'Manage groups', adminAll: 'All released groups', channels: { one: '{n} channel', other: '{n} channels' }, review: 'Live TV groups', label: 'Channel groups of {role}', changed: 'The channel groups have changed. Please check the selection and save again.', gone: 'No longer available: {names}.' },
     f: {
       libraries: 'Libraries',
       maxParentalRating: 'Age rating',
