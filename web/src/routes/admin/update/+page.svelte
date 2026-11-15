@@ -58,6 +58,7 @@
     if (e?.status === 429) return tr('admin.update.tooSoon');
     if (e?.body?.error === 'busy') return tr('admin.update.updater.error.busy'); // a redeploy is already running
     if (e?.status === 409) return tr('admin.update.notConfigured');
+    if (e?.body?.error === 'webhook_gone') return tr('admin.update.webhookGone'); // a stale webhook address (404): never the URL
     if (e?.body?.error === 'portainer_unreachable') {
       const code = e.body?.code, h = code ? hint(code) : undefined;
       return tr('admin.update.unreachable', { detail: code ? ` (${code}${h ? `: ${h}` : ''})` : '' });

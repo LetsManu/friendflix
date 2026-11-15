@@ -25,6 +25,8 @@
   export let name: string | undefined = undefined;
   /** every control locked (a save runs) */
   export let disabled = false;
+  /** the library checklist's line with no library ticked (the person's Rechte tab names the person) */
+  export let noneHint: string | undefined = undefined;
 
   const dispatch = createEventDispatcher<{ change: unknown }>();
   const id = uid('fc');
@@ -67,17 +69,14 @@
     dispatch('change', Number.isInteger(n) && num !== null && num !== '' ? n : (field.min ?? 0));
   }
 
-  // ---- libraries: 'all' or the chosen names (names the server no longer has stay listed, so they can be removed). At least one
-  // stays ticked (the role write refuses an empty list): the last ticked box is disabled, with the hint saying why.
+  // ---- libraries: 'all' or the chosen names (names the server no longer has stay listed, so they can be removed). The last box may
+  // go too: no library is a Live-TV-only role or person (roles redesign §3.1), the reserved hint line then says so.
   $: all = value === 'all' || value === null || value === undefined;
   $: chosen = Array.isArray(value) ? (value as string[]) : [];
   $: names = [...libraries.map((l) => l.name), ...chosen.filter((n) => !libraries.some((l) => l.name === n))];
   const allToggled = (e: Event) => dispatch('change', (e.currentTarget as HTMLInputElement).checked ? 'all' : [...names]);
-  $: lastOne = !all && chosen.length === 1 ? chosen[0] : null;
-  const libToggled = (name: string, on: boolean) => {
-    const next = on ? [...chosen, name] : chosen.filter((n) => n !== name);
-    if (next.length) dispatch('change', next);
-  };
+  $: none = !all && chosen.length === 0;
+  const libToggled = (name: string, on: boolean) => dispatch('change', on ? [...chosen, name] : chosen.filter((n) => n !== name));
 </script>
 
 <div class="fc">
@@ -88,15 +87,15 @@
     <Field {label} type="number" min={field.min} max={field.max} step={1} value={num} error={err} disabled={disabled || (noCap && unlimited)}
       placeholder={placeholder === undefined || placeholder === null ? '' : String(placeholder)} on:input={typed} />
   {:else if field.kind === 'libraries'}
-    <fieldset class="libs">
+    <fieldset class="libs" aria-describedby={none ? `${id}-min` : undefined}>
       <legend>{label}</legend>
       <label class="chk all"><input type="checkbox" checked={all} disabled={disabled || (all && !names.length)} on:change={allToggled} /><span>{$t('adminPeople.roles.allLibraries')}</span></label>
       {#each names as n, i (n)}
-        <label class="chk" for="{id}-{i}"><input id="{id}-{i}" type="checkbox" checked={all || chosen.includes(n)} disabled={disabled || all || n === lastOne}
-          aria-describedby={n === lastOne ? `${id}-min` : undefined} on:change={(e) => libToggled(n, e.currentTarget.checked)} /><span>{n}</span></label>
+        <label class="chk" for="{id}-{i}"><input id="{id}-{i}" type="checkbox" checked={all || chosen.includes(n)} disabled={disabled || all}
+          on:change={(e) => libToggled(n, e.currentTarget.checked)} /><span>{n}</span></label>
       {/each}
       <!-- the hint's line is always there (nothing moves when it appears) -->
-      <p class="min" id="{id}-min" aria-hidden={lastOne === null ? 'true' : undefined}>{lastOne === null ? '' : $t('adminPeople.roles.libsMin')}</p>
+      <p class="min" id="{id}-min" aria-hidden={none ? undefined : 'true'}>{none ? (noneHint ?? $t('adminPeople.roles.libsNoneHint')) : ''}</p>
     </fieldset>
   {:else}
     <Select {label} {options} {disabled} value={picked} on:change={pick} />

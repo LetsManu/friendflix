@@ -293,6 +293,7 @@ const dict: Translation<typeof de> = {
     livetvNone: 'Yok',
     livetvRemove: '{name} istisnasını kaldır',
     livetvSaved: '{name} için istisnalar kaydedildi.',
+    libsNoneLine: 'Kütüphane olmadan {name} yalnızca canlı TV görür.',
   },
   roles: {
     intro: 'Her rolün neler yapabileceği. Değişiklikler yalnızca “Kaydet” ile geçerli olur ve mevcut hesaplara da uygulanır.',
@@ -412,7 +413,8 @@ const dict: Translation<typeof de> = {
     errRange: 'Lütfen {min} ile {max} arasında bir sayı gir.',
     cellTitle: '{role} · {field}',
     cellNameUnsaved: '{role}, {field}: {value}, kaydedilmedi',
-    libsMin: 'En az bir kütüphane paylaşılmış kalır.',
+    libsNone: 'Kütüphane yok',
+    libsNoneHint: 'Kütüphane yok – bu kişi yalnızca canlı TV görür.',
     retryDone: { one: 'Başarısız {n} rol kaydedildi.', other: 'Başarısız {n} rol kaydedildi.' },
     fLabel: 'Ad',
     fInvitable: 'Davetlerde sunulur',

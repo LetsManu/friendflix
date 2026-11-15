@@ -293,6 +293,7 @@ const dict: Translation<typeof de> = {
     livetvNone: 'Nessuno',
     livetvRemove: 'Annulla l’eccezione per {name}',
     livetvSaved: 'Eccezioni di {name} salvate.',
+    libsNoneLine: 'Senza libreria {name} vede solo la TV in diretta.',
   },
   roles: {
     intro: 'Cosa può fare ogni ruolo. Le modifiche valgono solo dopo «Salva» e si applicano anche agli account esistenti.',
@@ -412,7 +413,8 @@ const dict: Translation<typeof de> = {
     errRange: 'Inserisci un numero da {min} a {max}.',
     cellTitle: '{role} · {field}',
     cellNameUnsaved: '{role}, {field}: {value}, non salvato',
-    libsMin: 'Almeno una libreria resta condivisa.',
+    libsNone: 'Nessuna libreria',
+    libsNoneHint: 'Nessuna libreria: la persona vede solo la TV in diretta.',
     retryDone: { one: '{n} ruolo non riuscito salvato.', many: '{n} ruoli non riusciti salvati.', other: '{n} ruoli non riusciti salvati.' },
     fLabel: 'Nome',
     fInvitable: 'Offerto negli inviti',

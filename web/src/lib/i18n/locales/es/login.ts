@@ -179,6 +179,10 @@ const login: Translation<typeof de> = {
       addClassic: 'Añadir en la página de inicio de sesión',
       note: 'Las passkeys que crees aquí valen para FriendFlix.',
       renew: '¿Creaste tus llaves de acceso antes en la página de inicio de sesión? Esas no sirven en FriendFlix. Crea aquí una nueva una vez.',
+      exists: 'Este dispositivo ya tiene una passkey para tu cuenta. Úsala para iniciar sesión o elimínala en la app de contraseñas.',
+      unsupportedOptions: 'Este dispositivo no cumple los requisitos para crear la passkey.',
+      failed: 'No se pudo crear la passkey.',
+      errorCode: 'Código de error: {code}',
     },
     password: {
       title: 'Contraseña',

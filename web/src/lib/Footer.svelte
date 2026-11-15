@@ -3,7 +3,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { FOOTER_COLUMNS } from '#lib/menu';
-  import { features, linkShown, serverCaps } from '#lib/capabilities';
+  import { areas, features, linkShown, serverCaps } from '#lib/capabilities';
   import { perms } from '#lib/perms';
   import Logo from '#lib/Logo.svelte';
   import { LOCALES, locale, t, type Locale } from '#lib/i18n';
@@ -15,6 +15,9 @@
   export let onHelp: () => void = () => undefined;
   /** kids profile: no link columns (party, lists, stats … are not for kids), language and help stay */
   export let kids = false;
+  /** the boot hint guesses a library: the link columns wait unseen until /api/me confirms it (app.css .lib-held), then fade in */
+  export let held = false;
+  export let fadeIn = false;
   let langErr = false;
   async function pick(e: Event) {
     const sel = e.currentTarget as HTMLSelectElement, l = sel.value as Locale;
@@ -28,9 +31,9 @@
 <footer class="foot" class:kids aria-label={$t('shell.footer.label')}>
   <div class="inner">
     {#if !kids}
-      <nav class="cols" aria-label={$t('shell.footer.more')}>
+      <nav class="cols" class:lib-held={held} class:lib-in={fadeIn} aria-label={$t('shell.footer.more')}>
         {#each FOOTER_COLUMNS as col, i (i)}
-          <ul>{#each col.filter(([href]) => linkShown($serverCaps, href, $features, $perms)) as [href, label] (href)}<li><a {href}>{$t(label)}</a></li>{/each}</ul>
+          <ul>{#each col.filter(([href]) => linkShown($serverCaps, href, $features, $perms, $areas)) as [href, label] (href)}<li><a {href}>{$t(label)}</a></li>{/each}</ul>
         {/each}
       </nav>
     {/if}

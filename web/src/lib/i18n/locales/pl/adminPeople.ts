@@ -293,6 +293,7 @@ const dict: Translation<typeof de> = {
     livetvNone: 'Brak',
     livetvRemove: 'Anuluj wyjątek dla grupy {name}',
     livetvSaved: 'Zapisano wyjątki użytkownika {name}.',
+    libsNoneLine: 'Bez biblioteki {name} widzi tylko telewizję na żywo.',
   },
   roles: {
     intro: 'Co może robić każda rola. Zmiany obowiązują dopiero po kliknięciu „Zapisz” i dotyczą też istniejących kont.',
@@ -412,7 +413,8 @@ const dict: Translation<typeof de> = {
     errRange: 'Podaj liczbę od {min} do {max}.',
     cellTitle: '{role} · {field}',
     cellNameUnsaved: '{role}, {field}: {value}, niezapisane',
-    libsMin: 'Co najmniej jedna biblioteka pozostaje udostępniona.',
+    libsNone: 'Brak biblioteki',
+    libsNoneHint: 'Brak biblioteki – ta osoba widzi tylko telewizję na żywo.',
     retryDone: { one: 'Zapisano {n} rolę, której nie udało się zastosować.', few: 'Zapisano {n} role, których nie udało się zastosować.', many: 'Zapisano {n} ról, których nie udało się zastosować.', other: 'Zapisano {n} roli, których nie udało się zastosować.' },
     fLabel: 'Nazwa',
     fInvitable: 'Oferowana w zaproszeniach',

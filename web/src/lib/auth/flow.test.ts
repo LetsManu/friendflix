@@ -10,7 +10,7 @@ vi.mock('#lib/api', () => ({ getCsrf: () => csrf.token }));
 
 import {
   answer, artPaths, cancelFlow, classicHref, codeFromBoxes, credentialJSON, errorKey, fallbackArt, fieldLabel, flowConfig, inviteToken,
-  passkeyCeremonies, passkeyCreate, passkeyGet, passkeyProblem, pasteCode, preparedPasskey, resumeFlow, runPasskey, safeNext, startFlow, wallColumns,
+  creationError, passkeyCeremonies, passkeyCreate, passkeyCreateHint, passkeyGet, passkeyProblem, pasteCode, preparedPasskey, resumeFlow, runPasskey, safeNext, startFlow, wallColumns,
   type FlowStep, type PasskeyCreate, type PasskeyGet,
 } from './flow';
 
@@ -496,6 +496,51 @@ describe('passkeys', () => {
     expect(cred).toEqual({ id: 'n1', rawId: b64url([5]), type: 'public-key', authenticatorAttachment: null, response: { clientDataJSON: b64url([1]), attestationObject: b64url([2]), transports: ['internal'] }, clientExtensionResults: {} });
     installWebAuthn({ create: async () => { throw Object.assign(new Error('x'), { name: 'NotAllowedError' }); } });
     await expect(passkeyCreate(CREATE)).rejects.toThrow('passkey_cancelled');
+  });
+
+  it('creationError: each DOMException name → its code; anything else → passkey_failed with the name only', () => {
+    const dom = (name: string) => Object.assign(new Error('secret message with challenge ZmFrZQ'), { name });
+    const cases: Array<[string, string]> = [
+      ['NotAllowedError', 'passkey_cancelled'], ['AbortError', 'passkey_cancelled'], ['InvalidStateError', 'passkey_exists'],
+      ['NotSupportedError', 'passkey_unsupported_options'], ['ConstraintError', 'passkey_unsupported_options'], ['SecurityError', 'passkey_unsupported'],
+      ['TypeError', 'passkey_failed'], ['UnknownError', 'passkey_failed'],
+    ];
+    for (const [name, code] of cases) expect(creationError(dom(name)).message).toBe(code);
+    const f = creationError(dom('TypeError'));
+    expect((f as any).errorName).toBe('TypeError');
+    expect(JSON.stringify(f)).not.toContain('secret');
+    expect((creationError('boom') as any).errorName).toBe('Error');
+    expect((creationError(dom('<script>')) as any).errorName).toBe('Error');
+    expect(creationError(null).message).toBe('passkey_failed');
+  });
+
+  it('passkeyCreate: errors of the browser, of the option conversion and of credentialJSON are mapped, not "cancelled"', async () => {
+    installWebAuthn({ create: async () => { throw Object.assign(new Error('x'), { name: 'InvalidStateError' }); } });
+    await expect(passkeyCreate(CREATE)).rejects.toThrow('passkey_exists');
+    installWebAuthn({ create: async () => { throw Object.assign(new Error('x'), { name: 'ConstraintError' }); } });
+    await expect(passkeyCreate(CREATE)).rejects.toThrow('passkey_unsupported_options');
+    // a conversion error (bad base64 in the options without the JSON helpers)
+    installWebAuthn({ create: async () => ({}) });
+    await expect(passkeyCreate({ ...CREATE, challenge: '***' })).rejects.toMatchObject({ message: 'passkey_failed', errorName: 'InvalidCharacterError' });
+    // parseCreationOptionsFromJSON throwing a TypeError
+    const { PKC } = installWebAuthn({ json: true, create: async () => ({}) });
+    (PKC as any).parseCreationOptionsFromJSON = () => { throw new TypeError('bad options'); };
+    await expect(passkeyCreate(CREATE)).rejects.toMatchObject({ message: 'passkey_failed', errorName: 'TypeError' });
+    // credentialJSON throwing
+    installWebAuthn({ create: async () => ({ toJSON: () => { throw new RangeError('x'); } }) });
+    await expect(passkeyCreate(CREATE)).rejects.toMatchObject({ message: 'passkey_failed', errorName: 'RangeError' });
+  });
+
+  it('passkeyCreateHint: the hint PasskeySetup shows, with a code only for failed', async () => {
+    const e = (m: string) => new Error(m);
+    expect(passkeyCreateHint(e('passkey_cancelled'))).toEqual({ hint: 'cancelled', code: '' });
+    expect(passkeyCreateHint(e('passkey_exists'))).toEqual({ hint: 'exists', code: '' });
+    expect(passkeyCreateHint(e('passkey_unsupported_options'))).toEqual({ hint: 'unsupportedOptions', code: '' });
+    expect(passkeyCreateHint(e('passkey_unsupported'))).toEqual({ hint: 'unsupported', code: '' });
+    installWebAuthn({ create: async () => { throw Object.assign(new Error('x'), { name: 'InvalidStateError' }); } });
+    expect(passkeyCreateHint(await passkeyCreate(CREATE).catch((x) => x))).toEqual({ hint: 'exists', code: '' });
+    expect(passkeyCreateHint(creationError(new TypeError('x')))).toEqual({ hint: 'failed', code: 'TypeError' });
+    expect(passkeyCreateHint(e('whatever'))).toEqual({ hint: 'failed', code: 'Error' });
   });
 
   it('no PublicKeyCredential → passkey_unsupported', async () => {

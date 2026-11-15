@@ -6,19 +6,21 @@
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
   import { initial } from '#lib/avatars';
-  import { LIVE_RAIL, TV_RAIL, isTabActive, liveTabs, navLabel } from '#lib/menu';
-  import { features } from '#lib/capabilities';
+  import { LIVE_RAIL, TV_RAIL, isTabActive, libraryTabs, liveTabs, navLabel } from '#lib/menu';
+  import { areas, features } from '#lib/capabilities';
   import { focusFirst, hasTarget } from '#lib/spatial';
   import { railKey, type RailAction, type RailInput } from './rail';
 
   export let path: string;
+  /** the person's home (Live TV without libraries): Back there offers to leave the app */
+  export let home = '/';
   /** the open state; the layout sets it for the Back key */
   export let open = false;
   export let who = '';
   export let faceStyle: string | undefined = undefined;
 
   /** the rail: Live-TV after Filme while the feature is on */
-  $: rail = liveTabs(TV_RAIL, LIVE_RAIL, $features.livetv);
+  $: rail = liveTabs(libraryTabs(TV_RAIL, $areas.library), LIVE_RAIL, $features.livetv); // without the Mediathek: Live only (roles redesign §6)
   $: cur = rail.findIndex(([href]) => isTabActive(href, path));
 
   let nav: HTMLElement;
@@ -28,7 +30,7 @@
   let lastOutside: HTMLElement | null = null; // the last focused element outside the rail
 
   function apply(key: RailInput['key'], extra: Partial<RailInput> = {}): RailAction {
-    const r = railKey({ open }, { key, atLeftEdge: false, inRail: nav?.contains(document.activeElement) ?? false, onHome: path === '/', ...extra });
+    const r = railKey({ open }, { key, atLeftEdge: false, inRail: nav?.contains(document.activeElement) ?? false, onHome: path === home, ...extra });
     open = r.state.open;
     return r.action;
   }

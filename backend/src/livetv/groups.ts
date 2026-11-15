@@ -3,7 +3,7 @@
 import type pg from 'pg';
 import { auditInTx } from '../audit.js';
 import type { Ctx } from '../ctx.js';
-import { HttpError } from '../users.js';
+import { HttpError, InvalidField } from '../users.js';
 import { CHANNEL_SELECT } from './channels.js';
 import { invalidateLivetvRights } from './rights.js';
 
@@ -256,19 +256,55 @@ export async function setUserGroups(ctx: Pick<Ctx, 'db'>, actor: string, userId:
   return userGroups(ctx, userId);
 }
 
-/** role key -> names of the released groups that role sees (the admin role: every released group), in group order; for the role matrix */
-export async function roleGroupNames(ctx: Pick<Ctx, 'db'>): Promise<Map<string, string[]>> {
-  const rows = (await ctx.db.query<{ name: string; roles: string[] }>(
-    `select g.name, coalesce((select array_agg(r.role) from livetv_group_roles r where r.group_id = g.id), '{}') as roles
+/**
+ * role key -> the released groups that role sees (the admin role: every released group), as { id, name } in group order; for the role
+ * matrix (its `livetvGroups` names and `livetvGroupIds` come from this one answer)
+ */
+export async function roleGroups(ctx: Pick<Ctx, 'db'>): Promise<Map<string, GroupRef[]>> {
+  const rows = (await ctx.db.query<{ id: string; name: string; roles: string[] }>(
+    `select g.id, g.name, coalesce((select array_agg(r.role) from livetv_group_roles r where r.group_id = g.id), '{}') as roles
        from livetv_groups g where g.released order by g.position, lower(g.name)`)).rows;
-  const out = new Map<string, string[]>([['admin', rows.map((r) => r.name)]]);
+  const out = new Map<string, GroupRef[]>([['admin', rows.map(({ id, name }) => ({ id, name }))]]);
   for (const r of rows) {
     for (const role of r.roles) {
       if (role === 'admin') continue;
       let list = out.get(role);
       if (!list) out.set(role, (list = []));
-      list.push(r.name);
+      list.push({ id: r.id, name: r.name });
     }
   }
   return out;
+}
+
+// ---- the groups of a role, written with the role (roles redesign §4.2, §4.3) ----
+
+/**
+ * Inside the caller's transaction (writeRole: the role lock and the role's catalogue row FOR NO KEY UPDATE are held): the role sees
+ * exactly the released groups `ids`. The released group rows are locked here (serialised with group PATCH / release, which lock group
+ * rows and then take FOR KEY SHARE on the catalogue row through the grant FK; the caller must not hold that row FOR UPDATE, or the two
+ * deadlock). An unknown or unreleased id is refused
+ * (`InvalidField('livetvGroups')`), nothing is written. Only grants on released groups are replaced: a grant on an unreleased group
+ * stays, so a later release still knows its roles. Answers the released group names before and after, in group order; null when
+ * nothing changed.
+ */
+export async function setRoleGroupsIn(c: pg.PoolClient, role: string, ids: readonly string[]): Promise<{ from: string[]; to: string[] } | null> {
+  const released = (await c.query<{ id: string; name: string; granted: boolean }>(
+    `select g.id, g.name, exists (select 1 from livetv_group_roles r where r.group_id = g.id and r.role = $1) as granted
+       from livetv_groups g where g.released order by g.position, lower(g.name) for update of g`, [role])).rows;
+  const want = new Set(ids);
+  const known = new Set(released.map((g) => g.id));
+  if ([...want].some((id) => !known.has(id))) throw new InvalidField('livetvGroups');
+  const from = released.filter((g) => g.granted);
+  const to = released.filter((g) => want.has(g.id));
+  if (sameSet(from.map((g) => g.id), to.map((g) => g.id))) return null;
+  await c.query('delete from livetv_group_roles where role = $1 and group_id = any($2::uuid[]) and not (group_id = any($3::uuid[]))',
+    [role, released.map((g) => g.id), [...want]]);
+  await c.query('insert into livetv_group_roles(group_id, role) select unnest($1::uuid[]), $2 on conflict do nothing', [[...want], role]);
+  return { from: from.map((g) => g.name), to: to.map((g) => g.name) };
+}
+
+/** the released groups (group order) with their channel counts, and how many groups wait for a release; for the role page */
+export async function releasedGroupsSummary(ctx: Pick<Ctx, 'db'>): Promise<{ groups: Array<{ id: string; name: string; kidFriendly: boolean; channels: number }>; pending: number }> {
+  const { groups, pending } = await listGroups(ctx);
+  return { groups: groups.filter((g) => g.released).map(({ id, name, kidFriendly, channels }) => ({ id, name, kidFriendly, channels })), pending };
 }

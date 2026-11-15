@@ -56,12 +56,13 @@ test.describe('rights switched off', () => {
     expect(asked).toEqual([]);
   });
 
-  test('footer menu: no Watch-Party link, the others stay', async ({ page, api }) => {
+  test('footer menu: no Watch-Party and no Filmabend link (votes need the party right too), the others stay', async ({ page, api }) => {
     api.perms = { ...DENIED };
     await page.goto('/');
     const footer = page.getByRole('contentinfo');
-    await expect(footer.getByRole('link', { name: 'Filmabend' })).toBeVisible();
+    await expect(footer.getByRole('link', { name: 'Heute Abend' })).toBeVisible();
     await expect(footer.getByRole('link', { name: 'Watch-Party' })).toHaveCount(0);
+    await expect(footer.getByRole('link', { name: 'Filmabend' })).toHaveCount(0);
   });
 
   test('/party shows the refusal text instead of the form', async ({ page, api }) => {

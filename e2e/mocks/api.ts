@@ -64,6 +64,8 @@ export interface MockState {
   canDownload?: boolean;
   /** /api/me `perms` (the acting profile's effective rights); absent = the field is left out, like an older backend (everything allowed) */
   perms?: Partial<Record<'requests' | 'cast' | 'party' | 'partySchedule' | 'comments' | 'liveTv' | 'liveRecord', boolean>>;
+  /** /api/me `areas` (roles redesign §4.6: the parts of the app the profile may use); absent = the field is left out, like an older backend (all on) */
+  areas?: Partial<Record<'library' | 'livetv' | 'requests' | 'together' | 'downloads', boolean>>;
   /** /api/me `server.kind` (absent = the field is left out, like an older backend: the app treats it as Jellyfin) */
   serverKind?: 'jellyfin' | 'plex';
   /** /api/me `server.capabilities` (absent = left out: every capability counts as supported); e.g. `{ castHlsSubtitles: false }` */
@@ -261,7 +263,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       const withFeatures = st.features ? { ...withServer, features: st.features } : withServer;
       const base = st.perms ? { ...withFeatures, perms: st.perms } : withFeatures;
       const withDl = st.canDownload ? { ...base, downloads: { allowed: true, max: 3 } } : base;
-      const me = st.asAdmin ? { ...withDl, role: 'admin', roleLabel: 'Admin', isAdmin: true } : withDl;
+      const withAreas = st.areas ? { ...withDl, areas: { library: true, livetv: false, requests: true, together: true, downloads: false, ...st.areas } } : withDl;
+      const me = st.asAdmin ? { ...withAreas, role: 'admin', roleLabel: 'Admin', isAdmin: true } : withAreas;
       const s = st.accountSaved;
       return J(s ? { ...me, name: s.name, profile: { ...me.profile, name: s.name.slice(0, 20), avatar: s.avatar } } : me);
     }
@@ -377,6 +380,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       return np.wish === 'fail' ? J({ error: 'boom' }, 500) : J({ ok: true });
     }
     if (p === '/api/seerr/upcoming') {
+      if (st.perms?.requests === false) return J({ error: 'requests_forbidden' }, 403); // the backend's requirePerm (roles redesign §4.7)
       if (st.newPage.hang.has('upcoming')) return new Promise<void>(() => undefined);
       return J({ results: sp.get('type') === 'tv' ? st.newPage.upcoming.tv : st.newPage.upcoming.movie });
     }

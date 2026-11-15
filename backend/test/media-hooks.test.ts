@@ -3,11 +3,12 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { bus } from '../src/bus.js';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
-import { JellyfinClient } from '../src/jellyfin/client.js';
+import { JellyfinClient, policyFromTemplate } from '../src/jellyfin/client.js';
 import { JellyfinService } from '../src/jellyfin/service.js';
 import { jellyfinWebhookEvents } from '../src/jellyfin/webhook.js';
 import { MemoryKV } from '../src/kv.js';
 import { MediaError, type MediaEvent, type MediaServer, type PlaybackDto } from '../src/media/types.js';
+import { DEFAULT_ROLES } from '../src/roles.js';
 import { forgetAuth } from '../src/routes/internal.js';
 import { applyRole } from '../src/users.js';
 import { ENC_KEY, fakeHttp, makeEnv, type Call, type Handler, type TestEnv } from './helpers.js';
@@ -102,6 +103,26 @@ describe('Jellyfin: the hooks are no-ops / identity', () => {
     const r = await svc.subtitleStream(BOB, A, 'ms1', 3, 'vtt');
     expect(await r.text()).toBe('WEBVTT\n');
     expect(calls.at(-1)).toMatchObject({ path: `/Videos/${A}/ms1/Subtitles/3/0/Stream.vtt`, auth: expect.stringContaining(USER_TOKEN) });
+  });
+});
+
+describe('Jellyfin: a template with no library (roles redesign §3.1)', () => {
+  const none = { ...DEFAULT_ROLES.friend!, libraries: [] as string[] };
+  it('policyFromTemplate({ libraries: [] }, []) → EnableAllFolders false, EnabledFolders []', () => {
+    expect(policyFromTemplate(none, [])).toMatchObject({ EnableAllFolders: false, EnabledFolders: [] });
+    expect(policyFromTemplate(none, null)).toMatchObject({ EnableAllFolders: false, EnabledFolders: [] });
+  });
+  it('applyPolicy with [] sends EnabledFolders [] without asking for the folders', async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    const { svc, calls } = service({
+      'GET /Users/[^/]+': () => ({ json: { Policy: { IsAdministrator: false } } }),
+      'POST /Users/[^/]+/Policy': (_u, _i, b) => { sent.push(b); return { status: 204 }; },
+      'GET /Library/MediaFolders': () => ({ json: { Items: [{ Id: 'f1', Name: 'Filme' }] } }),
+    });
+    await svc.admin.applyPolicy('jfbob', { template: none, disabled: false });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ EnableAllFolders: false, EnabledFolders: [] });
+    expect(calls.some((c) => c.path === '/Library/MediaFolders')).toBe(false);
   });
 });
 

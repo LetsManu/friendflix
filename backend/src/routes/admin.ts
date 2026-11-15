@@ -17,7 +17,8 @@ import { claimHevcProbe, hevcBusyReason, hevcProbeRunning, hevcProbeWanted, hevc
 import { activeStreams } from '../playstats.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
-import { RoleInUse, createRole, deleteRole, orderRoles, roleExists, roleLabelArgs } from '../rolecat.js';
+import { RoleInUse, createRole, createRoleFromTemplate, deleteRole, orderRoles, roleExists, roleLabelArgs } from '../rolecat.js';
+import { ROLE_PRESET_KEYS } from '../roleTemplates.js';
 import { invalidateRoles } from '../roles.js';
 import { rolePatch, roleLabelInput, rolesOverview, writeRole } from '../roleWrite.js';
 import { cleanDeviceName } from '../deviceName.js';
@@ -286,16 +287,24 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.put('/api/admin/roles/:role', admin, async (req, reply) => {
     const role = (req.params as { role: string }).role;
     if (!(await roleExists(ctx, role))) return reply.code(404).send({ error: 'not_found' });
+    // an unknown or unreleased group: 400 { error: 'invalid', field: 'livetvGroups' } (InvalidField, answered by the error handler)
     const { changed, reapplied } = await writeRole(ctx, req.user!.id, role, rolePatch.parse(req.body));
     if (changed.includes('party')) await dropPartyDenied(ctx); // the role's accounts that lost `party` lose their open party sockets
     if (reapplied.failed) return reply.code(502).send({ error: 'policy_partial', failed: reapplied.failed, identities: reapplied.identities });
     return { ok: true, reapplied };
   });
 
-  // duplicates a role: the new row holds a full snapshot of `from` (the key is derived from the label)
+  // a new role (the key is derived from the label): `from` duplicates a role (a full snapshot of it, with its channel groups),
+  // `template` starts from a preset (roleTemplates.ts); 400 template_unavailable for liveOnly without Live TV
   app.post('/api/admin/roles', admin, async (req, reply) => {
-    const body = z.object({ label: roleLabelInput, from: z.string().min(1).max(64) }).strict().parse(req.body);
-    return reply.code(201).send({ key: await createRole(ctx, req.user!.id, body.label, body.from) });
+    const body = z.union([
+      z.object({ label: roleLabelInput, from: z.string().min(1).max(64) }).strict(),
+      z.object({ label: roleLabelInput, template: z.enum(ROLE_PRESET_KEYS) }).strict(),
+    ]).parse(req.body);
+    const key = 'from' in body
+      ? await createRole(ctx, req.user!.id, body.label, body.from)
+      : await createRoleFromTemplate(ctx, req.user!.id, body.label, body.template, livetvInstalled(ctx));
+    return reply.code(201).send({ key });
   });
 
   // `order` is a reserved role key (a static route wins over `:role`)

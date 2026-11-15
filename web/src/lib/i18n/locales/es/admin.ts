@@ -169,6 +169,7 @@ const es: Translation<typeof de> = {
     notConfigured: 'Portainer no está configurado.',
     unreachable: 'No se puede acceder a Portainer{detail}. Detalles en el registro del backend.',
     portainerError: 'Error de Portainer{detail}. Detalles en el registro del backend.',
+    webhookGone: 'La dirección del webhook de Portainer ya no es válida (Portainer asigna una nueva cuando se recrea la pila o se desactiva y vuelve a activar su webhook). Crea un webhook nuevo en Portainer, o quítalo en Admin → Ajustes → Actualizaciones y usa en su lugar los ajustes de la API.',
     httpDetail: ' (HTTP {status})',
     atStep: ' en {step}',
     intro: 'Portainer actualiza automáticamente cada 12 horas. Con el botón se hace al instante.',
@@ -282,6 +283,7 @@ const es: Translation<typeof de> = {
           failed: 'Portainer rechazó el redespliegue{detail}. Revisa la pila en Portainer y los ajustes de Portainer en Admin → Ajustes → Actualizaciones.',
           timeout: 'No cambió nada en 15 minutos ({at}). Revisa la pila y sus registros en Portainer.',
           unreachable: 'Portainer no era accesible{code}. Revisa PORTAINER_URL en Admin → Ajustes → Actualizaciones: el backend debe poder alcanzar esa dirección.',
+          webhookGone: 'La dirección del webhook de Portainer ya no es válida (Portainer asigna una nueva cuando se recrea la pila o se desactiva y vuelve a activar su webhook). Crea un webhook nuevo en Portainer, o quítalo en Admin → Ajustes → Actualizaciones y usa en su lugar los ajustes de la API.',
           noTarget: 'No se inició nada: elige primero una versión para el canal «Versión fija».',
         },
         detail: ' (HTTP {status}, paso {step})',
@@ -297,6 +299,7 @@ const es: Translation<typeof de> = {
         foreign_stack: 'Esta pila la gestiona Portainer (u otra herramienta), por eso el actualizador no la vuelve a crear. Configura el webhook de Portainer en Admin → Ajustes → Actualizaciones o actualiza la pila en Portainer.',
         portainer: 'Portainer rechazó el redespliegue. Revisa el webhook o la API en Admin → Ajustes → Actualizaciones.',
         portainer_unreachable: 'No se puede acceder a Portainer.',
+        webhook_gone: 'La dirección del webhook de Portainer ya no es válida (Portainer asigna una nueva cuando se recrea la pila o se desactiva y vuelve a activar su webhook). Crea un webhook nuevo en Portainer, o quítalo en Admin → Ajustes → Actualizaciones y usa en su lugar los ajustes de la API.',
       },
       failReason: {
         verify_failed: 'falló la comprobación de firmas, no se reinició nada',
@@ -314,7 +317,7 @@ const es: Translation<typeof de> = {
         unknown: 'error desconocido',
       },
       foreign: {
-        portainer: 'Esta pila la gestiona Portainer. «Actualizar ahora» la vuelve a desplegar a través de Portainer (webhook o API de Admin → Ajustes → Actualizaciones). El actualizador nunca vuelve a crear por sí mismo una pila de Portainer, así que volver a la versión anterior no está disponible aquí.',
+        portainer: 'Esta pila la gestiona Portainer. «Actualizar ahora» la vuelve a desplegar a través de Portainer (API o webhook de Admin → Ajustes → Actualizaciones). El actualizador nunca vuelve a crear por sí mismo una pila de Portainer, así que volver a la versión anterior no está disponible aquí.',
         manual: 'Esta pila la gestiona Portainer (u otra herramienta), por eso el actualizador no la actualiza: al volver a crearla desde aquí se perderían las variables propias de la pila (p. ej. BIND_ADDR). Configura el webhook de Portainer en Admin → Ajustes → Actualizaciones o actualiza la pila en Portainer. Para la API: PORTAINER_URL, PORTAINER_API_KEY y PORTAINER_STACK_ID (el número tras «id=» en la dirección de la pila en Portainer).',
         started: 'Portainer está volviendo a desplegar la pila. FriendFlix se reiniciará en un momento.',
         workdir: 'Esta pila se inició desde {dir}, pero el actualizador ve {projectDir}, por eso no la vuelve a crear (le faltaría el .env de ese directorio). Pon UPDATER_PROJECT_DIR={dir} en el .env de {dir} y ejecuta allí docker compose up -d una vez.',

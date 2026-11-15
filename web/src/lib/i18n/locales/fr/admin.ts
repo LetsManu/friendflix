@@ -169,6 +169,7 @@ const fr: Translation<typeof de> = {
     notConfigured: 'Portainer n’est pas configuré.',
     unreachable: 'Portainer injoignable{detail}. Détails dans le journal du backend.',
     portainerError: 'Erreur Portainer{detail}. Détails dans le journal du backend.',
+    webhookGone: 'L’adresse du webhook Portainer n’est plus valide (Portainer en attribue une nouvelle lorsque la stack est recréée ou que son webhook est désactivé puis réactivé). Crée un nouveau webhook dans Portainer, ou supprime-le dans Admin → Paramètres → Mises à jour et utilise à la place les paramètres de l’API.',
     httpDetail: ' (HTTP {status})',
     atStep: ' à l’étape {step}',
     intro: 'Portainer met à jour automatiquement toutes les 12 heures. Ce bouton permet de le faire immédiatement.',
@@ -282,6 +283,7 @@ const fr: Translation<typeof de> = {
           failed: 'Portainer a refusé le redéploiement{detail}. Vérifie la stack dans Portainer et les réglages Portainer dans Admin → Paramètres → Mises à jour.',
           timeout: 'Rien n’a changé en 15 minutes ({at}). Vérifie la stack et ses journaux dans Portainer.',
           unreachable: 'Portainer n’était pas joignable{code}. Vérifie PORTAINER_URL dans Admin → Paramètres → Mises à jour : le backend doit pouvoir joindre cette adresse.',
+          webhookGone: 'L’adresse du webhook Portainer n’est plus valide (Portainer en attribue une nouvelle lorsque la stack est recréée ou que son webhook est désactivé puis réactivé). Crée un nouveau webhook dans Portainer, ou supprime-le dans Admin → Paramètres → Mises à jour et utilise à la place les paramètres de l’API.',
           noTarget: 'Rien n’a été lancé : choisis d’abord une version pour le canal « Version fixe ».',
         },
         detail: ' (HTTP {status}, étape {step})',
@@ -297,6 +299,7 @@ const fr: Translation<typeof de> = {
         foreign_stack: 'Cette stack est gérée par Portainer (ou un autre outil), le programme de mise à jour ne la recrée donc pas. Configure le webhook Portainer dans Admin → Paramètres → Mises à jour, ou mets à jour la stack dans Portainer.',
         portainer: 'Portainer a refusé le redéploiement. Vérifie le webhook ou l’API dans Admin → Paramètres → Mises à jour.',
         portainer_unreachable: 'Portainer est injoignable.',
+        webhook_gone: 'L’adresse du webhook Portainer n’est plus valide (Portainer en attribue une nouvelle lorsque la stack est recréée ou que son webhook est désactivé puis réactivé). Crée un nouveau webhook dans Portainer, ou supprime-le dans Admin → Paramètres → Mises à jour et utilise à la place les paramètres de l’API.',
       },
       failReason: {
         verify_failed: 'échec de la vérification des signatures, rien n’a été redémarré',
@@ -314,7 +317,7 @@ const fr: Translation<typeof de> = {
         unknown: 'erreur inconnue',
       },
       foreign: {
-        portainer: 'Cette stack est gérée par Portainer. « Mettre à jour maintenant » la redéploie via Portainer (webhook ou API depuis Admin → Paramètres → Mises à jour). Le programme de mise à jour ne recrée jamais lui-même une stack Portainer, le retour à la version précédente n’est donc pas disponible ici.',
+        portainer: 'Cette stack est gérée par Portainer. « Mettre à jour maintenant » la redéploie via Portainer (API ou webhook depuis Admin → Paramètres → Mises à jour). Le programme de mise à jour ne recrée jamais lui-même une stack Portainer, le retour à la version précédente n’est donc pas disponible ici.',
         manual: 'Cette stack est gérée par Portainer (ou un autre outil), le programme de mise à jour ne la met donc pas à jour : la recréer d’ici ferait perdre les variables propres à la stack (p. ex. BIND_ADDR). Configure le webhook Portainer dans Admin → Paramètres → Mises à jour, ou mets à jour la stack dans Portainer. Pour l’API : PORTAINER_URL, PORTAINER_API_KEY et PORTAINER_STACK_ID (le nombre après « id= » dans l’adresse de la stack dans Portainer).',
         started: 'Portainer redéploie la stack. FriendFlix redémarre dans un instant.',
         workdir: 'Cette stack a été démarrée depuis {dir}, mais le programme de mise à jour voit {projectDir}, il ne la recrée donc pas (il lui manquerait le .env de ce répertoire). Ajoute UPDATER_PROJECT_DIR={dir} au .env de {dir} et lance une fois docker compose up -d à cet endroit.',
