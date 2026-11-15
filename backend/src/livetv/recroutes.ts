@@ -12,6 +12,7 @@ import { adminListRecordings, deleteRecording, effectiveStorage, getRecording, l
 import { expandRules, forecast, insertScheduled, programmeAt, releaseReservation, validTz, type RuleRow } from './recsched.js';
 import { exportToLibrary, usage } from './recstore.js';
 import { channelAllowed } from './rights.js';
+import { invalidateRecordingUses } from './streams.js';
 import { playEntryGate, profileChangedSince, streamLimitRefusal } from './routes.js';
 import { LIVE_CAP_S, liveSidHash, mintRecToken, revokeLiveToken } from './tokens.js';
 import { isHomeRequest } from '../netaddr.js';
@@ -326,6 +327,9 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
       [id, req.profile!.id, d.onlyNew ?? null, d.keepMax !== undefined, d.keepMax ?? null, d.padBefore !== undefined, d.padBefore == null ? null : d.padBefore * 60,
         d.padAfter !== undefined, d.padAfter == null ? null : d.padAfter * 60, d.enabled ?? null, d.title ?? null])).rows[0];
     if (!r) return notFound(reply);
+    // A-M15: a disabled rule plans nothing, and an onlyNew change decides afresh which airings it wants: the airings it planned and
+    // that did not start yet go (removed, not cancelled, so enabling the rule again plans them again; an owner's own cancel stays)
+    if (d.enabled === false || d.onlyNew !== undefined) await dropPlanned(ctx, id);
     if (r.enabled) await expandRules(ctx, Date.now(), { ruleId: id });
     return { rule: ruleView(r) };
   });
@@ -336,11 +340,26 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!id) return notFound(reply);
     const own = (await ctx.db.query('select 1 from livetv_recording_rules where id = $1 and profile_id = $2', [id, req.profile!.id])).rowCount;
     if (!own) return notFound(reply);
-    await ctx.db.query("update livetv_recordings set state = 'cancelled' where rule_id = $1 and state = 'scheduled'", [id]);
+    const channels = (await ctx.db.query<{ channel_id: string | null }>(
+      "update livetv_recordings set state = 'cancelled' where rule_id = $1 and state = 'scheduled' returning channel_id", [id])).rows;
     await ctx.db.query('delete from livetv_recording_rules where id = $1', [id]);
+    await releaseChannels(ctx, channels);
     return reply.code(204).send();
   });
 
+}
+
+/** the rule's planned airings that did not start yet go; the reservations they held are released (A-M15) */
+async function dropPlanned(ctx: Ctx, ruleId: string): Promise<void> {
+  const channels = (await ctx.db.query<{ channel_id: string | null }>(
+    "delete from livetv_recordings where rule_id = $1 and state = 'scheduled' returning channel_id", [ruleId])).rows;
+  await releaseChannels(ctx, channels);
+}
+
+/** recordingUses forgets them, and a reservation no other planned recording needs goes */
+async function releaseChannels(ctx: Ctx, rows: Array<{ channel_id: string | null }>): Promise<void> {
+  invalidateRecordingUses();
+  for (const c of new Set(rows.flatMap((x) => (x.channel_id ? [x.channel_id] : [])))) await releaseReservation(ctx, c).catch(() => undefined);
 }
 
 /** Admin → Aufnahmen (spec §9.6), registered from adminRoutes.ts */

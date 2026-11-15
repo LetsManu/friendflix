@@ -11,7 +11,7 @@ import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { detectLivetv } from '../src/livetv/detect.js';
 import { forecast } from '../src/livetv/recsched.js';
 import { invalidateLivetvRights } from '../src/livetv/rights.js';
-import { invalidateLiveConversions, invalidateRecordingUses } from '../src/livetv/streams.js';
+import { invalidateLiveConversions, invalidateRecordingUses, recordingUses } from '../src/livetv/streams.js';
 import { invalidateRights } from '../src/rights.js';
 import { invalidateRoles } from '../src/roles.js';
 import { cfg, ENC_KEY, fakeHttp, makeEnv, type Call, type TestEnv } from './helpers.js';
@@ -252,6 +252,41 @@ describe('scheduling', () => {
     expect((await call(ben, 'DELETE', `/api/livetv/rules/${r.json().rule.id}`)).statusCode).toBe(404);
     expect((await call(anna, 'DELETE', `/api/livetv/rules/${r.json().rule.id}`)).statusCode).toBe(204);
     expect((await env.pool.query("select count(*)::int n from livetv_recordings where state = 'scheduled' and series_key is not null")).rows[0].n).toBe(0);
+  });
+});
+
+describe('rule changes (A-M15)', () => {
+  const planned = async () => (await env.pool.query<{ episode: string; state: string }>(
+    "select episode, state from livetv_recordings where rule_id is not null order by start_at")).rows.map((x) => `${x.episode}:${x.state}`);
+
+  it('disabling a rule takes its planned airings back, enabling plans them again; an onlyNew change re-plans them', async () => {
+    await prog('Nordlicht TV.de', T(), { episode: 'S01E01' });
+    await prog('Nordlicht TV.de', T() + 24 * HOUR, { episode: 'S01E02' });
+    await env.pool.query("update livetv_programmes set is_new = (episode = 'S01E02')");
+    const r = await call(anna, 'POST', '/api/livetv/rules', { kind: 'series', channelId: nordlicht, seriesKey: 'die leuchtturmwärter', title: 'Die Leuchtturmwärter', onlyNew: false });
+    expect(r.statusCode, r.body).toBe(201);
+    const id = r.json().rule.id;
+    expect(await planned()).toEqual(['S01E01:scheduled', 'S01E02:scheduled']);
+    expect((await call(anna, 'PATCH', `/api/livetv/rules/${id}`, { enabled: false })).statusCode).toBe(200);
+    expect(await planned()).toEqual([]);
+    expect((await call(anna, 'PATCH', `/api/livetv/rules/${id}`, { enabled: true })).statusCode).toBe(200);
+    expect(await planned()).toEqual(['S01E01:scheduled', 'S01E02:scheduled']);
+    // only new episodes from now on: the rerun goes
+    expect((await call(anna, 'PATCH', `/api/livetv/rules/${id}`, { onlyNew: true })).statusCode).toBe(200);
+    expect(await planned()).toEqual(['S01E02:scheduled']);
+  });
+
+  it('a rule\'s delete releases the reservation its next airing held', async () => {
+    const soon = Date.now() + 2 * MIN;
+    await prog('Nordlicht TV.de', soon, { episode: 'S01E01' });
+    const r = await call(anna, 'POST', '/api/livetv/rules', { kind: 'series', channelId: nordlicht, seriesKey: 'die leuchtturmwärter', title: 'Die Leuchtturmwärter', onlyNew: false, padBefore: 0 });
+    expect(r.statusCode, r.body).toBe(201);
+    await env.kv.set(`conv:resv:${nordlicht}`, '1', 600);
+    await env.kv.indexAdd('conv:resvs', nordlicht);
+    expect(await recordingUses(env.ctx, nordlicht)).toBe(true);
+    expect((await call(anna, 'DELETE', `/api/livetv/rules/${r.json().rule.id}`)).statusCode).toBe(204);
+    expect(await recordingUses(env.ctx, nordlicht)).toBe(false);
+    expect(await env.kv.get(`conv:resv:${nordlicht}`)).toBeNull();
   });
 });
 
