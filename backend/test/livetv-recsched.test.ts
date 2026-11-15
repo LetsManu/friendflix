@@ -136,7 +136,7 @@ afterAll(() => env.close());
 beforeEach(async () => {
   env.ctx.cfg = { ...cfg };
   __resetConvMemo();
-  await env.pool.query(`delete from notifications; delete from livetv_recordings; delete from livetv_recording_rules; delete from livetv_programmes;
+  await env.pool.query(`delete from notifications; delete from livetv_recordings; delete from livetv_recording_purges; delete from livetv_recording_rules; delete from livetv_programmes;
     delete from livetv_channels; delete from livetv_group_roles; delete from livetv_groups; delete from livetv_sources`);
   for (const p of ['ltv', 'conv:', 'play:']) for (const k of await env.kv.keys(p)) await env.kv.del(k);
   streams.clear(); recorders.clear(); calls.length = 0;

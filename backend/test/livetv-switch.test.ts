@@ -504,7 +504,7 @@ describe('release on switch', () => {
     await env.kv.set(`ltv:zero:${d}`, String(Date.now() - 120_000), 3600);
     await livetvTick(env.ctx);
     expect(dels()).toEqual([`DELETE:${d}`]);
-    await env.pool.query('delete from livetv_recordings');
+    await env.pool.query('delete from livetv_recordings; delete from livetv_recording_purges');
     invalidateRecordingUses();
   });
 

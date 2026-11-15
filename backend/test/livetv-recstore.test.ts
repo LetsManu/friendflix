@@ -88,7 +88,7 @@ beforeAll(async () => {
 afterAll(() => env.close());
 beforeEach(async () => {
   env.ctx.cfg = { ...cfg };
-  await env.pool.query(`delete from notifications; delete from audit_log; delete from livetv_recordings; delete from livetv_recording_rules; delete from livetv_channels;
+  await env.pool.query(`delete from notifications; delete from audit_log; delete from livetv_recordings; delete from livetv_recording_purges; delete from livetv_recording_rules; delete from livetv_channels;
     delete from livetv_group_roles; delete from livetv_groups; delete from livetv_sources`);
   for (const p of ['ltv', 'conv:']) for (const k of await env.kv.keys(p)) await env.kv.del(k);
   calls.length = 0;
@@ -170,7 +170,7 @@ describe('space and retention (spec §15.5)', () => {
   });
 
   it('a deletion livetv did not confirm is finished by the next space tick', async () => {
-    const id = await row({ state: 'cancelled', delete_after: new Date() });
+    const id = await row({ state: 'deleting', delete_after: new Date() });
     await spaceTick(env.ctx);
     expect(await state(id)).toBeNull();
   });
@@ -265,5 +265,52 @@ describe('storage modes (spec §15.3)', () => {
     expect((await call(anna, 'GET', '/api/admin/livetv/recordings/libraries')).statusCode).toBe(403);
     const st = (await call(admin, 'GET', '/api/admin/livetv/recordings/storage')).json();
     expect(st.library).toEqual({ mounted: true, writable: true, dedicated: true, freeBytes: 900 * GB });
+  });
+});
+
+describe('deleting (fix round 1)', () => {
+  it('A-I8: a failing revocation keeps the row deleting (tokens 410) until the job completes it', async () => {
+    const { recHooks, deleteRecording } = await import('../src/livetv/recordings.js');
+    const id = await row({ bytes: 4000 });
+    const saved = recHooks.onRecordingDeleted;
+    let fail = true;
+    recHooks.onRecordingDeleted = async () => { if (fail) throw new Error('licence store down'); };
+    try {
+      expect(await deleteRecording(env.ctx, id, 'owner')).toBe('pending');
+      expect((await state(id)).state).toBe('deleting');
+      expect(calls.filter((c) => c.path.startsWith(`/v1/recordings/${id}`))).toEqual([]); // nothing removed before the revocation held
+      fail = false;
+      await spaceTick(env.ctx);
+      expect(await state(id)).toBeNull();
+      expect(calls.filter((c) => c.path === `/v1/recordings/${id}`).map((c) => c.method)).toEqual(['DELETE']); // the retry stops a recorder too (A-M5)
+      expect(calls.filter((c) => c.path === `/v1/recordings/${id}/delete`)).toHaveLength(1);
+    } finally { recHooks.onRecordingDeleted = saved; }
+  });
+
+  it('A-I9: deleting a library recording rescans its library', async () => {
+    env.ctx.cfg = { ...cfg, LIVETV_RECORD_STORAGE: 'library', LIVETV_RECORD_LIBRARY_ID: 'lib-aufnahmen' };
+    const { deleteRecording } = await import('../src/livetv/recordings.js');
+    const id = await row({ storage: 'library', library_path: 'Sternstunde Physik/Sternstunde Physik – x.ts' });
+    expect(await deleteRecording(env.ctx, id, 'owner')).toBe('deleted');
+    expect(calls.filter((c) => c.path === `/v1/recordings/${id}/library-delete`)).toHaveLength(1);
+    expect(asked).toEqual(['refresh lib-aufnahmen']);
+  });
+
+  it('A-I4: deleting a profile queues its recordings\' files; usage counts them until the job removed them', async () => {
+    const kid = '0c000000-0000-4000-a000-0000000000a9';
+    await env.pool.query(`insert into profiles(id, user_id, name, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values ($1, $2, 'Zweit', $3, 'anna-zweit', $4)`,
+      [kid, annaId, 'b'.repeat(32), encrypt(key, 'pw')]);
+    const done = await row({ profile_id: kid, bytes: 3000 });
+    const running = await row({ profile_id: kid, state: 'recording', bytes: 1000, start_at: new Date(Date.now() - HOUR), end_at: new Date(Date.now() + HOUR) });
+    const plan = await row({ profile_id: kid, state: 'scheduled', bytes: 0, mode: null, start_at: new Date(Date.now() + DAY), end_at: new Date(Date.now() + DAY + HOUR) });
+    await env.pool.query('delete from profiles where id = $1', [kid]);
+    for (const x of [done, running, plan]) expect(await state(x)).toBeNull();
+    expect((await env.pool.query('select recording_id from livetv_recording_purges order by bytes')).rows.map((r) => r.recording_id)).toEqual([running, done]);
+    expect(await usage(env.ctx)).toBe(4000);
+    await spaceTick(env.ctx);
+    expect((await env.pool.query('select count(*)::int n from livetv_recording_purges')).rows[0].n).toBe(0);
+    expect(await usage(env.ctx)).toBe(0);
+    expect(calls.filter((c) => c.path === `/v1/recordings/${running}`).map((c) => c.method)).toEqual(['DELETE']);
+    expect(calls.filter((c) => c.path.endsWith('/delete')).map((c) => c.path.split('/')[3]).sort()).toEqual([done, running].sort());
   });
 });

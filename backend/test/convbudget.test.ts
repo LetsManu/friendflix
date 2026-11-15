@@ -479,7 +479,7 @@ describe('recordings (Phase 3)', () => {
       env.ctx.fetchImpl = ((input: RequestInfo | URL, init?: RequestInit) => (new URL(String(input)).host === 'livetv:8090' ? Promise.reject(new TypeError('fetch failed')) : orig(input, init))) as typeof fetch;
       await detectLivetv(env.ctx, 0, { strict: true });
       env.ctx.fetchImpl = orig;
-      await env.pool.query('delete from livetv_recordings; delete from livetv_channels; delete from livetv_sources');
+      await env.pool.query('delete from livetv_recordings; delete from livetv_recording_purges; delete from livetv_channels; delete from livetv_sources');
       invalidateLiveConversions();
     }
   });

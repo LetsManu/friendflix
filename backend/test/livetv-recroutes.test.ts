@@ -103,7 +103,7 @@ beforeEach(async () => {
   env.ctx.cfg = { ...cfg };
   __resetConvMemo();
   await env.pool.query('update devices set kids_profile_id = null'); // a kids test locks its device to the kids profile
-  await env.pool.query(`delete from audit_log; delete from livetv_recordings; delete from livetv_recording_rules; delete from livetv_programmes; delete from livetv_channels;
+  await env.pool.query(`delete from audit_log; delete from livetv_recordings; delete from livetv_recording_purges; delete from livetv_recording_rules; delete from livetv_programmes; delete from livetv_channels;
     delete from livetv_group_roles; delete from livetv_groups; delete from livetv_sources`);
   for (const p of ['ltv', 'conv:']) for (const k of await env.kv.keys(p)) await env.kv.del(k);
   calls.length = 0;

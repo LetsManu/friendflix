@@ -491,7 +491,7 @@ describe('recording tokens (Phase 3)', () => {
     userId: ANNA, profileId: ANNA, deviceId: 'dev-anna-1', sidHash: SID_A, recordingId, channelId: nord, channelName: 'Nordlicht TV', via: 'local', remote: false,
   }, 7200);
   beforeEach(async () => {
-    await env.pool.query('delete from livetv_recordings');
+    await env.pool.query('delete from livetv_recordings; delete from livetv_recording_purges');
     adm = await env.login(); // earlier tests of this file end the admin's first session
     adminProfile = (await env.pool.query<{ id: string }>('select id from profiles where user_id = $1 and is_owner', [adminId])).rows[0]!.id;
   });

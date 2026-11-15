@@ -83,7 +83,7 @@ beforeAll(async () => {
 afterAll(() => env.close());
 beforeEach(async () => {
   env.ctx.cfg = { ...cfg };
-  await env.pool.query('delete from livetv_recordings; delete from livetv_recording_rules; delete from livetv_channels; delete from livetv_group_roles; delete from livetv_groups; delete from livetv_sources');
+  await env.pool.query('delete from livetv_recordings; delete from livetv_recording_purges; delete from livetv_recording_rules; delete from livetv_channels; delete from livetv_group_roles; delete from livetv_groups; delete from livetv_sources');
   src = (await env.pool.query<{ id: string }>(`insert into livetv_sources(id, kind, name, url_enc) values (gen_random_uuid(), 'm3u', 'Anbieter A', 'x') returning id`)).rows[0]!.id;
   news = (await env.pool.query<{ id: string }>("insert into livetv_groups(id, name, released) values (gen_random_uuid(), 'Nachrichten', true) returning id")).rows[0]!.id;
   kids = (await env.pool.query<{ id: string }>("insert into livetv_groups(id, name, released, kid_friendly) values (gen_random_uuid(), 'Kinder', true, true) returning id")).rows[0]!.id;

@@ -166,7 +166,7 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     const a = actorOf(req);
     const r = await getRecording(ctx, id);
     // a recording this profile cannot see is unknown to it (an admin may share any)
-    if (!r || r.state === 'cancelled' || (!a.admin && !(await visibleRecording(ctx, u, profile, id)))) return notFound(reply);
+    if (!r || r.state === 'cancelled' || r.state === 'deleting' || (!a.admin && !(await visibleRecording(ctx, u, profile, id)))) return notFound(reply);
     if (r.profile_id !== profile.id && !a.admin) return reply.code(403).send({ error: 'forbidden' });
     if ((b.data.padBefore !== undefined || b.data.padAfter !== undefined)) {
       if (r.profile_id !== profile.id) return reply.code(403).send({ error: 'forbidden' });

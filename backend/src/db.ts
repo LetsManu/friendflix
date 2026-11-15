@@ -1259,6 +1259,7 @@ export const MIGRATIONS: string[] = [
     visibility text not null default 'private' check (visibility in ('private','account','everyone')),
     shared_by uuid references users(id) on delete set null,
     watched_at timestamptz, delete_warned_at timestamptz, delete_after timestamptz,
+    files_purged boolean not null default false, -- set by the delete path once livetv removed the files (the trigger below then queues nothing)
     created_at timestamptz not null default now(),
     check (end_at > start_at),
     unique (rule_id, channel_id, start_at)
@@ -1273,6 +1274,25 @@ export const MIGRATIONS: string[] = [
     position_s int not null, updated_at timestamptz not null default now(),
     primary key (profile_id, recording_id)
   );
+  -- files whose row went another way than the delete path (a profile or account deletion cascades the rows): queued here by the trigger,
+  -- removed through livetv by the space job; usage counts them until then
+  create table if not exists livetv_recording_purges (
+    recording_id uuid primary key,
+    dir uuid not null,
+    library_path text,
+    bytes bigint not null default 0,
+    created_at timestamptz not null default now()
+  );
+  create or replace function livetv_recording_purge_queue() returns trigger language plpgsql as $$
+  begin
+    if not old.files_purged and (old.mode is not null or old.bytes > 0 or old.library_path is not null or old.state in ('starting','recording')) then
+      insert into livetv_recording_purges(recording_id, dir, library_path, bytes) values (old.id, old.dir, old.library_path, old.bytes)
+        on conflict (recording_id) do nothing;
+    end if;
+    return old;
+  end $$;
+  drop trigger if exists livetv_recordings_purge_queue on livetv_recordings;
+  create trigger livetv_recordings_purge_queue before delete on livetv_recordings for each row execute function livetv_recording_purge_queue();
   `,
 ];
 

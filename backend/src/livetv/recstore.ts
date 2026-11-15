@@ -6,7 +6,7 @@ import { notify, notifyAdmins } from '../notify.js';
 import { LivetvError, livetvCall } from './client.js';
 import { livetvInstalled } from './detect.js';
 import { pushEvent } from './events.js';
-import { deleteRecording, getRecording, libraryModeAvailable, purgeRecording, recordSettings, type RecRow } from './recordings.js';
+import { completeDelete, deleteRecording, getRecording, libraryModeAvailable, recordSettings, removeFiles, type RecRow } from './recordings.js';
 import { finishHooks } from './recsched.js';
 import type { ExportAnswer } from './wire.js';
 
@@ -32,9 +32,14 @@ const LINK_WINDOW_MS = 2 * DAY_MS;
 
 const event = (ctx: Ctx, e: Parameters<typeof pushEvent>[1]) => pushEvent(ctx, e).catch(() => undefined);
 
-/** the bytes of every recording that has files (FriendFlix folder and library; a cancelled one whose files still wait for removal too) */
+/**
+ * The bytes of every recording that has files: the FriendFlix folder and the library, a recording being deleted, and the queued files
+ * of rows a profile or account deletion took away (until the space job removed them, A-I4).
+ */
 export async function usage(ctx: Pick<Ctx, 'db'>): Promise<number> {
-  return Number((await ctx.db.query<{ n: string | null }>("select sum(bytes) as n from livetv_recordings where state not in ('scheduled','starting')")).rows[0]?.n ?? 0);
+  return Number((await ctx.db.query<{ n: string | null }>(
+    `select coalesce((select sum(bytes) from livetv_recordings where state not in ('scheduled','starting')), 0)
+          + coalesce((select sum(bytes) from livetv_recording_purges), 0) as n`)).rows[0]?.n ?? 0);
 }
 
 /** "YYYY-MM-DD HH.mm" in the server's time zone (the library file name, spec §15.3) */
@@ -106,9 +111,16 @@ const gb = (n: number) => `${Math.round(n / 1_000_000_000)} GB`;
  */
 export async function spaceTick(ctx: Ctx, now: number = Date.now()): Promise<void> {
   const s = recordSettings(ctx);
-  // removals livetv did not confirm before (a deleted recording whose files are still there)
-  for (const r of (await ctx.db.query<RecRow>("select * from livetv_recordings where state = 'cancelled' and delete_after is not null order by delete_after limit 100")).rows) {
-    await purgeRecording(ctx, r).catch(() => false);
+  // deletes that did not finish (a revocation or livetv did not confirm): revocations again, then the recorder, the files and the row
+  for (const r of (await ctx.db.query<RecRow>("select * from livetv_recordings where state = 'deleting' order by delete_after limit 100")).rows) {
+    await completeDelete(ctx, r, { stop: true }).catch(() => 'pending');
+  }
+  // the files of rows a profile or account deletion took (the purge trigger queued them): recorder, folder, library file and rescan
+  for (const q of (await ctx.db.query<{ recording_id: string; dir: string; library_path: string | null }>(
+    'select recording_id, dir, library_path from livetv_recording_purges order by created_at limit 100')).rows) {
+    if (await removeFiles(ctx, { id: q.recording_id, dir: q.dir, library_path: q.library_path }, { stop: true }).catch(() => false)) {
+      await ctx.db.query('delete from livetv_recording_purges where recording_id = $1', [q.recording_id]);
+    }
   }
   // due automatic deletions (the owner was told 24 h ago)
   for (const r of (await ctx.db.query<{ id: string }>(

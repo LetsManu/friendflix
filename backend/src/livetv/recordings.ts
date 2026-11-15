@@ -5,6 +5,7 @@ import { effectiveRights } from '../rights.js';
 import { CHANNEL_SELECT, toEffective, type EffectiveRow } from './channels.js';
 import { LivetvError, livetvCall } from './client.js';
 import { livetvInstalled } from './detect.js';
+import { recordError } from '../errorlog.js';
 import { channelSet, type LivetvProfile, type LivetvUser } from './rights.js';
 
 /**
@@ -59,6 +60,7 @@ export interface RecRow {
   watched_at: Date | null;
   delete_warned_at: Date | null;
   delete_after: Date | null;
+  files_purged: boolean;
   created_at: Date;
 }
 
@@ -167,7 +169,7 @@ async function kidFriendly(ctx: RightsCtx, channelId: string | null): Promise<bo
  * recording is seen only while it records or once it is finished.
  */
 async function sees(ctx: RightsCtx, user: LivetvUser, profile: LivetvProfile, r: Pick<RecRow, 'profile_id' | 'user_id' | 'visibility' | 'channel_id' | 'state'>, set?: () => Promise<ReadonlySet<string>>): Promise<boolean> {
-  if (r.state === 'cancelled') return false;
+  if (r.state === 'cancelled' || r.state === 'deleting') return false;
   if (r.profile_id === profile.id && !profile.kids) return true;
   if (!SHARED_STATES.includes(r.state) || r.visibility === 'private') return false;
   if (r.visibility === 'account') {
@@ -271,7 +273,7 @@ export const recHooks: RecHooks = {
 /** *Behalten* (spec §15.5): owner or admin; null = not found or not allowed */
 export async function setKeep(ctx: Ctx, a: Actor, id: string, keep: boolean): Promise<RecRow | null> {
   const r = await getRecording(ctx, id);
-  if (!r || r.state === 'cancelled' || !mayChange(r, a)) return null;
+  if (!r || r.state === 'cancelled' || r.state === 'deleting' || !mayChange(r, a)) return null;
   // kept: a pending automatic deletion is called off
   return (await ctx.db.query<RecRow>(
     `update livetv_recordings set keep = $2, delete_after = case when $2 then null else delete_after end,
@@ -281,7 +283,7 @@ export async function setKeep(ctx: Ctx, a: Actor, id: string, keep: boolean): Pr
 /** sharing (spec §15.6): owner or admin; a narrower audience revokes the playback tokens of profiles that lose it */
 export async function setVisibility(ctx: Ctx, a: Actor, id: string, visibility: Visibility): Promise<RecRow | null> {
   const r = await getRecording(ctx, id);
-  if (!r || r.state === 'cancelled' || !mayChange(r, a)) return null;
+  if (!r || r.state === 'cancelled' || r.state === 'deleting' || !mayChange(r, a)) return null;
   const next = (await ctx.db.query<RecRow>(
     "update livetv_recordings set visibility = $2, shared_by = case when $2 = 'private' then null else $3::uuid end where id = $1 and state <> 'cancelled' returning *",
     [id, visibility, a.userId])).rows[0] ?? null;
@@ -296,25 +298,32 @@ const DELETE_TIMEOUT_MS = 30_000;
 const gone = (e: unknown) => e instanceof LivetvError && e.status === 404;
 
 /**
- * Removes a recording's files through livetv (the recorder first, when one may still run), then the row. false = livetv did not
- * confirm (not installed, unreachable): the row stays `cancelled` with `delete_after` set and the space tick tries again.
+ * Removes a recording's files through livetv: the recorder first (`stop`), the folder, the library file and then a rescan of its
+ * library (§15.5). false = livetv did not confirm (not installed, unreachable): the caller keeps what it has and the space job tries again.
  */
+export async function removeFiles(ctx: Ctx, r: { id: string; dir: string; library_path: string | null }, o: { stop?: boolean; nothing?: boolean } = {}): Promise<boolean> {
+  if (!livetvInstalled(ctx)) return o.nothing === true;
+  try {
+    if (o.stop) await livetvCall(ctx, 'DELETE', `/v1/recordings/${r.id}`, undefined, { timeoutMs: STOP_TIMEOUT_MS }).catch((e: unknown) => { if (!gone(e)) throw e; });
+    await livetvCall(ctx, 'POST', `/v1/recordings/${r.id}/delete`, { dir: r.dir }, { timeoutMs: DELETE_TIMEOUT_MS }).catch((e: unknown) => { if (!gone(e)) throw e; });
+    if (r.library_path) {
+      await livetvCall(ctx, 'POST', `/v1/recordings/${r.id}/library-delete`, { path: r.library_path }, { timeoutMs: DELETE_TIMEOUT_MS }).catch((e: unknown) => { if (!gone(e)) throw e; });
+      // the library item goes with its file: Jellyfin is asked to scan that library now (A-I9)
+      const lib = recordSettings(ctx).libraryId;
+      if (lib) await ctx.jf.admin.refreshLibrary?.(lib).catch(() => undefined);
+    }
+  } catch (e) {
+    if (e instanceof LivetvError) return false;
+    throw e;
+  }
+  return true;
+}
+
+/** removes the files, then the row (the purge trigger queues nothing: files_purged); false = livetv did not confirm */
 export async function purgeRecording(ctx: Ctx, r: Pick<RecRow, 'id' | 'dir' | 'library_path' | 'bytes' | 'mode'>, o: { stop?: boolean } = {}): Promise<boolean> {
   const nothing = Number(r.bytes) === 0 && r.mode === null && r.library_path === null;
-  if (!livetvInstalled(ctx)) {
-    if (!nothing) return false;
-  } else {
-    try {
-      if (o.stop) await livetvCall(ctx, 'DELETE', `/v1/recordings/${r.id}`, undefined, { timeoutMs: STOP_TIMEOUT_MS }).catch((e: unknown) => { if (!gone(e)) throw e; });
-      await livetvCall(ctx, 'POST', `/v1/recordings/${r.id}/delete`, { dir: r.dir }, { timeoutMs: DELETE_TIMEOUT_MS }).catch((e: unknown) => { if (!gone(e)) throw e; });
-      if (r.library_path) {
-        await livetvCall(ctx, 'POST', `/v1/recordings/${r.id}/library-delete`, { path: r.library_path }, { timeoutMs: DELETE_TIMEOUT_MS }).catch((e: unknown) => { if (!gone(e)) throw e; });
-      }
-    } catch (e) {
-      if (e instanceof LivetvError) return false;
-      throw e;
-    }
-  }
+  if (!(await removeFiles(ctx, r, { ...o, nothing }))) return false;
+  await ctx.db.query('update livetv_recordings set files_purged = true where id = $1', [r.id]);
   await ctx.db.query('delete from livetv_recordings where id = $1', [r.id]);
   return true;
 }
@@ -322,10 +331,31 @@ export async function purgeRecording(ctx: Ctx, r: Pick<RecRow, 'id' | 'dir' | 'l
 export type DeleteResult = 'cancelled' | 'deleted' | 'pending' | 'not_found';
 
 /**
+ * The revocations a delete needs before anything is removed (A-I8): the playback tokens and, from Phase 3c, the download licences.
+ * false = one failed (a fixed code in the error log): the row stays `deleting` and the space job tries again.
+ */
+async function revokeAll(ctx: Ctx, id: string): Promise<boolean> {
+  try {
+    await recHooks.revokeTokens(ctx, id);
+    await recHooks.onRecordingDeleted?.(ctx, id);
+    return true;
+  } catch {
+    void recordError(ctx, { source: 'job', code: 'livetv-rec-revoke' }).catch(() => undefined);
+    return false;
+  }
+}
+
+/** finishes a delete: revocations, then the files and the row; 'pending' = something did not hold yet (the space job retries) */
+export async function completeDelete(ctx: Ctx, r: RecRow, o: { stop?: boolean } = {}): Promise<'deleted' | 'pending'> {
+  if (!(await revokeAll(ctx, r.id))) return 'pending';
+  return (await purgeRecording(ctx, r, { stop: o.stop ?? true })) ? 'deleted' : 'pending';
+}
+
+/**
  * The one delete path (owner, admin, retention, space). A scheduled recording becomes `cancelled` (the row stays: a rule never plans
- * that airing again). Anything else is marked `cancelled` + `delete_after = now` at once (lists drop it, its playback tokens and
- * download licences are revoked, the tick no longer collects or resumes it), then the recorder is stopped and the files go through
- * livetv; `pending` = livetv did not confirm yet (the space tick finishes it).
+ * that airing again). Anything else becomes `deleting` at once (lists drop it, its tokens answer 410, the tick no longer collects or
+ * resumes it); then its tokens and licences are revoked, and only when that held is the recorder stopped and are the files removed
+ * through livetv. `pending` = a revocation or livetv did not confirm yet: the space job finishes it.
  */
 export async function deleteRecording(ctx: Ctx, id: string, by: 'owner' | 'admin' | 'retention' | 'space'): Promise<DeleteResult> {
   void by; // the callers audit; the row keeps no trace of who deleted it
@@ -336,13 +366,11 @@ export async function deleteRecording(ctx: Ctx, id: string, by: 'owner' | 'admin
     if (c.rowCount) return 'cancelled';
     return deleteRecording(ctx, id, by); // it started meanwhile
   }
-  const marked = (await ctx.db.query<{ was: RecState }>(
-    `update livetv_recordings r set state = 'cancelled', delete_after = now() from (select state as was from livetv_recordings where id = $1 for update) o
-      where r.id = $1 returning o.was`, [id])).rows[0];
+  if (r.state === 'cancelled' && r.mode === null && Number(r.bytes) === 0 && r.delete_after === null) return 'cancelled';
+  const marked = (await ctx.db.query<RecRow>(
+    "update livetv_recordings set state = 'deleting', delete_after = coalesce(delete_after, now()) where id = $1 returning *", [id])).rows[0];
   if (!marked) return 'not_found';
-  await recHooks.revokeTokens(ctx, id).catch(() => undefined);
-  await recHooks.onRecordingDeleted?.(ctx, id).catch(() => undefined);
-  return (await purgeRecording(ctx, r, { stop: ['recording', 'starting'].includes(marked.was) || ['recording', 'starting'].includes(r.state) })) ? 'deleted' : 'pending';
+  return completeDelete(ctx, marked, { stop: true });
 }
 
 /** Admin → Aufnahmen (spec §9.6): metadata only (owner profile, channel, time, mode, state, error), never a title or a playback way */
