@@ -117,6 +117,31 @@ describe('recordingSource', () => {
     ]);
   });
 
+  it('a 410 progress is the gone state; other failures are quiet; no token means no beat and no end call', async () => {
+    let progress = 410;
+    const f = stub((u) => (u.endsWith('/progress') ? { status: progress, body: { error: 'x' } } : u === '/api/livetv/beat' ? { status: 500, body: { error: 'x' } } : { body: PLAY }));
+    const s = recordingSource('r-1', clock().deps);
+    const gone = vi.fn();
+    s.onGone = gone;
+    await s.beat!(); // before /play: no token
+    await s.stop();
+    expect(s.active!()).toBe(false);
+    expect(f).not.toHaveBeenCalled();
+    await s.progress(5, 'paused');
+    expect(gone).toHaveBeenCalledTimes(1);
+    progress = 500;
+    await s.progress(6, 'paused');
+    await s.info(0);
+    expect(s.active!()).toBe(true);
+    await s.beat!(); // a 500 beat is no gone state
+    expect(gone).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failing /play other than gone throws the API error', async () => {
+    stub(() => ({ status: 503, body: { error: 'busy' } }));
+    await expect(recordingSource('r-1', clock().deps).info(0)).rejects.toMatchObject({ status: 503 });
+  });
+
   it('a recording that is gone answers the gone state from /play', async () => {
     stub(() => ({ status: 404, body: { error: 'not_found' } }));
     const s = recordingSource('r-x', clock().deps);

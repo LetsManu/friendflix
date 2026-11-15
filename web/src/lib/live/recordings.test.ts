@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { conflictText, groupBySeries, PAD_MAX, recordingFor, schedule, stateLabel, stepPad, type Recording } from './recordings';
+import {
+  conflictText, createRule, deleteRecording, deleteRule, getRecording, groupBySeries, listRecordings, PAD_MAX, patchRecording, patchRule, programme, recordingFor, schedule,
+  stateLabel, stepPad, toLibrary, type Recording, finished, hhmm, KEEP_MAX, minutesOf, planned, progressOf, rowRecordings, ROW_MAX, stepKeep,
+} from './recordings';
 
 const at = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
 let n = 0;
@@ -86,5 +89,74 @@ describe('schedule', () => {
     expect(u).toBe('/api/livetv/recordings');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body)).toEqual({ channelId: 'ch-nord', start: at(12, 20, 15) });
+  });
+});
+
+describe('the calls', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  type Init = { method?: string; body?: string; keepalive?: boolean };
+  /** fetch answering `body` (200) and recording `METHOD url body` per call */
+  function stub(body: unknown, status = 200) {
+    const f = vi.fn(async (_u: string, _i: Init) => ({ status, ok: status < 400, headers: { get: () => null }, text: async () => JSON.stringify(body) }));
+    vi.stubGlobal('fetch', f);
+    return () => f.mock.calls.map(([u, i]) => `${i.method ?? 'GET'} ${u}${i.body ? ` ${i.body}` : ''}${i.keepalive ? ' keepalive' : ''}`);
+  }
+  const r1 = rec({ id: 'r/1' });
+  const rule = { id: 'ru 1' };
+  it.each<[string, () => Promise<unknown>, unknown, unknown, string]>([
+    ['listRecordings', () => listRecordings(), { recordings: [], rules: [] }, { recordings: [], rules: [] }, 'GET /api/livetv/recordings?state=all'],
+    ['listRecordings with conflicts', () => listRecordings('scheduled', { conflicts: true }), { recordings: [], rules: [] }, { recordings: [], rules: [] }, 'GET /api/livetv/recordings?state=scheduled&conflicts=1'],
+    ['getRecording', () => getRecording('r/1'), { recording: r1 }, r1, 'GET /api/livetv/recordings/r%2F1'],
+    ['programme', () => programme('ch nord', '2026-11-10T19:15:00.000Z'), { title: 'x' }, { title: 'x' }, 'GET /api/livetv/programme/ch%20nord/2026-11-10T19%3A15%3A00.000Z'],
+    ['patchRecording', () => patchRecording('r/1', { keep: true }), { recording: r1 }, r1, 'PATCH /api/livetv/recordings/r%2F1 {"keep":true}'],
+    ['deleteRecording', () => deleteRecording('r/1', true), null, null, 'DELETE /api/livetv/recordings/r%2F1 keepalive'],
+    ['toLibrary', () => toLibrary('r/1'), { recording: r1 }, r1, 'POST /api/livetv/recordings/r%2F1/library {}'],
+    ['createRule', () => createRule({ kind: 'series', channelId: null, seriesKey: 'leucht', title: 'Die Leuchtturmwärter', onlyNew: true }), { rule, forecast: null }, { rule, forecast: null },
+      'POST /api/livetv/rules {"kind":"series","channelId":null,"seriesKey":"leucht","title":"Die Leuchtturmwärter","onlyNew":true}'],
+    ['patchRule', () => patchRule('ru 1', { enabled: false }), { rule }, rule, 'PATCH /api/livetv/rules/ru%201 {"enabled":false}'],
+    ['deleteRule', () => deleteRule('ru 1'), null, null, 'DELETE /api/livetv/rules/ru%201'],
+  ])('%s calls its endpoint', async (_n, call, answer, want, line) => {
+    const calls = stub(answer);
+    expect(await call()).toEqual(want);
+    expect(calls()).toEqual([line]);
+  });
+  it('schedule answers the recording (and a forecast when there is one); other errors are thrown', async () => {
+    stub({ recording: r1 });
+    expect(await schedule({ channelId: 'ch-nord', start: at(12, 20) })).toEqual({ ok: true, recording: r1 });
+    const fc = { slots: { used: 1, limit: 2 }, parallel: { used: 1, max: 4 }, provider: null, conflict: false };
+    stub({ recording: r1, forecast: fc });
+    expect(await schedule({ channelId: 'ch-nord', start: at(12, 20) })).toEqual({ ok: true, recording: r1, forecast: fc });
+    stub({ error: 'conflict' }, 409); // no forecast: not a typed conflict
+    await expect(schedule({ channelId: 'ch-nord', start: at(12, 20) })).rejects.toMatchObject({ status: 409 });
+    stub({ error: 'busy' }, 503);
+    await expect(schedule({ channelId: 'ch-nord', start: at(12, 20) })).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+describe('the list helpers', () => {
+  it('stepKeep walks 1 … 10 and "all" (null) above', () => {
+    expect(stepKeep(null, 1)).toBeNull();
+    expect(stepKeep(null, -1)).toBe(KEEP_MAX);
+    expect(stepKeep(KEEP_MAX, 1)).toBeNull();
+    expect(stepKeep(1, -1)).toBe(1);
+    expect(stepKeep(3, 1)).toBe(4);
+  });
+  it('the row keeps the newest playable ones, Fertig adds failed ones, Geplant is soonest first', () => {
+    const list = [
+      rec({ id: 'old', start: at(1, 20) }), rec({ id: 'new', start: at(9, 20), state: 'partial' }), rec({ id: 'run', start: at(10, 20), state: 'recording' }),
+      rec({ id: 'bad', state: 'failed' }), rec({ id: 'p2', state: 'scheduled', start: at(20, 20) }), rec({ id: 'p1', state: 'scheduled', start: at(15, 20) }),
+    ];
+    expect(rowRecordings(list).map((r) => r.id)).toEqual(['run', 'new', 'old']);
+    expect(rowRecordings(Array.from({ length: ROW_MAX + 3 }, () => rec({})))).toHaveLength(ROW_MAX);
+    expect(finished(list).map((r) => r.id)).toEqual(['old', 'new', 'run', 'bad']);
+    expect(planned(list).map((r) => r.id)).toEqual(['p1', 'p2']);
+  });
+  it('minutes, the time of day and the watched share', () => {
+    expect(minutesOf({ durationS: 2700, start: at(10, 20), end: at(10, 21) })).toBe(45);
+    expect(minutesOf({ durationS: null, start: at(10, 20), end: at(10, 21, 30) })).toBe(90);
+    expect(hhmm(new Date(2026, 10, 10, 7, 5))).toBe('07:05');
+    expect(progressOf({ positionS: 900, durationS: 1800 })).toBe(0.5);
+    expect(progressOf({ positionS: 4000, durationS: 1800 })).toBe(1);
+    expect(progressOf({ positionS: 10, durationS: null })).toBe(0);
   });
 });

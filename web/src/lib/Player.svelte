@@ -82,7 +82,7 @@
   import PhoneTitle from '#lib/player/phone/PhoneTitle.svelte';
   import PhoneTopBar from '#lib/player/phone/PhoneTopBar.svelte';
   import ProgressLine from '#lib/player/phone/ProgressLine.svelte';
-  import { jellyfinSource, type PlaybackSource, type SourceInfo } from '#lib/player/source';
+  import { jellyfinSource, type PlaybackSource, type RecordingSource, type SourceInfo } from '#lib/player/source';
 
   export let itemId: string;
   /**
@@ -432,7 +432,7 @@
   };
 
   /** a recording's reports (source seam): start / progress as a position with its state, stop ends the token too */
-  async function recReport(s: PlaybackSource, kind: 'start' | 'progress' | 'stop', keepalive: boolean): Promise<void> {
+  async function recReport(s: RecordingSource, kind: 'start' | 'progress' | 'stop', keepalive: boolean): Promise<void> {
     const pos = video?.currentTime ?? lastPos;
     if (kind !== 'stop') return s.progress(pos, video?.paused ? 'paused' : 'playing', { keepalive });
     await Promise.all([s.progress(pos, 'stopped', { keepalive }), s.stop({ keepalive })]); // both leave at once (a page unload)
@@ -444,13 +444,13 @@
    */
   const REC_END_KEEP_MS = 30_000;
   let recEndT: ReturnType<typeof setTimeout> | undefined;
-  function recEnded(s: PlaybackSource) {
+  function recEnded(s: RecordingSource) {
     void s.progress(video?.currentTime ?? lastPos, 'stopped');
     clearTimeout(recEndT);
     recEndT = setTimeout(() => { if (stopped && !destroyed) void s.stop(); }, REC_END_KEEP_MS);
   }
   /** a play after the end: within 30 s the same token plays on; later a fresh one is minted (the old one was revoked) */
-  function recReplay(s: PlaybackSource): boolean {
+  function recReplay(s: RecordingSource): boolean {
     clearTimeout(recEndT);
     if (s.active?.() !== false) return false;
     const pos = video?.currentTime ?? 0;
@@ -620,7 +620,7 @@
    * A recording (source seam): its token URL as the HLS stream of a synthetic info (no tracks, no session of the media server), resumed
    * at its saved position unless the caller names one. Network hiccups retry like a film; a gone recording shows the gone state.
    */
-  async function loadSource(s: PlaybackSource, startSec?: number): Promise<undefined> {
+  async function loadSource(s: RecordingSource, startSec?: number): Promise<undefined> {
     cancelFirstFrame();
     error = ''; errNote = '';
     s.onGone = showGone;

@@ -6,7 +6,7 @@ import { ApiError } from '#lib/api';
 import { consumeAutoplay, noteInteraction } from '#lib/stillwatching';
 import { LiveCastError, PROGRESS_MS } from './engine';
 import { recCastMedia } from './liveInfo';
-import { flush, idle, playing, setup, T0, type Env } from '../../test-utils/fake-cast-engine';
+import { flush, handoff, idle, playing, settle, setup, T0, type Env } from '../../test-utils/fake-cast-engine';
 
 /** Recordings on the Chromecast (Phase 3 Task 10, spec §15.7): `loadRecording` mints a `chromecast` rec token and loads `/media/r/…` */
 const ORIGIN = 'https://friend.example.com';
@@ -107,6 +107,24 @@ describe('cast engine: recordings', () => {
       expect(env.liveLoads).toEqual([]);
       expect(get(env.out)).toBeNull();
     }
+  });
+
+  it('a title on the TV is stopped first; a receiver that cannot load the recording: its token goes again, the call rejects', async () => {
+    const env = setup();
+    env.state.set(playing());
+    env.engine.adopt(handoff({ started: true }));
+    await flush();
+    await env.engine.loadRecording('r1', meta);
+    await settle();
+    expect(env.reports()).toEqual(['stop']);
+    expect(env.deletes()).toContain('c1');
+    expect(get(env.out)).toMatchObject({ itemId: 'rec:r1' });
+    const bad = setup();
+    connected(bad);
+    bad.setLiveLoad(async () => false);
+    await expect(bad.engine.loadRecording('r1', meta)).rejects.toMatchObject({ code: 'load_failed' });
+    expect(bad.liveStops()).toEqual(['rtok-r1-1']);
+    expect(get(bad.out)).toBeNull();
   });
 
   it('recCastMedia: the CAF segment format follows the answer', () => {

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { hasKey, setLocale } from '#lib/i18n';
-import { EVENT_CODES, bitrateText, cacheLine, eventText, inputText, levelWord, matchLine, modeText, type LiveEvent } from './status';
+import { EVENT_CODES, bitrateText, cacheLine, eventText, inputText, levelWord, loadCounts, loadStatus, matchLine, modeText, startChannel, stopChannel, type LiveEvent } from './status';
 
 afterEach(async () => { await setLocale('de'); });
 
@@ -110,5 +110,35 @@ describe('matchLine', () => {
     expect(matchLine({ total: 3, matched: 3, unmatched: 0 })).toBe('3 von 3 Sendern mit Programm · 0 ohne');
     await setLocale('en');
     expect(matchLine({ total: 412, matched: 398, unmatched: 14 })).toBe('398 of 412 channels with a programme · 14 without');
+  });
+});
+
+describe('the status calls', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  /** fetch answering per path (200 unless a status is given), recording `METHOD url body` */
+  function stub(answer: (u: string) => { status?: number; body: unknown }) {
+    const f = vi.fn(async (u: string, _i: { method?: string; body?: string }) => {
+      const a = answer(u), status = a.status ?? 200;
+      return { status, ok: status < 400, headers: { get: () => null }, text: async () => JSON.stringify(a.body) };
+    });
+    vi.stubGlobal('fetch', f);
+    return () => f.mock.calls.map(([u, i]) => `${i.method ?? 'GET'} ${u}${i.body ? ` ${i.body}` : ''}`);
+  }
+  it('status, the EPG counts and Stoppen go to their endpoints', async () => {
+    const calls = stub((u) => ({ body: u.endsWith('/summary') ? { matched: 1, total: 2, unmatched: 1 } : { ok: true } }));
+    await loadStatus();
+    expect(await loadCounts()).toEqual({ matched: 1, total: 2, unmatched: 1 });
+    await stopChannel('ch nord');
+    expect(calls()).toEqual(['GET /api/admin/livetv/status', 'GET /api/admin/livetv/epg/summary', 'POST /api/admin/livetv/streams/ch%20nord/stop']);
+  });
+  it('Neu starten: the stream test starts it and its token is let go; no preview or an error is false', async () => {
+    let calls = stub((u) => ({ body: u.endsWith('/test') ? { ok: true, preview: { token: 'pt-1' } } : { ok: true } }));
+    expect(await startChannel('ch-nord')).toBe(true);
+    expect(calls()).toEqual(['POST /api/admin/livetv/channels/ch-nord/test', 'DELETE /api/livetv/watch {"token":"pt-1"}']);
+    calls = stub(() => ({ body: { ok: false } }));
+    expect(await startChannel('ch-nord')).toBe(false);
+    expect(calls()).toHaveLength(1);
+    stub(() => ({ status: 503, body: { error: 'livetv_unreachable' } }));
+    expect(await startChannel('ch-nord')).toBe(false);
   });
 });

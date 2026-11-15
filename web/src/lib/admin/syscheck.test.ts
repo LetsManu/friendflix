@@ -11,8 +11,8 @@ import it_ from '#lib/i18n/locales/it/index';
 import pl from '#lib/i18n/locales/pl/index';
 import tr_ from '#lib/i18n/locales/tr/index';
 import {
-  CHECK_GROUPS, CHECK_IDS, BROWSER_IDS, adviceTexts, cachedBrowserLines, cachedSystemcheck, checkedAtText, docsHref, forgetSystemcheck, isNewer, lineText, mergeLines, rememberBrowserLines, rememberSystemcheck, settingHref, statusIcon,
-  statusTone, summaryOf, type CheckLine, type CheckStatus, type SystemcheckResult,
+  CHECK_GROUPS, CHECK_IDS, BROWSER_IDS, adviceTexts, cachedBrowserLines, cachedSystemcheck, checkedAtText, countLines, docsHref, forgetSystemcheck, isNewer, lineText, mergeLines, rememberBrowserLines, rememberSystemcheck, settingHref, statusIcon,
+  loadSystemcheck, statusTone, summaryOf, type CheckLine, type CheckStatus, type SystemcheckResult,
 } from './syscheck';
 
 afterEach(async () => { await setLocale('de'); });
@@ -296,5 +296,19 @@ describe('syscheck area in every language', () => {
       expect(text).not.toMatch(/netflix|seerr/i);
       for (const host of text.match(/[a-z0-9-]+(\.[a-z0-9-]+)+\.[a-z]{2,}/gi) ?? []) expect(host, host).toMatch(/(^|\.)example\.com$|^192\.0\.2\./);
     }
+  });
+});
+
+describe('loadSystemcheck and countLines', () => {
+  afterEach(() => { vi.unstubAllGlobals(); forgetSystemcheck(); });
+  it('"Jetzt prüfen" asks with refresh; placeholders are not counted', async () => {
+    const res = { checkedAt: '2026-11-15T10:05:00.000Z', lines: [] };
+    const f = vi.fn(async (_u: string) => ({ status: 200, ok: true, headers: { get: () => null }, text: async () => JSON.stringify(res) }));
+    vi.stubGlobal('fetch', f);
+    await loadSystemcheck();
+    await loadSystemcheck(true);
+    expect(f.mock.calls.map((c) => c[0])).toEqual(['/api/admin/systemcheck', '/api/admin/systemcheck?refresh=1']);
+    const l = (status: CheckStatus, placeholder = false) => ln({ id: 'core.database', status, ...(placeholder ? { placeholder: true as const } : {}) });
+    expect(countLines([l('ok'), l('ok'), l('problem'), l('warning', true)])).toEqual({ ok: 2, warning: 0, problem: 1, not_set_up: 0, unknown: 0 });
   });
 });

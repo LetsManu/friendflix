@@ -93,17 +93,6 @@ export interface ProgrammeDetail {
   padDefaults?: { before: number; after: number };
 }
 
-/** POST /api/livetv/recordings/:id/play */
-export interface RecPlay {
-  token: string;
-  url: string;
-  growing: boolean;
-  segments: 'ts' | 'fmp4';
-  durationS: number | null;
-  positionS: number;
-  expiresAt: number;
-}
-
 const enc = encodeURIComponent;
 
 // ---- calls ----
@@ -139,11 +128,7 @@ export const deleteRecording = (id: string, keepalive = false) => api<null>(`/ap
 
 export const toLibrary = (id: string) => api<{ recording: Recording }>(`/api/livetv/recordings/${enc(id)}/library`, { method: 'POST', body: {} }).then((r) => r.recording);
 
-export const playRecording = (id: string, via?: 'local' | 'chromecast' | 'airplay') =>
-  api<RecPlay>(`/api/livetv/recordings/${enc(id)}/play`, { method: 'POST', body: via ? { via } : {} });
-
-export const recordingProgress = (id: string, positionS: number, o: { played?: boolean; keepalive?: boolean } = {}) =>
-  api<{ ok: true }>(`/api/livetv/recordings/${enc(id)}/progress`, { method: 'POST', body: { positionS: Math.max(0, Math.floor(positionS)), ...(o.played ? { played: true } : {}) }, keepalive: o.keepalive });
+// playing a recording (its token, progress, end) goes through `recordingSource` in lib/player/source.ts
 
 export type SeriesRuleBody = { kind: 'series'; channelId: string | null; seriesKey: string; title: string; onlyNew: boolean; keepMax?: number | null; padBefore?: number; padAfter?: number };
 export type TimeRuleBody = { kind: 'time'; channelId: string; weekdays: number[]; startTime: string; durationMin: number; tz: string; title: string; padBefore?: number; padAfter?: number };

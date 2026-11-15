@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tr } from '#lib/i18n';
-import { dismiss, DISMISS_KEY, DISMISS_MAX, handoffAge, handoffDevice, handoffHref, handoffTime, hintFor, handoffTitle, isDismissed, shouldTakeFocus, type Handoff } from './handoff';
+import { dismiss, DISMISS_KEY, DISMISS_MAX, handoffAge, handoffDevice, handoffHref, handoffTime, hintFor, handoffTitle, isDismissed, loadHandoff, shouldTakeFocus, type Handoff } from './handoff';
 
 const base: Handoff = {
   id: 'h1', itemId: 'e4', type: 'Episode', title: 'The Lantern Road', seriesName: 'Dunmoor', season: 1, episode: 4, imageId: 'e4',
@@ -90,5 +90,26 @@ describe('handoff helpers', () => {
     expect(hintFor(base, 'e5')).toBeNull();
     expect(hintFor(base, '')).toBeNull();
     expect(hintFor(null, 'e4')).toBeNull();
+  });
+});
+
+describe('loadHandoff', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const stub = (status: number, body: unknown) => {
+    const f = vi.fn(async (_u: string) => ({ status, ok: status < 400, headers: { get: () => null }, text: async () => JSON.stringify(body) }));
+    vi.stubGlobal('fetch', f);
+    return f;
+  };
+  it('asks for the offer (of one title when given); no offer and any error are null', async () => {
+    let f = stub(200, { handoff: film });
+    expect(await loadHandoff()).toEqual(film);
+    expect(f.mock.calls[0]![0]).toBe('/api/handoff');
+    f = stub(200, { handoff: null });
+    expect(await loadHandoff('rec:1 2')).toBeNull();
+    expect(f.mock.calls[0]![0]).toBe('/api/handoff?item=rec%3A1%202');
+    stub(200, {});
+    expect(await loadHandoff()).toBeNull();
+    stub(500, { error: 'x' });
+    expect(await loadHandoff()).toBeNull();
   });
 });
