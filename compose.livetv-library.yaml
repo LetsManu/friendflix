@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Optional override (Live TV recordings, Jellyfin library mode, spec §15.3): mounts ONE dedicated sub-folder of the media share into livetv,
+# read-write, as /library. Nothing else of the media share is mounted into livetv, not even read-only; Jellyfin keeps its own read-only
+# mount of the whole share and sees the folder as e.g. /media/Aufnahmen. First: mkdir -p <media>/Aufnahmen && chown 10001:10001
+# <media>/Aufnahmen, set RECORDINGS_LIBRARY_PATH, add this file to COMPOSE_FILE like the GPU overlays (docs/livetv.md).
+services:
+  livetv:
+    volumes:
+      - ${RECORDINGS_LIBRARY_PATH:?set RECORDINGS_LIBRARY_PATH, e.g. ./media/Aufnahmen}:/library:rw

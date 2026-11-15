@@ -36,7 +36,8 @@ The updater keeps the overlay files you started the stack with, so an overlay in
 
 **Reverse proxy:** the watch token is part of every stream address (`/media/l/<token>/…`). Add the `location /media/l/` block from
 `deploy/npm/portal.advanced.conf` to the portal proxy host (it turns off the access and error log for these paths, like `/media/c/`),
-and never paste a `/media/l/…` address into an issue or a chat.
+and never paste a `/media/l/…` address into an issue or a chat. Recordings play from `/media/r/<token>/…`: add the
+`location /media/r/` block from the same file too (also with Plan B, which otherwise sends `/media/r/` to the media server).
 
 ## GPU
 
@@ -64,6 +65,10 @@ so a host firewall rule alone does not close the range; `LIVETV_SRT_BIND` does. 
 **Where the Live TV settings are.** `LIVETV_ENCODER`, `LIVETV_SRT_HOST`, `LIVETV_DVR_MINUTES` and `LIVETV_MAX_BITRATE` are edited in *Admin → Live-TV → Einstellungen* (the same settings store as before; *Admin → Einstellungen* only points there while Live TV is installed). That tab also shows the SRT ports read-only; the ports and their exposure (`LIVETV_SRT_PORTS`, `LIVETV_SRT_BIND`) stay in the Compose file, in Portainer as environment variables of the stack.
 
 Other settings: `LIVETV_CACHE_MAX_GB` (default 6, the disposable segment cache), `LIVETV_URL` (only if you move the service), `RECORDINGS_PATH` (host folder for recordings, Phase 3; default the named volume `recordings`; absolute path, writable by uid 10001).
+
+**Recordings folder (since recordings, Phase 3).** `livetv` writes recordings into `RECORDINGS_PATH` (default the named volume `recordings`), and the gateway serves them **read-only** from the same folder (`${RECORDINGS_PATH:-recordings}:/data/recordings:ro`, environment `RECORDINGS_DIR=/data/recordings`). The backend never mounts it, and no container gets the Docker socket. While Live TV is off the gateway mount is an empty volume and changes nothing. A **Portainer stack** from before recordings needs these two lines in its `gateway` service (or the stack file of the current release): under `environment:` `RECORDINGS_DIR: /data/recordings`, under `volumes:` `- ${RECORDINGS_PATH:-recordings}:/data/recordings:ro`; then *Update the stack*. With a host folder in `RECORDINGS_PATH` create it first and give it to uid 10001 (`mkdir -p <folder> && chown 10001:10001 <folder>`), otherwise Docker creates it as root and recordings fail with a write error. Without the gateway lines recordings are still made, but playing them answers 503.
+
+**Recordings into a Jellyfin library (optional).** With *Jellyfin-Bibliothek* or *Beides* as the recordings storage, `livetv` writes finished recordings into ONE dedicated sub-folder of your media share and nothing else: `mkdir -p <media>/Aufnahmen && chown 10001:10001 <media>/Aufnahmen`, set `RECORDINGS_LIBRARY_PATH=<media>/Aufnahmen` and add `compose.livetv-library.yaml` to `COMPOSE_FILE` (like the GPU overlays; in Portainer add its `volumes:` line to the `livetv` service), then `docker compose up -d`. Only that folder is mounted into `livetv`, read-write; the rest of the media share is not mounted into it at all. Jellyfin sees the folder through its own read-only mount (e.g. `/media/Aufnahmen`); point a library (*Home videos* or *Mixed content*) at it. The folder must be empty on first use (FriendFlix then marks it with `.friendflix-recordings`); a folder with other files is refused. Live TV may only write into this one folder. Whoever sees this library in Jellyfin sees every recording in it.
 
 ## Sources
 

@@ -18,7 +18,7 @@ const E = { LIVETV_KEY_FILE: keyFile };
 describe('loadConfig', () => {
   it('defaults: port 8090, 6 GB cache, SRT 9000-9009, no version; the key from the file', () => {
     const c = loadConfig(E);
-    expect(c).toEqual({ port: 8090, key: Buffer.from(KEY_HEX, 'hex'), cacheDir: '/cache', cacheMaxBytes: 6 * 1024 ** 3, srtPorts: [9000, 9001, 9002, 9003, 9004, 9005, 9006, 9007, 9008, 9009], version: null });
+    expect(c).toEqual({ port: 8090, key: Buffer.from(KEY_HEX, 'hex'), cacheDir: '/cache', cacheMaxBytes: 6 * 1024 ** 3, recordingsDir: '/recordings', libraryDir: '/library', srtPorts: [9000, 9001, 9002, 9003, 9004, 9005, 9006, 9007, 9008, 9009], version: null });
     expect(KEY_FILE).toBe('/run/friendflix-livetv/livetv_key');
   });
 

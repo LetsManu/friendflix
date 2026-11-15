@@ -12,7 +12,8 @@ import { makeEnv, type TestEnv } from './helpers.js';
 // Live TV Phase 1, Task 12: migration 48 (spec §6.1), the `livetv` settings group (§6.4, ruling 25) and the effective channel values
 // (§6.1 "Derived values", channels.ts). The migration is tested against the real one: rewind past 47, migrate again.
 const TABLES = ['livetv_channels', 'livetv_epg_channels', 'livetv_favourites', 'livetv_group_map', 'livetv_group_roles', 'livetv_group_users',
-  'livetv_groups', 'livetv_logos', 'livetv_programmes', 'livetv_programmes_stage', 'livetv_recent', 'livetv_sources'];
+  'livetv_groups', 'livetv_logos', 'livetv_programmes', 'livetv_programmes_stage', 'livetv_recent', 'livetv_recording_progress', 'livetv_recording_purges',
+  'livetv_recording_rules', 'livetv_recordings', 'livetv_sources'];
 
 let env: TestEnv;
 let livetvUp = false;
@@ -248,6 +249,69 @@ describe('migration 54 (numbering fallback)', () => {
   });
 });
 
+describe('recordings migration (Phase 3; the next free index at merge time, never hard-coded)', () => {
+  const idx = () => MIGRATIONS.findIndex((m) => m.includes('create table if not exists livetv_recordings'));
+  const rec = async (profileId: string, channelId: string | null, over: Record<string, unknown> = {}) => {
+    const row = {
+      id: randomUUID(), profile_id: profileId, user_id: profileId, channel_id: channelId, channel_name: 'Nordlicht TV', title: 'Sternstunde Physik',
+      start_at: new Date('2026-11-20T19:00:00Z'), end_at: new Date('2026-11-20T20:00:00Z'), pad_before_s: 120, pad_after_s: 300, storage: 'ff', dir: randomUUID(), ...over,
+    };
+    const keys = Object.keys(row);
+    await q(`insert into livetv_recordings(${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')})`, Object.values(row));
+    return row.id;
+  };
+  const day = (d: number) => ({ start_at: new Date(`2026-11-${d}T19:00:00Z`), end_at: new Date(`2026-11-${d}T20:00:00Z`) });
+
+  it('migration creates recordings tables and is rerunnable', async () => {
+    expect(idx()).toBeGreaterThan(53);
+    const cols = async (t: string) => (await q('select column_name, data_type, is_nullable, column_default from information_schema.columns where table_name = $1', [t])).rows
+      .reduce<Record<string, { data_type: string; is_nullable: string; column_default: string | null }>>((m, r) => ({ ...m, [r.column_name]: r }), {});
+    const r = await cols('livetv_recordings');
+    expect(r.dir).toMatchObject({ data_type: 'uuid', is_nullable: 'NO' });
+    expect(r.segments).toMatchObject({ data_type: 'text', is_nullable: 'YES' });
+    expect(r.follow_epg).toMatchObject({ data_type: 'boolean', is_nullable: 'NO', column_default: 'false' });
+    expect(r.prog_key).toMatchObject({ data_type: 'text' });
+    expect(r.gaps).toMatchObject({ data_type: 'jsonb', column_default: "'[]'::jsonb" });
+    expect(Object.keys(await cols('livetv_recording_rules'))).toEqual(expect.arrayContaining(['series_key', 'weekdays', 'start_time', 'tz', 'only_new', 'keep_max']));
+    expect(Object.keys(await cols('livetv_recording_progress')).sort()).toEqual(['position_s', 'profile_id', 'recording_id', 'updated_at']);
+
+    const p = await addProfile('Anna');
+    const sid = await addSource();
+    const ch = await addChannel(sid);
+    const a = await rec(p, ch, { mode: 'transcode', segments: 'fmp4' });
+    await expect(rec(p, ch, { mode: 'copy', ...day(21) })).rejects.toThrow(/check constraint/); // the stream's modes, not §6.3's copy
+    await expect(rec(p, ch, { segments: 'mp4', ...day(21) })).rejects.toThrow(/check constraint/);
+    await expect(rec(p, ch, { error: 'x'.repeat(41), ...day(22) })).rejects.toThrow(/check constraint/);
+    // one slot per profile, channel and start while scheduled or recording; a cancelled one frees it
+    await expect(rec(p, ch)).rejects.toThrow(/livetv_recordings_slot/);
+    await q("update livetv_recordings set state = 'cancelled' where id = $1", [a]);
+    await rec(p, ch);
+    // the folder is unique
+    const dir = randomUUID();
+    await rec(p, ch, { dir, ...day(23) });
+    await expect(rec(p, ch, { dir, ...day(24) })).rejects.toThrow(/duplicate key/);
+    // a rule plans each airing once (a cancelled airing stays planned as cancelled)
+    const rule = randomUUID();
+    await q("insert into livetv_recording_rules(id, profile_id, user_id, kind, channel_id, series_key, title) values ($1, $2, $2, 'series', $3, 'leuchtturm', 'Die Leuchtturmwärter')", [rule, p, ch]);
+    await rec(p, ch, { rule_id: rule, ...day(25), state: 'cancelled' });
+    await expect(rec(p, ch, { rule_id: rule, ...day(25) })).rejects.toThrow(/duplicate key/);
+    // a time rule needs its channel, weekdays, start, duration and time zone; a series rule its key
+    await expect(q("insert into livetv_recording_rules(id, profile_id, user_id, kind, title) values ($1, $2, $2, 'time', 'Hafenrunde')", [randomUUID(), p])).rejects.toThrow(/check constraint/);
+    await expect(q("insert into livetv_recording_rules(id, profile_id, user_id, kind, title) values ($1, $2, $2, 'series', 'X')", [randomUUID(), p])).rejects.toThrow(/check constraint/);
+
+    for (let i = 0; i < 2; i++) {
+      await q('delete from schema_migrations where version = $1', [idx() + 1]);
+      await migrate(pool());
+    }
+    expect((await q('select count(*)::int n from schema_migrations where version = $1', [idx() + 1])).rows[0].n).toBe(1);
+    expect((await q('select count(*)::int n from livetv_recordings where profile_id = $1', [p])).rows[0].n).toBe(4);
+    // A-M4: the scheduler's and the store job's predicates have their indexes
+    const ix = (await q("select indexname, indexdef from pg_indexes where tablename = 'livetv_recordings'")).rows.reduce<Record<string, string>>((m, r) => ({ ...m, [r.indexname]: r.indexdef }), {});
+    expect(ix.livetv_recordings_active).toMatch(/\(state\) WHERE.*starting.*recording.*deleting/);
+    expect(ix.livetv_recordings_export).toMatch(/\(end_at\) WHERE \(export_state = 'pending'/);
+  });
+});
+
 describe('effective values', () => {
   it('number, name and group', async () => {
     const sid = await addSource({ name: 'Zahlenliste' });
@@ -343,7 +407,9 @@ describe('settings', () => {
     await detectLivetv(env.ctx, 0);
     const after = await settingsView(env.ctx);
     const group = after.groups.find((g) => g.id === 'livetv');
-    expect(group?.items.map((i) => i.key)).toEqual(['LIVETV_ENCODER', 'LIVETV_SRT_HOST', 'LIVETV_DVR_MINUTES', 'LIVETV_MAX_BITRATE']);
+    expect(group?.items.map((i) => i.key)).toEqual(['LIVETV_ENCODER', 'LIVETV_SRT_HOST', 'LIVETV_DVR_MINUTES', 'LIVETV_MAX_BITRATE',
+      'LIVETV_RECORD_STORAGE', 'LIVETV_RECORD_LIBRARY_ID', 'LIVETV_RECORD_LIBRARY_JF_PATH', 'LIVETV_RECORD_LIMIT_GB', 'LIVETV_RECORD_RETENTION_DAYS',
+      'LIVETV_RECORD_PAD_BEFORE_MIN', 'LIVETV_RECORD_PAD_AFTER_MIN', 'LIVETV_RECORD_MAX_PARALLEL']);
     expect(group?.items[0]).toMatchObject({ kind: 'enum', value: 'auto', options: ['auto', 'qsv', 'vaapi', 'nvenc', 'software'] });
     expect(group?.items[1]).toMatchObject({ kind: 'string', set: false, value: null });
     livetvUp = false;

@@ -51,9 +51,11 @@ export interface FfmpegArgsIn {
   input: FfInput;
   /**
    * the audio of a separate HLS rendition: a second pipe input on AUDIO_FD, mapped instead of the first input's audio. The map is
-   * optional (`1:a:0?`): a rendition without a decodable audio stream still gives the picture. `shift`: seconds its first segment
-   * starts after the video's (negative: before), from an alignment by program date-time (inputs.ts `alignStart`); the later of
-   * the two inputs gets `-itsoffset` (a number, never a URL), as ffmpeg starts each input at 0 by itself.
+   * optional (`1:a:0?`): a rendition without a decodable audio stream still gives the picture. `shift`: seconds the audio input
+   * starts after the video input (negative: before): for two MPEG-TS renditions measured from their first timestamps on the
+   * encoder's clock (inputs.ts `clockShift`), else from an alignment by program date-time (`alignStart`); the later of the two
+   * inputs gets `-itsoffset` (a number, never a URL), as ffmpeg starts each input at 0 by itself. Not `-copyts`: that would also
+   * switch off ffmpeg's smoothing of timestamp jumps (a provider discontinuity, a skipped segment, the 33-bit wrap) in the output.
    */
   audioInput?: { format: PipeFormat; shift?: number };
   encoder: Encoder;

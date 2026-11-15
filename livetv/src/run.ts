@@ -35,6 +35,12 @@ export type RunOptions = {
   onStdout?(chunk: Buffer): void;
   signal?: AbortSignal;
   stderrLog?: { channelId: string; log: Log };
+  /**
+   * A descriptor the caller opened, handed to the child as its stdin / stdout instead of a pipe (N1): the child reads or writes that
+   * very file and never resolves a path for it (`pipe:1`, `/proc/self/fd/0`). With `stdoutFd` nothing is collected (`stdout` empty).
+   */
+  stdinFd?: number;
+  stdoutFd?: number;
 };
 export type Run = (cmd: Cmd, args: string[], o: RunOptions) => Promise<RunResult>;
 /** what gpuInfo (system.ts) reads; tests pass a fake */
@@ -72,7 +78,9 @@ export function stderrLine(line: string, args: readonly string[]): string {
 export function createRun(bins: Partial<Record<Cmd, string>> = {}): Run {
   return (cmd, args, o) => new Promise((resolve) => {
     if (o.signal?.aborted) { resolve({ code: 1, stdout: Buffer.alloc(0), stderr: '' }); return; }
-    const child = spawn(bins[cmd] ?? BINS[cmd], args, { env: CHILD_ENV, stdio: [o.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe', ...(o.audioStdin ? ['pipe' as const] : [])] });
+    const child = spawn(bins[cmd] ?? BINS[cmd], args, {
+      env: CHILD_ENV, stdio: [o.stdin ? 'pipe' : (o.stdinFd ?? 'ignore'), o.stdoutFd ?? 'pipe', 'pipe', ...(o.audioStdin ? ['pipe' as const] : [])],
+    });
     const out: Buffer[] = [];
     let outLen = 0;
     let truncated = false;
@@ -101,8 +109,8 @@ export function createRun(bins: Partial<Record<Cmd, string>> = {}): Run {
     };
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, o.timeoutMs);
     o.signal?.addEventListener('abort', onAbort, { once: true });
-    // stdout and stderr are always pipes here
-    child.stdout!.on('data', (c: Buffer) => {
+    // stderr is always a pipe here; stdout unless the caller handed a descriptor
+    child.stdout?.on('data', (c: Buffer) => {
       if (o.onStdout) try { o.onStdout(c); } catch { /* a listener's bug never breaks the run */ }
       const room = STDOUT_MAX - outLen;
       if (c.length > room) truncated = true;

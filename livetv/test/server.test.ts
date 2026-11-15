@@ -26,6 +26,7 @@ const SYSTEM: SystemView = {
   cache: { usedBytes: 1024, maxBytes: 6 * 1024 ** 3 },
   recordings: null,
   srt: { ports: [9000, 9001] },
+  library: null,
 };
 /** a route only this test registers: shows how later tasks add theirs (JSON body parsed, path parameters) */
 const echo: Route = { method: 'POST', path: /^\/v1\/echo\/([a-z0-9-]{1,40})$/, handle: async (c) => ({ status: 200, json: { id: c.params[0], body: c.json } }) };

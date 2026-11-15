@@ -1209,6 +1209,96 @@ export const MIGRATIONS: string[] = [
   `
   alter table livetv_sources add column if not exists chno_fallback boolean;
   `,
+  // 55: Live TV Phase 3 recordings (spec §6.3 with plan Task 1's changes): the recording's mode is the shared stream's (passthrough /
+  // remux / transcode), `starting` a start in progress under a lease (`claim_token` until `claim_until`), `deleting` a delete whose
+  // revocations or file removal still have to be confirmed, `segments` the format it stores (ts, or fmp4 of an fMP4 passthrough), `follow_epg` + `prog_key` (normalised
+  // title + "\n" + episode or sub-title) let a scheduled EPG recording follow its programme, `dir` is the uuid folder under
+  // /recordings, `error` a fixed code. One slot per profile, channel and start while scheduled or recording; a rule plans each
+  // airing once (its cancelled rows stay, so a re-import never plans them again). Rerunnable. (Index at merge time: the next free one.)
+  `
+  create table if not exists livetv_recording_rules (
+    id uuid primary key,
+    profile_id uuid not null references profiles(id) on delete cascade,
+    user_id uuid not null references users(id) on delete cascade,
+    kind text not null check (kind in ('series','time')),
+    channel_id uuid references livetv_channels(id) on delete cascade, -- null = all channels of the profile's set (series only)
+    series_key text check (char_length(series_key) <= 300),
+    title text not null check (char_length(title) between 1 and 200),
+    weekdays smallint[], start_time time, duration_min int check (duration_min between 1 and 1440), tz text check (char_length(tz) <= 64),
+    only_new boolean not null default true,
+    keep_max int check (keep_max between 1 and 100),
+    pad_before_s int check (pad_before_s between 0 and 1800), pad_after_s int check (pad_after_s between 0 and 7200),
+    enabled boolean not null default true,
+    created_at timestamptz not null default now(),
+    check ((kind = 'series') = (series_key is not null)),
+    check (kind = 'series' or (channel_id is not null and weekdays is not null and start_time is not null and duration_min is not null and tz is not null))
+  );
+  create index if not exists livetv_recording_rules_profile on livetv_recording_rules(profile_id);
+  create table if not exists livetv_recordings (
+    id uuid primary key,
+    profile_id uuid references profiles(id) on delete cascade,
+    user_id uuid not null references users(id) on delete cascade,
+    rule_id uuid references livetv_recording_rules(id) on delete set null,
+    channel_id uuid references livetv_channels(id) on delete set null,
+    channel_name text not null,
+    title text not null, subtitle text, description text, episode text, series_key text,
+    start_at timestamptz not null, end_at timestamptz not null, pad_before_s int not null check (pad_before_s between 0 and 1800), pad_after_s int not null,
+    state text not null default 'scheduled' check (state in ('scheduled','starting','recording','done','partial','failed','cancelled','deleting')),
+    claim_token uuid, claim_until timestamptz, -- the replica that starts (or resumes) it holds this lease; every later step checks it
+    mode text check (mode in ('passthrough','remux','transcode')),
+    segments text check (segments in ('ts','fmp4')),
+    follow_epg boolean not null default false,
+    prog_key text,
+    storage text not null check (storage in ('ff','library')),
+    dir uuid not null unique,               -- the folder under /recordings
+    library_path text,                      -- relative path inside the library folder once exported
+    export_state text check (export_state in ('pending','failed')), -- the library export waits for the store job, or failed (the HLS copy stays)
+    jellyfin_item_id text,
+    bytes bigint not null default 0, duration_s int, gaps jsonb not null default '[]',
+    error text check (char_length(error) <= 40),
+    keep boolean not null default false,
+    visibility text not null default 'private' check (visibility in ('private','account','everyone')),
+    shared_by uuid references users(id) on delete set null,
+    watched_at timestamptz, delete_warned_at timestamptz, delete_after timestamptz,
+    end_pending timestamptz, -- a longer end (programme overran) livetv has not acknowledged yet: sent again every tick until it is
+    files_purged boolean not null default false, -- set by the delete path once livetv removed the files (the trigger below then queues nothing)
+    created_at timestamptz not null default now(),
+    check (end_at > start_at),
+    unique (rule_id, channel_id, start_at)
+  );
+  create unique index if not exists livetv_recordings_slot on livetv_recordings(profile_id, channel_id, start_at) where state in ('scheduled','starting','recording');
+  create index if not exists livetv_recordings_due on livetv_recordings(start_at) where state = 'scheduled';
+  create index if not exists livetv_recordings_profile on livetv_recordings(profile_id, start_at desc);
+  create index if not exists livetv_recordings_rule on livetv_recordings(rule_id) where rule_id is not null;
+  -- the tick's running rows, the space job's deletes and the store job's exports (A-M4)
+  create index if not exists livetv_recordings_active on livetv_recordings(state) where state in ('starting','recording','deleting');
+  create index if not exists livetv_recordings_export on livetv_recordings(end_at) where export_state = 'pending';
+  create table if not exists livetv_recording_progress (
+    profile_id uuid not null references profiles(id) on delete cascade,
+    recording_id uuid not null references livetv_recordings(id) on delete cascade,
+    position_s int not null, updated_at timestamptz not null default now(),
+    primary key (profile_id, recording_id)
+  );
+  -- files whose row went another way than the delete path (a profile or account deletion cascades the rows): queued here by the trigger,
+  -- removed through livetv by the space job; usage counts them until then
+  create table if not exists livetv_recording_purges (
+    recording_id uuid primary key,
+    dir uuid not null,
+    library_path text,
+    bytes bigint not null default 0,
+    created_at timestamptz not null default now()
+  );
+  create or replace function livetv_recording_purge_queue() returns trigger language plpgsql as $$
+  begin
+    if not old.files_purged and (old.mode is not null or old.bytes > 0 or old.library_path is not null or old.state in ('starting','recording')) then
+      insert into livetv_recording_purges(recording_id, dir, library_path, bytes) values (old.id, old.dir, old.library_path, old.bytes)
+        on conflict (recording_id) do nothing;
+    end if;
+    return old;
+  end $$;
+  drop trigger if exists livetv_recordings_purge_queue on livetv_recordings;
+  create trigger livetv_recordings_purge_queue before delete on livetv_recordings for each row execute function livetv_recording_purge_queue();
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

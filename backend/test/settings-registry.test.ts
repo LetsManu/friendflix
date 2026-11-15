@@ -21,12 +21,12 @@ const def = (key: string) => {
 describe('key classification', () => {
   it('every key of the config schema is in exactly one of SETTINGS, ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS', () => {
     const keys = Object.keys(configSchema.shape);
-    expect(keys).toHaveLength(114); // + DB_CONNECT/STATEMENT/IDLE_TX/LONG_STATEMENT_TIMEOUT_MS, + LIVETV_DVR_MINUTES, LIVETV_MAX_BITRATE, + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
+    expect(keys).toHaveLength(122); // + the eight LIVETV_RECORD_* (Phase 3), + DB_CONNECT/STATEMENT/IDLE_TX/LONG_STATEMENT_TIMEOUT_MS, + LIVETV_DVR_MINUTES, LIVETV_MAX_BITRATE, + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
     const classes = [SETTINGS.map((s) => s.key), ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS];
     for (const k of keys) expect(classes.filter((c) => c.includes(k)), k).toHaveLength(1);
     expect(classes.flat().sort()).toEqual([...keys].sort()); // nothing outside the schema, no duplicates
-    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 26, 4, 80]); // + DB_*_TIMEOUT_MS (4 env-only), + LIVETV_DVR_MINUTES, LIVETV_MAX_BITRATE, + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
-    expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(79);
+    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 26, 4, 88]); // + the eight LIVETV_RECORD_*, + DB_*_TIMEOUT_MS (4 env-only), + LIVETV_DVR_MINUTES, LIVETV_MAX_BITRATE, + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
+    expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(87);
     expect(SETTINGS.filter((s) => s.visible === false).map((s) => s.key)).toEqual(['LIVETV_WANTED']);
   });
   it('each setting parses with the config schema field of the same key', () => {
@@ -99,7 +99,9 @@ describe('key classification', () => {
     expect(settingDef('MEDIA_SERVER')).toBeUndefined();
   });
   it('livetv group (Live TV Task 12): the encoder choice and the host shown in the push setup hint', () => {
-    expect(SETTINGS.filter((s) => s.group === 'livetv').map((s) => s.key)).toEqual(['LIVETV_ENCODER', 'LIVETV_SRT_HOST', 'LIVETV_DVR_MINUTES', 'LIVETV_MAX_BITRATE']);
+    expect(SETTINGS.filter((s) => s.group === 'livetv').map((s) => s.key)).toEqual(['LIVETV_ENCODER', 'LIVETV_SRT_HOST', 'LIVETV_DVR_MINUTES', 'LIVETV_MAX_BITRATE',
+      'LIVETV_RECORD_STORAGE', 'LIVETV_RECORD_LIBRARY_ID', 'LIVETV_RECORD_LIBRARY_JF_PATH', 'LIVETV_RECORD_LIMIT_GB', 'LIVETV_RECORD_RETENTION_DAYS',
+      'LIVETV_RECORD_PAD_BEFORE_MIN', 'LIVETV_RECORD_PAD_AFTER_MIN', 'LIVETV_RECORD_MAX_PARALLEL']);
     // Task 31: the rewind buffer (0-120 min, default 30, ruling 47) and the highest provider bitrate (1-40 Mbit/s, default 10)
     expect(def('LIVETV_DVR_MINUTES')).toMatchObject({ kind: 'int', apply: 'live', default: 30, min: 0, max: 120 });
     expect(def('LIVETV_MAX_BITRATE')).toMatchObject({ kind: 'int', apply: 'live', default: 10_000_000, min: 1_000_000, max: 40_000_000 });

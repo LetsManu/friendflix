@@ -380,13 +380,13 @@ Standard ist das Node-Gateway. Wird es bei vielen parallelen Streams zum Engpass
 
 **Einrichten**
 1. Jellyfin muss vom NPM-Host erreichbar sein, ohne öffentlich zu sein: Stack mit `docker compose -f compose.yaml -f compose.planb.yaml --profile bundled up -d` starten. Das veröffentlicht Jellyfin **nur auf `127.0.0.1:8096`**. Port 8096 bleibt in der Host-Firewall gesperrt. (Läuft Jellyfin außerhalb des Stacks, muss es auf `127.0.0.1:8096` für NPM erreichbar und von außen gesperrt sein.)
-2. In NPM → Proxy Host → Advanced: den `location /media/`-Block aus `portal.advanced.conf` **ersetzen** durch den Inhalt von `deploy/npm/plan-b-auth-request.conf`; `__INTERNAL_SECRET__` durch das `INTERNAL_SECRET` ersetzen. Steht es in der `.env` (ältere Installation), diesen Wert nehmen; sonst liegt es im Volume `bootstrap` (mit `compose.secrets.yaml`: `secrets/internal_secret`). Ohne es auf dem Bildschirm oder in einem geteilten Log auszugeben, direkt in eine lokale Kopie schreiben (gleiche `-f`-Dateien wie beim Start):
+2. In NPM → Proxy Host → Advanced: den `location /media/`-Block aus `portal.advanced.conf` **ersetzen** durch den Inhalt von `deploy/npm/plan-b-auth-request.conf`. Die Blöcke `location /media/l/` (Live-TV) und `location /media/r/` (Aufnahmen) **bleiben stehen**: Ihre Token stehen im Pfad, sie gehen weiter ans Gateway und schreiben weder Access- noch Error-Log. Dann `__INTERNAL_SECRET__` durch das `INTERNAL_SECRET` ersetzen. Steht es in der `.env` (ältere Installation), diesen Wert nehmen; sonst liegt es im Volume `bootstrap` (mit `compose.secrets.yaml`: `secrets/internal_secret`). Ohne es auf dem Bildschirm oder in einem geteilten Log auszugeben, direkt in eine lokale Kopie schreiben (gleiche `-f`-Dateien wie beim Start):
    ```bash
    S=$(docker compose run --rm --no-deps -T --entrypoint cat backend /run/friendflix/internal_secret)
    ( umask 077; sed "s|__INTERNAL_SECRET__|$S|" deploy/npm/plan-b-auth-request.conf > plan-b.local.conf ); unset S
    ```
    Den Inhalt von `plan-b.local.conf` in NPM einfügen und die Datei danach löschen (`rm plan-b.local.conf`; nie committen).
-3. Gateway-Container kann gestoppt werden (`docker compose stop gateway`).
+3. Gateway-Container nur stoppen (`docker compose stop gateway`), wenn weder Live-TV noch Aufnahmen genutzt werden: `/media/l/` und `/media/r/` laufen auch mit Plan B über das Gateway.
 4. Testen: `curl -I https://friend.example.com/media/Videos/<id>/master.m3u8` ohne Cookie → **401**; im Browser abspielen → läuft.
 
 **Sicherheitsmerkmale (automatisiert geprüft mit `scripts/test-plan-b.sh` gegen echtes nginx):** 401 ohne/mit falscher Session, 403 außerhalb der Allowlist und bei Traversal, nur GET/HEAD, `/internal/` öffentlich 404, Client-`Authorization`/`X-Emby-*` erreichen Jellyfin nie, `api_key` wird entfernt, Bitrate wird auf das Rollenlimit gekappt, Token nur serverseitig, kein `Set-Cookie`/Token in Antworten, Range → 206.

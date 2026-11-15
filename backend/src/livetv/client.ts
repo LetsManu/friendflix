@@ -61,7 +61,7 @@ export class LivetvError extends Error {
   }
 }
 
-type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 /**
  * an abort after `ms` (a plain timer, so the deadline also covers reading the body; `clear` once it is read), or as soon as the

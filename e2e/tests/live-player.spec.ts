@@ -4,6 +4,7 @@ import type { Locator, Page } from '@playwright/test';
 import { expect, test, type MockState } from '../fixtures.js';
 import { mockLivePlayer } from '../helpers.js';
 import { livePlaylist, patchChannel, type LivetvMock } from '../mocks/livetv.js';
+import { callMediaSession, stubMediaSession } from '../mocks/mediasession.js';
 
 // The live player on a desktop (Task 39, spec §12, §21): it starts and plays a mocked live HLS stream with a rewind buffer
 // (mocks/livetv.ts `dvrPlaylist`: a date-time on every segment), pause / −30 s / +30 s / LIVE, Von Anfang an, the info banner, the
@@ -142,8 +143,9 @@ test.describe('live player (desktop)', () => {
     const btn = await restart(page).boundingBox();
     expect(btn!.width).toBeLessThanOrEqual(slot!.width + 0.5); // the button sits in its reserved slot
     await restart(page).click();
-    await expect(pill(page)).toHaveText(/^−5:[23]\d$/);
-    await expect(pill(page)).toHaveAccessibleName(/^5:[23]\d hinter live$/);
+    // 5 min + the 30-s lead behind the start, less the 12 s LIVE itself sits behind the newest end (liveHlsConfig, H3)
+    await expect(pill(page)).toHaveText(/^−5:[12]\d$/);
+    await expect(pill(page)).toHaveAccessibleName(/^5:[12]\d hinter live$/);
   });
 
   test('Von Anfang an seeks into a long buffer', async ({ page, api }) => {
@@ -152,7 +154,7 @@ test.describe('live player (desktop)', () => {
     await open(page);
     await showControls(page);
     await restart(page).click();
-    await expect(pill(page)).toHaveText(/^−95:[23]\d$/, { timeout: 15_000 });
+    await expect(pill(page)).toHaveText(/^−95:[12]\d$/, { timeout: 15_000 });
   });
 
   test('Von Anfang an is absent when the start is older than the buffer', async ({ page, api }) => {
@@ -296,6 +298,69 @@ test.describe('live player (desktop)', () => {
     expect(f!.keepalive).toBe(true);
     expect(f!.body).toContain('tok-ch-nord');
     await expect.poll(() => api.livetv.stops).toContain('tok-ch-nord');
+  });
+});
+
+test.describe('live player: catching up with live (H3)', () => {
+  const paused = (page: Page) => page.evaluate(() => document.querySelector('video')!.paused);
+  /** the stream runs on for a minute while the picture is paused: the playlist slides with the page clock */
+  async function aMinuteLater(page: Page, api: MockState) {
+    await expect.poll(() => paused(page)).toBe(true);
+    const loads = api.livetv.playlistLoads;
+    api.livetv.liveStart! -= MIN;
+    api.livetv.timeShift += MIN;
+    await page.clock.fastForward('01:00');
+    await expect.poll(() => api.livetv.playlistLoads).toBeGreaterThan(loads);
+  }
+  /** playing again, at the live edge: the picture jumped the minute it missed (less the sync distance), and the pill says LIVE */
+  async function backAtLive(page: Page, t0: number) {
+    await expect.poll(() => paused(page)).toBe(false);
+    await expect.poll(() => time(page), { timeout: 15_000 }).toBeGreaterThan(t0 + 40);
+    await page.clock.runFor(2_000);
+    await showControls(page);
+    await expect(pill(page)).toHaveText('LIVE');
+  }
+
+  test('a pause from outside the player (a hidden tab, audio focus) is no choice to stay behind: on resume it goes back to live', async ({ page, api }) => {
+    await arm(page, api);
+    await open(page);
+    // paused and resumed by the element itself, not through the player's button
+    const t0 = await time(page);
+    await page.evaluate(() => document.querySelector('video')!.pause());
+    await aMinuteLater(page, api);
+    await page.evaluate(() => document.querySelector('video')!.play());
+    await backAtLive(page, t0);
+  });
+
+  test('a pause from the OS media session (lock screen, headset, media keys) is the viewer\'s own: it keeps the timeshift', async ({ page, api }) => {
+    await stubMediaSession(page);
+    await arm(page, api);
+    await open(page);
+    const t0 = await time(page);
+    await callMediaSession(page, 'pause');
+    await aMinuteLater(page, api);
+    await callMediaSession(page, 'play');
+    await expect.poll(() => paused(page)).toBe(false);
+    await page.clock.runFor(3_000);
+    expect(await time(page)).toBeLessThan(t0 + 10);
+    await showControls(page);
+    await expect(pill(page)).toHaveText(/^−1:0\d$/);
+  });
+
+  test('the viewer\'s own pause keeps them behind after the resume (timeshift)', async ({ page, api }) => {
+    await arm(page, api);
+    await open(page);
+    await showControls(page);
+    const t0 = await time(page);
+    await bar(page).getByRole('button', { name: 'Pause' }).click();
+    await aMinuteLater(page, api);
+    await showControls(page);
+    await bar(page).getByRole('button', { name: 'Abspielen' }).click();
+    await expect.poll(() => paused(page)).toBe(false);
+    await page.clock.runFor(3_000);
+    expect(await time(page)).toBeLessThan(t0 + 10);
+    await showControls(page);
+    await expect(pill(page)).toHaveText(/^−1:0\d$/);
   });
 });
 

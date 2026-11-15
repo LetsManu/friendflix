@@ -293,6 +293,7 @@ jobs:
           docker compose -f compose.yaml --profile livetv config -q
           RENDER_GID=109 docker compose -f compose.prod.yaml -f compose.livetv-gpu.yaml --profile livetv config -q
           docker compose -f compose.prod.yaml -f compose.livetv-nvidia.yaml --profile livetv config -q
+          RECORDINGS_LIBRARY_PATH=/srv/media/Aufnahmen docker compose -f compose.prod.yaml -f compose.livetv-library.yaml --profile livetv config -q
           test -z "$(docker compose -f compose.prod.yaml config --services | grep -x livetv || true)"
           test -z "$(docker compose -f compose.yaml config --services | grep -x livetv || true)"
           docker compose -f compose.prod.yaml --profile livetv config --services | grep -qx livetv
@@ -323,6 +324,7 @@ jobs:
           docker compose -f compose.yaml --profile livetv config -q
           RENDER_GID=109 docker compose -f compose.prod.yaml -f compose.livetv-gpu.yaml --profile livetv config -q
           docker compose -f compose.prod.yaml -f compose.livetv-nvidia.yaml --profile livetv config -q
+          RECORDINGS_LIBRARY_PATH=/srv/media/Aufnahmen docker compose -f compose.prod.yaml -f compose.livetv-library.yaml --profile livetv config -q
           test -z "$(docker compose -f compose.prod.yaml config --services | grep -x livetv || true)"
           test -z "$(docker compose -f compose.yaml config --services | grep -x livetv || true)"
           docker compose -f compose.prod.yaml --profile livetv config --services | grep -qx livetv

@@ -201,6 +201,25 @@ describe('the remux / transcode driver', () => {
     ]);
   });
 
+  it('H1 item 6: every restart is logged with its count and reason, every outage with its number (no line is folded)', async () => {
+    const quick: Plan = { exitAt: 0 };
+    const { streams } = setup([
+      { out: [[4_000, '0.ts,0.000000,4.000000\n']], exitAt: 4_000, code: 0 }, quick,
+      { out: [[4_000, '1.ts,0.000000,4.000000\n']], exitAt: 8_000 }, {},
+    ]);
+    streams.start(body());
+    await flush();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await flush();
+    expect(logs.filter((l) => /input lost|restart #/.test(l))).toEqual([
+      'stream ch-hafenkanal run ended (ffmpeg_exit), restart #1',
+      'stream ch-hafenkanal input lost #1',
+      'stream ch-hafenkanal run ended (ffmpeg_exit), restart #2',
+      'stream ch-hafenkanal run ended (ffmpeg_exit), restart #3',
+      'stream ch-hafenkanal input lost #2',
+    ]);
+  });
+
   it('a stop ends ffmpeg and never restarts it', async () => {
     const { run, streams } = setup([{ out: [[4_000, '0.ts,0.000000,4.000000\n']] }]);
     streams.start(body());

@@ -11,6 +11,10 @@ export interface LivetvConfig {
   cacheDir: string;
   /** LIVETV_CACHE_MAX_GB in bytes */
   cacheMaxBytes: number;
+  /** the recordings volume (Phase 3): the recorder writes `<dir>/` folders here, nothing else */
+  recordingsDir: string;
+  /** the Jellyfin library sub-folder of the opt-in overlay `compose.livetv-library.yaml` (Phase 3); absent = no library mode */
+  libraryDir: string;
   /** LIVETV_SRT_PORTS, parsed: livetv listens on exactly these (spec §3.5) */
   srtPorts: number[];
   version: string | null;
@@ -53,6 +57,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): LivetvConfig {
     key: key(env),
     cacheDir: '/cache',
     cacheMaxBytes: Math.floor(gb * GB),
+    recordingsDir: '/recordings',
+    libraryDir: '/library',
     srtPorts: parseSrtPorts(env.LIVETV_SRT_PORTS),
     version: env.APP_VERSION && /^[0-9]+\.[0-9]+\.[0-9]+$/.test(env.APP_VERSION) ? env.APP_VERSION : null,
   };
