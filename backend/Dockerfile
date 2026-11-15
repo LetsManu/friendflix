@@ -21,7 +21,8 @@ COPY gateway/package.json gateway/
 COPY web/package.json web/
 COPY updater/package.json updater/
 COPY livetv/package.json livetv/
-RUN npm ci --omit=dev -w backend
+# npm may keep a dependency inside backend/node_modules (a version that cannot be hoisted to the root): both trees go into the image
+RUN npm ci --omit=dev -w backend && mkdir -p backend/node_modules
 
 FROM node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216
 ARG GIT_SHA=dev
@@ -41,6 +42,7 @@ WORKDIR /app
 # version this line is a no-op; remove the package from it then.
 RUN apk add --no-cache 'zlib>=1.3.2-r1' 'musl>=1.2.6-r3' 'musl-utils>=1.2.6-r3' && rm -rf /var/log/apk.log /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 COPY --from=deps --chown=node:node /app/node_modules node_modules
+COPY --from=deps --chown=node:node /app/backend/node_modules backend/node_modules
 COPY --from=build --chown=node:node /app/backend/dist backend/dist
 COPY --chown=node:node backend/package.json backend/
 COPY --chown=node:node version.json ./
