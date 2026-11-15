@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DiskHealth, HealthSnapshot, ServiceHealth, ServiceId } from '../src/health.js';
 import { coreCheck, levelToStatus } from '../src/syscheck/checks/core.js';
+import { RedisKV } from '../src/kv.js';
 import { buildSystemcheck } from '../src/syscheck/engine.js';
 import { CHECK_TIMEOUT_MS, SNAPSHOT_TIMEOUT_MS, type CheckId, type SystemcheckResult } from '../src/syscheck/types.js';
 import { ADMIN, cfg, fakeHttp, makeEnv, type TestEnv } from './helpers.js';
@@ -86,7 +87,7 @@ describe('core lines', () => {
 
   it('Redis without its append-only file → core.redisPersistence warning redis_not_persistent with the docs; with it → ok; not known → unknown', async () => {
     try {
-      env.kv.aof = false;
+      env.kv.aof = 'off';
       const off = await run();
       expect(get(off, 'core.redisPersistence')).toEqual({
         id: 'core.redisPersistence', group: 'core', status: 'warning', cause: 'redis_not_persistent', fix: 'redis_not_persistent',
@@ -94,11 +95,30 @@ describe('core lines', () => {
       });
       // Redis itself answers: only the persistence line warns
       expect(get(off, 'core.redis').status).toBe('ok');
-      env.kv.aof = true;
+      env.kv.aof = 'ok';
       expect(get(await run(), 'core.redisPersistence')).toEqual({ id: 'core.redisPersistence', group: 'core', status: 'ok', runs: 'server' });
       env.kv.aof = null;
       expect(get(await run(), 'core.redisPersistence')).toMatchObject({ status: 'unknown', cause: 'check_unavailable' });
-    } finally { env.kv.aof = true; }
+    } finally { env.kv.aof = 'ok'; }
+  });
+
+  it('append-only file on but its last write failed (disk full, volume not writable) → warning redis_aof_write_failed, never ok', async () => {
+    try {
+      env.kv.aof = 'write_error';
+      expect(get(await run(), 'core.redisPersistence')).toEqual({
+        id: 'core.redisPersistence', group: 'core', status: 'warning', cause: 'redis_aof_write_failed', fix: 'redis_aof_write_failed',
+        docs: 'operations.md#redis-volume-redis-data', runs: 'server',
+      });
+    } finally { env.kv.aof = 'ok'; }
+  });
+
+  it('aofStatus reads INFO persistence only: aof_enabled and aof_last_write_status', async () => {
+    const info = (lines: string[]) => ({ info: async (section: string) => (section === 'persistence' ? `# Persistence\r\n${lines.join('\r\n')}\r\n` : '') });
+    const status = (lines: string[]) => new RedisKV(info(lines) as unknown as ConstructorParameters<typeof RedisKV>[0]).aofStatus();
+    expect(await status(['loading:0', 'aof_enabled:1', 'aof_last_write_status:ok'])).toBe('ok');
+    expect(await status(['aof_enabled:1', 'aof_last_write_status:err'])).toBe('write_error');
+    expect(await status(['aof_enabled:0', 'aof_last_write_status:ok'])).toBe('off');
+    expect(await status(['loading:0'])).toBeNull();
   });
 
   it('PUBLIC_URL http → core.publicUrl warning public_url_http, settingKey PUBLIC_URL', async () => {

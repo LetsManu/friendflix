@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { checkLoginFlows } from '../flowCheck.js';
 import { forgetOidcProbe, getSnapshot, OIDC_PROBE_KEYS, worstOf, type HealthIssue } from '../health.js';
-import { requireAdmin } from '../session.js';
+import { requireAdmin, sessionHash } from '../session.js';
 
 const REFRESH_PER_MIN = 6;
 const healthQuery = z.object({ refresh: z.enum(['1', '0', 'true', 'false']).optional() });
@@ -25,7 +25,7 @@ export function healthRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/admin/health', admin, async (req, reply) => {
     const q = healthQuery.parse(req.query);
     const refresh = q.refresh === '1' || q.refresh === 'true';
-    if (refresh && (await ctx.kv.incr(`health:refresh:${req.sid}`, 60)) > REFRESH_PER_MIN) return reply.code(429).send({ error: 'rate_limited' });
+    if (refresh && (await ctx.kv.incr(`health:refresh:${sessionHash(req.sid!)}`, 60)) > REFRESH_PER_MIN) return reply.code(429).send({ error: 'rate_limited' });
     return getSnapshot(ctx, { refresh });
   });
 
@@ -45,7 +45,7 @@ export function healthRoutes(app: FastifyInstance, ctx: Ctx) {
     // `?fresh=1` (the card's "Check again", after a repair): the cached result is skipped, at most a few times a minute
     const fresh = healthQuery.parse(req.query).refresh;
     if (fresh === '1' || fresh === 'true') {
-      if ((await ctx.kv.incr(`health:login:${req.sid}`, 60)) > REFRESH_PER_MIN) return reply.code(429).send({ error: 'rate_limited' });
+      if ((await ctx.kv.incr(`health:login:${sessionHash(req.sid!)}`, 60)) > REFRESH_PER_MIN) return reply.code(429).send({ error: 'rate_limited' });
       return checkLoginFlows(ctx, { fresh: true });
     }
     return checkLoginFlows(ctx);

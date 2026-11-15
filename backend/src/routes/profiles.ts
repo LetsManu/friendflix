@@ -12,7 +12,7 @@ import { hashPin, verifyPin } from '../crypto.js';
 import { MAX_PROFILES, ProfileError, createProfile, deleteProfile, getProfile, listProfiles, lockProfileKids, onConnection, publicProfile, setDeviceKids, type KidsRating } from '../profiles.js';
 import { dropPartyPeers } from '../partySockets.js';
 import { invalidateRights } from '../rights.js';
-import { COOKIE, SESSION_PREFIX, hashOfSessionKey, rand, requireUser, saveSession, sessionHash, sessionKey, sessionTtl, type Session } from '../session.js';
+import { COOKIE, rand, requireUser, saveSession, scanSessions, sessionHash, sessionKey, sessionTtl } from '../session.js';
 import type { ProfileRow } from '../types.js';
 import { policyChanged } from '../hooks.js';
 import { accountSerial, applyRole } from '../users.js';
@@ -35,11 +35,8 @@ const maxRating = z.union([z.literal(0), z.literal(6), z.literal(12)]);
 /** The account's sessions that sit on this profile, by their hash (session.ts sessionHash: what sockets and the gateway memo match). */
 export async function profileSids(ctx: Pick<Ctx, 'kv'>, userId: string, profileId: string): Promise<Set<string>> {
   const out = new Set<string>();
-  for (const k of await ctx.kv.keys(SESSION_PREFIX)) {
-    const raw = await ctx.kv.get(k);
-    if (!raw) continue;
-    const sess = JSON.parse(raw) as Session;
-    if (sess.userId === userId && sess.profileId === profileId) out.add(hashOfSessionKey(k));
+  for await (const { hash, s } of scanSessions(ctx.kv)) {
+    if (s.userId === userId && s.profileId === profileId) out.add(hash);
   }
   return out;
 }
@@ -50,15 +47,11 @@ export async function profileSids(ctx: Pick<Ctx, 'kv'>, userId: string, profileI
  */
 export async function dropProfileSessions(ctx: Ctx, userId: string, profileId: string, exceptSid?: string): Promise<void> {
   const keep = exceptSid ? sessionHash(exceptSid) : null;
-  for (const k of await ctx.kv.keys(SESSION_PREFIX)) {
-    const h = hashOfSessionKey(k);
+  for await (const { key, hash: h, s: sess } of scanSessions(ctx.kv)) {
     if (h === keep) continue;
-    const raw = await ctx.kv.get(k);
-    if (!raw) continue;
-    const sess = JSON.parse(raw) as Session;
     if (sess.userId !== userId || sess.profileId !== profileId) continue;
     delete sess.profileId;
-    await ctx.kv.replace(k, JSON.stringify(sess), sessionTtl(ctx, sess)); // under the key it has (a legacy one moves on its next use)
+    await ctx.kv.replace(key, JSON.stringify(sess), sessionTtl(ctx, sess)); // under the key it has (a legacy one moves on its next use)
     forgetAuth(h);
   }
 }

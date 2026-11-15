@@ -71,13 +71,15 @@ export const REDIS_PERSIST_DOCS = 'operations.md#redis-volume-redis-data';
 /**
  * Redis writes its append-only file (compose: --appendonly yes on the redis-data volume): sign-ins survive a restart and a reboot.
  * Without it (a compose file or a Portainer stack from before, an own override) every reboot signs everybody out: a warning that
- * names the compose lines. Not readable (Redis down, a store without INFO): not checked, the core.redis line says why.
+ * names the compose lines. On, but its last write failed (disk full, volume not writable): a warning too (Redis refuses writes
+ * meanwhile), never ok. Not readable (Redis down, a store without INFO): not checked, the core.redis line says why.
  */
 async function redisPersistLine(env: CheckEnv): Promise<CheckLine> {
   const id = 'core.redisPersistence';
-  const o = await bounded(() => env.ctx.kv.aofEnabled(), FALLBACK_MS);
-  if (!o.ok || o.v === null || o.v === undefined) return bad(id, 'unknown', 'check_unavailable');
-  return o.v ? line(id, 'ok') : bad(id, 'warning', 'redis_not_persistent', { docs: REDIS_PERSIST_DOCS });
+  const o = await bounded(() => env.ctx.kv.aofStatus(), FALLBACK_MS);
+  if (!o.ok || !o.v) return bad(id, 'unknown', 'check_unavailable');
+  if (o.v === 'ok') return line(id, 'ok');
+  return bad(id, 'warning', o.v === 'off' ? 'redis_not_persistent' : 'redis_aof_write_failed', { docs: REDIS_PERSIST_DOCS });
 }
 
 /** a dependency read directly when the snapshot did not come in time (a stalled database holds the snapshot, not this probe) */

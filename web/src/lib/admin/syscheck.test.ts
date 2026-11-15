@@ -44,6 +44,10 @@ describe('Systemcheck texts', () => {
       expect(x.label.length, lang).toBeGreaterThan(5);
       expect(x.cause.length, lang).toBeGreaterThan(20);
       expect(x.fix, lang).toContain('redis-data');
+      // on, but its last write failed: its own sentence, naming the volume
+      const w = lineText(ln({ id: 'core.redisPersistence', status: 'warning', cause: 'redis_aof_write_failed', fix: 'redis_aof_write_failed' }));
+      expect(w.cause.length, lang).toBeGreaterThan(20);
+      expect(w.fix, lang).toContain('redis-data');
     }
   });
 

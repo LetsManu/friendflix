@@ -39,9 +39,14 @@ export interface KV {
    */
   move(from: string, to: string): Promise<boolean>;
   ping(): Promise<boolean>;
-  /** Whether the store writes its append-only file (Redis INFO persistence `aof_enabled`); null = not known (no such store). */
-  aofEnabled(): Promise<boolean | null>;
+  /**
+   * The store's append-only file (Redis INFO persistence, never CONFIG): ok (`aof_enabled:1`, last write ok), off (`aof_enabled:0`:
+   * memory only), write_error (on, but `aof_last_write_status:err`: disk full, volume not writable); null = not known.
+   */
+  aofStatus(): Promise<AofStatus | null>;
 }
+
+export type AofStatus = 'ok' | 'off' | 'write_error';
 
 export class RedisKV implements KV {
   constructor(private readonly redis: Redis) {}
@@ -115,10 +120,13 @@ export class RedisKV implements KV {
   async ping() {
     return (await this.redis.ping()) === 'PONG';
   }
-  async aofEnabled() {
-    // INFO only (never CONFIG): the line `aof_enabled:1` of the persistence section
-    const m = /^aof_enabled:(\d)/m.exec(await this.redis.info('persistence'));
-    return m ? m[1] === '1' : null;
+  async aofStatus(): Promise<AofStatus | null> {
+    // INFO only (never CONFIG): `aof_enabled` and `aof_last_write_status` of the persistence section
+    const info = await this.redis.info('persistence');
+    const on = /^aof_enabled:(\d)/m.exec(info);
+    if (!on) return null;
+    if (on[1] !== '1') return 'off';
+    return /^aof_last_write_status:err/m.test(info) ? 'write_error' : 'ok';
   }
 }
 
@@ -222,12 +230,12 @@ export class MemoryKV implements KV {
     this.m.set(to, e);
     return true;
   }
-  /** what aofEnabled() answers (tests set it; an in-memory store has no file) */
-  aof: boolean | null = null;
+  /** what aofStatus() answers (tests set it; an in-memory store has no file) */
+  aof: AofStatus | null = null;
   async ping() {
     return true;
   }
-  async aofEnabled() {
+  async aofStatus() {
     return this.aof;
   }
 }

@@ -8,7 +8,7 @@ import { audit } from '../audit.js';
 import { bounded } from '../health.js';
 import type { Ctx } from '../ctx.js';
 import { roleExists } from '../rolecat.js';
-import { loadSession, requireAdmin } from '../session.js';
+import { loadSession, requireAdmin, sessionHash } from '../session.js';
 import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
 import { dropLivetvProof } from './client.js';
 import { detectLivetv, enableBenchmark, livetvInstalled, livetvSystem } from './detect.js';
@@ -640,7 +640,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
    */
   async function uploadProbe(req: FastifyRequest, reply: FastifyReply) {
     // Redis down or hanging: the limit cannot be counted and is skipped (admin + CSRF, 4 MiB cap), never waited for
-    const n = await bounded(() => ctx.kv.incr(`syscheck:probe:upload:${req.sid}`, 60), PROBE_KV_MS);
+    const n = await bounded(() => ctx.kv.incr(`syscheck:probe:upload:${sessionHash(req.sid!)}`, 60), PROBE_KV_MS);
     if (n.ok && n.v > PROBE_PER_MIN) return reply.code(429).send({ error: 'rate_limited' });
     const body = req.body as Readable | undefined;
     if (!(body instanceof Readable)) return reply.code(400).send({ error: 'invalid', field: 'file' });

@@ -13,7 +13,7 @@ import { deletePushSubscriptions } from './push.js';
 import { forgetAuth } from './routes/internal.js';
 import { dropPartyPeers } from './partySockets.js';
 import { dropRemotePeers } from './routes/tv.js';
-import { SESSION_PREFIX, hashOfSessionKey, sessionHash, sessionKey } from './session.js';
+import { SESSION_PREFIX, scanSessions, sessionHash, sessionKey } from './session.js';
 
 export const DEVICE_COOKIE = 'ff_dev';
 
@@ -62,15 +62,13 @@ export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string
     const ks = raw ? (JSON.parse(raw) as { userId: string; deviceId?: string }) : null;
     if (ks?.userId === userId) keepDevice = ks.deviceId;
   }
-  for (const k of await ctx.kv.keys(SESSION_PREFIX)) {
-    const h = hashOfSessionKey(k);
+  for await (const { listed, hash: h, s } of scanSessions(ctx.kv)) {
     if (h === keep) continue;
-    const raw = await ctx.kv.get(k);
-    if (!raw) continue;
-    const s = JSON.parse(raw) as { userId: string; deviceId?: string };
     if (s.userId === userId && (!deviceId || s.deviceId === deviceId)) {
-      await ctx.kv.del(k);
-      if (!gone.has(h)) n++;
+      // both names: the hashed one, and the legacy one the scan listed (a first use may move it, an old process may write it)
+      await ctx.kv.del(`${SESSION_PREFIX}${h}`);
+      if (listed !== `${SESSION_PREFIX}${h}`) await ctx.kv.del(listed);
+      n++;
       gone.add(h);
     }
   }
@@ -94,10 +92,9 @@ export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string
  */
 export async function forgetUserAuth(ctx: Ctx, userId: string): Promise<number> {
   let n = 0;
-  for (const k of await ctx.kv.keys(SESSION_PREFIX)) {
-    const raw = await ctx.kv.get(k);
-    if (!raw || (JSON.parse(raw) as { userId: string }).userId !== userId) continue;
-    forgetAuth(hashOfSessionKey(k));
+  for await (const { hash, s } of scanSessions(ctx.kv)) {
+    if (s.userId !== userId) continue;
+    forgetAuth(hash);
     n++;
   }
   return n;
@@ -106,11 +103,8 @@ export async function forgetUserAuth(ctx: Ctx, userId: string): Promise<number> 
 /** True if a live session of the user (other than `exceptSid`) still belongs to this device. */
 export async function deviceHasSession(ctx: Ctx, userId: string, deviceId: string, exceptSid?: string): Promise<boolean> {
   const skip = exceptSid ? sessionHash(exceptSid) : null;
-  for (const k of await ctx.kv.keys(SESSION_PREFIX)) {
-    if (hashOfSessionKey(k) === skip) continue;
-    const raw = await ctx.kv.get(k);
-    if (!raw) continue;
-    const s = JSON.parse(raw) as { userId: string; deviceId?: string };
+  for await (const { hash, s } of scanSessions(ctx.kv)) {
+    if (hash === skip) continue;
     if (s.userId === userId && s.deviceId === deviceId) return true;
   }
   return false;

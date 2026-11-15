@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { sha256 } from './crypto.js';
 import type { Ctx } from './ctx.js';
+import type { KV } from './kv.js';
 import { getUserById } from './users.js';
 import { jfUserFor, resolveProfile } from './profiles.js';
 import type { JfUser, ProfileRow, UserRow } from './types.js';
@@ -44,8 +45,33 @@ export function hashOfSessionKey(key: string): string {
   const rest = key.slice(SESSION_PREFIX.length);
   return HASH_RE.test(rest) ? rest : sha256(rest);
 }
-/** the key an older build stored the session under; none for a cookie that looks like a hash (it would name a hashed key) */
+/**
+ * the key an older build stored the session under; none for a cookie that looks like a hash (it would name a hashed key).
+ * TODO(2027-03): remove the legacy fallback (this, the move in loadSession and the legacy branch of scanSessions) once 90 days (the
+ * longest session lifetime, SESSION_TTL_SECONDS / a TV's) have passed since the first release with hashed session keys: by then no
+ * legacy key can still be alive, and an unknown cookie no longer costs a second read.
+ */
 const legacyKey = (sid: string) => (HASH_RE.test(sid) ? null : `${SESSION_PREFIX}${sid}`);
+/** one stored session found by a scan: `key` it was read under, `listed` the key the scan named (a legacy one may have moved since) */
+export interface ScannedSession { key: string; listed: string; hash: string; s: Session }
+/**
+ * Every stored session, once each. A legacy key whose session was moved to its hashed name between the listing and the read (its first
+ * use raced the scan) is read under the hashed name, so a revoke never misses it; a session listed under both names is yielded once.
+ */
+export async function* scanSessions(kv: Pick<KV, 'keys' | 'get'>): AsyncGenerator<ScannedSession> {
+  const seen = new Set<string>();
+  for (const listed of await kv.keys(SESSION_PREFIX)) {
+    const hash = hashOfSessionKey(listed);
+    if (seen.has(hash)) continue;
+    const hashed = `${SESSION_PREFIX}${hash}`;
+    let key = listed;
+    let raw = await kv.get(listed);
+    if (!raw && listed !== hashed) { key = hashed; raw = await kv.get(hashed); }
+    if (!raw) continue;
+    seen.add(hash);
+    yield { key, listed, hash, s: JSON.parse(raw) as Session };
+  }
+}
 /** the kv ttl of a session (idle, capped by the absolute lifetime) */
 export const sessionTtl = (ctx: Pick<Ctx, 'cfg'>, s: Session) => Math.min(s.idle ?? ctx.cfg.SESSION_IDLE_SECONDS, s.ttl ?? ctx.cfg.SESSION_TTL_SECONDS);
 /** Ends a session: its hashed key and a legacy raw one. */

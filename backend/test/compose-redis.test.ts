@@ -5,11 +5,15 @@
  * across a restart of its container and a reboot of the host: append-only file on a named volume, while the container itself
  * stays locked down (read-only root, no capabilities, the image's redis user). Every compose file that defines redis is checked.
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = new URL('../../', import.meta.url);
 const read = (f: string) => readFileSync(new URL(f, ROOT), 'utf8');
+/** every compose file of the repository root (compose.yaml, compose.prod.yaml and each overlay): a new one is checked without a list */
+const COMPOSE = readdirSync(ROOT).filter((f) => /^compose(\.[a-z0-9-]+)?\.yaml$/.test(f)).sort();
+/** the two that define the whole stack (and so redis); every other one is an overlay */
+const STACKS = ['compose.prod.yaml', 'compose.yaml'];
 
 /** the lines of one top-level service block (`  name:` up to the next service or top-level key) */
 function service(src: string, name: string): string[] {
@@ -36,7 +40,7 @@ function topVolumes(src: string): string[] {
   return out;
 }
 
-describe.each(['compose.yaml', 'compose.prod.yaml'])('%s redis', (file) => {
+describe.each(STACKS)('%s redis', (file) => {
   const src = read(file);
   const redis = service(src, 'redis');
   const block = redis.join('\n');
@@ -71,10 +75,12 @@ describe.each(['compose.yaml', 'compose.prod.yaml'])('%s redis', (file) => {
 });
 
 describe('compose overlays', () => {
-  it('no overlay turns redis persistence off again', () => {
-    for (const f of ['compose.authentik.yaml', 'compose.livetv-gpu.yaml', 'compose.livetv-library.yaml', 'compose.livetv-nvidia.yaml', 'compose.monitoring.yaml',
-      'compose.no-updater.yaml', 'compose.planb.yaml', 'compose.plex.yaml', 'compose.secrets.yaml']) {
-      expect(service(read(f), 'redis'), f).toEqual([]);
-    }
+  it('finds the compose files of the repository (both stacks and the overlays)', () => {
+    for (const f of STACKS) expect(COMPOSE).toContain(f);
+    expect(COMPOSE.length).toBeGreaterThan(STACKS.length);
+  });
+
+  it.each(COMPOSE.filter((f) => !STACKS.includes(f)))('%s does not define or override redis (it would bypass the persistence checks above)', (f) => {
+    expect(service(read(f), 'redis')).toEqual([]);
   });
 });

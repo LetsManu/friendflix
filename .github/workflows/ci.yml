@@ -297,9 +297,15 @@ jobs:
           test -z "$(docker compose -f compose.prod.yaml config --services | grep -x livetv || true)"
           test -z "$(docker compose -f compose.yaml config --services | grep -x livetv || true)"
           docker compose -f compose.prod.yaml --profile livetv config --services | grep -qx livetv
-          # Redis keeps sign-ins across a reboot: append-only file on the redis-data volume, with every overlay (backend/test/compose-redis.test.ts)
-          for f in "compose.yaml" "compose.prod.yaml" "compose.prod.yaml -f compose.plex.yaml" "compose.prod.yaml -f compose.no-updater.yaml" "compose.prod.yaml -f compose.secrets.yaml"; do
-            docker compose -f $f config --format json | jq -e '.services.redis as $r | ($r.command | index("--appendonly")) as $i | $r.command[$i + 1] == "yes" and $r.read_only == true and ([$r.volumes[] | select(.source == "redis-data" and .target == "/data")] | length) == 1' > /dev/null
+          # Redis keeps sign-ins across a reboot: append-only file on the redis-data volume, with each stack alone and compose.prod.yaml
+          # under every overlay found (compose.*.yaml; placeholder values only for the variables the optional overlays require)
+          redis_ok='.services.redis as $r | ($r.command | index("--appendonly")) as $i | $r.command[$i + 1] == "yes" and $r.read_only == true and ([$r.volumes[] | select(.source == "redis-data" and .target == "/data")] | length) == 1'
+          docker compose -f compose.yaml config --format json | jq -e "$redis_ok" > /dev/null
+          docker compose -f compose.prod.yaml config --format json | jq -e "$redis_ok" > /dev/null
+          for o in compose.*.yaml; do
+            [ "$o" = compose.prod.yaml ] && continue
+            RENDER_GID=109 RECORDINGS_LIBRARY_PATH=/srv/media/Aufnahmen AUTHENTIK_PG_PASSWORD=x AUTHENTIK_SECRET_KEY=x GRAFANA_ADMIN_PASSWORD=x \
+              docker compose -f compose.prod.yaml -f "$o" --profile livetv config --format json | jq -e "$redis_ok" > /dev/null || { echo "redis not persistent with $o"; exit 1; }
           done
       - name: Compose config with .env.example
         run: |
