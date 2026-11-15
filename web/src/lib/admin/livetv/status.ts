@@ -22,6 +22,14 @@ export const EVENT_CODES = [
   'input_back',
   'push_rejected',
   'released_on_switch',
+  'rec_started',
+  'rec_done',
+  'rec_partial',
+  'rec_failed',
+  'rec_moved',
+  'rec_no_slot',
+  'rec_storage_full',
+  'rec_export_failed',
 ] as const;
 export type LiveEventCode = (typeof EVENT_CODES)[number];
 export type EventLevel = 'info' | 'warn' | 'error';
@@ -33,6 +41,7 @@ export interface LiveEvent {
   code: LiveEventCode;
   channelId?: string;
   sourceId?: string;
+  recordingId?: string;
   n?: number;
   /** a fixed error code */
   reason?: string;

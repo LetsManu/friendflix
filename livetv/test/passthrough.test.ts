@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FetchError } from '../src/fetch.js';
-import { PlaylistRefused, parseMedia, passthroughDriver } from '../src/passthrough.js';
+import { FetchError, type FetchOptions } from '../src/fetch.js';
+import { POOL_MAX_AGE_MS, PlaylistRefused, parseMedia, passthroughDriver } from '../src/passthrough.js';
 import { PLAYLIST_MAX_BYTES, SEGMENT_MAX_BYTES } from '../src/probe.js';
 import { Streams, type StartBody } from '../src/streams.js';
 import { fakeFetch, flush, memoryStore, type Served } from './streams-helpers.js';
@@ -108,6 +108,67 @@ describe('passthrough', () => {
     expect(mem.files.get(`${ROOT}/${streamKey}/6.ts`)).toEqual(Buffer.alloc(188, 3));
     expect(streams.list()[0]!.errors).toEqual([]);
     expect(streams.list()[0]!.state).toBe('running');
+  });
+
+  it('H1: a read from a node a segment or two behind is no update (nothing stored twice, no discontinuity); 3 in a row are a restart', async () => {
+    let seq = 100;
+    let stale = false;
+    routes.set(MASTER, () => (stale ? media(seq - 2, 3) : media(seq, 3)));
+    segments(`${HOST}/live/anna/geheim`, 90, 130);
+    const { streamKey } = streams.start(body());
+    await flush();
+    for (const s of [101, 102]) {
+      seq = s;
+      await vi.advanceTimersByTimeAsync(2000);
+    }
+    // one stale read, then the edge moves on
+    stale = true;
+    await vi.advanceTimersByTimeAsync(2000);
+    stale = false;
+    seq = 103;
+    await vi.advanceTimersByTimeAsync(2000);
+    await flush();
+    let text = playlist(streamKey);
+    expect(uris(text)).toEqual(['0.ts', '1.ts', '2.ts', '3.ts', '4.ts', '5.ts']);
+    expect(text.split('\n')).not.toContain('#EXT-X-DISCONTINUITY');
+    // provider 100..105 in order: local 5 is provider 105
+    expect(mem.files.get(`${ROOT}/${streamKey}/5.ts`)).toEqual(Buffer.alloc(188, 105));
+    // three stale reads in a row: the provider really went back, a new start at its edge with a discontinuity
+    stale = true;
+    for (let i = 0; i < 3; i++) await vi.advanceTimersByTimeAsync(2000);
+    await flush();
+    text = playlist(streamKey);
+    expect(uris(text)).toHaveLength(9);
+    expect(text.split('\n').filter((l) => l === '#EXT-X-DISCONTINUITY')).toHaveLength(1);
+  });
+
+  it('review M5: the connection pool (and its pinned addresses) is renewed at least every POOL_MAX_AGE_MS while the stream runs', async () => {
+    let seq = 100;
+    routes.set(MASTER, () => media(seq++, 3));
+    segments(`${HOST}/live/anna/geheim`, 100, 2000);
+    const pools: unknown[] = [];
+    const destroyed: unknown[] = [];
+    const fetch = (url: string, o: FetchOptions) => {
+      if (o.pool && !pools.includes(o.pool)) {
+        pools.push(o.pool);
+        const p = o.pool;
+        const d = p.destroy.bind(p);
+        (p as { destroy: () => void }).destroy = () => { destroyed.push(p); d(); };
+      }
+      return ff.fetch(url, o);
+    };
+    await streams.close();
+    streams = new Streams({ root: ROOT, maxBytes: 1024 ** 3, drivers: { passthrough: passthroughDriver({ fetch }) }, store: mem.store, log: (m) => logs.push(m) });
+    const { streamKey } = streams.start(body());
+    await flush();
+    // a viewer keeps fetching (else the idle safety net stops the stream after 3 min)
+    const watch = async (ms: number) => { for (let t = 0; t < ms; t += 60_000) { streams.touch(streamKey); await vi.advanceTimersByTimeAsync(Math.min(60_000, ms - t)); } };
+    await watch(POOL_MAX_AGE_MS - 5_000);
+    expect(pools).toHaveLength(1);
+    await watch(10_000);
+    expect(pools).toHaveLength(2);
+    expect(destroyed).toEqual([pools[0]]);
+    expect(POOL_MAX_AGE_MS).toBe(10 * 60_000);
   });
 
   it('a media sequence that skips ahead marks a discontinuity; a contiguous one does not', async () => {

@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { FetchError, type FetchOptions, type GuardDeps, type GuardedResponse } from '../src/fetch.js';
-import { alignStart, openInput } from '../src/inputs.js';
+import { InputEnd, MEASURE_MS, alignStart, openInput } from '../src/inputs.js';
 import { parseMedia } from '../src/passthrough.js';
 
 const GUARD: GuardDeps = { own: [], lookup: async () => ['192.0.2.40'] };
@@ -138,7 +138,8 @@ describe('openInput with a separate audio rendition (I1)', () => {
     const ff = opened.ffInput;
     if (ff.kind !== 'pipe' || !ff.audio) throw new Error('an audio pipe is expected');
     expect([await first(ff.stdin), await first(ff.audio.stdin)]).toEqual(['v13;', 'a1003;']);
-    expect(logs).toEqual(['separate audio: no common media sequence or program date-time, each rendition starts at its live edge']);
+    // the text bodies carry no timestamps (timestamps_missing, inputs-align.test.ts)
+    expect(logs.filter((l) => !l.includes('timestamps_missing'))).toEqual(['separate audio: no common media sequence or program date-time, each rendition starts at its live edge']);
     expect(logs.join(' ')).not.toMatch(/example\.com|\.m3u8/);
     opened.close();
   });
@@ -154,25 +155,26 @@ describe('openInput with a separate audio rendition (I1)', () => {
     opened.close();
   });
 
-  it('a segment gone (404) in one rendition ends BOTH pipes (no silent skip), so the driver restarts and aligns again', async () => {
-    const routes = new Map<string, Route>([[`${BASE}/master.m3u8`, MASTER], [`${BASE}/video/index.m3u8`, pl(10, 6, { prefix: 'v' })], [`${BASE}/audio/de.m3u8`, pl(10, 6, { prefix: 'a' })]]);
-    segments(routes, 10, 15);
-    routes.delete(`${BASE}/audio/a14.ts`);
+  it('segments gone (404) in a row in one rendition end BOTH pipes, so the driver restarts and aligns again (one alone is skipped)', async () => {
+    const routes = new Map<string, Route>([[`${BASE}/master.m3u8`, MASTER], [`${BASE}/video/index.m3u8`, pl(10, 6, { prefix: 'v' })], [`${BASE}/audio/de.m3u8`, pl(10, 7, { prefix: 'a' })]]);
+    segments(routes, 10, 16);
+    // 13 is in both; the audio's 14..16 are gone (its window is one ahead): 14 and 15 are skipped, 16 ends the run
+    for (const n of [14, 15, 16]) routes.delete(`${BASE}/audio/a${n}.ts`);
     const logs: string[] = [];
     const opened = await openInput({ url: `${BASE}/master.m3u8`, kind: 'hls', allowLan: false }, { guard: GUARD, fetch: provider(routes).fetch, log: (m) => logs.push(m) });
     const ff = opened.ffInput;
     if (ff.kind !== 'pipe' || !ff.audio) throw new Error('an audio pipe is expected');
     const audio = await drain(ff.audio.stdin);
     expect(audio.text).toBe('a13;');
-    expect(audio.error).toBeInstanceOf(FetchError);
+    expect((audio.error as InputEnd).code).toBe('segments_failed');
     // the sibling ends too (at once, not after its next poll)
     const video = await drain(ff.stdin);
     expect(video.text).toBe('');
-    expect(logs).toEqual(['separate audio: a rendition skipped, both restart to align again']);
+    expect(logs.filter((l) => !l.includes('timestamps_missing'))).toEqual(['audio segment skipped after a retry (not_found)', 'audio segment skipped after a retry (not_found)']);
   });
 
   it('missed segments or a discontinuity on a later poll end both pipes too', async () => {
-    for (const later of [pl(18, 6, { prefix: 'a', dur: 2 }), pl(11, 6, { prefix: 'a', dur: 2, disc: [16] })]) {
+    for (const [later, code] of [[pl(18, 6, { prefix: 'a', dur: 2 }), 'gap'], [pl(11, 6, { prefix: 'a', dur: 2, disc: [16] }), 'discontinuity']] as const) {
       let polls = 0;
       const routes = new Map<string, Route>([[`${BASE}/master.m3u8`, MASTER], [`${BASE}/video/index.m3u8`, pl(10, 6, { prefix: 'v', dur: 2 })],
         [`${BASE}/audio/de.m3u8`, () => (++polls === 1 ? pl(10, 6, { prefix: 'a', dur: 2 }) : later)]]);
@@ -182,7 +184,7 @@ describe('openInput with a separate audio rendition (I1)', () => {
       if (ff.kind !== 'pipe' || !ff.audio) throw new Error('an audio pipe is expected');
       const audio = await drain(ff.audio.stdin);
       expect(audio.text).toBe('a13;a14;a15;');
-      expect(audio.error).toBeInstanceOf(FetchError);
+      expect((audio.error as { code?: string }).code).toBe(code);
       expect(polls).toBe(2);
       expect((await drain(ff.stdin)).text).toBe('');
     }
@@ -219,29 +221,34 @@ describe('openInput: whose fault a paired run\'s end is (audioFault)', () => {
     if (ff.kind !== 'pipe' || !ff.audio || !opened.audioFault) throw new Error('an audio pipe is expected');
     return { opened, video: ff.stdin, audio: ff.audio.stdin, fault: opened.audioFault };
   };
-  const base = () => {
-    const routes = new Map<string, Route>([[`${BASE}/master.m3u8`, MASTER], [`${BASE}/video/index.m3u8`, pl(10, 6, { prefix: 'v' })], [`${BASE}/audio/de.m3u8`, pl(10, 6, { prefix: 'a' })]]);
-    segments(routes, 10, 15);
+  /** both start at 13; the side given lists 10..18 (the other 10..15), so three of its segments in a row can fail after its first */
+  const base = (longer: 'video' | 'audio' = 'audio') => {
+    const routes = new Map<string, Route>([[`${BASE}/master.m3u8`, MASTER], [`${BASE}/video/index.m3u8`, pl(10, longer === 'video' ? 9 : 6, { prefix: 'v' })],
+      [`${BASE}/audio/de.m3u8`, pl(10, longer === 'audio' ? 9 : 6, { prefix: 'a' })]]);
+    segments(routes, 10, 18);
     return routes;
   };
 
   it('the audio failing on its own is its fault; the video failing (the audio then ended by it) is not', async () => {
-    const a = base();
-    a.set(`${BASE}/audio/a13.ts`, new FetchError('unreachable'));
+    const a = base('audio');
+    for (const n of [14, 15, 16]) a.set(`${BASE}/audio/a${n}.ts`, new FetchError('unreachable'));
     const x = await open(a);
-    expect((await drain(x.audio)).error).toBeInstanceOf(FetchError);
+    expect((await drain(x.audio)).error).toBeInstanceOf(InputEnd);
     await drain(x.video);
     expect([x.fault(false), x.fault(true)]).toEqual([true, true]);
 
-    const v = base();
-    v.set(`${BASE}/video/v13.ts`, new FetchError('unreachable'));
+    const v = base('video');
+    for (const n of [14, 15, 16]) v.set(`${BASE}/video/v${n}.ts`, new FetchError('unreachable'));
     const y = await open(v);
-    expect((await drain(y.video)).error).toBeInstanceOf(FetchError);
+    expect((await drain(y.video)).error).toBeInstanceOf(InputEnd);
     await drain(y.audio);
     expect([y.fault(false), y.fault(true)]).toEqual([false, false]);
   });
 
   it('an audio side that gives nothing while the video flows is its fault only when the run stalled', async () => {
+    // the first bytes of both are measured before ffmpeg starts (MEASURE_MS at most): fake time moves past that wait
+    vi.useFakeTimers();
+    onTestFinished(() => { vi.useRealTimers(); });
     const routes = base();
     // the audio segment never arrives (the fetch hangs until the input is closed)
     const p = provider(routes);
@@ -249,7 +256,11 @@ describe('openInput: whose fault a paired run\'s end is (audioFault)', () => {
       if (url.endsWith('/a13.ts')) return new Promise<GuardedResponse>((_, rej) => o.signal?.addEventListener('abort', () => rej(new FetchError('unreachable'))));
       return p.fetch(url, o);
     };
-    const opened = await openInput({ url: `${BASE}/master.m3u8`, kind: 'hls', allowLan: false }, { guard: GUARD, fetch });
+    const logs: string[] = [];
+    const openP = openInput({ url: `${BASE}/master.m3u8`, kind: 'hls', allowLan: false }, { guard: GUARD, fetch, log: (m) => logs.push(m) });
+    await vi.advanceTimersByTimeAsync(MEASURE_MS);
+    const opened = await openP;
+    expect(logs).toEqual(['separate audio: first timestamps not read in time (timestamps_late), aligned by sequence']);
     const ff = opened.ffInput;
     if (ff.kind !== 'pipe' || !ff.audio || !opened.audioFault) throw new Error('an audio pipe is expected');
     const pending = ff.audio.stdin[Symbol.asyncIterator]().next().catch(() => undefined);

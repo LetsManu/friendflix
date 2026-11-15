@@ -13,7 +13,7 @@ import { mediaGatewayKeys, mediaUrlKey } from '../media/index.js';
 import { MediaError, type ExternalSession } from '../media/types.js';
 import { effectiveLimits } from '../limits.js';
 import { streamBitrateFor, streamKeyFor } from '../livetv/streams.js';
-import { resolveLiveToken } from '../livetv/tokens.js';
+import { resolveLiveToken, resolveRecToken } from '../livetv/tokens.js';
 import { jfUserFor, resolveProfile } from '../profiles.js';
 import { isHomeAddress } from '../netaddr.js';
 import { effectiveRole, remoteBitrateCap } from '../roles.js';
@@ -161,6 +161,20 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     reply.header('cache-control', 'no-store');
     if (r.status !== 200) return reply.code(r.status).send({ error: r.status === 401 ? 'unauthenticated' : r.status === 403 ? 'forbidden' : 'gone' });
     return { streamKey: r.streamKey, kind: r.kind, maxAgeS: r.maxAgeS };
+  });
+
+  /**
+   * Live TV recordings (Phase 3): the gateway's check of `/media/r/<token>/…`, like /internal/authz/live. 200 { dir, growing, maxAgeS }
+   * (the recording's uuid folder under the read-only recordings mount) or 401/403/410 { error }. The token is never logged.
+   */
+  app.post('/internal/authz/rec', { config: { rateLimit: false } }, async (req, reply) => {
+    if (!checkSecret(req, 'x-internal-secret', ctx.cfg.INTERNAL_SECRET)) return reply.code(403).send({ error: 'forbidden' });
+    const b = z.object({ token: z.string().regex(CAST_TOKEN_RE), ip: z.string().min(1).max(64) }).strict().safeParse(req.body);
+    if (!b.success) return reply.code(400).send({ error: 'bad_request' });
+    const r = await resolveRecToken(ctx, b.data.token, b.data.ip);
+    reply.header('cache-control', 'no-store');
+    if (r.status !== 200) return reply.code(r.status).send({ error: r.status === 401 ? 'unauthenticated' : r.status === 403 ? 'forbidden' : 'gone' });
+    return { dir: r.dir, growing: r.growing, maxAgeS: r.maxAgeS };
   });
 
   /**

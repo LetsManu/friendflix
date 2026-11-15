@@ -494,6 +494,17 @@ export interface MediaAdmin {
   findItems?(q: string, limit: number): Promise<FoundItem[]>;
   /** Users & permissions (optional): the film or series with this id (admin key), null when unknown or another kind; errors never carry the id. */
   findItem?(id: string): Promise<FoundItem | null>;
+  /**
+   * Live TV recordings, library mode (spec §15.3; optional, Jellyfin): scan one library now (a recording was exported into its folder).
+   * Absent (Plex): the library modes are not offered.
+   */
+  refreshLibrary?(id: string): Promise<void>;
+  /** the libraries with their folders as the server sees them (`/Library/VirtualFolders`) */
+  libraryFolders?(): Promise<Array<{ id: string; name: string; paths: string[] }>>;
+  /** creates a library on one folder (*Bibliothek „Aufnahmen“ anlegen*); answers its id when the server names it */
+  createLibrary?(name: string, path: string, kind: 'homevideos' | 'mixed'): Promise<{ id: string | null }>;
+  /** the item of a library whose file is `path` (as the server sees it), null when the scan has not found it (yet) */
+  itemByPath?(libraryId: string, path: string): Promise<string | null>;
 }
 
 /**

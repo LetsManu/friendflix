@@ -58,6 +58,16 @@ const GRANT = 'conv:grant:';
  */
 const GRANT_INDEX = 'conv:grants';
 const INDEX_TTL_S = CONV_GRANT_TTL_S + 1;
+/**
+ * Recording reservations (Phase 3, spec §5.1 / §15.4): `conv:resv:<channelId>` per channel (two recordings of one channel share one
+ * stream and one slot), indexed in `conv:resvs` like the grants, refreshed by the recording tick (TTL 120 s). A reservation counts as a
+ * `record` conversion unless that channel already runs a transcode (its `live:<channelId>` entry is the slot then).
+ */
+const RESV = 'conv:resv:';
+const RESV_INDEX = 'conv:resvs';
+export const CONV_RESV_TTL_S = 120;
+/** the entry key of a channel's reservation in a count */
+export const resvKey = (channelId: string) => `resv:${channelId}`;
 /** the record /api/playback/info and cast write per play session (`conv`: that answer really converts, ruling 6) */
 const PBINFO = 'pbinfo:';
 const BENCH_KEY = 'conv:bench';
@@ -202,7 +212,7 @@ const withoutLive = (entries: ConvEntry[], channelId: string) => entries.filter(
  * what it does with their play session and no live record plays it: a hover / focus prefetch, an answer nobody took). A cast or download
  * grant is never among them (a cast's stream plays on the receiver, which reports later).
  */
-async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; sessions?: SessionRead | null }): Promise<{ entries: ConvEntry[]; ownPending: string[] } | null> {
+async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; sessions?: SessionRead | null; exceptResv?: string }): Promise<{ entries: ConvEntry[]; ownPending: string[] } | null> {
   const list = ctx.jf.admin.transcodeSessions?.bind(ctx.jf.admin);
   const sessions = list ? await (o.sessions ?? (() => within(list, HEVC_SESSIONS_TIMEOUT_MS)))() : [];
   if (!sessions) return null;
@@ -246,6 +256,16 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
   // live TV transcodes livetv runs (Task 31), before the grants: a start's grant is bound to the same key `live:<channelId>`, so the
   // grant loop skips it once livetv lists the stream (one entry per key, F8)
   for (const e of liveTv) if (!out.has(e.key)) out.set(e.key, e);
+
+  // recording reservations (Phase 3): one per channel, unless that channel's transcode already counts (listed by livetv or a bound grant)
+  const resvIds = await ctx.kv.indexMembers(RESV_INDEX).catch(() => [] as string[]);
+  const resvs = resvIds.length ? await ctx.kv.mget(resvIds.map((id) => `${RESV}${id}`)).catch(() => [] as Array<string | null>) : [];
+  const grantIds = new Set(await ctx.kv.indexMembers(GRANT_INDEX).catch(() => [] as string[]));
+  resvIds.forEach((id, i) => {
+    const r = parse<{ label?: string; userId?: string }>(resvs[i]);
+    if (!r || out.has(`live:${id}`) || grantIds.has(`live:${id}`) || o.exceptResv === id) return;
+    out.set(resvKey(id), { kind: 'record', key: resvKey(id), label: r.label ?? null, since: null, device: null, userId: r.userId ?? null, pending: true });
+  });
 
   const mine = o.exceptUser !== undefined && o.exceptDevice !== undefined;
   const ownPending: string[] = [];
@@ -295,7 +315,7 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
  * admission passed only because of that (the same count with it would refuse). Both counts are decided here, under the one lock, so no
  * other admission sees the slot in between; the caller must then release that channel or drop this grant.
  */
-export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: string; deviceId?: string; hint: string; hevc?: boolean; label?: string; swap?: boolean; sessions?: SessionRead | null; exceptLive?: string }): Promise<{ ok: true; onlyWithout?: true } | { ok: false; why: 'full' | 'unknown' }> {
+export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: string; deviceId?: string; hint: string; hevc?: boolean; label?: string; swap?: boolean; sessions?: SessionRead | null; exceptLive?: string; exceptResv?: string }): Promise<{ ok: true; onlyWithout?: true } | { ok: false; why: 'full' | 'unknown' }> {
   // the limit does not depend on the lock (livetv is never asked here, only the last livetvStale is read): its settings read (800 ms at most here) starts now and overlaps the wait and the count
   const limP = conversionLimit(ctx, { settingsMs: HEVC_SESSIONS_TIMEOUT_MS, checkLivetv: false });
   limP.catch(() => undefined); // awaited below; never an unhandled rejection when the lock is not had
@@ -308,7 +328,7 @@ export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: str
   }
   if (!locked) return { ok: false, why: 'unknown' };
   try {
-    const [lim, counted] = await Promise.all([limP, count(ctx, { ...(o.deviceId ? { exceptUser: o.userId, exceptDevice: o.deviceId } : {}), ...(o.sessions ? { sessions: o.sessions } : {}) })]);
+    const [lim, counted] = await Promise.all([limP, count(ctx, { ...(o.deviceId ? { exceptUser: o.userId, exceptDevice: o.deviceId } : {}), ...(o.sessions ? { sessions: o.sessions } : {}), ...(o.exceptResv ? { exceptResv: o.exceptResv } : {}) })]);
     if (!counted) return { ok: false, why: 'unknown' };
     const withIt = admits(o.kind, counted.entries.length, lim.limit, lim.priority);
     const onlyWithout = !withIt && o.exceptLive !== undefined && admits(o.kind, withoutLive(counted.entries, o.exceptLive).length, lim.limit, lim.priority);
@@ -352,3 +372,24 @@ const removeGrant = async (ctx: Ctx, id: string): Promise<void> => {
   await ctx.kv.indexRemove(GRANT_INDEX, id).catch(() => undefined);
 };
 export const dropConvGrant = (ctx: Ctx, hint: string) => bindConvGrant(ctx, hint, null);
+
+/**
+ * Reserves (or refreshes) a recording's slot for its channel (Phase 3): new viewers' conversions are counted against it from 5 min before
+ * the recording starts. The member lives 1 s longer than its key, as for the grants.
+ */
+export async function reserveConversion(ctx: Ctx, channelId: string, o: { label?: string; userId?: string } = {}): Promise<void> {
+  await ctx.kv.indexAdd(RESV_INDEX, channelId, CONV_RESV_TTL_S + 1);
+  await ctx.kv.set(`${RESV}${channelId}`, JSON.stringify({ ...(o.label ? { label: o.label } : {}), ...(o.userId ? { userId: o.userId } : {}) }), CONV_RESV_TTL_S);
+}
+/** the channel's reservation goes (never throws) */
+export async function dropReservation(ctx: Ctx, channelId: string): Promise<void> {
+  await ctx.kv.del(`${RESV}${channelId}`).catch(() => undefined);
+  await ctx.kv.indexRemove(RESV_INDEX, channelId).catch(() => undefined);
+}
+/** the channels holding a reservation now */
+export async function reservedChannels(ctx: Ctx): Promise<string[]> {
+  const ids = await ctx.kv.indexMembers(RESV_INDEX).catch(() => [] as string[]);
+  if (!ids.length) return [];
+  const vals = await ctx.kv.mget(ids.map((id) => `${RESV}${id}`)).catch(() => [] as Array<string | null>);
+  return ids.filter((_, i) => vals[i] != null);
+}

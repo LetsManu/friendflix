@@ -245,6 +245,14 @@ services:
       LIVETV_SRT_HOST: ${LIVETV_SRT_HOST:-}
       LIVETV_DVR_MINUTES: ${LIVETV_DVR_MINUTES:-}
       LIVETV_MAX_BITRATE: ${LIVETV_MAX_BITRATE:-}
+      LIVETV_RECORD_STORAGE: ${LIVETV_RECORD_STORAGE:-}
+      LIVETV_RECORD_LIBRARY_ID: ${LIVETV_RECORD_LIBRARY_ID:-}
+      LIVETV_RECORD_LIBRARY_JF_PATH: ${LIVETV_RECORD_LIBRARY_JF_PATH:-}
+      LIVETV_RECORD_LIMIT_GB: ${LIVETV_RECORD_LIMIT_GB:-}
+      LIVETV_RECORD_RETENTION_DAYS: ${LIVETV_RECORD_RETENTION_DAYS:-}
+      LIVETV_RECORD_PAD_BEFORE_MIN: ${LIVETV_RECORD_PAD_BEFORE_MIN:-}
+      LIVETV_RECORD_PAD_AFTER_MIN: ${LIVETV_RECORD_PAD_AFTER_MIN:-}
+      LIVETV_RECORD_MAX_PARALLEL: ${LIVETV_RECORD_MAX_PARALLEL:-}
       # <<< Admin -> Settings
     # root fs is read-only. PREVIEWS_PATH / DOWNLOADS_PATH: named volume by default, or a host folder
     # (e.g. /mnt/data/friendflix/downloads, must be writable by uid 1000) - see docs/downloads.md "Speicherort"
@@ -275,9 +283,11 @@ services:
       METRICS_TOKEN: ${METRICS_TOKEN:-}
       DOWNLOAD_DIR: /data/downloads
       LIVETV_URL: ${LIVETV_URL:-http://livetv:8090} # the optional livetv service (profile livetv); serves /media/l/<token>/...
+      RECORDINGS_DIR: /data/recordings # Live TV recordings (serves /media/r/<token>/...); an empty volume while Live TV is off
     group_add: ["10001"] # reads bootstrap-gateway (internal_secret only: never the database password or the encryption key)
     volumes:
       - ${DOWNLOADS_PATH:-downloads}:/data/downloads:ro # same folder as the backend, read-only
+      - ${RECORDINGS_PATH:-recordings}:/data/recordings:ro # the folder livetv records into, read-only (livetv alone writes it)
       - bootstrap-gateway:/run/friendflix-gateway:ro
     depends_on:
       bootstrap: { condition: service_completed_successfully }

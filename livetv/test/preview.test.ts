@@ -149,7 +149,7 @@ describe('GET /v1/streams/:channelId/preview.jpg', () => {
     const previews = new Previews({ run });
     streams = new Streams({
       root: '/cache', maxBytes: 1024 ** 3, drivers: { remux: manual }, store: mem.store, log: (m) => logs.push(m),
-      onSegment: (id, path) => previews.segment(id, path), onStop: (id) => previews.drop(id),
+      onSegment: (id, seg) => previews.segment(id, seg.path), onStop: (id) => previews.drop(id),
     });
     const app = createApp({
       verifier: { key, cache: new ReplayCache(), notBefore: Date.now() - 1000 }, version: null, bootId: '0123456789abcdef',

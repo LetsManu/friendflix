@@ -18,6 +18,7 @@ import {
   ChannelRefusal, LOGO_MAX_BYTES, LOGO_MIMES, MAX_BULK_TEST, adminChannel, bulkBody, bulkChannels, bulkTest, channelPatch, channelQuery, dropLogo, epgSearchQuery,
   listChannels, orderBody as channelOrderBody, orderChannels, patchChannel, importDueFor, readEpgPin, searchEpgChannels, setEpgPin, setLogo, testChannel,
 } from './adminChannels.js';
+import { recordingAdminRoutes } from './recroutes.js';
 import { liveStatus, readHwAccel, stopStream } from './status.js';
 import { CHANNEL_SELECT, isOwnFeeds, toEffective, type EffectiveRow } from './channels.js';
 import { isHomeRequest } from '../netaddr.js';
@@ -87,6 +88,7 @@ function parse<T>(schema: z.ZodType<T>, body: unknown, reply: Reply): T | undefi
  * field names only.
  */
 export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
+  recordingAdminRoutes(app, ctx); // Phase 3: Admin → Aufnahmen
   const admin = { preHandler: requireAdmin(ctx) };
   // hook preHandler: the limiter runs after requireAdmin, so nobody but an admin can use up the portal-wide budget
   const limited = { ...admin, config: { rateLimit: { max: 3, timeWindow: '2 minutes', keyGenerator: () => 'livetv', hook: 'preHandler' as const } } };

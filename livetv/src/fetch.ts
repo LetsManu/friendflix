@@ -27,8 +27,38 @@ export type GuardDeps = { lookup(h: string): Promise<string[]>; own: readonly Ci
  * Internal only: never put it in an error, a log line or an answer.
  */
 export type GuardedResponse = { status: number; url: string; headers: Record<string, string>; body: AsyncIterable<Uint8Array> };
-/** `signal`: the caller's own abort (its client went away); it ends the fetch and its body at once, like the timeout does */
-export type FetchOptions = { allowLan: boolean; userAgent?: string; timeoutMs: number; connectTimeoutMs?: number; maxBytes: number; signal?: AbortSignal };
+/**
+ * `signal`: the caller's own abort (its client went away); it ends the fetch and its body at once, like the timeout does. `pool`:
+ * the connections of one run (createPool); without it every request is a connection of its own, as before.
+ */
+export type FetchOptions = { allowLan: boolean; userAgent?: string; timeoutMs: number; connectTimeoutMs?: number; maxBytes: number; signal?: AbortSignal; pool?: Pool };
+
+/**
+ * The connections of one run of a live input (H1 item 4): one kept-alive connection per host, to the address checked once for the
+ * run, so its playlist polls and segment fetches stay on one CDN edge instead of a new connection (and DNS answer) for each, where
+ * consecutive reads land on different nodes and one of them is behind. The guard is the same: each host is checked by
+ * `resolveChecked` before its first connection, and only that checked address is ever connected to (no second DNS answer for the
+ * whole run, so no rebinding either). A body not read to its end closes its connection; `destroy()` closes the rest (the run's
+ * end). One pool serves one input, so the input's `allowLan` holds for every request through it.
+ */
+export interface Pool {
+  readonly http: http.Agent;
+  readonly https: https.Agent;
+  /**
+   * `<allowLan>|<host>` → the check of its address, kept as the promise: the first concurrent requests (the video and audio
+   * playlists of a pair) wait for one lookup, so a host never gets two pinned addresses (review M4). A refused one is not kept.
+   */
+  readonly ips: Map<string, Promise<string>>;
+  destroy(): void;
+}
+export function createPool(): Pool {
+  const o = { keepAlive: true, keepAliveMsecs: 1_000, maxFreeSockets: 4, scheduling: 'lifo' as const };
+  const pool: Pool = {
+    http: new http.Agent(o), https: new https.Agent(o), ips: new Map(),
+    destroy: () => { pool.http.destroy(); pool.https.destroy(); pool.ips.clear(); },
+  };
+  return pool;
+}
 
 export const CONNECT_TIMEOUT_MS = 10_000;
 export const MAX_REDIRECTS = 3;
@@ -62,7 +92,18 @@ async function withinBudget<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
 /** one GET to the checked address of `url`; resolves with the response head */
 async function requestOnce(url: URL, o: FetchOptions, deps: GuardDeps, signal: AbortSignal): Promise<http.IncomingMessage> {
   const host = url.hostname.replace(/^\[(.*)\]$/, '$1');
-  const ip = await withinBudget(resolveChecked(host, o.allowLan, deps), signal);
+  // a run's pool checks each host once and keeps that address for the run (one edge); without one, every request resolves anew
+  const key = `${o.allowLan}|${host}`;
+  let check = o.pool?.ips.get(key);
+  if (!check) {
+    check = resolveChecked(host, o.allowLan, deps);
+    if (o.pool) {
+      const pool = o.pool;
+      pool.ips.set(key, check);
+      check.catch(() => { if (pool.ips.get(key) === check) pool.ips.delete(key); });
+    }
+  }
+  const ip = await withinBudget(check, signal);
   const secure = url.protocol === 'https:';
   const port = url.port ? Number(url.port) : secure ? 443 : 80;
   const target = deps.dial ? deps.dial(ip, port) : ip;
@@ -75,7 +116,7 @@ async function requestOnce(url: URL, o: FetchOptions, deps: GuardDeps, signal: A
   const headers: Record<string, string> = { host: url.host, accept: '*/*' };
   if (o.userAgent) headers['user-agent'] = o.userAgent;
   const options: https.RequestOptions = {
-    method: 'GET', port, path: `${url.pathname}${url.search}`, headers, agent: false, signal,
+    method: 'GET', port, path: `${url.pathname}${url.search}`, headers, agent: o.pool ? (secure ? o.pool.https : o.pool.http) : false, signal,
     // a literal never goes through `lookup`, so it is replaced directly (equal to `host` unless the test hook maps it)
     ...(isIP(host) ? { hostname: target } : { hostname: host, lookup }),
     ...(url.username || url.password ? { auth: `${decode(url.username)}:${decode(url.password)}` } : {}),
@@ -93,20 +134,25 @@ async function requestOnce(url: URL, o: FetchOptions, deps: GuardDeps, signal: A
   });
 }
 
-/** the body as a stream that stops at `maxBytes` (`too_big`) and fails with fixed codes only */
+/**
+ * the body as a stream that stops at `maxBytes` (`too_big`) and fails with fixed codes only. A body read to its end leaves its
+ * connection open (a pool then reuses it); any other end closes it.
+ */
 async function* readBody(res: http.IncomingMessage, maxBytes: number, signal: AbortSignal, done: () => void): AsyncGenerator<Uint8Array> {
   let n = 0;
+  let complete = false;
   try {
     for await (const c of res as AsyncIterable<Buffer>) {
       n += c.length;
       if (n > maxBytes) throw new FetchError('too_big');
       yield c;
     }
+    complete = res.complete;
   } catch (e) {
     throw failure(e, signal);
   } finally {
     done();
-    res.destroy();
+    if (!complete) res.destroy();
   }
 }
 

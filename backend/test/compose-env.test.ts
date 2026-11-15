@@ -147,6 +147,15 @@ describe.each(['compose.prod.yaml', 'compose.yaml'])('%s livetv', (file) => {
     expect(b).not.toMatch(/bootstrap:\/run/);
   });
 
+  it('recordings (Phase 3): livetv writes the recordings folder, the gateway reads it read-only, the backend never mounts it', () => {
+    expect(service(src, 'gateway')).toContain('${RECORDINGS_PATH:-recordings}:/data/recordings:ro');
+    expect(service(src, 'gateway')).toContain('RECORDINGS_DIR: /data/recordings');
+    expect(service(src, 'backend')).not.toMatch(/recordings/);
+    const writers = src.split(/\n {2}(?=[a-z-]+:\n)/).slice(1).filter((b) => /RECORDINGS_PATH:-recordings\}:\/[a-z/]+(?!:ro)\s/.test(b)).map((b) => b.split(':')[0]);
+    expect(writers).toEqual(['livetv']);
+    expect(src.slice(src.indexOf('\nvolumes:\n'))).toMatch(/^ {2}recordings:/m);
+  });
+
   it('only the bootstrap service writes the livetv key volume, only livetv reads it', () => {
     expect(service(src, 'bootstrap')).toContain('bootstrap-livetv:/run/friendflix-livetv\n');
     const users = src.split(/\n {2}(?=[a-z-]+:\n)/).slice(1).filter((b) => b.includes('bootstrap-livetv:/run')).map((b) => b.split(':')[0]);
@@ -187,6 +196,14 @@ describe('livetv GPU overlays', () => {
     expect(src).toContain('devices: ["/dev/dri:/dev/dri"]');
     expect(src).toContain('group_add: ["${RENDER_GID:?');
     expect(src).not.toMatch(/profiles:/);
+  });
+  it('compose.livetv-library.yaml mounts only the dedicated library sub-folder into livetv, read-write; it needs RECORDINGS_LIBRARY_PATH', () => {
+    const src = read('compose.livetv-library.yaml');
+    expect(src).toMatch(/^# SPDX-License-Identifier: AGPL-3.0-or-later$/m);
+    expect(src).toMatch(/^ {2}livetv:$/m);
+    expect(src).toContain('- ${RECORDINGS_LIBRARY_PATH:?set RECORDINGS_LIBRARY_PATH, e.g. ./media/Aufnahmen}:/library:rw');
+    expect(src).not.toMatch(/MEDIA_PATH|docker\.sock|profiles:/);
+    expect(src.split('\n').filter((l) => /^ {2}[a-z]/.test(l))).toEqual(['  livetv:']); // no other service gains a mount
   });
   it('compose.livetv-nvidia.yaml reserves one nvidia GPU with the video capability', () => {
     const src = read('compose.livetv-nvidia.yaml');
