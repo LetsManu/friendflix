@@ -5,11 +5,11 @@
  * write. livetv is a fake (`ctx.fetchImpl`). Fictional people, channels and titles only.
  */
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetConvMemo } from '../src/convbudget.js';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { detectLivetv } from '../src/livetv/detect.js';
-import { forecast } from '../src/livetv/recsched.js';
+import { forecast, livetvRecordTick } from '../src/livetv/recsched.js';
 import { invalidateLivetvRights } from '../src/livetv/rights.js';
 import { invalidateLiveConversions, invalidateRecordingUses, recordingUses } from '../src/livetv/streams.js';
 import { invalidateRights } from '../src/rights.js';
@@ -31,6 +31,8 @@ const MIN = 60_000;
 const HOUR = 3_600_000;
 
 const calls: Call[] = [];
+/** every line the app logged (A-M12) */
+const logLines: string[] = [];
 const recorders = new Set<string>();
 function fakeLivetv() {
   env.ctx.fetchImpl = fakeHttp({
@@ -89,7 +91,7 @@ async function row(o: Record<string, unknown>): Promise<string> {
 const iso = (t: number) => new Date(t).toISOString();
 
 beforeAll(async () => {
-  env = await makeEnv();
+  env = await makeEnv({}, { logger: { stream: { write: (l: string) => { logLines.push(l); } }, level: 'trace' } });
   admin = await env.login();
   anna = await person(annaId, 'anna', 'Anna Beispiel', 'family');
   ben = await person(benId, 'ben', 'Ben Muster', 'friend');
@@ -369,14 +371,28 @@ describe('changing and deleting', () => {
   });
 
   it('no answer or log line contains a stream URL', async () => {
-    await prog('Nordlicht TV.de', T());
+    const lines: string[] = [];
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((k) => vi.spyOn(console, k).mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); }));
+    const from = logLines.length;
     const answers: string[] = [];
-    const p = await call(anna, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(T()) });
-    answers.push(p.body);
-    answers.push((await call(anna, 'GET', '/api/livetv/recordings')).body);
-    answers.push((await call(anna, 'GET', `/api/livetv/programme/${nordlicht}/${iso(T())}`)).body);
-    answers.push((await call(admin, 'GET', '/api/admin/livetv/recordings')).body);
-    for (const a of answers) expect(a).not.toMatch(/iptv\.example\.com|geheim|\/recordings\/[0-9a-f]{8}-/);
-    expect(answers.join('')).not.toContain((await env.pool.query('select dir from livetv_recordings')).rows[0].dir);
+    try {
+      await prog('Nordlicht TV.de', T());
+      const p = await call(anna, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(T()) });
+      answers.push(p.body);
+      // a finished recording: its playback, the tick and its delete go through the log paths too
+      const done = await row({ state: 'done', mode: 'passthrough', segments: 'ts', bytes: 1000, start_at: new Date(Date.now() - 2 * HOUR), end_at: new Date(Date.now() - HOUR) });
+      await env.kv.del('ltv:rectick');
+      await livetvRecordTick(env.ctx);
+      answers.push((await call(anna, 'POST', `/api/livetv/recordings/${done}/play`, {})).body);
+      answers.push((await call(anna, 'GET', '/api/livetv/recordings')).body);
+      answers.push((await call(anna, 'GET', `/api/livetv/programme/${nordlicht}/${iso(T())}`)).body);
+      answers.push((await call(admin, 'GET', '/api/admin/livetv/recordings')).body);
+      answers.push((await call(anna, 'DELETE', `/api/livetv/recordings/${done}`)).body);
+    } finally { for (const s of spies) s.mockRestore(); }
+    const logged = [...logLines.slice(from), ...lines];
+    expect(logged.length).toBeGreaterThan(0); // the capture works
+    // a recording id in a route is fine; a folder below the recordings volume is not
+    for (const a of [...answers, ...logged]) expect(a).not.toMatch(/iptv\.example\.com|geheim|(?<!\/livetv)\/recordings\/[0-9a-f]{8}-/);
+    for (const { dir } of (await env.pool.query<{ dir: string }>('select dir from livetv_recordings')).rows) expect([...answers, ...logged].join('')).not.toContain(dir);
   });
 });
