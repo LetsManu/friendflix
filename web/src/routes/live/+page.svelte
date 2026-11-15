@@ -19,6 +19,9 @@
   import { channelOrder, type LiveFilter } from '#lib/live/order';
   import { watchPath } from '#lib/live/progress';
   import TvLiveList from '#lib/live/TvLiveList.svelte';
+  import RecordingsRow from '#lib/live/RecordingsRow.svelte';
+  import { listRecordings, type Recording } from '#lib/live/recordings';
+  import { perms } from '#lib/perms';
 
   /**
    * /live (spec §11): the favourites row, the group chips and the channel grid on desktop and phone; the 10-foot list on a TV
@@ -26,6 +29,8 @@
    * player of the profile's last channel, or the list when there is none.
    * The list is fetched with its ETag and refreshed every 30 s (and when the tab comes back), so a minute of programme data
    * arrives without a reload; the layout reserves every slot (rows, lines, the time-left slot), so arriving data moves nothing.
+   * The *Aufnahmen* row (Phase 3 Task 8) sits below the channels on every layout (kids: read-only shares), so its arrival moves
+   * nothing above it; it refreshes with the list.
    */
   const REFRESH_MS = 30_000;
   const page = pageStore();
@@ -38,7 +43,14 @@
   /** the shell turned the TV layout on (html.tv): paired TVs, or the `?tv=1` preview */
   let tvMode = false;
 
+  /** the recordings this profile sees (null while loading); a refresh that fails keeps what is on screen */
+  let recs: Recording[] | null = null;
+  $: canRecord = $perms.liveRecord && !$kidsMode;
+  async function loadRecs(): Promise<void> {
+    try { recs = (await listRecordings('all')).recordings; } catch { recs ??= []; }
+  }
   async function load(): Promise<void> {
+    void loadRecs();
     if (busy) return;
     busy = true;
     try {
@@ -130,14 +142,15 @@
       <button type="button" class="sec" on:click={retry}>{$t('live.player.retry')}</button>
     </div>
   {:else if $kidsMode}
-    <KidsLive channels={shown} {favs} now={$minute} loading={loading || playing} none={!!list && !list.channels.length} on:open={(e) => open(e.detail)} on:star={(e) => toggleStar(e.detail)} on:order={(e) => openOrder(e.detail)} />
+    <KidsLive channels={shown} {favs} recordings={recs} now={$minute} loading={loading || playing} none={!!list && !list.channels.length} on:open={(e) => open(e.detail)} on:star={(e) => toggleStar(e.detail)} on:order={(e) => openOrder(e.detail)} />
   {:else if tvMode}
-    <TvLiveList channels={shown} all={list?.channels ?? []} {favs} {groups} {filter} recent={recent.length > 0} last={list?.last?.id ?? null} now={$minute} loading={loading || playing} none={!!list && !list.channels.length}
+    <TvLiveList channels={shown} all={list?.channels ?? []} {favs} {groups} {filter} recent={recent.length > 0} last={list?.last?.id ?? null} now={$minute} loading={loading || playing} none={!!list && !list.channels.length} recordings={recs} {canRecord}
       on:open={(e) => open(e.detail)} on:star={(e) => toggleStar(e.detail)} on:select={(e) => (filter = e.detail)} on:order={(e) => openOrder(e.detail)} />
   {:else}
     <FavTiles channels={favs} now={$minute} {loading} on:open={(e) => open(e.detail)} on:order={(e) => openOrder(e.detail)} />
     <GroupChips {groups} value={filter} recent={recent.length > 0} {loading} on:select={(e) => (filter = e.detail)} />
     <LiveList_ channels={shown} now={$minute} {loading} {filter} none={!!list && !list.channels.length} on:open={(e) => open(e.detail)} on:star={(e) => toggleStar(e.detail)} />
+    <RecordingsRow recordings={recs} {canRecord} />
   {/if}
 </div>
 

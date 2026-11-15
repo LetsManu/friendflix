@@ -7,7 +7,8 @@
    * container is detected the area appears without a reload. Installed: the area's tabs in the URL (`?tab=`, spec §9; *Quellen* is
    * the default and has no parameter; on a phone the tabs are a scrolling chip row): *Quellen* (SourcesTab), *Kanäle*, *Gruppen &
    * Rechte*, *Programmführer* (GuideTab: the match counts; Tasks 23–25 fill the others), *Live-Status* (StatusTab: budget, tiles, running
-   * channels, events, pushed streams, version, GPU advice, the speed measurement's outcome, "Live-TV ausschalten …") and *Einstellungen* (SettingsTab: the four LIVETV_* settings through the settings API, the SRT ports read-only). The shell and the page's cards own the <h1> / <title>.
+   * channels, events, pushed streams, version, GPU advice, the speed measurement's outcome, "Live-TV ausschalten …"), *Aufnahmen*
+   * (RecordingsTab, Phase 3: storage mode, library, limits, the list, delete all) and *Einstellungen* (SettingsTab: the four LIVETV_* settings through the settings API, the SRT ports read-only). The shell and the page's cards own the <h1> / <title>.
    */
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -22,6 +23,7 @@
   import GuideTab from '#lib/admin/livetv/GuideTab.svelte';
   import GroupsTab from '#lib/admin/livetv/GroupsTab.svelte';
   import OffDialog from '#lib/admin/livetv/OffDialog.svelte';
+  import RecordingsTab from '#lib/admin/livetv/RecordingsTab.svelte';
   import SettingsTab from '#lib/admin/livetv/SettingsTab.svelte';
   import SourcesTab from '#lib/admin/livetv/SourcesTab.svelte';
   import StatusTab from '#lib/admin/livetv/StatusTab.svelte';
@@ -134,6 +136,7 @@
     {:else if tab === 'channels'}<ChannelsTab />
     {:else if tab === 'groups'}<GroupsTab />
     {:else if tab === 'guide'}<GuideTab />
+    {:else if tab === 'recordings'}<RecordingsTab />
     {:else if tab === 'settings'}<SettingsTab />
     {:else}<StatusTab {s} stopping={ph === 'stopping'} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />{/if}
   </div>

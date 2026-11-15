@@ -694,12 +694,17 @@ describe('Favoriten ordnen sheet (Task 38)', () => {
 describe('Live-TV tab surfaces', () => {
   const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
   const styleOf = (src: string) => [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
-  const dirs = [fileURLToPath(new URL('../live/', import.meta.url)), fileURLToPath(new URL('../../routes/live/', import.meta.url))];
+  // the recordings pages (Phase 3 Task 8/9) live one and two levels below routes/live
+  const dirs = [fileURLToPath(new URL('../live/', import.meta.url)), fileURLToPath(new URL('../../routes/live/', import.meta.url)),
+    fileURLToPath(new URL('../../routes/live/recordings/', import.meta.url)), fileURLToPath(new URL('../../routes/live/recordings/[id]/', import.meta.url))];
   const files = dirs.flatMap((d) => readdirSync(d).filter((f) => f.endsWith('.svelte')).map((f) => join(d, f)));
 
   it('the scan sees the live components', () => {
     const names = files.map((f) => f.split(sep).pop());
     expect(names).toEqual(expect.arrayContaining(['ChannelRow.svelte', 'FavTiles.svelte', 'GroupChips.svelte', 'LiveList.svelte', '+page.svelte']));
+    // the recordings UI (Phase 3 Tasks 7–9)
+    expect(names).toEqual(expect.arrayContaining(['RecordSheet.svelte', 'RecordingsRow.svelte', 'RecordingItem.svelte', 'TimeRecordSheet.svelte']));
+    expect(files.filter((f) => f.includes(`recordings${sep}`) && f.endsWith('+page.svelte'))).toHaveLength(2);
   });
 
   it('they animate transform and opacity only, and none of them uses a colour, background or layout transition', () => {
@@ -741,7 +746,7 @@ describe('Live-TV tab surfaces', () => {
 /** Live-TV → Live-Status and Programmführer (Task 26): the stylesheet scan reaches the new files too (glass spec constraints) */
 describe('Live-TV status and guide tabs (Task 26)', () => {
   const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
-  const files = ['./livetv/StatusTab.svelte', './livetv/GuideTab.svelte'];
+  const files = ['./livetv/StatusTab.svelte', './livetv/GuideTab.svelte', './livetv/RecordingsTab.svelte'];
   const cssOf = (f: string) => [...read(f).matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
 
   it('they animate nothing but transform and opacity (no keyframes, no colour, background or layout transition)', () => {

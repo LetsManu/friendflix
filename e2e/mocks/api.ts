@@ -491,6 +491,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (/^\/api\/items\/[^/]+\/extras\/all$/.test(p)) return J({ items: [] }); // Extras tab (block 15): specs with extras mock it themselves
     // Block 17 P1 (player): no chapters / no cast by default; player-scenes specs mock both themselves
     if (/^\/api\/items\/[^/]+\/chapters$/.test(p)) return J({ supported: true, chapters: [] });
+    // a recording (`rec:<uuid>`) is no library item: asking for its cast & info is a bug (review W-I3), so it counts as unmocked
+    if (p.startsWith('/api/items/rec:')) { st.unmocked.add(`${m} ${p}`); return J({ error: 'not_found' }, 404); }
     if (/^\/api\/items\/[^/]+\/castinfo$/.test(p)) return J({ item: { id: p.split('/')[3], name: '', type: 'Movie' }, cast: [], guests: [], directors: [], writers: [], creators: [], studios: [], genres: [], tags: [] });
     if (p === '/api/hubs') return J({ hubs: [] }); // brand hub tiles (block 15): specs with hubs mock it themselves
     if ((mm = p.match(/^\/api\/items\/([^/]+)\/reactions$/))) {

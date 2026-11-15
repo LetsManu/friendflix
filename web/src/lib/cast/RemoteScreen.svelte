@@ -74,7 +74,7 @@
   let fetched: Item | undefined;
   $: item = s ? cachedItem(s.itemId) ?? (fetched?.id === s.itemId ? fetched : undefined) : undefined;
   let askedFor = ''; // one request per title, also when it fails
-  $: if (s && !s.live && s.itemId !== askedFor && !cachedItem(s.itemId)) { askedFor = s.itemId; void loadItem(s.itemId); }
+  $: if (s && !s.live && !s.rec && s.itemId !== askedFor && !cachedItem(s.itemId)) { askedFor = s.itemId; void loadItem(s.itemId); } // a recording is no library item
   async function loadItem(id: string) {
     try { const r = await api<{ item: Item }>(`/api/items/${id}`); if (get(castSession)?.itemId === id) fetched = r.item; } catch { /* the session's own subtitle */ }
   }

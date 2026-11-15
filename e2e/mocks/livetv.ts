@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Route } from '@playwright/test';
-import { HLS_INIT, HLS_SEGMENTS } from './hls.js';
+import { HLS_INIT, HLS_PLAYLIST, HLS_SEGMENTS } from './hls.js';
 import { png } from './png.js';
 
 /**
@@ -13,11 +13,26 @@ import { png } from './png.js';
  * Fixed fictional data around Thursday 2026-11-12 20:37 local time (the specs install a fake clock there): programmes are built from
  * local clock times, so they fit in any time zone. Every channel carries `groupPos` (the position of its group).
  */
-export interface MockProg { title: string; start: string; end: string; subtitle?: string }
+export interface MockProg { title: string; start: string; end: string; subtitle?: string; description?: string; episode?: string }
 export interface MockChannel {
   id: string; number: number; name: string; logo: string | null; groupId: string | null; running: boolean; receiving?: boolean;
   epg: 'ok' | 'gap' | 'none'; preview?: string; now?: MockProg; next?: MockProg; favourite: boolean; groupPos?: number;
 }
+/** a recording as the backend answers it (web/src/lib/live/recordings.ts `Recording`) */
+export interface MockRecording {
+  id: string; title: string; subtitle: string | null; episode: string | null; channel: { id: string | null; name: string; logo: string | null };
+  start: string; end: string; padBefore: number; padAfter: number; state: 'scheduled' | 'recording' | 'done' | 'partial' | 'failed' | 'cancelled';
+  error: string | null; gaps: number; durationS: number | null; bytes: number; keep: boolean; visibility: 'private' | 'account' | 'everyone'; mine: boolean;
+  seriesKey: string | null; ruleId: string | null; positionS: number; watched: boolean; deleteAfter: string | null; storage: 'ff' | 'library'; growing: boolean;
+  /** an own planned recording: the forecast's verdict (the *Konflikt* chip of *Geplant*) */
+  conflict?: boolean | null;
+}
+export interface MockRule {
+  id: string; kind: 'series' | 'time'; channelId: string | null; seriesKey: string | null; title: string; onlyNew: boolean; keepMax: number | null;
+  padBefore: number | null; padAfter: number | null; weekdays: number[] | null; startTime: string | null; durationMin: number | null; tz: string | null; enabled: boolean;
+}
+export interface MockForecast { slots: { used: number; limit: number }; parallel: { used: number; max: number }; provider: { used: number; max: number } | null; conflict: boolean }
+
 export interface LivetvMock {
   /** GET /api/livetv/channels answers this (`favourite` of a channel follows `favourites`) */
   groups: Array<{ id: string; name: string }>;
@@ -76,6 +91,32 @@ export interface LivetvMock {
   timeShift: number;
   /** when the sliding playlist's first segment started (ms since epoch, real clock), set on the first request unless a spec sets it */
   liveStart: number | null;
+  // ---- recordings (Phase 3, backend livetv/recroutes.ts) ----
+  /** GET /api/livetv/recordings answers these (newest first as given) */
+  recordings: MockRecording[];
+  rules: MockRule[];
+  /** POST /api/livetv/recordings and POST /api/livetv/rules without `force` answer 409 `conflict` with this forecast */
+  recConflict: MockForecast | null;
+  /** recording writes, "METHOD /path body" */
+  recCalls: string[];
+  /** the clock the mock decides scheduled vs. recording by (the specs' fake page clock) */
+  recNow: number;
+  /** POST …/play answers this instead of a token (410 gone, 409 not_ready …) */
+  recPlayError: { status: number; body: Record<string, unknown> } | null;
+  /** /media/r/<token>/… answers this status instead (410: the recording was deleted) */
+  recMediaStatus: number;
+  /** POST …/progress bodies, with the recording id */
+  recProgress: Array<{ id: string; positionS: number; played?: boolean }>;
+  /** POST …/play: the recording ids and the `via` sent ('' = none) */
+  recPlays: Array<{ id: string; via: string }>;
+  /** a growing recording's EVENT playlist: when its first segment was written (real clock), set on the first request */
+  recGrowStart: number | null;
+  /** the admin's padding defaults (minutes) the list and the programme detail carry */
+  recPadDefaults: { before: number; after: number };
+  /** *Behalten → in Bibliothek* is possible (storage mode `both` with a library) */
+  recLibraryExport: boolean;
+  /** the list requests, with their query (`state=…&conflicts=1`) */
+  recLists: string[];
 }
 
 const at = (h: number, m: number): string => new Date(2026, 10, 12, h, m, 0, 0).toISOString();
@@ -127,6 +168,19 @@ export function livetvState(): LivetvMock {
     dvrPlaylist: false,
     timeShift: 0,
     liveStart: null,
+    recordings: [],
+    rules: [],
+    recConflict: null,
+    recCalls: [],
+    recNow: new Date(2026, 10, 12, 20, 37, 10).getTime(),
+    recPlayError: null,
+    recMediaStatus: 200,
+    recProgress: [],
+    recPlays: [],
+    recGrowStart: null,
+    recPadDefaults: { before: 2, after: 5 },
+    recLibraryExport: false,
+    recLists: [],
   };
   return st;
 }
@@ -137,6 +191,139 @@ export function patchChannel(st: LivetvMock, id: string, patch: Partial<MockChan
   st.version++;
 }
 export const progAt = prog;
+
+let recSeq = 0;
+/** a recording of the fixtures (a finished *Die Leuchtturmwärter* on Nordlicht TV unless `o` says otherwise) */
+export function mockRecording(o: Partial<MockRecording> = {}): MockRecording {
+  recSeq++;
+  return {
+    id: `00000000-0000-4000-8000-${String(recSeq).padStart(12, '0')}`, title: 'Die Leuchtturmwärter', subtitle: null, episode: null,
+    channel: { id: 'ch-nord', name: 'Nordlicht TV', logo: logo('ch-nord') }, start: at(20, 15), end: at(21, 0), padBefore: 2, padAfter: 5,
+    state: 'done', error: null, gaps: 0, durationS: 30, bytes: 2_700_000_000, keep: false, visibility: 'private', mine: true,
+    seriesKey: 'die leuchtturmwärter', ruleId: null, positionS: 0, watched: false, deleteAfter: null, storage: 'ff', growing: false, ...o,
+  };
+}
+const FORECAST_OK: MockForecast = { slots: { used: 0, limit: 2 }, parallel: { used: 1, max: 4 }, provider: null, conflict: false };
+const DESCRIPTION = 'Zwei Wärter, eine Insel und ein Licht, das nie ausgehen darf.';
+const keyOf = (title: string) => title.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+
+/** the recording routes of the profile (`/api/livetv/programme/…`, `/recordings*`, `/rules*`); null = not one of them */
+function recordingRoute(st: LivetvMock, m: string, p: string, body: any, J: Reply, route: Route): Promise<void> | null {
+  const none = () => route.fulfill({ status: 204 });
+  let mm: RegExpMatchArray | null;
+  const log = () => st.recCalls.push(`${m} ${p}${body && Object.keys(body).length ? ` ${JSON.stringify(body)}` : ''}`);
+  if ((mm = p.match(/^\/api\/livetv\/programme\/([^/]+)\/([^/]+)$/)) && m === 'GET') {
+    const c = st.channels.find((x) => x.id === decodeURIComponent(mm![1]!));
+    const start = Date.parse(decodeURIComponent(mm[2]!));
+    const pr = c && [c.now, c.next].find((x) => x && Date.parse(x.start) === start);
+    if (!c || !pr) return J({ error: 'not_found' }, 404);
+    const seriesKey = keyOf(pr.title);
+    const r = st.recordings.find((x) => x.mine && x.channel.id === c.id && Date.parse(x.start) === start && x.state !== 'cancelled');
+    const rule = st.rules.find((x) => x.kind === 'series' && x.seriesKey === seriesKey && (x.channelId === null || x.channelId === c.id));
+    return J({
+      channelId: c.id, start: pr.start, end: pr.end, title: pr.title, ...(pr.subtitle ? { subtitle: pr.subtitle } : {}), description: pr.description ?? DESCRIPTION,
+      ...(pr.episode ? { episode: pr.episode } : {}), seriesKey, ...(r ? { recording: { id: r.id, state: r.state } } : {}), ...(rule ? { rule: { id: rule.id } } : {}), canRecord: true, padDefaults: st.recPadDefaults,
+    });
+  }
+  if (p === '/api/livetv/recordings' && m === 'GET') {
+    const q = new URL(route.request().url()).searchParams;
+    st.recLists.push(q.toString());
+    // the conflict forecast only when asked (backend: `?conflicts=1`)
+    const recordings = st.recordings.filter((r) => r.state !== 'cancelled').map((r) => (q.get('conflicts') === '1' ? r : (({ conflict: _c, ...rest }) => rest)(r)));
+    return J({ recordings, rules: st.rules, padDefaults: st.recPadDefaults, libraryExport: st.recLibraryExport });
+  }
+  if (p === '/api/livetv/recordings' && m === 'POST') {
+    log();
+    const c = st.channels.find((x) => x.id === body?.channelId);
+    if (!c) return J({ error: 'not_found' }, 404);
+    if (st.recConflict && !body.force) return J({ error: 'conflict', forecast: st.recConflict }, 409);
+    const start = Date.parse(body.start);
+    const pr = [c.now, c.next].find((x) => x && Date.parse(x.start) === start);
+    const end = pr ? Date.parse(pr.end) : Date.parse(body.end);
+    const running = start <= st.recNow && st.recNow < end;
+    const r = mockRecording({
+      title: pr?.title ?? body.title, channel: { id: c.id, name: c.name, logo: c.logo }, start: new Date(start).toISOString(), end: new Date(end).toISOString(),
+      state: running ? 'recording' : 'scheduled', growing: running, durationS: running ? 30 : null, bytes: running ? 1 : 0, seriesKey: pr ? keyOf(pr.title) : null,
+      padBefore: body.padBefore ?? 2, padAfter: body.padAfter ?? 5,
+    });
+    st.recordings = [r, ...st.recordings];
+    return J({ recording: r, ...(st.recConflict ? { forecast: st.recConflict } : {}) }, 201);
+  }
+  if ((mm = p.match(/^\/api\/livetv\/recordings\/([^/]+)$/))) {
+    const id = decodeURIComponent(mm[1]!);
+    const r = st.recordings.find((x) => x.id === id);
+    if (m === 'GET') return r ? J({ recording: r }) : J({ error: 'not_found' }, 404);
+    if (m === 'PATCH') {
+      log();
+      if (!r) return J({ error: 'not_found' }, 404);
+      const next = { ...r, ...(body.keep !== undefined ? { keep: body.keep } : {}), ...(body.visibility ? { visibility: body.visibility } : {}),
+        ...(body.padBefore !== undefined ? { padBefore: body.padBefore } : {}), ...(body.padAfter !== undefined ? { padAfter: body.padAfter } : {}) };
+      st.recordings = st.recordings.map((x) => (x.id === id ? next : x));
+      return J({ recording: next });
+    }
+    if (m === 'DELETE') {
+      log();
+      if (!r) return J({ error: 'not_found' }, 404);
+      st.recordings = r.state === 'scheduled' ? st.recordings.map((x) => (x.id === id ? { ...x, state: 'cancelled' as const } : x)) : st.recordings.filter((x) => x.id !== id);
+      return none();
+    }
+  }
+  if ((mm = p.match(/^\/api\/livetv\/recordings\/([^/]+)\/play$/)) && m === 'POST') {
+    const id = decodeURIComponent(mm[1]!);
+    st.recPlays.push({ id, via: typeof body?.via === 'string' ? body.via : '' });
+    if (st.recPlayError) return J(st.recPlayError.body, st.recPlayError.status);
+    const r = st.recordings.find((x) => x.id === id);
+    if (!r) return J({ error: 'not_found' }, 404);
+    const via = typeof body?.via === 'string' ? body.via : '';
+    // every mint is a new token (a later play after a stop gets `-2`, `-3` …)
+    const n = st.recPlays.filter((x) => x.id === id && x.via === via).length;
+    const tok = `rtok-${r.id.slice(-4)}${via === 'chromecast' ? '-cc' : via === 'airplay' ? '-ap' : ''}${n > 1 ? `-${n}` : ''}`;
+    return J({ token: tok, url: `/media/r/${tok}/index.m3u8`, growing: r.state === 'recording', segments: 'fmp4', durationS: r.durationS, positionS: r.positionS, expiresAt: Date.now() + 3_600_000 });
+  }
+  if ((mm = p.match(/^\/api\/livetv\/recordings\/([^/]+)\/progress$/)) && m === 'POST') {
+    const id = decodeURIComponent(mm[1]!);
+    st.recProgress.push({ id, positionS: body.positionS, ...(body.played ? { played: true } : {}) });
+    st.recordings = st.recordings.map((x) => (x.id === id ? { ...x, positionS: body.positionS } : x));
+    return J({ ok: true });
+  }
+  if ((mm = p.match(/^\/api\/livetv\/recordings\/([^/]+)\/library$/)) && m === 'POST') {
+    log();
+    const id = decodeURIComponent(mm[1]!);
+    st.recordings = st.recordings.map((x) => (x.id === id ? { ...x, keep: true } : x));
+    return J({ recording: st.recordings.find((x) => x.id === id) });
+  }
+  if (p === '/api/livetv/rules' && m === 'GET') return J({ rules: st.rules });
+  if (p === '/api/livetv/rules' && m === 'POST') {
+    log();
+    if (st.recConflict && body.kind === 'time' && !body.force) { /* rules never refuse: the forecast rides along */ }
+    const rule: MockRule = {
+      id: `00000000-0000-4000-9000-${String(st.rules.length + 1).padStart(12, '0')}`, kind: body.kind, channelId: body.channelId ?? null, seriesKey: body.kind === 'series' ? body.seriesKey : null,
+      title: body.title, onlyNew: body.kind === 'series' ? body.onlyNew : true, keepMax: body.keepMax ?? null, padBefore: body.padBefore ?? null, padAfter: body.padAfter ?? null,
+      weekdays: body.weekdays ?? null, startTime: body.startTime ?? null, durationMin: body.durationMin ?? null, tz: body.tz ?? null, enabled: true,
+    };
+    st.rules = [...st.rules, rule];
+    return J({ rule, forecast: st.recConflict ?? FORECAST_OK }, 201);
+  }
+  if ((mm = p.match(/^\/api\/livetv\/rules\/([^/]+)$/)) && (m === 'PATCH' || m === 'DELETE')) {
+    log();
+    const id = decodeURIComponent(mm[1]!);
+    const r = st.rules.find((x) => x.id === id);
+    if (!r) return J({ error: 'not_found' }, 404);
+    if (m === 'DELETE') { st.rules = st.rules.filter((x) => x.id !== id); return none(); }
+    const next = { ...r, ...body };
+    st.rules = st.rules.map((x) => (x.id === id ? next : x));
+    return J({ rule: next });
+  }
+  return null;
+}
+
+/** a growing recording's EVENT playlist: six segments at once, one more every 2 s (real clock), at most the 15 of HLS_SEGMENTS */
+function eventPlaylist(st: LivetvMock, nowMs: number): string {
+  st.recGrowStart ??= nowMs;
+  const n = Math.min(HLS_SEGMENTS.length, WINDOW + Math.floor((nowMs - st.recGrowStart) / (SEG_S * 1000)));
+  return ['#EXTM3U', '#EXT-X-VERSION:7', `#EXT-X-TARGETDURATION:${SEG_S}`, '#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-PLAYLIST-TYPE:EVENT', '#EXT-X-MAP:URI="init.mp4"',
+    ...Array.from({ length: n }, (_, i) => [`#EXTINF:${SEG_S}.000000,`, `s${i}.m4s`]).flat(), ''].join('\n');
+}
 
 const list = (st: LivetvMock) => ({
   groups: st.groups,
@@ -248,13 +435,33 @@ export function livetvRoute(st: LivetvMock, m: string, p: string, body: any, hea
     bump();
     return J({ ok: true });
   }
+  const rec = recordingRoute(st, m, p, body, J, route);
+  if (rec) return rec;
   if (/^\/api\/livetv\/channels\/[^/]+\/preview\.jpg$/.test(p)) return route.fulfill({ status: 200, contentType: 'image/png', body: png(16, 9, [40, 90, 130]) });
   if (/^\/api\/livetv\/logos\/[^/]+$/.test(p)) return route.fulfill({ status: 200, contentType: 'image/png', body: png(8, 8, [220, 220, 230]) });
   return null;
 }
 
-/** `/media/l/<token>/…`: the sliding live playlist, its init segment and segments; null = not a live path */
+/** `/media/r/<token>/…`: a recording's playlist (VOD when finished, a growing EVENT playlist while it records) and its segments */
+function recordingMedia(st: LivetvMock, tok: string, f: string, route: Route): Promise<void> {
+  if (st.recMediaStatus !== 200) return route.fulfill({ status: st.recMediaStatus, body: '' });
+  // a stopped token is revoked (backend endLiveToken): the gateway answers 410
+  if (st.stops.includes(tok)) return route.fulfill({ status: 410, body: '' });
+  if (f === 'index.m3u8') {
+    const r = st.recordings.find((x) => tok.startsWith(`rtok-${x.id.slice(-4)}`));
+    const body = r?.state === 'recording' ? eventPlaylist(st, Date.now()) : HLS_PLAYLIST;
+    return route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', headers: { 'cache-control': 'no-store' }, body });
+  }
+  if (f === 'init.mp4') return route.fulfill({ status: 200, contentType: 'video/mp4', body: HLS_INIT });
+  const seg = f.match(/^s(\d+)\.m4s$/);
+  if (seg) return route.fulfill({ status: 200, contentType: 'video/iso.segment', body: HLS_SEGMENTS[Number(seg[1]) % HLS_SEGMENTS.length]! });
+  return route.fulfill({ status: 404, body: '' });
+}
+
+/** `/media/l/<token>/…`: the sliding live playlist, its init segment and segments; `/media/r/…` a recording; null = neither */
 export function livetvMedia(st: LivetvMock, p: string, route: Route): Promise<void> | null {
+  const rm = p.match(/\/media\/r\/([^/]+)\/([^/]+)$/);
+  if (rm) return recordingMedia(st, rm[1]!, rm[2]!, route);
   const mm = p.match(/\/media\/l\/([^/]+)\/([^/]+)$/);
   if (!mm) return null;
   if (st.mediaStatus !== 200) return route.fulfill({ status: st.mediaStatus, body: '' });

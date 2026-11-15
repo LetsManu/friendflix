@@ -173,6 +173,16 @@ describe('GET /api/admin/roles', () => {
     expect(m.roles.find((r: { key: string }) => r.key === 'family').missingLibraries).toEqual([]);
   });
 
+  it('Darf aufnehmen (liveRecord) is off by default for every built-in role but Admin; a saved value is kept', async () => {
+    for (const k of ['family', 'friend', 'guest']) expect((await roleOf(k)).values.liveRecord, k).toBe(false);
+    expect((await roleOf('admin')).values.liveRecord).toBe(true);
+    // an admin's own choice is stored and kept (no migration, only defaults changed)
+    expect((await put('friend', { perms: { liveRecord: true } })).statusCode).toBe(200);
+    expect((await roleOf('friend')).values.liveRecord).toBe(true);
+    expect((await put('friend', { perms: { liveRecord: null } })).statusCode).toBe(200);
+    expect((await roleOf('friend')).values.liveRecord).toBe(false);
+  });
+
   it('matrix.roles[].areas: family all true; a role with libraries [] has library false', async () => {
     const all = { library: true, livetv: true, requests: true, together: true, downloads: true };
     expect((await roleOf('family')).areas).toEqual(all);
@@ -613,6 +623,13 @@ describe('catalogue writes', () => {
       expect(await createAudit(key)).toEqual([{ template: 'liveOnly', label: 'Nur Fernsehen' }]);
     } finally {
       await env.pool.query('delete from livetv_groups');
+    }
+  });
+
+  it('every template starts with Darf aufnehmen off (Familie and Freund too)', async () => {
+    for (const t of ['family', 'friend', 'guest', 'empty']) {
+      const { key } = (await fromTemplate(`Neu ${t}`, t)).json();
+      expect((await roleOf(key)).values.liveRecord, t).toBe(false);
     }
   });
 

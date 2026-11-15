@@ -132,6 +132,7 @@ An admin can turn on **Live TV** under *Admin → Live TV*: its own container th
 - **Programme guide and numbers:** channels are matched to the guide exactly (by id, then by name), never by guesswork. Extra guides – a link, or an XMLTV file you upload – fill the channels the provider's guide leaves empty, and a time shift fixes guides that are hours off. Numbers come from the list or are counted from a number you pick; numbers you set yourself and logos you upload are kept.
 - **Watching:** the *Live TV* tab shows what runs now and next, your ordered favourites and *Recently watched*. Everyone on a channel shares one stream with a rewind buffer (30 minutes by default, up to 120): pause, go back, *From the start*, an info banner and the channel list. H.264 channels are passed through or repackaged – sound a browser cannot play becomes AAC – and need no conversion; the rest counts against the server-wide conversion limit, which keeps films playable.
 - **TV and casting:** on TVs ▲/▼ switch channels, and channel, number and Info keys work where the remote sends them. Live channels cast to Chromecast and AirPlay, also from the Android app.
+- **Recordings:** record a programme, a whole series or a time slot from the player's info panel, watch it in *Meine Aufnahmen* – also while it is still being recorded – in the normal player, keep, share, cast and continue it on another device; the admin picks the storage (FriendFlix folder or a Jellyfin library), limit and retention.
 
 ### Discovering
 

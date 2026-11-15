@@ -6,7 +6,7 @@
    * `FieldControl` with its marker line under it ("aus .env", "geändert (Standard: …)", "nicht gespeichert"; the line is always
    * there, so nothing moves when a value is staged). The slot adds what is not a field (the channel groups, the invitable switch).
    * A section fades in (opacity) when its area is switched on; it goes at once, so what is below moves only as the press's result.
-   * `locks` names the switches that wait for another area (Darf aufnehmen while Live-TV is off): shown off, locked, the marker line
+   * `locks` names the switches that wait for another area (Darf aufnehmen while Live-TV is off): shows its real value, locked, the marker line
    * says why ("Braucht Live-TV").
    *   <AreaSection title="Mediathek" icon="film" fields={fieldsOfArea(m, 'library')} {role} {stage} {matrix} on:change={(e) => …} />
    */
@@ -35,8 +35,8 @@
   const dispatch = createEventDispatcher<{ change: { key: string; value: unknown } }>();
   const id = uid('as');
   const isStaged = (s: Stage, f: MatrixField): boolean => Object.hasOwn(s[role.key] ?? {}, f.key);
-  /** a locked switch reads off (as the app offers it) */
-  const valueOf = (s: Stage, f: MatrixField, lk: typeof locks): unknown => (lk[f.key] ? false : isStaged(s, f) ? s[role.key]![f.key] : role.values[f.key]);
+  /** a switch locked by the Mediathek reads off (as the app offers it); one that waits for Live-TV shows its real value (its own right) */
+  const valueOf = (s: Stage, f: MatrixField, lk: typeof locks): unknown => (lk[f.key] === 'library' ? false : isStaged(s, f) ? s[role.key]![f.key] : role.values[f.key]);
   /** under a control: why it is locked, staged, "geändert (Standard: …)" for a role-set value, or that it comes from .env */
   function mark(s: Stage, f: MatrixField, lk: typeof locks, _l: unknown): string {
     if (lk[f.key]) return tr(lk[f.key] === 'livetv' ? 'adminPeople.roles.areas.needsLivetv' : 'adminPeople.roles.areas.needsLibrary');

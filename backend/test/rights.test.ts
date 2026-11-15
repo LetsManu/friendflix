@@ -59,8 +59,9 @@ describe('permission registry', () => {
     const all = Object.fromEntries(PERM_KEYS.map((k) => [k, true]));
     expect(PERM_KEYS).toEqual(['requests', 'cast', 'party', 'partySchedule', 'comments', 'liveTv', 'liveRecord']);
     expect(DEFAULT_PERMS.admin).toEqual(all);
-    expect(DEFAULT_PERMS.family).toEqual({ ...all, partySchedule: false });
-    expect(DEFAULT_PERMS.friend).toEqual({ ...all, partySchedule: false });
+    // Darf aufnehmen (liveRecord) is its own right and off by default for every role but Admin (owner decision 2026-11-15)
+    expect(DEFAULT_PERMS.family).toEqual({ ...all, partySchedule: false, liveRecord: false });
+    expect(DEFAULT_PERMS.friend).toEqual({ ...all, partySchedule: false, liveRecord: false });
     expect(DEFAULT_PERMS.guest).toEqual({ ...all, partySchedule: false, comments: false, liveRecord: false });
     expect(KIDS_OFF).toEqual(['requests', 'party', 'partySchedule', 'comments', 'liveRecord']);
   });

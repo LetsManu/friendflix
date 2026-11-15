@@ -12,11 +12,11 @@ export type PermKey = (typeof PERM_KEYS)[number];
 export type Perms = Record<PermKey, boolean>;
 
 const ALL_ON: Perms = { requests: true, cast: true, party: true, partySchedule: true, comments: true, liveTv: true, liveRecord: true };
-/** today's behaviour: guests have no comments (anime.ts), only admins keep more than 3 scheduled parties (party.ts) */
+/** today's behaviour: guests have no comments (anime.ts), only admins keep more than 3 scheduled parties (party.ts); recording (`liveRecord`) is off for everyone but admins until a role turns it on (owner decision 2026-11-15) */
 export const DEFAULT_PERMS: Record<'admin' | 'family' | 'friend' | 'guest', Perms> = {
   admin: { ...ALL_ON },
-  family: { ...ALL_ON, partySchedule: false },
-  friend: { ...ALL_ON, partySchedule: false },
+  family: { ...ALL_ON, partySchedule: false, liveRecord: false },
+  friend: { ...ALL_ON, partySchedule: false, liveRecord: false },
   guest: { ...ALL_ON, partySchedule: false, comments: false, liveRecord: false },
 };
 
@@ -72,7 +72,7 @@ export const MATRIX_FIELDS: readonly MatrixField[] = [
   { key: 'comments', group: 'together', kind: 'bool', area: 'together' },
   { key: 'cast', group: 'cast', kind: 'bool', requires: 'cast', area: 'general' },
   { key: 'liveTv', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv' },
-  // "Darf aufnehmen": visible, no longer planned; the recordings backend (Phase 3a) enforces it, the recordings screens follow (roles redesign §5.4)
+  // "Darf aufnehmen": visible, no longer planned; the recordings backend (Phase 3a) enforces it and the recordings screens (Phase 3b) use it (roles redesign §5.4)
   { key: 'liveRecord', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv' },
 ];
 
