@@ -32,7 +32,7 @@ const FULL = {
 };
 const role = (key: string, values: Record<string, unknown>, extra: Partial<MatrixRole> = {}): MatrixRole => ({
   key, label: key, builtinLabel: false, base: 'friend', origin: 'admin', invitable: true, position: 0, accounts: 1, profiles: 1, kidsProfiles: 0,
-  values, sources: {}, defaults: { ...values }, envGone: false, stored: true, missingLibraries: [], areas: areasOf(values), livetvGroups: [], livetvGroupIds: [], ...extra,
+  values, sources: {}, defaults: { ...values }, envGone: false, stored: true, missingLibraries: [], areas: areasOf(values), livetvGroupIds: [], ...extra,
 });
 const matrix = (): RoleMatrix => ({
   fields, features: { requests: true, cast: true, livetv: true }, libraries: [{ id: 'l1', name: 'Filme' }, { id: 'l2', name: 'Serien' }],

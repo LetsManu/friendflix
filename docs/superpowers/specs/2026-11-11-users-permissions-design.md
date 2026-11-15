@@ -362,6 +362,10 @@ approvals), **Rollen & Rechte** (was *Rollen*), **Geräte**, **Nutzung**.
 
 ### 6.1 Rollen & Rechte (`/admin/roles`, rebuilt) — G7
 
+> **Superseded by `2026-11-15-roles-redesign-design.md`** (§5): the roles are a list with one page per role (area switches,
+> details per area, inline channel groups); the matrix below survives only as the read-only *Vergleichen* view, and the role
+> sheet, the cell popover, the drag grips and the column menus are gone.
+
 **Desktop (≥ 900 px): the matrix.**
 
 - A glass `.panel` holding a table: first column = the switches and numbers grouped under sticky group headers (*Zugang*,

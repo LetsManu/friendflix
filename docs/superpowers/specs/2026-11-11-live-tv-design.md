@@ -1021,6 +1021,10 @@ chip row; tables become row cards (the existing `DataTable` phone mode).
 
 ### 9.3 Gruppen & Rechte
 
+> **Superseded in part by `2026-11-15-roles-redesign-design.md`** (§5.6): the *Nach Rolle* matrix is gone; that view is
+> *Personen* (the exceptions list and a link to *Rollen & Rechte*, where each role's groups are chosen on its page). The list's
+> role chips and the release sheet stay.
+
 - Group list (drag order like channels): name, channel count, *Kinderfreundlich* toggle, role chips (which roles see it),
   provider groups mapped into it ("aus: DE | Sport, Sport HD"). *Gruppe anlegen*, *Zusammenführen…* (merge: maps the provider
   groups of the selected groups into one and deletes the rest), *Umbenennen*, *Löschen* (channels fall back to *Ohne Gruppe*,

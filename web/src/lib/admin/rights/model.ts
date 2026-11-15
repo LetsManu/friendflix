@@ -51,9 +51,11 @@ export interface MatrixRole {
   stored: boolean;
   /** library names of the role the media server no longer has */
   missingLibraries: string[];
-  /** names of the released Live TV groups the role sees (the admin role: all), in group order; read-only (Live TV spec §8); only sent by a server with Live TV */
-  livetvGroups?: string[];
-  /** ids of the same groups (the role page's chips, staged as `livetvGroups`) */
+  /**
+   * ids of the released Live TV groups the role sees (the admin role: all), in group order: the role page's chips (staged as
+   * `livetvGroups`), the compare view's names (through `livetv.groups`). The server still sends the names as `livetvGroups` for one
+   * release; the web no longer reads them.
+   */
   livetvGroupIds?: string[];
   /** the areas of the effective values (backend areasOf, without the coupling) */
   areas?: Areas;

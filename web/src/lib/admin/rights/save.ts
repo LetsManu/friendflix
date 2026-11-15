@@ -39,7 +39,7 @@ export function stagedJobs(s: Stage, m: RoleMatrix): Job[] {
 
 /**
  * A written role in the matrix: the values it carried become the loaded ones (set in the role itself now; the channel groups as
- * ids and names), and the staged entries equal to them go. Returns the new matrix and stage (the inputs stay as they were).
+ * ids in group order), and the staged entries equal to them go. Returns the new matrix and stage (the inputs stay as they were).
  */
 export function storeJob(m: RoleMatrix, s: Stage, j: Job): { matrix: RoleMatrix; stage: Stage } {
   const at = m.roles.findIndex((x) => x.key === j.role);
@@ -50,9 +50,7 @@ export function storeJob(m: RoleMatrix, s: Stage, j: Job): { matrix: RoleMatrix;
     if (k === 'label') { r.label = String(v); r.builtinLabel = false; } else if (k === 'invitable') r.invitable = Boolean(v);
     else if (k === 'livetvGroups') {
       const ids = new Set(Array.isArray(v) ? (v as string[]) : []);
-      const groups = (m.livetv?.groups ?? []).filter((g) => ids.has(g.id));
-      r.livetvGroupIds = groups.map((g) => g.id);
-      r.livetvGroups = groups.map((g) => g.name);
+      r.livetvGroupIds = (m.livetv?.groups ?? []).filter((g) => ids.has(g.id)).map((g) => g.id);
     } else { r.values[k] = v; r.sources[k] = 'role'; }
   }
   const matrix = { ...m, roles: m.roles.map((x, i) => (i === at ? r : x)) };

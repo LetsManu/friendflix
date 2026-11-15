@@ -432,13 +432,10 @@ describe('role matrix and save bar (rights)', () => {
     expect(css(matrix)).not.toMatch(/(^|[\s,}])\.lock\b/);
   });
 
-  it('the role sheet and the history: white text and the .9 notes on the menu scrim over any backdrop; the staged rail is --warn', () => {
-    for (const f of ['RoleSheet', 'RoleHistory']) {
-      const src = read(`./rights/${f}.svelte`);
-      expect(src, f).toContain('--fr-scrim-safe:{SCRIM_MENU}');
-      expect(css(src), f).toMatch(/color: rgba\(255, 255, 255, \.9\)/);
-    }
-    expect(css(read('./rights/RoleSheet.svelte'))).toMatch(/\.row\.staged \{ border-left-color: var\(--warn\); \}/);
+  it('the history sheet: white text and the .9 notes on the menu scrim over any backdrop; the staged rail is --warn', () => {
+    const src = read('./rights/RoleHistory.svelte');
+    expect(src).toContain('--fr-scrim-safe:{SCRIM_MENU}');
+    expect(css(src)).toMatch(/color: rgba\(255, 255, 255, \.9\)/);
     for (const bg of [frostComposite(WHITE, SCRIM_MENU), frostComposite(AMB_PEAK, SCRIM_MENU), frostComposite(DARK_BASE, SCRIM_MENU)]) {
       expect(textContrast(bg)).toBeGreaterThanOrEqual(AA);
       expect(textContrast(bg, 0.9)).toBeGreaterThanOrEqual(AA);
@@ -459,7 +456,7 @@ describe('role matrix and save bar (rights)', () => {
   it('animates transform and opacity only, and every surface with motion switches it off in calm mode and for reduced motion', () => {
     const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
     const files = readdirSync(dir).filter((f) => f.endsWith('.svelte'));
-    expect(files).toEqual(expect.arrayContaining(['RoleMatrix.svelte', 'FieldControl.svelte', 'SaveBar.svelte', 'ReviewSheet.svelte', 'RoleSheet.svelte', 'RoleHistory.svelte', 'DeleteRoleDialog.svelte', 'NewRoleDialog.svelte']));
+    expect(files).toEqual(expect.arrayContaining(['RoleMatrix.svelte', 'FieldControl.svelte', 'SaveBar.svelte', 'ReviewSheet.svelte', 'RoleHistory.svelte', 'DeleteRoleDialog.svelte', 'NewRoleDialog.svelte']));
     const bad: string[] = [];
     for (const f of files) {
       const c = css(readFileSync(join(dir, f), 'utf8'));
@@ -470,11 +467,11 @@ describe('role matrix and save bar (rights)', () => {
     // the moving surfaces use the glass transitions (transform / opacity) and stand still in calm mode
     expect(bar).toMatch(/in:barRise out:barRise=\{\{ dir: 'out' \}\}/);
     expect(read('./rights/ReviewSheet.svelte')).toMatch(/sheetSlide\(node, \{ dir \}\)/);
-    // the role sheet and the history slide in from the right edge (translateX, the same sheetSlide)
-    for (const f of ['RoleSheet', 'RoleHistory']) expect(read(`./rights/${f}.svelte`), f).toMatch(/sheetSlide\(node, \{ dir, side: 'right' \}\)/);
+    // the history slides in from the right edge (translateX, sheetSlide)
+    expect(read('./rights/RoleHistory.svelte')).toMatch(/sheetSlide\(node, \{ dir, side: 'right' \}\)/);
     // the compare view is read-only: nothing in it moves (no drag, no popover)
     expect(css(matrix)).not.toMatch(/transition|(?<!text-)transform\s*:/);
-    for (const f of ['SaveBar', 'ReviewSheet', 'RoleSheet', 'RoleHistory']) {
+    for (const f of ['SaveBar', 'ReviewSheet', 'RoleHistory']) {
       const src = read(`./rights/${f}.svelte`);
       expect(src, f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
       expect(src, f).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
@@ -498,7 +495,6 @@ describe('role matrix and save bar (rights)', () => {
     expect(host).toMatch(/:global\(html\.m-still\) \.toasts \{ transition: none; \}/);
     expect(read('./rights/ReviewSheet.svelte')).toContain('use:sheetRoom transition:slide|global');
     expect(read('./user/KidsSheet.svelte')).toContain('use:sheetRoom transition:slide|global');
-    expect(read('./rights/RoleSheet.svelte')).toContain("use:sheetRoom={'right'} transition:slide|global");
     expect(read('./rights/RoleHistory.svelte')).toContain("use:sheetRoom={'right'} transition:slide|global");
   });
 });

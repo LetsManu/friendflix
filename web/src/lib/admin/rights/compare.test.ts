@@ -22,10 +22,11 @@ const fields: MatrixField[] = [
 const FULL = { libraries: 'all', maxParentalRating: 12, maxStreams: 2, download: true, maxDownloads: 5, requests: true, requestsPerMonth: 3, party: true, comments: true, cast: true, liveTv: true, liveRecord: false };
 const role = (key: string, values: Record<string, unknown>, extra: Partial<MatrixRole> = {}): MatrixRole => ({
   key, label: key === 'friend' ? 'Freund' : key, builtinLabel: false, base: 'friend', origin: 'admin', invitable: true, position: 0, accounts: 1, profiles: 1, kidsProfiles: 0,
-  values, sources: {}, defaults: { ...values }, envGone: false, stored: true, missingLibraries: [], areas: areasOf(values), livetvGroups: [], livetvGroupIds: [], ...extra,
+  values, sources: {}, defaults: { ...values }, envGone: false, stored: true, missingLibraries: [], areas: areasOf(values), livetvGroupIds: [], ...extra,
 });
 const matrix = (features = { requests: true, cast: true, livetv: true }): RoleMatrix => ({
-  fields, features, libraries: [], roles: [], livetv: features.livetv ? { groups: [], pending: 0 } : null, templates: [],
+  fields, features, libraries: [], roles: [], templates: [],
+  livetv: features.livetv ? { groups: ['Nordlicht TV', 'Hafenkanal', 'Sport'].map((name, i) => ({ id: `g${i}`, name, kidFriendly: false, channels: 3 })), pending: 0 } : null,
 });
 
 describe('compareGroups', () => {
@@ -98,10 +99,10 @@ describe('compareCell', () => {
     expect(compareCell(m, a, row('area:library'))).toMatchObject({ locked: true, href: null });
     expect(compareCell(m, a, row('maxStreams'))).toMatchObject({ locked: false, href: '/admin/roles/admin?field=maxStreams' });
   });
-  it('the channel groups: names (two, then +n), "Keine" without', () => {
-    const r = role('friend', FULL, { livetvGroups: ['Nordlicht TV', 'Hafenkanal', 'Sport'] });
+  it('the channel groups: names (two, then +n) from the ids, in group order; "Keine" without', () => {
+    const r = role('friend', FULL, { livetvGroupIds: ['g2', 'g0', 'g1', 'g-gone'] });
     expect(compareCell(m, r, row('livetvGroups'))).toMatchObject({ bool: false, text: 'Nordlicht TV, Hafenkanal +1', name: 'Freund, Kanalgruppen: Nordlicht TV, Hafenkanal +1', href: '/admin/roles/friend?field=livetvGroups' });
-    expect(compareCell(m, role('friend', FULL, { livetvGroups: undefined }), row('livetvGroups')).text).toBe('Keine');
+    expect(compareCell(m, role('friend', FULL, { livetvGroupIds: undefined }), row('livetvGroups')).text).toBe('Keine');
   });
   it('follows the language', async () => {
     await setLocale('en');

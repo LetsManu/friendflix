@@ -13,7 +13,7 @@ beforeEach(() => { vi.mocked(api).mockReset(); vi.mocked(toast.error).mockReset(
 
 const role = (key: string, values: Record<string, unknown>, extra: Partial<MatrixRole> = {}): MatrixRole => ({
   key, label: key, builtinLabel: false, base: 'friend', origin: 'admin', invitable: true, position: 0, accounts: 2, profiles: 3, kidsProfiles: 0,
-  values, sources: {}, defaults: values, envGone: false, stored: true, missingLibraries: [], livetvGroups: ['Nordlicht TV'], livetvGroupIds: ['g-nord'], ...extra,
+  values, sources: {}, defaults: values, envGone: false, stored: true, missingLibraries: [], livetvGroupIds: ['g-nord'], ...extra,
 });
 const matrix = (): RoleMatrix => ({
   fields: [{ key: 'maxStreams', group: 'playback', kind: 'int', area: 'general' }, { key: 'party', group: 'together', kind: 'bool', area: 'together' }],
@@ -31,7 +31,7 @@ describe('the shared save (role page and compare view)', () => {
       { role: 'guest', body: { perms: { party: true } }, fields: { party: true } },
     ]);
   });
-  it('storeJob: the written values become the loaded ones and unstage; the groups as ids and names in group order', () => {
+  it('storeJob: the written values become the loaded ones and unstage; the groups as ids in group order', () => {
     const m = matrix();
     const s = stageSet(stageSet({}, m, 'friend', 'livetvGroups', ['g-hafen', 'g-nord']), m, 'friend', 'maxStreams', 3);
     const [job] = stagedJobs(s, m);
@@ -41,7 +41,7 @@ describe('the shared save (role page and compare view)', () => {
     expect(r.values.maxStreams).toBe(3);
     expect(r.sources.maxStreams).toBe('role');
     expect(r.livetvGroupIds).toEqual(['g-nord', 'g-hafen']);
-    expect(r.livetvGroups).toEqual(['Nordlicht TV', 'Hafenkanal']);
+    expect(r).not.toHaveProperty('livetvGroups'); // the web reads ids only (the names the server still sends go unread)
     // the inputs stay as they were
     expect(m.roles[0]!.values.maxStreams).toBe(2);
     expect(m.roles[0]!.livetvGroupIds).toEqual(['g-nord']);
@@ -94,7 +94,7 @@ describe('storeJob edge cases', () => {
   });
   it('a non-array livetvGroups value empties the groups', () => {
     const out = storeJob(matrix(), {}, { role: 'friend', body: {}, fields: { livetvGroups: null } });
-    expect(out.matrix.roles[0]).toMatchObject({ livetvGroupIds: [], livetvGroups: [] });
+    expect(out.matrix.roles[0]).toMatchObject({ livetvGroupIds: [] });
   });
 });
 

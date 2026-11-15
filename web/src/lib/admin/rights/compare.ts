@@ -69,7 +69,9 @@ export function compareCell(m: RoleMatrix, r: MatrixRole, row: CompareRow): Comp
     const s = r.sources[row.field.key];
     src = s === 'role' || s === 'env' ? s : null;
   } else {
-    value = r.livetvGroups ?? [];
+    // the names of the role's groups (ids) in group order; an id the list no longer has is left out
+    const ids = new Set(r.livetvGroupIds ?? []);
+    value = (m.livetv?.groups ?? []).filter((g) => ids.has(g.id)).map((g) => g.name);
     bool = false;
   }
   if (bool) text = cellText({ kind: 'bool' }, value);
