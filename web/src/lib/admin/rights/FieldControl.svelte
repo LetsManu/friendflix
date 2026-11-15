@@ -27,6 +27,10 @@
   export let disabled = false;
   /** the library checklist's line with no library ticked (the person's Rechte tab names the person) */
   export let noneHint: string | undefined = undefined;
+  /** the last ticked library cannot go (the admin role keeps a library: the server refuses none, admin_library_required) */
+  export let keepOne = false;
+  /** the "no library" hint's line is reserved; false where an empty list never shows here (the role page: no library is the Mediathek off) */
+  export let reserveNone = true;
 
   const dispatch = createEventDispatcher<{ change: unknown }>();
   const id = uid('fc');
@@ -87,15 +91,15 @@
     <Field {label} type="number" min={field.min} max={field.max} step={1} value={num} error={err} disabled={disabled || (noCap && unlimited)}
       placeholder={placeholder === undefined || placeholder === null ? '' : String(placeholder)} on:input={typed} />
   {:else if field.kind === 'libraries'}
-    <fieldset class="libs" aria-describedby={none ? `${id}-min` : undefined}>
+    <fieldset class="libs" aria-describedby={none && reserveNone ? `${id}-min` : undefined}>
       <legend>{label}</legend>
       <label class="chk all"><input type="checkbox" checked={all} disabled={disabled || (all && !names.length)} on:change={allToggled} /><span>{$t('adminPeople.roles.allLibraries')}</span></label>
       {#each names as n, i (n)}
-        <label class="chk" for="{id}-{i}"><input id="{id}-{i}" type="checkbox" checked={all || chosen.includes(n)} disabled={disabled || all}
+        <label class="chk" for="{id}-{i}"><input id="{id}-{i}" type="checkbox" checked={all || chosen.includes(n)} disabled={disabled || all || (keepOne && chosen.length === 1 && chosen.includes(n))}
           on:change={(e) => libToggled(n, e.currentTarget.checked)} /><span>{n}</span></label>
       {/each}
       <!-- the hint's line is always there (nothing moves when it appears) -->
-      <p class="min" id="{id}-min" aria-hidden={none ? undefined : 'true'}>{none ? (noneHint ?? $t('adminPeople.roles.libsNoneHint')) : ''}</p>
+      {#if reserveNone}<p class="min" id="{id}-min" aria-hidden={none ? undefined : 'true'}>{none ? (noneHint ?? $t('adminPeople.roles.libsNoneHint')) : ''}</p>{/if}
     </fieldset>
   {:else}
     <Select {label} {options} {disabled} value={picked} on:change={pick} />

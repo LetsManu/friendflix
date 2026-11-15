@@ -470,7 +470,7 @@ export const MATRIX_FIELDS_MOCK: Array<Record<string, unknown>> = [
   { key: 'comments', group: 'together', kind: 'bool', area: 'together' },
   { key: 'cast', group: 'cast', kind: 'bool', requires: 'cast', area: 'general' },
   { key: 'liveTv', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv' },
-  { key: 'liveRecord', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv', planned: 'recordings' },
+  { key: 'liveRecord', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv' },
 ];
 /** backend/src/areas.ts areasOf: the areas of a set of effective values (roles redesign §2.1) */
 export const areasOfMock = (v: Record<string, unknown>) => ({
@@ -500,7 +500,8 @@ const MATRIX_BASE_VALUES: Record<string, unknown> = {
 };
 /** what each mocked role inherits without a role row (code defaults of the built-ins, the env role's ROLE_TEMPLATES values) */
 const MATRIX_INHERITED: Record<string, Record<string, unknown>> = {
-  admin: { maxStreams: 4, maxBitrate: 40_000_000, download: true, maxDownloads: 25, partySchedule: true },
+  // the admin role's switches are all on (backend perms.ts ALL_ON): every area of it is on
+  admin: { maxStreams: 4, maxBitrate: 40_000_000, download: true, maxDownloads: 25, partySchedule: true, liveTv: true, liveRecord: true },
   family: { maxStreams: 4, maxBitrate: 40_000_000, download: true, maxDownloads: 25, downloadMaxHeight: 1080, partySchedule: true },
   friend: {},
   guest: { maxParentalRating: 12, maxStreams: 1, maxBitrate: 8_000_000, remoteMaxBitrate: 4_000_000, maxHeight: 1080, maxDownloads: 0, downloadMaxHeight: 0, requests: false, party: false, comments: false, cast: false },

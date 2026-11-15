@@ -7,7 +7,9 @@
    *    warten auf Freigabe" with *Nur diese zeigen* (also `?pending=1`, the link of the *Quellen* card); per group the channel count,
    *    *Kinderfreundlich*, the role chips and the provider groups mapped into it; a row menu (*Freigeben …* / *Freigabe zurücknehmen*,
    *    *Umbenennen*, *Löschen*); a bulk bar for the selected groups (*Freigeben …*, *Zusammenführen …*); *Gruppe anlegen*.
-   *  - *Nach Rolle*: groups × roles switches (GroupMatrix) and the people with exceptions (read from each account, ruling R21).
+   *  - *Personen*: the people with exceptions (read from each account, ruling R21) and the line that which role sees which groups
+   *    is set in Rollen & Rechte, with the link (roles redesign §5.6: the role page chooses a role's groups; the list's role chips
+   *    and the release sheet still answer the group-centric question and write the same table).
    *  - *Reihenfolge*: the drag order (OrderView, `PUT /groups/order`).
    * The kids preview line stays above all three. Every write goes through `runAction` and reloads the list; a write that fails says
    * why (`groupErrorOf`) and the switches that were flipped go back.
@@ -29,7 +31,6 @@
   import { uid } from '#lib/ui/ids';
   import { toast } from '#lib/ui/toast';
   import { confirmOrderDiscard, guardLeave } from './discard';
-  import GroupMatrix from './GroupMatrix.svelte';
   import GroupNameDialog from './GroupNameDialog.svelte';
   import MergeDialog from './MergeDialog.svelte';
   import OrderView from './OrderView.svelte';
@@ -41,8 +42,8 @@
 
   const id = uid('grp');
   const page$ = pageStore();
-  type View = 'list' | 'roles' | 'order';
-  const VIEWS: View[] = ['list', 'roles', 'order'];
+  type View = 'list' | 'people' | 'order';
+  const VIEWS: View[] = ['list', 'people', 'order'];
 
   let data: GroupsAnswer | null = null, failed = false;
   let roles: GrantRole[] = [];
@@ -62,7 +63,7 @@
    *  - `loadSeq` counts the started loads; only the answer of the latest started one is applied (an older one that lands last is dropped).
    *  - `fresh`: false from the start of a write until a load that started AFTER the write's request settled has been applied (`writeMark` =
    *    loads started when it settled). A load that was already running then, or that lands while a write is open, never makes it true.
-   *    While it is false the role chips and matrix cells are disabled and `setRole` refuses.
+   *    While it is false the role chips are disabled and `setRole` refuses.
    *  - `reloadFailed`: the last load failed while a list is shown; the slot offers *Neu laden*. `loadsOpen`: loads in flight (busy state).
    */
   let loadSeq = 0, writeMark = 0, loadsOpen = 0;
@@ -119,7 +120,7 @@
     peopleLoading = false;
   }
   onMount(() => { void load(); void loadRoles(); });
-  $: if (view === 'roles' && peopleRows === null && !peopleFailed && !peopleLoading) void loadPeople();
+  $: if (view === 'people' && peopleRows === null && !peopleFailed && !peopleLoading) void loadPeople();
 
   /** `?pending=1`: only the groups that wait for a release; gone once none waits */
   $: pending = data?.pending ?? 0;
@@ -224,7 +225,7 @@
     { id: 'rename', label: tr('adminLive.grp.rename'), icon: 'pencil', disabled: w, run: () => open({ kind: 'rename', group: g }, rowMenu(g.id)) },
     { id: 'delete', label: tr('adminLive.grp.delete'), icon: 'x', danger: true, disabled: w, run: () => { void remove(g); } },
   ];
-  const viewKey = (v: View) => `adminLive.grp.view${v === 'list' ? 'List' : v === 'roles' ? 'Roles' : 'Order'}` as 'adminLive.grp.viewList';
+  const viewKey = (v: View) => `adminLive.grp.view${v === 'list' ? 'List' : v === 'people' ? 'People' : 'Order'}` as 'adminLive.grp.viewList';
   /** OrderView's `bind:dirty`: the shown group order is not stored yet */
   let orderDirty = false;
   /** the one gate before the order view is left (the radios, an area tab, a link): false = the person kept ordering */
@@ -330,8 +331,8 @@
       {:else}
         <AdminCard><p class="empty">{$t('adminLive.grp.empty')}</p></AdminCard>
       {/if}
-    {:else if view === 'roles'}
-      <GroupMatrix groups={pendingFirst(groups, false)} {roles} busy={roleLocked} on:toggle={(e) => setRole(e.detail.group, e.detail.role, e.detail.on)} />
+    {:else if view === 'people'}
+      <p class="moved"><Icon name="info" size={16} /><span>{$t('adminLive.grp.rolesMoved')}</span><a href="/admin/roles">{$t('admin.tabs.roles')}</a></p>
       <section class="people" aria-labelledby="{id}-p">
         <h3 id="{id}-p">{$t('adminLive.grp.people')}</h3>
         {#if peopleFailed}
@@ -423,6 +424,10 @@
   .rc:disabled { opacity: .6; cursor: progress; }
   .empty { margin: 0; color: var(--mut); }
   .hint { margin: 0; color: var(--mut); }
+  /* where the role × group switches went: the role page (a link, a 44 px target) */
+  .moved { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .1rem .5rem; color: var(--mut); }
+  .moved :global(svg) { flex: none; }
+  .moved a { display: inline-flex; align-items: center; min-height: 44px; color: var(--link, var(--info)); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
   .people h3 { margin: .4rem 0 .5rem; font-size: 1rem; font-weight: 700; }
   .plist li { display: flex; align-items: center; justify-content: space-between; gap: .6rem 1rem; flex-wrap: wrap; min-height: 52px; padding: .3rem .9rem; border-top: 1px solid rgba(255, 255, 255, .08); }
   .plist li:first-child { border-top: 0; }

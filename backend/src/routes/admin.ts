@@ -243,7 +243,9 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!mode) return reply.code(409).send({ error: 'not_configured' });
     // whether an updater lists the services (it then judges the redeploy's progress; else this backend's build alone)
     const v = await updaterView(ctx).catch(() => null);
-    const r = await redeployViaPortainer(ctx, req.user!.id, mode, undefined, { updater: Boolean(v && 'status' in v && v.status.services.length) });
+    // force: "reload anyway" of the same build (older pages send no body): a restart of the backend then counts as the change
+    const forced = (req.body as { force?: unknown } | null | undefined)?.force === true;
+    const r = await redeployViaPortainer(ctx, req.user!.id, mode, undefined, { updater: Boolean(v && 'status' in v && v.status.services.length), forced });
     if (!r.ok && r.error === 'busy') return reply.code(409).send({ error: 'busy' });
     if (!r.ok && r.error === 'unavailable') return reply.code(503).send({ error: 'busy' }); // not recorded: nothing sent
     if (!r.ok) {

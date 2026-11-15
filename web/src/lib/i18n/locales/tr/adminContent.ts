@@ -143,8 +143,6 @@ const dict: Translation<typeof de> = {
     checked: 'Güncellemeler kontrol edildi.',
     checkedUpToDate: 'Güncelsin.',
     confirmBody: 'Portal {sha} sürümüne güncellenir ve bu sırada kısa süre erişilemez.',
-    working: '{s} sn’dir sürüyor …',
-    step: { started: 'Güncelleme başlatıldı', restarting: 'Hizmetler yeniden başlıyor', newversion: 'Yeni sürüm başlıyor', done: 'Tamam: sayfa yeniden yükleniyor' },
     loadFailed: 'Sürüm bilgisi yüklenemedi.',
     commit: 'Değişiklik',
     author: 'Yazar',

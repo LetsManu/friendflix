@@ -20,7 +20,7 @@ const codeDefaults = (role: 'admin' | 'family' | 'friend' | 'guest'): Record<str
 };
 
 describe('areas registry', () => {
-  it('every MATRIX_FIELDS row has an area and only liveRecord is planned', () => {
+  it('every MATRIX_FIELDS row has an area and none is planned (liveRecord is visible since Stage 4)', () => {
     const areaOf = Object.fromEntries(MATRIX_FIELDS.map((f) => [f.key, f.area]));
     expect(areaOf).toEqual({
       libraries: 'library', maxParentalRating: 'library', maxBitrate: 'library', remoteMaxBitrate: 'library', transcoding: 'library', maxHeight: 'library',
@@ -30,7 +30,7 @@ describe('areas registry', () => {
       download: 'downloads', maxDownloads: 'downloads', downloadMaxHeight: 'downloads', downloadDays: 'downloads',
       maxStreams: 'general', cast: 'general',
     });
-    expect(MATRIX_FIELDS.filter((f) => f.planned).map((f) => [f.key, f.planned])).toEqual([['liveRecord', 'recordings']]);
+    expect(MATRIX_FIELDS.filter((f) => f.planned).map((f) => [f.key, f.planned])).toEqual([]);
   });
 
   it('areasOf follows test-vectors/areas.json', () => {

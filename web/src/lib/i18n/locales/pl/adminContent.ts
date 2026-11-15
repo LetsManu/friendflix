@@ -148,8 +148,6 @@ const dict: Translation<typeof de> = {
     checked: 'Sprawdzono aktualizacje.',
     checkedUpToDate: 'Masz najnowszą wersję.',
     confirmBody: 'Portal zostanie zaktualizowany do wersji {sha} i na chwilę będzie niedostępny.',
-    working: 'Trwa od {s} s …',
-    step: { started: 'Aktualizacja uruchomiona', restarting: 'Usługi uruchamiają się ponownie', newversion: 'Nowa wersja startuje', done: 'Gotowe: strona zostanie przeładowana' },
     loadFailed: 'Nie udało się wczytać informacji o wersji.',
     commit: 'Zmiana',
     author: 'Autor',
