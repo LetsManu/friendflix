@@ -10,7 +10,8 @@ import type { Ctx } from '../ctx.js';
  *
  * LIVE_EVENT_CODES is the complete Phase 1 list, declared before most emitters exist so Task 26's texts cover each code; a new code is
  * added here first. Emitters: `source_refresh_failed` refresh.ts (Task 16); `ingest_sync_pending` Task 20; `stopped_by_admin`
- * Task 26; `start_refused_full`, `start_failed`, `input_lost`, `input_back`, `push_rejected` Task 31; `released_on_switch` Task 32.
+ * Task 26; `start_refused_full`, `start_failed`, `input_lost`, `input_back`, `push_rejected` Task 31; `released_on_switch` Task 32; the
+ * `rec_*` codes Phase 3 (recsched.ts; `reason` = the recording's fixed error code, `n` = its gaps).
  */
 export const LIVE_EVENT_CODES = [
   'source_refresh_failed',
@@ -22,6 +23,13 @@ export const LIVE_EVENT_CODES = [
   'input_back',
   'push_rejected',
   'released_on_switch',
+  'rec_started',
+  'rec_done',
+  'rec_partial',
+  'rec_failed',
+  'rec_moved',
+  'rec_no_slot',
+  'rec_storage_full',
 ] as const;
 export type LiveEventCode = (typeof LIVE_EVENT_CODES)[number];
 
@@ -32,6 +40,8 @@ export interface LiveEvent {
   code: LiveEventCode;
   channelId?: string;
   sourceId?: string;
+  /** Phase 3: the recording an event is about (never its title) */
+  recordingId?: string;
   n?: number;
   /** a fixed error code, ^[a-z_]{1,40}$ */
   reason?: string;
@@ -58,6 +68,7 @@ function clean(v: unknown): LiveEvent | null {
   const e: LiveEvent = { at: o.at, level: o.level as LiveEvent['level'], code: o.code as LiveEventCode };
   if (typeof o.channelId === 'string' && ID_RE.test(o.channelId)) e.channelId = o.channelId;
   if (typeof o.sourceId === 'string' && ID_RE.test(o.sourceId)) e.sourceId = o.sourceId;
+  if (typeof o.recordingId === 'string' && ID_RE.test(o.recordingId)) e.recordingId = o.recordingId;
   if (typeof o.n === 'number' && Number.isInteger(o.n)) e.n = o.n;
   if (typeof o.reason === 'string' && REASON_RE.test(o.reason)) e.reason = o.reason;
   return e;

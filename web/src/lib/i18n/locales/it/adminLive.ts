@@ -610,6 +610,13 @@ const dict: Translation<typeof de> = {
     input_back: 'Ingresso tornato · dopo {n} s',
     push_rejected: 'Connessione rifiutata: ID o passphrase errati',
     released_on_switch: 'Terminato subito al cambio (serviva il posto o la connessione)',
+    rec_started: 'Registrazione avviata',
+    rec_done: 'Registrazione completata',
+    rec_partial: 'Registrazione incompleta (interruzioni)',
+    rec_failed: 'Registrazione non riuscita',
+    rec_moved: 'La registrazione segue il nuovo orario',
+    rec_no_slot: 'Registrazione in attesa: nessun posto libero',
+    rec_storage_full: 'Spazio per le registrazioni pieno',
   },
   evBare: {
     input_lost: 'Ingresso perso',

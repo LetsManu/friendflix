@@ -610,6 +610,13 @@ const dict: Translation<typeof de> = {
     input_back: 'Giriş geri geldi · {n} sn sonra',
     push_rejected: 'Bağlantı reddedildi: yanlış kimlik veya parola',
     released_on_switch: 'Geçiş sırasında hemen sonlandırıldı (yer veya bağlantı gerekti)',
+    rec_started: 'Kayıt başladı',
+    rec_done: 'Kayıt tamamlandı',
+    rec_partial: 'Kayıt eksik (boşluklar)',
+    rec_failed: 'Kayıt başarısız',
+    rec_moved: 'Kayıt yeni yayın saatini izliyor',
+    rec_no_slot: 'Kayıt bekliyor: boş yer yok',
+    rec_storage_full: 'Kayıt alanı dolu',
   },
   evBare: {
     input_lost: 'Giriş kayboldu',

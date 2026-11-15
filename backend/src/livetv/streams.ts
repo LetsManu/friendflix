@@ -242,7 +242,9 @@ export async function liveConversions(ctx: Ctx): Promise<ConvEntry[]> {
   const names = ids.length
     ? new Map((await ctx.db.query<{ id: string; name: string }>(`select id, name from (${CHANNEL_SELECT} where c.id = any($1::uuid[])) e`, [ids])).rows.map((r) => [r.id, r.name] as const))
     : new Map<string, string>();
-  return tr.map((s) => ({ kind: 'live', key: convKey(s.channelId), label: names.get(s.channelId) ?? null, since: s.since, device: null, userId: null }));
+  // a transcode a recording uses counts as `record` (Phase 3); its key stays `live:<id>` (one slot per channel, F8)
+  const recorded = ids.length ? await recordedChannels(ctx) : new Set<string>();
+  return tr.map((s) => ({ kind: recorded.has(s.channelId) ? 'record' : 'live', key: convKey(s.channelId), label: names.get(s.channelId) ?? null, since: s.since, device: null, userId: null }));
 }
 
 /**
@@ -562,11 +564,133 @@ async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: Live
   }
 }
 
+// ---- recordings (Phase 3) ----
+
+export type RecordStartError = 'no_slot' | 'provider_limit' | 'channel_unreachable' | 'not_receiving';
+
+/**
+ * Starts (or joins) a channel's shared stream for a recording (plan Phase 3 Task 3): the same start path as a watch (start lock, input,
+ * push feed receiving?, the source's connection limit, `POST /v1/streams`, the first segment within 15 s), with admission kind `record`
+ * (its own reservation left out) and no viewer: no token, no release on switch. A running stream is joined without the budget (one
+ * stream and one slot per channel, however many recordings use it). A stream that turns out not to transcode gives its slot back.
+ */
+export async function startForRecording(ctx: Ctx, ch: EffectiveChannel, o: { userId: string }): Promise<{ mode: Mode; segments: Segments | null } | { error: RecordStartError }> {
+  const until = Date.now() + JOIN_WAIT_MS;
+  for (;;) {
+    const list = await readStreams(ctx);
+    if (list === null) return { error: 'channel_unreachable' };
+    const cur = activeOf(list, ch.id);
+    if (cur) return { mode: cur.mode, segments: cur.segments };
+    const token = randomUUID();
+    if (await ctx.kv.setnx(startKey(ch.id), token, START_LOCK_TTL_S)) {
+      try {
+        return await startRecordStream(ctx, ch, o.userId, list, token);
+      } finally {
+        await ctx.kv.delIfEquals(startKey(ch.id), token).catch(() => false);
+      }
+    }
+    if (Date.now() >= until) return { error: 'channel_unreachable' };
+    await sleep(POLL_MS);
+  }
+}
+
+async function startRecordStream(ctx: Ctx, ch: EffectiveChannel, userId: string, list: StreamView[], lock: string): Promise<{ mode: Mode; segments: Segments | null } | { error: RecordStartError }> {
+  const row = (await ctx.db.query<InputRow>(
+    `select c.ingest, c.stream_kind, c.stream_url_enc, c.allow_lan, s.allow_lan as source_lan, s.user_agent, s.max_streams, s.enabled
+       from livetv_channels c join livetv_sources s on s.id = c.source_id where c.id = $1`, [ch.id])).rows[0];
+  if (!row || !row.enabled) return { error: 'channel_unreachable' };
+  if (row.ingest === 'push') {
+    const receiving = await pushReceiving(ctx, ch.id);
+    if (receiving === null) return { error: 'channel_unreachable' };
+    if (!receiving) return { error: 'not_receiving' };
+  }
+  if (row.max_streams !== null) {
+    const ids = list.filter((s) => s.state !== 'failed' && s.channelId !== ch.id && UUID_RE.test(s.channelId)).map((s) => s.channelId);
+    const n = ids.length
+      ? Number((await ctx.db.query<{ n: string }>('select count(*) as n from livetv_channels where source_id = $1 and id = any($2::uuid[])', [ch.sourceId, ids])).rows[0]?.n ?? 0)
+      : 0;
+    if (n >= row.max_streams) return { error: 'provider_limit' };
+  }
+  const input = inputOf(ctx, ch.id, row);
+  if (!input) return { error: 'channel_unreachable' };
+  const mode = expectedMode(ch, Date.now());
+  const key = convKey(ch.id);
+  let granted = false;
+  if (mode === 'transcode') {
+    const a = await admitConversion(ctx, { kind: 'record', userId, hint: key, label: ch.name, exceptResv: ch.id });
+    if (!a.ok) return { error: 'no_slot' };
+    await bindConvGrant(ctx, key, key, { label: ch.name });
+    granted = true;
+  }
+  const giveBack = async () => {
+    if (!granted) return;
+    granted = false;
+    await dropConvGrant(ctx, key);
+  };
+  try {
+    const body: StartBody = {
+      channelId: ch.id, input, mode, encoder: await liveEncoder(ctx), dvrSeconds: ctx.cfg.LIVETV_DVR_MINUTES * 60, maxBitrate: ctx.cfg.LIVETV_MAX_BITRATE,
+    };
+    if (!(await ctx.kv.refreshIfEquals(startKey(ch.id), lock, START_LOCK_TTL_S).catch(() => false))) {
+      if ((await ctx.kv.get(startKey(ch.id)).catch(() => 'unknown')) === null) await giveBack();
+      return { error: 'channel_unreachable' };
+    }
+    try {
+      await livetvCall(ctx, 'POST', '/v1/streams', body, { timeoutMs: START_TIMEOUT_MS });
+    } catch (e) {
+      if (!(e instanceof LivetvError)) throw e;
+      await giveBack();
+      await event(ctx, { level: 'error', code: 'start_failed', channelId: ch.id, reason: e.code });
+      return { error: 'channel_unreachable' };
+    }
+    invalidateLiveConversions();
+    const ready = await firstSegment(ctx, ch.id, FIRST_SEGMENT_MS, () => ctx.kv.refreshIfEquals(startKey(ch.id), lock, START_LOCK_TTL_S).catch(() => false));
+    if (!ready) {
+      await stopQuietly(ctx, ch.id);
+      await giveBack();
+      await event(ctx, { level: 'error', code: 'start_failed', channelId: ch.id, reason: 'no_segment' });
+      return { error: 'channel_unreachable' };
+    }
+    if (ready.mode !== 'transcode') await giveBack();
+    return { mode: ready.mode, segments: ready.segments };
+  } catch (e) {
+    await giveBack();
+    throw e;
+  }
+}
+
 // ---- release on switch (Task 32) ----
 
-/** Phase 3 (recordings) decides this; in Phase 1 no recording ever uses a channel (ruling 38) */
-export function recordingUses(_channelId: string): boolean {
-  return false;
+/** a recording's slot is reserved (and its channel kept) from its start − padding − this */
+export const RECORD_LEAD_MS = 5 * 60_000;
+const USES_MEMO_MS = 5_000;
+let usesMemo = new WeakMap<object, { at: number; p: Promise<Set<string>> }>();
+/** drops the memo of recordedChannels (a recording started, ended or was deleted) */
+export function invalidateRecordingUses(): void {
+  usesMemo = new WeakMap();
+}
+
+/**
+ * The channels recordings use now (Phase 3): a row `recording`, or `scheduled` and starting within its padding + 5 min (its slot is
+ * reserved then, and its channel must not be released or idle-stopped meanwhile). One query, memoised 5 s per ctx.
+ */
+export function recordedChannels(ctx: Pick<Ctx, 'db'>): Promise<Set<string>> {
+  const hit = usesMemo.get(ctx);
+  if (hit && Date.now() - hit.at < USES_MEMO_MS) return hit.p;
+  const p = ctx.db.query<{ channel_id: string }>(
+    `select distinct channel_id from livetv_recordings
+      where channel_id is not null
+        and (state = 'recording'
+          or (state = 'scheduled' and start_at - make_interval(secs => pad_before_s) <= now() + make_interval(secs => $1::int)
+              and end_at + make_interval(secs => pad_after_s) > now()))`, [RECORD_LEAD_MS / 1000])
+    .then((r) => new Set(r.rows.map((x) => x.channel_id)), () => new Set<string>());
+  usesMemo.set(ctx, { at: Date.now(), p });
+  return p;
+}
+
+/** whether a recording uses the channel (ruling 38, Phase 3): release on switch and the idle stop leave it running */
+export async function recordingUses(ctx: Pick<Ctx, 'db'>, channelId: string): Promise<boolean> {
+  return (await recordedChannels(ctx)).has(channelId);
 }
 
 /**
@@ -595,7 +719,7 @@ export async function releasableOld(
   const v = await deviceLiveView(ctx, who.userId, who.deviceId);
   if (!v || v.channelId === target.id || !UUID_RE.test(v.channelId)) return null;
   const s = activeOf(list ?? (await readStreams(ctx)), v.channelId);
-  if (!s || recordingUses(v.channelId)) return null;
+  if (!s || (await recordingUses(ctx, v.channelId))) return null;
   if (((await viewerCounts(ctx, { exceptHash: v.hash })).get(v.channelId) ?? 0) > 0) return null;
   const row = (await ctx.db.query<{ source_id: string }>('select source_id from livetv_channels where id = $1', [v.channelId])).rows[0];
   return row ? { channelId: v.channelId, sourceId: row.source_id, mode: s.mode, hash: v.hash } : null;
@@ -618,7 +742,7 @@ async function beginRelease(ctx: Ctx, old: { channelId: string; hash: string; wh
   let ok = false;
   try {
     await __switchHooks.afterMarker?.(id);
-    if (((await viewerCounts(ctx, { exceptHash: old.hash })).get(id) ?? 0) > 0 || recordingUses(id)) return null;
+    if (((await viewerCounts(ctx, { exceptHash: old.hash })).get(id) ?? 0) > 0 || (await recordingUses(ctx, id))) return null;
     const own = old.who ? joinKey(id, old.who) : null;
     if ((await ctx.kv.keys(joinPrefix(id))).some((k) => k !== own)) return null;
     try {
@@ -722,7 +846,8 @@ export async function livetvTick(ctx: Ctx): Promise<void> {
       await streamEvents(ctx, s);
       if (await ctx.kv.get(startKey(id))) continue;
       if (await ctx.kv.get(stoppingKey(id))) continue; // a switch releases it right now (Task 32)
-      if ((viewers.get(id) ?? 0) > 0) {
+      // a recording keeps its channel (Phase 3): like a viewer, it holds off the idle stop
+      if ((viewers.get(id) ?? 0) > 0 || (await recordingUses(ctx, id))) {
         await ctx.kv.del(zeroKey(id));
         continue;
       }
@@ -737,7 +862,8 @@ export async function livetvTick(ctx: Ctx): Promise<void> {
       const lock = randomUUID();
       if (!(await ctx.kv.setnx(startKey(id), lock, START_LOCK_TTL_S))) continue;
       try {
-        if ((await viewerCounts(ctx)).get(id) || (await ctx.kv.keys(joinPrefix(id))).length || (await ctx.kv.get(stoppingKey(id)))) {
+        invalidateRecordingUses();
+        if ((await viewerCounts(ctx)).get(id) || (await ctx.kv.keys(joinPrefix(id))).length || (await ctx.kv.get(stoppingKey(id))) || (await recordingUses(ctx, id))) {
           await ctx.kv.del(zeroKey(id));
           continue;
         }

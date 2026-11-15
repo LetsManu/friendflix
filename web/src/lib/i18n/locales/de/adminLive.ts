@@ -609,6 +609,13 @@ export default {
     input_back: 'Eingang wieder da · nach {n} s',
     push_rejected: 'Verbindung abgelehnt: falsche Kennung oder Passphrase',
     released_on_switch: 'Beim Umschalten sofort beendet (Platz oder Verbindung gebraucht)',
+    rec_started: 'Aufnahme gestartet',
+    rec_done: 'Aufnahme fertig',
+    rec_partial: 'Aufnahme unvollständig (Lücken)',
+    rec_failed: 'Aufnahme fehlgeschlagen',
+    rec_moved: 'Aufnahme folgt der neuen Sendezeit',
+    rec_no_slot: 'Aufnahme wartet: kein Platz frei',
+    rec_storage_full: 'Aufnahmespeicher voll',
   },
   evBare: {
     input_lost: 'Eingang verloren',

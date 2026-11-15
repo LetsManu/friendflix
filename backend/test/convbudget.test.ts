@@ -5,15 +5,18 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CONV_DEFAULT_SLOTS, CONV_EXEMPT_TTL_S, CONV_GRANT_TTL_S, __resetConvMemo, admitConversion, admits, bindConvGrant, conversionLimit, countConversions, dropConvGrant, holdback,
-  markConvExempt, readBench, recommend, type BenchRecord, type ConvKind, type ConvPriority,
+  dropReservation, markConvExempt, readBench, recommend, reserveConversion, type BenchRecord, type ConvKind, type ConvPriority,
 } from '../src/convbudget.js';
+import { encrypt, keyFromBase64 } from '../src/crypto.js';
+import { detectLivetv } from '../src/livetv/detect.js';
+import { invalidateLiveConversions, invalidateRecordingUses, liveConversions } from '../src/livetv/streams.js';
 import { clearDownloadConv, markDownloadConv } from '../src/convexempt.js';
 import { fingerprint, probeHevcEncoder } from '../src/hevcenc.js';
 import { setLive } from '../src/live.js';
 import type { EncoderSettings, MediaTraits } from '../src/media/types.js';
 import { previews } from '../src/previews.js';
 import type { UserRow } from '../src/types.js';
-import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
+import { ADMIN, cfg, ENC_KEY, fakeHttp, makeEnv, type TestEnv } from './helpers.js';
 
 // Live TV Phase 1, Task 1: one budget for every video conversion (spec §5.1, §5.2, ruling 10).
 
@@ -431,5 +434,53 @@ describe('probes and previews are exempt', () => {
     expect(await env.kv.get('conv:exempt:ps-prev-1')).not.toBeNull();
     raw = [converting('ps-prev-1')];
     expect(await countConversions(env.ctx)).toEqual([]);
+  });
+});
+
+describe('recordings (Phase 3)', () => {
+  it('reservations count per channel until that channel transcodes; exceptResv leaves the recording\'s own out', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 2 };
+    await reserveConversion(env.ctx, 'ch-a', { label: 'Hafenkanal' });
+    await reserveConversion(env.ctx, 'ch-a', { label: 'Hafenkanal' }); // refreshed, still one
+    await reserveConversion(env.ctx, 'ch-b');
+    expect((await countConversions(env.ctx))!.map((e) => [e.kind, e.key, e.label, e.pending])).toEqual([['record', 'resv:ch-a', 'Hafenkanal', true], ['record', 'resv:ch-b', null, true]]);
+    expect(await ask({ kind: 'film', userId: BEN, deviceId: 'd9' })).toEqual({ ok: false, why: 'full' });
+    expect(await admitConversion(env.ctx, { kind: 'record', userId: ANNA, hint: 'live:ch-a', exceptResv: 'ch-a' })).toEqual({ ok: true });
+    // its grant is bound to live:ch-a: the reservation of ch-a no longer counts on top
+    await bindConvGrant(env.ctx, 'live:ch-a', 'live:ch-a');
+    expect((await countConversions(env.ctx))!.map((e) => e.key).sort()).toEqual(['live:ch-a', 'resv:ch-b']);
+    await dropConvGrant(env.ctx, 'live:ch-a');
+    await dropReservation(env.ctx, 'ch-a');
+    await dropReservation(env.ctx, 'ch-b');
+    expect(await countConversions(env.ctx)).toEqual([]);
+  });
+
+  it('liveConversions labels a recorded transcode as record', async () => {
+    const key = keyFromBase64(ENC_KEY);
+    const src = (await env.pool.query<{ id: string }>("insert into livetv_sources(id, kind, name, url_enc) values (gen_random_uuid(), 'm3u', 'Anbieter A', $1) returning id", [encrypt(key, 'x')])).rows[0]!.id;
+    const ch = async (name: string) => (await env.pool.query<{ id: string }>(
+      "insert into livetv_channels(id, source_id, source_key, stream_url_enc, stream_kind, import_name) values (gen_random_uuid(), $1, $2, $3, 'srt', $2) returning id", [src, name, encrypt(key, 'srt://192.0.2.10:9000')])).rows[0]!.id;
+    const recorded = await ch('Hafenkanal');
+    const watched = await ch('Nordlicht TV');
+    await env.pool.query(
+      `insert into livetv_recordings(id, profile_id, user_id, channel_id, channel_name, title, start_at, end_at, pad_before_s, pad_after_s, state, storage, dir)
+       values (gen_random_uuid(), $1, $1, $2, 'Hafenkanal', 'Sternstunde Physik', now() - interval '5 minutes', now() + interval '1 hour', 120, 300, 'recording', 'ff', gen_random_uuid())`, [admin.id, recorded]);
+    const orig = env.ctx.fetchImpl;
+    const fake = fakeHttp({
+      'GET /v1/streams': () => ({ json: [recorded, watched].map((id, i) => ({ channelId: id, streamKey: String(i + 1).padStart(32, '0'), mode: 'transcode', since: 1, state: 'running', bitrate: null, errors: [], lastSegmentAt: 1, segments: 'ts' })) }),
+    });
+    env.ctx.fetchImpl = ((input: RequestInfo | URL, init?: RequestInit) => (new URL(String(input)).host === 'livetv:8090' ? fake(input, init) : orig(input, init))) as typeof fetch;
+    try {
+      await detectLivetv(env.ctx, 0, { strict: true });
+      invalidateLiveConversions();
+      invalidateRecordingUses();
+      expect((await liveConversions(env.ctx)).map((e) => [e.kind, e.key, e.label]).sort()).toEqual([['live', `live:${watched}`, 'Nordlicht TV'], ['record', `live:${recorded}`, 'Hafenkanal']].sort());
+    } finally {
+      env.ctx.fetchImpl = ((input: RequestInfo | URL, init?: RequestInit) => (new URL(String(input)).host === 'livetv:8090' ? Promise.reject(new TypeError('fetch failed')) : orig(input, init))) as typeof fetch;
+      await detectLivetv(env.ctx, 0, { strict: true });
+      env.ctx.fetchImpl = orig;
+      await env.pool.query('delete from livetv_recordings; delete from livetv_channels; delete from livetv_sources');
+      invalidateLiveConversions();
+    }
   });
 });

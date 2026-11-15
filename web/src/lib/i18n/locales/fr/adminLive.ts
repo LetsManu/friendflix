@@ -610,6 +610,13 @@ const dict: Translation<typeof de> = {
     input_back: 'Entrée rétablie · après {n} s',
     push_rejected: 'Connexion refusée : identifiant ou phrase secrète incorrects',
     released_on_switch: 'Arrêtée aussitôt lors du changement (place ou connexion nécessaire)',
+    rec_started: 'Enregistrement démarré',
+    rec_done: 'Enregistrement terminé',
+    rec_partial: 'Enregistrement incomplet (coupures)',
+    rec_failed: 'Échec de l’enregistrement',
+    rec_moved: 'L’enregistrement suit le nouvel horaire',
+    rec_no_slot: 'Enregistrement en attente : aucune place libre',
+    rec_storage_full: 'Stockage des enregistrements plein',
   },
   evBare: {
     input_lost: 'Entrée perdue',

@@ -679,6 +679,16 @@ async function record(ctx: Ctx, id: string, at: Date, error: string | null, coun
  * with `file`, a just received upload; `onSuccess` runs after the swap committed and before the outcome is recorded (the upload makes
  * its file the current one there; refresh.ts). A `source` read with `rev` (its `updated_at::text`) keeps an edit's due mark (see record).
  */
+/**
+ * What runs after a successful guide import (Phase 3: recording rules are expanded and scheduled EPG recordings follow their programme),
+ * registered by recsched.ts when it loads (no import back: epg.ts stays a leaf of that graph). Its failure never fails the import.
+ */
+export type AfterEpgImport = (ctx: Ctx, sourceId: string) => Promise<void>;
+let afterImport: AfterEpgImport | null = null;
+export function setAfterEpgImport(fn: AfterEpgImport): void {
+  afterImport = fn;
+}
+
 export async function refreshEpg(
   ctx: Ctx, source: SourceRow & { rev?: string },
   o: { heartbeat?: () => Promise<unknown>; file?: { path: string; sha256: string }; onSuccess?: () => Promise<void> } = {},
@@ -719,6 +729,7 @@ export async function refreshEpg(
   // the stored index still matches the channels the list step just imported (no logo step)
   if (!('error' in r)) await autoMatch(ctx, { icons, sources: [source.id] });
   else await autoMatch(ctx).catch(() => undefined);
+  if (!('error' in r) && afterImport) await afterImport(ctx, source.id).catch(() => undefined);
   return r;
 }
 
