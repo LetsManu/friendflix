@@ -40,6 +40,18 @@ describe('updater job -> rows', () => {
     expect(f.rows.every((r) => r.took === undefined)).toBe(true);
   });
 
+  it('just started (every step still pending): "step 1 of 4", not the last step', () => {
+    const f = jobFlow(job({ step: null, steps: { pull: 'pending', verify: 'pending', restart: 'pending', health: 'pending', rollback: 'skipped' } }), { now: T });
+    expect(f).toMatchObject({ outcome: 'running', count: 'Step 1 of 4' });
+    expect(f.progress).toBe(0);
+  });
+
+  it('failed before any step ran (all skipped): "stopped at step 1 of 4"', () => {
+    const f = jobFlow(job({ state: 'failed', step: null, finishedAt: iso(2_000), error: 'pull_failed', steps: { pull: 'skipped', verify: 'skipped', restart: 'skipped', health: 'skipped', rollback: 'skipped' } }));
+    expect(f.outcome).toBe('failed');
+    expect(f.count).toBe('Stopped at step 1 of 4');
+  });
+
   it('reconnecting (the backend restarts in the middle): the rows stay as they were, only the label says so, never a failure', () => {
     const running = job({ step: 'restart', steps: { pull: 'ok', verify: 'ok', restart: 'running', health: 'pending', rollback: 'skipped' } });
     const f = jobFlow(running, { now: T + 30_000, reconnecting: true });

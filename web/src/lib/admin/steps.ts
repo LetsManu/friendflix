@@ -62,8 +62,10 @@ const elapsed = (start: string, now: number) => { const a = ms(start); return a 
 
 /** count and bar over the real steps (`rows` without a rollback: it only undoes them) */
 function frame(rows: StepRow[], outcome: FlowOutcome, partial?: number): Pick<StepFlow, 'progress' | 'count'> {
+  // the running or failed row; with none (just started, or failed before any step ran) the first step not done, else the last
   const found = rows.findIndex((r) => r.state === 'running' || r.state === 'failed');
-  const at = found < 0 && outcome !== 'ok' && outcome !== 'neutral' ? rows.length - 1 : found;
+  const open = rows.findIndex((r) => r.state !== 'ok');
+  const at = found >= 0 ? found : open >= 0 ? open : rows.length - 1;
   const n = rows.length;
   if (outcome === 'running') return { progress: progressOf(rows, partial), count: trDynamic(`${U}.flow.stepOf`, { n: Math.max(1, at + 1), total: n }) };
   if (outcome === 'failed') return { progress: progressOf(rows), count: trDynamic(`${U}.flow.stopped`, { n: Math.max(1, at + 1), total: n }) };
