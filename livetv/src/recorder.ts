@@ -46,7 +46,16 @@ export interface RecordingView {
 export interface StartRecording { id: string; channelId: string; dir: string; endAt: number }
 export type StartResult = { ok: true; state: 'recording'; segments: 'ts' | 'fmp4' | null } | { ok: false; status: 409 | 410 | 507; error: 'stream_not_running' | 'storage_full' | 'invalid_dir' | 'removed' };
 /** `POST /v1/recordings/:id/close`: the facts of a finished folder (its playlist closed now if it was not) */
-export type CloseResult = Omit<RecordingView, 'since'> | null;
+export type CloseResult = (Omit<RecordingView, 'since'> & {
+  /** M2: the first segment's start to the last segment's end (epoch ms), so the backend sees a late begin or an early end; null = empty */
+  span: { from: number; to: number } | null;
+}) | null;
+
+/** what a playlist's segments cover, start of the first to end of the last */
+const spanOf = (entries: readonly { pdt: number; duration: number }[]) => {
+  const last = entries.at(-1);
+  return last ? { from: entries[0]!.pdt, to: last.pdt + last.duration * 1000 } : null;
+};
 
 /** the file operations of the recorder (tests wrap them to fail with ENOSPC) */
 export interface RecFs {
@@ -446,7 +455,7 @@ export class Recorder {
       if (cur.state === 'recording') await this.finish(cur, this.now());
       else await cur.queue;
       const { since: _since, ...facts } = this.list().find((v) => v.id === id)!;
-      return facts;
+      return { ...facts, span: spanOf(cur.entries) };
     }
     const path = join(this.o.root, dir);
     const st = await lstat(path).catch(() => null);
@@ -473,7 +482,7 @@ export class Recorder {
     this.log(`recording ${id} closed from its folder`);
     return {
       id, channelId: '', dir, state: !entries.length || error ? 'failed' : 'done', segments: entries.length ? (entries.at(-1)!.ext === 'm4s' ? 'fmp4' : 'ts') : null,
-      bytes, durationS: Math.round(entries.reduce((n, e) => n + e.duration, 0)), gaps, error: !entries.length ? 'stream_gone' : error,
+      bytes, durationS: Math.round(entries.reduce((n, e) => n + e.duration, 0)), gaps, error: !entries.length ? 'stream_gone' : error, span: spanOf(entries),
     };
   }
 

@@ -15,7 +15,7 @@ import { pushEvent, type LiveEvent } from './events.js';
 import { deleteRecording, effectiveStorage, getRecording, mayRecord, progKey, recordSettings, seriesKeyOf, type Gap, type RecRow, type RecState } from './recordings.js';
 import { channelAllowed, channelSet, type LivetvProfile, type LivetvUser } from './rights.js';
 import { MAX_PAD_BEFORE_S, RECORD_LEAD_MS, expectedMode, invalidateRecordingUses, runningChannelIds, startForRecording, type RecordStartError } from './streams.js';
-import type { RecorderView, RecordingStartAnswer } from './wire.js';
+import type { RecorderCloseAnswer, RecorderView, RecordingStartAnswer } from './wire.js';
 
 /**
  * The recording scheduler (spec §15, plan Phase 3 Task 3). The backend owns every decision; livetv only records what it is told.
@@ -498,9 +498,9 @@ async function sendPendingEnd(ctx: Ctx, id: string): Promise<void> {
 
 /** finalises a recording whose recorder livetv lost after its end (B-I2); a missing folder fails it `stream_gone` */
 async function closeLost(ctx: Ctx, r: RecRow): Promise<void> {
-  let facts: RecorderView | null;
+  let facts: RecorderCloseAnswer | null;
   try {
-    facts = await livetvCall<RecorderView>(ctx, 'POST', `/v1/recordings/${r.id}/close`, { dir: r.dir }, { timeoutMs: CALL_TIMEOUT_MS });
+    facts = await livetvCall<RecorderCloseAnswer>(ctx, 'POST', `/v1/recordings/${r.id}/close`, { dir: r.dir }, { timeoutMs: CALL_TIMEOUT_MS });
   } catch (e) {
     if (!(e instanceof LivetvError)) throw e;
     if (e.status !== 404) return; // livetv did not answer: the next tick asks again
@@ -510,15 +510,38 @@ async function closeLost(ctx: Ctx, r: RecRow): Promise<void> {
   await collect(ctx, r, factsView(r, facts));
 }
 
-/** livetv's answer of a close, checked field by field */
-function factsView(r: RecRow, facts: RecorderView): RecorderView {
+/**
+ * livetv's answer of a close, checked field by field. A folder read after its recorder was lost carries no gap for what it never
+ * recorded at its edges (M2): a late begin (a crashed launcher, a lost recorder) or an early end. Against the programme (from its start,
+ * or from the request when that was later, as A-I5; to its end; padding is a margin, its absence is no loss), a missing edge of more than
+ * EDGE_TOLERANCE (max(10 s, 1 % of the programme)) becomes a gap, so the recording ends `partial`. livetv's `span` says which edge;
+ * without one (an older livetv) the whole shortfall counts at the end.
+ */
+function factsView(r: RecRow, facts: RecorderCloseAnswer): RecorderView {
+  const bytes = Math.max(0, Math.round(Number(facts.bytes) || 0));
+  const durationS = Math.max(0, Math.round(Number(facts.durationS) || 0));
+  const gaps = Array.isArray(facts.gaps) ? facts.gaps.filter((g) => typeof g?.from === 'number' && typeof g?.to === 'number').slice(0, 1000) : [];
+  const from = Math.max(r.start_at.getTime(), r.created_at.getTime());
+  const to = r.end_at.getTime();
+  const tol = Math.max(EDGE_TOLERANCE_MIN_MS, (to - from) * 0.01);
+  if (bytes > 0 && to > from) {
+    const span = facts.span && typeof facts.span.from === 'number' && typeof facts.span.to === 'number' ? facts.span : null;
+    if (span) {
+      if (span.from - from > tol) gaps.push({ from, to: Math.min(span.from, to) });
+      if (to - span.to > tol) gaps.push({ from: Math.max(span.to, from), to });
+    } else {
+      const short = to - from - durationS * 1000;
+      if (short > tol) gaps.push({ from: to - short, to });
+    }
+  }
   return {
     id: r.id, channelId: r.channel_id ?? '', dir: r.dir, state: facts.state === 'done' ? 'done' : 'failed', segments: facts.segments === 'fmp4' || facts.segments === 'ts' ? facts.segments : null,
-    bytes: Math.max(0, Math.round(Number(facts.bytes) || 0)), durationS: Math.max(0, Math.round(Number(facts.durationS) || 0)),
-    gaps: Array.isArray(facts.gaps) ? facts.gaps.filter((g) => typeof g?.from === 'number' && typeof g?.to === 'number').slice(0, 1000) : [],
+    bytes, durationS, gaps: gaps.sort((a, b) => a.from - b.from),
     error: facts.error === 'storage_full' || facts.error === 'write_failed' || facts.error === 'stream_gone' ? facts.error : null, since: 0,
   };
 }
+/** M2: the least a missing edge must be to count as a gap */
+export const EDGE_TOLERANCE_MIN_MS = 10_000;
 
 /**
  * N5: a `starting` row whose lease ran out after its end: the replica that held it may have posted a recorder before it went away. Its
@@ -526,9 +549,9 @@ function factsView(r: RecRow, facts: RecorderView): RecorderView {
  * recorded (or livetv did not answer): the caller fails it as before.
  */
 async function closeExpired(ctx: Ctx, r: RecRow, token: string): Promise<boolean> {
-  let facts: RecorderView;
+  let facts: RecorderCloseAnswer;
   try {
-    facts = await livetvCall<RecorderView>(ctx, 'POST', `/v1/recordings/${r.id}/close`, { dir: r.dir }, { timeoutMs: CALL_TIMEOUT_MS });
+    facts = await livetvCall<RecorderCloseAnswer>(ctx, 'POST', `/v1/recordings/${r.id}/close`, { dir: r.dir }, { timeoutMs: CALL_TIMEOUT_MS });
   } catch (e) {
     if (!(e instanceof LivetvError)) throw e;
     return false;

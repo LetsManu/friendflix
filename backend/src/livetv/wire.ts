@@ -130,6 +130,8 @@ export interface BenchAnswer { speed: number; encoder: Encoder; seconds: number 
 export interface RecordingStartBody { id: string; channelId: string; dir: string /* uuid folder under /recordings */; endAt: number /* epoch ms */ }
 /** its answer (200); refusals are 409 `stream_not_running` / `invalid_dir`, 410 `removed` (deleted meanwhile) and 507 `storage_full` */
 export interface RecordingStartAnswer { state: 'recording'; segments: Segments | null }
+/** `POST /v1/recordings/:id/close` (livetv/src/recorder.ts `CloseResult`): the folder's facts; `span` what its segments cover (M2) */
+export type RecorderCloseAnswer = Omit<RecorderView, 'since'> & { since?: number; span?: { from: number; to: number } | null };
 /** livetv/src/recorder.ts `RecError` */
 export type RecorderError = 'storage_full' | 'write_failed' | 'stream_gone';
 /** an outage inside a recording, epoch ms (livetv/src/recorder.ts `Gap`) */

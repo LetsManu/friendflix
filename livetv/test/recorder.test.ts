@@ -402,7 +402,8 @@ describe('finalisation and races (fix round 1)', () => {
     recorder.close();
     recorder = newRecorder();
     const r = await recorder.closeFolder(ID, DIR);
-    expect(r).toEqual({ id: ID, channelId: '', dir: DIR, state: 'done', segments: 'ts', bytes: 3 * 188, durationS: 12, gaps: [{ from: T0 + 8000, to: T0 + 60_000 }], error: null });
+    // span (M2): the first segment's start to the last one's end, so the backend sees a late begin or an early end
+    expect(r).toEqual({ id: ID, channelId: '', dir: DIR, state: 'done', segments: 'ts', bytes: 3 * 188, durationS: 12, gaps: [{ from: T0 + 8000, to: T0 + 60_000 }], error: null, span: { from: T0, to: T0 + 64_000 } });
     expect(playlist().trimEnd().endsWith('#EXT-X-ENDLIST')).toBe(true);
     expect(await recorder.closeFolder(ID, '0f000000-0000-4000-a000-0000000000ee')).toBeNull();
   });

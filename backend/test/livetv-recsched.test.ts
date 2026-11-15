@@ -36,7 +36,7 @@ const recorders = new Map<string, RecorderView>();
 let up = true;
 let recPostStatus = 200;
 let patchStatus = 200;
-let closeAnswer: Omit<RecorderView, 'id' | 'dir' | 'since'> | null = null;
+let closeAnswer: (Omit<RecorderView, 'id' | 'dir' | 'since'> & { span?: { from: number; to: number } | null }) | null = null;
 let free = 100 * 1024 ** 3;
 let keyN = 0;
 const view = (channelId: string, o: Partial<StreamView> = {}): StreamView => ({
@@ -437,6 +437,31 @@ describe('finalisation and orphans (fix round 1)', () => {
     closeAnswer = null;
     await tick();
     expect([(await getRecording(env.ctx, none))!.state, (await getRecording(env.ctx, none))!.error]).toEqual(['failed', 'missed']);
+  });
+
+  it('M2: a folder that begins late or ends early is partial, with the missing edges as gaps (tolerance max(10 s, 1 %))', async () => {
+    const start = Date.now() - 3 * HOUR;
+    const end = start + HOUR;
+    // a crashed launcher's lease: its recorder began 20 min into the programme
+    const late = await recording({ state: 'starting', claim_token: randomUUID(), claim_until: new Date(Date.now() - MIN), mode: null,
+      start_at: new Date(start), end_at: new Date(end), pad_after_s: 60, created_at: new Date(start - 24 * HOUR) });
+    closeAnswer = { channelId: '', state: 'done', segments: 'ts', bytes: 9000, durationS: 2400, gaps: [], error: null, span: { from: start + 20 * MIN, to: end + 60_000 } };
+    await tick();
+    let r = await getRecording(env.ctx, late);
+    expect([r!.state, r!.gaps]).toEqual(['partial', [{ from: start, to: start + 20 * MIN }]]);
+    // a recorder lost after the end whose folder stops 15 min early (an older livetv without span: the shortfall counts at the tail)
+    const short = await recording({ channel_id: sternwarte, channel_name: 'Sternwarte 24', state: 'recording', mode: 'passthrough', bytes: 4000,
+      start_at: new Date(start), end_at: new Date(end), pad_after_s: 0, created_at: new Date(start - 24 * HOUR) });
+    closeAnswer = { channelId: '', state: 'done', segments: 'ts', bytes: 9000, durationS: 45 * 60, gaps: [], error: null };
+    await tick();
+    r = await getRecording(env.ctx, short);
+    expect([r!.state, r!.gaps]).toEqual(['partial', [{ from: end - 15 * MIN, to: end }]]);
+    // within the tolerance (36 s of an hour): done
+    const fine = await recording({ channel_id: hafen, channel_name: 'Hafenkanal', state: 'recording', mode: 'passthrough', bytes: 4000,
+      start_at: new Date(start), end_at: new Date(end), pad_after_s: 0, created_at: new Date(start - 24 * HOUR) });
+    closeAnswer = { channelId: '', state: 'done', segments: 'ts', bytes: 9000, durationS: 3570, gaps: [], error: null, span: { from: start + 20_000, to: end - 10_000 } };
+    await tick();
+    expect((await getRecording(env.ctx, fine))!.state).toBe('done');
   });
 
   it('N5: re-claiming an expired lease whose recorder runs counts no gap for the time it recorded', async () => {
