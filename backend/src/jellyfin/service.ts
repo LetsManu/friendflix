@@ -1210,6 +1210,8 @@ export class JellyfinService implements MediaServer {
         return { id: typeof lib?.ItemId === 'string' ? lib.ItemId : null };
       },
       itemByPath: async (libraryId, path) => {
+        // TODO(A-M14): Jellyfin's /Items has no path filter, so this lists at most 2 000 items of the library and an item beyond them
+        // is not found (the recording stays unlinked and is looked up again). A recordings library larger than that needs paging here.
         if (!/^[0-9a-f-]{32,36}$/i.test(libraryId)) return null;
         const q = new URLSearchParams({ ParentId: libraryId, Recursive: 'true', Fields: 'Path', IncludeItemTypes: 'Movie,Video,Episode', Limit: '2000' });
         const r = await client.adminJson<{ Items?: Array<{ Id?: unknown; Path?: unknown }> }>(`/Items?${q}`);
