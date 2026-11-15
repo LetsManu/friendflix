@@ -34,7 +34,7 @@
   $: if (session.itemId !== segFor) { segFor = session.itemId; segs = []; void loadSegments(session.itemId); }
   async function loadSegments(id: string) {
     const caps = get(serverCaps);
-    if (!caps.segments.length) return;
+    if (!caps.segments.length || id.startsWith('rec:')) return; // a recording (Live TV Phase 3) has no media-server segments
     try {
       const r = await api<{ segments: Segment[] } | null>(`/api/items/${id}/segments`);
       if (segFor === id) segs = (r?.segments ?? []).map((x) => ({ ...x, type: String(x.type).toLowerCase() })).filter((x) => segmentShown(caps, x.type));

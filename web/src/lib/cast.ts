@@ -511,11 +511,14 @@ export async function loadOnCast(info: CastInfo, activeSubtitle = -1, autoplay =
 export interface LiveCastMedia {
   contentId: string;
   contentType: 'application/x-mpegURL';
-  streamType: 'LIVE';
-  /** only for an fMP4 / CMAF stream (the watch answer's `segments`): the receiver must not expect MPEG-TS segments (bughunt M2) */
-  hlsSegmentFormat?: 'fmp4';
+  /** a live channel, or a recording (Phase 3: `BUFFERED` when finished, `LIVE` while it grows; lib/cast/liveInfo.ts recCastMedia) */
+  streamType: 'LIVE' | 'BUFFERED';
+  /** an fMP4 / CMAF stream (the watch answer's `segments`): the receiver must not expect MPEG-TS segments (bughunt M2); a recording names `ts` too */
+  hlsSegmentFormat?: 'fmp4' | 'ts';
+  /** a recording: where the receiver starts (s) */
+  startTime?: number;
   metadata: { title: string; subtitle: string; images: string[] };
-  customData: { ui: { live: true } };
+  customData: { ui: { live: boolean } };
 }
 /** loads a live channel on the receiver (autoplay); false on failure (no session, refused) */
 export async function loadLiveOnCast(l: LiveCastMedia): Promise<boolean> {
@@ -523,23 +526,25 @@ export async function loadLiveOnCast(l: LiveCastMedia): Promise<boolean> {
   if (!sess || !ch) return false;
   const m = ch.media;
   const media = new m.MediaInfo(l.contentId, l.contentType);
-  media.streamType = m.StreamType.LIVE ?? 'LIVE';
-  // fMP4 like the film path (mediaOf); a TS stream stays as it always was (no format set: the receiver's default is TS)
+  media.streamType = l.streamType === 'BUFFERED' ? m.StreamType.BUFFERED : m.StreamType.LIVE ?? 'LIVE';
+  // fMP4 like the film path (mediaOf); a live TS stream stays as it always was (no format set: the receiver's default is TS); a
+  // recording names TS explicitly
   if (l.hlsSegmentFormat === 'fmp4') {
     media.hlsSegmentFormat = m.HlsSegmentFormat.FMP4 ?? 'fmp4';
     media.hlsVideoSegmentFormat = m.HlsVideoSegmentFormat?.FMP4 ?? 'fmp4';
-  }
+  } else if (l.hlsSegmentFormat === 'ts') media.hlsSegmentFormat = m.HlsSegmentFormat.TS; // like the film path's TS
   const meta = new (m.GenericMediaMetadata ?? m.MovieMediaMetadata)();
   meta.metadataType = 0; // GENERIC
   meta.title = l.metadata.title;
   if (l.metadata.subtitle) meta.subtitle = l.metadata.subtitle;
   meta.images = l.metadata.images.map((u) => new ch.Image(u));
   media.metadata = meta;
-  media.customData = { ui: { live: true } };
+  media.customData = { ui: { live: l.customData.ui.live } };
   media.tracks = [];
   lastMedia = null;
   const req = new m.LoadRequest(media);
   req.autoplay = true;
+  if (l.startTime !== undefined) req.currentTime = l.startTime;
   try { return (await sess.loadMedia(req)) === undefined; } catch { return false; }
 }
 

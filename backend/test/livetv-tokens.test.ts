@@ -519,6 +519,20 @@ describe('recording tokens (Phase 3)', () => {
     expect((await play(plan.id)).json()).toEqual({ error: 'not_ready' });
   });
 
+  it('AirPlay pins two addresses within the window (a recording cast with via airplay, Phase 3 Task 10)', async () => {
+    const mine = await rec({ profile_id: adminProfile, user_id: adminId });
+    const ap = (await play(mine.id, { via: 'airplay' })).json().token as string;
+    expect((await authzRec(ap, IP1)).statusCode).toBe(200); // the phone
+    expect((await authzRec(ap, IP2)).statusCode).toBe(200); // the Apple TV, within the window
+    expect((await authzRec(ap, IP3)).statusCode).toBe(403); // a third address never
+    expect((await authzRec(ap, IP1)).statusCode).toBe(200);
+    expect((await authzRec(ap, IP2)).statusCode).toBe(200);
+    // a chromecast recording token: one address
+    const cc = (await play(mine.id, { via: 'chromecast' })).json().token as string;
+    expect((await authzRec(cc, IP2)).statusCode).toBe(200);
+    expect((await authzRec(cc, IP1)).statusCode).toBe(403);
+  });
+
   it('B-M1: a long recording plays past 12 h; a growing one\'s token follows a later end on the beat', async () => {
     const long = await rec({ profile_id: adminProfile, user_id: adminId, start_at: new Date(Date.now() - 22 * 3_600_000), end_at: new Date(Date.now() - 2 * 3_600_000), duration_s: 20 * 3600 });
     const l = (await play(long.id)).json();

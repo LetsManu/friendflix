@@ -60,7 +60,8 @@
     timer = setTimeout(() => dispatch('dismiss', id), LEAVE_MS);
   }
   function go(e: MouseEvent) {
-    if (h) playOrCast(e, { id: h.itemId, positionTicks: h.positionTicks }, { explicitStart: true });
+    // a recording opens its own player page (the link); casting it is the player's
+    if (h && h.type !== 'Recording') playOrCast(e, { id: h.itemId, positionTicks: h.positionTicks }, { explicitStart: true });
   }
   /** TV remote: Back returns to the tile without dismissing (the page's Back, opening the rail, does not run) */
   function onKey(e: KeyboardEvent) {
@@ -97,7 +98,11 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions (only the remote's Back, bubbling from the buttons) -->
   <div class="hc frost frost-safe frost-panel {layout}" class:leaving class:away class:entered style="--fr-scrim-safe:{SCRIM_SAFE_DIM}" role="region" aria-label={$t('home.handoff.region')} aria-hidden={off ? 'true' : undefined} inert={off || undefined} data-nav-skip={off ? '' : undefined} data-handoff bind:this={root}
     on:animationend={(e) => { if (e.target === e.currentTarget) entered = true; }} on:keydown={onKey} use:remote>
-    {#if layout !== 'phone'}<img class="thumb" src={img(h.imageId, 320)} alt="" width="96" height="54" loading="eager" decoding="async" />{/if}
+    {#if layout !== 'phone'}
+      <!-- a recording shows its channel's logo; without one a placeholder (an empty src would be a broken image) -->
+      {#if h.type === 'Recording' && !h.logo}<span class="thumb ph" aria-hidden="true"><Icon name="tv" size={tv ? 36 : 24} /></span>
+      {:else}<img class="thumb" class:logo={h.type === 'Recording'} src={h.type === 'Recording' ? h.logo : img(h.imageId, 320)} alt="" width="96" height="54" loading="eager" decoding="async" />{/if}
+    {/if}
     <div class="txt">
       <p class="last">{last}</p>
       <p class="name">{title}</p>
@@ -126,6 +131,8 @@
   /* TV (spec 2.4): top right of the focus tile inside the gutter, clear of the tile's text column (left gutter + 52 %), solid
      (html.tv turns .frost into --fr-solid), the tile's type scale (rem: follows the html.tv root size) */
   .hc.tv { top: var(--tv-gutter); right: var(--tv-gutter); width: min(34rem, calc(48% - 2 * var(--tv-gutter) - 1.5rem)); gap: 1rem 1.25rem; padding: 1.5rem; align-items: center; }
+  .thumb.logo { object-fit: contain; background: rgba(255, 255, 255, .08); }
+  .thumb.ph { display: flex; align-items: center; justify-content: center; color: rgba(255, 255, 255, .6); }
   .tv .thumb { width: 10rem; height: 5.625rem; border-radius: var(--tv-radius); }
   .tv .txt { padding-right: 0; gap: .375rem; }
   .tv .last { font-size: 1.125rem; font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; }

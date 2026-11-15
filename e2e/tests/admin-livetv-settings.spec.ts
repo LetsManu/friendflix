@@ -16,7 +16,7 @@ test.describe('admin: Live-TV, Einstellungen (desktop)', () => {
   test('the tab follows Live-Status and shows the four settings and the ports read-only', async ({ page }) => {
     await page.goto('/admin/livetv?tab=settings');
     const tabs = page.getByRole('tablist', { name: 'Live-TV-Bereiche' }).getByRole('tab');
-    await expect(tabs).toHaveText(['Quellen', 'Kanäle', 'Gruppen & Rechte', 'Programmführer', 'Live-Status', 'Einstellungen']);
+    await expect(tabs).toHaveText(['Quellen', 'Kanäle', 'Gruppen & Rechte', 'Programmführer', 'Live-Status', 'Aufnahmen', 'Einstellungen']);
     await expect(page.getByRole('tab', { name: 'Einstellungen' })).toHaveAttribute('aria-selected', 'true');
     for (const n of ['Encoder für Live-TV', 'Adresse für gesendete Streams', 'Rückspulpuffer für Live-TV (Minuten)']) await expect(setting(page, n)).toBeVisible();
     await expect(page.getByRole('group', { name: /Bitrate/ })).toBeVisible();

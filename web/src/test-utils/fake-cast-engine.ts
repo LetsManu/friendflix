@@ -110,9 +110,18 @@ export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock; store?: Retu
   const watchAnswers: Record<string, () => Promise<WatchAnswer>> = {};
   let wn = 0;
   const liveList: { list: LiveList | null } = { list: null };
+  /** recordings (Phase 3): POST /api/livetv/recordings/:id/play answers (absent: a finished fMP4 recording at 42 s with a fresh token) */
+  const recAnswers: Record<string, () => Promise<unknown>> = {};
+  let rn = 0;
   const api = vi.fn(async (path: string, init: Init = {}) => {
     calls.push({ path, init });
     order.push(`${init.method ?? 'GET'} ${path}`);
+    const rp = /^\/api\/livetv\/recordings\/([^/]+)\/play$/.exec(path);
+    if (rp) {
+      const id = decodeURIComponent(rp[1]!), a = recAnswers[id], tok = `rtok-${id}-${++rn}`;
+      return a ? a() : { token: tok, url: `/media/r/${tok}/index.m3u8`, growing: false, segments: 'fmp4', durationS: 2700, positionS: 42, expiresAt: T0 + 3 * 3_600_000 };
+    }
+    if (/^\/api\/livetv\/recordings\/[^/]+\/progress$/.test(path)) return { ok: true };
     const w = /^\/api\/livetv\/channels\/([^/]+)\/watch$/.exec(path);
     if (w) { const id = decodeURIComponent(w[1]!); const a = watchAnswers[id]; return a ? a() : liveAnswer(id, `tok-${id}-${++wn}`); }
     if (path === '/api/livetv/watch') return null;
@@ -198,7 +207,9 @@ export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock; store?: Retu
   const out = writable<CastSession | null>(null);
   const engine = createCastEngine(deps, out);
   return {
-    watchAnswers, liveList, liveLoads, setLiveLoad: (f: (m: LiveCastMedia) => Promise<boolean>) => { liveLoadImpl = f; },
+    watchAnswers, recAnswers, liveList, liveLoads,
+    recProgress: () => calls.filter((c) => /^\/api\/livetv\/recordings\/[^/]+\/progress$/.test(c.path)).map((c) => c.init.body as { positionS: number }),
+    setLiveLoad: (f: (m: LiveCastMedia) => Promise<boolean>) => { liveLoadImpl = f; },
     /** the live tokens revoked with DELETE /api/livetv/watch */
     liveStops: () => calls.filter((c) => c.path === '/api/livetv/watch' && c.init.method === 'DELETE').map((c) => String(c.init.body?.token)),
     watches: () => calls.filter((c) => /^\/api\/livetv\/channels\/[^/]+\/watch$/.test(c.path)),

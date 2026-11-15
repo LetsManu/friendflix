@@ -190,8 +190,12 @@ describe('scheduling', () => {
     expect(r.statusCode, r.body).toBe(200);
     expect(r.json()).toEqual({
       channelId: nordlicht, start: iso(T() + 30 * MIN), end: iso(T() + 90 * MIN), title: 'Die Leuchtturmwärter', subtitle: 'Sturm', description: 'Eine Nacht auf der Insel.',
-      episode: 'S01E02', seriesKey: 'die leuchtturmwärter', canRecord: true,
+      episode: 'S01E02', seriesKey: 'die leuchtturmwärter', canRecord: true, padDefaults: { before: 2, after: 5 },
     });
+    // the admin's padding defaults reach the sheet (fix round 1, W-I7)
+    env.ctx.cfg = { ...env.ctx.cfg, LIVETV_RECORD_PAD_BEFORE_MIN: 4, LIVETV_RECORD_PAD_AFTER_MIN: 12 };
+    expect((await call(anna, 'GET', `/api/livetv/programme/${nordlicht}/${iso(T() + 30 * MIN)}`)).json().padDefaults).toEqual({ before: 4, after: 12 });
+    env.ctx.cfg = { ...env.ctx.cfg, LIVETV_RECORD_PAD_BEFORE_MIN: 2, LIVETV_RECORD_PAD_AFTER_MIN: 5 };
     expect((await call(anna, 'GET', `/api/livetv/programme/${nordlicht}/${iso(T())}`)).statusCode).toBe(404); // the stored time is not the shown one
     // a recording and a rule of this profile are named
     const p = await call(anna, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(T() + 30 * MIN) });
@@ -228,6 +232,45 @@ describe('scheduling', () => {
     const f = await call(anna, 'POST', '/api/livetv/recordings', { ...body, force: true });
     expect(f.statusCode).toBe(201);
     expect(f.json().forecast.conflict).toBe(true);
+  });
+
+  it('the list marks the profile\'s planned recordings that conflict only when asked (?conflicts=1, the Konflikt chip of Geplant)', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
+    const sat = await channel('Satkanal', { kind: 'srt' });
+    invalidateLivetvRights();
+    const first = await row({ channel_id: hafen, channel_name: 'Hafenkanal' });
+    const alone = (await call(anna, 'GET', '/api/livetv/recordings?state=scheduled&conflicts=1')).json().recordings;
+    expect(alone.map((r: { id: string; conflict?: boolean }) => [r.id, r.conflict])).toEqual([[first, false]]);
+    const second = await row({ channel_id: sat, channel_name: 'Satkanal', title: 'Die Leuchtturmwärter' });
+    const both = (await call(anna, 'GET', '/api/livetv/recordings?conflicts=1')).json().recordings as Array<{ id: string; conflict?: boolean }>;
+    expect(Object.fromEntries(both.map((r) => [r.id, r.conflict]))).toEqual({ [first]: true, [second]: true });
+    // without asking (the info panel, the Live-TV tab) nothing is forecast
+    const plain = (await call(anna, 'GET', '/api/livetv/recordings')).json().recordings as Array<{ id: string; conflict?: boolean }>;
+    for (const r of plain) expect(r).not.toHaveProperty('conflict');
+    // a finished recording carries no forecast
+    const done = await row({ channel_id: nordlicht, state: 'done', start_at: new Date(T() - 5 * HOUR), end_at: new Date(T() - 4 * HOUR), bytes: 1 });
+    const all = (await call(anna, 'GET', '/api/livetv/recordings?state=done&conflicts=1')).json().recordings as Array<{ id: string; conflict?: boolean }>;
+    expect(all.find((r) => r.id === done)).not.toHaveProperty('conflict');
+  });
+
+  it('the conflict forecast covers the 50 soonest planned recordings; the 51st and later are unknown (null), never "no conflict"', async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 51; i++) ids.push(await row({ start_at: new Date(T() + i * HOUR), end_at: new Date(T() + i * HOUR + 30 * MIN), title: `Folge ${i + 1}` }));
+    const list = (await call(anna, 'GET', '/api/livetv/recordings?state=scheduled&conflicts=1')).json().recordings as Array<{ id: string; conflict?: boolean | null }>;
+    const by = new Map(list.map((r) => [r.id, r.conflict]));
+    for (const id of ids.slice(0, 50)) expect(by.get(id), id).toBe(false);
+    expect(by.get(ids[50]!)).toBeNull(); // the furthest one is not forecast
+  });
+
+  it('the list says whether a finished recording can be kept in the library (mode both with a library, W-I8) and the padding defaults', async () => {
+    const r1 = (await call(anna, 'GET', '/api/livetv/recordings')).json();
+    expect([r1.libraryExport, r1.padDefaults]).toEqual([false, { before: 2, after: 5 }]);
+    env.ctx.cfg = { ...cfg, LIVETV_RECORD_STORAGE: 'both', LIVETV_RECORD_LIBRARY_ID: 'lib-rec' };
+    env.ctx.jf.admin.refreshLibrary ??= async () => undefined;
+    env.ctx.jf.admin.libraryFolders ??= async () => [];
+    expect((await call(anna, 'GET', '/api/livetv/recordings')).json().libraryExport).toBe(true);
+    env.ctx.cfg = { ...cfg, LIVETV_RECORD_STORAGE: 'both' };
+    expect((await call(anna, 'GET', '/api/livetv/recordings')).json().libraryExport).toBe(false);
   });
 
   it('forecast counts a channel once for two recordings', async () => {

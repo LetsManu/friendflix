@@ -172,6 +172,64 @@ export interface LivetvMock {
   area: LivetvAreaMock;
   /** the *Live-Status* tab and the guide counts (Task 26, mocks/livetvStatus.ts) */
   status: LtvStatusMock;
+  /** the *Aufnahmen* tab (Phase 3 Task 11): backend livetv/recroutes.ts recordingAdminRoutes */
+  rec: RecAdminMock;
+}
+/** Admin → Live-TV → Aufnahmen: storage, the Jellyfin libraries with their folders, the metadata list, and the writes made */
+export interface RecAdminMock {
+  storage: { usedBytes: number; limitBytes: number; freeBytes: number | null; hoursLeftHd: number; library: { mounted: boolean; writable: boolean; dedicated: boolean; freeBytes: number } | null };
+  libraries: { supported: boolean; jfPath: string; selected: string | null; libraries: Array<{ id: string; name: string; paths: string[]; fits: boolean }> };
+  items: Array<{ id: string; profile: string | null; channel: string; start: string; end: string; mode: string | null; state: string; error: string | null; bytes: number; keep: boolean }>;
+  /** "METHOD /path body" of every write */
+  calls: string[];
+}
+export function recAdminMock(): RecAdminMock {
+  const at = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
+  const id = (n: string) => `00000000-0000-4000-8000-0000000000${n}`;
+  return {
+    storage: { usedBytes: 143_000_000_000, limitBytes: 200_000_000_000, freeBytes: 820_000_000_000, hoursLeftHd: 41, library: null },
+    libraries: { supported: true, jfPath: '/media/Aufnahmen', selected: null, libraries: [
+      { id: 'lib-film', name: 'Filme', paths: ['/media/Filme'], fits: false },
+      { id: 'lib-rec', name: 'Aufnahmen', paths: ['/media/Aufnahmen'], fits: true },
+    ] },
+    items: [
+      { id: id('a1'), profile: 'Anna Beispiel', channel: 'Nordlicht TV', start: at(12, 20, 15), end: at(12, 21), mode: 'remux', state: 'recording', error: null, bytes: 900_000_000, keep: false },
+      { id: id('a2'), profile: 'Ben', channel: 'Hafenkanal', start: at(13, 21), end: at(13, 22), mode: null, state: 'scheduled', error: null, bytes: 0, keep: false },
+      { id: id('a3'), profile: 'Anna Beispiel', channel: 'Sternwarte 24', start: at(11, 22), end: at(11, 23), mode: 'transcode', state: 'failed', error: 'storage_full', bytes: 0, keep: false },
+    ],
+    calls: [],
+  };
+}
+/** `/api/admin/livetv/recordings*`; null = not one of them */
+function recAdminRoute(r: RecAdminMock, m: string, p: string, sp: URLSearchParams, body: any, J: Reply): Promise<void> | null {
+  const log = () => r.calls.push(`${m} ${p} ${JSON.stringify(body ?? {})}`);
+  if (p === '/api/admin/livetv/recordings/storage' && m === 'GET') return J(r.storage);
+  if (p === '/api/admin/livetv/recordings/libraries' && m === 'GET') return J(r.libraries);
+  if (p === '/api/admin/livetv/recordings/libraries' && m === 'POST') {
+    log();
+    r.libraries.libraries = [...r.libraries.libraries, { id: 'lib-new', name: 'Aufnahmen', paths: [r.libraries.jfPath], fits: true }];
+    return J({ id: 'lib-new' }, 201);
+  }
+  if (p === '/api/admin/livetv/recordings/delete-all' && m === 'POST') {
+    log();
+    if (body?.confirm !== 'LÖSCHEN') return J({ error: 'invalid', field: 'confirm' }, 400);
+    const n = r.items.length;
+    r.items = [];
+    return J({ deleted: n, pending: 0 });
+  }
+  if (p === '/api/admin/livetv/recordings' && m === 'GET') {
+    const st = sp.get('state');
+    const items = st === 'active' ? r.items.filter((x) => ['scheduled', 'starting', 'recording'].includes(x.state)) : st ? r.items.filter((x) => x.state === st) : r.items;
+    return J({ items, total: items.length });
+  }
+  const mm = p.match(/^\/api\/admin\/livetv\/recordings\/([0-9a-f-]{36})$/);
+  if (mm && m === 'DELETE') {
+    r.calls.push(`DELETE ${p}`);
+    const had = r.items.some((x) => x.id === mm[1]);
+    r.items = r.items.filter((x) => x.id !== mm[1]);
+    return had ? J({ ok: true }) : J({ error: 'not_found' }, 404); // the backend answers 204
+  }
+  return null;
 }
 /** a source as `GET /api/admin/livetv/sources` answers it (backend SourceView, Task 15): never a URL, only `urlHint` / `epgHint` */
 export interface LtvSourceMock {
@@ -536,6 +594,7 @@ export function livetvMock(): LivetvMock {
   return {
     installed: false, wanted: false, offerHidden: false, updater: true, stack: 'own', ltState: 'absent', ltError: null, ltOld: false, updaterError: null, job: null, tick: 0, jobPolls: 2, outcome: 'succeeded', failCode: null,
     benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, offLag: 2, lagLeft: 0, lagTo: true, gets: 0, posts: [], area: livetvAreaMock(), status: ltvStatusMock(),
+    rec: recAdminMock(),
   };
 }
 
@@ -1409,6 +1468,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     },
   });
   if (p.startsWith('/api/admin/livetv/groups')) return ltvGroupsRoute(st, m, p, body, J);
+  if (p.startsWith('/api/admin/livetv/recordings')) { const r = recAdminRoute(st.livetv.rec, m, p, sp, body, J); if (r) return r; }
   if (p.startsWith('/api/admin/livetv/')) return livetvRoute(st.livetv, m, p, sp, body, J);
   if (p === '/api/admin/summary') return st.summaryFails ? J({ error: 'boom' }, 500) : J(adminSummary(st));
   if (p === '/api/admin/status') {
