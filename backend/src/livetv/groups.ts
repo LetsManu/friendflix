@@ -281,8 +281,10 @@ export class InvalidField extends HttpError {
 }
 
 /**
- * Inside the caller's transaction (writeRole: the role lock is held): the role sees exactly the released groups `ids`. The released
- * groups are locked first (serialised with group PATCH / release, which lock group rows); an unknown or unreleased id is refused
+ * Inside the caller's transaction (writeRole: the role lock and the role's catalogue row FOR NO KEY UPDATE are held): the role sees
+ * exactly the released groups `ids`. The released group rows are locked here (serialised with group PATCH / release, which lock group
+ * rows and then take FOR KEY SHARE on the catalogue row through the grant FK; the caller must not hold that row FOR UPDATE, or the two
+ * deadlock). An unknown or unreleased id is refused
  * (`InvalidField('livetvGroups')`), nothing is written. Only grants on released groups are replaced: a grant on an unreleased group
  * stays, so a later release still knows its roles. Answers the released group names before and after, in group order; null when
  * nothing changed.

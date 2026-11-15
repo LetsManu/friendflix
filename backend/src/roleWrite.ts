@@ -98,7 +98,10 @@ export async function writeRole(ctx: Ctx, actor: string | null, key: string, pat
     await c.query('select pg_advisory_xact_lock(hashtext($1))', [`role:${key}`]);
     // the resolver reads the catalogue through this connection: a fresh ctx object, so nothing cached from before the lock is used
     const tx = { db: c, roles: ctx.roles };
-    const catRow = (await c.query<{ label: string | null; invitable: boolean; base: string }>('select label, invitable, base from roles where key=$1 for update', [key])).rows[0];
+    // FOR NO KEY UPDATE, not FOR UPDATE: this write changes only non-key columns (label, invitable), and a group write's grant insert
+    // takes FOR KEY SHARE on this row through the FK livetv_group_roles.role while it holds its group row; FOR UPDATE would wait for
+    // that and deadlock against setRoleGroupsIn below (which locks the group rows after this one)
+    const catRow = (await c.query<{ label: string | null; invitable: boolean; base: string }>('select label, invitable, base from roles where key=$1 for no key update', [key])).rows[0];
     if (!catRow && !Object.hasOwn(ctx.roles, key)) throw new HttpError(404, 'not_found'); // deleted while this write waited
     // a ROLE_TEMPLATES key the catalogue cannot hold (group grants need a catalogue row too: FK livetv_group_roles.role)
     if ((touchesCatalogue || patch.livetvGroups !== undefined) && !catRow) throw new HttpError(400, 'not_in_catalogue');
@@ -147,7 +150,8 @@ export async function writeRole(ctx: Ctx, actor: string | null, key: string, pat
       }
     }
     if (patch.livetvGroups !== undefined) {
-      // after the role lock: role lock, then group rows (a group write takes only group rows, so no cycle)
+      // role lock and catalogue row (FOR NO KEY UPDATE), then the released group rows. A group write locks a group row and then takes
+      // FOR KEY SHARE on the catalogue row (FK of its grant insert), which does not wait for NO KEY UPDATE: no cycle
       const g = await setRoleGroupsIn(c, key, patch.livetvGroups);
       if (g) { from.livetvGroups = g.from; to.livetvGroups = g.to; }
     }

@@ -6,9 +6,11 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
+import { updateGroup } from '../src/livetv/groups.js';
 import { allowedGroups, channelAllowed, channelSet, invalidateLivetvRights, livetvFeature } from '../src/livetv/rights.js';
 import { invalidateRights } from '../src/rights.js';
 import { invalidateRoles } from '../src/roles.js';
+import { writeRole } from '../src/roleWrite.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
 
 const installed = { v: true };
@@ -593,5 +595,41 @@ describe('role write: livetvGroups', () => {
     // the field is still accepted without Live TV (groups may exist from an earlier install)
     expect((await putRole('friend', { livetvGroups: [hafen] })).statusCode).toBe(200);
     expect(await grants('friend')).toEqual([hafen]);
+  });
+});
+
+// Fix round 1 (review I1): a role write with livetvGroups and a group write granting that role must not deadlock. The group write locks
+// its group row, then its grant insert takes FOR KEY SHARE on the role's catalogue row (FK livetv_group_roles.role); the role write
+// locks that row (FOR NO KEY UPDATE, which KEY SHARE does not wait for), then the released group rows. The interleaving is forced: a
+// held role_settings row stops the role write after it took the catalogue row and before it locks the groups.
+describe('role write vs group write', () => {
+  it('writeRole({ livetvGroups }) and updateGroup({ roles }) at the same time both complete', async () => {
+    const nord = await group('Nordlicht TV');
+    await env.pool.query("insert into role_settings(role, template) values ('friend', '{}') on conflict (role) do nothing");
+    const blocker = await env.pool.connect();
+    const waiting = async (needle: string) => Number((await env.pool.query<{ n: string }>(
+      "select count(*) n from pg_stat_activity where wait_event_type = 'Lock' and query like $1", [`%${needle}%`])).rows[0]!.n);
+    const settle = <T>(p: Promise<T>) => p.then((v) => ({ ok: true as const, v }), (e: unknown) => ({ ok: false as const, e }));
+    try {
+      await blocker.query('begin');
+      await blocker.query("select 1 from role_settings where role = 'friend' for update");
+      // the role write takes its role lock and catalogue row, then waits on the held role_settings row
+      const role = settle(writeRole(env.ctx, null, 'friend', { maxStreams: 3, livetvGroups: [nord] }));
+      await vi.waitFor(async () => expect(await waiting('insert into role_settings')).toBe(1), { timeout: 5000, interval: 20 });
+      // the group write locks the group row and grants the role: its FK check must not wait for the role write
+      let groupDone = false;
+      const grp = settle(updateGroup(env.ctx, adminId, nord, { roles: ['friend'] })).finally(() => { groupDone = true; });
+      await vi.waitFor(async () => expect(groupDone || (await waiting('livetv_group_roles')) > 0).toBe(true), { timeout: 5000, interval: 20 });
+      await blocker.query('commit');
+      const [r, g] = await Promise.all([role, grp]);
+      expect(g.ok ? 'ok' : String((g as { e: unknown }).e)).toBe('ok');
+      expect(r.ok ? 'ok' : String((r as { e: unknown }).e)).toBe('ok');
+      expect((await env.pool.query("select 1 from livetv_group_roles where role = 'friend' and group_id = $1", [nord])).rowCount).toBe(1);
+    } finally {
+      await blocker.query('rollback').catch(() => undefined);
+      blocker.release();
+      await env.pool.query("delete from role_settings where role = 'friend'");
+      invalidateRoles(env.ctx);
+    }
   });
 });
