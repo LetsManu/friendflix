@@ -62,6 +62,8 @@
       detail = await fetchProgramme(channel.id, programme.start);
       recId = detail.recording && (detail.recording.state === 'scheduled' || detail.recording.state === 'recording') ? detail.recording.id : null;
       ruleId = detail.rule?.id ?? null;
+      // the padding starts at the admin's defaults, or a planned recording's own
+      if (!padTouched && detail.padDefaults) pad = { ...detail.padDefaults };
       if (recId) {
         const r = await getRecording(recId).catch(() => null);
         if (r && !padTouched) pad = { before: r.padBefore, after: r.padAfter };

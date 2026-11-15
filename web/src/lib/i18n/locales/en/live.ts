@@ -158,6 +158,8 @@ const dict: Translation<typeof de> = {
     ruleTime: '{days} · {time} · {n} min',
     ruleSeries: 'Series',
     ruleByTime: 'By time',
+    toLibrary: 'Keep in library',
+    toLibraryDone: 'Kept in the library',
   },
   time: {
     title: 'New recording',

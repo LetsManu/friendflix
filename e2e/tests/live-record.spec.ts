@@ -131,6 +131,21 @@ test.describe('recording from the live player', () => {
     expect(JSON.parse(api.livetv.recCalls[0]!.replace(/^POST \/api\/livetv\/recordings /, ''))).toEqual({ channelId: 'ch-nord', start: new Date(2026, 10, 12, 21, 0).toISOString(), padBefore: 3, padAfter: 4 });
   });
 
+  test('the padding starts at the admin\'s defaults', async ({ page, api }) => {
+    api.livetv.recPadDefaults = { before: 4, after: 10 };
+    await arm(page, api);
+    await openPanel(page);
+    await panel(page).getByRole('button', { name: 'Aufnehmen' }).nth(1).click();
+    const s = sheet(page, 'Wetter am Hafen');
+    await s.getByRole('button', { name: 'Mehr', exact: true }).click();
+    await expect(s.getByText('4 Min.')).toBeVisible();
+    await expect(s.getByText('10 Min.')).toBeVisible();
+    await s.getByRole('button', { name: 'Vorlauf: eine Minute mehr' }).click();
+    await s.getByRole('button', { name: 'Aufnehmen', exact: true }).click();
+    await expect.poll(() => api.livetv.recCalls.length).toBe(1);
+    expect(JSON.parse(api.livetv.recCalls[0]!.replace(/^POST \/api\/livetv\/recordings /, ''))).toEqual({ channelId: 'ch-nord', start: new Date(2026, 10, 12, 21, 0).toISOString(), padBefore: 5, padAfter: 10 });
+  });
+
   test('guest sees no Aufnehmen', async ({ page, api }) => {
     api.perms = { liveRecord: false };
     await arm(page, api);

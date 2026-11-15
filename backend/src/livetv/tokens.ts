@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { REC_MAX_S } from '../recItem.js';
 import { randomBytes } from 'node:crypto';
 import { AIRPLAY_PIN2_WINDOW_MS, CAST_TOKEN_RE, hashToken, takePin } from '../cast.js';
 import type { Ctx } from '../ctx.js';
@@ -30,7 +31,7 @@ export const LIVE_IDLE_TTL_S = 90;
 export const LIVE_TOUCH_MS = 20_000;
 export const LIVE_CAP_S = 12 * 3600;
 /** a recording token's absolute cap (B-M1): the longest recording (24 h + 30 min before + 2 h after) and the hour after it */
-export const REC_CAP_S = 28 * 3600;
+export const REC_CAP_S = REC_MAX_S;
 export const MAX_LIVE_TOKENS = 4;
 export const VIEW_TTL_S = 45;
 /** how long a rights decision of a token is reused (spec §7.1 "memo 2 s"); also the gateway's memo of an authz answer (`maxAgeS`) */

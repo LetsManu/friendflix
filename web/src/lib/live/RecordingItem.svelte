@@ -17,8 +17,15 @@
   export let kind: 'done' | 'planned' = 'done';
   /** a write of this item is running */
   export let busy = false;
+  /**
+   * the person may record (`liveRecord`): without it an owner keeps only what the server allows anyway (watch, narrow a share,
+   * delete); *Behalten*, a wider share and the library copy would be refused
+   */
+  export let canRecord = true;
+  /** *Behalten → in Bibliothek* is possible on this server (storage mode `both` with a library) */
+  export let libraryExport = false;
 
-  const dispatch = createEventDispatcher<{ play: Recording; keep: Recording; share: { rec: Recording; visibility: Visibility }; delete: Recording; cancel: Recording }>();
+  const dispatch = createEventDispatcher<{ play: Recording; keep: Recording; share: { rec: Recording; visibility: Visibility }; delete: Recording; cancel: Recording; library: Recording }>();
   let shareOpen = false;
   const day = (iso: string) => fmtDate(iso, { weekday: 'short', day: 'numeric', month: 'short' });
   $: playable = rec.state === 'recording' || rec.state === 'done' || rec.state === 'partial';
@@ -26,6 +33,10 @@
   const SHARES: Array<{ v: Visibility; k: 'live.mine.sharePrivate' | 'live.mine.shareAccount' | 'live.mine.shareAll' }> = [
     { v: 'private', k: 'live.mine.sharePrivate' }, { v: 'account', k: 'live.mine.shareAccount' }, { v: 'everyone', k: 'live.mine.shareAll' },
   ];
+  const rank = (v: Visibility) => SHARES.findIndex((s) => s.v === v);
+  /** without `liveRecord` only the same or a narrower audience */
+  $: shares = canRecord ? SHARES : SHARES.filter((s) => rank(s.v) <= rank(rec.visibility));
+  $: exportable = canRecord && libraryExport && rec.mine && rec.storage === 'ff' && (rec.state === 'done' || rec.state === 'partial');
 </script>
 
 <li class="ritem" class:planned={kind === 'planned'}>
@@ -55,9 +66,12 @@
   <div class="acts">
     {#if kind === 'done'}
       {#if rec.mine}
-        <button type="button" class="ab" class:on={rec.keep} aria-pressed={rec.keep} aria-busy={busy} on:click={() => dispatch('keep', rec)}>
-          <span class="ic" aria-hidden="true"><Icon name="lock" size={18} /></span>{$t('live.mine.keep')}
-        </button>
+        {#if canRecord}
+          <button type="button" class="ab" class:on={rec.keep} aria-pressed={rec.keep} aria-busy={busy} on:click={() => dispatch('keep', rec)}>
+            <span class="ic" aria-hidden="true"><Icon name="lock" size={18} /></span>{$t('live.mine.keep')}
+          </button>
+        {/if}
+        {#if exportable}<button type="button" class="ab" aria-busy={busy} on:click={() => dispatch('library', rec)}>{$t('live.mine.toLibrary')}</button>{/if}
         <button type="button" class="ab" aria-expanded={shareOpen} on:click={() => (shareOpen = !shareOpen)}>{$t('live.mine.share')}</button>
         <button type="button" class="ab del" on:click={() => dispatch('delete', rec)}>{$t('live.mine.delete')}</button>
       {:else}
@@ -69,7 +83,7 @@
   </div>
   {#if shareOpen && rec.mine}
     <div class="share" role="group" aria-label={$t('live.mine.share')}>
-      {#each SHARES as s (s.v)}
+      {#each shares as s (s.v)}
         <button type="button" class="ab" aria-pressed={rec.visibility === s.v} on:click={() => { shareOpen = false; if (rec.visibility !== s.v) dispatch('share', { rec, visibility: s.v }); }}>{$t(s.k)}</button>
       {/each}
     </div>

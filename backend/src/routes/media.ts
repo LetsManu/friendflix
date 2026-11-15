@@ -265,7 +265,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     const deviceId = req.session!.deviceId;
     reply.header('Cache-Control', 'no-store');
     if (!deviceId) return { handoff: null };
-    return { handoff: await selectHandoff(ctx, { userId: req.user!.id, profileId: req.profile!.id, deviceId, jfUser: req.jfUser!, user: { id: req.user!.id, role: req.user!.role }, kids: Boolean(req.profile!.kids) }, q.item) };
+    return { handoff: await selectHandoff(ctx, { userId: req.user!.id, profileId: req.profile!.id, deviceId, jfUser: req.jfUser!, role: req.user!.role, kids: Boolean(req.profile!.kids) }, q.item) };
   }));
 
   app.get('/api/library/resume', pre, wrap(async (req) => ({ items: await resumeItems(ctx, req.jfUser!, req.profile!.id) })));

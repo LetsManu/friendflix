@@ -25,7 +25,7 @@ export interface MockRecording {
   error: string | null; gaps: number; durationS: number | null; bytes: number; keep: boolean; visibility: 'private' | 'account' | 'everyone'; mine: boolean;
   seriesKey: string | null; ruleId: string | null; positionS: number; watched: boolean; deleteAfter: string | null; storage: 'ff' | 'library'; growing: boolean;
   /** an own planned recording: the forecast's verdict (the *Konflikt* chip of *Geplant*) */
-  conflict?: boolean;
+  conflict?: boolean | null;
 }
 export interface MockRule {
   id: string; kind: 'series' | 'time'; channelId: string | null; seriesKey: string | null; title: string; onlyNew: boolean; keepMax: number | null;
@@ -111,6 +111,12 @@ export interface LivetvMock {
   recPlays: Array<{ id: string; via: string }>;
   /** a growing recording's EVENT playlist: when its first segment was written (real clock), set on the first request */
   recGrowStart: number | null;
+  /** the admin's padding defaults (minutes) the list and the programme detail carry */
+  recPadDefaults: { before: number; after: number };
+  /** *Behalten → in Bibliothek* is possible (storage mode `both` with a library) */
+  recLibraryExport: boolean;
+  /** the list requests, with their query (`state=…&conflicts=1`) */
+  recLists: string[];
 }
 
 const at = (h: number, m: number): string => new Date(2026, 10, 12, h, m, 0, 0).toISOString();
@@ -172,6 +178,9 @@ export function livetvState(): LivetvMock {
     recProgress: [],
     recPlays: [],
     recGrowStart: null,
+    recPadDefaults: { before: 2, after: 5 },
+    recLibraryExport: false,
+    recLists: [],
   };
   return st;
 }
@@ -213,10 +222,16 @@ function recordingRoute(st: LivetvMock, m: string, p: string, body: any, J: Repl
     const rule = st.rules.find((x) => x.kind === 'series' && x.seriesKey === seriesKey && (x.channelId === null || x.channelId === c.id));
     return J({
       channelId: c.id, start: pr.start, end: pr.end, title: pr.title, ...(pr.subtitle ? { subtitle: pr.subtitle } : {}), description: pr.description ?? DESCRIPTION,
-      ...(pr.episode ? { episode: pr.episode } : {}), seriesKey, ...(r ? { recording: { id: r.id, state: r.state } } : {}), ...(rule ? { rule: { id: rule.id } } : {}), canRecord: true,
+      ...(pr.episode ? { episode: pr.episode } : {}), seriesKey, ...(r ? { recording: { id: r.id, state: r.state } } : {}), ...(rule ? { rule: { id: rule.id } } : {}), canRecord: true, padDefaults: st.recPadDefaults,
     });
   }
-  if (p === '/api/livetv/recordings' && m === 'GET') return J({ recordings: st.recordings.filter((r) => r.state !== 'cancelled'), rules: st.rules });
+  if (p === '/api/livetv/recordings' && m === 'GET') {
+    const q = new URL(route.request().url()).searchParams;
+    st.recLists.push(q.toString());
+    // the conflict forecast only when asked (backend: `?conflicts=1`)
+    const recordings = st.recordings.filter((r) => r.state !== 'cancelled').map((r) => (q.get('conflicts') === '1' ? r : (({ conflict: _c, ...rest }) => rest)(r)));
+    return J({ recordings, rules: st.rules, padDefaults: st.recPadDefaults, libraryExport: st.recLibraryExport });
+  }
   if (p === '/api/livetv/recordings' && m === 'POST') {
     log();
     const c = st.channels.find((x) => x.id === body?.channelId);

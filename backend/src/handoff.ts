@@ -15,10 +15,11 @@ import type { JfUser } from './types.js';
  */
 
 /**
- * A FriendFlix recording in a hand-off row (Live TV Phase 3 Task 10): `rec:<uuid>`. Accepted only for a recording the profile sees:
- * written from its progress route (which checks that), re-checked on every read (a recording deleted or no longer shared goes).
+ * A FriendFlix recording in a hand-off row (Live TV Phase 3 Task 10): `rec:<uuid>` (recItem.ts). Accepted only for a recording the profile
+ * sees: written from its progress route (which checks that), re-checked on every read (a recording deleted or no longer shared goes).
  */
-export const REC_ITEM_RE = /^rec:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+export { REC_ITEM_RE } from './recItem.js';
+import { REC_ITEM_RE } from './recItem.js';
 
 /** how the device played it: on a TV through AirPlay or Chromecast; null = on the device itself */
 export type HandoffVia = CastVia;
@@ -122,7 +123,7 @@ interface HandoffRow {
  * device, too old, too short, nearly finished, hidden from Weiterschauen, dropped, gone from the library or already played.
  * All time decisions use the database's clock.
  */
-export async function selectHandoff(ctx: Ctx, who: { userId: string; profileId: string; deviceId: string; jfUser: JfUser; user?: { id: string; role: string }; kids?: boolean }, item?: string): Promise<HandoffAnswer | null> {
+export async function selectHandoff(ctx: Ctx, who: { userId: string; profileId: string; deviceId: string; jfUser: JfUser; role: string; kids: boolean }, item?: string): Promise<HandoffAnswer | null> {
   await pruneHandoff(ctx, who.profileId);
   const r = (await ctx.db.query<HandoffRow>(
     `select h.device_id, h.item_id, h.series_id, h.position_ticks::text, h.runtime_ticks::text, h.via, h.started_at,
@@ -173,9 +174,10 @@ export async function selectHandoff(ctx: Ctx, who: { userId: string; profileId: 
 }
 
 /** a recording's offer: only while the profile still sees it (else its row goes); named by its title and channel, no library image */
-async function recordingHandoff(ctx: Ctx, who: { profileId: string; user?: { id: string; role: string }; kids?: boolean }, r: HandoffRow, id: string, pos: number, runtime: number | undefined): Promise<HandoffAnswer | null> {
-  const v = who.user ? await recordingView(ctx, who.user, { id: who.profileId, kids: who.kids === true }, id) : null;
-  if (!v || v.state === 'scheduled' || v.state === 'failed') {
+async function recordingHandoff(ctx: Ctx, who: { userId: string; profileId: string; role: string; kids: boolean }, r: HandoffRow, id: string, pos: number, runtime: number | undefined): Promise<HandoffAnswer | null> {
+  const v = await recordingView(ctx, { id: who.userId, role: who.role }, { id: who.profileId, kids: who.kids }, id);
+  // not playable from the offer: gone, planned or starting (the view says scheduled), failed, or only in the Jellyfin library now
+  if (!v || v.state === 'scheduled' || v.state === 'failed' || v.storage === 'library') {
     await ctx.db.query('delete from handoff where profile_id = $1 and device_id = $2 and item_id = $3', [who.profileId, r.device_id, r.item_id]);
     return null;
   }

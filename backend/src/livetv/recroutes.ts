@@ -34,7 +34,8 @@ const createBody = z.object({
   padBefore: padBefore.optional(), padAfter: padAfter.optional(), force: z.boolean().optional(),
 }).strict();
 const patchBody = z.object({ keep: z.boolean().optional(), visibility: z.enum(['private', 'account', 'everyone']).optional(), padBefore: padBefore.optional(), padAfter: padAfter.optional() }).strict();
-const progressBody = z.object({ positionS: z.number().int().min(0).max(7 * 86_400), played: z.boolean().optional() }).strict();
+/** `via`: the cast engine reports for a TV (the hand-off row then names it, fix round 1 B-M3) */
+const progressBody = z.object({ positionS: z.number().int().min(0).max(7 * 86_400), played: z.boolean().optional(), via: z.enum(['chromecast', 'airplay']).optional() }).strict();
 const seriesRule = z.object({
   kind: z.literal('series'), channelId: uuid.nullable(), seriesKey: z.string().trim().min(1).max(300), title: z.string().trim().min(1).max(200),
   onlyNew: z.boolean(), keepMax: z.number().int().min(1).max(100).nullable().optional(), padBefore: padBefore.optional(), padAfter: padAfter.optional(),
@@ -102,7 +103,7 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
       ...(prog.subtitle ? { subtitle: prog.subtitle } : {}), ...(prog.description ? { description: prog.description } : {}), ...(prog.episode ? { episode: prog.episode } : {}),
       seriesKey, ...(prog.categories?.length ? { categories: prog.categories } : {}),
       ...(rec ? { recording: { id: rec.id, state: rec.state } } : {}), ...(rule ? { rule: { id: rule.id } } : {}),
-      canRecord: await mayRecord(ctx, u, profile),
+      canRecord: await mayRecord(ctx, u, profile), padDefaults: padDefaults(ctx),
     };
   });
 
@@ -144,20 +145,25 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/livetv/recordings', read, async (req, reply) => {
     if (!livetvInstalled(ctx)) return off(reply);
-    const q = req.query as { state?: string };
+    const q = req.query as { state?: string; conflicts?: string };
     const state = q.state === 'done' || q.state === 'scheduled' || q.state === 'all' ? q.state : 'all';
     const { user: u, profile } = who(req);
-    const recordings: Array<RecordingView & { conflict?: boolean }> = await listRecordings(ctx, u, profile, { state });
-    // *Geplant*'s Konflikt chip (plan Phase 3 Task 8): the profile's own planned recordings carry the forecast's verdict (bounded)
-    let checked = 0;
-    for (const v of recordings) {
-      if (!v.mine || v.state !== 'scheduled' || !v.channel.id || checked++ >= FORECAST_LIST_MAX) continue;
-      const fc = await forecast(ctx, { channelId: v.channel.id, from: Date.parse(v.start) - v.padBefore * 60_000, to: Date.parse(v.end) + v.padAfter * 60_000, exceptId: v.id });
-      v.conflict = fc.conflict;
+    const recordings: Array<RecordingView & { conflict?: boolean | null }> = await listRecordings(ctx, u, profile, { state });
+    // *Geplant*'s Konflikt chip (plan Phase 3 Task 8), only when asked (`?conflicts=1`): the profile's own planned recordings, the
+    // FORECAST_LIST_MAX soonest get the forecast's verdict, the later ones `null` (unknown: the client never claims "no conflict")
+    if (q.conflicts === '1') {
+      const own = recordings.filter((v) => v.mine && v.state === 'scheduled' && v.channel.id).sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+      for (const [i, v] of own.entries()) {
+        if (i >= FORECAST_LIST_MAX) { v.conflict = null; continue; }
+        const fc = await forecast(ctx, { channelId: v.channel.id!, from: Date.parse(v.start) - v.padBefore * 60_000, to: Date.parse(v.end) + v.padAfter * 60_000, exceptId: v.id });
+        v.conflict = fc.conflict;
+      }
     }
     const rules = profile.kids ? [] : (await ctx.db.query<RuleRow>('select * from livetv_recording_rules where profile_id = $1 order by created_at', [profile.id])).rows.map(ruleView);
     reply.header('cache-control', 'no-store');
-    return { recordings, rules };
+    // the sheet's padding defaults and whether *Behalten → in Bibliothek* is possible (mode `both` with a library, spec §15.3)
+    const s = recordSettings(ctx);
+    return { recordings, rules, padDefaults: padDefaults(ctx), libraryExport: effectiveStorage(ctx) === 'both' && Boolean(s.libraryId) && !profile.kids };
   });
 
   app.get('/api/livetv/recordings/:id', read, async (req, reply) => {
@@ -287,7 +293,7 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     if (deviceId) {
       await noteHandoff(ctx, {
         userId: u.id, profileId: profile.id, deviceId, itemId: `rec:${id}`, positionTicks: b.data.positionS * 10_000_000,
-        ...(r.duration_s ? { runtimeTicks: r.duration_s * 10_000_000 } : {}), via: null, start: false,
+        ...(r.duration_s ? { runtimeTicks: r.duration_s * 10_000_000 } : {}), via: b.data.via ?? null, start: false,
       });
     }
     const watched = b.data.played === true || (r.duration_s !== null && r.duration_s > 0 && b.data.positionS >= 0.9 * r.duration_s);
@@ -366,6 +372,9 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
 }
+
+/** the admin's padding defaults in minutes (LIVETV_RECORD_PAD_*), what a new recording gets unless the person changes them */
+const padDefaults = (ctx: Ctx) => { const s = recordSettings(ctx); return { before: Math.round(s.padBeforeS / 60), after: Math.round(s.padAfterS / 60) }; };
 
 /** the rule's planned airings that did not start yet go; the reservations they held are released (A-M15) */
 async function dropPlanned(ctx: Ctx, ruleId: string): Promise<void> {

@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { REC_ITEM_RE, REC_MAX_S } from '../recItem.js';
 import type { FastifyInstance } from 'fastify';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
@@ -30,9 +31,10 @@ const busy = new Set<string>();
 const peers = new Map<string, Set<Peer>>(); // userId -> sockets
 
 /** a library item, or a FriendFlix recording as `rec:<uuid>` (Live TV Phase 3: "Weiter auf dem Fernseher"; the TV's /play checks it) */
-const castItem = z.string().regex(/^(?:[0-9a-f]{32}|rec:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/);
+const castItem = z.string().regex(new RegExp(`^(?:[0-9a-f]{32}|${REC_ITEM_RE.source.slice(1, -1)})$`));
 const toTv = z.discriminatedUnion('t', [
-  z.object({ t: z.literal('cast'), itemId: castItem, startSec: z.number().int().min(0).max(86_400).optional() }),
+  // a recording can run 28 h (REC_MAX_S): its position may lie past a day
+  z.object({ t: z.literal('cast'), itemId: castItem, startSec: z.number().int().min(0).max(REC_MAX_S).optional() }),
   z.object({ t: z.literal('ctl'), action: z.enum(['play', 'pause', 'toggle', 'seekBy', 'stop', 'home', 'next', 'audio', 'sub']), value: z.number().min(-3600).max(3600).optional() }),
 ]);
 const track = z.object({ i: z.number().int().min(0).max(200), t: z.string().max(40) });
@@ -149,7 +151,10 @@ export function tvRoutes(app: FastifyInstance, ctx: Ctx) {
         if (m.success) for (const p of set) if (p.role === 'tv') send(p, m.data);
       } else {
         const m = fromTv.safeParse(json);
-        if (m.success) for (const p of set) if (p.role === 'remote') send(p, m.data);
+        if (!m.success) return;
+        // a recording is private to its profile: its title never reaches the account's other remotes (fix round 1, B-M6)
+        const out = m.data.itemId?.startsWith('rec:') ? (({ title: _t, ...rest }) => rest)(m.data) : m.data;
+        for (const p of set) if (p.role === 'remote') send(p, out);
       }
     });
     socket.on('error', () => socket.close());

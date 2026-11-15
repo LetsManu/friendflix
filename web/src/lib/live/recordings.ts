@@ -42,8 +42,9 @@ export interface Recording {
   deleteAfter: string | null;
   storage: 'ff' | 'library';
   growing: boolean;
-  /** an own planned recording: the forecast's verdict (*Geplant*'s *Konflikt* chip) */
-  conflict?: boolean;
+  /** an own planned recording, when the list was asked with `conflicts`: the forecast's verdict (*Geplant*'s *Konflikt* chip); null =
+   *  not forecast (beyond the soonest 50): never read as "no conflict" */
+  conflict?: boolean | null;
 }
 
 /** a recording rule (backend `ruleView`) */
@@ -88,6 +89,8 @@ export interface ProgrammeDetail {
   recording?: { id: string; state: RecState };
   rule?: { id: string };
   canRecord: boolean;
+  /** the admin's padding defaults in minutes (LIVETV_RECORD_PAD_*) */
+  padDefaults?: { before: number; after: number };
 }
 
 /** POST /api/livetv/recordings/:id/play */
@@ -105,8 +108,11 @@ const enc = encodeURIComponent;
 
 // ---- calls ----
 
-export const listRecordings = (state: 'done' | 'scheduled' | 'all' = 'all') =>
-  api<{ recordings: Recording[]; rules: Rule[] }>(`/api/livetv/recordings?state=${state}`);
+/** GET /api/livetv/recordings: also the padding defaults and whether *Behalten → in Bibliothek* is possible (mode `both`) */
+export interface RecordingList { recordings: Recording[]; rules: Rule[]; padDefaults?: { before: number; after: number }; libraryExport?: boolean }
+/** `conflicts`: the forecast of the profile's planned recordings (only *Geplant* asks: it costs the server a forecast each) */
+export const listRecordings = (state: 'done' | 'scheduled' | 'all' = 'all', o: { conflicts?: boolean } = {}) =>
+  api<RecordingList>(`/api/livetv/recordings?state=${state}${o.conflicts ? '&conflicts=1' : ''}`);
 
 export const getRecording = (id: string) => api<{ recording: Recording }>(`/api/livetv/recordings/${enc(id)}`).then((r) => r.recording);
 

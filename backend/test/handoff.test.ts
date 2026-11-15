@@ -400,7 +400,7 @@ describe('read', () => {
     const user = (await getUserById(env.ctx, uid))!;
     const profile = (await env.pool.query<ProfileRow>('select * from profiles where id = $1', [kidsPid])).rows[0]!;
     const before = env.jfCalls.length;
-    const a = await selectHandoff(env.ctx, { userId: uid, profileId: kidsPid, deviceId: dev, jfUser: jfUserFor(user, profile) });
+    const a = await selectHandoff(env.ctx, { userId: uid, profileId: kidsPid, deviceId: dev, jfUser: jfUserFor(user, profile), role: user.role, kids: true });
     expect(a).toMatchObject({ itemId: EP5 });
     expect(env.jfCalls.slice(before).map((c) => c.path).some((p) => p.includes(`/Users/${'a1'.repeat(16)}/Items/${EP5}`))).toBe(true);
     expect(env.jfCalls.slice(before).map((c) => c.path).some((p) => p.includes(`/Items/${EP4}`))).toBe(false);
@@ -475,7 +475,10 @@ describe('recordings', () => {
     await env.pool.query(`insert into livetv_recordings(${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')})`, Object.values(r));
     return r.id as string;
   };
-  beforeEach(async () => { await env.pool.query('delete from livetv_recordings'); });
+  beforeEach(async () => {
+    await env.pool.query('delete from livetv_recordings');
+    await env.pool.query("insert into devices (user_id, device_id, label, approved, client) values ($1, $2, 'LG webOS TV', true, 'webos') on conflict do nothing", [uid, DEV_B]);
+  });
 
   it('hand-off row for a recording resumes on another device', async () => {
     const id = await recRow();
@@ -483,15 +486,28 @@ describe('recordings', () => {
     expect((await call('POST', `/api/livetv/recordings/${id}/progress`, { positionS: 600 })).statusCode).toBe(200);
     expect(await row()).toMatchObject({ item_id: `rec:${id}`, position_ticks: '6000000000', runtime_ticks: '27000000000', series_id: null });
     // the TV (another device of the profile) is offered it, named as a recording, with no library image
-    const h = await selectHandoff(env.ctx, { userId: uid, profileId: pid, deviceId: DEV_B, jfUser: (await who()).jfUser, user: { id: uid, role: 'admin' }, kids: false });
+    const h = await selectHandoff(env.ctx, { userId: uid, profileId: pid, deviceId: DEV_B, jfUser: (await who()).jfUser, role: 'admin', kids: false });
     expect(h).toMatchObject({ itemId: `rec:${id}`, type: 'Recording', title: 'Die Leuchtturmwärter', imageId: '', positionTicks: 6_000_000_000, runtimeTicks: 27_000_000_000 });
     // the route accepts the recording as `item` (the row moved to the other device, as if that one had played it)
     await env.pool.query('update handoff set device_id = $2 where device_id = $1', [dev, DEV_B]);
     const r = await call('GET', `/api/handoff?item=rec:${id}`);
     expect(r.statusCode, r.body).toBe(200);
     expect(r.json().handoff).toMatchObject({ itemId: `rec:${id}`, type: 'Recording' });
+    // the device it was cast from says so (the cast engine reports with via, fix round 1 B-M3)
+    expect((await call('POST', `/api/livetv/recordings/${id}/progress`, { positionS: 700, via: 'chromecast' })).statusCode).toBe(200);
+    expect((await row())).toMatchObject({ item_id: `rec:${id}`, via: 'chromecast' });
+    await env.pool.query('delete from handoff where device_id = $1', [DEV_B]);
+    await env.pool.query('update handoff set device_id = $2 where device_id = $1', [dev, DEV_B]);
     // almost finished: no offer
     await env.pool.query('update handoff set position_ticks = $1', [2600 * 10_000_000]);
+    expect((await call('GET', '/api/handoff')).json().handoff).toBeNull();
+  });
+
+  it('a recording that now lives only in the library is not offered (its /play would refuse it, B-M4)', async () => {
+    const id = await recRow({ storage: 'library', library_path: 'Die Leuchtturmwärter/Die Leuchtturmwärter – 2026-11-12 20.15.ts' });
+    await env.pool.query(
+      "insert into handoff(profile_id, user_id, device_id, item_id, position_ticks, runtime_ticks, via, updated_at, started_at) values ($1, $2, $3, $4, 6000000000, 27000000000, null, now() - interval '5 minutes', now() - interval '20 minutes')",
+      [pid, uid, DEV_B, `rec:${id}`]);
     expect((await call('GET', '/api/handoff')).json().handoff).toBeNull();
   });
 

@@ -158,6 +158,8 @@ export default {
     ruleTime: '{days} · {time} · {n} Min.',
     ruleSeries: 'Serie',
     ruleByTime: 'Nach Uhrzeit',
+    toLibrary: 'Behalten → in Bibliothek',
+    toLibraryDone: 'In der Bibliothek behalten',
   },
   time: {
     title: 'Neue Aufnahme',

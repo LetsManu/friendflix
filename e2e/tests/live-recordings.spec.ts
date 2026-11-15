@@ -131,6 +131,58 @@ test.describe('Aufnahmen row and Meine Aufnahmen', () => {
     await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Aufnahme abgebrochen')).toBeVisible();
   });
 
+  test('Geplant asks for the forecast; an unknown verdict (null) shows no chip', async ({ page, api }) => {
+    const a = mockRecording({ title: 'Wetter am Hafen', state: 'scheduled', start: at(12, 21), end: at(12, 21, 30), bytes: 0, durationS: null, conflict: null });
+    await arm(page, api, [a]);
+    await page.goto('/live/recordings');
+    await page.getByRole('group', { name: 'Ansicht' }).getByRole('button', { name: 'Geplant' }).click();
+    await expect(items(page)).toHaveCount(1);
+    await expect(items(page).first()).not.toContainText('Konflikt');
+    expect(api.livetv.recLists.some((q) => q.includes('conflicts=1'))).toBe(true);
+  });
+
+  test('an owner without liveRecord keeps watching, narrowing and deleting; nothing that would be refused is offered', async ({ page, api }) => {
+    api.perms = { liveRecord: false };
+    const r = mockRecording({ visibility: 'account' });
+    await arm(page, api, [r]);
+    api.livetv.recLibraryExport = true;
+    api.livetv.rules = [{ id: 'rule-1', kind: 'series', channelId: null, seriesKey: 'die leuchtturmwärter', title: 'Die Leuchtturmwärter', onlyNew: true, keepMax: 5, padBefore: null, padAfter: null, weekdays: null, startTime: null, durationMin: null, tz: null, enabled: true }];
+    await page.goto('/live/recordings');
+    const it = items(page).first();
+    await expect(it.getByRole('button', { name: /^Abspielen/ })).toBeVisible();
+    await expect(it.getByRole('button', { name: 'Behalten' })).toHaveCount(0);
+    await expect(it.getByRole('button', { name: 'Behalten → in Bibliothek' })).toHaveCount(0);
+    await it.getByRole('button', { name: 'Teilen …' }).click();
+    // only a narrower audience: "Mit allen" would widen it
+    await expect(it.getByRole('group', { name: 'Teilen …' }).getByRole('button')).toHaveText(['Nur für mich', 'Mit meinem Konto']);
+    await it.getByRole('button', { name: 'Nur für mich' }).click();
+    await expect.poll(() => api.livetv.recCalls).toEqual([`PATCH /api/livetv/recordings/${r.id} {"visibility":"private"}`]);
+    await expect(it.getByRole('button', { name: 'Löschen' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Neue Aufnahme' })).toHaveCount(0);
+    // the series rules are read-only
+    await page.getByRole('group', { name: 'Ansicht' }).getByRole('button', { name: 'Serien' }).click();
+    const rule = page.getByRole('region', { name: 'Die Leuchtturmwärter' });
+    await expect(rule).toContainText('Höchstens 5 behalten');
+    await expect(rule.getByRole('switch')).toHaveCount(0);
+    await expect(rule.getByRole('button')).toHaveCount(0);
+  });
+
+  test('Behalten → in Bibliothek only when the server can export (mode both), and it keeps the recording', async ({ page, api }) => {
+    const r = mockRecording({});
+    await arm(page, api, [r, mockRecording({ title: 'Sternstunde Physik', seriesKey: 'x', start: at(10, 9), end: at(10, 10), state: 'recording', growing: true })]);
+    await page.goto('/live/recordings');
+    await expect(items(page).first().getByRole('button', { name: 'Behalten' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Behalten → in Bibliothek' })).toHaveCount(0);
+    api.livetv.recLibraryExport = true;
+    await page.reload();
+    // a finished recording only (the running one cannot be exported yet)
+    await expect(page.getByRole('button', { name: 'Behalten → in Bibliothek' })).toHaveCount(1);
+    await items(page).first().getByRole('button', { name: 'Behalten → in Bibliothek' }).click();
+    await expect.poll(() => api.livetv.recCalls).toEqual([`POST /api/livetv/recordings/${r.id}/library`]);
+    await expect(items(page).first().getByRole('button', { name: 'Behalten', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('In der Bibliothek behalten')).toBeVisible();
+  });
+
   test('Serien lists the rules with their settings', async ({ page, api }) => {
     await arm(page, api, []);
     api.livetv.rules = [{ id: 'rule-1', kind: 'series', channelId: null, seriesKey: 'die leuchtturmwärter', title: 'Die Leuchtturmwärter', onlyNew: true, keepMax: 5, padBefore: null, padAfter: null, weekdays: null, startTime: null, durationMin: null, tz: null, enabled: true }];

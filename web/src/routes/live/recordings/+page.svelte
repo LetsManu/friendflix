@@ -17,7 +17,7 @@
   import RecordingsRow from '#lib/live/RecordingsRow.svelte';
   import TimeRecordSheet from '#lib/live/TimeRecordSheet.svelte';
   import {
-    deleteRecording, deleteRule, finished, groupBySeries, listRecordings, patchRecording, patchRule, planned, stepKeep, type Recording, type Rule, type Visibility,
+    deleteRecording, deleteRule, finished, groupBySeries, listRecordings, patchRecording, patchRule, planned, stepKeep, toLibrary, type Recording, type Rule, type Visibility,
   } from '#lib/live/recordings';
 
   /**
@@ -42,13 +42,16 @@
   let timeOpen = false;
   let timeTrigger: HTMLElement | null = null;
   let chans: LiveChannel[] | null = null;
+  /** *Behalten → in Bibliothek* is possible on this server (mode `both` with a library) */
+  let libraryExport = false;
 
   $: canRecord = $perms.liveRecord && !$kidsMode;
   $: if ($featuresKnown && !$features.livetv) void goto('/', { replaceState: true });
 
   async function load(): Promise<void> {
     try {
-      const r = await listRecordings('all');
+      const r = await listRecordings('all', { conflicts: true });
+      libraryExport = r.libraryExport === true;
       recs = r.recordings.filter((x) => !pending.has(x.id));
       rules = r.rules;
       failed = false;
@@ -105,6 +108,10 @@
       recs = recs.filter((x) => x.id !== r.id);
       toast.success($t('live.rec.cancelled'));
     } catch (e) { toast.error(errorText(e)); } finally { const b = new Set(busy); b.delete(r.id); busy = b; }
+  }
+  /** *Behalten → in Bibliothek* (spec §15.3 mode `both`): a copy goes into the Jellyfin library and the recording is kept */
+  async function keepInLibrary(r: Recording): Promise<void> {
+    await write(r, async () => { const next = await toLibrary(r.id); toast.success($t('live.mine.toLibraryDone')); return next; }, { keep: true });
   }
   const play = (r: Recording) => void goto(`/live/recordings/${encodeURIComponent(r.id)}`);
 
@@ -201,13 +208,13 @@
               <h2 id="lmr-{g.key}">{g.title} <span class="cnt">{$t('live.mine.episodes', { n: g.items.length })}</span></h2>
               <ul class="list">
                 {#each g.items as r (r.id)}
-                  <RecordingItem rec={r} busy={busy.has(r.id)} on:play={(e) => play(e.detail)} on:keep={(e) => void keep(e.detail)} on:share={(e) => void share(e.detail.rec, e.detail.visibility)} on:delete={(e) => remove(e.detail)} />
+                  <RecordingItem rec={r} {canRecord} {libraryExport} busy={busy.has(r.id)} on:play={(e) => play(e.detail)} on:keep={(e) => void keep(e.detail)} on:share={(e) => void share(e.detail.rec, e.detail.visibility)} on:delete={(e) => remove(e.detail)} on:library={(e) => void keepInLibrary(e.detail)} />
                 {/each}
               </ul>
             </section>
           {:else}
             <ul class="list single">
-              <RecordingItem rec={g.item} busy={busy.has(g.item.id)} on:play={(e) => play(e.detail)} on:keep={(e) => void keep(e.detail)} on:share={(e) => void share(e.detail.rec, e.detail.visibility)} on:delete={(e) => remove(e.detail)} />
+              <RecordingItem rec={g.item} {canRecord} {libraryExport} busy={busy.has(g.item.id)} on:play={(e) => play(e.detail)} on:keep={(e) => void keep(e.detail)} on:share={(e) => void share(e.detail.rec, e.detail.visibility)} on:delete={(e) => remove(e.detail)} on:library={(e) => void keepInLibrary(e.detail)} />
             </ul>
           {/if}
         {/each}
@@ -233,6 +240,10 @@
               <span class="kind">{r.kind === 'series' ? $t('live.mine.ruleSeries') : $t('live.mine.ruleByTime')}</span>
             </div>
             <p class="rline">{ruleLine(r)}</p>
+            {#if !canRecord}
+              <!-- without liveRecord the rules are read-only (every rule write needs it) -->
+              <p class="rline">{r.kind === 'series' ? `${r.onlyNew ? `${$t('live.rec.onlyNew')} · ` : ''}${r.keepMax === null ? $t('live.rec.keepAll') : $t('live.rec.keepMax', { n: r.keepMax })}` : ''}</p>
+            {:else}
             <div class="ropts">
               {#if r.kind === 'series'}
                 <Toggle label={$t('live.rec.onlyNew')} checked={r.onlyNew} on:change={(e) => void ruleWrite(r, { onlyNew: e.detail })} />
@@ -245,6 +256,7 @@
               <Toggle label={$t('live.mine.ruleEnabled')} checked={r.enabled} on:change={(e) => void ruleWrite(r, { enabled: e.detail })} />
               <button type="button" class="ab del" on:click={(e) => void ruleDelete(r, e.currentTarget)}>{$t('live.mine.ruleDelete')}</button>
             </div>
+            {/if}
           </section>
         {/each}
       {/if}

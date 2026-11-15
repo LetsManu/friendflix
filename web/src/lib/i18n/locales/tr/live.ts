@@ -158,6 +158,8 @@ const dict: Translation<typeof de> = {
     ruleTime: '{days} · {time} · {n} dk.',
     ruleSeries: 'Dizi',
     ruleByTime: 'Saate göre',
+    toLibrary: 'Sakla → kütüphaneye',
+    toLibraryDone: 'Kütüphanede saklandı',
   },
   time: {
     title: 'Yeni kayıt',
