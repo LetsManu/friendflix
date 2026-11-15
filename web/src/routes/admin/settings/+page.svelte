@@ -14,6 +14,8 @@
    * switch keeps every unsaved edit and a tab holding one shows a dot. A deep link `?setting=<KEY>` opens the key's tab and highlights
    * its row (highlight.ts), a Live-TV key goes to Admin → Live-TV → Einstellungen, an unknown one opens *Allgemein*; the old
    * `#settings-<group>` links open the group's tab at its card. Either way the address then reads the plain tab.
+   * The search above the tabs (search.ts) covers every setting, Live TV's too: while a query is typed its results take the tab panel's
+   * place; choosing one clears the query and opens `?setting=<KEY>`; Esc clears. Nothing is edited in the result list.
    */
   import { onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
@@ -24,6 +26,7 @@
   import { fmtList, t, tr } from '#lib/i18n';
   import { busyKeys, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
+  import Field from '#lib/ui/Field.svelte';
   import { confirm } from '#lib/ui/confirm';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import StatusPill from '#lib/ui/StatusPill.svelte';
@@ -31,6 +34,7 @@
   import { refreshSummary } from '#lib/admin/summary';
   import SettingRow from '#lib/admin/settings/SettingRow.svelte';
   import { highlightSetting } from '#lib/admin/settings/highlight';
+  import { SEARCH_MIN, searchSettings, type SettingHit } from '#lib/admin/settings/search';
   import { SETTINGS_TABS, TAB_GROUPS, dirtyTabs, tabHref, tabOf, tabOfGroup, tabOfKey, type SettingsTab } from '#lib/admin/settings/tabs';
   import { settingHref } from '#lib/admin/syscheck';
   import {
@@ -84,7 +88,34 @@
   $: tabGroups = TAB_GROUPS[tab].flatMap((id) => groups.filter((g) => g.id === id));
   $: dirty = dirtyTabs(changes);
 
-  const select = (to: SettingsTab) => goto(tabHref(to), { replace: true, reset: false });
+  const select = (to: SettingsTab) => { q = ''; return goto(tabHref(to), { replace: true, reset: false }); };
+
+  /** the search: its results replace the tab panel while a query is typed ($t as an argument: the texts follow a language switch) */
+  let q: string | number | null = '';
+  $: query = String(q ?? '');
+  $: searching = !!view && query.trim().length >= SEARCH_MIN;
+  const find = (text: string, v: SettingsView, _tr: unknown) => searchSettings(text, v.groups);
+  $: hits = searching && view ? find(query, view, $t) : [];
+  const hitHref = (h: SettingHit) => settingHref(h.key, h.tab === 'livetv' ? 'livetv' : undefined);
+  const hitTab = (h: SettingHit) => (h.tab === 'livetv' ? $t('settings.groups.livetv') : $t(`settings.tabs.${h.tab}`));
+  /** choosing a result: the query goes, the link opens the setting */
+  const chosen = () => { q = ''; };
+  const resultLinks = () => Array.from(document.querySelectorAll<HTMLElement>('#set-results a'));
+  /** in the field: Esc clears, Enter opens the first result, ↓ goes to the results */
+  function searchKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && query) { e.preventDefault(); q = ''; }
+    else if (e.key === 'Enter' && hits[0]) { e.preventDefault(); const to = hitHref(hits[0]); q = ''; void goto(to); }
+    else if (e.key === 'ArrowDown' && hits.length) { e.preventDefault(); resultLinks()[0]?.focus(); }
+  }
+  /** in the results: ↑/↓ move, Esc clears and goes back to the field */
+  function resultKey(e: KeyboardEvent) {
+    const links = resultLinks(), i = links.indexOf(e.currentTarget as HTMLElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const n = i + (e.key === 'ArrowDown' ? 1 : -1);
+      if (n < 0) document.getElementById('set-search')?.focus(); else links[Math.min(n, links.length - 1)]?.focus();
+    } else if (e.key === 'Escape') { e.preventDefault(); q = ''; document.getElementById('set-search')?.focus(); }
+  }
   /** the tablist's keys, as in Live-TV: arrows, Home/End; the focus follows the selected tab (roving tabindex) */
   function tabKey(e: KeyboardEvent) {
     const i = SETTINGS_TABS.indexOf(tab), last = SETTINGS_TABS.length - 1;
@@ -264,6 +295,10 @@
 
 <div class="wrap">
   <p class="intro muted">{$t('settings.intro')}</p>
+  <div class="search" role="search">
+    <Field id="set-search" label={$t('settings.search.label')} hideLabel type="search" placeholder={$t('settings.search.placeholder')} maxlength={100} autocomplete="off"
+      bind:value={q} on:keydown={searchKey} />
+  </div>
   <div class="tabbar">
     <div class="tabs" role="tablist" aria-label={$t('settings.tabs.label')}>
       {#each SETTINGS_TABS as k (k)}
@@ -274,7 +309,20 @@
     </div>
     {#if livetvInstalled}<a class="ltv" href="/admin/livetv?tab=settings">{$t('settings.livetvMoved')}</a>{/if}
   </div>
-  <div id="set-panel" role="tabpanel" aria-labelledby="set-tab-{tab}" tabindex="-1">
+  {#if searching}
+    <div id="set-results" class="results">
+      <p class="count" role="status">{hits.length ? $t('settings.search.results', { n: hits.length }) : $t('settings.search.none', { q: query.trim() })}</p>
+      {#if hits.length}
+        <ul>
+          {#each hits as h (h.key)}
+            <li><a href={hitHref(h)} on:click={chosen} on:keydown={resultKey}><span class="rl">{h.label}</span><code class="rk">{h.key}</code><span class="rt">{hitTab(h)}</span></a></li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  {/if}
+  <!-- the panel stays while searching (hidden): what was typed into a card is kept as it is -->
+  <div id="set-panel" role="tabpanel" aria-labelledby="set-tab-{tab}" tabindex="-1" hidden={searching}>
   {#if loadFailed}
     <div class="state" role="alert"><Icon name="alert" size={22} /><p>{$t('settings.loadFailed')}</p><Button variant="secondary" icon="refresh" on:click={load}>{$t('ui.retry')}</Button></div>
   {:else if !view}
@@ -374,6 +422,16 @@
   .dot.on { opacity: 1; }
   .ltv { display: inline-flex; align-items: center; min-height: 44px; margin-left: auto; text-decoration: underline; }
   #set-panel { outline: none; min-width: 0; }
+  .search { margin-bottom: .8rem; max-width: 28rem; }
+  .results { min-width: 0; }
+  .count { margin: 0 0 .5rem; color: var(--mut); font-size: .9rem; }
+  .results ul { list-style: none; margin: 0; padding: 0; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); overflow: hidden; }
+  .results li + li { border-top: 1px solid var(--line); }
+  .results a { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'l t' 'k t'; align-items: center; column-gap: .8rem; min-height: 44px; padding: .55rem .9rem; color: inherit; text-decoration: none; }
+  .results a:hover, .results a:focus-visible { background: rgba(255,255,255,.06); }
+  .rl { grid-area: l; font-weight: 600; overflow-wrap: anywhere; }
+  .rk { grid-area: k; font-size: .78rem; color: var(--mut); overflow-wrap: anywhere; }
+  .rt { grid-area: t; font-size: .82rem; color: var(--mut); white-space: nowrap; }
   @media (max-width: 720px) {
     .tabbar { border-bottom: 0; }
     .tabs { gap: .5rem; padding-bottom: 2px; }

@@ -188,5 +188,7 @@ export default {
   },
   /** the tabs of Admin → Einstellungen (`?tab=`); `unsaved` is read after the name of a tab with unsaved edits */
   tabs: { label: 'Bereiche der Einstellungen', general: 'Allgemein', signin: 'Anmeldung', media: 'Medien', playback: 'Wiedergabe', updates: 'Updates', notifications: 'Benachrichtigungen', unsaved: 'ungespeicherte Änderungen' },
+  /** the search above the tabs: results name their tab; choosing one opens the setting */
+  search: { label: 'Einstellungen durchsuchen', placeholder: 'Suchen nach Name, Schlüssel oder Stichwort', results: { one: '{n} Einstellung gefunden', other: '{n} Einstellungen gefunden' }, none: 'Keine Einstellung passt zu „{q}“.' },
   livetvMoved: 'Live-TV-Einstellungen findest du jetzt unter Live-TV.',
 } as const;

@@ -83,4 +83,21 @@ test.describe('admin: settings (phone)', () => {
     await expect(page.getByRole('tab', { name: 'Updates' })).toHaveAccessibleName('Updates (ungespeicherte Änderungen)');
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
+
+  test('search results fit 375 px and are 44 px targets', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 740 });
+    await page.goto('/admin/settings');
+    await page.getByRole('searchbox', { name: 'Einstellungen durchsuchen' }).fill('schlüssel');
+    const links = page.locator('#set-results').getByRole('link');
+    await expect(links.first()).toBeVisible();
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+    for (const l of await links.all()) {
+      const box = (await l.boundingBox())!;
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.x + box.width).toBeLessThanOrEqual(375.5);
+    }
+    await links.first().tap();
+    await expect(page.locator('[data-flash]')).toHaveCount(1);
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+  });
 });

@@ -193,6 +193,7 @@ const settings: Translation<typeof de> = {
     POSTPLAY_ENABLED: { label: 'Pantalla tras el final', help: 'Tras una película o el último episodio: «Estás al día», lo que viene después y sugerencias. Desactivado la quita para todos.' },
   },
   tabs: { label: 'Secciones de ajustes', general: 'General', signin: 'Inicio de sesión', media: 'Medios', playback: 'Reproducción', updates: 'Actualizaciones', notifications: 'Notificaciones', unsaved: 'cambios sin guardar' },
+  search: { label: 'Buscar en los ajustes', placeholder: 'Buscar por nombre, clave o palabra', results: { one: '{n} ajuste encontrado', many: '{n} ajustes encontrados', other: '{n} ajustes encontrados' }, none: 'Ningún ajuste coincide con «{q}».' },
   livetvMoved: 'Los ajustes de TV en directo ahora están en TV en directo.',
 };
 export default settings;

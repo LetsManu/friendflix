@@ -577,3 +577,96 @@ test.describe('admin: settings tabs and deep links', () => {
     });
   });
 });
+
+// Settings search (Systemcheck Stage 4, Task 11): over all settings, Live TV's included; a result opens ?setting=<KEY>.
+test.describe('admin: settings search', () => {
+  test.beforeEach(({ api }) => { api.asAdmin = true; });
+  const search = (page: Page) => page.getByRole('search').getByRole('searchbox', { name: 'Einstellungen durchsuchen' });
+
+  test('typing shows results in place of the tab panel; Enter on a result opens ?setting=KEY and clears the query', async ({ page, api }) => {
+    await page.goto('/admin/settings?tab=signin');
+    await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
+    await search(page).fill('portainer');
+    await expect(page.getByRole('tabpanel')).toBeHidden();
+    await expect(page.getByRole('status').filter({ hasText: 'gefunden' })).toHaveText('5 Einstellungen gefunden');
+    const results = page.locator('#set-results').getByRole('link');
+    await expect(results).toHaveCount(5);
+    await expect(results.first()).toContainText('Portainer-Stack-Webhook');
+    await expect(results.first()).toContainText('PORTAINER_WEBHOOK_URL');
+    await expect(results.first()).toContainText('Updates');
+    // nothing is edited in the list
+    await expect(page.locator('#set-results').getByRole('textbox')).toHaveCount(0);
+    await search(page).press('ArrowDown');
+    await expect(results.first()).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(results.nth(1)).toBeFocused();
+    await expect(results.nth(1)).toHaveAttribute('href', '/admin/settings?setting=PORTAINER_URL');
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/admin\/settings\?tab=updates$/);
+    await expect(search(page)).toHaveValue('');
+    const row = page.locator('#setting-PORTAINER_URL');
+    await expect(row).toHaveAttribute('data-flash', 'static');
+    await expect(row.getByRole('textbox')).toBeFocused();
+    // the edit on another tab is still there
+    await expect(page.getByRole('tab', { name: 'Anmeldung' })).toHaveAccessibleName('Anmeldung (ungespeicherte Änderungen)');
+    await page.getByRole('tab', { name: 'Anmeldung' }).click();
+    await expect(setting(page, 'Admin-Gruppe').getByRole('textbox')).toHaveValue('ff-admins');
+    expect(api.settings.puts).toEqual([]);
+  });
+
+  test('Enter in the field opens the first result; key and accent-free queries work', async ({ page }) => {
+    await page.goto('/admin/settings');
+    await search(page).fill('OIDC_ISS');
+    await expect(page.locator('#set-results').getByRole('link')).toHaveText([/OIDC-Issuer/]);
+    await search(page).fill('offentliche');
+    await expect(page.locator('#set-results').getByRole('link').first()).toContainText('Öffentliche Adresse');
+    await search(page).press('Enter');
+    await expect(page.locator('#setting-PUBLIC_URL')).toHaveAttribute('data-flash', 'static');
+    await expect(search(page)).toHaveValue('');
+  });
+
+  test('Esc clears and restores the tab', async ({ page }) => {
+    await page.goto('/admin/settings?tab=playback');
+    await search(page).fill('download');
+    await expect(page.getByRole('tabpanel')).toBeHidden();
+    await search(page).press('Escape');
+    await expect(search(page)).toHaveValue('');
+    await expect(search(page)).toBeFocused();
+    await expect(page.getByRole('tabpanel')).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Wiedergabe' })).toHaveAttribute('aria-selected', 'true');
+    // Esc from a result too
+    await search(page).fill('download');
+    await search(page).press('ArrowDown');
+    await page.keyboard.press('Escape');
+    await expect(search(page)).toBeFocused();
+    await expect(page.getByRole('tabpanel')).toBeVisible();
+  });
+
+  test('no results says so (role=status); one letter keeps the tab', async ({ page }) => {
+    await page.goto('/admin/settings');
+    await search(page).fill('x');
+    await expect(page.getByRole('tabpanel')).toBeVisible();
+    await search(page).fill('xylophon');
+    await expect(page.getByRole('status').filter({ hasText: 'xylophon' })).toHaveText('Keine Einstellung passt zu „xylophon“.');
+    await expect(page.locator('#set-results').getByRole('link')).toHaveCount(0);
+  });
+
+  test('Live-TV settings are found while Live TV is installed and open in Live-TV → Einstellungen', async ({ page, api }) => {
+    Object.assign(api.admin.livetv, { installed: true, wanted: true, ltState: 'enabled' });
+    await page.goto('/admin/settings');
+    await search(page).fill('encoder');
+    const hit = page.locator('#set-results').getByRole('link', { name: /Encoder für Live-TV/ });
+    await expect(hit).toContainText('Live-TV');
+    await expect(hit).toHaveAttribute('href', '/admin/livetv?tab=settings&setting=LIVETV_ENCODER');
+    await hit.click();
+    await expect(page).toHaveURL(/\/admin\/livetv\?tab=settings$/);
+    await expect(page.locator('#setting-LIVETV_ENCODER')).toHaveAttribute('data-flash', 'static');
+  });
+
+  test('secrets: a result shows label and key only, never a value', async ({ page }) => {
+    await page.goto('/admin/settings');
+    await search(page).fill('tmdb');
+    await expect(page.locator('#set-results').getByRole('link')).toHaveCount(1);
+    expect(await page.locator('#set-results').innerText()).not.toMatch(/abcd|mock-leak/);
+  });
+});

@@ -192,6 +192,7 @@ const settings: Translation<typeof de> = {
     POSTPLAY_ENABLED: { label: 'Bitiş sonrası ekran', help: 'Bir filmden veya son bölümden sonra: “Her şeyi izledin”, sıradaki ve öneriler. Kapalıysa herkes için gizlenir.' },
   },
   tabs: { label: 'Ayar bölümleri', general: 'Genel', signin: 'Oturum açma', media: 'Medya', playback: 'Oynatma', updates: 'Güncellemeler', notifications: 'Bildirimler', unsaved: 'kaydedilmemiş değişiklikler' },
+  search: { label: 'Ayarlarda ara', placeholder: 'Ad, anahtar veya kelimeyle ara', results: { one: '{n} ayar bulundu', other: '{n} ayar bulundu' }, none: '“{q}” ile eşleşen ayar yok.' },
   livetvMoved: 'Canlı TV ayarlarını artık Canlı TV bölümünde bulursun.',
 };
 export default settings;

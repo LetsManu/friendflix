@@ -193,6 +193,7 @@ const settings: Translation<typeof de> = {
     POSTPLAY_ENABLED: { label: 'Écran après la fin', help: 'Après un film ou le dernier épisode : « Vous êtes à jour », la suite et des suggestions. Désactivé, il disparaît pour tout le monde.' },
   },
   tabs: { label: 'Rubriques des réglages', general: 'Général', signin: 'Connexion', media: 'Médias', playback: 'Lecture', updates: 'Mises à jour', notifications: 'Notifications', unsaved: 'modifications non enregistrées' },
+  search: { label: 'Rechercher dans les réglages', placeholder: 'Rechercher par nom, clé ou mot', results: { one: '{n} réglage trouvé', many: '{n} réglages trouvés', other: '{n} réglages trouvés' }, none: 'Aucun réglage ne correspond à « {q} ».' },
   livetvMoved: 'Les réglages de la télévision en direct se trouvent désormais sous Télévision en direct.',
 };
 export default settings;

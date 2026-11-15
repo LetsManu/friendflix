@@ -189,6 +189,7 @@ const settings: Translation<typeof de> = {
     POSTPLAY_ENABLED: { label: 'Screen after the end', help: 'After a film or the last episode: “You’re caught up”, what comes next, and suggestions. Off turns it off for everyone.' },
   },
   tabs: { label: 'Settings sections', general: 'General', signin: 'Sign-in', media: 'Media', playback: 'Playback', updates: 'Updates', notifications: 'Notifications', unsaved: 'unsaved changes' },
+  search: { label: 'Search settings', placeholder: 'Search by name, key or keyword', results: { one: '{n} setting found', other: '{n} settings found' }, none: 'No setting matches “{q}”.' },
   livetvMoved: 'You will now find the Live TV settings under Live TV.',
 };
 export default settings;

@@ -194,6 +194,7 @@ const settings: Translation<typeof de> = {
     POSTPLAY_ENABLED: { label: 'Ekran po zakończeniu', help: 'Po filmie lub ostatnim odcinku: „Wszystko obejrzane”, co dalej i propozycje. Wyłączenie ukrywa go dla wszystkich.' },
   },
   tabs: { label: 'Sekcje ustawień', general: 'Ogólne', signin: 'Logowanie', media: 'Media', playback: 'Odtwarzanie', updates: 'Aktualizacje', notifications: 'Powiadomienia', unsaved: 'niezapisane zmiany' },
+  search: { label: 'Szukaj w ustawieniach', placeholder: 'Szukaj po nazwie, kluczu lub słowie', results: { one: 'Znaleziono {n} ustawienie', few: 'Znaleziono {n} ustawienia', many: 'Znaleziono {n} ustawień', other: 'Znaleziono {n} ustawienia' }, none: 'Żadne ustawienie nie pasuje do „{q}”.' },
   livetvMoved: 'Ustawienia telewizji na żywo znajdziesz teraz w sekcji Telewizja na żywo.',
 };
 export default settings;
