@@ -264,8 +264,8 @@ const mayChange = (r: RecRow, a: Actor) => r.profile_id === a.profileId || a.adm
  * registered by that module; empty = none).
  */
 export interface RecHooks {
-  /** revoke the recording's playback tokens; `keepProfile`: tokens of that profile stay (the owner after a visibility change) */
-  revokeTokens: (ctx: Ctx, recordingId: string, o?: { keepProfile?: string }) => Promise<void>;
+  /** revoke the recording's playback tokens; `onlyLost`: only those of profiles that cannot see it any more (a narrower share) */
+  revokeTokens: (ctx: Ctx, recordingId: string, o?: { onlyLost?: boolean }) => Promise<void>;
   onRecordingDeleted?: (ctx: Ctx, recordingId: string) => Promise<void>;
 }
 export const recHooks: RecHooks = {
@@ -289,8 +289,10 @@ export async function setVisibility(ctx: Ctx, a: Actor, id: string, visibility: 
   const next = (await ctx.db.query<RecRow>(
     "update livetv_recordings set visibility = $2, shared_by = case when $2 = 'private' then null else $3::uuid end where id = $1 and state <> 'cancelled' returning *",
     [id, visibility, a.userId])).rows[0] ?? null;
-  if (next && next.visibility !== r.visibility && r.visibility !== 'private') {
-    await recHooks.revokeTokens(ctx, id, r.profile_id ? { keepProfile: r.profile_id } : {}).catch(() => undefined);
+  // a narrower share ends the playback of the profiles that lose it at once (their next authz would refuse them within 2 s anyway); a
+  // wider one or no change revokes nothing (B-I4, A-M2)
+  if (next && VISIBILITIES.indexOf(next.visibility) < VISIBILITIES.indexOf(r.visibility)) {
+    await recHooks.revokeTokens(ctx, id, { onlyLost: true }).catch(() => undefined);
   }
   return next;
 }

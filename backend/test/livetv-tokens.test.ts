@@ -551,6 +551,23 @@ describe('recording tokens (Phase 3)', () => {
     expect((await resolveRecToken(env.ctx, own, IP1)).status).toBe(200);
   });
 
+  it('B-I4: a wider share revokes nothing; a narrower one only the tokens of profiles that lose access; the next request of a lost one is refused anyway', async () => {
+    const r = await rec({ visibility: 'account' });
+    // Anna's second profile (same account) and the admin's profile (another account) watch it while it is shared with everyone
+    const ANNA2 = '0d000000-0000-4000-a000-0000000000a2';
+    await env.pool.query(`insert into profiles(id, user_id, name, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values ($1, $2, 'Zweit', $3, 'anna-zweit', $4) on conflict do nothing`,
+      [ANNA2, ANNA, '9'.repeat(32), encrypt(key, 'pw')]);
+    const sameAccount = (await mintRecToken(env.ctx, { userId: ANNA, profileId: ANNA2, deviceId: 'dev-anna-2', sidHash: SID_B, recordingId: r.id, channelId: nord, channelName: 'Nordlicht TV', via: 'local', remote: false }, 7200)).token;
+    await setVisibility(env.ctx, { userId: ANNA, profileId: ANNA, admin: false }, r.id, 'everyone'); // widening
+    const other = (await play(r.id)).json().token as string;
+    expect((await resolveRecToken(env.ctx, sameAccount, IP2)).status).toBe(200);
+    expect((await authzRec(other)).statusCode).toBe(200);
+    await setVisibility(env.ctx, { userId: ANNA, profileId: ANNA, admin: false }, r.id, 'everyone'); // no change
+    await setVisibility(env.ctx, { userId: ANNA, profileId: ANNA, admin: false }, r.id, 'account'); // narrowing: the other account loses it
+    expect((await authzRec(other)).statusCode).toBe(410);
+    expect((await resolveRecToken(env.ctx, sameAccount, IP2)).status).toBe(200);
+  });
+
   it('a recording that now lives only in the library is gone for its tokens', async () => {
     const r = await rec();
     const { token } = await annaRec(r.id);

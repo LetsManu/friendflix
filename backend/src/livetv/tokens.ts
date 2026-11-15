@@ -399,15 +399,27 @@ export async function resolveRecToken(ctx: Ctx, token: string, ip: string): Prom
   return { status: 200, dir: row.dir, growing: row.state === 'recording', maxAgeS: LIVE_AUTHZ_MAX_AGE_S };
 }
 
-/** Revokes every playback token of a recording (all accounts); `keepProfile`: that profile's tokens stay (the owner after a share change) */
-export async function revokeRecordingTokens(ctx: Ctx, recordingId: string, o: { keepProfile?: string } = {}): Promise<number> {
+/**
+ * Revokes the playback tokens of a recording (all accounts). `onlyLost`: only those whose profile cannot see it any more, checked now
+ * (a narrower share keeps the others playing).
+ */
+export async function revokeRecordingTokens(ctx: Ctx, recordingId: string, o: { onlyLost?: boolean } = {}): Promise<number> {
   let n = 0;
   for (const idx of await ctx.kv.keys(idxKey(''))) {
     for (const t of await listTokens(ctx, idx.slice(idxKey('').length))) {
-      if (kindOf(t.rec) !== 'rec' || t.rec.recordingId !== recordingId || (o.keepProfile && t.rec.profileId === o.keepProfile)) continue;
+      if (kindOf(t.rec) !== 'rec' || t.rec.recordingId !== recordingId) continue;
+      if (o.onlyLost && (await stillSees(ctx, t.rec))) continue;
       await revokeLiveToken(ctx, t.hash);
       n++;
     }
   }
   return n;
+}
+
+/** whether the token's account and profile still see its recording (no memo) */
+async function stillSees(ctx: Ctx, rec: LiveTokenRec): Promise<boolean> {
+  const user = await getUserById(ctx, rec.userId);
+  const prof = user && !user.disabled ? await getProfile(ctx, user.id, rec.profileId) : null;
+  if (!user || !prof || !rec.recordingId) return false;
+  return (await visibleRecording(ctx, { id: user.id, role: user.role }, { id: prof.id, kids: prof.kids }, rec.recordingId)) !== null;
 }
