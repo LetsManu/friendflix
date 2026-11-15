@@ -188,6 +188,7 @@ const settings: Translation<typeof de> = {
     RECO_HALF_LIFE_DAYS: { label: 'Taste half-life (days)', help: 'After this many days a taste signal (e.g. a thumbs-up) counts only half. Engine v2 only.' },
     POSTPLAY_ENABLED: { label: 'Screen after the end', help: 'After a film or the last episode: “You’re caught up”, what comes next, and suggestions. Off turns it off for everyone.' },
   },
+  tabs: { label: 'Settings sections', general: 'General', signin: 'Sign-in', media: 'Media', playback: 'Playback', updates: 'Updates', notifications: 'Notifications', unsaved: 'unsaved changes' },
   livetvMoved: 'You will now find the Live TV settings under Live TV.',
 };
 export default settings;

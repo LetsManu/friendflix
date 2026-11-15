@@ -36,9 +36,10 @@ test.describe('admin: settings', () => {
     await page.goto('/admin/settings');
     await page.getByRole('button', { name: 'Alle übernehmen' }).click();
     expect(api.settings.imports).toEqual(['all']);
+    await expect(setting(page, 'Öffentliche Adresse').getByText(/Auch gespeichert/)).toBeVisible();
+    await page.getByRole('tab', { name: 'Medien' }).click();
     const req = setting(page, 'Adresse des Anfragen-Dienstes');
     await expect(req.getByText(/REQUESTS_URL und REQUESTS_URL_FILE aus der \.env/)).toBeVisible();
-    await expect(setting(page, 'Öffentliche Adresse').getByText(/Auch gespeichert/)).toBeVisible();
     expect(await page.locator('main').innerText()).not.toMatch(/seerr/i);
   });
 
@@ -49,7 +50,7 @@ test.describe('admin: settings', () => {
       const set = Storage.prototype.setItem;
       Storage.prototype.setItem = function (k: string, v: string) { console.log(`ss:${k}=${v}`); return set.call(this, k, v); };
     });
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     const tmdb = setting(page, 'TMDB-API-Schlüssel');
     // the mock seeds a canary as the value of secret rows (TMDB, DATABASE_URL); the page ignores it
     await expect(tmdb.getByText('Gesetzt · …abcd')).toBeVisible();
@@ -86,7 +87,7 @@ test.describe('admin: settings', () => {
   });
 
   test('an undecryptable secret asks to enter it again', async ({ page }) => {
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     const key = setting(page, 'Jellyfin-API-Schlüssel (Admin)');
     await expect(key.getByText('Gespeicherter Wert nicht lesbar – bitte neu eingeben.')).toBeVisible();
   });
@@ -94,7 +95,9 @@ test.describe('admin: settings', () => {
   test('saving a restart setting shows the restart banner; API_COMPRESSION applies live', async ({ page, api }) => {
     await page.goto('/admin/settings');
     await expect(page.getByText('docker compose restart backend')).toHaveCount(0);
+    await expect(setting(page, 'API-Antworten komprimieren')).toBeVisible();
     await expect(setting(page, 'API-Antworten komprimieren').getByText('Neustart nötig')).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Wiedergabe' }).click();
     const row = setting(page, 'Downloads pro Stunde');
     await expect(row.getByText('Neustart nötig')).toBeVisible();
     await row.getByRole('spinbutton').fill('7');
@@ -107,7 +110,7 @@ test.describe('admin: settings', () => {
 
   test('probe unreachable → Save anyway saves with force: true', async ({ page, api }) => {
     api.settings.probeFail = { ok: false, code: 'unreachable', detail: 'upstream_error' };
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     const media = card(page, 'Mediaserver');
     await setting(page, 'Jellyfin-Adresse').getByRole('textbox').fill('http://jellyfin.lan:8096');
     await media.getByRole('button', { name: 'Speichern' }).click();
@@ -122,7 +125,7 @@ test.describe('admin: settings', () => {
 
   test('a hard probe failure offers no Save anyway', async ({ page, api }) => {
     api.settings.probeFail = { ok: false, code: 'unauthorized' };
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     const media = card(page, 'Mediaserver');
     await setting(page, 'Jellyfin-Adresse').getByRole('textbox').fill('http://jellyfin.lan:8096');
     await media.getByRole('button', { name: 'Speichern' }).click();
@@ -131,13 +134,14 @@ test.describe('admin: settings', () => {
   });
 
   test('only changed fields are sent: the redacted ntfy URL never goes back', async ({ page, api }) => {
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=notifications');
     await expect(setting(page, 'ntfy-Kanal für Ankündigungen').getByRole('textbox')).toHaveValue('https://ntfy.example.com/friendflix?auth=redacted');
     await setting(page, 'ntfy-Server für persönliche Nachrichten').getByRole('textbox').fill('https://ntfy.example.com');
     await card(page, 'Benachrichtigungen').getByRole('button', { name: 'Speichern' }).click();
     await expect(toasts(page).getByText('Einstellungen gespeichert.')).toBeVisible();
     expect(api.settings.puts).toEqual([{ values: { NTFY_BASE_URL: 'https://ntfy.example.com' } }]);
     // typing back the shown value is no change
+    await page.getByRole('tab', { name: 'Wiedergabe' }).click();
     const f = setting(page, 'Gleichzeitige Vorbereitungen').getByRole('spinbutton');
     await f.fill('2');
     await f.fill('1');
@@ -146,7 +150,7 @@ test.describe('admin: settings', () => {
 
   test('a refused value shows its error at the field', async ({ page, api }) => {
     api.settings.saveErrors = { DOWNLOAD_PREP_CONCURRENCY: 'too_big' };
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=playback');
     await setting(page, 'Gleichzeitige Vorbereitungen').getByRole('spinbutton').fill('9');
     await card(page, 'Downloads').getByRole('button', { name: 'Speichern' }).click();
     await expect(setting(page, 'Gleichzeitige Vorbereitungen').getByRole('alert')).toHaveText('Der Wert ist zu groß.');
@@ -154,7 +158,7 @@ test.describe('admin: settings', () => {
   });
 
   test('Test runs the group probe with the unsaved values', async ({ page, api }) => {
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=signin');
     const signin = card(page, 'Anmeldung');
     await signin.getByRole('button', { name: 'Testen' }).click();
     await expect(signin.getByRole('status')).toHaveText('Verbindung funktioniert.');
@@ -172,7 +176,7 @@ test.describe('admin: settings', () => {
     await installLogin(page.context(), st);
     let classic = 0;
     page.on('request', (r) => { if (new URL(r.url()).pathname === '/auth/reauth') classic++; });
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=signin');
     await setting(page, 'Authentik-API-Token').getByRole('button', { name: 'Authentik-API-Token ersetzen' }).click();
     await setting(page, 'Authentik-API-Token').getByLabel('Neuer Wert').fill('very-secret-token-1234');
     await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
@@ -187,14 +191,14 @@ test.describe('admin: settings', () => {
     expect(api.settings.puts[1]).toEqual(api.settings.puts[0]);
     expect(JSON.stringify(api.settings.puts[1])).toContain('very-secret-token-1234');
     expect(classic).toBe(0);
-    await expect(page).toHaveURL(/\/admin\/settings$/);
+    await expect(page).toHaveURL(/\/admin\/settings\?tab=signin$/);
     expect(await page.evaluate(() => sessionStorage.getItem('ff_settings_pending'))).toBeNull();
   });
 
   test('re-authentication in place: closing the dialog saves nothing more and keeps what was typed', async ({ page, api }) => {
     api.settings.reauthRequired = true;
     await installLogin(page.context(), loginState({ starts: [{ body: password('admin') }] }));
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=signin');
     await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
     await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
     const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
@@ -238,7 +242,7 @@ test.describe('admin: settings', () => {
     await installLogin(page.context(), st);
     let redirected = false;
     await page.route('**/auth/reauth?**', (r) => { redirected = true; return r.fulfill({ status: 200, contentType: 'text/html', body: '<p>left</p>' }); });
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=signin');
     await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
     await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
     const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
@@ -250,7 +254,7 @@ test.describe('admin: settings', () => {
     expect(api.settings.puts).toHaveLength(2);
     expect(api.settings.puts[1]).toEqual(api.settings.puts[0]);
     expect(JSON.stringify(api.settings.puts[1])).toContain('ff-admins');
-    await expect(page).toHaveURL(/\/admin\/settings$/);
+    await expect(page).toHaveURL(/\/admin\/settings\?tab=signin$/);
     expect(redirected).toBe(false);
     expect(await page.evaluate(() => sessionStorage.getItem('ff_settings_pending'))).toBeNull();
   });
@@ -258,7 +262,7 @@ test.describe('admin: settings', () => {
   test('the dialog offers no passkey option when the provider offers none (no passkeyAlt)', async ({ page, api }) => {
     api.settings.reauthRequired = true;
     await installLogin(page.context(), loginState({ starts: [{ body: password('admin') }] }));
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=signin');
     await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
     await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
     const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
@@ -270,7 +274,7 @@ test.describe('admin: settings', () => {
     api.settings.reauthRequired = true;
     const st = loginState({ starts: [() => ({ body: password('admin') })] });
     await installLogin(page.context(), st);
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=signin');
     await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
     const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
     for (let i = 1; i <= 2; i++) {
@@ -293,12 +297,12 @@ test.describe('admin: settings', () => {
       api.settings.reauthRequired = false;
       return r.fulfill({ status: 302, headers: { location: next ?? '/' } });
     });
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=signin');
     await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
     await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
-    await expect.poll(() => next).toBe('/admin/settings?resume=1');
+    await expect.poll(() => next).toBe('/admin/settings?tab=signin&resume=1');
     await expect(toasts(page).getByText('Einstellungen gespeichert.')).toBeVisible();
-    await expect(page).toHaveURL(/\/admin\/settings$/);
+    await expect(page).toHaveURL(/\/admin\/settings\?tab=signin$/);
     expect(api.settings.puts).toEqual([{ values: { ADMIN_GROUP: 'ff-admins' } }, { values: { ADMIN_GROUP: 'ff-admins' } }]);
     await expect(setting(page, 'Admin-Gruppe').getByRole('textbox')).toHaveValue('ff-admins');
   });
@@ -316,7 +320,7 @@ test.describe('admin: settings', () => {
       api.settings.reauthRequired = false;
       return r.fulfill({ status: 302, headers: { location: new URL(r.request().url()).searchParams.get('next') ?? '/' } });
     });
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=signin');
     await setting(page, 'Authentik-API-Token').getByRole('button', { name: 'Authentik-API-Token ersetzen' }).click();
     await setting(page, 'Authentik-API-Token').getByLabel('Neuer Wert').fill('very-secret-token-1234');
     await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
@@ -360,7 +364,7 @@ test.describe('admin: settings', () => {
   });
 
   test('an edited ntfy URL that still carries the redaction marker is refused at the field, nothing is sent', async ({ page, api }) => {
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=notifications');
     const row = setting(page, 'ntfy-Kanal für Ankündigungen');
     await row.getByRole('textbox').fill('https://ntfy.example.com/other-topic?auth=redacted');
     await card(page, 'Benachrichtigungen').getByRole('button', { name: 'Speichern' }).click();
@@ -382,11 +386,11 @@ test.describe('admin: settings', () => {
       api.settings.reauthRequired = false;
       return r.fulfill({ status: 302, headers: { location: next ?? '/' } });
     });
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     await setting(page, 'Jellyfin-Adresse').getByRole('textbox').fill('http://jellyfin.lan:8096');
     const media = card(page, 'Mediaserver');
     await media.getByRole('button', { name: 'Testen' }).click();
-    await expect.poll(() => next).toBe('/admin/settings?resume=1');
+    await expect.poll(() => next).toBe('/admin/settings?tab=media&resume=1');
     await expect(media.getByRole('status')).toHaveText('Verbindung funktioniert.');
     expect(api.settings.tests).toEqual([{ group: 'media', values: { JELLYFIN_URL: 'http://jellyfin.lan:8096' } }]);
     expect(api.settings.puts).toEqual([]);
@@ -400,7 +404,7 @@ test.describe('admin: settings', () => {
       api.settings.reauthRequired = false;
       return r.fulfill({ status: 302, headers: { location: new URL(r.request().url()).searchParams.get('next') ?? '/' } });
     });
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     const media = card(page, 'Mediaserver');
     await setting(page, 'Jellyfin-Adresse').getByRole('textbox').fill('http://jellyfin.lan:8096');
     await media.getByRole('button', { name: 'Speichern' }).click();
@@ -423,11 +427,11 @@ test.describe('admin: settings', () => {
       reauths++;
       return r.fulfill({ status: 302, headers: { location: new URL(r.request().url()).searchParams.get('next') ?? '/' } });
     });
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=signin');
     await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
     await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
     await expect(page.getByRole('alert').filter({ hasText: 'Die erneute Anmeldung hat nicht gereicht' })).toBeVisible();
-    await expect(page).toHaveURL(/\/admin\/settings$/);
+    await expect(page).toHaveURL(/\/admin\/settings\?tab=signin$/);
     expect(reauths).toBe(1);
     expect(api.settings.puts).toHaveLength(2);
     expect(await page.evaluate(() => sessionStorage.getItem('ff_settings_pending'))).toBeNull();
@@ -449,7 +453,7 @@ test.describe('admin: settings', () => {
     await expect(nav.getByRole('link', { name: 'Einstellungen' })).toHaveAttribute('aria-current', 'page');
   });
   test('LOGIN_UI starts with "Automatisch" and offers FriendFlix / Authentik; clearing it sends null', async ({ page, api }) => {
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=signin');
     const row = setting(page, 'Anmeldeseite');
     const sel = row.getByRole('combobox');
     await expect(sel).toHaveValue('');
@@ -462,5 +466,114 @@ test.describe('admin: settings', () => {
     await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
     await expect.poll(() => api.settings.puts.length).toBe(2);
     expect(api.settings.puts[1]!.values).toEqual({ LOGIN_UI: null });
+  });
+});
+
+// Settings tabs and deep links (Systemcheck Stage 4, Task 10): `?tab=`, `?setting=<KEY>`, the old `#settings-<group>` links.
+test.describe('admin: settings tabs and deep links', () => {
+  test.beforeEach(({ api }) => { api.asAdmin = true; });
+  const tab = (page: Page, name: string) => page.getByRole('tablist', { name: 'Bereiche der Einstellungen' }).getByRole('tab', { name });
+
+  test('six tabs, Allgemein without a parameter, each tab shows its groups; arrows, Home and End move between them', async ({ page }) => {
+    await page.goto('/admin/settings');
+    const tabs = page.getByRole('tablist', { name: 'Bereiche der Einstellungen' }).getByRole('tab');
+    await expect(tabs).toHaveText(['Allgemein', 'Anmeldung', 'Medien', 'Wiedergabe', 'Updates', 'Benachrichtigungen']);
+    await expect(tab(page, 'Allgemein')).toHaveAttribute('aria-selected', 'true');
+    for (const h of ['Allgemein', 'Systemzustand', 'Sitzungen', 'Server']) await expect(card(page, h)).toBeVisible();
+    await expect(card(page, 'Mediaserver')).toHaveCount(0);
+    await tab(page, 'Medien').click();
+    await expect(page).toHaveURL(/\/admin\/settings\?tab=media$/);
+    for (const h of ['Mediaserver', 'Anfragen', 'Datenquellen', 'Empfehlungen']) await expect(card(page, h)).toBeVisible();
+    await expect(card(page, 'Server')).toHaveCount(0);
+    await expect(page.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'set-tab-media');
+    await tab(page, 'Medien').press('ArrowRight');
+    await expect(tab(page, 'Wiedergabe')).toBeFocused();
+    await expect(card(page, 'Downloads')).toBeVisible();
+    await page.keyboard.press('End');
+    await expect(tab(page, 'Benachrichtigungen')).toHaveAttribute('aria-selected', 'true');
+    await expect(card(page, 'Push-Mitteilungen')).toBeVisible();
+    await page.keyboard.press('Home');
+    await expect(page).toHaveURL(/\/admin\/settings$/);
+    await expect(tab(page, 'Allgemein')).toHaveAttribute('tabindex', '0');
+    await expect(tab(page, 'Medien')).toHaveAttribute('tabindex', '-1');
+  });
+
+  test('?setting=AUTHENTIK_API_TOKEN opens Anmeldung, the row is in view and focused, data-flash set', async ({ page }) => {
+    await page.goto('/admin/settings?setting=AUTHENTIK_API_TOKEN');
+    await expect(tab(page, 'Anmeldung')).toHaveAttribute('aria-selected', 'true');
+    const row = page.locator('#setting-AUTHENTIK_API_TOKEN');
+    // the e2e browser asks for reduced motion: a static outline until the next interaction
+    await expect(row).toHaveAttribute('data-flash', 'static');
+    await expect(row).toBeInViewport();
+    await expect(row.getByRole('button', { name: 'Authentik-API-Token ersetzen' })).toBeFocused();
+    await expect(page).toHaveURL(/\/admin\/settings\?tab=signin$/);
+    await page.keyboard.press('Shift');
+    await expect(row).not.toHaveAttribute('data-flash');
+  });
+
+  test('an env-locked key is highlighted the same: its row opens, its Move button has the focus', async ({ page }) => {
+    await page.goto('/admin/settings?tab=media&setting=PUBLIC_URL');
+    await expect(tab(page, 'Allgemein')).toHaveAttribute('aria-selected', 'true');
+    const row = page.locator('#setting-PUBLIC_URL');
+    await expect(row).toHaveAttribute('data-flash', 'static');
+    await expect(row.getByRole('textbox')).toBeDisabled();
+    await expect(row.getByRole('button', { name: 'Öffentliche Adresse: in die Einstellungen übernehmen' })).toBeFocused();
+  });
+
+  test('?setting=UNKNOWN opens Allgemein without error and highlights nothing', async ({ page }) => {
+    await page.goto('/admin/settings?tab=updates&setting=UNKNOWN_KEY');
+    await expect(tab(page, 'Allgemein')).toHaveAttribute('aria-selected', 'true');
+    await expect(page).toHaveURL(/\/admin\/settings$/);
+    await expect(card(page, 'Server')).toBeVisible();
+    await expect(page.locator('[data-flash]')).toHaveCount(0);
+  });
+
+  test('#settings-recommendations opens Medien at the card', async ({ page }) => {
+    await page.goto('/admin/settings#settings-recommendations');
+    await expect(tab(page, 'Medien')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('heading', { level: 2, name: 'Empfehlungen' })).toBeInViewport();
+    await expect(page).toHaveURL(/\/admin\/settings\?tab=media$/);
+  });
+
+  test('edits survive a tab switch and the tab shows the unsaved dot', async ({ page, api }) => {
+    await page.goto('/admin/settings?tab=signin');
+    const signin = tab(page, 'Anmeldung');
+    const width = (await signin.boundingBox())!.width;
+    await expect(signin.locator('.dot')).toHaveCSS('opacity', '0');
+    await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
+    await expect(signin).toHaveAccessibleName('Anmeldung (ungespeicherte Änderungen)');
+    await expect(signin.locator('.dot')).toHaveCSS('opacity', '1');
+    // the dot's place was kept: the tab did not grow
+    expect((await signin.boundingBox())!.width).toBeCloseTo(width, 0);
+    await tab(page, 'Updates').click();
+    await expect(setting(page, 'Admin-Gruppe')).toHaveCount(0);
+    await expect(tab(page, 'Updates')).toHaveAccessibleName('Updates');
+    await signin.click();
+    await expect(setting(page, 'Admin-Gruppe').getByRole('textbox')).toHaveValue('ff-admins');
+    await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
+    await expect.poll(() => api.settings.puts).toEqual([{ values: { ADMIN_GROUP: 'ff-admins' } }]);
+    await expect(signin).toHaveAccessibleName('Anmeldung');
+  });
+
+  test('a Live-TV key on the settings page goes to Live-TV → Einstellungen', async ({ page, api }) => {
+    Object.assign(api.admin.livetv, { installed: true, wanted: true, ltState: 'enabled' });
+    await page.goto('/admin/settings?setting=LIVETV_ENCODER');
+    await expect(page).toHaveURL(/\/admin\/livetv\?tab=settings$/);
+    await expect(page.locator('#setting-LIVETV_ENCODER')).toHaveAttribute('data-flash', 'static');
+  });
+
+  test.describe('with motion', () => {
+    test.use({ reducedMotion: 'no-preference' });
+    test('the highlight animates only opacity, then goes', async ({ page }) => {
+      await page.goto('/admin/settings?setting=RECO_ENGINE');
+      const row = page.locator('#setting-RECO_ENGINE');
+      await expect(row).toHaveAttribute('data-flash', '');
+      const props = await page.evaluate(() => document.getAnimations()
+        .map((a) => a.effect as KeyframeEffect)
+        .filter((e) => e.pseudoElement === '::after' && (e.target as HTMLElement | null)?.id === 'setting-RECO_ENGINE')
+        .map((e) => [...new Set(e.getKeyframes().flatMap((k) => Object.keys(k)))].filter((k) => !['offset', 'computedOffset', 'easing', 'composite'].includes(k))));
+      expect(props).toEqual([['opacity']]);
+      await expect(row).not.toHaveAttribute('data-flash', { timeout: 4_000 });
+    });
   });
 });

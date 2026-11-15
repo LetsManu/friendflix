@@ -186,5 +186,7 @@ export default {
     RECO_HALF_LIFE_DAYS: { label: 'Halbwertszeit des Geschmacks (Tage)', help: 'Nach so vielen Tagen zählt ein Geschmackssignal (z. B. ein Daumen hoch) nur noch halb. Nur Engine v2.' },
     POSTPLAY_ENABLED: { label: 'Bildschirm nach dem Ende', help: 'Nach einem Film oder der letzten Folge: „Du bist auf dem neuesten Stand“, was als Nächstes kommt, und Vorschläge. Aus schaltet ihn für alle ab.' },
   },
+  /** the tabs of Admin → Einstellungen (`?tab=`); `unsaved` is read after the name of a tab with unsaved edits */
+  tabs: { label: 'Bereiche der Einstellungen', general: 'Allgemein', signin: 'Anmeldung', media: 'Medien', playback: 'Wiedergabe', updates: 'Updates', notifications: 'Benachrichtigungen', unsaved: 'ungespeicherte Änderungen' },
   livetvMoved: 'Live-TV-Einstellungen findest du jetzt unter Live-TV.',
 } as const;

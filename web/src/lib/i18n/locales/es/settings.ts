@@ -192,6 +192,7 @@ const settings: Translation<typeof de> = {
     RECO_HALF_LIFE_DAYS: { label: 'Vida media del gusto (días)', help: 'Tras estos días, una señal de gusto (p. ej. un pulgar arriba) cuenta solo la mitad. Solo motor v2.' },
     POSTPLAY_ENABLED: { label: 'Pantalla tras el final', help: 'Tras una película o el último episodio: «Estás al día», lo que viene después y sugerencias. Desactivado la quita para todos.' },
   },
+  tabs: { label: 'Secciones de ajustes', general: 'General', signin: 'Inicio de sesión', media: 'Medios', playback: 'Reproducción', updates: 'Actualizaciones', notifications: 'Notificaciones', unsaved: 'cambios sin guardar' },
   livetvMoved: 'Los ajustes de TV en directo ahora están en TV en directo.',
 };
 export default settings;

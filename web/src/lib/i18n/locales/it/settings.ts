@@ -192,6 +192,7 @@ const settings: Translation<typeof de> = {
     RECO_HALF_LIFE_DAYS: { label: 'Emivita dei gusti (giorni)', help: 'Dopo questi giorni un segnale di gusto (ad es. un pollice in su) conta solo la metà. Solo motore v2.' },
     POSTPLAY_ENABLED: { label: 'Schermata dopo la fine', help: 'Dopo un film o l’ultimo episodio: “Sei in pari”, cosa viene dopo e suggerimenti. Disattivata, sparisce per tutti.' },
   },
+  tabs: { label: 'Sezioni delle impostazioni', general: 'Generale', signin: 'Accesso', media: 'Media', playback: 'Riproduzione', updates: 'Aggiornamenti', notifications: 'Notifiche', unsaved: 'modifiche non salvate' },
   livetvMoved: 'Le impostazioni della TV in diretta ora si trovano sotto TV in diretta.',
 };
 export default settings;

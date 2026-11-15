@@ -140,6 +140,16 @@ test.describe('Systemcheck on Admin → Status', () => {
     await expect(ok.getByRole('link')).toHaveCount(0);
   });
 
+  test('Zur Einstellung opens the setting on its tab, in view and highlighted', async ({ page }) => {
+    await page.goto('/admin/status');
+    await page.locator('#systemcheck li[data-id="signin.authentik"]').getByRole('link', { name: 'Zur Einstellung' }).click();
+    await expect(page).toHaveURL(/\/admin\/settings\?tab=signin$/);
+    await expect(page.getByRole('tab', { name: 'Anmeldung' })).toHaveAttribute('aria-selected', 'true');
+    const row = page.locator('#setting-AUTHENTIK_API_TOKEN');
+    await expect(row).toHaveAttribute('data-flash', 'static');
+    await expect(row).toBeInViewport();
+  });
+
   test('a setting from the environment says so; docs open the guide in a new tab', async ({ page, api }) => {
     api.syscheck.result = syscheckWith([
       { id: 'core.publicUrl', status: 'warning', cause: 'public_url_http', fix: 'public_url_http', settingKey: 'PUBLIC_URL', settingGroup: 'general', locked: true },

@@ -6,8 +6,13 @@
    * LIVETV_MAX_BITRATE), edited and saved through the same settings API, rows and texts as Admin → Einstellungen (no second store). A save
    * sends only the changed keys; a refusal that needs a recent sign-in asks in place (lib/account/reauth.ts) and repeats the save once.
    * Below them the SRT ports read-only (`GET /livetv/ingest`; the bind address is not known to the web) and where they are set.
+   * A deep link `?setting=<KEY>` (the Systemcheck's "Zur Einstellung", the settings search) highlights that row once it is loaded, then
+   * the address reads the plain tab again.
    */
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { pageStore } from '#lib/page';
+  import { highlightSetting } from '#lib/admin/settings/highlight';
   import Icon from '#lib/Icon.svelte';
   import { isReauthError, reauthenticate } from '#lib/account/reauth';
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
@@ -31,6 +36,19 @@
 
   $: changes = items ? changedValues(items, edits) : {};
   $: dirty = Object.keys(changes).length > 0;
+  const page$ = pageStore();
+  $: linkKey = $page$.url.searchParams.get('setting');
+  $: if (items && linkKey) void follow(linkKey);
+  let following = false;
+  async function follow(key: string) {
+    if (following) return;
+    following = true;
+    try {
+      await goto('/admin/livetv?tab=settings', { replace: true, reset: false });
+      if (items?.some((i) => i.key === key)) await highlightSetting(key);
+    } finally { following = false; }
+  }
+
   $: range = ingest?.ports ? (ingest.ports.from === ingest.ports.to ? String(ingest.ports.from) : `${ingest.ports.from}–${ingest.ports.to}`) : '';
 
   async function load() {
