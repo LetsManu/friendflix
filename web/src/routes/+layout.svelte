@@ -28,13 +28,13 @@
   import { loadModal, prefetchModal } from '#lib/lazy';
   import { startTvLink, type ToTv } from '#lib/remote';
   import { perms, permsFrom } from '#lib/perms';
-  import { capsFrom, features, featuresOfMe, featuresFrom, featuresKnown, kindFrom, serverCaps, serverKind } from '#lib/capabilities';
+  import { areas, areasFrom, capsFrom, features, featuresOfMe, featuresFrom, featuresKnown, kindFrom, serverCaps, serverKind } from '#lib/capabilities';
   import { setMeta } from '#lib/offline/db';
   import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '#lib/spatial';
   import Intro from '#lib/Intro.svelte';
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
-  import { isRailTop, isTabActive, LIVE_RAIL, liveTabs, TV_RAIL } from '#lib/menu';
+  import { isRailTop, isTabActive, libraryTabs, LIVE_RAIL, liveTabs, TV_RAIL } from '#lib/menu';
   import { deskGuardBudget, tvGuardBudget, deskPagePlan, frameGuard, framesIdle, framesResume, isDetailPage, motionLevel, motionTripped, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
@@ -44,7 +44,7 @@
   import { railKey } from '#lib/tv/rail';
   import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
   import { dialogKeys } from '#lib/actions';
-  import { canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintOf, hintPerms, kidsRedirect, needsProfileGate, needsWelcome, readActive, readHint, readPicked, readReloading, welcomeHref, writeActive, writeHint } from '#lib/gate';
+  import { areaRedirect, canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintLibrary, hintOf, hintPerms, kidsRedirect, needsProfileGate, needsWelcome, readActive, readHint, readPicked, readReloading, welcomeHref, writeActive, writeHint } from '#lib/gate';
   import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
   import TabBar from '#lib/phone/TabBar.svelte';
   import { dragClose } from '#lib/phone/dragClose';
@@ -97,6 +97,8 @@
    * Either way the page mounts once in the right language; nothing re-creates it later (see pageEpoch in lib/i18n).
    */
   if (bootHint?.noRequests) features.set(featuresFrom({ requests: false })); // until /api/me answers: no request links flash
+  // ... nor library tabs and links for a person without libraries (Wünsche, Gemeinsam and Downloads need the Mediathek, roles redesign §6)
+  if (!hintLibrary(bootHint)) areas.set(areasFrom({ library: false, requests: false, together: false, downloads: false }));
   { // ... nor the entries of a right switched off for the profile this tab runs with (the hint keeps a list per profile)
     const hp = hintPerms(bootHint, bootProfile);
     perms.set(hp);
@@ -120,7 +122,9 @@
     if (me) me = { ...me, language: l, languageChosen: true };
     langAsk = null;
   }
-  $: canDownload = Boolean(me?.downloads?.allowed);
+  $: canDownload = Boolean(me?.downloads?.allowed) && $areas.downloads; // downloads are library items (roles redesign §4.6)
+  /** where "home" is: the start page, or Live TV for a person without libraries (the start page would only send there) */
+  $: home = $areas.library || !$features.livetv ? '/' : '/live';
   $: multi = (me?.profileCount ?? 0) > 1;
   $: who = me ? (me.profile?.name ?? me.name) : '';
   $: faceStyle = me?.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined;
@@ -234,10 +238,11 @@
   $: if (!showBanner && stopBanner) { stopBanner(); stopBanner = null; }
   $: unread = notes.filter((n) => !n.read).length;
   $: if (path) { catOpen = false; catGone(); closePreview(); }
-  $: chips = $mobile && showsChips(path) && !kidsUi;
-  // kids profiles stay on kids routes, new profiles go through /welcome once (both also checked in boot() before the page mounts)
+  $: chips = $mobile && showsChips(path) && !kidsUi && $areas.library;
+  // a person without libraries stays on Live TV and the account pages, kids profiles stay on kids routes, new profiles go through
+  // /welcome once (all also checked in boot() before the page mounts)
   $: if (me && !pending && !publicPage) {
-    const to = kidsRedirect(me, path) ?? (needsWelcome(me, path) ? welcomeHref(path + $page.url.search, me.kids) : null);
+    const to = areaRedirect(me, path, $features.livetv) ?? kidsRedirect(me, path) ?? (needsWelcome(me, path) ? welcomeHref(path + $page.url.search, kidsHome(me)) : null);
     if (to) void goto(to, { replaceState: true });
   }
   $: if (typeof document !== 'undefined') {
@@ -306,7 +311,7 @@
   function pickCat(href: string) { catOpen = false; catGone(); void goto(href); }
   function onKey(e: KeyboardEvent) {
     // "/" and Ctrl/Cmd+K jump to the search field (not while typing somewhere else)
-    if (!watchPage && !tv && ((e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'))) {
+    if (!watchPage && !tv && $areas.library && ((e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'))) {
       const el = e.target as HTMLElement | null;
       const typing = el && (isEditable(el) || el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
       if (!typing || e.key !== '/') { e.preventDefault(); openSearch(); return; }
@@ -339,6 +344,18 @@
     else if (m.action === 'home' || m.action === 'stop') goto('/');
     else window.dispatchEvent(new CustomEvent('ff-remote', { detail: m })); // the player listens
   }
+
+  /** a kids profile whose home is the (library-based) kids home */
+  const kidsHome = (m: Me) => Boolean(m.kids) && m.areas?.library !== false;
+  // a person without libraries: an in-app navigation to a library page (a link, the phone remote's "home", a notification) goes to
+  // Live TV instead, before that page mounts and asks for library data (roles redesign §6; deep links are boot()'s job)
+  beforeNavigate((nav) => {
+    if (!me || pending || nav.willUnload || !nav.to || (nav.type !== 'link' && nav.type !== 'goto')) return;
+    const to = areaRedirect(me, nav.to.url.pathname, get(features).livetv);
+    if (!to) return;
+    nav.cancel();
+    void goto(to);
+  });
 
   // deferred actions (decline/revoke with an Undo window) commit right away when the person leaves the page (other route,
   // reload, closing the tab: willUnload sends keepalive requests); a pagehide listener in lib/ui/action.ts covers the rest
@@ -483,7 +500,7 @@
 
   // ---- TV page transitions (spec 5.2; plan in lib/tv/motion.ts): artwork -> detail backdrop morph, rail pages slide, else crossfade ----
   let pageFadeIn = false; // no View Transitions API (TV, desktop detail): the new page fades in (afterNavigate)
-  $: tvRail = liveTabs(TV_RAIL, LIVE_RAIL, $features.livetv);
+  $: tvRail = liveTabs(libraryTabs(TV_RAIL, $areas.library), LIVE_RAIL, $features.livetv);
   const railAt = (p: string) => tvRail.findIndex(([href]) => isTabActive(href, p));
   const onScreen = (el: Element | null | undefined): el is HTMLElement => {
     const r = el?.getBoundingClientRect();
@@ -760,6 +777,7 @@
         setMediaServer(m.server?.kind); // texts that name the media server (i18n serverText)
         perms.set(permsFrom(m.perms));
         features.set(featuresOfMe(m));
+        areas.set(areasFrom(m.areas));
         featuresKnown.set(true);
         writeHint(hintOf(m, readHint())); writeActive(m.profile?.id); clearReloadFlag(); // the profile-switch reload is done: a later reload may render early again
         if (m.profile?.id) void setMeta('lastProfileId', m.profile.id).catch(() => undefined); // the offline hub shows the last active profile's downloads
@@ -770,8 +788,10 @@
         }
         // a kids profile never mounts a grown-up page; a new profile starts with /welcome (after the language question, which
         // is an overlay above it)
+        // a person without libraries only gets Live TV and the account pages (roles redesign §6; before the kids rule)
+        else if (!pending && areaRedirect(m, location.pathname, get(features).livetv)) await goto(areaRedirect(m, location.pathname, get(features).livetv)!, { replaceState: true });
         else if (!pending && kidsRedirect(m, location.pathname)) await goto(kidsRedirect(m, location.pathname)!, { replaceState: true });
-        else if (!pending && needsWelcome(m, location.pathname)) await goto(welcomeHref(location.pathname + location.search, m.kids), { replaceState: true });
+        else if (!pending && needsWelcome(m, location.pathname)) await goto(welcomeHref(location.pathname + location.search, kidsHome(m)), { replaceState: true });
         // the server language is active before the page mounts (an early-rendered page only gets the $t texts updated;
         // older servers send no language: keep the remembered one)
         if (m.language) await setLocale(m.language);
@@ -785,7 +805,7 @@
         if (pending) stops.push(watchApproval());
         tv = m.tv || sessionStorage.getItem('ff_tv') === '1';
         if (!pending) maybeColdIntro(m.profile?.id);
-        if (!pending) { loadNotes(); loadList(); loadPrefs(); const notesTimer = setInterval(loadNotes, 60_000); stops.push(() => clearInterval(notesTimer)); }
+        if (!pending) { loadNotes(); if (get(areas).library) loadList(); loadPrefs(); const notesTimer = setInterval(loadNotes, 60_000); stops.push(() => clearInterval(notesTimer)); }
         if (m.tv) localStorage.setItem('ff_tv_device', '1'); // an expired TV session goes back to the pairing screen, not to a login form
         if (tv) {
           { let t: ReturnType<typeof setTimeout>; const wake = () => { document.documentElement.classList.remove('idle-cursor'); clearTimeout(t); t = setTimeout(() => document.documentElement.classList.add('idle-cursor'), 4000); }; wake(); window.addEventListener('mousemove', wake); stops.push(() => { window.removeEventListener('mousemove', wake); clearTimeout(t); }); }
@@ -813,10 +833,10 @@
   {#if ambPage}<div class="frost-amb" aria-hidden="true"></div>{/if}
   {#if !watchPage && !profilesPage && kidsUi}
     <header class="nav kidsnav" class:solid={scrolled || !path.startsWith('/kids')}>
-      <a class="klogo" href="/kids" aria-label={$t('kids.nav.homeLink')}><Logo wordmark={!$mobile} size={$mobile ? 30 : 32} label="" /> <span class="kbadge">{$t('kids.badge')}</span></a>
+      <a class="klogo" href={$areas.library ? '/kids' : home} aria-label={$t('kids.nav.homeLink')}><Logo wordmark={!$mobile} size={$mobile ? 30 : 32} label="" /> <span class="kbadge">{$t('kids.badge')}</span></a>
       <span class="sp"></span>
       <nav class="knav" aria-label={$t('kids.nav.label')}>
-        <a class="kbtn" href="/kids/search" aria-label={$t('kids.nav.search')} aria-current={path.startsWith('/kids/search') ? 'page' : undefined}><Icon name="search" size={26} /></a>
+        {#if $areas.library}<a class="kbtn" href="/kids/search" aria-label={$t('kids.nav.search')} aria-current={path.startsWith('/kids/search') ? 'page' : undefined}><Icon name="search" size={26} /></a>{/if}
         {#if $features.livetv}<a class="kbtn" href="/live" aria-label={$t('kids.nav.live')} aria-current={path.startsWith('/live') ? 'page' : undefined}><Icon name="tv" size={26} /></a>{/if}
         <a class="kav" href="/profiles" aria-label={$t('kids.nav.switchProfile', { name: who })}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span></a>
       </nav>
@@ -828,9 +848,9 @@
       <header class="nav m" class:solid={mSolid || !heroPage} class:chips class:tuck={chips && mTucked}>
         <span class="mbg" aria-hidden="true"></span>
         <div class="mrow">
-          <a class="mlogo" href="/" aria-label={$t('shell.nav.homeLink')} aria-current={path === '/' ? 'page' : undefined}><Logo size={28} label="" /><span class="wm" aria-hidden="true">FriendFlix</span></a>
+          <a class="mlogo" href={home} aria-label={$t('shell.nav.homeLink')} aria-current={path === home ? 'page' : undefined}><Logo size={28} label="" /><span class="wm" aria-hidden="true">FriendFlix</span></a>
           <span class="sp">{#if castHeader && $barSess}<button type="button" class="icon-btn castind" aria-label={$t('player.castBar.castingTo', { device: $barSess.device })} on:click={openCastRemote}><Icon name="cast" size={24} /></button>{/if}</span>
-          <a class="icon-btn" href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>
+          {#if $areas.library}<a class="icon-btn" href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>{/if}
           <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
         </div>
         {#if chips}
@@ -843,7 +863,7 @@
         {/if}
       </header>
     {:else if desk}
-      <DeskBar bind:this={deskBar} {path} {heroPage} {me} {who} {faceStyle} {multi} {admin} {canDownload} {lgApp} {here} {notes} onHelp={() => (help = true)} />
+      <DeskBar bind:this={deskBar} {path} {home} {heroPage} {me} {who} {faceStyle} {multi} {admin} {canDownload} {lgApp} {here} {notes} onHelp={() => (help = true)} />
     {/if}
     <TabBar {path} {canDownload} />
     {#if (catOpen || catLeaving) && $mobile}

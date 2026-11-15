@@ -23,7 +23,10 @@
   let titles: Item[] | null = null, picked = new Set<string>(), loadErr = false;
   let main: HTMLElement;
   $: kids = Boolean(me?.kids || me?.profile?.kids);
-  $: total = 3;
+  /** step 2 picks titles from the library: a person without libraries skips it (2 steps, roles redesign §6) */
+  $: library = me?.areas?.library !== false;
+  $: steps = library ? [1, 2, 3] : [1, 3];
+  $: total = steps.length;
 
   onMount(async () => {
     try {
@@ -45,7 +48,8 @@
         await api(`/api/profiles/${me.profile.id}`, { method: 'PATCH', body: kids ? { avatar } : { name: n, avatar } });
         me = { ...me, profile: { ...me.profile, name: kids ? me.profile.name : n, avatar } };
       }
-      step = 2; void loadTitles(); void focusStep();
+      if (library) { step = 2; void loadTitles(); } else step = 3;
+      void focusStep();
     } catch (e) {
       err = e instanceof ApiError && e.status === 409 ? tr('kids.welcome.nameTaken') : tr('kids.welcome.saveFailed');
     } finally { busy = false; }
@@ -83,7 +87,7 @@
     try {
       await api('/api/prefs/onboarded', { method: 'PUT', body: { onboarded: true } });
       window.dispatchEvent(new Event('ff-onboarded')); // the layout stops sending this profile here
-      await goto(safeNext(new URLSearchParams(location.search).get('next'), kids ? '/kids' : '/'), { replace: true });
+      await goto(safeNext(new URLSearchParams(location.search).get('next'), kids && library ? '/kids' : '/'), { replace: true });
     } catch { err = tr('kids.welcome.saveFailed'); busy = false; }
   }
 </script>
@@ -91,8 +95,8 @@
 <div class="wel" class:kids bind:this={main}>
   <span class="brand" aria-hidden="true"><Logo wordmark size={30} /></span>
   {#if me}
-    <p class="step">{$t('kids.welcome.step', { n: step, total })}</p>
-    <div class="dots" aria-hidden="true">{#each [1, 2, 3] as s (s)}<i class:on={s <= step}></i>{/each}</div>
+    <p class="step">{$t('kids.welcome.step', { n: steps.indexOf(step) + 1, total })}</p>
+    <div class="dots" aria-hidden="true">{#each steps as s (s)}<i class:on={s <= step}></i>{/each}</div>
 
     {#if step === 1}
       <section class="card" aria-labelledby="w1">

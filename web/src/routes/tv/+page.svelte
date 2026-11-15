@@ -36,8 +36,10 @@
     document.documentElement.classList.add('tv');
     try { // already a paired TV: straight to the portal (or, when the admin set "TV startet mit Live-TV", to the last live channel)
       const r = await fetch('/api/me', { credentials: 'same-origin' });
-      const me: { tv?: boolean; startLive?: boolean } | null = r.ok ? await r.json() : null;
-      if (me?.tv) { location.replace(me.startLive === true ? '/live?play=last' : '/'); return; }
+      const me: { tv?: boolean; startLive?: boolean; areas?: { library?: boolean; livetv?: boolean } } | null = r.ok ? await r.json() : null;
+      // a TV of a person without libraries starts like "TV startet mit Live-TV" (the start page would only send to /live; roles redesign §6)
+      const live = me?.startLive === true || (me?.areas?.library === false && me.areas.livetv === true);
+      if (me?.tv) { location.replace(live ? '/live?play=last' : '/'); return; }
     } catch { /* offline: show the code screen anyway */ }
     const pre = publicLocale();
     if (pre) { langSet = true; await setLocale(pre); }

@@ -2,12 +2,13 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { api, type Item, type Me } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import Row from '#lib/Row.svelte';
   import { avatarBg, initial } from '#lib/avatars';
   import { groupLinks, linksFor } from '#lib/menu';
-  import { features, linkShown, serverCaps } from '#lib/capabilities';
+  import { areas, features, linkShown, serverCaps } from '#lib/capabilities';
   import { perms } from '#lib/perms';
   import { logout } from '#lib/session';
   import { goto } from '$app/navigation';
@@ -24,7 +25,9 @@
   onMount(() => {
     tvApp = isTvApp();
     api<Me>('/api/me').then((m) => (me = m)).catch(() => undefined);
-    api('/api/library/resume').then((r) => (resume = r.items)).catch(() => (resume = []));
+    // Weiterschauen is library data (a person without libraries gets none: roles redesign §6)
+    if (get(areas).library) api('/api/library/resume').then((r) => (resume = r.items)).catch(() => (resume = []));
+    else resume = [];
     api('/api/notifications').then(async (r) => {
       notes = r.notifications;
       // seeing them here counts as reading (same as opening the bell)
@@ -45,12 +48,12 @@
   async function surprise() {
     try { await goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { await goto('/browse/movies'); }
   }
-  $: canDownload = Boolean(me?.downloads?.allowed);
-  $: groups = groupLinks(linksFor(canDownload).filter(([href]) => linkShown($serverCaps, href, $features, $perms)));
+  $: canDownload = Boolean(me?.downloads?.allowed) && $areas.downloads;
+  $: groups = groupLinks(linksFor(canDownload).filter(([href]) => linkShown($serverCaps, href, $features, $perms, $areas)));
   $: admin = Boolean(me?.isAdmin && me?.profile?.isOwner);
   $: owner = Boolean(me?.profile?.isOwner && !me.kids); // the account page is the owner profile's
   $: shown = notes ? (allNotes ? notes : notes.slice(0, 5)) : [];
-  $: tiles = [['/watchlist', 'shell.menu.myList', 'plus'], ...(canDownload ? [['/downloads', 'shell.menu.downloads', 'download']] : []), ['/lists', 'shell.menu.lists', 'list'], ['/history', 'shell.menu.history', 'calendar']] as Array<[string, TKey, string]>;
+  $: tiles = ($areas.library ? [['/watchlist', 'shell.menu.myList', 'plus'], ...(canDownload ? [['/downloads', 'shell.menu.downloads', 'download']] : []), ['/lists', 'shell.menu.lists', 'list'], ['/history', 'shell.menu.history', 'calendar']] : []) as Array<[string, TKey, string]>;
 </script>
 
 <svelte:head><title>{$t('common.pageTitle', { page: $t('account.me.title') })}</title></svelte:head>
@@ -64,9 +67,9 @@
     </div>
   </header>
 
-  <ul class="tiles2" aria-label={$t('account.me.quick')}>
+  {#if tiles.length}<ul class="tiles2" aria-label={$t('account.me.quick')}>
     {#each tiles as [href, label, icon] (href)}<li><a class="frost-flat frost-tile edge-hover" {href}><span class="ti"><Icon name={icon} size={24} /></span><span class="tl">{$t(label)}</span></a></li>{/each}
-  </ul>
+  </ul>{/if}
 
   <section aria-labelledby="h-notes">
     <div class="sech"><h2 id="h-notes">{$t('account.me.notifications')}</h2>{#if notes && notes.length > 5}<button type="button" class="lnk" aria-expanded={allNotes} on:click={() => (allNotes = !allNotes)}>{allNotes ? $t('account.me.less') : $t('account.me.all', { n: notes.length })}</button>{/if}</div>
@@ -92,7 +95,7 @@
         <section class="grp" aria-label={$t(g.title)}>
           <h2 class="gh">{$t(g.title)}</h2>
           <ul class="lst frost-flat frost-tile">
-            {#if g.title === 'shell.menu.groups.discover'}<li><button type="button" class="rowbtn fill-hover" on:click={surprise}><Icon name="shuffle" size={20} />{$t('shell.menu.surprise')}<Icon name="chevron-right" size={18} /></button></li>{/if}
+            {#if g.title === 'shell.menu.groups.discover' && $areas.library}<li><button type="button" class="rowbtn fill-hover" on:click={surprise}><Icon name="shuffle" size={20} />{$t('shell.menu.surprise')}<Icon name="chevron-right" size={18} /></button></li>{/if}
             {#each g.items as [href, label, icon] (href)}<li><a class="fill-hover" {href}><Icon name={icon} size={20} />{$t(label)}<Icon name="chevron-right" size={18} /></a></li>{/each}
             {#if isAcc && owner}<li><a class="fill-hover" href="/me/account"><Icon name="user" size={20} />{$t('account.account.title')}<Icon name="chevron-right" size={18} /></a></li>{/if}
             {#if isAcc}<li><a class="fill-hover" href="/settings#language"><Icon name="globe" size={20} />{$t('account.me.language', { name: localeName($locale) })}<Icon name="chevron-right" size={18} /></a></li>{/if}

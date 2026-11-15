@@ -13,8 +13,8 @@
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import { avatarBg, initial } from '#lib/avatars';
-  import { HEADER_TABS, LIVE_HEADER, isTabActive, liveTabs, navLabel } from '#lib/menu';
-  import { features } from '#lib/capabilities';
+  import { HEADER_TABS, LIVE_HEADER, isTabActive, libraryTabs, liveTabs, navLabel } from '#lib/menu';
+  import { areas, features } from '#lib/capabilities';
   import { categoryHref, kindFromPath, type Kind } from '#lib/mobile';
   import { langLabel } from '#lib/langs';
   import { logout as doLogout } from '#lib/session';
@@ -33,9 +33,13 @@
   import { nextId } from './searchSheet';
   import { menuKeys } from '#lib/ui/menuKeys';
 
-  /** the header tabs: Live-TV after Filme while the feature is on */
-  $: tabs = liveTabs(HEADER_TABS, LIVE_HEADER, $features.livetv);
+  /** the header tabs: Live-TV after Filme while the feature is on; without the Mediathek only Live-TV (roles redesign §6) */
+  $: tabs = liveTabs(libraryTabs(HEADER_TABS, $areas.library), LIVE_HEADER, $features.livetv);
+  /** Categories, the search and "Überrasch mich" are library things */
+  $: library = $areas.library;
   export let path: string;
+  /** where the logo goes (Live TV for a person without libraries) */
+  export let home = '/';
   /** a page that starts with a billboard: the pill stays see-through at the very top */
   export let heroPage = false;
   export let me: Me | null = null;
@@ -229,6 +233,7 @@
   function onClose() { if (q) { q = ''; commitSearch(''); } closeSearch(); }
   /** opens the field and puts the cursor in it (the magnifier, "/" and Ctrl/Cmd+K via the layout) */
   export function openSearch() {
+    if (!library) return; // the search looks through the library
     searchOpen = true; focused = true; menu = bell = cats = false;
     sync();
     searchEl?.focus();
@@ -394,8 +399,8 @@
 
 <header class="nav desk" class:solid class:still data-desk-bar bind:this={root}>
   <span class="scrim" aria-hidden="true"></span>
-  <a class="logo" href="/" aria-label={$t('shell.nav.homeLink')}><Logo wordmark size={30} /></a>
-  <nav class="pill" class:on={fillOn} class:open class:compact class:collapse aria-label={$t('shell.nav.main')} bind:this={pill} style:--fw="{fw}px" style:--fwc="{open ? fw : lastFw}px" style:--sel-a={selA ?? undefined} use:clipSheen>
+  <a class="logo" href={home} aria-label={$t('shell.nav.homeLink')}><Logo wordmark size={30} /></a>
+  <nav class="pill" class:on={fillOn} class:open class:compact class:collapse class:empty={!library && !tabs.length} aria-label={$t('shell.nav.main')} bind:this={pill} style:--fw="{fw}px" style:--fwc="{open ? fw : lastFw}px" style:--sel-a={selA ?? undefined} use:clipSheen>
     <!-- the background: at rest ONE glass surface the size of the pill (.whole, no edge inside it); while the pill changes size
          two glass halves instead, each with one of its round ends, that slide (never scale) and cross-fade into each other in
          the middle (see morph). Over the billboard (not yet scrolled) with the safe scrim. Under the glass ONE blur, painted
@@ -407,7 +412,7 @@
     <div class="track" bind:this={track}>
       <span class="fill" aria-hidden="true" bind:this={fill}><i class="cap"></i><i class="mid" bind:this={mid}></i><i class="cap" bind:this={capR}></i></span>
       {#each tabs as [href, label] (href)}<a {href} class="tab" class:active={isTabActive(href, path)} class:gone={collapse && !isTabActive(href, path)} aria-current={isTabActive(href, path) ? 'page' : undefined}>{$t(navLabel(label, $features.requests))}</a>{/each}
-      <div class="pop-anchor" class:gone={collapse} on:focusout={onAnchorOut}>
+      {#if library}<div class="pop-anchor" class:gone={collapse} on:focusout={onAnchorOut}>
         <!-- a disclosure (links and filters in a region), not a menu: no aria-haspopup -->
         <button type="button" class="tab cbtn" aria-expanded={cats} aria-controls={cats ? 'ff-cats' : undefined} bind:this={catBtn} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>
         {#if cats}
@@ -432,15 +437,15 @@
             </div>
           </div>
         {/if}
-      </div>
+      </div>{/if}
     </div>
-    <form class="psearch" role="search" bind:this={form} on:submit|preventDefault={submitSearch} on:focusin={onFocusIn} on:focusout={onFocusOut}>
+    {#if library}<form class="psearch" role="search" bind:this={form} on:submit|preventDefault={submitSearch} on:focusin={onFocusIn} on:focusout={onFocusOut}>
       <button type="button" class="mag" bind:this={magBtn} aria-label={open && !compact ? $t('shell.search.submit') : $t('shell.search.open')} on:mousedown|preventDefault on:click={onMag}><Icon name="search" size={18} /></button>
       <input id="hq" type="search" bind:this={searchEl} bind:value={q} autocomplete="off" enterkeyhint="search" placeholder={$t('shell.search.placeholder')} aria-label={$t('shell.search.label')} tabindex={open && !compact ? 0 : -1}
         role="combobox" aria-expanded={sheetOpen} aria-controls={sheetIds.length ? 'ds-list' : 'ds-sheet'} aria-autocomplete="list" aria-activedescendant={sheetOpen && activeId ? activeId : undefined}
         on:input={onSearchInput} on:keydown={onSearchKey} />
       <button type="button" class="x" bind:this={xBtn} aria-label={$t('desk.bar.close')} tabindex={open && !compact ? 0 : -1} on:mousedown|preventDefault on:click={onClose} on:keydown={onSearchKey}><Icon name="x" size={16} /></button>
-    </form>
+    </form>{/if}
   </nav>
   <div class="right">
     <div class="pop-anchor" on:focusout={onAnchorOut}>
@@ -468,7 +473,7 @@
           <a href="/settings" role="menuitem" tabindex="-1"><Icon name="settings" size={18} />{$t('shell.menu.accountSettings')}</a>
           <a href="/devices" role="menuitem" tabindex="-1"><Icon name="monitor" size={18} />{$t('shell.menu.devices')}</a>
           {#if canDownload}<a href="/downloads" role="menuitem" tabindex="-1"><Icon name="download" size={18} />{$t('shell.menu.downloads')}</a>{/if}
-          <button class="plain" role="menuitem" tabindex="-1" on:click={surprise}><Icon name="shuffle" size={18} />{$t('shell.menu.surprise')}</button>
+          {#if library}<button class="plain" role="menuitem" tabindex="-1" on:click={surprise}><Icon name="shuffle" size={18} />{$t('shell.menu.surprise')}</button>{/if}
           <button class="plain" role="menuitem" tabindex="-1" on:click={openHelp}><Icon name="info" size={18} />{$t('shell.menu.help')}</button>
           {#if admin}<a href="/admin" role="menuitem" tabindex="-1"><Icon name="shield" size={18} />{$t('shell.menu.admin')}</a>{/if}
           <hr />
@@ -502,6 +507,9 @@
   /* ---- the pill: transparent itself; its look is the background layer (.pbg), so a size change can be played back by
      sliding that layer's two halves (transform only) while the content glides; the field lives at its right end ---- */
   .pill { position: relative; display: flex; align-items: center; gap: 0; padding: 4px; border-radius: 999px; border: 1px solid transparent; }
+  /* nothing in it yet (a person without libraries before /api/me named Live TV): the pill waits unseen, then fades in */
+  .pill { transition: opacity var(--m-d-s, 160ms) ease-out; }
+  .pill.empty { opacity: 0; visibility: hidden; }
   .pbg { position: absolute; inset: -1px; pointer-events: none; }
   /* at rest: the glass is one surface, the pill's own shape */
   .pbg > .whole { position: absolute; inset: 0; box-sizing: border-box; border-radius: 999px; }

@@ -3,7 +3,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { FOOTER_COLUMNS } from '#lib/menu';
-  import { features, linkShown, serverCaps } from '#lib/capabilities';
+  import { areas, features, linkShown, serverCaps } from '#lib/capabilities';
   import { perms } from '#lib/perms';
   import Logo from '#lib/Logo.svelte';
   import { LOCALES, locale, t, type Locale } from '#lib/i18n';
@@ -30,7 +30,7 @@
     {#if !kids}
       <nav class="cols" aria-label={$t('shell.footer.more')}>
         {#each FOOTER_COLUMNS as col, i (i)}
-          <ul>{#each col.filter(([href]) => linkShown($serverCaps, href, $features, $perms)) as [href, label] (href)}<li><a {href}>{$t(label)}</a></li>{/each}</ul>
+          <ul>{#each col.filter(([href]) => linkShown($serverCaps, href, $features, $perms, $areas)) as [href, label] (href)}<li><a {href}>{$t(label)}</a></li>{/each}</ul>
         {/each}
       </nav>
     {/if}

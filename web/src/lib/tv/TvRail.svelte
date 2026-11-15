@@ -6,8 +6,8 @@
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
   import { initial } from '#lib/avatars';
-  import { LIVE_RAIL, TV_RAIL, isTabActive, liveTabs, navLabel } from '#lib/menu';
-  import { features } from '#lib/capabilities';
+  import { LIVE_RAIL, TV_RAIL, isTabActive, libraryTabs, liveTabs, navLabel } from '#lib/menu';
+  import { areas, features } from '#lib/capabilities';
   import { focusFirst, hasTarget } from '#lib/spatial';
   import { railKey, type RailAction, type RailInput } from './rail';
 
@@ -18,7 +18,7 @@
   export let faceStyle: string | undefined = undefined;
 
   /** the rail: Live-TV after Filme while the feature is on */
-  $: rail = liveTabs(TV_RAIL, LIVE_RAIL, $features.livetv);
+  $: rail = liveTabs(libraryTabs(TV_RAIL, $areas.library), LIVE_RAIL, $features.livetv); // without the Mediathek: Live only (roles redesign §6)
   $: cur = rail.findIndex(([href]) => isTabActive(href, path));
 
   let nav: HTMLElement;
