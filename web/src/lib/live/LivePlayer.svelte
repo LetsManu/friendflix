@@ -38,6 +38,7 @@
   import InfoBanner from './InfoBanner.svelte';
   import InfoPanel from './InfoPanel.svelte';
   import RecordSheet from './RecordSheet.svelte';
+  import TimeRecordSheet from './TimeRecordSheet.svelte';
   import { hintKeys, noteKey, seenKeys, type SeenKey } from './keyhints';
   import { resolveLiveKey, type LiveKeyAction } from './livekeys';
   import { liveRemote, type LiveRemote } from './remotekeys';
@@ -734,6 +735,21 @@
     recordFrom = null;
     void tick().then(() => { if (back?.isConnected) back.focus(); });
   }
+  // *Eigenen Zeitraum aufnehmen …* (DVR follow-ups): the programme's sheet hands over to the time-span sheet, prefilled; closing
+  // it puts the focus back where the programme's sheet was opened from
+  let spanFor: { channelId: string; start: Date; end: Date; title: string } | null = null;
+  let spanFrom: HTMLElement | null = null;
+  function openSpan(p: { channelId: string; start: Date; end: Date; title: string }): void {
+    spanFrom = recordFrom;
+    recordFor = null; recordFrom = null;
+    spanFor = p;
+  }
+  function closeSpan(): void {
+    spanFor = null;
+    const back = spanFrom;
+    spanFrom = null;
+    void tick().then(() => { if (back?.isConnected) back.focus(); });
+  }
   function recordWatch(id: string): void {
     recordFor = null; recordFrom = null; panelOpen = false;
     if (id !== curId) pickChannel(id); else wake();
@@ -857,6 +873,8 @@
     const back = e.key === 'Escape' || (tv && isBackKey(e));
     // the programme's detail sheet: Back closes it (focus back to its button on the info panel); its own keys stay with it
     if (recordFor) { if (back) { e.preventDefault(); e.stopImmediatePropagation(); closeRecord(); } return; }
+    // the time-span sheet: its modal frame owns every key (Escape closes it), none of them zaps or types a channel number
+    if (spanFor) return;
     // the Play on sheet: Back closes it (focus back to its button); its own keys stay with it
     if (playOnOpen) { if (back) { e.preventDefault(); e.stopImmediatePropagation(); closePlayOn(); } return; }
     // the remote screen of a live cast: Back leaves the player, every other key belongs to its buttons
@@ -1282,8 +1300,11 @@
       on:close={closePanel} on:restart={() => { closePanel(); restart(); }} on:last={() => { panelOpen = false; jumpLast(); wake(); }} on:list={openList} on:record={(e) => openRecord(e.detail)} />
   {/if}
   {#if recordFor && cur && canRecord}
-    <RecordSheet channel={cur} programme={recordFor} now={$minute} phone={phoneUi} {still}
-      on:close={closeRecord} on:changed={() => recKey++} on:watch={(e) => recordWatch(e.detail.channelId)} />
+    <RecordSheet channel={cur} programme={recordFor} now={$minute} phone={phoneUi} {still} span={!tv}
+      on:close={closeRecord} on:changed={() => recKey++} on:watch={(e) => recordWatch(e.detail.channelId)} on:span={(e) => openSpan(e.detail)} />
+  {/if}
+  {#if spanFor && cur && canRecord}
+    <TimeRecordSheet channels={list?.channels ?? [cur]} preset={spanFor} layer={130} on:close={closeSpan} on:saved={() => recKey++} />
   {/if}
   {#if listOpen && pstate}
     <ChannelPanel state={pstate} groups={list?.groups ?? []} playingId={curId} now={$minute} phone={phoneUi} {still} {tv} trigger={listBtn ?? null}
