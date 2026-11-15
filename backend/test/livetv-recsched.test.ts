@@ -423,6 +423,32 @@ describe('finalisation and orphans (fix round 1)', () => {
     expect(of('DELETE', `/v1/recordings/${later}`)).toHaveLength(1);
   });
 
+  it('N5: a crashed launcher\'s expired lease past the end is closed from its folder, not failed missed', async () => {
+    const id = await recording({ state: 'starting', claim_token: randomUUID(), claim_until: new Date(Date.now() - MIN), mode: null,
+      start_at: new Date(Date.now() - 2 * HOUR), end_at: new Date(Date.now() - HOUR), pad_after_s: 60 });
+    closeAnswer = { channelId: '', state: 'done', segments: 'ts', bytes: 9000, durationS: 3600, gaps: [], error: null };
+    await tick();
+    const r = await getRecording(env.ctx, id);
+    expect([r!.state, r!.bytes, r!.duration_s]).toEqual(['done', '9000', 3600]);
+    expect(await notices('livetv.rec.failed')).toEqual([]);
+    // no folder (the launcher never posted): failed as missed, as before
+    const none = await recording({ channel_id: sternwarte, channel_name: 'Sternwarte 24', state: 'starting', claim_token: randomUUID(), claim_until: new Date(Date.now() - MIN), mode: null,
+      start_at: new Date(Date.now() - 2 * HOUR), end_at: new Date(Date.now() - HOUR), pad_after_s: 60 });
+    closeAnswer = null;
+    await tick();
+    expect([(await getRecording(env.ctx, none))!.state, (await getRecording(env.ctx, none))!.error]).toEqual(['failed', 'missed']);
+  });
+
+  it('N5: re-claiming an expired lease whose recorder runs counts no gap for the time it recorded', async () => {
+    const due = Date.now() - 10 * MIN;
+    const id = await recording({ state: 'starting', claim_token: randomUUID(), claim_until: new Date(Date.now() - MIN), mode: null,
+      start_at: new Date(due), end_at: new Date(Date.now() + HOUR), pad_before_s: 0, created_at: new Date(due - HOUR) });
+    recorders.set(id, rec(id, nordlicht, { dir: (await getRecording(env.ctx, id))!.dir, since: due + 5000 }));
+    await tick();
+    const r = await getRecording(env.ctx, id);
+    expect([r!.state, r!.gaps]).toEqual(['recording', []]);
+  });
+
   it('A-I3: a resume racing a delete leaves no recorder behind', async () => {
     const id = await recording({ state: 'recording', mode: 'passthrough', start_at: new Date(Date.now() - 10 * 60_000), end_at: new Date(Date.now() + HOUR) });
     // livetv lost the recorder; the owner deletes the recording while the resume posts it again

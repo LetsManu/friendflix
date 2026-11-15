@@ -507,12 +507,38 @@ async function closeLost(ctx: Ctx, r: RecRow): Promise<void> {
     facts = null;
   }
   if (!facts || (facts.state !== 'done' && facts.state !== 'failed')) { await failRow(ctx, r, 'stream_gone', { from: ['recording'] }); return; }
-  await collect(ctx, r, {
-    id: r.id, channelId: r.channel_id ?? '', dir: r.dir, state: facts.state, segments: facts.segments === 'fmp4' || facts.segments === 'ts' ? facts.segments : null,
+  await collect(ctx, r, factsView(r, facts));
+}
+
+/** livetv's answer of a close, checked field by field */
+function factsView(r: RecRow, facts: RecorderView): RecorderView {
+  return {
+    id: r.id, channelId: r.channel_id ?? '', dir: r.dir, state: facts.state === 'done' ? 'done' : 'failed', segments: facts.segments === 'fmp4' || facts.segments === 'ts' ? facts.segments : null,
     bytes: Math.max(0, Math.round(Number(facts.bytes) || 0)), durationS: Math.max(0, Math.round(Number(facts.durationS) || 0)),
     gaps: Array.isArray(facts.gaps) ? facts.gaps.filter((g) => typeof g?.from === 'number' && typeof g?.to === 'number').slice(0, 1000) : [],
     error: facts.error === 'storage_full' || facts.error === 'write_failed' || facts.error === 'stream_gone' ? facts.error : null, since: 0,
-  });
+  };
+}
+
+/**
+ * N5: a `starting` row whose lease ran out after its end: the replica that held it may have posted a recorder before it went away. Its
+ * folder is closed and read like a lost recorder's (B-I2); one with recorded bytes ends done or partial, not `missed`. false = nothing was
+ * recorded (or livetv did not answer): the caller fails it as before.
+ */
+async function closeExpired(ctx: Ctx, r: RecRow, token: string): Promise<boolean> {
+  let facts: RecorderView;
+  try {
+    facts = await livetvCall<RecorderView>(ctx, 'POST', `/v1/recordings/${r.id}/close`, { dir: r.dir }, { timeoutMs: CALL_TIMEOUT_MS });
+  } catch (e) {
+    if (!(e instanceof LivetvError)) throw e;
+    return false;
+  }
+  if (!facts || (facts.state !== 'done' && facts.state !== 'failed') || !(Number(facts.bytes) > 0)) return false;
+  const row = (await ctx.db.query<RecRow>(
+    "update livetv_recordings set state = 'recording', claim_token = null, claim_until = null where id = $1 and state = 'starting' and claim_token = $2 returning *",
+    [r.id, token])).rows[0];
+  if (row) await collect(ctx, row, factsView(row, facts));
+  return true;
 }
 
 /**
@@ -553,7 +579,7 @@ async function postRecorder(ctx: Ctx, r: RecRow): Promise<RecordingStartAnswer |
 const refusalWhy = (e: RecordStartError) => (e === 'no_slot' || e === 'provider_limit' ? 'no_slot' : 'stream_gone');
 
 /** starts (or resumes) a claimed row's stream and recorder; answers whether it records now */
-async function launch(ctx: Ctx, r: RecRow, token: string, owner: Owner, now: number, resume: boolean): Promise<boolean> {
+async function launch(ctx: Ctx, r: RecRow, token: string, owner: Owner, now: number, resume: boolean, reclaimed = false): Promise<boolean> {
   const ch = (await channelNames(ctx, [r.channel_id!])).get(r.channel_id!);
   if (!ch) { await failRow(ctx, r, 'stream_gone', { from: [r.state], claim: token }); return false; }
   const res = await startForRecording(ctx, ch, { userId: owner.user.id });
@@ -573,7 +599,10 @@ async function launch(ctx: Ctx, r: RecRow, token: string, owner: Owner, now: num
   // now: the programme's start, or the moment the recording was asked for when that was later ("record now" of a running programme
   // never counts the minutes before it was asked for, A-I5)
   const due = Math.max(r.start_at.getTime(), r.created_at.getTime());
-  const late = now - due > LATE_START_MS ? [{ from: due, to: now }] : [];
+  // N5: a lease that ran out under a launcher that went away: its recorder may have run all along; the gap ends when it began
+  const ran = reclaimed ? (await recorderList(ctx))?.find((x) => x.id === r.id && x.state === 'recording') : undefined;
+  const lateTo = ran ? Math.min(now, Math.max(due, ran.since)) : now;
+  const late = lateTo - due > LATE_START_MS ? [{ from: due, to: lateTo }] : [];
   const u = resume
     ? await ctx.db.query("update livetv_recordings set claim_token = null, claim_until = null, end_pending = null where id = $1 and state = 'recording' and claim_token = $2", [r.id, token])
     : await ctx.db.query(
@@ -645,11 +674,15 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
         if (!w || w.disabled || !(await mayRecord(ctx, w.user, w.profile))) { await cancelRow(ctx, r, 'forbidden', c.token); continue; }
         if (!r.channel_id || !(await channelAllowed(ctx, w.user, w.profile, r.channel_id))) { await cancelRow(ctx, r, 'forbidden', c.token); continue; }
         if (!installed) { await failRow(ctx, r, 'livetv_off', fromStarting); continue; }
-        if (now >= padEnd(r)) { await failRow(ctx, r, (await ctx.kv.get(whyKey(r.id)).catch(() => null)) ?? 'missed', fromStarting); continue; }
+        if (now >= padEnd(r)) {
+          if (expired && (await closeExpired(ctx, r, c.token))) continue;
+          await failRow(ctx, r, (await ctx.kv.get(whyKey(r.id)).catch(() => null)) ?? 'missed', fromStarting);
+          continue;
+        }
         const free = (await readLivetvSystem(ctx).catch(() => null))?.recordings?.freeBytes;
         const st = await storageState(ctx);
         if ((typeof free === 'number' && free < FREE_MIN_BYTES) || (st.used >= recordSettings(ctx).limitBytes && !st.deletable)) { await failRow(ctx, r, 'storage_full', fromStarting); continue; }
-        await launch(ctx, r, c.token, w, now, false);
+        await launch(ctx, r, c.token, w, now, false, expired);
       } catch {
         // one row's failure (a database error, a bug) never stops the others (A-M11); its lease is given back, it is tried again
         logCode(ctx, 'tick-start');
