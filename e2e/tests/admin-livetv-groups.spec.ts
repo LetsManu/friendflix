@@ -632,37 +632,24 @@ test.describe('admin: Live TV in the people pages (desktop)', () => {
   test.use({ allowedConsole: /status of (400|409)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; install(api); api.admin.matrix.features.livetv = true; });
 
-  test('role matrix shows the Kanalgruppen row only with Live TV', async ({ page, api }) => {
+  test('the compare view shows the Kanalgruppen row only with Live TV; its cells link to the role page\'s groups', async ({ page, api }) => {
     api.admin.matrix.features.livetv = false;
     await page.goto('/admin/roles?view=compare');
     await expect(page.getByRole('grid', { name: 'Rechte der Rollen' })).toBeVisible();
     await expect(page.getByRole('rowheader', { name: 'Kanalgruppen' })).toHaveCount(0);
     await expect(page.getByRole('rowheader', { name: 'Live-TV', exact: true })).toHaveCount(0);
     api.admin.matrix.features.livetv = true;
+    api.admin.matrix.roles.find((r) => r.key === 'family')!.values.liveTv = true; // the chips are live (not dormant): one takes the focus
     await page.reload();
     await expect(page.getByRole('rowheader', { name: 'Kanalgruppen' })).toBeVisible();
-    const link = (name: string) => page.getByRole('link', { name });
-    await expect(link('Sport, Nachrichten +2')).toHaveAttribute('href', '/admin/livetv?tab=groups');
-    await expect(link('Sport, Nachrichten +3')).toBeVisible();
+    const link = (name: string) => page.getByRole('link', { name, exact: true });
+    await expect(link('Familie, Kanalgruppen: Sport, Nachrichten +2, bearbeiten')).toHaveAttribute('href', '/admin/roles/family?field=livetvGroups');
+    await expect(link('Admin, Kanalgruppen: Sport, Nachrichten +3, bearbeiten')).toBeVisible();
     await expect(page.getByRole('row', { name: /Kanalgruppen/ })).toContainText('Keine');
-    await link('Sport, Nachrichten +2').click();
-    await expect(page).toHaveURL(/\/admin\/livetv\?tab=groups$/);
-  });
-
-  test('role sheet lists the role\'s channel groups as chips', async ({ page, api }) => {
-    await page.goto('/admin/roles?view=compare');
-    await page.locator('button.rn', { hasText: 'Familie' }).click();
-    const sheet = page.getByRole('dialog', { name: 'Rolle „Familie“' });
-    const sec = sheet.getByRole('region', { name: 'Kanalgruppen' });
-    await expect(sec.getByRole('listitem')).toHaveText(['Sport', 'Nachrichten', 'Kinderinsel', 'Natur & Tiere']);
-    await expect(sec.getByRole('link', { name: 'Unter „Gruppen & Rechte“ ändern' })).toHaveAttribute('href', '/admin/livetv?tab=groups');
-    await page.keyboard.press('Escape');
-    // without Live TV the section is not there
-    api.admin.matrix.features.livetv = false;
-    await page.reload();
-    await page.locator('button.rn', { hasText: 'Familie' }).click();
-    await expect(page.getByRole('dialog', { name: 'Rolle „Familie“' })).toBeVisible();
-    await expect(page.getByRole('region', { name: 'Kanalgruppen' })).toHaveCount(0);
+    await link('Familie, Kanalgruppen: Sport, Nachrichten +2, bearbeiten').click();
+    await expect(page).toHaveURL(/\/admin\/roles\/family\?field=livetvGroups$/);
+    // the role page focuses the first channel group
+    await expect(page.getByRole('group', { name: 'Kanalgruppen von Familie' }).getByRole('button').first()).toBeFocused();
   });
 
   test('Rechte tab adds Sport for a guest', async ({ page, api }) => {

@@ -2,14 +2,12 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /**
-   * Admin: Rollen & Rechte (roles redesign §5.1). *Rollen* (the default view, every width): the role list, each row a link to the
-   * role's page, with its areas, its people and the ⋯ menu. *Vergleichen* (`?view=compare`, switched by the segmented control
-   * without a reload): from 900 px the role matrix, below it the one-right view (spec §6.1; still editable in this stage). Edits
-   * there are staged into the save bar, *Änderungen prüfen* lists them, *Speichern* writes one role after the other
-   * (PUT /api/admin/roles/:role) with the progress in the bar; a partial policy failure (502 policy_partial: the values are stored)
-   * offers *Erneut anwenden* with the role's last body. The menus run here: *Duplizieren* and *+ Neue Rolle* (POST, asks for the
-   * name), *Löschen* (confirm, or the dialog that moves the people first, from the server's 409 role_in_use), the order (PUT /order,
-   * applied at once and reloaded). An unsaved-changes guard asks before the page is left (switching the view keeps the page).
+   * Admin: Rollen & Rechte (roles redesign §5.1, §5.5). *Rollen* (the default view, every width): the role list, each row a link
+   * to the role's page, with its areas, its people and the ⋯ menu. *Vergleichen* (`?view=compare`, switched by the segmented
+   * control without a reload): from 900 px the role matrix, below it the one-right view; both read-only, every value a link to
+   * the role page at that right (the role page is the one editor, §1.1). Nothing is staged here, so there is no save bar and no
+   * leave guard. The menus run here: *Duplizieren* and *+ Neue Rolle* (POST, asks for the name), *Löschen* (confirm, or the
+   * dialog that moves the people first, from the server's 409 role_in_use), the order (PUT /order, applied at once and reloaded).
    */
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
@@ -23,17 +21,13 @@
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import { toast } from '#lib/ui/toast';
   import { pageStore } from '#lib/page';
-  import { leaveGuard, leavesRoute } from '#lib/admin/leaveGuard';
   import CompareView from '#lib/admin/rights/CompareView.svelte';
   import DeleteRoleDialog from '#lib/admin/rights/DeleteRoleDialog.svelte';
-  import { policyLine, reviewLines, roleName as roleLabel, saveBarText, stageCounts, type MatrixRole, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
+  import { roleName as roleLabel, type MatrixRole, type RoleMatrix } from '#lib/admin/rights/model';
   import { copyRole, deleteMoving, deleteRole, moveTargetsOf } from '#lib/admin/rights/roleDelete';
-  import { createSave } from '#lib/admin/rights/save';
   import NameDialog from '#lib/admin/rights/NameDialog.svelte';
-  import ReviewSheet from '#lib/admin/rights/ReviewSheet.svelte';
   import RoleList from '#lib/admin/rights/RoleList.svelte';
   import RoleMatrixView from '#lib/admin/rights/RoleMatrix.svelte';
-  import SaveBar from '#lib/admin/rights/SaveBar.svelte';
 
   let matrix: RoleMatrix | null = null, error: string | null = null;
 
@@ -44,10 +38,10 @@
     const mq = matchMedia(WIDE);
     const sync = () => {
       if (wide === mq.matches) return;
-      // the matrix and the one-right view swap: the focus follows to the same role's menu instead of falling to <body>
+      // the matrix and the one-right view swap: the focus follows to the same role's head link instead of falling to <body>
       const key = document.activeElement?.closest('[data-role]')?.getAttribute('data-role');
       wide = mq.matches;
-      if (key && mode === 'compare' && wide) void tick().then(() => grid?.focusHead(key, 'menu'));
+      if (key && mode === 'compare' && wide) void tick().then(() => grid?.focusHead(key));
     };
     sync();
     mq.addEventListener('change', sync);
@@ -60,19 +54,13 @@
       const r = await api<{ matrix?: RoleMatrix }>('/api/admin/roles');
       if (!r.matrix) throw new Error('no matrix');
       matrix = r.matrix;
-      stage = {};
     } catch { error = tr('adminPeople.loadFailed'); }
   }
   onMount(load);
-  /** the matrix again after a role was created, deleted or moved: staged edits stay (those of a role that is gone drop) */
+  /** the matrix again after a role was created, deleted or moved */
   async function refresh() {
     const r = await api<{ matrix?: RoleMatrix }>('/api/admin/roles');
-    if (!r.matrix) return;
-    const keys = new Set(r.matrix.roles.map((x) => x.key));
-    matrix = r.matrix;
-    stage = Object.fromEntries(Object.entries(stage).filter(([k]) => keys.has(k)));
-    // a failed write of a role that is gone can never be applied again: it leaves the retry, and the bar's error with it
-    save.prune(keys);
+    if (r.matrix) matrix = r.matrix;
   }
 
   // ---- the two views: the list, and *Vergleichen* (?view=compare); the control replaces the entry (Back leaves the page)
@@ -96,30 +84,9 @@
     void tick().then(() => document.getElementById(`rv-${next}`)?.focus());
   }
 
-  // ---- the matrix: staged changes, the save bar, the review sheet, the sequential save
-  let stage: Stage = {};
-  $: counts = matrix ? stageCounts(stage, matrix) : null;
-  /** staged roles, at any width (the guard and the save bar count the same edits) */
-  $: dirtyCount = counts?.roles ?? 0;
-  /** the sequential save (save.ts): one PUT per staged role, the progress and a partial failure in the bar */
-  const save = createSave({ matrix: () => matrix, stage: () => stage, stored: (m, st) => { matrix = m; stage = st; } });
-  $: saving = $save.saving;
-  let reviewing = false, reviewBtn: HTMLElement | null = null;
-  let bar: SaveBar | undefined;
   let list: RoleList | undefined, grid: RoleMatrixView | undefined;
-  /** the focus to a role in the view that is shown: its row link or column head (a new role), or its menu button (a moved one) */
-  const focusRole = (key: string, what: 'name' | 'menu' = 'name') => (mode === 'roles' ? list?.focusHead(key, what) : grid?.focusHead(key, what));
-  function discardAll() { stage = {}; save.discard(); }
-  function openReview() {
-    reviewBtn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    reviewing = true;
-  }
-  async function saveReviewed() {
-    reviewing = false;
-    await tick();
-    bar?.focus();
-    await save.apply();
-  }
+  /** the focus to a role in the list: its row link (a new role) or its menu button (a moved one) */
+  const focusRole = (key: string, what: 'name' | 'menu' = 'name') => list?.focusHead(key, what);
 
   // ---- role menu: duplicate (and *+ Neue Rolle*, a copy of a chosen role), delete (with a move), order
   let status = '';
@@ -182,7 +149,7 @@
 
   /** a column to a new place: shown at once, written with PUT /order (every key, the server ignores env-only ones), then read back */
   async function moveRole({ key, to }: { key: string; to: number }) {
-    if (!matrix || saving) return;
+    if (!matrix) return;
     const from = matrix.roles.findIndex((r) => r.key === key);
     // only roles with a table row can be ordered, and they stay in front of the env-only ones
     const storedCount = matrix.roles.filter((r) => r.stored).length;
@@ -206,9 +173,6 @@
   }
   let orderQueue: Promise<void> = Promise.resolve(), movesOpen = 0;
 
-  // a reload or a closed tab asks too (the browser's own question); switching the view keeps the page and never asks
-  leaveGuard((nav) => (nav.willUnload || leavesRoute(nav)) && dirtyCount > 0, () => ({ title: tr('adminPeople.roles.leaveTitle'), body: tr('adminPeople.roles.leaveBody', { n: dirtyCount }), danger: true, confirmLabel: tr('adminPeople.roles.leaveConfirm') }));
-
 </script>
 
 <div class="roles" class:cmp={mode === 'compare'}>
@@ -221,7 +185,7 @@
       {/each}
       {#if tabsEl}<SlidePill host={tabsEl} selector={'[role="tab"][aria-selected="true"]'} tone="white" />{/if}
     </div>
-    <Button icon="plus" disabled={!matrix || saving} on:click={startNew}>{$t('adminPeople.roles.new.title')}</Button>
+    <Button icon="plus" disabled={!matrix} on:click={startNew}>{$t('adminPeople.roles.new.title')}</Button>
   </div>
 </div>
 
@@ -240,23 +204,15 @@
 {:else if !matrix.roles.length}
   <div class="state"><p>{$t('adminPeople.roles.empty')}</p></div>
 {:else if mode === 'roles'}
-  <RoleList bind:this={list} {matrix} {stage} disabled={saving} {status} on:duplicate={(e) => startDuplicate(e.detail)} on:remove={(e) => void removeRole(e.detail)} on:move={(e) => void moveRole(e.detail)} />
+  <RoleList bind:this={list} {matrix} {status} on:duplicate={(e) => startDuplicate(e.detail)} on:remove={(e) => void removeRole(e.detail)} on:move={(e) => void moveRole(e.detail)} />
 {:else if wide}
-  <RoleMatrixView bind:this={grid} {matrix} bind:stage disabled={saving} {status} on:duplicate={(e) => startDuplicate(e.detail)} on:remove={(e) => void removeRole(e.detail)} on:move={(e) => void moveRole(e.detail)} />
+  <RoleMatrixView bind:this={grid} {matrix} />
 {:else}
-  <CompareView {matrix} bind:stage disabled={saving} />
+  <CompareView {matrix} />
 {/if}
 </div>
 </div>
 
-{#if counts}
-  <SaveBar bind:this={bar} count={counts.changes} text={saveBarText(counts)} busy={saving} progress={$save.progress} error={$save.error}
-    on:discard={discardAll} on:review={openReview} on:retry={() => void save.retry()} />
-{/if}
-{#if reviewing && matrix && counts}
-  <ReviewSheet lines={reviewLines(stage, matrix)} policy={counts.policy ? policyLine(counts) : null} trigger={reviewBtn}
-    on:close={() => (reviewing = false)} on:save={saveReviewed} />
-{/if}
 {#if dup}
   <NameDialog title={tr('adminPeople.roles.duplicateTitle', { name: roleLabel(dup.role) })} hint={$t('adminPeople.roles.duplicateHint')} label={$t('adminPeople.roles.fLabel')} confirmLabel={$t('adminPeople.roles.create')}
     busy={dupBusy} error={dupErr} trigger={dup.trigger} on:submit={(e) => void duplicate(e.detail, dup?.role.key)} on:cancel={() => (dup = null)} />
@@ -271,8 +227,6 @@
 {/if}
 
 <style>
-  /* the save bar's room at the page's end (set before it rises in): nothing above it moves */
-  .roles { padding-bottom: var(--savebar-h, 0px); }
   /* the list is one column of at most 760 px, on the page heading's edge (a centred column stood off the heading above it); the
      head keeps that column in the compare view too (it never moves), the matrix below takes the whole width */
   .top, .roles:not(.cmp) #rv-panel { max-width: 760px; }

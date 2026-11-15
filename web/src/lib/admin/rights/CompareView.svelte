@@ -2,24 +2,18 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /**
-   * *Vergleich* on the phone (spec §6.1): one right at a time, every role as a row with the right's own control (switch, number,
-   * preset, library list), so the roles can be compared where the matrix does not fit. A select picks the right ("Wer darf
-   * übertragen?"). Edits go into `stage` like the matrix's cells (the save bar counts them); the admin's switches are locked.
-   *   <CompareView {matrix} bind:stage />
+   * *Vergleich* on the phone (roles redesign §5.5): one right at a time, every role as a row with its value in words, where it was
+   * set ("geändert (Standard: …)", "aus .env") and a *Bearbeiten* link to the role page at that right; read-only, like the matrix.
+   * A select picks the right ("Wer darf übertragen?"). The admin role's switches are locked (the lock says so, no link).
+   *   <CompareView {matrix} />
    */
   import { locale, t, tr } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
-  import { PERM_KEYS } from '#lib/perms';
   import Select from '#lib/ui/Select.svelte';
-  import FieldControl from './FieldControl.svelte';
-  import { cellText, changedFromText, compareQuestion, fieldLabel, roleName, stageSet, visibleFields, type MatrixField, type MatrixRole, type RoleMatrix, type Stage } from './model';
+  import { compareCell } from './compare';
+  import { changedFromText, compareQuestion, fieldLabel, roleName, visibleFields, type MatrixField, type MatrixRole, type RoleMatrix } from './model';
 
   export let matrix: RoleMatrix;
-  export let stage: Stage = {};
-  /** a save runs: the controls are locked (like the matrix and the cards) */
-  export let disabled = false;
-
-  const PERM_SET: ReadonlySet<string> = new Set(PERM_KEYS);
 
   let picked = '';
   $: if (!picked && fields[0]) picked = fields[0].key;
@@ -28,13 +22,11 @@
   $: options = fields.map((f) => ({ value: f.key, label: $locale && fieldLabel(f.key) }));
   $: question = field ? $locale && compareQuestion(field.key) : '';
 
-  const isStaged = (s: Stage, r: MatrixRole, f: MatrixField): boolean => Object.hasOwn(s[r.key] ?? {}, f.key);
-  const valueOf = (s: Stage, r: MatrixRole, f: MatrixField): unknown => (isStaged(s, r, f) ? s[r.key]![f.key] : r.values[f.key]);
-  const nameOf = (s: Stage, r: MatrixRole, _l: unknown): string => (Object.hasOwn(s[r.key] ?? {}, 'label') ? String(s[r.key]!.label) : roleName(r));
-  const locked = (r: MatrixRole, f: MatrixField): boolean => r.base === 'admin' && PERM_SET.has(f.key);
-  /** under a role's control: what it was staged from, "geändert (Standard: …)" for a role-set value, or that it comes from .env */
-  function note(s: Stage, r: MatrixRole, f: MatrixField, _l: unknown): string {
-    if (isStaged(s, r, f)) return tr('adminPeople.roles.unsaved');
+  const cellOf = (m: RoleMatrix, r: MatrixRole, f: MatrixField, _l: unknown) => compareCell(m, r, { kind: 'field', field: f });
+  /** the value in words: a switch says "erlaubt" / "nicht erlaubt" */
+  const words = (c: ReturnType<typeof compareCell>): string => (c.bool ? tr(c.value ? 'adminPeople.roles.allowed' : 'adminPeople.roles.denied') : c.text);
+  /** under the value: "geändert (Standard: …)" for a role-set value, or that it comes from .env */
+  function note(r: MatrixRole, f: MatrixField, _l: unknown): string {
     const src = r.sources[f.key];
     if (src === 'role') return changedFromText(r, f) ?? tr('adminPeople.roles.changedHere');
     if (src === 'env') return tr('adminPeople.roles.fromEnv');
@@ -45,37 +37,37 @@
 {#if field}
   {@const f = field}
   <div class="cmp">
-    <Select label={question} {options} {disabled} bind:value={picked} />
-    <ul>
+    <Select label={question} {options} bind:value={picked} />
+    <ul aria-label={question}>
       {#each matrix.roles as r (r.key)}
-        {@const n = nameOf(stage, r, $locale)}
-        <li class="row panel" class:staged={isStaged(stage, r, f)} data-role={r.key}>
-          {#if locked(r, f)}
-            <div class="lockrow">
-              <span class="nm">{n}</span>
-              <span class="lk"><Icon name="lock" size={16} /> {$t('adminPeople.roles.adminLocked')}</span>
-            </div>
-          {:else}
-            <FieldControl field={f} name={n} {disabled} value={valueOf(stage, r, f)} libraries={matrix.libraries} on:change={(e) => (stage = stageSet(stage, matrix, r.key, f.key, e.detail))} />
-            <!-- the line is always there: a staged or stored value adds its words without moving the rows -->
-            <p class="note" class:on={note(stage, r, f, $locale) !== ''}>{note(stage, r, f, $locale)}</p>
-          {/if}
+        {@const c = cellOf(matrix, r, f, $locale)}
+        {@const n = note(r, f, $locale)}
+        <li class="row panel" data-role={r.key}>
+          <div class="tx">
+            <span class="nm">{$locale && roleName(r)}</span>
+            <span class="val" class:off={c.bool && !c.value}>{#if c.bool}<Icon name={c.value ? 'check' : 'x'} size={16} />{/if}{words(c)}</span>
+            {#if c.locked}<span class="note"><Icon name="lock" size={14} />{$t('adminPeople.roles.adminLocked')}</span>{:else if n}<span class="note">{n}</span>{/if}
+          </div>
+          {#if c.href}<a class="ed" href={c.href} aria-label={$locale && $t('adminPeople.roles.editRole', { name: roleName(r) })}>{$t('adminPeople.roles.edit')}</a>{/if}
         </li>
       {/each}
     </ul>
-    <p class="sr-only" aria-live="polite">{$locale && question}: {matrix.roles.map((r) => `${nameOf(stage, r, $locale)} ${cellText(f, valueOf(stage, r, f))}`).join(', ')}</p>
   </div>
 {/if}
 
 <style>
   .cmp { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .6rem; }
-  /* a staged row: the amber rail of the matrix's staged cell */
-  .row { margin: 0; min-width: 0; display: flex; flex-direction: column; gap: .3rem; border-left: 3px solid transparent; }
-  .row.staged { border-left-color: var(--warn); }
-  .lockrow { display: flex; flex-direction: column; gap: .3rem; min-height: 44px; justify-content: center; }
+  .row { margin: 0; min-width: 0; min-height: 64px; box-sizing: border-box; display: flex; align-items: center; gap: .8rem; padding: .6rem .6rem .6rem 1rem; }
+  .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
   .nm { font-weight: 700; overflow-wrap: anywhere; }
-  .lk { display: flex; align-items: center; gap: .4rem; color: var(--mut); font-size: .88rem; }
-  .note { margin: 0; min-height: 1.3em; font-size: .82rem; color: var(--mut); opacity: 0; }
-  .note.on { opacity: 1; }
+  .val { display: inline-flex; align-items: center; gap: .35rem; font-weight: 600; color: var(--ok); }
+  .val:not(:has(svg)) { color: var(--fg); }
+  .val.off { color: var(--mut); }
+  .note { display: inline-flex; align-items: center; gap: .35rem; font-size: .82rem; color: var(--mut); }
+  /* the link to the role page: a 44 px target */
+  .ed { flex: none; display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; padding: 0 .9rem; border-radius: 99px;
+    background: rgba(var(--fr-scrim-rgb), .25); color: var(--fg); font-weight: 700; font-size: .9rem; text-decoration: none; }
+  .ed:hover { background: rgba(var(--fr-scrim-rgb), .4); }
+  .ed:focus-visible { outline: 2px solid #fff; outline-offset: 2px; box-shadow: 0 0 0 4px var(--ring-dark); }
 </style>

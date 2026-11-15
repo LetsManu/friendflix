@@ -8,7 +8,7 @@
    * people as a link to Personen filtered by the role. The ⋯ menu (a 44 px button outside the link): *Bearbeiten*,
    * *Duplizieren*, *Nach oben*, *Nach unten*, *Verlauf*, *Löschen* (env-only roles cannot move or go; built-ins cannot go).
    * A moved row glides to its place by transform (`flip`). Duplicate, delete and the order are the page's to run.
-   *   <RoleList bind:this={list} {matrix} {stage} disabled={busy} {status} on:move={…} on:duplicate={…} on:remove={…} />
+   *   <RoleList bind:this={list} {matrix} {status} on:move={…} on:duplicate={…} on:remove={…} />
    */
   import { createEventDispatcher, tick } from 'svelte';
   import { flip } from 'svelte/animate';
@@ -16,16 +16,11 @@
   import Icon from '#lib/Icon.svelte';
   import { locale, t, tr } from '#lib/i18n';
   import ActionMenu from '#lib/ui/ActionMenu.svelte';
-  import StatusPill from '#lib/ui/StatusPill.svelte';
-  import { areaSummary, stagedAreas } from './areas';
-  import { peopleLine, roleName, type MatrixRole, type RoleMatrix, type Stage } from './model';
+  import { areaSummary, areasOf, withCoupling } from './areas';
+  import { peopleLine, roleName, type MatrixRole, type RoleMatrix } from './model';
   import RoleHistory from './RoleHistory.svelte';
 
   export let matrix: RoleMatrix;
-  /** staged edits of the compare view: a row reads as it would after saving and says it is not saved */
-  export let stage: Stage = {};
-  /** a save runs: the menu's writes wait */
-  export let disabled = false;
   /** a polite announcement for screen readers (a role moved to a new place) */
   export let status = '';
 
@@ -33,14 +28,11 @@
 
   $: roles = matrix.roles;
   $: storedCount = roles.filter((r) => r.stored).length;
-  const dirty = (s: Stage, r: MatrixRole): boolean => Object.keys(s[r.key] ?? {}).length > 0;
-  const nameOf = (s: Stage, r: MatrixRole, _l: unknown): string => (Object.hasOwn(s[r.key] ?? {}, 'label') ? String(s[r.key]!.label) : roleName(r));
-  /** Live-TV on (as staged) and not one released group: the role sees no channel (the admin role sees every released group) */
-  const noGroups = (s: Stage, r: MatrixRole, m: RoleMatrix): boolean => {
-    if (!m.features.livetv || r.key === 'admin' || !stagedAreas(s, r).livetv) return false;
-    const ids = Object.hasOwn(s[r.key] ?? {}, 'livetvGroups') ? (s[r.key]!.livetvGroups as string[]) : (r.livetvGroupIds ?? []);
-    return ids.length === 0;
-  };
+  const nameOf = (r: MatrixRole, _l: unknown): string => roleName(r);
+  /** the areas as the app offers them (coupled); the server's answer, else derived from the values */
+  const areasOfRole = (r: MatrixRole) => withCoupling(r.areas ?? areasOf(r.values));
+  /** Live-TV on and not one released group: the role sees no channel (the admin role sees every released group) */
+  const noGroups = (r: MatrixRole, m: RoleMatrix): boolean => m.features.livetv && r.key !== 'admin' && areasOfRole(r).livetv && (r.livetvGroupIds ?? []).length === 0;
   const href = (r: MatrixRole) => `/admin/roles/${encodeURIComponent(r.key)}`;
 
   let history: { key: string; trigger: HTMLElement | null } | null = null;
@@ -48,17 +40,17 @@
   const here = (): HTMLElement | null => (document.activeElement instanceof HTMLElement ? document.activeElement : null);
 
   /** a menu item runs after the menu closed and gave the focus back to its button: that is where the focus returns to */
-  function items(role: MatrixRole, i: number, _l: unknown, _busy: boolean, _n: number) {
+  function items(role: MatrixRole, i: number, _l: unknown, _n: number) {
     const canDelete = role.origin === 'admin' || role.envGone;
     // an env-only role stays after the stored ones: it cannot move, and nothing moves past it
-    const up = disabled || !role.stored || i === 0, down = disabled || !role.stored || i + 1 >= storedCount;
+    const up = !role.stored || i === 0, down = !role.stored || i + 1 >= storedCount;
     return [
       { id: 'edit', label: tr('adminPeople.roles.edit'), icon: 'pencil', href: href(role) },
-      { id: 'duplicate', label: tr('adminPeople.roles.duplicate'), icon: 'copy', disabled, run: () => { dispatch('duplicate', { role, trigger: here() }); } },
+      { id: 'duplicate', label: tr('adminPeople.roles.duplicate'), icon: 'copy', run: () => { dispatch('duplicate', { role, trigger: here() }); } },
       { id: 'up', label: tr('adminPeople.roles.moveUp'), icon: 'chevron-up', disabled: up, run: () => { dispatch('move', { key: role.key, to: i - 1 }); } },
       { id: 'down', label: tr('adminPeople.roles.moveDown'), icon: 'chevron-down', disabled: down, run: () => { dispatch('move', { key: role.key, to: i + 1 }); } },
       { id: 'history', label: tr('adminPeople.roles.history'), icon: 'clock', run: () => { history = { key: role.key, trigger: here() }; } },
-      ...(canDelete ? [{ id: 'delete', label: tr('adminPeople.roles.delete'), icon: 'x', danger: true, disabled, run: () => { dispatch('remove', { role, trigger: here() }); } }] : []),
+      ...(canDelete ? [{ id: 'delete', label: tr('adminPeople.roles.delete'), icon: 'x', danger: true, run: () => { dispatch('remove', { role, trigger: here() }); } }] : []),
     ];
   }
 
@@ -76,23 +68,22 @@
 
 <ul class="list" aria-label={$t('adminPeople.roles.viewRoles')}>
   {#each roles as role, i (role.key)}
-    {@const n = nameOf(stage, role, $locale)}
-    {@const warn = noGroups(stage, role, matrix)}
-    <li class="row panel edge-hover" class:dirty={dirty(stage, role)} data-role={role.key} animate:flip={glide()}>
+    {@const n = nameOf(role, $locale)}
+    {@const warn = noGroups(role, matrix)}
+    <li class="row panel edge-hover" data-role={role.key} animate:flip={glide()}>
       <div class="main">
         <div class="head">
           <a class="name" href={href(role)} aria-describedby="rl-{i}-s">{n}</a>
           {#if role.base === 'admin' && role.key !== 'admin'}<span class="chip">{$t('admin.roleNames.admin')}</span>{/if}
           {#if role.envGone}<span class="chip">{$t('adminPeople.roles.envGone')}</span>{:else if role.origin === 'env'}<span class="chip">{$t('adminPeople.roles.fromEnv')}</span>{/if}
-          {#if dirty(stage, role)}<StatusPill tone="warn" label={$t('adminPeople.roles.unsaved')} icon="clock" />{/if}
         </div>
         <p class="sum" id="rl-{i}-s">
-          <span>{$locale && areaSummary(stagedAreas(stage, role), matrix.features)}</span>
+          <span>{$locale && areaSummary(areasOfRole(role), matrix.features)}</span>
           {#if warn}<span class="warn"><Icon name="alert" size={15} />{$t('adminPeople.roles.summary.noGroups')}</span>{/if}
         </p>
       </div>
       <a class="pp" href="/admin/users?role={encodeURIComponent(role.key)}"><Icon name="users" size={16} /><span>{$locale && peopleLine(role)}</span></a>
-      <span class="mn"><ActionMenu label={$locale && $t('ui.table.actionsFor', { name: n })} title={n} items={items(role, i, $locale, disabled, storedCount)} /></span>
+      <span class="mn"><ActionMenu label={$locale && $t('ui.table.actionsFor', { name: n })} title={n} items={items(role, i, $locale, storedCount)} /></span>
     </li>
   {/each}
 </ul>
@@ -107,7 +98,6 @@
      and the menu sit above it */
   .row { position: relative; margin: 0; min-height: 64px; box-sizing: border-box; padding: .7rem .6rem .7rem 1.1rem; display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: .2rem .6rem; }
-  .row.dirty { border-color: var(--warn); }
   .main { min-width: 0; display: flex; flex-direction: column; gap: .2rem; }
   .head { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .5rem; min-width: 0; }
   .name { color: var(--fg); font-size: 1.05rem; font-weight: 800; text-decoration: none; overflow-wrap: anywhere; outline: none; }

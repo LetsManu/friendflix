@@ -130,15 +130,17 @@
   // a reload or a closed tab asks too (the browser's own question)
   leaveGuard((nav) => (nav.willUnload || leavesRoute(nav)) && dirty > 0, () => leaveQuestion());
 
-  // ---- ?field=<key>: that control is focused and centred (an area's own switch: its card); no smooth scroll with reduced motion
+  // ---- ?field=<key>: that control is focused and centred (an area's own switch, or `area:<key>` from the compare view: its card;
+  // `livetvGroups`: the first channel group); no smooth scroll with reduced motion
   const AREA_OF_SWITCH: Record<string, AreaKey> = { liveTv: 'livetv', requests: 'requests', download: 'downloads' };
   async function focusField() {
     const f = $page$.url.searchParams.get('field');
     if (!f) return;
     await tick();
-    const sel = AREA_OF_SWITCH[f] ? `[data-area="${AREA_OF_SWITCH[f]}"] [role="switch"]` : `[data-field="${CSS.escape(f)}"]`;
+    const area = f.startsWith('area:') ? f.slice(5) : AREA_OF_SWITCH[f];
+    const sel = area ? `[data-area="${CSS.escape(area)}"] [role="switch"]` : f === 'livetvGroups' ? '[data-groups]' : `[data-field="${CSS.escape(f)}"]`;
     const host = document.querySelector<HTMLElement>(sel);
-    const el = host?.matches('button, input, select') ? host : host?.querySelector<HTMLElement>('input:not([disabled]), select, button[role="switch"], textarea');
+    const el = host?.matches('button, input, select') ? host : host?.querySelector<HTMLElement>('input:not([disabled]), select, button:not([disabled]), textarea');
     if (!el) return;
     el.focus({ preventScroll: true });
     el.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });

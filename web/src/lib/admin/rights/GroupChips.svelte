@@ -58,7 +58,7 @@
       <Button variant="ghost" size="sm" disabled={locked || !groups.length || chosen.length === groups.length} on:click={() => pick(new Set(groups.map((g) => g.id)))}>{$t('adminPeople.roles.groups.all')}</Button>
       <Button variant="ghost" size="sm" disabled={locked || !chosen.length} on:click={() => pick(new Set())}>{$t('adminPeople.roles.groups.none')}</Button>
     </div>
-    <div class="chips" class:dim={dormant || mode === 'env'} role="group" aria-label={$locale && tr('adminPeople.roles.groups.label', { role: roleName })} aria-describedby="{id}-l">
+    <div class="chips" data-groups class:dim={dormant || mode === 'env'} role="group" aria-label={$locale && tr('adminPeople.roles.groups.label', { role: roleName })} aria-describedby="{id}-l">
       {#each groups as g (g.id)}
         <button type="button" class="chip" class:on={set.has(g.id)} aria-pressed={set.has(g.id)} disabled={locked} on:click={() => flip(g.id)}>
           <span class="ck" aria-hidden="true"><Icon name="check" size={14} /></span>

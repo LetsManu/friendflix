@@ -403,8 +403,9 @@ describe('role matrix and save bar (rights)', () => {
   /** the bar floats over anything: its scrim over pure white, the ambient peak, the base, the solid fallback (as the cast bar) */
   const BAR = [frostComposite(WHITE, SCRIM_BAR), frostComposite(AMB_PEAK, SCRIM_BAR), frostComposite(DARK_BASE, SCRIM_BAR), SOLID];
 
-  it('a staged cell has the amber --warn outline; it keeps 4.5:1 on the panel, the solid first column and the chip fill', () => {
-    expect(css(matrix)).toMatch(/td\.staged::after \{ box-shadow: inset 0 0 0 2px var\(--warn\); \}/);
+  it('a staged field has the amber --warn rail (the role page; the compare view stages nothing); it keeps 4.5:1 on the panel and the chip fill', () => {
+    expect(css(read('./rights/AreaSection.svelte'))).toMatch(/\.fr\.staged \{ border-left-color: var\(--warn\); \}/);
+    expect(css(matrix)).not.toMatch(/staged/);
     for (const bg of [...ON_GLASS, ...ON_GLASS.map((b) => over(b, SCRIM_RGB, 0.4))]) expect(cr(GLASS.warn, bg), `${bg}`).toBeGreaterThanOrEqual(AA);
   });
 
@@ -415,7 +416,7 @@ describe('role matrix and save bar (rights)', () => {
     expect(c).toMatch(/thead th \{[^}]*background: var\(--fr-solid\);/);
     // the chips' fill is the darker scrim (.25, .4 on hover): it only adds contrast
     expect(c).toMatch(/\.chip \{[^}]*background: rgba\(var\(--fr-scrim-rgb\), \.25\);/);
-    expect(c).toMatch(/td:hover:not\(\.lock\) \.chip \{ background: rgba\(var\(--fr-scrim-rgb\), \.4\); \}/);
+    expect(c).toMatch(/\.cl:hover \.chip \{ background: rgba\(var\(--fr-scrim-rgb\), \.4\); \}/);
     for (const bg of [...ON_GLASS, ...ON_GLASS.flatMap((b) => [over(b, SCRIM_RGB, 0.25), over(b, SCRIM_RGB, 0.4)])]) {
       expect(textContrast(bg, MUT), `${bg}`).toBeGreaterThanOrEqual(AA);
       expect(cr(GLASS.ok, bg), 'allowed tick').toBeGreaterThanOrEqual(AA);
@@ -426,7 +427,7 @@ describe('role matrix and save bar (rights)', () => {
     expect(css(matrix)).toMatch(/\.dot \{[^}]*background: var\(--info\);/);
     for (const bg of ON_GLASS) expect(cr(GLASS.info, bg)).toBeGreaterThanOrEqual(AA);
     expect(matrix).toContain("tr('adminPeople.roles.changedHere')");
-    expect(matrix).toMatch(/cellName\(roleName\(role\), f, v, staged \? 'unsaved' : src === 'role'\)/);
+    expect(read('./rights/compare.ts')).toContain("src === 'role' ? 'adminPeople.roles.cellNameChanged' : 'adminPeople.roles.cellName'");
     // the lock icon's class is not the locked cell's (a scoped `.lock` rule would style the <td> too)
     expect(css(matrix)).not.toMatch(/(^|[\s,}])\.lock\b/);
   });
@@ -458,7 +459,7 @@ describe('role matrix and save bar (rights)', () => {
   it('animates transform and opacity only, and every surface with motion switches it off in calm mode and for reduced motion', () => {
     const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
     const files = readdirSync(dir).filter((f) => f.endsWith('.svelte'));
-    expect(files).toEqual(expect.arrayContaining(['RoleMatrix.svelte', 'FieldControl.svelte', 'CellPopover.svelte', 'SaveBar.svelte', 'ReviewSheet.svelte', 'RoleSheet.svelte', 'RoleHistory.svelte', 'DeleteRoleDialog.svelte', 'NameDialog.svelte']));
+    expect(files).toEqual(expect.arrayContaining(['RoleMatrix.svelte', 'FieldControl.svelte', 'SaveBar.svelte', 'ReviewSheet.svelte', 'RoleSheet.svelte', 'RoleHistory.svelte', 'DeleteRoleDialog.svelte', 'NameDialog.svelte']));
     const bad: string[] = [];
     for (const f of files) {
       const c = css(readFileSync(join(dir, f), 'utf8'));
@@ -467,15 +468,13 @@ describe('role matrix and save bar (rights)', () => {
     }
     expect(bad).toEqual([]);
     // the moving surfaces use the glass transitions (transform / opacity) and stand still in calm mode
-    expect(read('./rights/CellPopover.svelte')).toContain('transition:growBoth|global={{ trigger }}');
     expect(bar).toMatch(/in:barRise out:barRise=\{\{ dir: 'out' \}\}/);
     expect(read('./rights/ReviewSheet.svelte')).toMatch(/sheetSlide\(node, \{ dir \}\)/);
     // the role sheet and the history slide in from the right edge (translateX, the same sheetSlide)
     for (const f of ['RoleSheet', 'RoleHistory']) expect(read(`./rights/${f}.svelte`), f).toMatch(/sheetSlide\(node, \{ dir, side: 'right' \}\)/);
-    // the dragged column and its neighbours move by transform only; a glide is a transform transition
-    expect(css(matrix)).toMatch(/\.glide \{ transition: transform 180ms var\(--fr-out\); \}/);
-    expect(matrix).toMatch(/style:transform=\{shift\(drag, c\)\}/);
-    for (const f of ['CellPopover', 'SaveBar', 'ReviewSheet', 'RoleSheet', 'RoleHistory', 'RoleMatrix']) {
+    // the compare view is read-only: nothing in it moves (no drag, no popover)
+    expect(css(matrix)).not.toMatch(/transition|(?<!text-)transform\s*:/);
+    for (const f of ['SaveBar', 'ReviewSheet', 'RoleSheet', 'RoleHistory']) {
       const src = read(`./rights/${f}.svelte`);
       expect(src, f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
       expect(src, f).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
@@ -489,7 +488,7 @@ describe('role matrix and save bar (rights)', () => {
   it('the bar reserves its room before it rises: --savebar-h is set in a reactive statement (before the DOM update)', () => {
     expect(bar).toMatch(/\$: reserve\(shown\);/);
     expect(bar).toContain("st.setProperty('--savebar-h'");
-    expect(read('../../routes/admin/roles/+page.svelte')).toMatch(/\.roles \{ padding-bottom: var\(--savebar-h, 0px\); \}/);
+    expect(read('../../routes/admin/roles/[key]/+page.svelte')).toMatch(/\.rp \{[^}]*padding-bottom: var\(--savebar-h, 0px\);/);
   });
 
   it('open sheets keep a room for the toasts (--sheet-h / --sheet-w): the toasts move by their transform, calm mode at once', () => {
@@ -500,6 +499,7 @@ describe('role matrix and save bar (rights)', () => {
     expect(read('./rights/ReviewSheet.svelte')).toContain('use:sheetRoom transition:slide|global');
     expect(read('./user/KidsSheet.svelte')).toContain('use:sheetRoom transition:slide|global');
     expect(read('./rights/RoleSheet.svelte')).toContain("use:sheetRoom={'right'} transition:slide|global");
+    expect(read('./rights/RoleHistory.svelte')).toContain("use:sheetRoom={'right'} transition:slide|global");
   });
 });
 

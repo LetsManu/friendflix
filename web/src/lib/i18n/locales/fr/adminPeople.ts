@@ -373,7 +373,7 @@ const dict: Translation<typeof de> = {
     moveLeft: 'Déplacer à gauche',
     moveRight: 'Déplacer à droite',
     deleteMove: '{people} et {invites} reçoivent le rôle :',
-    compare: { title: 'Comparer les rôles', tab: 'Comparer' },
+    compare: { title: 'Comparer les rôles', tab: 'Comparer', cell: '{cell}, modifier' },
     compareQValue: '{right} par rôle',
     q: {
       transcoding: 'Qui peut transcoder ?',

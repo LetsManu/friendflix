@@ -373,7 +373,7 @@ const dict: Translation<typeof de> = {
     moveLeft: 'Sola taşı',
     moveRight: 'Sağa taşı',
     deleteMove: '{people} ve {invites} şu rolü alır:',
-    compare: { title: 'Rolleri karşılaştır', tab: 'Karşılaştır' },
+    compare: { title: 'Rolleri karşılaştır', tab: 'Karşılaştır', cell: '{cell}, düzenle' },
     compareQValue: 'Role göre {right}',
     q: {
       transcoding: 'Kimler dönüştürebilir?',

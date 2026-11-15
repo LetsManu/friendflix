@@ -375,7 +375,7 @@ export default {
     moveLeft: 'Nach links',
     moveRight: 'Nach rechts',
     deleteMove: '{people} und {invites} bekommen die Rolle:',
-    compare: { title: 'Rollen vergleichen', tab: 'Vergleichen' },
+    compare: { title: 'Rollen vergleichen', tab: 'Vergleichen', cell: '{cell}, bearbeiten' },
     compareQValue: '{right} je Rolle',
     q: {
       transcoding: 'Wer darf umwandeln?',
