@@ -39,7 +39,8 @@ export const rolePatch = z.object({
   transcoding: nullable(z.boolean()),
   maxHeight: nullable(z.union([z.number().int().min(144).max(4320), z.literal('unlimited')])),
   maxParentalRating: nullable(z.union([z.number().int().min(0).max(21), z.literal('unlimited')])),
-  libraries: nullable(z.union([z.literal('all'), z.array(z.string().trim().min(1).max(100).refine(wellFormed)).min(1).max(50)])),
+  // [] = no library: the role sees only Live TV (roles redesign §3.1)
+  libraries: nullable(z.union([z.literal('all'), z.array(z.string().trim().min(1).max(100).refine(wellFormed)).max(50)])),
   download: nullable(z.boolean()),
   maxDownloads: nullable(z.number().int().min(0).max(200)),
   downloadMaxHeight: nullable(z.number().int().min(0).max(2160)), // 0 = no downloads

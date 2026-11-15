@@ -1129,7 +1129,8 @@ export class JellyfinService implements MediaServer {
       applyPolicy: async (id, p: IdentityPolicy) => {
         const t = p.template;
         let ids: string[] | null = null;
-        if (t.libraries !== 'all') {
+        if (t.libraries !== 'all' && !t.libraries.length) ids = []; // no library: nothing to look up
+        else if (t.libraries !== 'all') {
           const folders = await client.mediaFolders();
           const want = new Set(t.libraries.map((n) => n.toLowerCase()));
           ids = folders.filter((f) => want.has(f.Name.toLowerCase())).map((f) => f.Id);

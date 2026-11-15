@@ -294,7 +294,7 @@ describe('PUT /api/admin/roles/:role', () => {
   it('validation and unknown roles', async () => {
     expect((await put('nobody', { maxStreams: 2 })).statusCode).toBe(404);
     for (const body of [{ maxStreams: 0 }, { maxStreams: 51 }, { maxHeight: 100 }, { maxHeight: 'none' }, { maxParentalRating: 22 }, { requestsPerMonth: 101 },
-      { libraries: [] }, { libraries: 'some' }, { label: '' }, { label: 'x'.repeat(31) }, { perms: { telepathy: true } }, { colour: 'red' }, { maxBitrate: 100 }]) {
+      { libraries: 'some' }, { label: '' }, { label: 'x'.repeat(31) }, { perms: { telepathy: true } }, { colour: 'red' }, { maxBitrate: 100 }]) {
       expect((await put('friend', body)).statusCode, JSON.stringify(body)).toBe(400);
     }
     expect(await row('friend')).toBeUndefined();
@@ -385,6 +385,30 @@ describe('PUT /api/admin/roles/:role', () => {
     expect((await row('family')).template).toEqual({ libraries: ['Kinder'] });
     expect((await put('family', { libraries: 'all' })).statusCode).toBe(200);
     expect((await row('family')).template).toEqual({ libraries: 'all' });
+  });
+
+  it('a role may have no library: stored [], audited libraries [\'Filme\'] → [], policy re-applied', async () => {
+    expect((await put('family', { libraries: ['Filme'] })).statusCode).toBe(200);
+    const n = policies().length;
+    const r = await put('family', { libraries: [] });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ ok: true, reapplied: { identities: 3, failed: 0 } });
+    expect((await row('family')).template).toEqual({ libraries: [] });
+    expect((await roleOf('family')).values.libraries).toEqual([]);
+    expect((await audits('family')).at(-1)!.meta).toEqual({ from: { libraries: ['Filme'] }, to: { libraries: [] } });
+    const sent = policies().slice(n);
+    expect(sent.map((c) => c.path).sort()).toEqual([JF.anna, JF.ben, JF.kids].map((id) => `/Users/${id}/Policy`).sort());
+    for (const c of sent) expect(c.body).toMatchObject({ EnableAllFolders: false, EnabledFolders: [] });
+  });
+
+  it('libraries [] while the media server cannot list libraries still saves', async () => {
+    folders = null as never; // the fake answers garbage: the list fails
+    forgetLibraries(env.ctx);
+    const r = await put('friend', { libraries: [] });
+    expect(r.statusCode).toBe(200);
+    expect((await row('friend')).template).toEqual({ libraries: [] });
+    // a named list still needs the server
+    expect((await put('friend', { libraries: ['Filme'] })).statusCode).toBe(502);
   });
 
   it('stale library names are skipped and reported', async () => {
