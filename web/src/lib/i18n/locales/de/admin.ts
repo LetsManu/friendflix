@@ -168,6 +168,7 @@ export default {
     notConfigured: 'Portainer ist nicht konfiguriert.',
     unreachable: 'Portainer nicht erreichbar{detail}. Details im Backend-Log.',
     portainerError: 'Portainer-Fehler{detail}. Details im Backend-Log.',
+    webhookGone: 'Die Portainer-Webhook-Adresse ist nicht mehr gültig (Portainer vergibt eine neue, wenn der Stack neu erstellt oder sein Webhook aus- und wieder eingeschaltet wird). Lege in Portainer einen neuen Webhook an oder entferne ihn unter Admin → Einstellungen → Updates und nutze stattdessen die API-Einstellungen.',
     httpDetail: ' (HTTP {status})',
     atStep: ' bei {step}',
     intro: 'Portainer aktualisiert automatisch alle 12 Stunden. Mit dem Knopf geht es sofort.',
@@ -281,6 +282,7 @@ export default {
           failed: 'Portainer hat das Neu-Deployen abgelehnt{detail}. Prüfe den Stack in Portainer und die Portainer-Einstellungen unter Admin → Einstellungen → Updates.',
           timeout: 'In 15 Minuten hat sich nichts geändert ({at}). Prüfe den Stack und seine Logs in Portainer.',
           unreachable: 'Portainer war nicht erreichbar{code}. Prüfe PORTAINER_URL unter Admin → Einstellungen → Updates: Das Backend muss die Adresse erreichen können.',
+          webhookGone: 'Die Portainer-Webhook-Adresse ist nicht mehr gültig (Portainer vergibt eine neue, wenn der Stack neu erstellt oder sein Webhook aus- und wieder eingeschaltet wird). Lege in Portainer einen neuen Webhook an oder entferne ihn unter Admin → Einstellungen → Updates und nutze stattdessen die API-Einstellungen.',
           noTarget: 'Nichts gestartet: Wähle zuerst eine Version für den Kanal „Feste Version“.',
         },
         detail: ' (HTTP {status}, Schritt {step})',
@@ -296,6 +298,7 @@ export default {
         foreign_stack: 'Dieser Stack wird von Portainer (oder einem anderen Werkzeug) verwaltet, deshalb erstellt ihn der Updater nicht neu. Hinterlege den Portainer-Webhook unter Admin → Einstellungen → Updates oder aktualisiere den Stack in Portainer.',
         portainer: 'Portainer hat das Neu-Deployen abgelehnt. Prüfe Webhook bzw. API unter Admin → Einstellungen → Updates.',
         portainer_unreachable: 'Portainer ist nicht erreichbar.',
+        webhook_gone: 'Die Portainer-Webhook-Adresse ist nicht mehr gültig (Portainer vergibt eine neue, wenn der Stack neu erstellt oder sein Webhook aus- und wieder eingeschaltet wird). Lege in Portainer einen neuen Webhook an oder entferne ihn unter Admin → Einstellungen → Updates und nutze stattdessen die API-Einstellungen.',
       },
       failReason: {
         verify_failed: 'Signaturprüfung fehlgeschlagen, nichts wurde neu gestartet',
@@ -313,7 +316,7 @@ export default {
         unknown: 'unbekannter Fehler',
       },
       foreign: {
-        portainer: 'Dieser Stack wird von Portainer verwaltet. „Jetzt aktualisieren“ deployt ihn über Portainer neu (Webhook oder API aus Admin → Einstellungen → Updates). Der Updater erstellt einen Portainer-Stack nie selbst neu, deshalb geht „zurück zur vorherigen Version“ hier nicht.',
+        portainer: 'Dieser Stack wird von Portainer verwaltet. „Jetzt aktualisieren“ deployt ihn über Portainer neu (API oder Webhook aus Admin → Einstellungen → Updates). Der Updater erstellt einen Portainer-Stack nie selbst neu, deshalb geht „zurück zur vorherigen Version“ hier nicht.',
         manual: 'Dieser Stack wird von Portainer (oder einem anderen Werkzeug) verwaltet, deshalb aktualisiert ihn der Updater nicht: Beim Neuerstellen von hier gingen die Variablen des Stacks verloren (z. B. BIND_ADDR). Hinterlege den Portainer-Webhook unter Admin → Einstellungen → Updates oder aktualisiere den Stack in Portainer. Für die API: PORTAINER_URL, PORTAINER_API_KEY und PORTAINER_STACK_ID (die Zahl nach „id=“ in der Adresse des Stacks in Portainer).',
         started: 'Portainer deployt den Stack neu. FriendFlix startet gleich neu.',
         workdir: 'Dieser Stack wurde aus {dir} gestartet, der Updater sieht aber {projectDir}, deshalb erstellt er ihn nicht neu (ihm fehlte die .env aus diesem Verzeichnis). UPDATER_PROJECT_DIR={dir} in die .env in {dir} schreiben und dort einmal docker compose up -d ausführen.',

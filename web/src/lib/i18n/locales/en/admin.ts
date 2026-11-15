@@ -169,6 +169,7 @@ const en: Translation<typeof de> = {
     notConfigured: 'Portainer is not configured.',
     unreachable: 'Portainer not reachable{detail}. Details in the backend log.',
     portainerError: 'Portainer error{detail}. Details in the backend log.',
+    webhookGone: 'The Portainer webhook address is no longer valid (Portainer issues a new one when the stack is recreated or its webhook is switched off and on). Create a new webhook in Portainer, or remove it in Admin → Settings → Updates and use the API settings instead.',
     httpDetail: ' (HTTP {status})',
     atStep: ' at {step}',
     intro: 'Portainer updates automatically every 12 hours. The button does it right away.',
@@ -282,6 +283,7 @@ const en: Translation<typeof de> = {
           failed: 'Portainer refused the redeploy{detail}. Check the stack in Portainer and the Portainer settings in Admin → Settings → Updates.',
           timeout: 'Nothing changed within 15 minutes ({at}). Check the stack and its logs in Portainer.',
           unreachable: 'Portainer was not reachable{code}. Check PORTAINER_URL in Admin → Settings → Updates: it must be an address the backend can reach.',
+          webhookGone: 'The Portainer webhook address is no longer valid (Portainer issues a new one when the stack is recreated or its webhook is switched off and on). Create a new webhook in Portainer, or remove it in Admin → Settings → Updates and use the API settings instead.',
           noTarget: 'Nothing was started: choose a version for the “Fixed version” channel first.',
         },
         detail: ' (HTTP {status}, step {step})',
@@ -297,6 +299,7 @@ const en: Translation<typeof de> = {
         foreign_stack: 'This stack is managed by Portainer (or another tool), so the updater does not recreate it. Set the Portainer webhook in Admin → Settings → Updates, or update the stack in Portainer.',
         portainer: 'Portainer refused the redeploy. Check the webhook or API settings in Admin → Settings → Updates.',
         portainer_unreachable: 'Portainer is not reachable.',
+        webhook_gone: 'The Portainer webhook address is no longer valid (Portainer issues a new one when the stack is recreated or its webhook is switched off and on). Create a new webhook in Portainer, or remove it in Admin → Settings → Updates and use the API settings instead.',
       },
       failReason: {
         verify_failed: 'signature check failed, nothing was restarted',
@@ -314,7 +317,7 @@ const en: Translation<typeof de> = {
         unknown: 'unknown error',
       },
       foreign: {
-        portainer: 'This stack is managed by Portainer. “Update now” redeploys it through Portainer (webhook or API from Admin → Settings → Updates). The updater never recreates a Portainer stack itself, so going back to the previous version is not available here.',
+        portainer: 'This stack is managed by Portainer. “Update now” redeploys it through Portainer (API or webhook from Admin → Settings → Updates). The updater never recreates a Portainer stack itself, so going back to the previous version is not available here.',
         manual: 'This stack is managed by Portainer (or another tool), so the updater does not update it: recreating it from here would lose the stack’s own variables (e.g. BIND_ADDR). Set the Portainer webhook in Admin → Settings → Updates, or update the stack in Portainer. For the API: PORTAINER_URL, PORTAINER_API_KEY and PORTAINER_STACK_ID (the number after “id=” in the stack’s address in Portainer).',
         started: 'Portainer is redeploying the stack. FriendFlix restarts in a moment.',
         workdir: 'This stack was started from {dir}, but the updater looks at {projectDir}, so it does not recreate it (it would miss that directory’s .env). Put UPDATER_PROJECT_DIR={dir} into the .env in {dir} and run docker compose up -d there once.',
