@@ -72,7 +72,7 @@ export const MATRIX_FIELDS: readonly MatrixField[] = [
   { key: 'comments', group: 'together', kind: 'bool', area: 'together' },
   { key: 'cast', group: 'cast', kind: 'bool', requires: 'cast', area: 'general' },
   { key: 'liveTv', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv' },
-  // "Darf aufnehmen": visible, no longer planned; the recordings backend (Phase 3a) enforces it, the recordings screens follow (roles redesign §5.4)
+  // "Darf aufnehmen": visible, no longer planned; the recordings backend (Phase 3a) enforces it and the recordings screens (Phase 3b) use it (roles redesign §5.4)
   { key: 'liveRecord', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv' },
 ];
 
