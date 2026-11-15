@@ -256,18 +256,21 @@ export async function setUserGroups(ctx: Pick<Ctx, 'db'>, actor: string, userId:
   return userGroups(ctx, userId);
 }
 
-/** role key -> names of the released groups that role sees (the admin role: every released group), in group order; for the role matrix */
-export async function roleGroupNames(ctx: Pick<Ctx, 'db'>): Promise<Map<string, string[]>> {
-  const rows = (await ctx.db.query<{ name: string; roles: string[] }>(
-    `select g.name, coalesce((select array_agg(r.role) from livetv_group_roles r where r.group_id = g.id), '{}') as roles
+/**
+ * role key -> the released groups that role sees (the admin role: every released group), as { id, name } in group order; for the role
+ * matrix (its `livetvGroups` names and `livetvGroupIds` come from this one answer)
+ */
+export async function roleGroups(ctx: Pick<Ctx, 'db'>): Promise<Map<string, GroupRef[]>> {
+  const rows = (await ctx.db.query<{ id: string; name: string; roles: string[] }>(
+    `select g.id, g.name, coalesce((select array_agg(r.role) from livetv_group_roles r where r.group_id = g.id), '{}') as roles
        from livetv_groups g where g.released order by g.position, lower(g.name)`)).rows;
-  const out = new Map<string, string[]>([['admin', rows.map((r) => r.name)]]);
+  const out = new Map<string, GroupRef[]>([['admin', rows.map(({ id, name }) => ({ id, name }))]]);
   for (const r of rows) {
     for (const role of r.roles) {
       if (role === 'admin') continue;
       let list = out.get(role);
       if (!list) out.set(role, (list = []));
-      list.push(r.name);
+      list.push({ id: r.id, name: r.name });
     }
   }
   return out;
@@ -303,23 +306,6 @@ export async function setRoleGroupsIn(c: pg.PoolClient, role: string, ids: reado
     [role, released.map((g) => g.id), [...want]]);
   await c.query('insert into livetv_group_roles(group_id, role) select unnest($1::uuid[]), $2 on conflict do nothing', [[...want], role]);
   return { from: from.map((g) => g.name), to: to.map((g) => g.name) };
-}
-
-/** role key -> ids of the released groups that role sees (the admin role: every released group), in group order */
-export async function roleGroupIds(ctx: Pick<Ctx, 'db'>): Promise<Map<string, string[]>> {
-  const rows = (await ctx.db.query<{ id: string; roles: string[] }>(
-    `select g.id, coalesce((select array_agg(r.role) from livetv_group_roles r where r.group_id = g.id), '{}') as roles
-       from livetv_groups g where g.released order by g.position, lower(g.name)`)).rows;
-  const out = new Map<string, string[]>([['admin', rows.map((r) => r.id)]]);
-  for (const r of rows) {
-    for (const role of r.roles) {
-      if (role === 'admin') continue;
-      let list = out.get(role);
-      if (!list) out.set(role, (list = []));
-      list.push(r.id);
-    }
-  }
-  return out;
 }
 
 /** the released groups (group order) with their channel counts, and how many groups wait for a release; for the role page */
