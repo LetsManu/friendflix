@@ -98,6 +98,28 @@ describe('press', () => {
     expect(b.style.transform).toBe('scale(.92)');
   });
 
+  it('up and destroy give back an inline opacity or transform someone else set, instead of clearing it', () => {
+    const { n, a } = setup();
+    n.style.opacity = '0.5';
+    n.fire('pointerdown', touch);
+    expect(n.style.opacity).toBe('0.72');
+    n.fire('pointerup');
+    expect(n.style.opacity).toBe('0.5');
+    n.fire('pointerup'); // a second up (leave after up) changes nothing
+    expect(n.style.opacity).toBe('0.5');
+    const i = setup();
+    i.n.classList.add('icon');
+    i.n.style.transform = 'translateX(4px)';
+    i.n.fire('pointerdown', touch);
+    expect(i.n.style.transform).toBe('scale(.92)');
+    i.a.destroy();
+    expect(i.n.style.transform).toBe('translateX(4px)');
+    // destroyed while released: nothing to give back, nothing touched
+    n.style.opacity = '0.4';
+    a.destroy();
+    expect(n.style.opacity).toBe('0.4');
+  });
+
   it('up, cancel and leave release it', () => {
     const { n } = setup();
     for (const t of ['pointerup', 'pointercancel', 'pointerleave']) {

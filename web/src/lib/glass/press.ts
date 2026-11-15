@@ -24,11 +24,20 @@ function iconOnly(node: HTMLElement): boolean {
 /** Svelte action: `<a use:press>`; the node is positioned and clips the ripple (`.ff-press`) */
 export function press(node: HTMLElement): { destroy(): void } {
   node.classList.add('ff-press');
+  /** the inline value the press replaced (another actor's), given back on release; null: not pressed */
+  let prev: { prop: 'transform' | 'opacity'; value: string } | null = null;
+  const release = () => {
+    if (!prev) return;
+    node.style[prev.prop] = prev.value;
+    prev = null;
+  };
   const down = (e: PointerEvent) => {
     if (e.pointerType === 'mouse' || fxMode() !== 'full') return;
     node.classList.add('pressed');
-    if (iconOnly(node)) node.style.transform = ICON_SCALE;
-    else node.style.opacity = String(PRESS_OPACITY);
+    release(); // a second press before the release: the first one's value is the one to keep
+    const prop = iconOnly(node) ? 'transform' : 'opacity';
+    prev = { prop, value: node.style[prop] ?? '' };
+    node.style[prop] = prop === 'transform' ? ICON_SCALE : String(PRESS_OPACITY);
     const b = rippleBox(node.getBoundingClientRect(), e.clientX, e.clientY);
     const rip = node.ownerDocument.createElement('span');
     rip.className = 'ripple';
@@ -40,8 +49,7 @@ export function press(node: HTMLElement): { destroy(): void } {
   };
   const up = () => {
     node.classList.remove('pressed');
-    node.style.transform = '';
-    node.style.opacity = '';
+    release();
   };
   node.addEventListener('pointerdown', down);
   for (const t of ['pointerup', 'pointercancel', 'pointerleave'] as const) node.addEventListener(t, up);
@@ -50,8 +58,7 @@ export function press(node: HTMLElement): { destroy(): void } {
       node.removeEventListener('pointerdown', down);
       for (const t of ['pointerup', 'pointercancel', 'pointerleave'] as const) node.removeEventListener(t, up);
       node.classList.remove('ff-press', 'pressed');
-      node.style.transform = '';
-      node.style.opacity = '';
+      release();
     },
   };
 }

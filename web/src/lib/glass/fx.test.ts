@@ -8,7 +8,7 @@ vi.mock('#lib/tv/motion', () => ({ motionLevel: () => m.level, watchFrames: () =
 
 import {
   COUNT_MS, countAt, cubicBezier, fxMode, grow, growBoth, growFrom, GROW_IN_MS, GROW_OUT_MS, growShift, emphOut, inEase, outEase, PILL_MID, pillParts,
-  REDUCED_MS, rippleBox, scrimFade, twoWay, SHEET_IN_MS, SHEET_OUT_MS, sheetSlide, springEase, TOAST_IN_MS, TOAST_OUT_MS, toastRise, barRise, BAR_IN_MS, BAR_OUT_MS,
+  REDUCED_MS, rippleBox, scrimFade, twoWay, SHEET_IN_MS, SHEET_OUT_MS, sheetSlide, TOAST_IN_MS, TOAST_OUT_MS, toastRise, barRise, BAR_IN_MS, BAR_OUT_MS,
   dialogRise, dialogBoth, DIALOG_IN_MS, DIALOG_OUT_MS,
 } from './fx';
 
@@ -18,12 +18,14 @@ const box = (left: number, top: number, width: number, height: number) => ({ get
 const ts = Array.from({ length: 101 }, (_, i) => i / 100);
 
 describe('curves', () => {
-  it('cubicBezier endpoints and the spring overshoot', () => {
-    expect(springEase(0)).toBe(0);
-    expect(springEase(1)).toBe(1);
-    expect(springEase(-1)).toBe(0);
-    expect(springEase(2)).toBe(1);
-    expect(Math.max(...ts.map(springEase))).toBeGreaterThan(1.05);
+  it('cubicBezier endpoints, an overshooting curve, in and out', () => {
+    // a spring-like curve (y beyond 1) is computed faithfully, clamped only outside 0…1 (no pop-up uses one: fx.test 'no overshoot')
+    const spring = cubicBezier(0.34, 1.56, 0.64, 1);
+    expect(spring(0)).toBe(0);
+    expect(spring(1)).toBe(1);
+    expect(spring(-1)).toBe(0);
+    expect(spring(2)).toBe(1);
+    expect(Math.max(...ts.map(spring))).toBeGreaterThan(1.05);
     // in / out: monotonic, the ease-in slow at the start, the ease-out fast
     expect(inEase(0.25)).toBeLessThan(0.25);
     expect(outEase(0.25)).toBeGreaterThan(0.5);

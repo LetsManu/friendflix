@@ -35,8 +35,7 @@ export function cubicBezier(x1: number, y1: number, x2: number, y2: number): (t:
   return (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : sy(solve(t)));
 }
 
-/** GLASS_SPRING, GLASS_IN and GLASS_OUT (`#lib/tv/motion`) as functions */
-export const springEase = cubicBezier(0.34, 1.56, 0.64, 1);
+/** GLASS_IN and GLASS_OUT (`#lib/tv/motion`) as functions (no pop-up uses the overshooting GLASS_SPRING any more) */
 export const inEase = cubicBezier(0.4, 0, 1, 1);
 export const outEase = cubicBezier(0.22, 1, 0.36, 1);
 
@@ -195,7 +194,7 @@ export function dialogRise(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMod
     duration: out ? DIALOG_OUT_MS : DIALOG_IN_MS,
     delay: 0,
     easing: out ? inEase : emphOut,
-    css: (t) => `transform:translateY(${Math.round(DIALOG_RISE_PX * (1 - t)) + 0}px);opacity:${Math.min(1, Math.max(0, t))}`,
+    css: (t) => `transform:translateY(${Math.round(DIALOG_RISE_PX * (1 - t)) + 0 /* + 0: never "-0px" */}px);opacity:${Math.min(1, Math.max(0, t))}`,
   };
 }
 /** dialogRise as a bidirectional transition: `transition:dialogBoth` */
