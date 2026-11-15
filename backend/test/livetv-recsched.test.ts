@@ -6,7 +6,7 @@
  * call and lists what it runs. Fictional people, channels and titles only.
  */
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetConvMemo, admitConversion, countConversions, dropConvGrant } from '../src/convbudget.js';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { detectLivetv } from '../src/livetv/detect.js';
@@ -281,6 +281,36 @@ describe('EPG follow', () => {
     await tick();
     expect((await getRecording(env.ctx, id))!.end_at.getTime()).toBe(start + 80 * MIN);
     expect(of('PATCH', `/v1/recordings/${id}`)).toHaveLength(1);
+  });
+});
+
+describe('replicas (fix round 1, A-C1)', () => {
+  it('two schedulers racing one row: exactly one recorder, nothing deleted', async () => {
+    const start = Date.now() + 60_000;
+    const id = await recording({ start_at: new Date(start), end_at: new Date(start + HOUR) });
+    // the first scheduler's stream start hangs (a slow provider) long enough for its tick lock to lapse
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let waiting = 0;
+    const inner = env.ctx.fetchImpl;
+    env.ctx.fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const u = new URL(String(input));
+      if (init?.method === 'POST' && u.pathname === '/v1/streams') { waiting++; await gate; }
+      return inner(input, init);
+    }) as typeof fetch;
+    const a = livetvRecordTick(env.ctx);
+    await vi.waitFor(() => expect(waiting).toBe(1));
+    await env.kv.del('ltv:rectick'); // its lock lapsed: a second replica ticks
+    invalidateLiveConversions();
+    const b = livetvRecordTick(env.ctx);
+    await new Promise((r) => setTimeout(r, 100));
+    release();
+    await Promise.all([a, b]);
+    expect((await getRecording(env.ctx, id))?.state).toBe('recording');
+    expect(of('POST', /\/v1\/recordings\/[0-9a-f-]+\/delete$/)).toEqual([]);
+    expect(of('DELETE', /\/v1\/recordings\//)).toEqual([]);
+    expect(of('POST', '/v1/streams')).toHaveLength(1);
+    expect([...recorders.keys()]).toEqual([id]);
   });
 });
 

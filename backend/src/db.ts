@@ -1210,7 +1210,8 @@ export const MIGRATIONS: string[] = [
   alter table livetv_sources add column if not exists chno_fallback boolean;
   `,
   // 55: Live TV Phase 3 recordings (spec §6.3 with plan Task 1's changes): the recording's mode is the shared stream's (passthrough /
-  // remux / transcode), `segments` the format it stores (ts, or fmp4 of an fMP4 passthrough), `follow_epg` + `prog_key` (normalised
+  // remux / transcode), `starting` a start in progress under a lease (`claim_token` until `claim_until`), `deleting` a delete whose
+  // revocations or file removal still have to be confirmed, `segments` the format it stores (ts, or fmp4 of an fMP4 passthrough), `follow_epg` + `prog_key` (normalised
   // title + "\n" + episode or sub-title) let a scheduled EPG recording follow its programme, `dir` is the uuid folder under
   // /recordings, `error` a fixed code. One slot per profile, channel and start while scheduled or recording; a rule plans each
   // airing once (its cancelled rows stay, so a re-import never plans them again). Rerunnable. (Index at merge time: the next free one.)
@@ -1242,7 +1243,8 @@ export const MIGRATIONS: string[] = [
     channel_name text not null,
     title text not null, subtitle text, description text, episode text, series_key text,
     start_at timestamptz not null, end_at timestamptz not null, pad_before_s int not null, pad_after_s int not null,
-    state text not null default 'scheduled' check (state in ('scheduled','recording','done','partial','failed','cancelled')),
+    state text not null default 'scheduled' check (state in ('scheduled','starting','recording','done','partial','failed','cancelled','deleting')),
+    claim_token uuid, claim_until timestamptz, -- the replica that starts (or resumes) it holds this lease; every later step checks it
     mode text check (mode in ('passthrough','remux','transcode')),
     segments text check (segments in ('ts','fmp4')),
     follow_epg boolean not null default false,
@@ -1261,7 +1263,7 @@ export const MIGRATIONS: string[] = [
     check (end_at > start_at),
     unique (rule_id, channel_id, start_at)
   );
-  create unique index if not exists livetv_recordings_slot on livetv_recordings(profile_id, channel_id, start_at) where state in ('scheduled','recording');
+  create unique index if not exists livetv_recordings_slot on livetv_recordings(profile_id, channel_id, start_at) where state in ('scheduled','starting','recording');
   create index if not exists livetv_recordings_due on livetv_recordings(start_at) where state = 'scheduled';
   create index if not exists livetv_recordings_profile on livetv_recordings(profile_id, start_at desc);
   create index if not exists livetv_recordings_rule on livetv_recordings(rule_id) where rule_id is not null;

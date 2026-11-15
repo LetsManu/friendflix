@@ -11,7 +11,7 @@ import { LivetvError, livetvCall } from './client.js';
 import { livetvInstalled, readLivetvSystem } from './detect.js';
 import { setAfterEpgImport } from './epg.js';
 import { pushEvent, type LiveEvent } from './events.js';
-import { deleteRecording, effectiveStorage, mayRecord, progKey, purgeRecording, recordSettings, seriesKeyOf, type Gap, type RecRow, type RecState } from './recordings.js';
+import { deleteRecording, effectiveStorage, getRecording, mayRecord, progKey, recordSettings, seriesKeyOf, type Gap, type RecRow, type RecState } from './recordings.js';
 import { channelAllowed, channelSet, type LivetvProfile, type LivetvUser } from './rights.js';
 import { RECORD_LEAD_MS, expectedMode, invalidateRecordingUses, runningChannelIds, startForRecording, type RecordStartError } from './streams.js';
 import type { RecorderView, RecordingStartAnswer } from './wire.js';
@@ -248,10 +248,10 @@ export async function expandRules(ctx: Ctx, now: number = Date.now(), o: { ruleI
       }
     } else {
       const mine = (await ctx.db.query<{ episode: string | null; subtitle: string | null; state: RecState; channel_id: string | null; prog_key: string | null; start_at: Date }>(
-        "select episode, subtitle, state, channel_id, prog_key, start_at from livetv_recordings where rule_id = $1 and state in ('scheduled','recording','done','partial')", [r.id])).rows;
+        "select episode, subtitle, state, channel_id, prog_key, start_at from livetv_recordings where rule_id = $1 and state in ('scheduled','starting','recording','done','partial')", [r.id])).rows;
       const done = new Set(mine.flatMap((x) => { const k = episodeKey(x); return k ? [k] : []; }));
       // an airing this rule planned already (it may have moved and not followed yet): never a second row for it
-      const already = (cid: string, p: Prog) => mine.some((x) => (x.state === 'scheduled' || x.state === 'recording') && x.channel_id === cid && x.prog_key === progKey(p)
+      const already = (cid: string, p: Prog) => mine.some((x) => (x.state === 'scheduled' || x.state === 'starting' || x.state === 'recording') && x.channel_id === cid && x.prog_key === progKey(p)
         && Math.abs(x.start_at.getTime() - p.start) <= FOLLOW_WINDOW_MS);
       const candidates = (chans.get(r.id) ?? []).flatMap((cid) => (progs.get(cid) ?? []).map((p) => ({ cid, p })))
         .filter(({ p }) => seriesKeyOf({ title: p.title, series_key: p.seriesKey }) === r.series_key)
@@ -361,11 +361,13 @@ async function noticeStorageFull(ctx: Ctx, r: RecRow): Promise<void> {
   await event(ctx, { level: 'error', code: 'rec_storage_full', ...(r.channel_id ? { channelId: r.channel_id } : {}), recordingId: r.id });
 }
 
-/** ends a recording that never ran (or whose recorder is lost) */
-async function failRow(ctx: Ctx, r: RecRow, error: string, o: { from?: RecState[] } = {}): Promise<void> {
+/** ends a recording that never ran (or whose recorder is lost); `claim`: only while this replica holds the row's lease */
+async function failRow(ctx: Ctx, r: RecRow, error: string, o: { from?: RecState[]; claim?: string } = {}): Promise<void> {
   const state: RecState = Number(r.bytes) > 0 ? 'partial' : 'failed';
   const u = await ctx.db.query<RecRow>(
-    'update livetv_recordings set state = $2, error = $3 where id = $1 and state = any($4::text[]) returning *', [r.id, state, error, o.from ?? ['scheduled']]);
+    `update livetv_recordings set state = $2, error = $3, claim_token = null, claim_until = null
+      where id = $1 and state = any($4::text[]) and ($5::uuid is null or claim_token = $5::uuid) returning *`,
+    [r.id, state, error, o.from ?? ['scheduled'], o.claim ?? null]);
   const row = u.rows[0];
   if (!row) return;
   invalidateRecordingUses();
@@ -375,15 +377,39 @@ async function failRow(ctx: Ctx, r: RecRow, error: string, o: { from?: RecState[
   await ctx.kv.del(whyKey(r.id)).catch(() => undefined);
 }
 
-async function cancelRow(ctx: Ctx, r: RecRow, error: string): Promise<void> {
-  const u = await ctx.db.query("update livetv_recordings set state = 'cancelled', error = $2 where id = $1 and state = 'scheduled'", [r.id, error]);
+async function cancelRow(ctx: Ctx, r: RecRow, error: string, claim: string): Promise<void> {
+  const u = await ctx.db.query(
+    "update livetv_recordings set state = 'cancelled', error = $2, claim_token = null, claim_until = null where id = $1 and state = 'starting' and claim_token = $3",
+    [r.id, error, claim]);
   if (u.rowCount) invalidateRecordingUses();
+}
+
+/**
+ * The lease of a start (A-C1): one replica at a time starts or resumes a row. A scheduled row (or one whose earlier start lease ran out)
+ * becomes `starting`; a recording row keeps its state. The lease outlives the worst launch (stream start lock, admission, POST, first
+ * segment, recorder POST: about 60 s); every later write of the launch is conditional on the token.
+ */
+export const CLAIM_S = 120;
+async function claim(ctx: Ctx, id: string, kind: 'start' | 'resume'): Promise<{ token: string; row: RecRow } | null> {
+  const token = randomUUID();
+  const r = await ctx.db.query<RecRow>(kind === 'start'
+    ? `update livetv_recordings set state = 'starting', claim_token = $2, claim_until = now() + make_interval(secs => $3)
+        where id = $1 and (state = 'scheduled' or (state = 'starting' and claim_until < now())) returning *`
+    : `update livetv_recordings set claim_token = $2, claim_until = now() + make_interval(secs => $3)
+        where id = $1 and state = 'recording' and (claim_until is null or claim_until < now()) returning *`, [id, token, CLAIM_S]);
+  return r.rows[0] ? { token, row: r.rows[0] } : null;
+}
+/** gives a lease back without starting: a starting row is scheduled again */
+async function unclaim(ctx: Ctx, id: string, token: string): Promise<void> {
+  await ctx.db.query(
+    `update livetv_recordings set state = case when state = 'starting' then 'scheduled' else state end, claim_token = null, claim_until = null
+      where id = $1 and claim_token = $2`, [id, token]).catch(() => undefined);
 }
 
 /** the recordings' bytes (FriendFlix folder and library) and whether an unprotected finished one could make room */
 async function storageState(ctx: Ctx): Promise<{ used: number; deletable: boolean }> {
   const r = (await ctx.db.query<{ used: string | null; deletable: boolean }>(
-    "select sum(bytes) as used, bool_or(not keep and state in ('done','partial')) as deletable from livetv_recordings where state <> 'scheduled'")).rows[0];
+    "select sum(bytes) as used, bool_or(not keep and state in ('done','partial')) as deletable from livetv_recordings where state not in ('scheduled','starting')")).rows[0];
   return { used: Number(r?.used ?? 0), deletable: r?.deletable === true };
 }
 
@@ -456,13 +482,13 @@ async function postRecorder(ctx: Ctx, r: RecRow): Promise<RecordingStartAnswer |
 
 const refusalWhy = (e: RecordStartError) => (e === 'no_slot' || e === 'provider_limit' ? 'no_slot' : 'stream_gone');
 
-/** starts (or resumes) a row's stream and recorder; answers whether it records now */
-async function launch(ctx: Ctx, r: RecRow, owner: Owner, now: number, resume: boolean): Promise<boolean> {
-  if (await ctx.kv.get(retryKey(r.id)).catch(() => null)) return false;
+/** starts (or resumes) a claimed row's stream and recorder; answers whether it records now */
+async function launch(ctx: Ctx, r: RecRow, token: string, owner: Owner, now: number, resume: boolean): Promise<boolean> {
   const ch = (await channelNames(ctx, [r.channel_id!])).get(r.channel_id!);
-  if (!ch) { await failRow(ctx, r, 'stream_gone', { from: [r.state] }); return false; }
+  if (!ch) { await failRow(ctx, r, 'stream_gone', { from: [r.state], claim: token }); return false; }
   const res = await startForRecording(ctx, ch, { userId: owner.user.id });
   if ('error' in res) {
+    await unclaim(ctx, r.id, token);
     await ctx.kv.set(retryKey(r.id), '1', RETRY_MS / 1000).catch(() => undefined);
     await ctx.kv.set(whyKey(r.id), refusalWhy(res.error), Math.max(60, Math.ceil((padEnd(r) - now) / 1000) + HOUR_S)).catch(() => undefined);
     if ((res.error === 'no_slot' || res.error === 'provider_limit') && (await ctx.kv.setnx(noSlotKey(r.id), '1', Math.max(60, Math.ceil((padEnd(r) - now) / 1000) + HOUR_S)).catch(() => false))) {
@@ -471,21 +497,29 @@ async function launch(ctx: Ctx, r: RecRow, owner: Owner, now: number, resume: bo
     return false;
   }
   const posted = await postRecorder(ctx, r);
-  if (posted === 'retry') return false;
-  if ('fail' in posted) { await failRow(ctx, r, posted.fail, { from: [r.state] }); return false; }
-  if (resume) return true;
+  if (posted === 'retry') { await unclaim(ctx, r.id, token); return false; }
+  if ('fail' in posted) { await failRow(ctx, r, posted.fail, { from: [r.state], claim: token }); return false; }
   // a late start (a refused slot, the backend was down) that misses part of the programme is a gap from its start to now
   const late = now - r.start_at.getTime() > LATE_START_MS ? [{ from: r.start_at.getTime(), to: now }] : [];
-  const u = await ctx.db.query(
-    "update livetv_recordings set state = 'recording', mode = $2, segments = $3, gaps = $4::jsonb where id = $1 and state = 'scheduled'",
-    [r.id, res.mode, posted.segments ?? res.segments, JSON.stringify(mergeGaps(r.gaps, late))]);
+  const u = resume
+    ? await ctx.db.query("update livetv_recordings set claim_token = null, claim_until = null where id = $1 and state = 'recording' and claim_token = $2", [r.id, token])
+    : await ctx.db.query(
+      `update livetv_recordings set state = 'recording', mode = $2, segments = $3, gaps = $4::jsonb, claim_token = null, claim_until = null
+        where id = $1 and state = 'starting' and claim_token = $5`,
+      [r.id, res.mode, posted.segments ?? res.segments, JSON.stringify(mergeGaps(r.gaps, late)), token]);
   invalidateRecordingUses();
   if (!u.rowCount) {
-    // deleted or cancelled meanwhile: never an orphan recorder
-    await purgeRecording(ctx, { ...r, mode: res.mode, bytes: '1' }, { stop: true }).catch(() => false);
+    // the row changed under the launch. Only a fresh read that shows it cancelled or being deleted, while still under this lease,
+    // proves the recorder this launch posted is an orphan; anything else (another replica's lease, a gone row) is left alone
+    // (the reconcile stops recorders without a recording row)
+    const fresh = await getRecording(ctx, r.id);
+    if (fresh && fresh.claim_token === token && (fresh.state === 'cancelled' || fresh.state === 'deleting')) {
+      await livetvCall(ctx, 'DELETE', `/v1/recordings/${r.id}`, undefined, { timeoutMs: CALL_TIMEOUT_MS }).catch(() => undefined);
+      await livetvCall(ctx, 'POST', `/v1/recordings/${r.id}/delete`, { dir: r.dir }, { timeoutMs: CALL_TIMEOUT_MS }).catch(() => undefined);
+    }
     return false;
   }
-  await event(ctx, { level: 'info', code: 'rec_started', channelId: ch.id, recordingId: r.id });
+  if (!resume) await event(ctx, { level: 'info', code: 'rec_started', channelId: ch.id, recordingId: r.id });
   return true;
 }
 
@@ -505,7 +539,7 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
       if (await ctx.kv.setnx(FOLLOW_KEY, '1', FOLLOW_EVERY_S).catch(() => false)) await followEpg(ctx, now);
     }
     const active = (await ctx.db.query<RecRow>(
-      `select * from livetv_recordings where state = 'recording'
+      `select * from livetv_recordings where state in ('starting','recording')
           or (state = 'scheduled' and start_at - make_interval(secs => pad_before_s) <= $1::timestamptz + make_interval(secs => $2::int))
         order by start_at, id`, [new Date(now), RECORD_LEAD_MS / 1000])).rows;
     const who = await owners(ctx, active.flatMap((r) => (r.profile_id ? [r.profile_id] : [])));
@@ -516,23 +550,29 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
       for (const r of active) {
         const ch = r.channel_id ? chans.get(r.channel_id) : undefined;
         if (!ch || now >= padEnd(r)) continue;
-        if ((r.state === 'recording' ? r.mode : expectedMode(ch, now)) === 'transcode') await reserveConversion(ctx, ch.id, { label: ch.name, userId: r.user_id }).catch(() => undefined);
+        if ((r.state === 'recording' && r.mode ? r.mode : expectedMode(ch, now)) === 'transcode') await reserveConversion(ctx, ch.id, { label: ch.name, userId: r.user_id }).catch(() => undefined);
       }
     }
 
-    // (2) due starts
-    for (const r of active) {
-      if (r.state !== 'scheduled' || padStart(r) > now) continue;
+    // (2) due starts: each under its own lease (a scheduled row, or one whose earlier start lease ran out)
+    for (const r0 of active) {
+      const expired = r0.state === 'starting' && (!r0.claim_until || r0.claim_until.getTime() < now);
+      if (!(r0.state === 'scheduled' || expired) || padStart(r0) > now) continue;
       if (!(await renew())) return;
+      if (now < padEnd(r0) && (await ctx.kv.get(retryKey(r0.id)).catch(() => null))) continue; // a refused start waits its minute
+      const c = await claim(ctx, r0.id, 'start');
+      if (!c) continue; // another replica starts it
+      const r = c.row;
+      const fromStarting = { from: ['starting'] as RecState[], claim: c.token };
       const w = r.profile_id ? who.get(r.profile_id) : undefined;
-      if (!w || w.disabled || !(await mayRecord(ctx, w.user, w.profile))) { await cancelRow(ctx, r, 'forbidden'); continue; }
-      if (!r.channel_id || !(await channelAllowed(ctx, w.user, w.profile, r.channel_id))) { await cancelRow(ctx, r, 'forbidden'); continue; }
-      if (!installed) { await failRow(ctx, r, 'livetv_off'); continue; }
-      if (now >= padEnd(r)) { await failRow(ctx, r, (await ctx.kv.get(whyKey(r.id)).catch(() => null)) ?? 'missed'); continue; }
+      if (!w || w.disabled || !(await mayRecord(ctx, w.user, w.profile))) { await cancelRow(ctx, r, 'forbidden', c.token); continue; }
+      if (!r.channel_id || !(await channelAllowed(ctx, w.user, w.profile, r.channel_id))) { await cancelRow(ctx, r, 'forbidden', c.token); continue; }
+      if (!installed) { await failRow(ctx, r, 'livetv_off', fromStarting); continue; }
+      if (now >= padEnd(r)) { await failRow(ctx, r, (await ctx.kv.get(whyKey(r.id)).catch(() => null)) ?? 'missed', fromStarting); continue; }
       const free = (await readLivetvSystem(ctx).catch(() => null))?.recordings?.freeBytes;
       const st = await storageState(ctx);
-      if ((typeof free === 'number' && free < FREE_MIN_BYTES) || (st.used >= recordSettings(ctx).limitBytes && !st.deletable)) { await failRow(ctx, r, 'storage_full'); continue; }
-      await launch(ctx, r, w, now, false);
+      if ((typeof free === 'number' && free < FREE_MIN_BYTES) || (st.used >= recordSettings(ctx).limitBytes && !st.deletable)) { await failRow(ctx, r, 'storage_full', fromStarting); continue; }
+      await launch(ctx, r, c.token, w, now, false);
     }
     if (!installed) {
       // livetv went away under a running recording: after its end it is ended with what it had
@@ -564,7 +604,10 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
           if (end !== null) await livetvCall(ctx, 'PATCH', `/v1/recordings/${r.id}`, { endAt: end + r.pad_after_s * 1000 }, { timeoutMs: CALL_TIMEOUT_MS }).catch(() => undefined);
         }
         // livetv lost the recorder (a restart: new bootId), or its stream stopped: start the stream again and resume into the same folder
-        if (w && r.channel_id && (!e || (running !== null && !running.has(r.channel_id)))) await launch(ctx, r, w, now, true);
+        if (w && r.channel_id && (!e || (running !== null && !running.has(r.channel_id))) && !(await ctx.kv.get(retryKey(r.id)).catch(() => null))) {
+          const c = await claim(ctx, r.id, 'resume');
+          if (c) await launch(ctx, c.row, c.token, w, now, true);
+        }
       }
     }
 
@@ -582,7 +625,7 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
 export async function releaseReservation(ctx: Ctx, channelId: string): Promise<void> {
   invalidateRecordingUses();
   const still = (await ctx.db.query<{ n: number }>(
-    `select count(*)::int as n from livetv_recordings where channel_id = $1 and (state = 'recording' or (state = 'scheduled'
+    `select count(*)::int as n from livetv_recordings where channel_id = $1 and (state in ('starting','recording') or (state = 'scheduled'
        and start_at - make_interval(secs => pad_before_s) <= now() + make_interval(secs => $2::int)))`, [channelId, RECORD_LEAD_MS / 1000])).rows[0]?.n ?? 0;
   if (!still) await dropReservation(ctx, channelId);
 }
@@ -607,7 +650,7 @@ export async function forecast(ctx: Ctx, o: { channelId: string; from: number; t
   const rows = (await ctx.db.query<{ id: string; channel_id: string; mode: string | null; state: RecState; s: Date; e: Date }>(
     `select id, channel_id, mode, state, start_at - make_interval(secs => pad_before_s) as s, end_at + make_interval(secs => pad_after_s) as e
        from livetv_recordings
-      where state in ('scheduled','recording') and channel_id is not null and id <> coalesce($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+      where state in ('scheduled','starting','recording') and channel_id is not null and id <> coalesce($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
         and start_at - make_interval(secs => pad_before_s) < $2 and end_at + make_interval(secs => pad_after_s) > $1`,
     [new Date(o.from), new Date(o.to), o.exceptId ?? null])).rows;
   const chans = await channelNames(ctx, [o.channelId, ...rows.map((r) => r.channel_id)]);

@@ -389,7 +389,7 @@ export async function resolveRecToken(ctx: Ctx, token: string, ip: string): Prom
   const rec = await load(ctx, hash);
   if (!rec || rec.exp <= Date.now() || kindOf(rec) !== 'rec' || !rec.recordingId) return { status: 401 };
   const row = await getRecording(ctx, rec.recordingId);
-  if (!row || row.state === 'cancelled' || row.state === 'scheduled' || (row.storage === 'library' && row.library_path !== null)) return { status: 410 };
+  if (!row || row.state === 'cancelled' || row.state === 'deleting' || row.state === 'scheduled' || row.state === 'starting' || (row.storage === 'library' && row.library_path !== null)) return { status: 410 };
   const owner = await rightsOf(ctx, hash, rec);
   if (!owner) return { status: 403 };
   const airplay = rec.via === 'airplay';

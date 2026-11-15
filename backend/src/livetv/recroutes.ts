@@ -118,7 +118,7 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!(end > start) || end - start > MAX_SPAN_MS) return reply.code(400).send({ error: 'invalid', field: 'end' });
     if (end <= Date.now()) return reply.code(400).send({ error: 'invalid', field: 'start' });
     const existing = async () => (await ctx.db.query<{ id: string }>(
-      "select id from livetv_recordings where profile_id = $1 and channel_id = $2 and start_at = $3 and state in ('scheduled','recording')", [profile.id, b.data.channelId, new Date(start)])).rows[0];
+      "select id from livetv_recordings where profile_id = $1 and channel_id = $2 and start_at = $3 and state in ('scheduled','starting','recording')", [profile.id, b.data.channelId, new Date(start)])).rows[0];
     const dup = await existing();
     if (dup) return reply.code(200).send({ recording: await recordingView(ctx, u, profile, dup.id) });
     const s = recordSettings(ctx);
@@ -223,7 +223,7 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     const r = await visibleRecording(ctx, u, profile, id);
     if (!r) return notFound(reply);
     if (r.storage === 'library' && r.library_path !== null) return reply.code(409).send({ error: 'in_library' });
-    if (r.state === 'scheduled' || Number(r.bytes) === 0) return reply.code(409).send({ error: 'not_ready' });
+    if (r.state === 'scheduled' || r.state === 'starting' || Number(r.bytes) === 0) return reply.code(409).send({ error: 'not_ready' });
     const deviceId = req.session!.deviceId;
     if (!deviceId) return reply.code(403).send({ error: 'device_pending' });
     const growing = r.state === 'recording';

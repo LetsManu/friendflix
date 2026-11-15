@@ -34,7 +34,7 @@ const event = (ctx: Ctx, e: Parameters<typeof pushEvent>[1]) => pushEvent(ctx, e
 
 /** the bytes of every recording that has files (FriendFlix folder and library; a cancelled one whose files still wait for removal too) */
 export async function usage(ctx: Pick<Ctx, 'db'>): Promise<number> {
-  return Number((await ctx.db.query<{ n: string | null }>("select sum(bytes) as n from livetv_recordings where state <> 'scheduled'")).rows[0]?.n ?? 0);
+  return Number((await ctx.db.query<{ n: string | null }>("select sum(bytes) as n from livetv_recordings where state not in ('scheduled','starting')")).rows[0]?.n ?? 0);
 }
 
 /** "YYYY-MM-DD HH.mm" in the server's time zone (the library file name, spec §15.3) */

@@ -680,7 +680,7 @@ export function recordedChannels(ctx: Pick<Ctx, 'db'>): Promise<Set<string>> {
   const p = ctx.db.query<{ channel_id: string }>(
     `select distinct channel_id from livetv_recordings
       where channel_id is not null
-        and (state = 'recording'
+        and (state in ('starting','recording')
           or (state = 'scheduled' and start_at - make_interval(secs => pad_before_s) <= now() + make_interval(secs => $1::int)
               and end_at + make_interval(secs => pad_after_s) > now()))`, [RECORD_LEAD_MS / 1000])
     .then((r) => new Set(r.rows.map((x) => x.channel_id)), () => new Set<string>());

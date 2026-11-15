@@ -13,8 +13,8 @@ import { channelSet, type LivetvProfile, type LivetvUser } from './rights.js';
  * itself: the recorder is stopped and the files are removed through signed livetv calls by recording id and folder (a uuid), never by
  * a client-supplied path. Nothing here logs a title, a path or a token.
  */
-export type RecState = 'scheduled' | 'recording' | 'done' | 'partial' | 'failed' | 'cancelled';
-export const REC_STATES: readonly RecState[] = ['scheduled', 'recording', 'done', 'partial', 'failed', 'cancelled'];
+export type RecState = 'scheduled' | 'starting' | 'recording' | 'done' | 'partial' | 'failed' | 'cancelled' | 'deleting';
+export const REC_STATES: readonly RecState[] = ['scheduled', 'starting', 'recording', 'done', 'partial', 'failed', 'cancelled', 'deleting'];
 export type Visibility = 'private' | 'account' | 'everyone';
 export const VISIBILITIES: readonly Visibility[] = ['private', 'account', 'everyone'];
 export type RecMode = 'passthrough' | 'remux' | 'transcode';
@@ -38,6 +38,8 @@ export interface RecRow {
   pad_before_s: number;
   pad_after_s: number;
   state: RecState;
+  claim_token: string | null;
+  claim_until: Date | null;
   mode: RecMode | null;
   segments: 'ts' | 'fmp4' | null;
   follow_epg: boolean;
@@ -201,7 +203,7 @@ export function toView(r: RecRow, o: { profileId: string; logoHash: string | nul
     channel: { id: r.channel_id, name: r.channel_name, logo: logoPath(o.logoHash) },
     start: r.start_at.toISOString(), end: r.end_at.toISOString(),
     padBefore: Math.round(r.pad_before_s / 60), padAfter: Math.round(r.pad_after_s / 60),
-    state: r.state, error: r.error, gaps: Array.isArray(r.gaps) ? r.gaps.length : 0, durationS: r.duration_s, bytes: Number(r.bytes),
+    state: r.state === 'starting' ? 'scheduled' : r.state, error: r.error, gaps: Array.isArray(r.gaps) ? r.gaps.length : 0, durationS: r.duration_s, bytes: Number(r.bytes),
     keep: r.keep, visibility: r.visibility, mine, seriesKey: r.series_key, ruleId: r.rule_id, positionS: o.positionS, watched,
     deleteAfter: iso(r.delete_after), storage: r.storage, growing: r.state === 'recording',
   };
@@ -225,8 +227,8 @@ export async function recordingView(ctx: RightsCtx, user: LivetvUser, profile: L
 
 const STATE_FILTER: Record<'done' | 'scheduled' | 'all', readonly RecState[]> = {
   done: ['done', 'partial', 'failed'],
-  scheduled: ['scheduled', 'recording'],
-  all: ['scheduled', 'recording', 'done', 'partial', 'failed'],
+  scheduled: ['scheduled', 'starting', 'recording'],
+  all: ['scheduled', 'starting', 'recording', 'done', 'partial', 'failed'],
 };
 
 /** the recordings this profile sees (its own and those shared with it), newest first (spec §15.7); none without `liveTv` */
@@ -340,7 +342,7 @@ export async function deleteRecording(ctx: Ctx, id: string, by: 'owner' | 'admin
   if (!marked) return 'not_found';
   await recHooks.revokeTokens(ctx, id).catch(() => undefined);
   await recHooks.onRecordingDeleted?.(ctx, id).catch(() => undefined);
-  return (await purgeRecording(ctx, r, { stop: marked.was === 'recording' || r.state === 'recording' })) ? 'deleted' : 'pending';
+  return (await purgeRecording(ctx, r, { stop: ['recording', 'starting'].includes(marked.was) || ['recording', 'starting'].includes(r.state) })) ? 'deleted' : 'pending';
 }
 
 /** Admin → Aufnahmen (spec §9.6): metadata only (owner profile, channel, time, mode, state, error), never a title or a playback way */
@@ -348,7 +350,7 @@ export interface AdminRecording {
   id: string; profile: string | null; channel: string; start: string; end: string; mode: RecMode | null; state: RecState; error: string | null; bytes: number; keep: boolean;
 }
 export async function adminListRecordings(ctx: Pick<Ctx, 'db'>, o: { state?: RecState | 'active'; limit?: number; offset?: number } = {}): Promise<{ items: AdminRecording[]; total: number }> {
-  const states = o.state === 'active' ? ['scheduled', 'recording'] : o.state ? [o.state] : REC_STATES.filter((s) => s !== 'cancelled');
+  const states = o.state === 'active' ? ['scheduled', 'starting', 'recording'] : o.state ? [o.state] : REC_STATES.filter((s) => s !== 'cancelled' && s !== 'deleting');
   const limit = Math.min(Math.max(1, o.limit ?? 50), 200);
   const offset = Math.max(0, o.offset ?? 0);
   const rows = (await ctx.db.query<{ id: string; profile: string | null; channel_name: string; start_at: Date; end_at: Date; mode: RecMode | null; state: RecState; error: string | null; bytes: string; keep: boolean; total: string }>(
