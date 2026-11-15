@@ -5,13 +5,13 @@
  * it, and an empty "library" folder standing in for the overlay's `/library` mount.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, fstatSync, mkdirSync, mkdtempSync, readFileSync, readSync, readdirSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Library, LibraryError, MARKER, sanitizeName } from '../src/library.js';
 import { recordingPlaylist } from '../src/recorder.js';
-import { createRun, type Run } from '../src/run.js';
+import { createRun, type Run, type RunOptions } from '../src/run.js';
 import { recordingRoutes } from '../src/routes/recordings.js';
 import type { Recorder } from '../src/recorder.js';
 
@@ -46,21 +46,31 @@ function recording(o: { fmp4?: boolean; n?: number; dir?: string } = {}): Buffer
  * ffmpeg as the tests need it without one: the concat list's runs, byte for byte, into the output; ffprobe answers `probed` seconds
  * (default: what the playlist says); a decode check answers `decodes`. `calls` keeps what was asked.
  */
-const fake = { probed: null as number | null, decodes: true, remux: 0, calls: [] as string[][] };
-const fakeRun: Run = async (cmd, args) => {
+const fake = { probed: null as number | null, decodes: true, remux: 0, calls: [] as string[][], opts: [] as RunOptions[], beforeRemux: null as null | (() => void) };
+/** what a child reads as its input file: `/proc/self/fd/0` is the descriptor it was handed as stdin, anything else a path */
+const input = (path: string, o: RunOptions) => {
+  if (path !== '/proc/self/fd/0') return readFileSync(path);
+  const b = Buffer.alloc(fstatSync(o.stdinFd!).size);
+  readSync(o.stdinFd!, b, 0, b.length, 0);
+  return b;
+};
+const fakeRun: Run = async (cmd, args, o) => {
   fake.calls.push([cmd, ...args]);
+  fake.opts.push(o);
   const ok = (stdout = '') => ({ code: 0, stdout: Buffer.from(stdout), stderr: '' });
   if (cmd === 'ffprobe') {
-    const file = args.at(-1)!;
-    const list = readFileSync(file).length / 188; // the fixtures are 188-byte packets of 4 s each (an init counts as nothing)
+    const list = input(args.at(-1)!, o).length / 188; // the fixtures are 188-byte packets of 4 s each (an init counts as nothing)
     return ok(`${fake.probed ?? Math.floor(list) * 4}\n`);
   }
   if (args.includes('concat')) {
+    fake.beforeRemux?.();
     if (fake.remux) return { code: fake.remux, stdout: Buffer.alloc(0), stderr: 'x' };
     const list = args[args.indexOf('-i') + 1]!;
     const dir = list.slice(0, list.lastIndexOf('/'));
     const runs = [...readFileSync(list, 'utf8').matchAll(/^file '([^']+)'$/gm)].map((m) => readFileSync(join(dir, m[1]!)));
-    writeFileSync(args.at(-1)!, Buffer.concat(runs));
+    // pipe:1 goes to the descriptor the child was handed as stdout; anything else is a path ffmpeg opens itself (following links)
+    if (args.at(-1) === 'pipe:1') writeSync(o.stdoutFd!, Buffer.concat(runs));
+    else writeFileSync(args.at(-1)!, Buffer.concat(runs));
     return ok();
   }
   return fake.decodes ? ok() : { code: 69, stdout: Buffer.alloc(0), stderr: 'x' };
@@ -71,7 +81,7 @@ beforeEach(() => {
   recRoot = mkdtempSync(join(tmpdir(), 'ltv-recroot-'));
   libRoot = mkdtempSync(join(tmpdir(), 'ltv-library-'));
   logs.length = 0;
-  Object.assign(fake, { probed: null, decodes: true, remux: 0, calls: [] });
+  Object.assign(fake, { probed: null, decodes: true, remux: 0, calls: [], opts: [], beforeRemux: null });
   lib = new Library({ root: libRoot, recordingsRoot: recRoot, log: (m) => logs.push(m), run: fakeRun });
 });
 afterEach(() => {
@@ -126,6 +136,22 @@ describe('the library export', () => {
     expect(remux.slice(remux.indexOf('-protocol_whitelist'), remux.indexOf('-protocol_whitelist') + 2)).toEqual(['-protocol_whitelist', 'file']);
     expect(remux).toEqual(expect.arrayContaining(['-c', 'copy', '-map', '0']));
     expect(fake.calls.filter((c) => c[0] === 'ffmpeg' && c.includes('null')).slice(-2).map((c) => c.includes('-sseof'))).toEqual([false, true]);
+  });
+
+  it('N1: a link planted at the part file while the export runs is never written through', async () => {
+    recording({ n: 3 });
+    const outside = mkdtempSync(join(tmpdir(), 'ltv-outside-'));
+    writeFileSync(join(outside, 'fremd.ts'), 'somebody else\'s recording');
+    const part = join(libRoot, 'Hafenkanal', '.Nacht.ts.part');
+    fake.beforeRemux = () => { rmSync(part); symlinkSync(join(outside, 'fremd.ts'), part); };
+    expect(await code(lib.export(ID, { dir: DIR, folder: 'Hafenkanal', file: 'Nacht' }))).toBe('write_failed');
+    expect(readFileSync(join(outside, 'fremd.ts'), 'utf8')).toBe('somebody else\'s recording');
+    expect(readdirSync(join(libRoot, 'Hafenkanal'))).toEqual([]); // neither the link nor a file under the final name
+    // ffmpeg is handed the part file as a descriptor livetv opened (O_NOFOLLOW), and reads it back through that descriptor
+    const remux = fake.calls.find((c) => c.includes('concat'))!;
+    expect(remux.at(-1)).toBe('pipe:1');
+    expect(fake.calls.filter((c) => !c.includes('concat')).flatMap((c) => c.filter((a) => a.includes('Hafenkanal')))).toEqual([]);
+    rmSync(outside, { recursive: true, force: true });
   });
 
   it.skipIf(!existsSync('/usr/bin/ffmpeg') || !existsSync('/usr/bin/ffprobe'))('B-I8: a recording whose init changes mid-way exports as one file that decodes, both pictures in it', async () => {

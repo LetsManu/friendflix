@@ -117,56 +117,67 @@ export class Library {
     if (!name) throw new LibraryError('invalid');
     const part = join(dir, `.${name}.part`);
     const work = join(src, '.export');
+    // the part file is created and opened here, never through a link, and stays open: ffmpeg writes into this descriptor (`pipe:1`) and
+    // the checks read it back through it (`/proc/self/fd/0`), so nothing reopens the library path while the export runs (N1)
+    const fh = await open(part, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644).catch((e: unknown) => {
+      throw new LibraryError(code(e) === 'EACCES' || code(e) === 'EROFS' || code(e) === 'EPERM' ? 'library_not_writable' : 'write_failed');
+    });
+    let bytes: number;
     try {
-      // the part file is created here (never through a link); ffmpeg then writes into it
-      const fh = await open(part, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644).catch((e: unknown) => {
-        throw new LibraryError(code(e) === 'EACCES' || code(e) === 'EROFS' || code(e) === 'EPERM' ? 'library_not_writable' : 'write_failed');
-      });
-      await fh.close();
       await rm(work, { recursive: true, force: true });
       await mkdir(work, { mode: 0o755 });
       const runs = await writeRuns(src, work, entries);
       if (!runs.length) throw new LibraryError('not_found');
-      await this.remux(work, runs, part);
-      await this.verify(part, entries.reduce((n, e) => n + e.duration, 0));
+      await this.remux(work, runs, fh.fd, dir);
+      await this.verify(fh.fd, entries.reduce((n, e) => n + e.duration, 0));
+      // the name still holds the file written (a link or another file swapped in meanwhile is refused, never moved into place)
+      const st = await fh.stat();
+      const now = await lstat(part).catch(() => null);
+      if (!now?.isFile() || now.ino !== st.ino || now.dev !== st.dev) throw new LibraryError('write_failed');
+      bytes = st.size;
       await rename(part, join(dir, name));
     } catch (e) {
-      await rm(part, { force: true }).catch(() => undefined);
+      await rm(part, { force: true }).catch(() => undefined); // a planted link goes itself, its target is never touched
       if (e instanceof LibraryError) throw e;
       throw new LibraryError(code(e) === 'ENOSPC' || code(e) === 'EDQUOT' ? 'storage_full' : 'write_failed');
     } finally {
+      await fh.close().catch(() => undefined);
       await rm(work, { recursive: true, force: true }).catch(() => undefined);
     }
-    const bytes = (await lstat(join(dir, name))).size;
     this.o.log?.(`recording ${id} exported to the library`);
     return { path: `${folderName}/${name}`, bytes };
   }
 
   /**
    * One file from the runs without re-encoding (B-I8): ffmpeg's concat demuxer reads every run with its own codec parameters (an init
-   * change, a stream restart) and writes one MPEG-TS, which carries parameter changes in-band. ffmpeg reads only the local run files.
+   * change, a stream restart) and writes one MPEG-TS, which carries parameter changes in-band, to its stdout: the open part file `out`.
+   * ffmpeg reads only the local run files.
    */
-  private async remux(work: string, runs: string[], out: string): Promise<void> {
+  private async remux(work: string, runs: string[], out: number, dir: string): Promise<void> {
     if (!this.o.run) throw new LibraryError('export_failed');
     const list = join(work, 'list.txt');
     await writeFile(list, runs.map((r) => `file '${r}'\n`).join(''), { flag: 'wx' });
     const r = await this.o.run('ffmpeg', [
       '-hide_banner', '-loglevel', 'error', '-nostdin', '-protocol_whitelist', 'file', '-f', 'concat', '-safe', '1', '-i', list,
-      '-map', '0', '-c', 'copy', '-f', 'mpegts', '-y', out,
-    ], { timeoutMs: REMUX_TIMEOUT_MS });
-    if (r.code !== 0) throw new LibraryError(r.code === TIMEOUT_CODE ? 'export_failed' : (await enospc(out)) ? 'storage_full' : 'export_failed');
+      '-map', '0', '-c', 'copy', '-f', 'mpegts', 'pipe:1',
+    ], { timeoutMs: REMUX_TIMEOUT_MS, stdoutFd: out });
+    if (r.code !== 0) throw new LibraryError(r.code === TIMEOUT_CODE ? 'export_failed' : (await enospc(dir)) ? 'storage_full' : 'export_failed');
   }
 
-  /** the file is complete before the recording's FriendFlix copy may go (B-I8): its duration fits and its start and end decode */
-  private async verify(file: string, expectedS: number): Promise<void> {
+  /**
+   * The file is complete before the recording's FriendFlix copy may go (B-I8): its duration fits and its start and end decode. It is
+   * read through the open descriptor `fd` (the child's stdin, opened as `/proc/self/fd/0`: the same file, seekable), never by path.
+   */
+  private async verify(fd: number, expectedS: number): Promise<void> {
     if (!this.o.run) throw new LibraryError('verify_failed');
-    const probe = await this.o.run('ffprobe', ['-v', 'error', '-protocol_whitelist', 'file', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], { timeoutMs: PROBE_TIMEOUT_MS });
+    const file = '/proc/self/fd/0';
+    const probe = await this.o.run('ffprobe', ['-v', 'error', '-protocol_whitelist', 'file', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], { timeoutMs: PROBE_TIMEOUT_MS, stdinFd: fd });
     const duration = Number(probe.stdout.toString('utf8').trim());
     if (probe.code !== 0 || !Number.isFinite(duration) || Math.abs(duration - expectedS) > Math.max(DURATION_TOLERANCE_S, expectedS * 0.01)) throw new LibraryError('verify_failed');
     for (const at of [['-t', '5'], ['-sseof', '-5']]) {
       const pos = at[0] === '-sseof' ? at : [];
       const len = at[0] === '-t' ? at : [];
-      const dec = await this.o.run('ffmpeg', ['-hide_banner', '-v', 'error', '-xerror', '-nostdin', '-protocol_whitelist', 'file', ...pos, '-i', file, ...len, '-f', 'null', '-'], { timeoutMs: PROBE_TIMEOUT_MS });
+      const dec = await this.o.run('ffmpeg', ['-hide_banner', '-v', 'error', '-xerror', '-nostdin', '-protocol_whitelist', 'file', ...pos, '-i', file, ...len, '-f', 'null', '-'], { timeoutMs: PROBE_TIMEOUT_MS, stdinFd: fd });
       if (dec.code !== 0) throw new LibraryError('verify_failed');
     }
   }
