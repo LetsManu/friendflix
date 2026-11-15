@@ -602,13 +602,14 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     if (req.method !== 'GET') return end(res, 405, 'method not allowed');
     if (drips >= DRIP_MAX) return end(res, 429, 'busy', 'text/plain', { 'cache-control': 'no-store', 'retry-after': '5' });
     drips++;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    // the pause timer is set after the first chunk; `release` (close or end) clears it whichever comes first
+    const pause: { timer?: ReturnType<typeof setTimeout> } = {};
     let released = false;
-    const release = () => { if (released) return; released = true; drips--; clearTimeout(timer); };
+    const release = () => { if (released) return; released = true; drips--; clearTimeout(pause.timer); };
     res.on('close', release);
     res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': String(2 * DRIP_CHUNK.length), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
     res.write(DRIP_CHUNK);
-    timer = setTimeout(() => { res.end(DRIP_CHUNK); release(); }, DRIP_PAUSE_MS);
+    pause.timer = setTimeout(() => { res.end(DRIP_CHUNK); release(); }, DRIP_PAUSE_MS);
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse) {

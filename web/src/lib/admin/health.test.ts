@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { hasKey } from '#lib/i18n';
-import { HEVC_STATES, hevcLineText, ENCODER_ADVICE, REASONS, SERVICE_IDS, TC_REASONS, cleanCode, diskLabelKey, emptyHintOnTop, isEmptyMediaError, levelTone, reasonKey, serviceText, tcKey, type ServiceHealth } from './health';
+import { HEVC_STATES, hevcLineText, ENCODER_ADVICE, REASONS, SERVICE_IDS, TC_REASONS, cleanCode, diskLabelKey, emptyHintOnTop, isEmptyMediaError, levelTone, reasonKey, serviceText, tcKey } from './health';
 
 describe('health view helpers', () => {
   it('levelTone maps all four levels', () => {
