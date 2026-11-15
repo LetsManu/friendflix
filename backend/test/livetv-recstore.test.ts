@@ -235,6 +235,17 @@ describe('storage modes (spec §15.3)', () => {
     expect((await resolveRecToken(env.ctx, p.json().token, '192.0.2.9')).status).toBe(200);
   });
 
+  it('N2: an export whose staging copy would pass the recordings limit is refused storage_full and keeps the folder', async () => {
+    env.ctx.cfg = { ...cfg, LIVETV_RECORD_STORAGE: 'library', LIVETV_RECORD_LIBRARY_ID: 'lib-aufnahmen', LIVETV_RECORD_LIMIT_GB: 1 };
+    await row({ bytes: 400_000_000 });
+    const id = await row({ storage: 'library', bytes: 400_000_000 });
+    await env.pool.query("update livetv_recordings set export_state = 'pending' where id = $1", [id]);
+    expect(await exportToLibrary(env.ctx, id)).toBe('failed');
+    expect(calls.filter((c) => c.path.endsWith('/export'))).toEqual([]);
+    expect(await state(id)).toMatchObject({ state: 'done', library_path: null, export_state: 'failed' });
+    expect((await listEvents(env.ctx)).filter((e) => e.code === 'rec_export_failed').map((e) => e.reason)).toEqual(['storage_full']);
+  });
+
   it('both: Behalten → in Bibliothek copies it, keeps the FriendFlix folder and protects it', async () => {
     env.ctx.cfg = { ...cfg, LIVETV_RECORD_STORAGE: 'both', LIVETV_RECORD_LIBRARY_ID: 'lib-aufnahmen' };
     const id = await row({ delete_after: new Date(Date.now() + DAY) });

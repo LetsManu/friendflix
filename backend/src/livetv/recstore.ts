@@ -94,6 +94,9 @@ async function exportLocked(ctx: Ctx, id: string, o: { keep?: boolean }): Promis
     return 'exported';
   }
   if (!livetvInstalled(ctx)) return fail('livetv_off');
+  // N2: livetv stages a copy of the recording beside it while it exports; that copy must fit under the recordings limit too (livetv
+  // checks the volumes' free space itself, keeping room for running recordings)
+  if ((await usage(ctx)) + Number(r.bytes) > s.limitBytes) return fail('storage_full');
   const rule = r.rule_id ? (await ctx.db.query<{ kind: string; title: string }>('select kind, title from livetv_recording_rules where id = $1', [r.rule_id])).rows[0] : undefined;
   const folder = rule?.kind === 'series' ? rule.title : r.title;
   let ans: ExportAnswer;

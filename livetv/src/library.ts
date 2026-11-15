@@ -23,6 +23,10 @@ const REMUX_TIMEOUT_MS = 20 * 60_000;
 const PROBE_TIMEOUT_MS = 2 * 60_000;
 /** how far the exported file's duration may be from the playlist's (or 1 % of it, if more) */
 export const DURATION_TOLERANCE_S = 2;
+/** N2: the least margin an export keeps on each volume beyond the recording's size (or 2 % of it, if more) */
+export const EXPORT_MARGIN_MIN = 1024 ** 3;
+/** N2: what running recordings keep on the recordings volume (the backend starts none below it: recsched.ts FREE_MIN_BYTES) */
+export const RECORDING_RESERVE = 2 * 1024 ** 3;
 
 export class LibraryError extends Error {
   constructor(readonly code: 'no_library' | 'library_not_writable' | 'library_not_dedicated' | 'not_found' | 'invalid' | 'storage_full' | 'write_failed' | 'export_failed' | 'verify_failed') { super(code); }
@@ -39,7 +43,14 @@ export interface LibraryFacts { mounted: boolean; writable: boolean; dedicated: 
 const code = (e: unknown) => (e as NodeJS.ErrnoException | null)?.code;
 
 export class Library {
-  constructor(private readonly o: { root: string; recordingsRoot: string; log?: Log; run?: Run }) {}
+  /**
+   * `free`: the bytes a volume has left (default statfs; null = unknown, which never refuses); `sameVolume`: whether the recording folder
+   * and the library sit on one volume (default: the same st_dev). Both are seams for the tests.
+   */
+  constructor(private readonly o: {
+    root: string; recordingsRoot: string; log?: Log; run?: Run;
+    free?: (path: string) => Promise<number | null>; sameVolume?: (a: string, b: string) => Promise<boolean>;
+  }) {}
 
   /** `/v1/system.library`: null while the overlay is not on (no `/library`) */
   async facts(): Promise<LibraryFacts | null> {
@@ -107,6 +118,7 @@ export class Library {
     const entries = text ? parseRecordingPlaylist(text) : [];
     if (!entries.length) throw new LibraryError('not_found');
     const root = await this.guardedRoot();
+    await this.roomFor(src, root, entries);
     const dir = await this.folder(root, folderName);
     let name = '';
     // room for " (9)" and the extension: a numbered name stays within NAME_MAX, so remove() takes it back (A-M6)
@@ -146,6 +158,27 @@ export class Library {
     }
     this.o.log?.(`recording ${id} exported to the library`);
     return { path: `${folderName}/${name}`, bytes };
+  }
+
+  /**
+   * N2: the export stages a copy of the recording next to it and then writes the file into the library, so before anything is written
+   * the recordings volume needs the recording's size, a margin (EXPORT_MARGIN_MIN or 2 %, whichever is more) and the RECORDING_RESERVE
+   * that running recordings keep (they have priority); the library volume the size and the margin. One volume for both needs the sum.
+   * Too little anywhere: `storage_full`, nothing touched.
+   */
+  private async roomFor(src: string, root: string, entries: ReturnType<typeof parseRecordingPlaylist>): Promise<void> {
+    let size = 0;
+    const inits = new Set(entries.flatMap((e) => (e.init === null ? [] : [`init-${e.init}.mp4`])));
+    for (const f of [...inits, ...entries.map((e) => `${e.seq}.${e.ext}`)]) size += (await lstat(join(src, f)).catch(() => null))?.size ?? 0;
+    const margin = Math.max(EXPORT_MARGIN_MIN, Math.ceil(size * 0.02));
+    const free = this.o.free ?? ((p: string) => statfs(p).then((s) => Number(s.bavail) * Number(s.bsize), () => null));
+    const same = await (this.o.sameVolume ?? (async (a: string, b: string) => (await lstat(a)).dev === (await lstat(b)).dev))(src, root).catch(() => false);
+    const recNeeds = size + margin + RECORDING_RESERVE + (same ? size + margin : 0);
+    const recFree = await free(src);
+    if (recFree !== null && recFree < recNeeds) throw new LibraryError('storage_full');
+    if (same) return;
+    const libFree = await free(root);
+    if (libFree !== null && libFree < size + margin) throw new LibraryError('storage_full');
   }
 
   /**

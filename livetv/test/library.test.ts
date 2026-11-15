@@ -154,6 +154,32 @@ describe('the library export', () => {
     rmSync(outside, { recursive: true, force: true });
   });
 
+  it('N2: without room for the copy and the file on both volumes the export is refused before anything is written', async () => {
+    recording({ n: 3 }); // 3 × 188 bytes
+    const GiB = 1024 ** 3;
+    const size = 3 * 188;
+    const free = new Map<string, number>();
+    const at = { dir: DIR, folder: 'Hafenkanal', file: 'Nacht' };
+    const tight = new Library({
+      root: libRoot, recordingsRoot: recRoot, run: fakeRun,
+      // the two temp folders sit on one volume here; the seam answers per volume as if they were two
+      free: async (p) => free.get(p.startsWith(recRoot) ? 'rec' : 'lib') ?? null, sameVolume: async () => false,
+    });
+    // the recordings volume keeps the copy, its margin (1 GiB or 2 %) and the 2 GiB running recordings need
+    free.set('rec', size + GiB + 2 * GiB - 1).set('lib', 100 * GiB);
+    expect(await code(tight.export(ID, at))).toBe('storage_full');
+    free.set('rec', 100 * GiB).set('lib', size + GiB - 1);
+    expect(await code(tight.export(ID, at))).toBe('storage_full');
+    expect(readdirSync(libRoot).filter((n) => n !== MARKER)).toEqual([]); // no folder, no part file
+    expect(readdirSync(join(recRoot, DIR)).filter((n) => n.startsWith('.'))).toEqual([]); // no staging copy
+    expect(fake.calls).toEqual([]);
+    free.set('lib', size + GiB);
+    expect((await tight.export(ID, at)).path).toBe('Hafenkanal/Nacht.ts');
+    // one volume for both: it needs room for both
+    const one = new Library({ root: libRoot, recordingsRoot: recRoot, run: fakeRun, free: async () => 2 * size + 2 * GiB + 2 * GiB - 1, sameVolume: async () => true });
+    expect(await code(one.export(ID, at))).toBe('storage_full');
+  });
+
   it.skipIf(!existsSync('/usr/bin/ffmpeg') || !existsSync('/usr/bin/ffprobe'))('B-I8: a recording whose init changes mid-way exports as one file that decodes, both pictures in it', async () => {
     const dir = join(recRoot, DIR);
     mkdirSync(dir, { recursive: true });
