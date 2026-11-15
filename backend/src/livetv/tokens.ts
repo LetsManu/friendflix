@@ -29,6 +29,8 @@ import { channelAllowed } from './rights.js';
 export const LIVE_IDLE_TTL_S = 90;
 export const LIVE_TOUCH_MS = 20_000;
 export const LIVE_CAP_S = 12 * 3600;
+/** a recording token's absolute cap (B-M1): the longest recording (24 h + 30 min before + 2 h after) and the hour after it */
+export const REC_CAP_S = 28 * 3600;
 export const MAX_LIVE_TOKENS = 4;
 export const VIEW_TTL_S = 45;
 /** how long a rights decision of a token is reused (spec §7.1 "memo 2 s"); also the gateway's memo of an authz answer (`maxAgeS`) */
@@ -114,15 +116,16 @@ const rightsMemo = new Map<string, { exp: number; v: { userName: string; profile
  */
 export async function mintLiveToken(ctx: Ctx, rec: Omit<LiveTokenRec, 'exp' | 'createdAt'>, o: { capS?: number } = {}): Promise<{ token: string; hash: string; expiresAt: number }> {
   const now = Date.now();
-  const capS = Math.max(60, Math.min(LIVE_CAP_S, Math.ceil(o.capS ?? LIVE_CAP_S)));
+  const kind = rec.kind === 'rec' ? 'rec' : 'live';
+  const maxCap = kind === 'rec' ? REC_CAP_S : LIVE_CAP_S;
+  const capS = Math.max(60, Math.min(maxCap, Math.ceil(o.capS ?? LIVE_CAP_S)));
   const exp = now + capS * 1000;
   const token = randomBytes(32).toString('base64url');
   const hash = hashToken(token);
   const { test, ...rest } = rec;
-  const kind = rec.kind === 'rec' ? 'rec' : 'live';
   const full: LiveTokenRec = { ...rest, ...(test === true ? { test: true as const } : {}), kind, exp, createdAt: now };
   await ctx.kv.set(dataKey(hash), JSON.stringify(full), keyTtl(exp, now));
-  await ctx.kv.indexAdd(idxKey(rec.userId), hash, LIVE_CAP_S);
+  await ctx.kv.indexAdd(idxKey(rec.userId), hash, maxCap);
   if (kind === 'live') await ctx.kv.set(liveViewKey(hash), rec.channelId, VIEW_TTL_S);
   const me = { hash, rec: full };
   for (const t of await listTokens(ctx, rec.userId)) {
@@ -274,8 +277,15 @@ export async function beatLiveToken(ctx: Ctx, token: string, who: { userId: stri
   const rec = await load(ctx, hash);
   const now = Date.now();
   if (!rec || rec.exp <= now || rec.userId !== who.userId) return gone;
-  const ttl = keyTtl(rec.exp, now);
   if (!(await rightsOf(ctx, hash, rec))) return gone; // a refused token is no viewer: nothing slides, re-pins or refreshes
+  // a growing recording whose end moved later (followEpg): its token's end follows, within REC_CAP_S of the mint (B-M1)
+  if (kindOf(rec) === 'rec' && rec.recordingId) {
+    const until = (await ctx.db.query<{ until: Date }>(
+      "select end_at + make_interval(secs => pad_after_s) + interval '1 hour' as until from livetv_recordings where id = $1 and state = 'recording'", [rec.recordingId])).rows[0]?.until;
+    const exp = until ? Math.min(until.getTime(), rec.createdAt + REC_CAP_S * 1000) : rec.exp;
+    if (exp > rec.exp) rec.exp = exp;
+  }
+  const ttl = keyTtl(rec.exp, now);
   if (ttl <= 0 || !(await ctx.kv.replace(dataKey(hash), JSON.stringify(rec), ttl))) return gone; // never resurrects a revoked one
   if (rec.via === 'local' && rec.sidHash === who.sidHash) {
     await ctx.kv.set(pinKey(hash), who.ip, pinTtl(rec.exp, now));
@@ -372,7 +382,8 @@ async function touch(ctx: Ctx, hash: string, rec: StoredRec, owner: { userName: 
 
 /**
  * A recording's playback token (`/media/r/<token>/…`): a live token of kind `rec` (same keys, pins, idle 90 s, beat and the 4-per-account
- * cap), capped at `capS` (the remaining duration + 1 h; while growing its end + padding + 1 h). It is no viewer of its channel.
+ * cap), capped at `capS` (its duration + 1 h, so a re-watch from the start fits; while growing its end + padding + 1 h, moved along on
+ * the beat when the end moves), at most REC_CAP_S. It is no viewer of its channel.
  */
 export function mintRecToken(ctx: Ctx, rec: Omit<LiveTokenRec, 'exp' | 'createdAt' | 'kind' | 'recordingId' | 'test'> & { recordingId: string }, capS: number) {
   return mintLiveToken(ctx, { ...rec, kind: 'rec' }, { capS });

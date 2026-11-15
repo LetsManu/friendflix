@@ -14,7 +14,7 @@ import { exportToLibrary, usage } from './recstore.js';
 import { channelAllowed } from './rights.js';
 import { invalidateRecordingUses } from './streams.js';
 import { playEntryGate, profileChangedSince, streamLimitRefusal } from './routes.js';
-import { LIVE_CAP_S, liveSidHash, mintRecToken, revokeLiveToken } from './tokens.js';
+import { liveSidHash, mintRecToken, revokeLiveToken } from './tokens.js';
 import { isHomeRequest } from '../netaddr.js';
 
 /**
@@ -247,7 +247,7 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     const minted = await mintRecToken(ctx, {
       userId: u.id, profileId: profile.id, deviceId, sidHash: liveSidHash(req.sid!), recordingId: r.id, channelId: r.channel_id ?? '', channelName: r.channel_name,
       via, remote: !isHomeRequest(req, ctx.cfg.HOME_NETWORKS),
-    }, Math.min(LIVE_CAP_S, Math.ceil(capMs / 1000)));
+    }, Math.ceil(capMs / 1000)); // mintRecToken caps it at REC_CAP_S
     if (await profileChangedSince(ctx, req, profile.id)) {
       await revokeLiveToken(ctx, minted.hash);
       return reply.code(409).send({ error: 'profile_changed' });

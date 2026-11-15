@@ -518,6 +518,19 @@ describe('recording tokens (Phase 3)', () => {
     expect((await play(plan.id)).json()).toEqual({ error: 'not_ready' });
   });
 
+  it('B-M1: a long recording plays past 12 h; a growing one\'s token follows a later end on the beat', async () => {
+    const long = await rec({ profile_id: adminProfile, user_id: adminId, start_at: new Date(Date.now() - 22 * 3_600_000), end_at: new Date(Date.now() - 2 * 3_600_000), duration_s: 20 * 3600 });
+    const l = (await play(long.id)).json();
+    expect(l.expiresAt).toBeGreaterThan(Date.now() + 21 * 3_600_000 - 60_000); // its whole length + 1 h, not the 12 h of a live token
+    const r = await rec({ profile_id: adminProfile, user_id: adminId, state: 'recording', start_at: new Date(Date.now() - 600_000), end_at: new Date(Date.now() + 1_800_000), duration_s: 600 });
+    const b = (await play(r.id)).json();
+    // the programme runs 2 h longer (followEpg grew the end): the next beat moves the token's end along
+    await env.pool.query("update livetv_recordings set end_at = end_at + interval '2 hours' where id = $1", [r.id]);
+    const beat = await beatLiveToken(env.ctx, b.token, { userId: adminId, sidHash: liveSidHash(adm.cookies.ff_sid!), ip: IP1 });
+    expect(beat.ok && beat.expiresAt).toBeGreaterThan(b.expiresAt + 2 * 3_600_000 - 60_000);
+    expect((await authzRec(b.token)).statusCode).toBe(200);
+  });
+
   it('growing playlist is no-store: the authz says growing while it records; the cap follows its end', async () => {
     const r = await rec({ profile_id: adminProfile, user_id: adminId, state: 'recording', start_at: new Date(Date.now() - 600_000), end_at: new Date(Date.now() + 1_800_000), duration_s: 600 });
     const b = (await play(r.id)).json();
