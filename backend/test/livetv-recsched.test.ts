@@ -409,6 +409,20 @@ describe('finalisation and orphans (fix round 1)', () => {
     expect(recorders.has(starting)).toBe(true);
   });
 
+  it('N4: a due row whose start was given back (a post that timed out after livetv started it) keeps its recorder', async () => {
+    const id = await recording({ state: 'scheduled', start_at: new Date(Date.now() - MIN), end_at: new Date(Date.now() + HOUR) });
+    recorders.set(id, rec(id, nordlicht, { dir: (await getRecording(env.ctx, id))!.dir }));
+    await env.kv.set(`ltv:recretry:${id}`, '1', 60); // the start waits its minute
+    await tick();
+    expect(of('DELETE', `/v1/recordings/${id}`)).toEqual([]);
+    expect(recorders.has(id)).toBe(true);
+    // a plan whose padded start is still ahead has no business with a recorder: that one is stopped
+    const later = await recording({ channel_id: sternwarte, channel_name: 'Sternwarte 24', state: 'scheduled', start_at: new Date(Date.now() + HOUR), end_at: new Date(Date.now() + 2 * HOUR) });
+    recorders.set(later, rec(later, sternwarte, { dir: (await getRecording(env.ctx, later))!.dir }));
+    await tick();
+    expect(of('DELETE', `/v1/recordings/${later}`)).toHaveLength(1);
+  });
+
   it('A-I3: a resume racing a delete leaves no recorder behind', async () => {
     const id = await recording({ state: 'recording', mode: 'passthrough', start_at: new Date(Date.now() - 10 * 60_000), end_at: new Date(Date.now() + HOUR) });
     // livetv lost the recorder; the owner deletes the recording while the resume posts it again

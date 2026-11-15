@@ -515,15 +515,20 @@ async function closeLost(ctx: Ctx, r: RecRow): Promise<void> {
   });
 }
 
-/** stops livetv's recorders whose row does not record; removes the folder of a cancelled or gone row (never of another state) */
-async function reapOrphans(ctx: Ctx, list: RecorderView[]): Promise<void> {
+/**
+ * Stops livetv's recorders whose row does not record; removes the folder of a cancelled or gone row (never of another state). A due
+ * `scheduled` row (between its padded start and end) keeps its recorder (N4): its start was given back after livetv may have started it
+ * (a post that timed out), and the next start posts the same recorder again.
+ */
+async function reapOrphans(ctx: Ctx, list: RecorderView[], now: number): Promise<void> {
   const live = list.filter((e) => e.state === 'recording');
   if (!live.length) return;
-  const rows = new Map((await ctx.db.query<{ id: string; state: RecState; dir: string }>(
-    'select id, state, dir from livetv_recordings where id = any($1::uuid[])', [live.map((e) => e.id)])).rows.map((x) => [x.id, x] as const));
+  const rows = new Map((await ctx.db.query<Pick<RecRow, 'id' | 'state' | 'dir' | 'start_at' | 'end_at' | 'pad_before_s' | 'pad_after_s'>>(
+    'select id, state, dir, start_at, end_at, pad_before_s, pad_after_s from livetv_recordings where id = any($1::uuid[])', [live.map((e) => e.id)])).rows.map((x) => [x.id, x] as const));
   for (const e of live) {
     const row = rows.get(e.id);
     if (row && (row.state === 'recording' || row.state === 'starting')) continue;
+    if (row?.state === 'scheduled' && padStart(row) <= now && now < padEnd(row)) continue;
     await livetvCall(ctx, 'DELETE', `/v1/recordings/${e.id}`, undefined, { timeoutMs: CALL_TIMEOUT_MS }).catch(() => undefined);
     const dir = row?.dir ?? e.dir;
     if ((!row || row.state === 'cancelled') && UUID_RE.test(dir)) {
@@ -696,7 +701,7 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
 
     // (3b) orphans (A-I3, B-I3): a recorder livetv runs for a row that is not recording (cancelled, deleted, finished) is stopped; the
     // folder of a cancelled or gone row is removed too. A row being started (`starting`) is left to its launch.
-    if (list) await reapOrphans(ctx, list);
+    if (list) await reapOrphans(ctx, list, now);
 
     // (4) due stops: the recorder ends itself at its end; this is the net for a recorder that did not
     if (!(await renew())) return;
