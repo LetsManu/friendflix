@@ -42,7 +42,13 @@ export interface InputDeps {
   noAudio?: boolean;
   /** fixed texts only (no URL): how a separate audio rendition was aligned or why it restarts */
   log?: (m: string) => void;
+  /**
+   * the driver's resume points, kept across its runs (item 3): the provider number of the last segment each rendition delivered.
+   * openInput starts after them while the provider still lists them, and moves them on as segments are delivered.
+   */
+  resume?: Resume;
 }
+export interface Resume { video: number | null; audio: number | null }
 
 /**
  * The separate audio rendition of an HLS input could not be opened (its playlist failed, was refused or is encrypted); the video
@@ -149,6 +155,8 @@ interface Follow {
   side?: 'video' | 'audio';
   /** whether the other rendition of the pair carries the discontinuity at `s` too (then the run goes on) */
   peerDisc?: (s: Numbered) => Promise<boolean>;
+  /** a segment was delivered (its last bytes handed on) or skipped: a restart resumes after it */
+  onTaken?: (seq: number) => void;
   /** every playlist read (parsed and numbered), for the other rendition's `peerDisc` */
   onPlaylist?: (segs: Numbered[]) => void;
   onSkip?: () => void;
@@ -221,13 +229,26 @@ async function* hlsBytes(first: { text: string; base: string; url: string }, get
         if (failed >= SEGMENT_FAILS || (o.strict && hole > MAX_HOLE_S)) throw end('segments_failed');
         o.log?.(`${side}segment skipped after a retry (${r.failed})`);
         last = s.seq;
+        o.onTaken?.(s.seq);
         progress = Date.now();
         continue;
       }
       failed = 0;
       hole = 0;
-      yield* r.body;
-      last = s.seq;
+      // one chunk ahead: the segment counts as delivered (`onTaken`, a restart resumes after it) as its last bytes are handed on
+      const it = r.body[Symbol.asyncIterator]();
+      try {
+        let cur = await it.next();
+        if (cur.done) { last = s.seq; o.onTaken?.(s.seq); }
+        while (!cur.done) {
+          const nx = await it.next();
+          if (nx.done) { last = s.seq; o.onTaken?.(s.seq); }
+          yield cur.value;
+          cur = nx;
+        }
+      } finally {
+        await Promise.resolve(it.return?.()).catch(() => {});
+      }
       progress = Date.now();
     }
     if (f.take.length === 0 && Date.now() - progress >= advanceTimeoutMs(p.targetDuration)) throw end('not_advancing');
@@ -263,28 +284,42 @@ export interface Aligned {
  * - else by program date-time, when both carry it: the video's start segment and the audio segment that starts nearest to its
  *   date-time (at most one audio segment away); the rest is `shift`.
  * - else null: the sequences do not correspond and there is no date-time to go by; each starts at its own live edge (as before).
+ * `after` (a restart that resumes, item 3): the first number each rendition may start at (right after what the run before
+ * delivered). By sequence both start at the later of the two, which may be one the providers have not listed yet (both wait for
+ * it); by date-time at the first pair at or after them. A discontinuity in between is no reason to skip ahead then: the run goes
+ * on across one that both renditions carry.
  */
-export function alignStart(v: MediaPlaylist, a: MediaPlaylist): Aligned | null {
+export function alignStart(v: MediaPlaylist, a: MediaPlaylist, after: { video?: number; audio?: number } = {}): Aligned | null {
   const vs = number(v);
   const as = number(a);
   if (vs.length === 0 || as.length === 0) return null;
+  const resuming = after.video !== undefined || after.audio !== undefined;
   const hi = Math.min(vs.at(-1)!.seq, as.at(-1)!.seq);
   const lastDisc = (l: Numbered[], upTo: number) => l.reduce((m, s) => (s.discontinuity && s.seq <= upTo ? s.seq : m), -Infinity);
-  const lo = Math.max(vs[0]!.seq, as[0]!.seq, lastDisc(vs, hi), lastDisc(as, hi));
+  const lo = resuming ? Math.max(vs[0]!.seq, as[0]!.seq) : Math.max(vs[0]!.seq, as[0]!.seq, lastDisc(vs, hi), lastDisc(as, hi));
   if (v.targetDuration === a.targetDuration && lo <= hi) {
-    const from = Math.max(hi - START_SEGMENTS + 1, lo);
+    const from = resuming ? Math.max(lo, after.video ?? -Infinity, after.audio ?? -Infinity) : Math.max(hi - START_SEGMENTS + 1, lo);
     const vp = vs.find((s) => s.seq === from)?.pdt;
     const ap = as.find((s) => s.seq === from)?.pdt;
     if (vp === undefined || ap === undefined || Math.abs(vp - ap) <= v.targetDuration * 500) return { video: from, audio: from, shift: 0, by: 'sequence' };
   }
-  // by date-time: never before the newest discontinuity of either (a date-time does not carry across one)
-  const vMin = Math.max(0, vs.findIndex((s) => s.seq === lastDisc(vs, Infinity)));
-  const aMin = Math.max(0, as.findIndex((s) => s.seq === lastDisc(as, Infinity)));
-  const first = Math.max(vMin, vs.length - START_SEGMENTS);
   const order: number[] = [];
-  // the newest START_SEGMENTS first; older ones when the audio window lags behind; newer ones when it starts later
-  for (let i = first; i >= vMin; i--) order.push(i);
-  for (let i = first + 1; i < vs.length; i++) order.push(i);
+  let aMin: number;
+  if (resuming) {
+    // the first video segment at or after its resume point, then later ones; audio candidates at or after its own
+    const vi = after.video === undefined ? Math.max(0, vs.length - START_SEGMENTS) : vs.findIndex((s) => s.seq >= after.video!);
+    aMin = after.audio === undefined ? 0 : as.findIndex((s) => s.seq >= after.audio!);
+    if (vi < 0 || aMin < 0) return null;
+    for (let i = vi; i < vs.length; i++) order.push(i);
+  } else {
+    // by date-time: never before the newest discontinuity of either (a date-time does not carry across one)
+    const vMin = Math.max(0, vs.findIndex((s) => s.seq === lastDisc(vs, Infinity)));
+    aMin = Math.max(0, as.findIndex((s) => s.seq === lastDisc(as, Infinity)));
+    const first = Math.max(vMin, vs.length - START_SEGMENTS);
+    // the newest START_SEGMENTS first; older ones when the audio window lags behind; newer ones when it starts later
+    for (let i = first; i >= vMin; i--) order.push(i);
+    for (let i = first + 1; i < vs.length; i++) order.push(i);
+  }
   for (const i of order) {
     const t = vs[i]!.pdt;
     if (t === undefined) continue;
@@ -299,6 +334,15 @@ export function alignStart(v: MediaPlaylist, a: MediaPlaylist): Aligned | null {
   return null;
 }
 
+/**
+ * `r` (the provider number of the last segment a rendition delivered in the run before) when the playlist `p` still holds the
+ * one after it, or a stale read is a little behind it (follow); null when it left the window or the provider started over.
+ */
+function resumable(p: MediaPlaylist, r: number | null | undefined): number | null {
+  if (r === null || r === undefined || p.segments.length === 0) return null;
+  const newest = p.mediaSequence + p.segments.length - 1;
+  return r >= p.mediaSequence - 1 && r <= newest + p.segments.length ? r : null;
+}
 
 /** a push feed's ring as ffmpeg's stdin: no address, no URL; closed by the stop, by `close()` or by 20 s without data */
 function openPush(channelId: string, deps: InputDeps): OpenedInput {
@@ -385,7 +429,12 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     // the demuxer follows the playlist's first segment (L5, see segmentFormat)
     const first = media.segments[0];
     const format: PipeFormat = first ? segmentFormat(first.uri, first.map) : 'mpegts';
-    if (audioUri === null || audioList === null) return { ffInput: { kind: 'pipe', format, stdin: hlsBytes({ text, base, url }, get, ac.signal, { log }) }, close };
+    const resume = deps.resume;
+    const rv = resumable(media, resume?.video);
+    const onVideo = (seq: number) => { if (resume) resume.video = seq; };
+    if (audioUri === null || audioList === null) {
+      return { ffInput: { kind: 'pipe', format, stdin: hlsBytes({ text, base, url }, get, ac.signal, { from: rv === null ? null : rv + 1, log, onTaken: onVideo }) }, close };
+    }
     // audio in a playlist of its own: fetched and followed like the video one (same guard, same limits), as a second pipe. Either
     // one ending its run ends both (ffmpeg sees EOF, the driver backs off, restarts and aligns them again), so a stream never
     // runs video-only or out of sync unnoticed. A rendition that cannot be opened is AudioUnavailable: the driver decides.
@@ -401,7 +450,8 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     }
     const afirst = amedia.segments[0];
     const aformat: PipeFormat = afirst ? segmentFormat(afirst.uri, afirst.map) : 'mpegts';
-    const al = alignStart(media, amedia);
+    const ra = resumable(amedia, resume?.audio);
+    const al = alignStart(media, amedia, { ...(rv !== null ? { video: rv + 1 } : {}), ...(ra !== null ? { audio: ra + 1 } : {}) });
     if (!al) log('separate audio: no common media sequence or program date-time, each rendition starts at its live edge');
     const onSkip = () => log('separate audio: a rendition skipped, both restart to align again');
     // what each rendition's playlist showed last, so the other can tell whether a discontinuity is in both
@@ -426,10 +476,12 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     };
     const followOf = (side: 'video' | 'audio', from: number | null) => ({
       from, strict: true, side, onSkip, log, peerDisc: peerDisc(side), onPlaylist: (l: Numbered[]) => { seen[side] = l; },
+      onTaken: (seq: number) => { if (resume) resume[side] = seq; },
     });
-    const video = hlsBytes({ text, base, url }, get, ac.signal, followOf('video', al?.video ?? null));
+    // without an alignment each starts at its own resume point, else at its own live edge
+    const video = hlsBytes({ text, base, url }, get, ac.signal, followOf('video', al?.video ?? (rv === null ? null : rv + 1)));
     // re-polled at the rendition's own URL (a redirect target may carry a token that expires), like the video playlist
-    const audio = hlsBytes({ text: ar.text, base: ar.url, url: audioUri }, get, ac.signal, followOf('audio', al?.audio ?? null));
+    const audio = hlsBytes({ text: ar.text, base: ar.url, url: audioUri }, get, ac.signal, followOf('audio', al?.audio ?? (ra === null ? null : ra + 1)));
     let videoBytes = 0;
     let audioBytes = 0;
     let audioFailed = false;

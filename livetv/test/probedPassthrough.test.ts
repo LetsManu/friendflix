@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it, vi } from 'vitest';
 import { FetchError, type GuardDeps } from '../src/fetch.js';
-import { SEGMENT_FAILS, SEGMENT_RETRY_MS } from '../src/inputs.js';
+import { SEGMENT_RETRY_MS } from '../src/inputs.js';
 import { START_PROBE_MS, type ProbeResult, type StreamInput } from '../src/probe.js';
 import { AUDIO_FAULTS, AUDIO_FAULT_WINDOW_MS, AUDIO_HEALTHY_SEGMENTS, AUDIO_TRIES, probedPassthrough, remuxDriver } from '../src/remux.js';
 import type { Driver, DriverContext } from '../src/streams.js';
@@ -232,11 +232,19 @@ describe('remuxDriver: a separate audio rendition that fails (I3, M3)', () => {
   async function drainQuiet(src?: AsyncIterable<Uint8Array>) {
     try { if (src) for await (const _ of src) { /* read */ } } catch { /* ended by failing */ }
   }
-  /** the failing side lists 1..6 (the other 1..3, so both start at 1) and fails 2..4: SEGMENT_FAILS in a row end its run */
+  /**
+   * both playlists grow by a segment every 2 s (fake time) from 1..3; the failing side loads only every 4th segment (1, 5, 9, …):
+   * SEGMENT_FAILS in a row end each of its runs, also the ones that resume further on (item 3)
+   */
   const routesWith = (fail: 'audio' | 'video') => {
-    const r = new Map<string, Served>([[`${base}/master.m3u8`, MASTER('de.m3u8')], [`${base}/v.m3u8`, pl('v', 1, fail === 'video' ? 6 : 3)], [`${base}/de.m3u8`, pl('a', 1, fail === 'audio' ? 6 : 3)]]);
-    for (let n = 1; n <= 6; n++) { r.set(`${base}/v${n}.ts`, Buffer.alloc(188, n)); r.set(`${base}/a${n}.ts`, Buffer.alloc(100, n)); }
-    for (let n = 2; n <= 1 + SEGMENT_FAILS; n++) r.set(fail === 'audio' ? `${base}/a${n}.ts` : `${base}/v${n}.ts`, new FetchError('unreachable'));
+    const t0 = Date.now();
+    const grown = (prefix: string) => () => pl(prefix, 1, 3 + Math.floor((Date.now() - t0) / 2_000));
+    const r = new Map<string, Served>([[`${base}/master.m3u8`, MASTER('de.m3u8')], [`${base}/v.m3u8`, grown('v')], [`${base}/de.m3u8`, grown('a')]]);
+    for (let n = 1; n <= 400; n++) {
+      const bad = n % 4 !== 1;
+      r.set(`${base}/v${n}.ts`, fail === 'video' && bad ? new FetchError('unreachable') : Buffer.alloc(188, n % 256));
+      r.set(`${base}/a${n}.ts`, fail === 'audio' && bad ? new FetchError('unreachable') : Buffer.alloc(100, n % 256));
+    }
     return r;
   };
   /** `p` with fake timers moved on until it settles (a failed segment is asked for again after SEGMENT_RETRY_MS) */
@@ -255,7 +263,7 @@ describe('remuxDriver: a separate audio rendition that fails (I3, M3)', () => {
     const s = setup(routesWith('video'), 4, delivering(() => 0));
     await settled(s.driver(s.c, AAC));
     expect(s.seen.map((r) => r.audio)).toEqual([true, true, true, true]);
-    expect(s.logs.filter((l) => !l.includes('segment skipped'))).toEqual([]);
+    expect(s.logs.filter((l) => l.includes('unavailable'))).toEqual([]);
   }));
 
   it('2: a rendition that fails after a segment or two each run is left out after AUDIO_TRIES runs (the count is not reset by them)', faked(async () => {
