@@ -69,7 +69,7 @@
 </div>
 
 <style>
-  .wrap { position: fixed; inset: 0; background: #000; z-index: 40; }
+  .wrap { position: fixed; left: 0; top: 0; right: 0; bottom: 0; background: #000; z-index: 40; }
   .wrap :global(.stage) { height: 100%; }
   .top { padding: calc(.8rem + var(--safe-top)) max(1rem, var(--safe-right)) .8rem max(1rem, var(--safe-left)); display: flex; align-items: center; gap: .6rem; background: linear-gradient(rgba(0, 0, 0, .8), transparent); }
   .ttl { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; line-height: 1.2; }

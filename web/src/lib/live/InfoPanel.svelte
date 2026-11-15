@@ -75,14 +75,16 @@
         <p class="ti">{lines.now}</p>
         <p class="sub">{lines.next ?? ''}</p>
       {/if}
-      <div class="rslot" class:two={canRecord && prog}>
-        {#if canRestart}<button type="button" class="frost-btn act" on:click={() => dispatch('restart')}>{$t('live.player.restart')}</button>{:else if canRecord && prog}<span></span>{/if}
-        {#if canRecord && prog}{@const p0 = prog}
-          <button type="button" class="frost-btn act rbtn" on:click={() => dispatch('record', p0)}>
-            <span class="dot" class:on={nowRec !== null} aria-hidden="true"></span>{nowRec ? $t(nowRec.state === 'recording' ? 'live.rec.recordingNow' : 'live.rec.planned') : $t('live.guide.record')}
-          </button>
-        {/if}
+      <div class="rslot">
+        {#if canRestart}<button type="button" class="frost-btn act" on:click={() => dispatch('restart')}>{$t('live.player.restart')}</button>{/if}
       </div>
+      {#if canRecord && prog}{@const p0 = prog}
+        <div class="rslot">
+          <button type="button" class="frost-btn act rbtn" on:click={() => dispatch('record', p0)}>
+            <span class="dot" class:on={nowRec !== null} aria-hidden="true"></span><span class="rl">{nowRec ? $t(nowRec.state === 'recording' ? 'live.rec.recordingNow' : 'live.rec.planned') : $t('live.guide.record')}</span>
+          </button>
+        </div>
+      {/if}
     </div>
     {#if prog && channel.next}{@const nx = channel.next}
       <div class="blk">
@@ -91,7 +93,7 @@
         {#if canRecord}
           <div class="rslot">
             <button type="button" class="frost-btn act rbtn" on:click={() => dispatch('record', nx)}>
-              <span class="dot" class:on={nextRec !== null} aria-hidden="true"></span>{nextRec ? $t(nextRec.state === 'recording' ? 'live.rec.recordingNow' : 'live.rec.planned') : $t('live.guide.record')}
+              <span class="dot" class:on={nextRec !== null} aria-hidden="true"></span><span class="rl">{nextRec ? $t(nextRec.state === 'recording' ? 'live.rec.recordingNow' : 'live.rec.planned') : $t('live.guide.record')}</span>
             </button>
           </div>
         {/if}
@@ -126,8 +128,10 @@
   .pg { height: 3px; margin-top: 6px; border-radius: 2px; background: rgba(255, 255, 255, .2); overflow: hidden; }
   .pg i { display: block; height: 100%; background: #fff; transform-origin: left center; }
   .rslot { min-height: 44px; margin-top: 12px; }
-  .rslot.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .rslot + .rslot { margin-top: 10px; }
+  /* one line whatever the state says: the button never grows */
   .rbtn { gap: 8px; }
+  .rl { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* the red dot: an outline while nothing is recorded, filled when it is (paired with the text, never colour alone) */
   .dot { flex: none; width: 10px; height: 10px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--err-mark); }
   .dot.on { background: var(--err-mark); }

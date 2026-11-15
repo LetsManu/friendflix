@@ -81,8 +81,9 @@
   }
   .rtile { transition: transform 200ms var(--fr-out); }
   .rtile:hover:not(:disabled) { transform: translateY(-2px); }
-  .pic { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 9; border-radius: var(--fr-r-tile); overflow: hidden; background: rgba(255, 255, 255, .07); box-shadow: inset 0 0 0 1px var(--fr-line); }
-  .pic img { width: 30%; height: auto; max-height: 60%; object-fit: contain; opacity: 0; transition: opacity 200ms var(--fr-out); }
+  /* 16:9 by its padding (the TV engines are Chromium 85, see compat.test.ts) */
+  .pic { position: relative; display: block; height: 0; padding-top: 56.25%; border-radius: var(--fr-r-tile); overflow: hidden; background: rgba(255, 255, 255, .07); box-shadow: inset 0 0 0 1px var(--fr-line); }
+  .pic img { position: absolute; left: 35%; top: 20%; width: 30%; height: 60%; object-fit: contain; opacity: 0; transition: opacity 200ms var(--fr-out); }
   .pic :global(img.in) { opacity: 1; }
   /* the running badge keeps its corner whether shown or not */
   .live { position: absolute; left: 8px; top: 8px; display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 0 8px; border-radius: 999px; font-size: .8rem; font-weight: 700; opacity: 0; }
@@ -106,6 +107,7 @@
   /* TV: 1u = 1 px at 1080p; tiles of 360 px, 28 px text, the focus ring and scale 1.08 (one focused element) */
   .tv { --u: calc(100vw / 1920); margin: calc(var(--u) * 28) 0; padding: 0 calc(var(--u) * 28); }
   .tv h2 { font-size: calc(var(--u) * 36); }
+  .tv .all { min-height: 54px; font-size: calc(var(--u) * 28); }
   .tv .tiles { gap: calc(var(--u) * 28); padding: calc(var(--u) * 16) calc(var(--u) * 8); }
   .tv .tiles > li { width: calc(var(--u) * 360); }
   .tv.wrap .tiles { grid-template-columns: repeat(auto-fill, calc(var(--u) * 360)); }

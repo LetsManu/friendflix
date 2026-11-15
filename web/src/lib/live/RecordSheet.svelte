@@ -276,7 +276,9 @@
   }
   /* TV: 54 px targets, 28 px text at 1080p */
   :global(html.tv) .rsheet { width: calc(100vw / 1920 * 760); font-size: calc(100vw / 1920 * 28); }
-  :global(html.tv) .rsheet button { min-height: 54px; }
+  :global(html.tv) .rsheet button { min-height: 54px; font-size: calc(100vw / 1920 * 28); }
+  :global(html.tv) .rsheet h2 { font-size: calc(100vw / 1920 * 36); }
+  :global(html.tv) .rsheet :global(label), :global(html.tv) .rsheet .sv, :global(html.tv) .rsheet .cline { font-size: calc(100vw / 1920 * 28); }
   :global(html.tv) .sb, :global(html.tv) .x { width: 54px; height: 54px; }
   :global(html.tv) .cslot { min-height: calc(3 * 1.35em + 54px + 18px); }
 </style>

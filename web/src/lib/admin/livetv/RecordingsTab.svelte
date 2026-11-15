@@ -145,7 +145,7 @@
     { key: 'time', label: $t('adminLive.recTab.colTime'), value: (r: Row) => when(r), sort: (a: Row, b: Row) => Date.parse(a.start) - Date.parse(b.start) },
     { key: 'mode', label: $t('adminLive.recTab.colMode'), value: (r: Row) => modeWord(r.mode) },
     { key: 'state', label: $t('adminLive.recTab.colState'), value: (r: Row) => stateText(r) },
-    { key: 'act', label: '', hideLabel: true, filter: false, sortable: false, align: 'end' },
+    { key: 'act', label: '', hideLabel: true, filter: false, sortable: false, align: 'end', width: '9.5rem' },
   ] as Column<Row>[];
   async function cancel(r: Row): Promise<void> {
     const res = await runAction({
@@ -299,5 +299,7 @@
   .uline { margin: 0; font-variant-numeric: tabular-nums; }
   form { display: grid; gap: .25rem; }
   .table { min-height: 8rem; }
+  /* *Abbrechen* and the mode words stay on one line */
+  .table :global(td.al-end), .table :global(td.al-end button) { white-space: nowrap; }
   .dh { margin: 0 0 .8rem; }
 </style>
