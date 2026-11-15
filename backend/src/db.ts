@@ -1260,6 +1260,7 @@ export const MIGRATIONS: string[] = [
     visibility text not null default 'private' check (visibility in ('private','account','everyone')),
     shared_by uuid references users(id) on delete set null,
     watched_at timestamptz, delete_warned_at timestamptz, delete_after timestamptz,
+    end_pending timestamptz, -- a longer end (programme overran) livetv has not acknowledged yet: sent again every tick until it is
     files_purged boolean not null default false, -- set by the delete path once livetv removed the files (the trigger below then queues nothing)
     created_at timestamptz not null default now(),
     check (end_at > start_at),

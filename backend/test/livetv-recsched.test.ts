@@ -34,6 +34,7 @@ const streams = new Map<string, StreamView>();
 const recorders = new Map<string, RecorderView>();
 let up = true;
 let recPostStatus = 200;
+let patchStatus = 200;
 let closeAnswer: Omit<RecorderView, 'id' | 'dir' | 'since'> | null = null;
 let free = 100 * 1024 ** 3;
 let keyN = 0;
@@ -65,7 +66,7 @@ function fakeLivetv() {
       if (!recorders.has(id) || recorders.get(id)!.state !== 'recording') recorders.set(id, rec(id, String(b.channelId)));
       return { json: { state: 'recording', segments: 'ts' } };
     },
-    'PATCH /v1/recordings/[0-9a-f-]+': () => ({ json: { ok: true } }),
+    'PATCH /v1/recordings/[0-9a-f-]+': () => (patchStatus === 200 ? { json: { ok: true } } : { status: patchStatus, json: { error: 'unavailable' } }),
     'DELETE /v1/recordings/[0-9a-f-]+': (u) => {
       const r = recorders.get(u.pathname.split('/').pop()!);
       if (!r) return { status: 404, json: { error: 'not_found' } };
@@ -140,7 +141,7 @@ beforeEach(async () => {
     delete from livetv_channels; delete from livetv_group_roles; delete from livetv_groups; delete from livetv_sources`);
   for (const p of ['ltv', 'conv:', 'play:']) for (const k of await env.kv.keys(p)) await env.kv.del(k);
   streams.clear(); recorders.clear(); calls.length = 0;
-  up = true; recPostStatus = 200; free = 100 * 1024 ** 3; closeAnswer = null;
+  up = true; recPostStatus = 200; patchStatus = 200; free = 100 * 1024 ** 3; closeAnswer = null;
   fakeLivetv();
   await detectLivetv(env.ctx, 0, { strict: true });
   invalidateLiveConversions();
@@ -285,6 +286,24 @@ describe('EPG follow', () => {
     await env.pool.query('update livetv_sources set epg_shift_min = -30 where id = $1', [src]);
     await followEpg(env.ctx);
     expect((await getRecording(env.ctx, r!.id))!.start_at.getTime()).toBe(t - 30 * MIN);
+  });
+
+  it('A-I7: a longer end livetv did not take is sent again on every tick until it is', async () => {
+    const start = Date.now() - 10 * MIN;
+    await prog('Nordlicht TV.de', start, { episode: 'S01E01', minutes: 60 });
+    const id = await recording({ state: 'recording', mode: 'passthrough', follow_epg: true, prog_key: progKey({ title: 'Die Leuchtturmwärter', episode: 'S01E01' }), start_at: new Date(start), end_at: new Date(start + HOUR) });
+    streams.set(nordlicht, view(nordlicht));
+    recorders.set(id, rec(id, nordlicht));
+    await env.pool.query("update livetv_programmes set end_at = end_at + interval '20 minutes'");
+    patchStatus = 503;
+    await tick();
+    await tick();
+    patchStatus = 200;
+    await tick();
+    await tick();
+    const want = { endAt: start + 80 * MIN + 300_000 };
+    expect(of('PATCH', `/v1/recordings/${id}`).map((c) => c.body)).toEqual([want, want, want]);
+    expect((await env.pool.query('select end_pending from livetv_recordings where id = $1', [id])).rows[0].end_pending).toBeNull();
   });
 
   it('a started recording grows when the programme end moves later, never shrinks', async () => {

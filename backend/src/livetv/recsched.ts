@@ -338,7 +338,10 @@ async function grow(ctx: Ctx, r: RecRow): Promise<number | null> {
   const best = list.filter((p) => progKey(p) === r.prog_key).sort((a, b) => Math.abs(a.start - at) - Math.abs(b.start - at))[0];
   const end = r.end_at.getTime();
   if (!best || best.end <= end || best.end > end + FOLLOW_WINDOW_MS) return null;
-  const u = await ctx.db.query("update livetv_recordings set end_at = $2 where id = $1 and state = 'recording' and end_at < $2", [r.id, new Date(best.end)]);
+  // the new end and the recorder's end to send are stored together; the PATCH goes out on every tick until livetv takes it (A-I7)
+  const u = await ctx.db.query(
+    "update livetv_recordings set end_at = $2, end_pending = $2::timestamptz + make_interval(secs => pad_after_s) where id = $1 and state = 'recording' and end_at < $2",
+    [r.id, new Date(best.end)]);
   return u.rowCount ? best.end : null;
 }
 
@@ -479,6 +482,20 @@ async function collect(ctx: Ctx, r: RecRow, e: RecorderView): Promise<void> {
   await finishHooks.finished?.(ctx, row).catch(() => undefined);
 }
 
+/** the recorder's longer end (A-I7): sent until livetv acknowledges it; a refusal is logged as a code and tried again next tick */
+async function sendPendingEnd(ctx: Ctx, id: string): Promise<void> {
+  const p = (await ctx.db.query<{ end_pending: Date | null }>("select end_pending from livetv_recordings where id = $1 and state = 'recording'", [id])).rows[0]?.end_pending;
+  if (!p) return;
+  try {
+    await livetvCall(ctx, 'PATCH', `/v1/recordings/${id}`, { endAt: p.getTime() }, { timeoutMs: CALL_TIMEOUT_MS });
+  } catch (e) {
+    if (!(e instanceof LivetvError)) throw e;
+    logCode(ctx, `extend-${/^[a-z_]{1,40}$/.test(e.code) ? e.code : 'failed'}`);
+    return;
+  }
+  await ctx.db.query('update livetv_recordings set end_pending = null where id = $1 and end_pending = $2', [id, p]);
+}
+
 /** finalises a recording whose recorder livetv lost after its end (B-I2); a missing folder fails it `stream_gone` */
 async function closeLost(ctx: Ctx, r: RecRow): Promise<void> {
   let facts: RecorderView | null;
@@ -553,7 +570,7 @@ async function launch(ctx: Ctx, r: RecRow, token: string, owner: Owner, now: num
   const due = Math.max(r.start_at.getTime(), r.created_at.getTime());
   const late = now - due > LATE_START_MS ? [{ from: due, to: now }] : [];
   const u = resume
-    ? await ctx.db.query("update livetv_recordings set claim_token = null, claim_until = null where id = $1 and state = 'recording' and claim_token = $2", [r.id, token])
+    ? await ctx.db.query("update livetv_recordings set claim_token = null, claim_until = null, end_pending = null where id = $1 and state = 'recording' and claim_token = $2", [r.id, token])
     : await ctx.db.query(
       `update livetv_recordings set state = 'recording', mode = $2, segments = $3, gaps = $4::jsonb, claim_token = null, claim_until = null
         where id = $1 and state = 'starting' and claim_token = $5`,
@@ -653,8 +670,8 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
           // progress, and gaps seen so far (kept across a livetv restart, which starts the recorder's own list anew)
           await ctx.db.query("update livetv_recordings set bytes = $2, duration_s = $3, gaps = $4::jsonb where id = $1 and state = 'recording'",
             [r.id, e.bytes, e.durationS, JSON.stringify(mergeGaps(r.gaps, e.gaps))]);
-          const end = await grow(ctx, r);
-          if (end !== null) await livetvCall(ctx, 'PATCH', `/v1/recordings/${r.id}`, { endAt: end + r.pad_after_s * 1000 }, { timeoutMs: CALL_TIMEOUT_MS }).catch(() => undefined);
+          await grow(ctx, r);
+          await sendPendingEnd(ctx, r.id);
         }
         // livetv lost the recorder (a restart: new bootId), or its stream stopped: start the stream again and resume into the same folder
         if (w && r.channel_id && (!e || (running !== null && !running.has(r.channel_id))) && !(await ctx.kv.get(retryKey(r.id)).catch(() => null))) {

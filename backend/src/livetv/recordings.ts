@@ -62,6 +62,7 @@ export interface RecRow {
   delete_warned_at: Date | null;
   delete_after: Date | null;
   files_purged: boolean;
+  end_pending: Date | null;
   created_at: Date;
 }
 
