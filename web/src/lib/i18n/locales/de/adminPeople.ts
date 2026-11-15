@@ -372,7 +372,7 @@ export default {
     delete: 'Löschen',
     history: 'Verlauf',
     deleteMove: '{people} und {invites} bekommen die Rolle:',
-    compare: { title: 'Rollen vergleichen', tab: 'Vergleichen', cell: '{cell}, bearbeiten' },
+    compare: { title: 'Rollen vergleichen', tab: 'Vergleichen', cell: '{cell}, bearbeiten', qArea: 'Wer hat den Bereich „{area}“?', qGroups: 'Welche Kanalgruppen sieht jede Rolle?' },
     compareQValue: '{right} je Rolle',
     q: {
       transcoding: 'Wer darf umwandeln?',

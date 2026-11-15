@@ -370,7 +370,7 @@ const dict: Translation<typeof de> = {
     delete: 'Sil',
     history: 'Geçmiş',
     deleteMove: '{people} ve {invites} şu rolü alır:',
-    compare: { title: 'Rolleri karşılaştır', tab: 'Karşılaştır', cell: '{cell}, düzenle' },
+    compare: { title: 'Rolleri karşılaştır', tab: 'Karşılaştır', cell: '{cell}, düzenle', qArea: '“{area}” alanı kimde var?', qGroups: 'Her rol hangi kanal gruplarını görüyor?' },
     compareQValue: 'Role göre {right}',
     q: {
       transcoding: 'Kimler dönüştürebilir?',

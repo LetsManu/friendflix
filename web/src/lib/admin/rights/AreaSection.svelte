@@ -53,7 +53,7 @@
   <h3 id="{id}-t">{#if icon}<Icon name={icon} size={18} />{/if}<span>{title}</span></h3>
   {#if fields.length}<div class="fields">
   {#each fields as f (f.key)}
-    <div class="fr" class:staged={isStaged(stage, f)} class:locked={!!locks[f.key]} data-field={f.key}>
+    <div class="fr" class:staged={isStaged(stage, f)} data-field={f.key}>
       <FieldControl field={f} value={valueOf(stage, f, locks)} libraries={matrix.libraries} disabled={disabled || !!locks[f.key]} keepOne={role.base === 'admin'} reserveNone={false}
         on:change={(e) => dispatch('change', { key: f.key, value: e.detail })} />
       <p class="mark">{mark(stage, f, locks, $locale)}</p>

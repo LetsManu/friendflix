@@ -370,7 +370,7 @@ const dict: Translation<typeof de> = {
     delete: 'Delete',
     history: 'History',
     deleteMove: '{people} and {invites} get the role:',
-    compare: { title: 'Compare roles', tab: 'Compare', cell: '{cell}, edit' },
+    compare: { title: 'Compare roles', tab: 'Compare', cell: '{cell}, edit', qArea: 'Who has the {area} area?', qGroups: 'Which channel groups does each role see?' },
     compareQValue: '{right} by role',
     q: {
       transcoding: 'Who may transcode?',

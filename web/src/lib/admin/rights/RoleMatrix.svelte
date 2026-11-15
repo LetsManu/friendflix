@@ -10,7 +10,7 @@
    * here edits: no popover, no drag, no column menu (the role page is the one editor, so its rules hold everywhere).
    *   <RoleMatrix bind:this={view} {matrix} />
    */
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { locale, t, tr } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
   import { areaLabel } from './areas';
@@ -56,6 +56,24 @@
     cells[key(to)]?.focus();
   }
 
+  // ---- the head's real height (names on two lines, people on two, the .env line): the sticky group rows sit right under it and a
+  // focused cell scrolls clear of it (`--head-h`, written once per change; review fix round 1, I1)
+  let scroller: HTMLElement, head: HTMLElement;
+  onMount(() => {
+    let last = 0;
+    const sync = () => {
+      const h = Math.ceil(head.getBoundingClientRect().height);
+      if (h === last || h <= 0) return;
+      last = h;
+      scroller.style.setProperty('--head-h', `${h}px`);
+    };
+    sync();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(sync);
+    ro.observe(head);
+    return () => ro.disconnect();
+  });
+
   /** moves the focus to a column head's link (the page crossed 900 px with the focus on that role) */
   export async function focusHead(k: string): Promise<void> {
     await tick();
@@ -64,10 +82,10 @@
 </script>
 
 <div class="matrix panel">
-  <div class="matrix-scroll">
+  <div class="matrix-scroll" bind:this={scroller}>
     <!-- the grid owns the keys of its cells (onKey) -->
     <table role="grid" aria-label={$t('adminPeople.roles.matrixLabel')} aria-readonly="true" on:keydown={onKey}>
-      <thead>
+      <thead bind:this={head}>
         <tr>
           <th scope="col" class="corner">{$t('adminPeople.roles.fieldCol')}</th>
           {#each roles as role (role.key)}
@@ -94,10 +112,10 @@
                   <td role="gridcell" class:wrap={row.kind === 'groups'}>
                     <a class="cl" href={x.href} data-cell="{r}:{c}" bind:this={cells[`${r}:${c}`]} tabindex={focus} aria-label={x.label} title={tip(role, row, false, x.src, $locale)}
                       on:focus={() => (active = { r, c })}>
-                      <span class="chip" class:bool={x.bool} class:off={x.bool && !x.value} class:names={row.kind === 'groups'} aria-hidden="true">
+                      <!-- the dot sits on its chip (a wide last column would leave it far away at the cell's edge) -->
+                      <span class="cv"><span class="chip" class:bool={x.bool} class:off={x.bool && !x.value} class:names={row.kind === 'groups'} aria-hidden="true">
                         {#if x.bool}<Icon name={x.value ? 'check' : 'x'} size={16} />{:else}{x.text}{/if}
-                      </span>
-                      {#if x.src}<span class="dot" class:env={x.src === 'env'} aria-hidden="true"></span>{/if}
+                      </span>{#if x.src}<span class="dot" class:env={x.src === 'env'} aria-hidden="true"></span>{/if}</span>
                     </a>
                   </td>
                 {:else}
@@ -123,11 +141,12 @@
   .matrix.panel { padding: 0; overflow: hidden; margin-bottom: 0; }
   .matrix-scroll { overflow: auto; max-height: calc(100vh - var(--nav-total, 64px) - 12rem); min-height: 16rem;
     /* a focused cell scrolls clear of the sticky head row, group row and first column */
-    scroll-padding: calc(var(--head-h) + var(--group-h)) 0 0 var(--first-w); --head-h: 6.2rem; --group-h: 2.2rem; --first-w: 11rem; }
+    scroll-padding: calc(var(--head-h) + var(--group-h)) 0 0 var(--first-w); --head-h: 7.4rem; --group-h: 2.2rem; --first-w: 11rem; }
   table { border-collapse: separate; border-spacing: 0; min-width: 100%; font-size: .92rem; }
   th, td { box-sizing: border-box; }
-  thead th { position: sticky; top: 0; z-index: 2; height: var(--head-h); background: var(--fr-solid); border-bottom: 1px solid var(--fr-line); vertical-align: bottom; padding: .6rem .8rem; text-align: left; }
-  .corner { left: 0; z-index: 4; width: var(--first-w); min-width: var(--first-w); font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--mut); }
+  /* the head is painted over the group rows and the first column that scroll under it; its height is measured (--head-h) */
+  thead th { position: sticky; top: 0; z-index: 5; background: var(--fr-solid); border-bottom: 1px solid var(--fr-line); vertical-align: bottom; padding: .6rem .8rem; text-align: left; }
+  .corner { left: 0; z-index: 6; width: var(--first-w); min-width: var(--first-w); font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--mut); }
   .rh { min-width: 9rem; padding: .4rem .6rem .5rem .8rem; vertical-align: top; }
   /* the head: the name is a 44 px link to the role page (the text clamps to two lines inside it), the people under it */
   .rn { display: flex; align-items: center; min-height: 44px; min-width: 44px; max-width: 100%; border-radius: 6px; color: inherit; font-weight: 800; font-size: .98rem; text-decoration: none; }
@@ -160,6 +179,7 @@
   td:focus-visible { box-shadow: none; }
   .lk { margin-left: .35rem; color: var(--mut); display: inline-grid; vertical-align: middle; }
   /* a value set for this role (or from .env): the small dot; its words are the tooltip and the cell's name */
-  .dot { position: absolute; top: 9px; right: 10px; width: 7px; height: 7px; border-radius: 50%; background: var(--info); }
+  .cv { position: relative; display: inline-flex; max-width: 100%; }
+  .dot { position: absolute; top: -2px; right: -3px; width: 7px; height: 7px; border-radius: 50%; background: var(--info); }
   .dot.env { background: transparent; box-shadow: inset 0 0 0 1.5px var(--info); }
 </style>

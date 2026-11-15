@@ -61,7 +61,7 @@ test.describe('Rollen & Rechte (phone)', () => {
   test('Vergleich: no question repeats the label ("Wer darf Darf …")', async ({ page }) => {
     await page.goto('/admin/roles');
     await compare(page).click();
-    const pick = page.getByRole('combobox', { name: /^Wer darf|je Rolle$/ });
+    const pick = page.getByRole('combobox', { name: /^Wer |je Rolle$|^Welche / });
     const values = await pick.locator('option').evaluateAll((o) => o.map((x) => (x as HTMLOptionElement).value));
     expect(values.length).toBeGreaterThan(5);
     for (const v of values) {
@@ -79,7 +79,7 @@ test.describe('Rollen & Rechte (phone)', () => {
     await tabs.getByRole('tab', { name: 'Vergleichen' }).click();
     await expect(tabs.getByRole('tab', { name: 'Vergleichen' })).toHaveAttribute('aria-selected', 'true');
     await expect(roleList(page)).toHaveCount(0);
-    const pick = page.getByRole('combobox', { name: /^Wer darf|je Rolle$/ });
+    const pick = page.getByRole('combobox', { name: /^Wer |je Rolle$|^Welche / });
     await pick.selectOption('cast');
     await expect(pick).toHaveAccessibleName('Wer darf auf Fernseher übertragen?');
     // read-only: each role's value in words and a 44 px link to its page at that right; no control to change it here
@@ -87,13 +87,14 @@ test.describe('Rollen & Rechte (phone)', () => {
     await expect(rows.getByRole('listitem').filter({ hasText: 'Gast' })).toContainText('erlaubt');
     await expect(rows.getByRole('listitem').filter({ hasText: 'Freund' })).toContainText('erlaubt');
     await expect(page.getByRole('switch')).toHaveCount(0);
-    const edit = rows.getByRole('link', { name: 'Rolle „Gast“ bearbeiten' });
+    // the link names the role, the right and its value
+    const edit = rows.getByRole('link', { name: 'Gast, Auf Fernseher übertragen: erlaubt, bearbeiten' });
     await expect(edit).toHaveText('Bearbeiten');
     await expect(edit).toHaveAttribute('href', '/admin/roles/guest?field=cast');
     const box = (await edit.boundingBox())!;
     expect(box.height).toBeGreaterThanOrEqual(44);
     // the admin's switches are locked: said so, no link
-    await expect(rows.getByRole('link', { name: 'Rolle „Admin“ bearbeiten' })).toHaveCount(0);
+    await expect(rows.getByRole('link', { name: /^Admin,/ })).toHaveCount(0);
     await expect(rows.getByText('Admins dürfen immer alles')).toBeVisible();
     await expect(bar(page)).toHaveCount(0);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
@@ -102,18 +103,36 @@ test.describe('Rollen & Rechte (phone)', () => {
     await expect(page.getByRole('switch', { name: 'Auf Fernseher übertragen' })).toBeFocused();
   });
 
+  test('Vergleich on the phone has the Bereiche and the Kanalgruppen too, like the desktop matrix', async ({ page, api }) => {
+    api.admin.matrix.features.livetv = true;
+    await page.goto('/admin/roles?view=compare');
+    const pick = page.getByRole('combobox', { name: /^Wer |je Rolle$|^Welche / });
+    // the areas come first
+    await expect(pick).toHaveAccessibleName('Wer hat den Bereich „Mediathek“?');
+    const values = await pick.locator('option').evaluateAll((o) => o.map((x) => (x as HTMLOptionElement).value));
+    expect(values.slice(0, 5)).toEqual(['area:library', 'area:livetv', 'area:requests', 'area:together', 'area:downloads']);
+    expect(values).toContain('livetvGroups');
+    await pick.selectOption('area:downloads');
+    const rows = page.getByRole('list', { name: 'Wer hat den Bereich „Downloads“?' });
+    await expect(rows.getByRole('listitem').filter({ hasText: 'Freund' })).toContainText('nicht erlaubt');
+    await expect(rows.getByRole('link', { name: 'Freund, Downloads: nicht erlaubt, bearbeiten' })).toHaveAttribute('href', '/admin/roles/friend?field=area%3Adownloads');
+    await pick.selectOption('livetvGroups');
+    await expect(pick).toHaveAccessibleName('Welche Kanalgruppen sieht jede Rolle?');
+    await expect(page.getByRole('list', { name: 'Welche Kanalgruppen sieht jede Rolle?' }).getByRole('listitem').filter({ hasText: 'Familie' })).toContainText('Sport, Nachrichten +2');
+  });
+
   test('a numeric field compares too (streams); a value set in the role says what the default is', async ({ page, api }) => {
     const guest = api.admin.matrix.roles.find((r) => r.key === 'guest')!;
     guest.values.maxStreams = 3;
     guest.sources.maxStreams = 'role';
     await page.goto('/admin/roles?view=compare');
-    await page.getByRole('combobox', { name: /^Wer darf|je Rolle$/ }).selectOption('maxStreams');
+    await page.getByRole('combobox', { name: /^Wer |je Rolle$|^Welche / }).selectOption('maxStreams');
     await expect(page.getByRole('combobox', { name: 'Gleichzeitige Streams je Rolle' })).toBeVisible();
     const gast = page.getByRole('list', { name: 'Gleichzeitige Streams je Rolle' }).getByRole('listitem').filter({ hasText: 'Gast' });
     await expect(gast).toContainText('3');
     await expect(gast).toContainText('geändert (Standard: 1)');
     await expect(page.getByRole('spinbutton')).toHaveCount(0);
-    await expect(gast.getByRole('link', { name: 'Rolle „Gast“ bearbeiten' })).toHaveAttribute('href', '/admin/roles/guest?field=maxStreams');
+    await expect(gast.getByRole('link', { name: 'Gast, Gleichzeitige Streams: 3, geändert, bearbeiten' })).toHaveAttribute('href', '/admin/roles/guest?field=maxStreams');
   });
 
   test('the menu: edit, duplicate, history, delete; env-only roles stay last without move actions', async ({ page, api }) => {
@@ -171,7 +190,7 @@ test.describe('Rollen & Rechte (phone)', () => {
     await expect(page.getByRole('grid')).toBeVisible();
     await page.getByRole('columnheader', { name: /Gast/ }).getByRole('link', { name: 'Rolle „Gast“ bearbeiten' }).focus();
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.getByRole('combobox', { name: /^Wer darf|je Rolle$/ })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: /^Wer |je Rolle$|^Welche / })).toBeVisible();
   });
 
   test('the admin nav says Rollen & Rechte', async ({ page }) => {
@@ -202,9 +221,14 @@ test.describe('Rollen & Rechte (phone)', () => {
     // a long area line never widens the dialog past the screen (it ends in "…")
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(360);
+    // the area lines wrap instead of being cut
+    for (const d of await dlg.locator('.opt .de').all()) expect(await d.evaluate((el) => el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight + 1)).toBe(true);
+    await expect(dlg.locator('.opt').filter({ hasText: 'Familie' })).toContainText('Downloads');
     await dlg.getByRole('radio', { name: 'Kopie von …' }).check();
     const wide = (await page.locator('.dlg').boundingBox())!;
     expect(wide.x + wide.width).toBeLessThanOrEqual(360);
+    // the select that appears is scrolled into view
+    await expect(dlg.getByRole('combobox', { name: 'Rolle zum Kopieren' })).toBeInViewport({ ratio: 1 });
     await dlg.getByRole('button', { name: 'Anlegen' }).scrollIntoViewIfNeeded();
     await expect(dlg.getByRole('button', { name: 'Anlegen' })).toBeInViewport();
   });

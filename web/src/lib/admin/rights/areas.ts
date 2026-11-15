@@ -87,6 +87,28 @@ export function fieldLocks(s: Stage, r: MatrixRole): Record<string, 'library' | 
   return out;
 }
 
+/** the area whose card is a field's own switch (Live-TV, Wünsche, Downloads) */
+const SWITCH_AREA: Readonly<Record<string, AreaKey>> = { liveTv: 'livetv', requests: 'requests', download: 'downloads' };
+
+/**
+ * Where the role page's `?field=<key>` lands (§5.5, review fix round 1): the field's control (`field`), or an area's card
+ * (`card`: `area:<key>`, an area's own switch). A detail of an area whose section is not shown lands on that area's card,
+ * highlighted (`flash`); a control that is shown but locked (Darf aufnehmen while Live-TV is off) scrolls its row into view
+ * (`row`) and gives the focus to the card of the area it waits for. `shown`: the sections the page renders. Null: unknown key.
+ */
+export function fieldTarget(m: RoleMatrix, key: string, shown: Areas, locks: Record<string, 'library' | 'livetv'>):
+  { field: string } | { card: AreaKey; flash?: true; row?: string } | null {
+  if (key.startsWith('area:')) { const a = key.slice(5) as AreaKey; return AREA_KEYS.includes(a) ? { card: a } : null; }
+  if (SWITCH_AREA[key]) return { card: SWITCH_AREA[key] };
+  if (key === 'livetvGroups') return { field: key };
+  const f = m.fields.find((x) => x.key === key);
+  if (!f) return null;
+  if (f.area === 'general') return { field: key };
+  if (!shown[f.area]) return { card: f.area, flash: true };
+  if (locks[key]) return { card: locks[key] === 'livetv' ? 'livetv' : 'library', row: key, flash: true };
+  return { field: key };
+}
+
 /** the staged entries `keys` of a role dropped: back to the loaded values */
 function unstage(s: Stage, role: string, keys: readonly string[]): Stage {
   const cur = s[role];

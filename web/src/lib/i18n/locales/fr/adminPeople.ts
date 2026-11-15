@@ -370,7 +370,7 @@ const dict: Translation<typeof de> = {
     delete: 'Supprimer',
     history: 'Historique',
     deleteMove: '{people} et {invites} reçoivent le rôle :',
-    compare: { title: 'Comparer les rôles', tab: 'Comparer', cell: '{cell}, modifier' },
+    compare: { title: 'Comparer les rôles', tab: 'Comparer', cell: '{cell}, modifier', qArea: 'Qui a la zone « {area} » ?', qGroups: 'Quels groupes de chaînes chaque rôle voit-il ?' },
     compareQValue: '{right} par rôle',
     q: {
       transcoding: 'Qui peut transcoder ?',

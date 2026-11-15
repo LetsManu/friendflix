@@ -25,7 +25,7 @@
   import DeleteRoleDialog from '#lib/admin/rights/DeleteRoleDialog.svelte';
   import { roleName as roleLabel, type MatrixRole, type RoleMatrix } from '#lib/admin/rights/model';
   import { deleteMoving, deleteRole, moveTargetsOf } from '#lib/admin/rights/roleDelete';
-  import { createError, createRole, type CreateBody } from '#lib/admin/rights/newRole';
+  import { createError, createRole, templateGone, type CreateBody } from '#lib/admin/rights/newRole';
   import NewRoleDialog from '#lib/admin/rights/NewRoleDialog.svelte';
   import RoleList from '#lib/admin/rights/RoleList.svelte';
   import RoleMatrixView from '#lib/admin/rights/RoleMatrix.svelte';
@@ -107,7 +107,12 @@
     if (freshBusy) return;
     freshBusy = true; freshErr = '';
     let key: string;
-    try { key = await createRole(body); } catch (e) { freshErr = createError(e); freshBusy = false; return; }
+    try { key = await createRole(body); } catch (e) {
+      freshErr = createError(e); freshBusy = false;
+      // a template the server no longer offers: the start points are read again (the option goes, the dialog falls back)
+      if (templateGone(e)) await reload();
+      return;
+    }
     fresh = null; freshBusy = false;
     toast.success(tr('adminPeople.roles.duplicated', { name: body.label }));
     await goto(`/admin/roles/${encodeURIComponent(key)}`);

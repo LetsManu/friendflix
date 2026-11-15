@@ -5,7 +5,7 @@ import { api, ApiError } from '#lib/api';
 import { setLocale } from '#lib/i18n';
 import { areasOf } from './areas';
 import type { MatrixRole, RoleMatrix, RoleTemplateInfo } from './model';
-import { createBody, createError, createRole, firstStart, startOptions } from './newRole';
+import { createBody, createError, createRole, firstStart, startOptions, templateGone } from './newRole';
 
 vi.mock('#lib/api', async (orig) => ({ ...(await orig<typeof import('#lib/api')>()), api: vi.fn() }));
 beforeEach(() => { vi.mocked(api).mockReset(); });
@@ -78,6 +78,8 @@ describe('createRole', () => {
     const e = await createRole({ label: 'X', template: 'liveOnly' }).catch((x: unknown) => x);
     expect(e).toBeInstanceOf(ApiError);
     expect(createError(e)).toBe('Ohne Live-TV gibt es diese Vorlage nicht.');
+    expect(templateGone(e)).toBe(true);
+    expect(templateGone(new ApiError(400, { error: 'bad_request' }))).toBe(false);
     expect(createError(new ApiError(409, { error: 'name_taken' }))).toBe(createError(new ApiError(409, {})));
   });
 });

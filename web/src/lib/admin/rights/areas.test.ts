@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import type { Areas } from '#lib/capabilities';
-import { AREA_KEYS, areaDisabled, areaSummary, areasOf, coupledValue, fieldLocks, fieldNeeds, fieldsOfArea, hasLibrary, stageArea, stagedAreas, stagedValues, stageField } from './areas';
+import { AREA_KEYS, areaDisabled, areaSummary, areasOf, coupledValue, fieldLocks, fieldNeeds, fieldsOfArea, fieldTarget, hasLibrary, stageArea, stagedAreas, stagedValues, stageField } from './areas';
 import { visibleFields } from './model';
 import { stageSet, type MatrixField, type MatrixRole, type RoleMatrix, type Stage } from './model';
 
@@ -144,6 +144,33 @@ describe('Live-TV coupling: Darf aufnehmen needs Live-TV (roles redesign §5.4, 
     expect(fieldLocks({}, f)).toEqual({});
     expect(fieldLocks(stageArea({}, m, f, 'livetv', false), f)).toEqual({ liveRecord: 'livetv' });
     expect(fieldLocks(stageArea({}, m, f, 'library', false), f)).toEqual({ requests: 'library', party: 'library', partySchedule: 'library', comments: 'library', download: 'library' });
+  });
+});
+
+describe('fieldTarget: where ?field= lands (review fix round 1, I2)', () => {
+  const m = matrix();
+  /** the sections the page shows (Live-TV's stays while it is installed, dormant when off) */
+  const on = (over: Partial<Areas> = {}): Areas => ({ library: true, livetv: true, requests: true, together: true, downloads: true, ...over });
+  it('a field whose control is shown and usable: the field itself', () => {
+    expect(fieldTarget(m, 'maxDownloads', on(), {})).toEqual({ field: 'maxDownloads' });
+    expect(fieldTarget(m, 'maxStreams', on({ library: false, livetv: false }), {})).toEqual({ field: 'maxStreams' });
+    expect(fieldTarget(m, 'livetvGroups', on(), {})).toEqual({ field: 'livetvGroups' });
+  });
+  it('an area card: area:<key> and an area\'s own switch', () => {
+    expect(fieldTarget(m, 'area:together', on(), {})).toEqual({ card: 'together' });
+    expect(fieldTarget(m, 'download', on(), {})).toEqual({ card: 'downloads' });
+    expect(fieldTarget(m, 'liveTv', on(), {})).toEqual({ card: 'livetv' });
+  });
+  it('a detail of an area that is off (no section): its area card, highlighted', () => {
+    expect(fieldTarget(m, 'maxDownloads', on({ downloads: false }), {})).toEqual({ card: 'downloads', flash: true });
+    expect(fieldTarget(m, 'partySchedule', on({ together: false }), {})).toEqual({ card: 'together', flash: true });
+  });
+  it('a locked control in a shown section: the row scrolls into view, the card of the area it waits for takes the focus', () => {
+    expect(fieldTarget(m, 'liveRecord', on(), { liveRecord: 'livetv' })).toEqual({ card: 'livetv', row: 'liveRecord', flash: true });
+  });
+  it('a key the matrix does not know: nothing', () => {
+    expect(fieldTarget(m, 'nope', on(), {})).toBeNull();
+    expect(fieldTarget(m, 'area:nope', on(), {})).toBeNull();
   });
 });
 

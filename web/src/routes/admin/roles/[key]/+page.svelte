@@ -20,12 +20,12 @@
   import { leaveGuard, leavesRoute } from '#lib/admin/leaveGuard';
   import AreaGrid from '#lib/admin/rights/AreaGrid.svelte';
   import AreaSection from '#lib/admin/rights/AreaSection.svelte';
-  import { AREA_ICON, AREA_KEYS, areaLabel, fieldLocks, fieldsOfArea, stageArea, stagedAreas, stageField, type AreaKey, type Areas } from '#lib/admin/rights/areas';
+  import { AREA_ICON, AREA_KEYS, areaLabel, fieldLocks, fieldsOfArea, fieldTarget, stageArea, stagedAreas, stageField, type AreaKey, type Areas } from '#lib/admin/rights/areas';
   import DeleteRoleDialog from '#lib/admin/rights/DeleteRoleDialog.svelte';
   import GroupChips from '#lib/admin/rights/GroupChips.svelte';
   import { PERM_SET, peopleLine, policyLine, reviewLines, roleName, saveBarText, stageCounts, stageSet, type MatrixField, type MatrixRole, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
   import NewRoleDialog from '#lib/admin/rights/NewRoleDialog.svelte';
-  import { createError, createRole, type CreateBody } from '#lib/admin/rights/newRole';
+  import { createError, createRole, templateGone, type CreateBody } from '#lib/admin/rights/newRole';
   import ReviewSheet from '#lib/admin/rights/ReviewSheet.svelte';
   import RoleHistory from '#lib/admin/rights/RoleHistory.svelte';
   import { canDelete, deleteMoving, deleteRole, moveTargetsOf } from '#lib/admin/rights/roleDelete';
@@ -141,20 +141,35 @@
   // a reload or a closed tab asks too (the browser's own question)
   leaveGuard((nav) => (nav.willUnload || leavesRoute(nav)) && dirty > 0, () => leaveQuestion());
 
-  // ---- ?field=<key>: that control is focused and centred (an area's own switch, or `area:<key>` from the compare view: its card;
-  // `livetvGroups`: the first channel group); no smooth scroll with reduced motion
-  const AREA_OF_SWITCH: Record<string, AreaKey> = { liveTv: 'livetv', requests: 'requests', download: 'downloads' };
+  // ---- ?field=<key> (the compare view's links): that control is focused and centred; `area:<key>` and an area's own switch: its card;
+  // `livetvGroups`: the first channel group. A detail of an area that is off has no control here: its area's card takes the focus,
+  // briefly highlighted; a control that is shown but locked (Darf aufnehmen while Live-TV is off) is scrolled to, and the card it
+  // waits for takes the focus (areas.ts fieldTarget; review fix round 1, I2). No smooth scroll with reduced motion.
+  const ENABLED = 'input:not([disabled]), select:not([disabled]), button:not([disabled]), textarea:not([disabled])';
   async function focusField() {
     const f = $page$.url.searchParams.get('field');
     if (!f) return;
-    await tick();
-    const area = f.startsWith('area:') ? f.slice(5) : AREA_OF_SWITCH[f];
-    const sel = area ? `[data-area="${CSS.escape(area)}"] [role="switch"]` : f === 'livetvGroups' ? '[data-groups]' : `[data-field="${CSS.escape(f)}"]`;
-    const host = document.querySelector<HTMLElement>(sel);
-    const el = host?.matches('button, input, select') ? host : host?.querySelector<HTMLElement>('input:not([disabled]), select, button:not([disabled]), textarea');
-    if (!el) return;
-    el.focus({ preventScroll: true });
-    el.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
+    await tick(); // the role and its sections are rendered
+    if (!matrix || !role) return;
+    const shown = { ...stagedAreas(stage, role), livetv: matrix.features.livetv };
+    const to = fieldTarget(matrix, f, shown, fieldLocks(stage, role));
+    if (!to) return;
+    const behavior: ScrollBehavior = reducedMotion() ? 'auto' : 'smooth';
+    if ('field' in to) {
+      const host = document.querySelector<HTMLElement>(to.field === 'livetvGroups' ? '[data-groups]' : `[data-field="${CSS.escape(to.field)}"]`);
+      const el = host?.matches(ENABLED) ? host : host?.querySelector<HTMLElement>(ENABLED);
+      if (el) { el.focus({ preventScroll: true }); el.scrollIntoView({ block: 'center', behavior }); return; }
+      // shown but nothing to use (all chips dormant): the row at least
+      host?.scrollIntoView({ block: 'center', behavior });
+      return;
+    }
+    const card = document.querySelector<HTMLElement>(`[data-area="${CSS.escape(to.card)}"]`);
+    const sw = card?.querySelector<HTMLElement>('[role="switch"]');
+    if (!card || !sw) return;
+    sw.focus({ preventScroll: true });
+    const row = to.row ? document.querySelector<HTMLElement>(`[data-field="${CSS.escape(to.row)}"]`) : null;
+    (row ?? card).scrollIntoView({ block: 'center', behavior });
+    if (to.flash) { card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1600); }
   }
 
   // ---- the ⋯ menu: duplicate (the copy's page opens), history, delete (back to the list)
@@ -186,7 +201,14 @@
     if (!role || dupBusy) return;
     dupBusy = true; dupErr = '';
     let made: string;
-    try { made = await createRole(body); } catch (e) { dupErr = createError(e); dupBusy = false; return; }
+    try { made = await createRole(body); } catch (e) {
+      dupErr = createError(e); dupBusy = false;
+      // a template the server no longer offers: the start points are read again (the staged edits stay)
+      if (templateGone(e)) {
+        try { const r = await api<{ matrix?: RoleMatrix }>('/api/admin/roles'); if (r.matrix) matrix = r.matrix; } catch { /* the stale list stays */ }
+      }
+      return;
+    }
     dup = null; dupBusy = false;
     discardAll();
     await tick(); // the guard reads the emptied stage

@@ -44,6 +44,8 @@ export const createBody = (label: string, start: StartKey, from: string): Create
 /** POST /api/admin/roles; the new role's key (throws the API error) */
 export const createRole = async (body: CreateBody): Promise<string> => (await api<{ key: string }>('/api/admin/roles', { method: 'POST', body })).key;
 
-/** the dialog's error line: a template the server no longer offers (Live TV gone meanwhile) says so, the rest as everywhere */
-export const createError = (e: unknown): string =>
-  (e instanceof ApiError && e.body?.error === 'template_unavailable' ? tr('adminPeople.roles.new.unavailable') : errorText(e));
+/** the server no longer offers the template (Live TV gone meanwhile): the page reads the start points again */
+export const templateGone = (e: unknown): boolean => e instanceof ApiError && e.body?.error === 'template_unavailable';
+
+/** the dialog's error line: a template the server no longer offers says so, the rest as everywhere */
+export const createError = (e: unknown): string => (templateGone(e) ? tr('adminPeople.roles.new.unavailable') : errorText(e));

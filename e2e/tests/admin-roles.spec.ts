@@ -255,8 +255,13 @@ test.describe('Rollen & Rechte: Neue Rolle', () => {
     await page.route('**/api/admin/roles', (r) => (r.request().method() === 'POST' ? r.fulfill({ status: 400, contentType: 'application/json', body: '{"error":"template_unavailable"}' }) : r.fallback()));
     await dlg.getByRole('textbox', { name: 'Name' }).fill('Hafenblick');
     await dlg.getByRole('radio', { name: 'Nur Live-TV' }).check();
+    api.admin.matrix.features.livetv = false; // Live TV went away meanwhile: the read-back lists no Nur Live-TV
     await dlg.getByRole('button', { name: 'Anlegen' }).click();
-    await expect(dlg.getByText('Ohne Live-TV gibt es diese Vorlage nicht.')).toBeVisible();
+    // said for the dialog, not as the name's error; the template list is read again, so the option goes and Freund is picked
+    await expect(dlg.getByRole('alert').filter({ hasText: 'Ohne Live-TV gibt es diese Vorlage nicht.' })).toBeVisible();
+    await expect(dlg.getByRole('textbox', { name: 'Name' })).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(dlg.getByRole('radio', { name: 'Nur Live-TV' })).toHaveCount(0);
+    await expect(dlg.getByRole('radio', { name: 'Freund' })).toBeChecked();
     await expect(page).toHaveURL(/\/admin\/roles$/);
   });
 });
@@ -282,7 +287,7 @@ test.describe('compare (read-only)', () => {
     await expect(page.getByRole('region', { name: 'Bereiche' }).getByRole('switch', { name: 'Downloads', exact: true })).toBeFocused();
   });
 
-  test('compare: the Bereiche rows show ✓/– per role; Darf aufnehmen is not listed', async ({ page, api }) => {
+  test('compare: the Bereiche rows show ✓/– per role; Darf aufnehmen is not an area row', async ({ page, api }) => {
     api.admin.matrix.features.livetv = true;
     Object.assign(api.admin.matrix.roles.find((r) => r.key === 'guest')!.values, { libraries: [], liveTv: true });
     await page.goto('/admin/roles?view=compare');
@@ -370,6 +375,66 @@ test.describe('compare (read-only)', () => {
     await expect(cell(page, 'Admin, Mediathek: erlaubt')).toHaveAttribute('tabindex', '0');
     await page.keyboard.press('Control+End');
     await expect(link(page, 'Crew, Auf Fernseher übertragen: erlaubt, bearbeiten')).toBeFocused();
+  });
+
+  test('compare: the head stays clear: a sticky group row sits below the head, a focused cell is never under it', async ({ page, api }) => {
+    api.admin.matrix.features.livetv = true;
+    api.admin.matrix.roles.find((r) => r.key === 'crew')!.envGone = true; // the tallest head: name, people on two lines, the .env line
+    await page.setViewportSize({ width: 1280, height: 700 });
+    await page.goto('/admin/roles?view=compare');
+    const scroller = page.locator('.matrix-scroll');
+    await expect(grid(page)).toBeVisible();
+    // the head cells are the sticky ones (the <thead> box itself scrolls away)
+    const headBottom = () => grid(page).locator('thead th.corner').evaluate((el) => el.getBoundingClientRect().bottom);
+    // what the eye sees just above and just below the head's lower edge
+    const probe = (dy: number) => page.evaluate(([d]) => {
+      // in a role column (the corner cell is painted above everything anyway)
+      const head = document.querySelector('table[role="grid"] thead th.rh')!.getBoundingClientRect();
+      const el = document.elementFromPoint(head.left + 20, head.bottom + d!);
+      return el?.closest('thead') ? 'head' : el?.closest('.gh') ? 'group' : 'row';
+    }, [dy]);
+    for (const top of [0, 140, 320, 520]) {
+      await scroller.evaluate((el, t) => { el.scrollTop = t; }, top);
+      await page.waitForTimeout(50);
+      expect(await probe(-3), `scrollTop ${top}`).toBe('head');
+      if (top > 0) expect(await probe(3), `scrollTop ${top}`).toBe('group');
+    }
+    // the keyboard walks down the grid: the focused cell always scrolls fully clear of the head
+    await scroller.evaluate((el) => { el.scrollTop = 0; });
+    await link(page, 'Familie, Mediathek: erlaubt, bearbeiten').focus();
+    for (let i = 0; i < 18; i++) {
+      await page.keyboard.press('ArrowDown');
+      const top = await page.evaluate(() => document.activeElement!.getBoundingClientRect().top);
+      expect(top, `step ${i}`).toBeGreaterThanOrEqual(await headBottom() - 0.5);
+    }
+    for (let i = 0; i < 18; i++) {
+      await page.keyboard.press('ArrowUp');
+      const top = await page.evaluate(() => document.activeElement!.getBoundingClientRect().top);
+      expect(top, `back ${i}`).toBeGreaterThanOrEqual(await headBottom() - 0.5);
+    }
+  });
+
+  test('compare: a link to a detail of an area that is off lands on that area\'s card, highlighted', async ({ page }) => {
+    await page.goto('/admin/roles?view=compare');
+    // Freund has no Downloads: the role page shows no Downloads section
+    await link(page, 'Freund, Gleichzeitige Downloads: 15, bearbeiten').click();
+    await expect(page).toHaveURL(/\/admin\/roles\/friend\?field=maxDownloads$/);
+    const card = page.locator('[data-area="downloads"]');
+    await expect(card.getByRole('switch')).toBeFocused();
+    await expect(card).toBeInViewport();
+    await expect(card).toHaveClass(/\bflash\b/);
+    await expect(card).not.toHaveClass(/\bflash\b/, { timeout: 4000 }); // briefly
+  });
+
+  test('compare: Darf aufnehmen with Live-TV off: the row scrolls into view, the Live-TV card takes the focus', async ({ page, api }) => {
+    api.admin.matrix.features.livetv = true;
+    Object.assign(api.admin.matrix.roles.find((r) => r.key === 'guest')!.values, { liveTv: false, liveRecord: true });
+    await page.goto('/admin/roles?view=compare');
+    await link(page, 'Gast, Darf aufnehmen: nicht erlaubt, bearbeiten').click();
+    await expect(page).toHaveURL(/\/admin\/roles\/guest\?field=liveRecord$/);
+    await expect(page.locator('[data-area="livetv"] [role="switch"]')).toBeFocused();
+    await expect(page.locator('[data-field="liveRecord"]')).toBeInViewport();
+    await expect(page.locator('[data-area="livetv"]')).toHaveClass(/\bflash\b/);
   });
 
   test('more than five roles scroll inside the panel, not the page', async ({ page, api }) => {

@@ -63,7 +63,7 @@
    *  - `loadSeq` counts the started loads; only the answer of the latest started one is applied (an older one that lands last is dropped).
    *  - `fresh`: false from the start of a write until a load that started AFTER the write's request settled has been applied (`writeMark` =
    *    loads started when it settled). A load that was already running then, or that lands while a write is open, never makes it true.
-   *    While it is false the role chips and matrix cells are disabled and `setRole` refuses.
+   *    While it is false the role chips are disabled and `setRole` refuses.
    *  - `reloadFailed`: the last load failed while a list is shown; the slot offers *Neu laden*. `loadsOpen`: loads in flight (busy state).
    */
   let loadSeq = 0, writeMark = 0, loadsOpen = 0;
