@@ -245,6 +245,8 @@ export interface EngineDeps {
 
 /** progress report cadence while the receiver plays */
 export const PROGRESS_MS = 10_000;
+/** a live or recording cast beats its token this often (the token idles out after 90 s) */
+export const BEAT_MS = 20_000;
 /** a refused live-token renewal is retried after this, doubling each time up to the maximum */
 const RENEW_RETRY_MS = 60_000;
 const RENEW_RETRY_MAX_MS = 600_000;
@@ -314,6 +316,8 @@ interface LiveCast {
   renewFails?: number;
   /** a recording (`loadRecording`): its id; its token is never renewed (minted for the recording's length), its position reported */
   rec?: { id: string };
+  /** when the token was last beaten (timers clock): every BEAT_MS while the cast holds it */
+  beatAt?: number;
 }
 /** "21:00 Wetter am Hafen" */
 const progLine = (p: Prog): string => `${progClock(p.start)} ${p.title}`;
@@ -1646,8 +1650,19 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   /** a recording's position on the TV goes to its progress (the owner's ≥ 90 % marks it watched on the server) */
   const recReport = (l: LiveCast, keepalive = false) => {
     if (!l.rec || l.view.state !== 'playing') return;
-    void call(`/api/livetv/recordings/${encodeURIComponent(l.rec.id)}/progress`, { method: 'POST', body: { positionS: Math.max(0, Math.floor(l.view.position)) }, ...(keepalive ? { keepalive } : {}) }).catch(() => undefined);
+    void call(`/api/livetv/recordings/${encodeURIComponent(l.rec.id)}/progress`, { method: 'POST', body: { positionS: Math.max(0, Math.floor(l.view.position)), via: 'chromecast' }, ...(keepalive ? { keepalive } : {}) }).catch(() => undefined);
   };
+  /**
+   * The cast's heartbeat (review B-I4): a token idles out after 90 s without a fetch or a beat, and a paused BUFFERED receiver fetches
+   * nothing, so the cast beats it every BEAT_MS while it holds it. A 410 (revoked: the recording was deleted, the right lost) ends it here.
+   */
+  function liveBeat(l: LiveCast) {
+    const tok = l.token;
+    l.beatAt = timers.now();
+    void call('/api/livetv/beat', { method: 'POST', body: { token: tok } }).catch((e: unknown) => {
+      if (e instanceof ApiError && e.status === 410 && lc === l && l.token === tok) endLive(l, 'the token is gone', { revoke: false });
+    });
+  }
   /** the page goes: the TV plays on (its fetches keep the token and the viewer alive); nothing is revoked, the hint stays */
   function livePageHide(l: LiveCast) {
     if (lc !== l) return;
@@ -1662,6 +1677,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     l.loop = timers.set(() => {
       if (lc !== l) return;
       if (!l.busy && l.foreignAt !== undefined && timers.now() - l.foreignAt >= ADVANCE_WAIT_MS) { endLive(l, 'the TV plays other media'); return; }
+      if (!l.busy && timers.now() - (l.beatAt ?? 0) >= BEAT_MS) liveBeat(l);
+      if (lc !== l) return;
       if (l.rec) { if (!l.busy) recReport(l); liveArm(l); return; } // a recording: its progress, no renewal
       if (!l.busy && l.view.state === 'playing' && l.expiresAt - timers.now() < RENEW_BEFORE_MS && timers.now() >= (l.renewAfter ?? 0)) {
         // refused: the old token plays on, the next try comes after 60 s, then 120 s, ... (at most 10 min)
@@ -1677,6 +1694,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   const liveOrder = (): Promise<string[]> => call<LiveList>('/api/livetv/channels')
     .then((r) => (r && Array.isArray(r.channels) ? channelOrder(r.channels, 'all', r.favourites ?? [], r.recent ?? []).map((c) => c.id) : []), () => []);
   function liveSubscribe(l: LiveCast) {
+    l.beatAt = timers.now();
     l.offs.push(cast.castState.subscribe((st) => liveTick(l, st)), cast.onCastEvent((e) => liveEvent(l, e)), deps.onPageHide(() => livePageHide(l)));
     liveArm(l);
   }

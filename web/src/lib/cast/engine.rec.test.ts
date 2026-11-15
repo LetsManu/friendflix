@@ -45,7 +45,7 @@ describe('cast engine: recordings', () => {
     await flush();
     expect(get(env.out)).toMatchObject({ state: 'playing', position: 120, duration: 2700 });
     await env.advance(PROGRESS_MS);
-    expect(env.recProgress().at(-1)).toEqual({ positionS: 120 });
+    expect(env.recProgress().at(-1)).toEqual({ positionS: 120, via: 'chromecast' });
     env.engine.seek(300);
     expect(env.cast.castSeek).toHaveBeenCalledWith(300);
     await env.engine.stop();
@@ -54,6 +54,47 @@ describe('cast engine: recordings', () => {
     // nothing of the film machinery
     expect(env.reports()).toEqual([]);
     expect(env.tokenPosts()).toEqual([]);
+  });
+
+  it('the cast beats its token every 20 s while it holds it, also paused (a BUFFERED receiver fetches nothing), and stops with the cast', async () => {
+    const env = setup();
+    connected(env);
+    await env.engine.loadRecording('r1', meta);
+    env.state.set(playing({ contentId: env.liveLoads[0]!.contentId, duration: 2700, currentTime: 120, paused: true }));
+    await flush();
+    const beats = () => env.calls.filter((c) => c.path === '/api/livetv/beat').map((c) => c.init.body);
+    await env.advance(20_000);
+    expect(beats()).toEqual([{ token: 'rtok-r1-1' }]);
+    await env.advance(40_000);
+    expect(beats()).toHaveLength(3);
+    // its progress names the TV (the hand-off row then says so, B-M3)
+    expect(env.recProgress().at(-1)).toEqual({ positionS: 120, via: 'chromecast' });
+    await env.engine.stop();
+    await env.advance(60_000);
+    expect(beats()).toHaveLength(3);
+  });
+
+  it('a live channel cast beats its token too', async () => {
+    const env = setup();
+    connected(env);
+    await env.engine.loadLive('ch-nord');
+    env.state.set(playing({ contentId: env.liveLoads[0]!.contentId, duration: 0, currentTime: 0 }));
+    await flush();
+    await env.advance(20_000);
+    expect(env.calls.filter((c) => c.path === '/api/livetv/beat').map((c) => c.init.body)).toEqual([{ token: 'tok-ch-nord-1' }]);
+  });
+
+  it('a beat answered 410 ends the cast here (the token was revoked: the recording was deleted)', async () => {
+    const env = setup();
+    connected(env);
+    await env.engine.loadRecording('r1', meta);
+    env.state.set(playing({ contentId: env.liveLoads[0]!.contentId, duration: 2700, currentTime: 10 }));
+    await flush();
+    const orig = env.api.getMockImplementation()!;
+    env.api.mockImplementation(async (path: string, init?: Parameters<typeof orig>[1]) => { if (path === '/api/livetv/beat') throw new ApiError(410, { error: 'gone' }); return orig(path, init); });
+    await env.advance(20_000);
+    await flush();
+    expect(get(env.out)).toBeNull();
   });
 
   it('a recording that is gone or not started yet rejects typed; nothing is loaded', async () => {
