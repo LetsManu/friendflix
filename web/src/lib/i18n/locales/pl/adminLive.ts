@@ -750,6 +750,7 @@ const dict: Translation<typeof de> = {
     libFolders: 'Foldery: {paths}',
     libVisible: 'Kto widzi bibliotekę, widzi nagrania w niej.',
     roleMissing: 'Te role mogą nagrywać, ale nie widzą biblioteki „{library}”: {roles}. Nie mogą oglądać ani pobierać nagrań, które są tylko tam.',
+    rolesFailed: 'Nie udało się sprawdzić ról.',
     libUnsupported: 'Serwer multimediów nie oferuje biblioteki na nagrania: jest tylko folder FriendFlix.',
     libUnreachable: 'Nie udało się wczytać bibliotek.',
     save: 'Zapisz miejsce zapisu',

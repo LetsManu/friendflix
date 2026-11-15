@@ -15,6 +15,9 @@
    * Every slot that loads keeps its room (skeletons of the final height).
    */
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { highlightSetting } from '#lib/admin/settings/highlight';
+  import { pageStore } from '#lib/page';
   import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { isReauthError, reauthenticate } from '#lib/account/reauth';
@@ -39,7 +42,8 @@
   interface Lib { id: string; name: string; paths: string[]; fits: boolean }
   interface Libraries { supported: boolean; jfPath: string; selected: string | null; libraries: Lib[] }
   interface Row { id: string; profile: string | null; channel: string; start: string; end: string; mode: string | null; state: string; error: string | null; bytes: number; keep: boolean }
-  interface RoleRow { key: string; label: string | null; base?: string; values: Record<string, unknown> }
+  /** the parts of a role-matrix row (GET /api/admin/roles, backend roleWrite.ts MatrixRole) the §26 warning reads */
+  interface RoleRow { key: string; label: string | null; areas?: { library?: boolean }; values: { libraries?: 'all' | string[]; liveTv?: boolean; liveRecord?: boolean } }
 
   /** the registry rows shown here (the storage mode and library are the card above) */
   const LIMIT_KEYS = ['LIVETV_RECORD_LIMIT_GB', 'LIVETV_RECORD_RETENTION_DAYS', 'LIVETV_RECORD_PAD_BEFORE_MIN', 'LIVETV_RECORD_PAD_AFTER_MIN', 'LIVETV_RECORD_MAX_PARALLEL'];
@@ -50,6 +54,8 @@
   let settings: SettingView[] | null = null, settingsFailed = false;
   let rows: Row[] | null = null, rowsFailed = false;
   let roles: RoleRow[] = [];
+  /** the role list could not be read: the warning says so instead of staying silent */
+  let rolesFailed = false;
   let mode: Mode = 'ff', libraryId = '', savedMode: Mode = 'ff', savedLib = '';
   let edits: Record<string, Draft> = {};
   let errors: Record<string, string> = {};
@@ -62,9 +68,20 @@
   $: limitItems = settings ? settings.filter((s) => LIMIT_KEYS.includes(s.key)) : null;
   $: limitChanges = limitItems ? changedValues(limitItems, edits) : {};
   $: limitsDirty = Object.keys(limitChanges).length > 0;
-  /** §26: roles that may record (and use Live TV) but do not see the chosen library */
-  $: blind = chosen && mode !== 'ff' ? roles.filter((r) => r.values.liveTv === true && r.values.liveRecord === true && r.values.libraries !== 'all' && !(Array.isArray(r.values.libraries) && (r.values.libraries as unknown[]).includes(chosen!.id))) : [];
+  /**
+   * §26: roles that may record, have the Mediathek on and do not see the chosen library. Role library lists hold NAMES, matched
+   * without case (backend libraries.ts). A Live-TV-only role (no library) is never named: it plays its recordings through FriendFlix,
+   * and adding a library would turn its Mediathek on.
+   */
+  $: blind = chosen && mode !== 'ff' ? roles.filter((r) => missesLibrary(r, chosen!.name)) : [];
   const roleName = (r: RoleRow) => r.label ?? r.key;
+  function missesLibrary(r: RoleRow, name: string): boolean {
+    const v = r.values;
+    const libraryOn = r.areas?.library ?? (v.libraries === 'all' || (Array.isArray(v.libraries) && v.libraries.length > 0));
+    if (v.liveTv !== true || v.liveRecord !== true || !libraryOn || v.libraries === 'all') return false;
+    const want = name.toLocaleLowerCase();
+    return !(v.libraries ?? []).some((l) => typeof l === 'string' && l.toLocaleLowerCase() === want);
+  }
 
   const val = (key: string): unknown => settings?.find((s) => s.key === key)?.value;
   async function loadAll(): Promise<void> {
@@ -72,7 +89,8 @@
       api<Storage>('/api/admin/livetv/recordings/storage').then((s) => (storage = s)).catch(() => (storage = { usedBytes: 0, limitBytes: 0, freeBytes: null, hoursLeftHd: 0, library: null })),
       api<Libraries>('/api/admin/livetv/recordings/libraries').then((l) => { libs = l; libsFailed = false; }).catch(() => { libsFailed = true; }),
       loadSettings().then((v) => { settings = v.groups.find((g) => g.id === LIVETV_GROUP)?.items ?? []; settingsFailed = false; }).catch(() => { if (!settings) settingsFailed = true; }),
-      api<{ matrix?: { roles?: RoleRow[] } }>('/api/admin/roles').then((r) => (roles = r.matrix?.roles ?? [])).catch(() => (roles = [])),
+      api<{ matrix?: { roles?: RoleRow[] } }>('/api/admin/roles').then((r) => { roles = Array.isArray(r.matrix?.roles) ? r.matrix.roles : []; rolesFailed = !Array.isArray(r.matrix?.roles); })
+        .catch(() => { roles = []; rolesFailed = true; }),
       loadRows(),
     ]);
     const m = val('LIVETV_RECORD_STORAGE');
@@ -90,6 +108,17 @@
       rows = [...active.items, ...failed.items];
       rowsFailed = false;
     } catch { if (!rows) rowsFailed = true; }
+  }
+  // a deep link `?setting=LIVETV_RECORD_*` (Systemcheck, settings search): highlight its row once loaded, then the plain tab again; a
+  // key without a row here (the library, its folder) shows the storage card
+  const page$ = pageStore();
+  $: linkKey = $page$.url.searchParams.get('setting');
+  let followed = '';
+  $: if (linkKey && settings && storage && linkKey !== followed) void follow(linkKey);
+  async function follow(key: string) {
+    followed = key;
+    await goto('/admin/livetv?tab=recordings', { replace: true, reset: false });
+    if (!(await highlightSetting(key))) await highlightSetting('LIVETV_RECORD_STORAGE');
   }
   onMount(() => { void loadAll(); });
 
@@ -145,7 +174,7 @@
     { key: 'time', label: $t('adminLive.recTab.colTime'), value: (r: Row) => when(r), sort: (a: Row, b: Row) => Date.parse(a.start) - Date.parse(b.start) },
     { key: 'mode', label: $t('adminLive.recTab.colMode'), value: (r: Row) => modeWord(r.mode) },
     { key: 'state', label: $t('adminLive.recTab.colState'), value: (r: Row) => stateText(r) },
-    { key: 'act', label: '', hideLabel: true, filter: false, sortable: false, align: 'end', width: '9.5rem' },
+    { key: 'act', label: '', hideLabel: true, filter: false, sortable: false, align: 'end', width: '8rem' },
   ] as Column<Row>[];
   async function cancel(r: Row): Promise<void> {
     const res = await runAction({
@@ -172,7 +201,7 @@
     {#if !storage || !settings}
       <div class="sk" aria-hidden="true"><Skeleton h="2.6rem" /><Skeleton h="2.6rem" /><Skeleton h="2.6rem" /></div>
     {:else}
-      <fieldset class="modes">
+      <fieldset class="modes" id="setting-LIVETV_RECORD_STORAGE">
         <legend class="sr-only">{$t('adminLive.recTab.modes')}</legend>
         {#each [{ v: 'ff', l: 'modeFf' }, { v: 'library', l: 'modeLibrary' }, { v: 'both', l: 'modeBoth' }] as o (o.v)}
           {@const off = o.v !== 'ff' && !libraryModes}
@@ -214,7 +243,9 @@
           </div>
           <p class="note">{$t('adminLive.recTab.libVisible')}</p>
           <p class="note muted">{$t('adminLive.rec.libSecurity')}</p>
-          {#if blind.length && chosen}
+          {#if rolesFailed}
+            <p class="warn"><Icon name="alert" size={18} /><span>{$t('adminLive.recTab.rolesFailed')}</span></p>
+          {:else if blind.length && chosen}
             <p class="warn"><Icon name="alert" size={18} /><span>{$t('adminLive.recTab.roleMissing', { library: chosen.name, roles: blind.map(roleName).join(', ') })}</span></p>
           {/if}
         {/if}
@@ -257,7 +288,7 @@
         <svelte:fragment slot="cell" let:row let:col>
           {#if col.key === 'act'}
             {#if row.state === 'scheduled' || row.state === 'starting' || row.state === 'recording'}
-              <Button variant="secondary" size="sm" pending={$busyKeys.has(`ltv:rec:${row.id}`)} on:click={() => cancel(row)}>{$t('adminLive.recTab.cancel')}</Button>
+              <Button variant="secondary" pending={$busyKeys.has(`ltv:rec:${row.id}`)} on:click={() => cancel(row)}>{$t('adminLive.recTab.cancel')}</Button>
             {/if}
           {:else if col.key === 'state'}
             <StatusPill tone={row.state === 'failed' ? 'err' : row.state === 'recording' ? 'ok' : 'muted'} icon={row.state === 'failed' ? 'alert' : row.state === 'recording' ? 'record' : 'clock'} label={stateText(row)} />
@@ -301,5 +332,7 @@
   .table { min-height: 8rem; }
   /* *Abbrechen* and the mode words stay on one line */
   .table :global(td.al-end), .table :global(td.al-end button) { white-space: nowrap; }
+  /* names and mode words break between words, never inside one */
+  .table :global(td:not(.al-end)) { word-break: normal; overflow-wrap: normal; hyphens: manual; }
   .dh { margin: 0 0 .8rem; }
 </style>

@@ -750,6 +750,7 @@ const dict: Translation<typeof de> = {
     libFolders: 'Cartelle: {paths}',
     libVisible: 'Chi vede la libreria vede le registrazioni che contiene.',
     roleMissing: 'Questi ruoli possono registrare ma non vedono la libreria «{library}»: {roles}. Non possono né guardare né scaricare le registrazioni che si trovano solo lì.',
+    rolesFailed: 'Impossibile controllare i ruoli.',
     libUnsupported: 'Il media server non offre librerie per le registrazioni: c’è solo la cartella FriendFlix.',
     libUnreachable: 'Impossibile caricare le librerie.',
     save: 'Salva archiviazione',

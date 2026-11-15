@@ -60,22 +60,61 @@ test.describe('admin: Live-TV, Aufnahmen (desktop)', () => {
     await expect.poll(() => api.settings.puts).toEqual([{ values: { LIVETV_RECORD_STORAGE: 'library', LIVETV_RECORD_LIBRARY_ID: 'lib-film' } }]);
   });
 
-  test('a recording role that cannot see the library is named (§26); a missing library can be created', async ({ page, api }) => {
+  test('§26: roles with the Mediathek on that lack the recordings library (by name) are named; Live-TV-only roles never are', async ({ page, api }) => {
     mount(api);
-    api.admin.livetv.rec.libraries.libraries = api.admin.livetv.rec.libraries.libraries.filter((l) => l.id !== 'lib-rec');
-    // the role matrix (GET /api/admin/roles): every role sees all libraries, a "Nur Live-TV" role none and may record
+    // the role matrix (GET /api/admin/roles): library lists hold NAMES, matched without case (backend libraries.ts)
     const mx = api.admin.matrix;
     const base = mx.roles.find((r) => r.key === 'family')!;
+    const role = (key: string, label: string, libraries: unknown) => ({ ...base, key, label, builtinLabel: false, values: { ...base.values, libraries, liveTv: true, liveRecord: true } });
     mx.roles = [...mx.roles.map((r) => ({ ...r, values: { ...r.values, libraries: 'all' } })),
-      { ...base, key: 'liveonly', label: 'Nur Live-TV', builtinLabel: false, values: { ...base.values, libraries: [], liveTv: true, liveRecord: true } }];
+      role('sees', 'Sieht Aufnahmen', ['Filme', 'aufnahmen']), role('blind', 'Nur Filme', ['Filme']), role('liveonly', 'Nur Live-TV', [])];
     await page.goto('/admin/livetv?tab=recordings');
     const c = card(page, 'Speicherort');
     await c.getByRole('radio', { name: /^Beides/ }).check();
-    await c.getByLabel('Bibliothek', { exact: true }).selectOption('lib-film');
-    await expect(c).toContainText('Diese Rollen dürfen aufnehmen, sehen die Bibliothek „Filme“ aber nicht: Nur Live-TV.');
+    await expect(c.getByLabel('Bibliothek', { exact: true })).toHaveValue('lib-rec');
+    await expect(c).toContainText('Diese Rollen dürfen aufnehmen, sehen die Bibliothek „Aufnahmen“ aber nicht: Nur Filme.');
+    await expect(c).not.toContainText('Nur Live-TV.');
+    await expect(c).not.toContainText('Sieht Aufnahmen');
+  });
+
+  test.describe('a failing role list', () => {
+    test.use({ allowedConsole: /status of 500/ });
+    test('§26: a role list that cannot be read says so instead of staying silent', async ({ page, api }) => {
+      mount(api);
+      await page.route('**/api/admin/roles', (r) => r.fulfill({ status: 500, json: { error: 'boom' } }));
+      await page.goto('/admin/livetv?tab=recordings');
+      const c = card(page, 'Speicherort');
+      await c.getByRole('radio', { name: /^Beides/ }).check();
+      await expect(c).toContainText('Die Rollen konnten nicht geprüft werden.');
+    });
+  });
+
+  test('a missing recordings library can be created', async ({ page, api }) => {
+    mount(api);
+    api.admin.livetv.rec.libraries.libraries = api.admin.livetv.rec.libraries.libraries.filter((l) => l.id !== 'lib-rec');
+    await page.goto('/admin/livetv?tab=recordings');
+    const c = card(page, 'Speicherort');
+    await c.getByRole('radio', { name: /^Beides/ }).check();
     await c.getByRole('button', { name: 'Bibliothek „Aufnahmen“ anlegen' }).click();
     await expect.poll(() => api.admin.livetv.rec.calls).toEqual(['POST /api/admin/livetv/recordings/libraries {}']);
     await expect(c.getByLabel('Bibliothek', { exact: true })).toHaveValue('lib-new');
+  });
+
+  test('?setting=LIVETV_RECORD_* opens this tab and highlights the row (Systemcheck, settings search)', async ({ page }) => {
+    await page.goto('/admin/livetv?tab=recordings&setting=LIVETV_RECORD_MAX_PARALLEL');
+    const row = page.locator('#setting-LIVETV_RECORD_MAX_PARALLEL');
+    await expect(row).toHaveAttribute('data-flash', /.+/);
+    await expect(row.getByRole('spinbutton')).toBeFocused();
+    await expect(page).toHaveURL((u) => u.searchParams.get('tab') === 'recordings' && !u.searchParams.has('setting'));
+    // the storage mode has no registry row here: its card is the target
+    await page.goto('/admin/livetv?tab=recordings&setting=LIVETV_RECORD_STORAGE');
+    await expect(page.locator('#setting-LIVETV_RECORD_STORAGE')).toHaveAttribute('data-flash', /.+/);
+  });
+
+  test('the settings search sends a recording setting to this tab', async ({ page }) => {
+    await page.goto('/admin/settings?setting=LIVETV_RECORD_RETENTION_DAYS');
+    await expect(page).toHaveURL((u) => u.pathname === '/admin/livetv' && u.searchParams.get('tab') === 'recordings');
+    await expect(page.locator('#setting-LIVETV_RECORD_RETENTION_DAYS')).toHaveAttribute('data-flash', /.+/);
   });
 
   test('usage bar text', async ({ page }) => {

@@ -750,6 +750,7 @@ const dict: Translation<typeof de> = {
     libFolders: 'Carpetas: {paths}',
     libVisible: 'Quien vea la biblioteca ve las grabaciones que contiene.',
     roleMissing: 'Estos roles pueden grabar, pero no ven la biblioteca «{library}»: {roles}. No pueden ver ni descargar las grabaciones que solo estén allí.',
+    rolesFailed: 'No se pudieron comprobar los roles.',
     libUnsupported: 'El servidor multimedia no ofrece bibliotecas para grabaciones: solo existe la carpeta de FriendFlix.',
     libUnreachable: 'No se pudieron cargar las bibliotecas.',
     save: 'Guardar almacenamiento',

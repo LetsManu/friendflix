@@ -750,6 +750,7 @@ const dict: Translation<typeof de> = {
     libFolders: 'Klasörler: {paths}',
     libVisible: 'Kütüphaneyi gören herkes içindeki kayıtları görür.',
     roleMissing: 'Bu roller kayıt yapabilir ama “{library}” kütüphanesini görmez: {roles}. Yalnızca orada bulunan kayıtları ne izleyebilir ne de indirebilirler.',
+    rolesFailed: 'Roller denetlenemedi.',
     libUnsupported: 'Medya sunucusu kayıtlar için kütüphane sunmuyor: yalnızca FriendFlix klasörü var.',
     libUnreachable: 'Kütüphaneler yüklenemedi.',
     save: 'Depolama yerini kaydet',

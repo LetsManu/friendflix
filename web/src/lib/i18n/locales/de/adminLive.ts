@@ -750,6 +750,7 @@ export default {
     libFolders: 'Ordner: {paths}',
     libVisible: 'Aufnahmen in der Bibliothek sieht jede Person, die diese Bibliothek sieht.',
     roleMissing: 'Diese Rollen dürfen aufnehmen, sehen die Bibliothek „{library}“ aber nicht: {roles}. Aufnahmen, die nur dort liegen, können sie weder ansehen noch herunterladen.',
+    rolesFailed: 'Die Rollen konnten nicht geprüft werden.',
     libUnsupported: 'Der Medienserver bietet keine Bibliothek für Aufnahmen an: es gibt nur den FriendFlix-Ordner.',
     libUnreachable: 'Die Bibliotheken konnten nicht geladen werden.',
     save: 'Speicherort speichern',

@@ -163,6 +163,8 @@ describe('the time of the list', () => {
 describe('Systemcheck links', () => {
   it('settingHref: the Live-TV settings tab for the livetv group, Admin → Settings otherwise; a bad key opens the settings only', () => {
     expect(settingHref('LIVETV_ENCODER', 'livetv')).toBe('/admin/livetv?tab=settings&setting=LIVETV_ENCODER');
+    // the recording settings live on the Aufnahmen tab (fix round 1, W-I10)
+    expect(settingHref('LIVETV_RECORD_LIMIT_GB', 'livetv')).toBe('/admin/livetv?tab=recordings&setting=LIVETV_RECORD_LIMIT_GB');
     expect(settingHref('AUTHENTIK_API_TOKEN', 'signin')).toBe('/admin/settings?setting=AUTHENTIK_API_TOKEN');
     expect(settingHref('PUBLIC_URL')).toBe('/admin/settings?setting=PUBLIC_URL');
     expect(settingHref('x"><script')).toBe('/admin/settings');

@@ -750,6 +750,7 @@ const dict: Translation<typeof de> = {
     libFolders: 'Dossiers : {paths}',
     libVisible: 'Quiconque voit la bibliothèque voit les enregistrements qu’elle contient.',
     roleMissing: 'Ces rôles peuvent enregistrer mais ne voient pas la bibliothèque « {library} » : {roles}. Ils ne peuvent ni regarder ni télécharger les enregistrements qui ne sont que là.',
+    rolesFailed: 'Impossible de vérifier les rôles.',
     libUnsupported: 'Le serveur multimédia ne propose pas de bibliothèque pour les enregistrements : il n’y a que le dossier FriendFlix.',
     libUnreachable: 'Impossible de charger les bibliothèques.',
     save: 'Enregistrer le stockage',
