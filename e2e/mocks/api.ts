@@ -556,7 +556,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     // Live TV channel logos by hash (Task 19): any hash is a small image
     if (p.startsWith('/api/livetv/logos/') && m === 'GET') return route.fulfill({ status: 200, contentType: 'image/png', body: pngFor(p) });
-    if (p === '/api/admin/systemcheck' && st.asAdmin) { const r = syscheckRoute(st.syscheck, m, p, sp, J); if (r) return r; }
+    if (p === '/api/admin/systemcheck') { const r = syscheckRoute(st.syscheck, m, p, sp, J); if (r) return r; }
     if (st.asAdmin) { const r = syscheckUpload(st.syscheck, m, p, route); if (r) return r; }
     if (p.startsWith('/api/admin/updater') && st.asAdmin) { const r = updaterRoute(st.updater, st.settings, m, p, J); if (r) return r; }
     if (p.startsWith('/api/admin/settings')) { st.settings.livetvInstalled = st.admin.livetv.installed; const r = settingsRoute(st.settings, m, p, body(), J); if (r) return r; }

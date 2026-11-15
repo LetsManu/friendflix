@@ -39,7 +39,7 @@ test.describe('media server kind in the app (Plex)', () => {
   test('settings: engine v1 is "klassisch" on Plex, and the media group shows only the Plex keys', async ({ page, api }) => {
     api.serverKind = 'plex';
     api.settings = settingsState('plex');
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     await expect(setting(page, 'Empfehlungs-Engine').getByRole('combobox').locator('option')).toHaveText(['v1 (klassisch)', 'v2 (eigenes Geschmacksmodell)', 'Shadow (v2 neben v1)']);
     await expect(setting(page, 'Plex-Adresse')).toBeVisible();
     await expect(setting(page, 'Jellyfin-Adresse')).toHaveCount(0);
