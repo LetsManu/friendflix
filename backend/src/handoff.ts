@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import type { CastVia } from './cast.js';
 import type { Ctx } from './ctx.js';
 import type { ClientKind } from './deviceKind.js';
+import { recordingView } from './livetv/recordings.js';
 import { MediaError } from './media/types.js';
 import type { JfUser } from './types.js';
 
@@ -12,6 +13,13 @@ import type { JfUser } from './types.js';
  * migration 46). Written by every playback report (routes/media.ts playbackReport); read by GET /api/handoff. Rows hold ids,
  * positions and the database's clock only, never leave the profile, and live at most 24 hours.
  */
+
+/**
+ * A FriendFlix recording in a hand-off row (Live TV Phase 3 Task 10): `rec:<uuid>` (recItem.ts). Accepted only for a recording the profile
+ * sees: written from its progress route (which checks that), re-checked on every read (a recording deleted or no longer shared goes).
+ */
+export { REC_ITEM_RE } from './recItem.js';
+import { REC_ITEM_RE } from './recItem.js';
 
 /** how the device played it: on a TV through AirPlay or Chromecast; null = on the device itself */
 export type HandoffVia = CastVia;
@@ -74,8 +82,12 @@ export interface HandoffAnswer {
   /** opaque, stable while that device plays that title */
   id: string;
   itemId: string;
-  type: 'Movie' | 'Episode';
+  /** `Recording`: a FriendFlix recording (`itemId` = `rec:<uuid>`, `imageId` empty, `logo` the channel's) */
+  type: 'Movie' | 'Episode' | 'Recording';
   title: string;
+  /** a recording: its channel and the channel's logo path */
+  channel?: string;
+  logo?: string;
   year?: number;
   seriesName?: string;
   season?: number;
@@ -111,7 +123,7 @@ interface HandoffRow {
  * device, too old, too short, nearly finished, hidden from Weiterschauen, dropped, gone from the library or already played.
  * All time decisions use the database's clock.
  */
-export async function selectHandoff(ctx: Ctx, who: { userId: string; profileId: string; deviceId: string; jfUser: JfUser }, item?: string): Promise<HandoffAnswer | null> {
+export async function selectHandoff(ctx: Ctx, who: { userId: string; profileId: string; deviceId: string; jfUser: JfUser; role: string; kids: boolean }, item?: string): Promise<HandoffAnswer | null> {
   await pruneHandoff(ctx, who.profileId);
   const r = (await ctx.db.query<HandoffRow>(
     `select h.device_id, h.item_id, h.series_id, h.position_ticks::text, h.runtime_ticks::text, h.via, h.started_at,
@@ -129,6 +141,8 @@ export async function selectHandoff(ctx: Ctx, who: { userId: string; profileId: 
   const pos = Number(r.position_ticks);
   const runtime = r.runtime_ticks == null ? undefined : Number(r.runtime_ticks);
   if (pos < MIN_TICKS || (runtime !== undefined && runtime > 0 && pos >= runtime * 0.9)) return null;
+  const rec = REC_ITEM_RE.exec(r.item_id);
+  if (rec) return recordingHandoff(ctx, who, r, rec[1]!, pos, runtime);
   let it;
   try {
     it = await ctx.jf.item(who.jfUser, r.item_id);
@@ -155,6 +169,26 @@ export async function selectHandoff(ctx: Ctx, who: { userId: string; profileId: 
     positionTicks: pos,
     ...(rt != null ? { runtimeTicks: rt } : {}),
     ageSec: Number(r.age_sec),
+    device: { kind, ...(name ? { name } : {}), ...(r.via ? { via: r.via } : {}) },
+  };
+}
+
+/** a recording's offer: only while the profile still sees it (else its row goes); named by its title and channel, no library image */
+async function recordingHandoff(ctx: Ctx, who: { userId: string; profileId: string; role: string; kids: boolean }, r: HandoffRow, id: string, pos: number, runtime: number | undefined): Promise<HandoffAnswer | null> {
+  const v = await recordingView(ctx, { id: who.userId, role: who.role }, { id: who.profileId, kids: who.kids }, id);
+  // not playable from the offer: gone, planned or starting (the view says scheduled), failed, or only in the Jellyfin library now
+  if (!v || v.state === 'scheduled' || v.state === 'failed' || v.storage === 'library') {
+    await ctx.db.query('delete from handoff where profile_id = $1 and device_id = $2 and item_id = $3', [who.profileId, r.device_id, r.item_id]);
+    return null;
+  }
+  const rt = runtime ?? (v.durationS ? v.durationS * 10_000_000 : undefined);
+  if (rt !== undefined && rt > 0 && pos >= rt * 0.9) return null;
+  const kind: ClientKind = r.client ?? 'web';
+  const name = r.name ?? (kind === 'web' ? r.label : null);
+  return {
+    id: createHash('sha256').update(`${r.device_id}|${r.item_id}|${r.started_at.toISOString()}`).digest('hex').slice(0, 16),
+    itemId: r.item_id, type: 'Recording', title: v.title, channel: v.channel.name, ...(v.channel.logo ? { logo: v.channel.logo } : {}), imageId: '',
+    positionTicks: pos, ...(rt != null ? { runtimeTicks: rt } : {}), ageSec: Number(r.age_sec),
     device: { kind, ...(name ? { name } : {}), ...(r.via ? { via: r.via } : {}) },
   };
 }

@@ -9,6 +9,7 @@
    */
   import { createEventDispatcher, onDestroy, tick as settled } from 'svelte';
   import { goto } from '$app/navigation';
+  import { itemPath } from '#lib/remote';
   import { get } from 'svelte/store';
   import { fade } from 'svelte/transition';
   import { api, cachedItem, type Item } from '#lib/api';
@@ -127,7 +128,7 @@
     const c = get(session);
     if (!c) return;
     castEngine.release();
-    void goto('/watch/' + c.itemId);
+    void goto(itemPath(c.itemId));
   }
   /** `reconnect`: runs inside the tap (AirPlay opens the system picker, which needs the gesture) */
   function reconnect() { castEngine.reconnect(); }

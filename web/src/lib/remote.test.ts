@@ -205,3 +205,12 @@ describe('TV side', () => {
     expect(FakeWS.all).toHaveLength(1);
   });
 });
+
+describe('itemPath', () => {
+  it('a recording opens its player, a film the watch page; a malformed rec: id lands on Meine Aufnahmen', () => {
+    expect(R.itemPath('rec:0b3c6a6e-1f2d-4c1e-9a55-3f7d2c1b0a99', 61.7)).toBe('/live/recordings/0b3c6a6e-1f2d-4c1e-9a55-3f7d2c1b0a99?t=61');
+    expect(R.itemPath('f1', 12)).toBe('/watch/f1?t=12');
+    expect(R.itemPath('f1')).toBe('/watch/f1');
+    expect(R.itemPath('rec:nope')).toBe('/live/recordings');
+  });
+});

@@ -26,7 +26,7 @@
   import { kidsMode } from '#lib/kids';
   import type ItemModalType from '#lib/ItemModal.svelte';
   import { loadModal, prefetchModal } from '#lib/lazy';
-  import { startTvLink, type ToTv } from '#lib/remote';
+  import { itemPath, startTvLink, type ToTv } from '#lib/remote';
   import { perms, permsFrom } from '#lib/perms';
   import { areas, areasFrom, capsFrom, features, featuresOfMe, featuresFrom, featuresKnown, kindFrom, serverCaps, serverKind } from '#lib/capabilities';
   import { setMeta } from '#lib/offline/db';
@@ -231,7 +231,8 @@
   // /api/me (a 401 there would loop back to /auth/login → /login)
   $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending' || path === '/restore' || path === '/setup' || path === '/login' || path === '/reset' || path === '/confirm-email';
   // immersive player pages: no navigation (the film player, a party, the live player of Task 39)
-  $: watchPage = path.startsWith('/watch/') || path.startsWith('/live/watch/') || /^\/party\/[^/]+/.test(path);
+  // a recording plays full-screen like a film (Live TV Phase 3: /live/recordings/<id>)
+  $: watchPage = path.startsWith('/watch/') || path.startsWith('/live/watch/') || /^\/live\/recordings\/[^/]+/.test(path) || /^\/party\/[^/]+/.test(path);
   $: showRail = tv && !watchPage && !profilesPage && !kidsUi;
   // only the rail's own destinations, without a filter (a genre page from the home categories row is a drill-down: Back goes back)
   $: topLevel = !publicPage && isRailTop(path, $page.url.search); // (the prerendered /offline page has no search params)
@@ -359,7 +360,7 @@
 
   // ---- commands from the phone (only on a paired TV) ----
   function onTvCommand(m: ToTv) {
-    if (m.t === 'cast') goto(`/watch/${m.itemId}${m.startSec ? `?t=${m.startSec}` : ''}`);
+    if (m.t === 'cast') goto(itemPath(m.itemId, m.startSec || undefined)); // a recording (rec:<id>) opens its own player page
     else if (m.action === 'home' || m.action === 'stop') goto('/');
     else window.dispatchEvent(new CustomEvent('ff-remote', { detail: m })); // the player listens
   }
@@ -471,7 +472,7 @@
   });
 
   // ---- page transitions: View Transitions API where available (180 ms crossfade, main content rises 8 px; see app.css) ----
-  const immersive = (p: string) => /^\/(watch|party|live\/watch)\//.test(p);
+  const immersive = (p: string) => /^\/(watch|party|live\/watch)\/|^\/live\/recordings\/[^/]/.test(p);
   const isWatch = (p: string) => p.startsWith('/watch/');
   // A transition started while another runs skips the first one, whose `finished` then settles: only the latest transition may
   // clean up the shared root classes, and each one only takes the shared name off the elements it named (unless the latest named them too).

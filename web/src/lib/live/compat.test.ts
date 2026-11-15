@@ -49,5 +49,10 @@ describe('Chromium 85 compat scan', () => {
     expect(existsSync(abs), `${f}: a named file is missing, the scan cannot check it`).toBe(true);
     const text = readFileSync(abs, 'utf8');
     for (const token of FORBIDDEN) expect(text.includes(token), `${f} uses ${token}`).toBe(false);
+    // dvh/svh/lvh (Chromium 108) only as an override right after the same property in vh, which Chromium 85 keeps
+    for (const m of text.matchAll(/([a-z-]+):[^;]*\d[dsl]vh[^;]*;/g)) {
+      const before = text.slice(Math.max(0, m.index! - 200), m.index);
+      expect(new RegExp(`${m[1]}:[^;]*\\dvh[^;]*;\\s*$`).test(before), `${f}: ${m[0]} needs a vh fallback right before it`).toBe(true);
+    }
   });
 });

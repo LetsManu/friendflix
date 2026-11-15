@@ -123,7 +123,9 @@ export function adviceTexts(l: CheckLine): Array<{ cause: string; fix: string }>
 /** "Zur Einstellung": Live-TV settings live on their own page; a key of another form opens the settings page only */
 export function settingHref(key: string, group?: string): string {
   if (!SETTING_KEY.test(key)) return '/admin/settings';
-  return group === 'livetv' ? `/admin/livetv?tab=settings&setting=${key}` : `/admin/settings?setting=${key}`;
+  if (group !== 'livetv') return `/admin/settings?setting=${key}`;
+  // the recording settings (LIVETV_RECORD_*) live on the Aufnahmen tab (Phase 3)
+  return `/admin/livetv?tab=${key.startsWith('LIVETV_RECORD_') ? 'recordings' : 'settings'}&setting=${key}`;
 }
 
 /** "Anleitung": a file under docs/ on GitHub ('' for anything that is not `<file>.md#anchor`) */

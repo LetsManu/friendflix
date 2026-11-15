@@ -9,6 +9,7 @@
    */
   import { createEventDispatcher, onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import { itemPath } from '#lib/remote';
   import { get } from 'svelte/store';
   import { cachedItem } from '#lib/api';
   import { castSetVolume, castState, castToggleMute } from '#lib/cast';
@@ -77,7 +78,7 @@
   $: hasChips = chipSession.audioTracks.length > 0 || (!air && chipSession.subtitles.length > 0);
 
   // ---- actions ----
-  function openRemote() { const c = get(castSession); if (c) void goto(c.live ? '/live/watch/' + encodeURIComponent(c.live.channelId) : '/watch/' + c.itemId); }
+  function openRemote() { const c = get(castSession); if (c) void goto(c.live ? '/live/watch/' + encodeURIComponent(c.live.channelId) : itemPath(c.itemId)); }
   async function stop() {
     const c = get(castSession);
     if (!c) return;

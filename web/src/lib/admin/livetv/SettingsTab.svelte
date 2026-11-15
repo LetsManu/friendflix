@@ -53,7 +53,8 @@
 
   async function load() {
     failed = false;
-    try { items = (await loadSettings()).groups.find((g) => g.id === LIVETV_GROUP)?.items ?? []; } catch { if (!items) failed = true; }
+    // the recording settings (LIVETV_RECORD_*) live on the *Aufnahmen* tab (Phase 3 Task 11)
+    try { items = ((await loadSettings()).groups.find((g) => g.id === LIVETV_GROUP)?.items ?? []).filter((i) => !i.key.startsWith('LIVETV_RECORD_')); } catch { if (!items) failed = true; }
   }
   onMount(() => {
     void load();

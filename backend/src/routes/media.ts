@@ -9,7 +9,7 @@ import type { JfUser, ProfileRow, UserRow } from '../types.js';
 import { methodOf } from '../playstats.js';
 import { countStreams } from '../livetv/tokens.js';
 import { clearLive, clearStopped, getLive, listLive, markStopped, setLive } from '../live.js';
-import { noteHandoff, selectHandoff, type HandoffVia } from '../handoff.js';
+import { noteHandoff, REC_ITEM_RE, selectHandoff, type HandoffVia } from '../handoff.js';
 import { isHomeRequest } from '../netaddr.js';
 import { effectiveLimits } from '../limits.js';
 import { remoteBitrateCap } from '../roles.js';
@@ -260,11 +260,12 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // device hand-off: what this profile last played on another device (selection and answer: handoff.ts)
   app.get('/api/handoff', { ...pre, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, wrap(async (req, reply) => {
-    const q = z.object({ item: itemId.optional() }).parse(req.query);
+    // a recording (`rec:<uuid>`, Live TV Phase 3) is offered like a title; handoff.ts checks that the profile still sees it
+    const q = z.object({ item: z.union([itemId, z.string().regex(REC_ITEM_RE)]).optional() }).parse(req.query);
     const deviceId = req.session!.deviceId;
     reply.header('Cache-Control', 'no-store');
     if (!deviceId) return { handoff: null };
-    return { handoff: await selectHandoff(ctx, { userId: req.user!.id, profileId: req.profile!.id, deviceId, jfUser: req.jfUser! }, q.item) };
+    return { handoff: await selectHandoff(ctx, { userId: req.user!.id, profileId: req.profile!.id, deviceId, jfUser: req.jfUser!, role: req.user!.role, kids: Boolean(req.profile!.kids) }, q.item) };
   }));
 
   app.get('/api/library/resume', pre, wrap(async (req) => ({ items: await resumeItems(ctx, req.jfUser!, req.profile!.id) })));

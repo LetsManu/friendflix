@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { hasKey, setLocale, tr } from '#lib/i18n';
 import type { SourceView } from './api';
 import { ApiError } from '#lib/api';
-import { chnoFallbackShown, detectKind, fileFailText, fileLine, guideProviderLabel, isFileGuide, guideMoves, guideScopeLabel, guideStateLine, portRange, portsLine, refreshDone, refreshResult, scopeOptions, sourceError, sourceFailText, stateLine, tabOf, urlShapeOk } from './sources';
+import { chnoFallbackShown, detectKind, fileFailText, fileLine, guideProviderLabel, isFileGuide, guideMoves, guideScopeLabel, guideStateLine, portRange, portsLine, refreshDone, refreshResult, scopeOptions, sourceError, sourceFailText, stateLine, TABS, tabOf, urlShapeOk } from './sources';
 
 const at = (h: number, min: number, dayShift = 0) => new Date(2026, 10, 12 + dayShift, h, min).toISOString();
 const NOW = new Date(2026, 10, 12, 9, 30);
@@ -134,7 +134,9 @@ describe('small helpers', () => {
     expect(tabOf('status')).toBe('status');
     expect(tabOf('channels')).toBe('channels');
     expect(tabOf(null)).toBe('sources');
-    expect(tabOf('recordings')).toBe('sources'); // no such tab
+    expect(tabOf('recordings')).toBe('recordings'); // Phase 3 Task 11: Aufnahmen, before Einstellungen
+    expect(TABS.indexOf('recordings')).toBe(TABS.indexOf('settings') - 1);
+    expect(tabOf('nope')).toBe('sources'); // no such tab
   });
   it('urlShapeOk: scheme and host only', () => {
     expect(urlShapeOk('https://iptv.example.com/get.php?u=a', ['http:', 'https:'])).toBe(true);
