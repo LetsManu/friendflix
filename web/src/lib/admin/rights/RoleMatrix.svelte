@@ -33,11 +33,13 @@
   /** a cell (compare.ts); `_l`: the language, so a switch re-renders its words */
   const cellOf = (m: RoleMatrix, role: MatrixRole, row: CompareRow, _l: unknown) => compareCell(m, role, row);
   /** the cell's tooltip: why it is locked, or where its value was set */
-  function tip(role: MatrixRole, row: CompareRow, locked: boolean, src: 'role' | 'env' | null, _l: unknown): string | undefined {
+  function tip(role: MatrixRole, row: CompareRow, locked: boolean, src: 'role' | 'env' | null, needs: 'livetv' | null, _l: unknown): string | undefined {
     if (locked) return tr('adminPeople.roles.adminLocked');
-    if (src === 'role' && row.kind === 'field') return changedFromText(role, row.field) ?? tr('adminPeople.roles.changedHere');
-    if (src === 'env') return tr('adminPeople.roles.fromEnv');
-    return undefined;
+    const why = needs ? tr('adminPeople.roles.areas.needsLivetv') : '';
+    // Darf aufnehmen with Live-TV off keeps its stored value; the hint says it does nothing until Live-TV is on
+    if (src === 'role' && row.kind === 'field') return [changedFromText(role, row.field) ?? tr('adminPeople.roles.changedHere'), why].filter(Boolean).join(' · ');
+    if (src === 'env') return [tr('adminPeople.roles.fromEnv'), why].filter(Boolean).join(' · ');
+    return why || undefined;
   }
 
   // ---- reading by keyboard: one tab stop (the active cell), the arrows move it; Enter on a link follows it (the browser's own)
@@ -110,7 +112,7 @@
                 {@const focus = active.r === r && active.c === c ? 0 : -1}
                 {#if x.href}
                   <td role="gridcell" class:wrap={row.kind === 'groups'}>
-                    <a class="cl" href={x.href} data-cell="{r}:{c}" bind:this={cells[`${r}:${c}`]} tabindex={focus} aria-label={x.label} title={tip(role, row, false, x.src, $locale)}
+                    <a class="cl" href={x.href} data-cell="{r}:{c}" bind:this={cells[`${r}:${c}`]} tabindex={focus} aria-label={x.label} title={tip(role, row, false, x.src, x.needs, $locale)}
                       on:focus={() => (active = { r, c })}>
                       <!-- the dot sits on its chip (a wide last column would leave it far away at the cell's edge) -->
                       <span class="cv"><span class="chip" class:bool={x.bool} class:off={x.bool && !x.value} class:names={row.kind === 'groups'} aria-hidden="true">
@@ -120,7 +122,7 @@
                   </td>
                 {:else}
                   <td role="gridcell" class="lock" data-cell="{r}:{c}" bind:this={cells[`${r}:${c}`]} tabindex={focus} aria-disabled="true" aria-label={x.label}
-                    title={tip(role, row, true, null, $locale)} on:focus={() => (active = { r, c })}>
+                    title={tip(role, row, true, null, null, $locale)} on:focus={() => (active = { r, c })}>
                     <span class="chip" class:bool={x.bool} class:off={x.bool && !x.value} aria-hidden="true">
                       {#if x.bool}<Icon name={x.value ? 'check' : 'x'} size={16} />{:else}{x.text}{/if}
                     </span>

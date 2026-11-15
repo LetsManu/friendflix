@@ -133,6 +133,8 @@ beforeAll(async () => {
   await person(ANNA, 'family', 'Anna Beispiel');
   await person(BEN, 'friend', 'Ben Muster');
   await person(GUEST, 'guest', 'Gast Probe');
+  // recording is off by default for every role but Admin (owner decision 2026-11-15): grant it to Familie and Freund explicitly
+  await env.pool.query(`insert into role_settings(role, perms) values ('family', '{"liveRecord": true}'), ('friend', '{"liveRecord": true}')`);
 });
 afterAll(() => env.close());
 beforeEach(async () => {

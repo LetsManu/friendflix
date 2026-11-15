@@ -86,7 +86,7 @@ describe('stageArea (spec §2.3)', () => {
     expect(stageArea(off, m, R(m, 'friend'), 'together', true)).toEqual({});
   });
   it('the single-switch areas stage their switch', () => {
-    expect(stageArea({}, m, R(m, 'friend'), 'livetv', false)).toEqual({ friend: { liveTv: false, liveRecord: false } }); // Darf aufnehmen needs Live-TV
+    expect(stageArea({}, m, R(m, 'friend'), 'livetv', false)).toEqual({ friend: { liveTv: false } }); // Darf aufnehmen is its own right
     expect(stageArea({}, m, R(m, 'friend'), 'requests', false)).toEqual({ friend: { requests: false } });
     expect(stageArea({}, m, R(m, 'friend'), 'downloads', false)).toEqual({ friend: { download: false } });
     expect(stageArea({}, m, R(m, 'bare'), 'livetv', true)).toEqual({ bare: { liveTv: true } });
@@ -114,29 +114,35 @@ describe('stageField keeps the coupling', () => {
   });
 });
 
-describe('Live-TV coupling: Darf aufnehmen needs Live-TV (roles redesign §5.4, Stage 4 ruling)', () => {
+describe('Darf aufnehmen is its own right (owner decision 2026-11-15; roles redesign §5.4)', () => {
   const m = matrix();
-  it('Live-TV off stages Darf aufnehmen off; on again in the same session restores both', () => {
+  it('switching Live-TV off or on never stages Darf aufnehmen', () => {
     const off = stageArea({}, m, R(m, 'friend'), 'livetv', false);
-    expect(off).toEqual({ friend: { liveTv: false, liveRecord: false } });
+    expect(off).toEqual({ friend: { liveTv: false } });
     expect(stageArea(off, m, R(m, 'friend'), 'livetv', true)).toEqual({});
-    // a role whose recordings right is off already: only the Live-TV switch stages
-    const r = role('norec', { ...FULL, liveRecord: false });
-    expect(stageArea({}, { ...m, roles: [...m.roles, r] }, r, 'livetv', false)).toEqual({ norec: { liveTv: false } });
+    expect(stageArea({}, m, R(m, 'bare'), 'livetv', true)).toEqual({ bare: { liveTv: true } });
+    // a staged Darf aufnehmen edit survives a Live-TV toggle
+    const edited = stageField({}, m, R(m, 'friend'), 'liveRecord', false);
+    expect(stageArea(stageArea(edited, m, R(m, 'friend'), 'livetv', false), m, R(m, 'friend'), 'livetv', true)).toEqual({ friend: { liveRecord: false } });
   });
-  it('Darf aufnehmen cannot go on while Live-TV is off (staged or saved); off always can', () => {
+  it('the stored value stays what it is while Live-TV is off', () => {
     const off = stageArea({}, m, R(m, 'friend'), 'livetv', false);
-    expect(stageField(off, m, R(m, 'friend'), 'liveRecord', true)).toBe(off);
-    expect(stageField({}, m, R(m, 'bare'), 'liveRecord', true)).toEqual({});
-    expect(stageField({}, m, R(m, 'friend'), 'liveRecord', false)).toEqual({ friend: { liveRecord: false } });
+    expect(stagedValues(off, R(m, 'friend')).liveRecord).toBe(true);
+    expect(stagedValues({}, R(m, 'bare')).liveRecord).toBe(false);
   });
-  it('fieldNeeds / coupledValue / fieldLocks: what a field waits for, and the value the app offers', () => {
+  it('Darf aufnehmen can be staged either way, also while Live-TV is off', () => {
+    const off = stageArea({}, m, R(m, 'friend'), 'livetv', false);
+    expect(stageField(off, m, R(m, 'friend'), 'liveRecord', false)).toEqual({ friend: { liveTv: false, liveRecord: false } });
+    expect(stageField({}, m, R(m, 'bare'), 'liveRecord', true)).toEqual({ bare: { liveRecord: true } });
+  });
+  it('fieldNeeds / coupledValue / fieldLocks: Live-TV is a hint and a lock, never a value', () => {
     const v = { ...FULL, liveTv: false, libraries: [] };
     expect(fieldNeeds(v, 'liveRecord')).toBe('livetv');
     expect(fieldNeeds(v, 'party')).toBe('library');
     expect(fieldNeeds(v, 'maxStreams')).toBeNull();
     expect(fieldNeeds(FULL, 'liveRecord')).toBeNull();
-    expect(coupledValue(v, 'liveRecord')).toBe(false);
+    expect(coupledValue(v, 'liveRecord')).toBe(true);
+    expect(coupledValue({ ...v, liveRecord: false }, 'liveRecord')).toBe(false);
     expect(coupledValue(v, 'comments')).toBe(false);
     expect(coupledValue(v, 'maxStreams')).toBe(2);
     expect(coupledValue(FULL, 'liveRecord')).toBe(true);
@@ -182,9 +188,8 @@ describe('Review Focus 5: only coupled states can be staged', () => {
     { key: 'party', v: true }, { key: 'comments', v: true }, { key: 'download', v: true }, { key: 'requests', v: true }, { key: 'partySchedule', v: true },
     { key: 'liveRecord', v: true },
   ];
-  /** Mediathek off ⇒ Wünsche, Gemeinsam, Downloads off; Live-TV off ⇒ Darf aufnehmen off (on the values as they would be saved) */
-  const coupled = (v: Record<string, unknown>) => (hasLibrary(v.libraries) || [v.requests, v.party, v.partySchedule, v.comments, v.download].every((x) => x !== true))
-    && (v.liveTv === true || v.liveRecord !== true);
+  /** Mediathek off ⇒ Wünsche, Gemeinsam, Downloads off; Darf aufnehmen is independent of Live-TV */
+  const coupled = (v: Record<string, unknown>) => (hasLibrary(v.libraries) || [v.requests, v.party, v.partySchedule, v.comments, v.download].every((x) => x !== true));
   it('every sequence of up to three switches and field edits from a coupled role stays coupled', () => {
     const m = matrix();
     let checked = 0;

@@ -10,7 +10,7 @@
  */
 import { chipsText } from '#lib/admin/livetv/groups';
 import { tr } from '#lib/i18n';
-import { areaLabel, areasOf, coupledValue, fieldsOfArea, shownAreas, withCoupling, type AreaKey } from './areas';
+import { areaLabel, areasOf, coupledValue, fieldNeeds, fieldsOfArea, shownAreas, withCoupling, type AreaKey } from './areas';
 import { cellText, fieldLabel, PERM_SET, roleName, type MatrixField, type MatrixRole, type RoleMatrix } from './model';
 
 export type CompareRow = { kind: 'area'; area: AreaKey } | { kind: 'field'; field: MatrixField } | { kind: 'groups' };
@@ -44,6 +44,8 @@ export interface CompareCell {
   text: string;
   /** the admin role's switches and areas: not editable anywhere */
   locked: boolean;
+  /** a switch that only works while another area is on (Darf aufnehmen while Live-TV is off): the hint, never a changed value */
+  needs: 'livetv' | null;
   /** where the role's value was set ("geändert" / "aus .env"; the dot) */
   src: 'role' | 'env' | null;
   /** the link to the role page; null while locked */
@@ -56,7 +58,7 @@ export interface CompareCell {
 
 export function compareCell(m: RoleMatrix, r: MatrixRole, row: CompareRow): CompareCell {
   const admin = r.base === 'admin';
-  let value: unknown, bool: boolean, text: string, locked = false, src: CompareCell['src'] = null;
+  let value: unknown, bool: boolean, text: string, locked = false, src: CompareCell['src'] = null, needs: CompareCell['needs'] = null;
   if (row.kind === 'area') {
     value = withCoupling(r.areas ?? areasOf(r.values))[row.area];
     bool = true;
@@ -64,6 +66,7 @@ export function compareCell(m: RoleMatrix, r: MatrixRole, row: CompareRow): Comp
   } else if (row.kind === 'field') {
     // coupled as the role page shows it (a switch whose area is off reads off)
     value = coupledValue(r.values, row.field.key);
+    if (fieldNeeds(r.values, row.field.key) === 'livetv') needs = 'livetv';
     bool = row.field.kind === 'bool';
     locked = admin && PERM_SET.has(row.field.key);
     const s = r.sources[row.field.key];
@@ -80,7 +83,7 @@ export function compareCell(m: RoleMatrix, r: MatrixRole, row: CompareRow): Comp
   const words = bool ? tr(value ? 'adminPeople.roles.allowed' : 'adminPeople.roles.denied') : text;
   const name = tr(src === 'role' ? 'adminPeople.roles.cellNameChanged' : 'adminPeople.roles.cellName', { role: roleName(r), field: rowLabel(row), value: words });
   return {
-    value, bool, text, locked, src, name,
+    value, bool, text, locked, src, needs, name,
     href: locked ? null : compareHref(r, rowKey(row)),
     label: locked ? name : tr('adminPeople.roles.compare.cell', { cell: name }),
   };

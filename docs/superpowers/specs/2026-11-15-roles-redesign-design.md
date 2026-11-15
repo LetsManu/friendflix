@@ -334,7 +334,14 @@ Live-TV (excluded from `hasLibrary`), so a Live-TV-only role still has `library:
 so the registry no longer marks it planned. The switch is visible as "Darf aufnehmen" in the role page's Live-TV section
 (read-only in the compare view, in the person's *Rechte* tab like any right) and coupled to Live-TV the way the Mediathek
 coupling works: Live-TV off stages it off, and it stays off and locked ("Braucht Live-TV") until Live-TV is on again. The kids
-overlay still forces it off; the "Nur Live-TV" template keeps `liveRecord: false`. The recordings screens follow on their own
+overlay still forces it off; the "Nur Live-TV" template keeps `liveRecord: false`.
+**Owner decision 2026-11-15 (supersedes the coupling and the defaults above):** "Switch off at start. LiveTv and Record should
+be separated rights." `liveRecord` is off by default for Familie and Freund too (Admin stays on and locked; Gast, Nur Live-TV and
+Leer were off already; a role an admin already saved keeps its value, nothing is migrated), and it is its own right: switching
+Live-TV off or on never changes its stored or staged value. Recording still needs both (`liveTv` and `liveRecord`, enforced by the
+recording routes). On the role page the switch shows its real value while Live-TV is off, disabled, with "Braucht Live-TV" on its
+reserved marker line; the review sheet lists nothing for it. The compare view and the person's *Rechte* tab show the stored value
+with the same hint. The recordings screens follow on their own
 branch; "Aufnahmen herunterladen" is not added yet (it ships with recordings downloads, Phase 3c).
 
 ### 5.5 Compare view (`/admin/roles?view=compare`)
