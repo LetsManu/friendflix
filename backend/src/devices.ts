@@ -13,7 +13,7 @@ import { deletePushSubscriptions } from './push.js';
 import { forgetAuth } from './routes/internal.js';
 import { dropPartyPeers } from './partySockets.js';
 import { dropRemotePeers } from './routes/tv.js';
-import { SESSION_PREFIX, scanSessions, sessionHash, sessionKey } from './session.js';
+import { SESSION_PREFIX, hashOfSessionKey, scanSessions, sessionHash, sessionKey } from './session.js';
 
 export const DEVICE_COOKIE = 'ff_dev';
 
@@ -73,6 +73,9 @@ export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string
     }
   }
   if (gone.size) {
+    // a session stored under both names (an old process wrote its raw key back after the move) is yielded once by the scan, under
+    // whichever name came first: sweep the other name too, or the next sign-in with that cookie would move it back and revive it
+    for (const k of await ctx.kv.keys(SESSION_PREFIX)) if (gone.has(hashOfSessionKey(k))) await ctx.kv.del(k);
     dropRemotePeers(userId, gone);
     dropPartyPeers(userId, gone);
     for (const h of gone) forgetAuth(h); // the media gateway must not keep serving a memoised identity

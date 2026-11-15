@@ -142,6 +142,21 @@ describe('a revoke that races the first use of a legacy session', () => {
     expect((await call(here, 'GET', '/api/me')).statusCode).toBe(200);
   });
 
+  it('a session stored under both names (hashed listed first) is revoked under both: the raw key cannot revive it', async () => {
+    env = await makeEnv();
+    const here = await env.login();
+    const a = await env.login();
+    const sid = a.cookies.ff_sid!;
+    // an old process wrote the raw key back after the move: the hashed key is listed first, the legacy one after it
+    await env.kv.set(`sess:${sid}`, (await env.kv.get(sessionKey(sid)))!, 250);
+    const keys = await env.kv.keys('sess:');
+    expect(keys.indexOf(sessionKey(sid))).toBeLessThan(keys.indexOf(`sess:${sid}`));
+    expect((await call(here, 'POST', '/api/sessions/revoke-others')).json()).toEqual({ revoked: 1 });
+    expect(await env.kv.get(sessionKey(sid))).toBeNull();
+    expect(await env.kv.get(`sess:${sid}`)).toBeNull();
+    expect((await call(a, 'GET', '/api/me')).statusCode).toBe(401);
+  });
+
   it('scanSessions yields a session listed under both names once', async () => {
     env = await makeEnv();
     const s = await env.login();
