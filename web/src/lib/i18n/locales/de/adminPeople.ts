@@ -463,7 +463,7 @@ export default {
       adminLocked: 'Admins dürfen immer alles',
     },
     summary: { only: 'Nur {area}', none: 'Nichts freigegeben', noGroups: 'Live-TV ohne Kanalgruppe' },
-    new: { title: 'Neue Rolle', startFrom: 'Starten mit' },
+    new: { title: 'Neue Rolle', startFrom: 'Starten mit', liveOnly: 'Nur Live-TV', liveOnlyDesc: 'Fernsehsender ohne Mediathek', empty: 'Leer', emptyDesc: 'Alles aus, du schaltest frei', copy: 'Kopie von …', copyFrom: 'Rolle zum Kopieren', unavailable: 'Ohne Live-TV gibt es diese Vorlage nicht.' },
     page: { back: 'Rollen', missing: 'Diese Rolle gibt es nicht (mehr).', envLocked: 'Steht in der .env' },
   },
   sentence: {

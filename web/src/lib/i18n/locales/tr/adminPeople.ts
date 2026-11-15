@@ -461,7 +461,7 @@ const dict: Translation<typeof de> = {
       adminLocked: 'Yöneticiler her zaman her şeyi yapabilir',
     },
     summary: { only: 'Yalnızca {area}', none: 'Hiçbir şey paylaşılmadı', noGroups: 'Kanal grubu olmadan canlı TV' },
-    new: { title: 'Yeni rol', startFrom: 'Şununla başla' },
+    new: { title: 'Yeni rol', startFrom: 'Şununla başla', liveOnly: 'Yalnızca canlı TV', liveOnlyDesc: 'Medya kitaplığı olmadan kanallar', empty: 'Boş', emptyDesc: 'Her şey kapalı, sen açarsın', copy: 'Rol kopyası …', copyFrom: 'Kopyalanacak rol', unavailable: 'Canlı TV olmadan bu şablon kullanılamaz.' },
     page: { back: 'Roller', missing: 'Bu rol yok (artık yok).', envLocked: '.env içinde tanımlı' },
   },
   sentence: {

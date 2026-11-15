@@ -3,7 +3,8 @@
 <script lang="ts">
   /**
    * Admin: one role (roles redesign §5.3). Head: back to *Rollen*, the name as an inline field (staged; an env-only role's name is
-   * locked: "Steht in der .env"), the people as a link to Personen, the ⋯ menu (*Duplizieren*: the copy's page opens, *Verlauf*,
+   * locked: "Steht in der .env"), the people as a link to Personen, the ⋯ menu (*Duplizieren*: the new-role dialog with this role's
+   * copy picked, then the new role's page opens, *Verlauf*,
    * *Löschen*: back to the list). Then *Bereiche* (AreaGrid: the area switches with the coupling of areas.ts) and a section per
    * area that is on, in the fixed order Mediathek, Live-TV (shown while Live TV is installed: its groups stay listed, dimmed, when
    * it is off), Wünsche, Gemeinsam, Downloads, then *Allgemein* (streams, casting, the invitable switch). Every edit is staged
@@ -23,15 +24,15 @@
   import DeleteRoleDialog from '#lib/admin/rights/DeleteRoleDialog.svelte';
   import GroupChips from '#lib/admin/rights/GroupChips.svelte';
   import { PERM_SET, peopleLine, policyLine, reviewLines, roleName, saveBarText, stageCounts, stageSet, type MatrixField, type MatrixRole, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
-  import NameDialog from '#lib/admin/rights/NameDialog.svelte';
+  import NewRoleDialog from '#lib/admin/rights/NewRoleDialog.svelte';
+  import { createError, createRole, type CreateBody } from '#lib/admin/rights/newRole';
   import ReviewSheet from '#lib/admin/rights/ReviewSheet.svelte';
   import RoleHistory from '#lib/admin/rights/RoleHistory.svelte';
-  import { canDelete, copyRole, deleteMoving, deleteRole, moveTargetsOf } from '#lib/admin/rights/roleDelete';
+  import { canDelete, deleteMoving, deleteRole, moveTargetsOf } from '#lib/admin/rights/roleDelete';
   import { createSave, keepKnownGroups } from '#lib/admin/rights/save';
   import SaveBar from '#lib/admin/rights/SaveBar.svelte';
   import { reducedMotion } from '#lib/ui/motion';
   import ActionMenu from '#lib/ui/ActionMenu.svelte';
-  import { errorText } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import { confirm } from '#lib/ui/confirm';
   import Skeleton from '#lib/ui/Skeleton.svelte';
@@ -155,12 +156,13 @@
   let del: { trigger: HTMLElement | null; accounts: number; invites: number } | null = null, delBusy = false, delErr = '';
   $: deletable = !!role && canDelete(role);
   const leaveQuestion = () => ({ title: tr('adminPeople.roles.leaveTitle'), body: tr('adminPeople.roles.leaveBody', { n: dirty }), danger: true, confirmLabel: tr('adminPeople.roles.leaveConfirm') });
-  /** *Duplizieren* opens the copy's page: with staged edits it asks first, before anything is created (they are dropped on Verwerfen) */
+  /**
+   * *Duplizieren* opens the new-role dialog with the copy of this role picked; the copy's page opens. With staged edits it asks
+   * first (Abbrechen keeps them). They stay staged while the dialog is open and are dropped only once the copy exists: cancelling
+   * the dialog keeps them (Stage 3 review, parked finding).
+   */
   async function startDuplicate(trigger: HTMLElement | null) {
-    if (dirty > 0) {
-      if (!(await confirm(leaveQuestion()))) { void tick().then(() => trigger?.focus({ preventScroll: true })); return; }
-      discardAll();
-    }
+    if (dirty > 0 && !(await confirm(leaveQuestion()))) { void tick().then(() => trigger?.focus({ preventScroll: true })); return; }
     dup = { trigger }; dupErr = ''; dupBusy = false;
   }
   /** a menu item runs after the menu closed and gave the focus back to its button: that is where the focus returns to */
@@ -171,13 +173,16 @@
   ];
   $: items = itemsOf(saving, deletable, $locale);
 
-  async function duplicate(label: string) {
+  /** POST the new role (the copy, or a template picked instead); the edits asked about go now, then the new role's page opens */
+  async function duplicate(body: CreateBody) {
     if (!role || dupBusy) return;
     dupBusy = true; dupErr = '';
     let made: string;
-    try { made = await copyRole(label, role.key); } catch (e) { dupErr = errorText(e); dupBusy = false; return; }
+    try { made = await createRole(body); } catch (e) { dupErr = createError(e); dupBusy = false; return; }
     dup = null; dupBusy = false;
-    toast.success(tr('adminPeople.roles.duplicated', { name: label }));
+    discardAll();
+    await tick(); // the guard reads the emptied stage
+    toast.success(tr('adminPeople.roles.duplicated', { name: body.label }));
     await goto(`/admin/roles/${encodeURIComponent(made)}`);
   }
   /** the delete (roleDelete.ts): nobody holds the role → a confirm; people do → the server's 409 role_in_use opens the dialog */
@@ -273,9 +278,8 @@
   <ReviewSheet lines={reviewLines(stage, matrix)} policy={counts.policy ? policyLine(counts) : null} trigger={reviewBtn}
     on:close={() => (reviewing = false)} on:save={saveReviewed} />
 {/if}
-{#if dup && role}
-  <NameDialog title={tr('adminPeople.roles.duplicateTitle', { name: shownName })} hint={$t('adminPeople.roles.duplicateHint')} label={$t('adminPeople.roles.fLabel')} confirmLabel={$t('adminPeople.roles.create')}
-    busy={dupBusy} error={dupErr} trigger={dup.trigger} on:submit={(e) => void duplicate(e.detail)} on:cancel={() => (dup = null)} />
+{#if dup && role && matrix}
+  <NewRoleDialog {matrix} from={role.key} busy={dupBusy} error={dupErr} trigger={dup.trigger} on:submit={(e) => void duplicate(e.detail)} on:cancel={() => (dup = null)} />
 {/if}
 {#if history && role}
   <RoleHistory {role} trigger={history.trigger} names={(k) => { const r = matrix?.roles.find((x) => x.key === k); return r ? roleName(r) : null; }} on:close={() => (history = null)} />

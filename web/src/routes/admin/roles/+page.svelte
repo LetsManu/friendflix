@@ -6,15 +6,15 @@
    * to the role's page, with its areas, its people and the ⋯ menu. *Vergleichen* (`?view=compare`, switched by the segmented
    * control without a reload): from 900 px the role matrix, below it the one-right view; both read-only, every value a link to
    * the role page at that right (the role page is the one editor, §1.1). Nothing is staged here, so there is no save bar and no
-   * leave guard. The menus run here: *Duplizieren* and *+ Neue Rolle* (POST, asks for the name), *Löschen* (confirm, or the
-   * dialog that moves the people first, from the server's 409 role_in_use), the order (PUT /order, applied at once and reloaded).
+   * leave guard. The menus run here: *+ Neue Rolle* and *Duplizieren* (the new-role dialog: a name and a template or a copy, then
+   * the new role's page opens), *Löschen* (confirm, or the dialog that moves the people first, from the server's 409 role_in_use),
+   * the order (PUT /order, applied at once and reloaded).
    */
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
-  import { errorText } from '#lib/ui/action';
   import { SCRIM_BAR } from '#lib/glass/tone';
   import SlidePill from '#lib/glass/SlidePill.svelte';
   import Button from '#lib/ui/Button.svelte';
@@ -24,8 +24,9 @@
   import CompareView from '#lib/admin/rights/CompareView.svelte';
   import DeleteRoleDialog from '#lib/admin/rights/DeleteRoleDialog.svelte';
   import { roleName as roleLabel, type MatrixRole, type RoleMatrix } from '#lib/admin/rights/model';
-  import { copyRole, deleteMoving, deleteRole, moveTargetsOf } from '#lib/admin/rights/roleDelete';
-  import NameDialog from '#lib/admin/rights/NameDialog.svelte';
+  import { deleteMoving, deleteRole, moveTargetsOf } from '#lib/admin/rights/roleDelete';
+  import { createError, createRole, type CreateBody } from '#lib/admin/rights/newRole';
+  import NewRoleDialog from '#lib/admin/rights/NewRoleDialog.svelte';
   import RoleList from '#lib/admin/rights/RoleList.svelte';
   import RoleMatrixView from '#lib/admin/rights/RoleMatrix.svelte';
 
@@ -85,41 +86,31 @@
   }
 
   let list: RoleList | undefined, grid: RoleMatrixView | undefined;
-  /** the focus to a role in the list: its row link (a new role) or its menu button (a moved one) */
+  /** the focus to a moved role's menu button in the list */
   const focusRole = (key: string, what: 'name' | 'menu' = 'name') => list?.focusHead(key, what);
 
-  // ---- role menu: duplicate (and *+ Neue Rolle*, a copy of a chosen role), delete (with a move), order
+  // ---- role menu: *+ Neue Rolle* and *Duplizieren* (the new-role dialog), delete (with a move), order
   let status = '';
   interface Ask { role: MatrixRole; trigger: HTMLElement | null }
-  let dup: Ask | null = null, dupBusy = false, dupErr = '';
-  /** *+ Neue Rolle*: the name and the role it starts from (a copy) until the dialog with templates replaces it (§5.2) */
-  let fresh: { trigger: HTMLElement | null } | null = null, freshFrom = '';
-  $: sources = (matrix?.roles ?? []).map((r) => ({ value: r.key, label: roleLabel(r) }));
-  function startNew(e: MouseEvent) {
-    fresh = { trigger: e.currentTarget instanceof HTMLElement ? e.currentTarget : null };
-    freshFrom = matrix?.roles.find((r) => r.key === 'friend')?.key ?? matrix?.roles.find((r) => r.base !== 'admin')?.key ?? '';
-    dupErr = ''; dupBusy = false;
-  }
+  /** the new-role dialog: *+ Neue Rolle* (Freund picked) or *Duplizieren* (the copy of its role picked, `from`) */
+  let fresh: { trigger: HTMLElement | null; from: string } | null = null, freshBusy = false, freshErr = '';
+  function startNew(e: MouseEvent) { openNew(e.currentTarget instanceof HTMLElement ? e.currentTarget : null, ''); }
+  function openNew(trigger: HTMLElement | null, from: string) { fresh = { trigger, from }; freshErr = ''; freshBusy = false; }
   let del: (Ask & { accounts: number; invites: number }) | null = null, delBusy = false, delErr = '';
 
   /** the matrix again after a write that went through: a failed read must not look like a failed write (the stale matrix stays, the person is told) */
   async function reload(): Promise<boolean> {
     try { await refresh(); return true; } catch { toast.error(tr('adminPeople.loadFailed')); return false; }
   }
-  function startDuplicate(a: Ask) { dup = a; dupErr = ''; dupBusy = false; }
-  /**
-   * POST a copy of `from` named `label`; the dialog closes. *+ Neue Rolle* opens the new role's page (§5.2); *Duplizieren* in a
-   * menu stays: the list (or matrix) is read again and the focus goes to the new role.
-   */
-  async function duplicate(label: string, from: string | undefined, open = false) {
-    if (!from || dupBusy) return;
-    dupBusy = true; dupErr = '';
+  /** POST the new role (a template or a copy); the dialog closes and the new role's page opens (§5.2) */
+  async function create(body: CreateBody) {
+    if (freshBusy) return;
+    freshBusy = true; freshErr = '';
     let key: string;
-    try { key = await copyRole(label, from); } catch (e) { dupErr = errorText(e); dupBusy = false; return; }
-    dup = null; fresh = null; dupBusy = false;
-    toast.success(tr('adminPeople.roles.duplicated', { name: label }));
-    if (open) { await goto(`/admin/roles/${encodeURIComponent(key)}`); return; }
-    if (await reload()) await focusRole(key);
+    try { key = await createRole(body); } catch (e) { freshErr = createError(e); freshBusy = false; return; }
+    fresh = null; freshBusy = false;
+    toast.success(tr('adminPeople.roles.duplicated', { name: body.label }));
+    await goto(`/admin/roles/${encodeURIComponent(key)}`);
   }
 
   /** the delete of a role (roleDelete.ts): nobody holds it → a confirm; people do → the server's 409 role_in_use opens the dialog with its counts */
@@ -204,7 +195,7 @@
 {:else if !matrix.roles.length}
   <div class="state"><p>{$t('adminPeople.roles.empty')}</p></div>
 {:else if mode === 'roles'}
-  <RoleList bind:this={list} {matrix} {status} on:duplicate={(e) => startDuplicate(e.detail)} on:remove={(e) => void removeRole(e.detail)} on:move={(e) => void moveRole(e.detail)} />
+  <RoleList bind:this={list} {matrix} {status} on:duplicate={(e) => openNew(e.detail.trigger, e.detail.role.key)} on:remove={(e) => void removeRole(e.detail)} on:move={(e) => void moveRole(e.detail)} />
 {:else if wide}
   <RoleMatrixView bind:this={grid} {matrix} />
 {:else}
@@ -213,13 +204,8 @@
 </div>
 </div>
 
-{#if dup}
-  <NameDialog title={tr('adminPeople.roles.duplicateTitle', { name: roleLabel(dup.role) })} hint={$t('adminPeople.roles.duplicateHint')} label={$t('adminPeople.roles.fLabel')} confirmLabel={$t('adminPeople.roles.create')}
-    busy={dupBusy} error={dupErr} trigger={dup.trigger} on:submit={(e) => void duplicate(e.detail, dup?.role.key)} on:cancel={() => (dup = null)} />
-{:else if fresh}
-  <NameDialog title={$t('adminPeople.roles.new.title')} hint={$t('adminPeople.roles.duplicateHint')} label={$t('adminPeople.roles.fLabel')} confirmLabel={$t('adminPeople.roles.create')}
-    {sources} bind:source={freshFrom} sourceLabel={$t('adminPeople.roles.new.startFrom')}
-    busy={dupBusy} error={dupErr} trigger={fresh.trigger} on:submit={(e) => void duplicate(e.detail, freshFrom, true)} on:cancel={() => (fresh = null)} />
+{#if fresh && matrix}
+  <NewRoleDialog {matrix} from={fresh.from} busy={freshBusy} error={freshErr} trigger={fresh.trigger} on:submit={(e) => void create(e.detail)} on:cancel={() => (fresh = null)} />
 {/if}
 {#if del}
   <DeleteRoleDialog name={roleLabel(del.role)} targets={moveTargets} accounts={del.accounts} invites={del.invites} busy={delBusy} error={delErr} trigger={del.trigger}

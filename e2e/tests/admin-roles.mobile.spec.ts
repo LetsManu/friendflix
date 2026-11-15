@@ -135,11 +135,12 @@ test.describe('Rollen & Rechte (phone)', () => {
     await expect(page.getByRole('dialog', { name: 'Verlauf · Gast' })).toBeVisible();
     await page.keyboard.press('Escape');
     await (await menu(page, 'Familie')).getByRole('button', { name: 'Duplizieren' }).click();
-    const dlg = page.getByRole('dialog', { name: 'Rolle „Familie“ duplizieren' });
+    const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
     await dlg.getByRole('textbox', { name: 'Name' }).fill('Oma & Opa');
     await dlg.getByRole('button', { name: 'Anlegen' }).click();
     await expect(toasts(page).getByText('Rolle „Oma & Opa“ angelegt.')).toBeVisible();
-    await expect(card(page, 'Oma & Opa').getByRole('link', { name: 'Oma & Opa', exact: true })).toBeFocused();
+    await expect(page).toHaveURL(/\/admin\/roles\/oma-opa$/); // the copy's page
+    await page.getByRole('link', { name: 'Rollen', exact: true }).click();
     const names = () => roleList(page).locator('li > .main > .head > a.name').allTextContents();
     await expect.poll(names).toEqual(['Admin', 'Familie', 'Freund', 'Gast', 'Crew', 'Oma & Opa', 'Kombüse']);
     // up, then delete the empty role (asks once)
@@ -185,5 +186,20 @@ test.describe('Rollen & Rechte (phone)', () => {
     await expect(m.getByRole('link', { name: 'Bearbeiten' })).toHaveAttribute('href', `/admin/roles/${encodeURIComponent('Küche Crew')}`);
     await expect(m.getByRole('button', { name: 'Umbenennen' })).toHaveCount(0);
     await expect(m.getByRole('button', { name: 'Löschen' })).toHaveCount(0);
+  });
+
+  test('Neue Rolle on a phone: the options fit, nothing overflows, the dialog scrolls inside itself', async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 640 });
+    await page.goto('/admin/roles');
+    await page.getByRole('button', { name: 'Neue Rolle' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
+    await expect(dlg.getByRole('radio')).toHaveCount(5);
+    for (const o of await dlg.locator('.opt').all()) expect((await o.boundingBox())!.height).toBeGreaterThanOrEqual(56);
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+    const box = (await page.locator('.dlg').boundingBox())!;
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(640);
+    await dlg.getByRole('button', { name: 'Anlegen' }).scrollIntoViewIfNeeded();
+    await expect(dlg.getByRole('button', { name: 'Anlegen' })).toBeInViewport();
   });
 });

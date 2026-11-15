@@ -459,7 +459,7 @@ describe('role matrix and save bar (rights)', () => {
   it('animates transform and opacity only, and every surface with motion switches it off in calm mode and for reduced motion', () => {
     const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
     const files = readdirSync(dir).filter((f) => f.endsWith('.svelte'));
-    expect(files).toEqual(expect.arrayContaining(['RoleMatrix.svelte', 'FieldControl.svelte', 'SaveBar.svelte', 'ReviewSheet.svelte', 'RoleSheet.svelte', 'RoleHistory.svelte', 'DeleteRoleDialog.svelte', 'NameDialog.svelte']));
+    expect(files).toEqual(expect.arrayContaining(['RoleMatrix.svelte', 'FieldControl.svelte', 'SaveBar.svelte', 'ReviewSheet.svelte', 'RoleSheet.svelte', 'RoleHistory.svelte', 'DeleteRoleDialog.svelte', 'NewRoleDialog.svelte']));
     const bad: string[] = [];
     for (const f of files) {
       const c = css(readFileSync(join(dir, f), 'utf8'));
@@ -479,7 +479,7 @@ describe('role matrix and save bar (rights)', () => {
       expect(src, f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
       expect(src, f).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
     }
-    for (const f of ['DeleteRoleDialog', 'NameDialog']) expect(read(`./rights/${f}.svelte`), f).toContain('ModalShell');
+    for (const f of ['DeleteRoleDialog', 'NewRoleDialog']) expect(read(`./rights/${f}.svelte`), f).toContain('ModalShell');
     // the confirm dialog (Verwerfen, delete, …) sits in the same shell, so its calm mode is the shell's
     expect(read('../ui/ConfirmHost.svelte')).toMatch(/<ModalShell\b/);
     expect(read('../ui/ModalShell.svelte')).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);

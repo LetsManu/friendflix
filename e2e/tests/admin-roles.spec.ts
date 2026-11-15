@@ -17,6 +17,8 @@ const AT = [0, 0.125, 0.25, 0.5, 0.75, 1];
 const roleList = (page: Page) => page.getByRole('list', { name: 'Rollen' });
 const roleRow = (page: Page, name: string) => roleList(page).getByRole('listitem').filter({ has: page.getByRole('link', { name, exact: true }) });
 const rowNames = (page: Page) => roleList(page).locator('li > .main > .head > a.name').allTextContents();
+/** the new-role dialog (*+ Neue Rolle*, *Duplizieren*) */
+const newRole = (page: Page) => page.getByRole('dialog', { name: 'Neue Rolle' });
 const rowMenu = async (page: Page, role: string) => {
   await page.getByRole('button', { name: `Aktionen für ${role}` }).click();
   return page.getByRole('dialog', { name: role });
@@ -136,34 +138,126 @@ test.describe('Rollen & Rechte: the role list', () => {
     expect(await page.evaluate(() => (window as unknown as { __same?: boolean }).__same)).toBe(true);
   });
 
-  test('the ⋯ menu: Bearbeiten opens the role page; built-ins have no Löschen; Duplizieren creates a copy and focuses it', async ({ page, api }) => {
+  test('the ⋯ menu: Bearbeiten opens the role page; built-ins have no Löschen; Duplizieren opens Neue Rolle with Kopie von preselected', async ({ page, api }) => {
     await page.goto('/admin/roles');
     const m = await rowMenu(page, 'Gast');
     await expect(m.getByRole('link', { name: 'Bearbeiten' })).toHaveAttribute('href', '/admin/roles/guest');
     await expect(m.getByRole('button', { name: 'Löschen' })).toHaveCount(0);
     await expect(m.getByRole('button', { name: 'Umbenennen' })).toHaveCount(0);
     await m.getByRole('button', { name: 'Duplizieren' }).click();
-    const dlg = page.getByRole('dialog', { name: 'Rolle „Gast“ duplizieren' });
+    const dlg = newRole(page);
+    await expect(dlg.getByRole('radio', { name: 'Kopie von …' })).toBeChecked();
+    await expect(dlg.getByRole('combobox', { name: 'Rolle zum Kopieren' })).toHaveValue('guest');
     await dlg.getByRole('textbox', { name: 'Name' }).fill('Nachbarn');
     await dlg.getByRole('button', { name: 'Anlegen' }).click();
-    await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Rolle „Nachbarn“ angelegt.')).toBeVisible();
-    await expect.poll(() => rowNames(page)).toEqual(['Admin', 'Familie', 'Freund', 'Gast', 'Crew', 'Nachbarn']);
-    await expect(roleList(page).getByRole('link', { name: 'Nachbarn', exact: true })).toBeFocused();
-    expect(api.admin.matrix.roles.at(-1)!.key).toBe('nachbarn');
+    await expect(toasts(page).getByText('Rolle „Nachbarn“ angelegt.')).toBeVisible();
+    // the copy's page opens (§5.2)
+    await expect(page).toHaveURL(/\/admin\/roles\/nachbarn$/);
+    await expect(page.getByRole('heading', { level: 2, name: 'Nachbarn' })).toBeVisible();
+    expect(api.admin.audit[0]).toMatchObject({ action: 'role.create', meta: { from: 'guest', label: 'Nachbarn' } });
   });
+});
 
-  test('+ Neue Rolle: a name and the role to start from; the new role\'s page opens', async ({ page, api }) => {
+/** *+ Neue Rolle* (roles redesign §5.2): a name and a start point — Familie, Freund, Gast, Nur Live-TV (with Live TV), Leer, or a copy */
+test.describe('Rollen & Rechte: Neue Rolle', () => {
+  test.use({ allowedConsole: /status of 400/ });
+  test.beforeEach(({ api }) => { api.asAdmin = true; });
+  const open = async (page: Page) => {
     await page.goto('/admin/roles');
     await page.getByRole('button', { name: 'Neue Rolle' }).click();
-    const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
-    await dlg.getByRole('combobox', { name: 'Starten mit' }).selectOption({ label: 'Familie' });
-    await dlg.getByRole('textbox', { name: 'Name' }).fill('Oma & Opa');
+    return newRole(page);
+  };
+  const posts = (page: Page) => {
+    const bodies: unknown[] = [];
+    page.on('request', (r) => { if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/admin/roles') bodies.push(r.postDataJSON()); });
+    return bodies;
+  };
+  const areaSwitch = (page: Page, name: string) => page.getByRole('region', { name: 'Bereiche' }).getByRole('switch', { name, exact: true });
+
+  test('Neue Rolle "Nur Live-TV" named Hafenblick: POST { label, template: \'liveOnly\' }, opens /admin/roles/hafenblick with only Live-TV on and the no-group warning', async ({ page, api }) => {
+    api.admin.matrix.features.livetv = true;
+    const sent = posts(page);
+    const dlg = await open(page);
+    await dlg.getByRole('textbox', { name: 'Name' }).fill('Hafenblick');
+    await dlg.getByRole('radio', { name: 'Nur Live-TV' }).check();
+    await expect(dlg.getByRole('radio', { name: 'Nur Live-TV' })).toHaveAccessibleDescription('Fernsehsender ohne Mediathek');
     await dlg.getByRole('button', { name: 'Anlegen' }).click();
-    await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Rolle „Oma & Opa“ angelegt.')).toBeVisible();
-    // the new role's page opens
+    await expect(page).toHaveURL(/\/admin\/roles\/hafenblick$/);
+    expect(sent).toEqual([{ label: 'Hafenblick', template: 'liveOnly' }]);
+    await expect(areaSwitch(page, 'Live-TV')).toBeChecked();
+    for (const n of ['Mediathek', 'Wünsche', 'Gemeinsam', 'Downloads']) await expect(areaSwitch(page, n)).not.toBeChecked();
+    await expect(page.getByText('Ohne Kanalgruppe sieht diese Rolle kein Live-TV.')).toBeVisible();
+    expect(api.admin.audit[0]).toMatchObject({ action: 'role.create', meta: { template: 'liveOnly', label: 'Hafenblick' } });
+  });
+
+  test('Leer: every area off', async ({ page }) => {
+    const sent = posts(page);
+    const dlg = await open(page);
+    await dlg.getByRole('textbox', { name: 'Name' }).fill('Stille');
+    await dlg.getByRole('radio', { name: 'Leer' }).check();
+    await expect(dlg.getByRole('radio', { name: 'Leer' })).toHaveAccessibleDescription('Alles aus, du schaltest frei');
+    await dlg.getByRole('button', { name: 'Anlegen' }).click();
+    await expect(page).toHaveURL(/\/admin\/roles\/stille$/);
+    expect(sent).toEqual([{ label: 'Stille', template: 'empty' }]);
+    for (const n of ['Mediathek', 'Wünsche', 'Gemeinsam', 'Downloads']) await expect(areaSwitch(page, n)).not.toBeChecked();
+  });
+
+  test('Kopie von Familie keeps Familie\'s groups', async ({ page, api }) => {
+    api.admin.matrix.features.livetv = true;
+    api.admin.matrix.roles.find((r) => r.key === 'family')!.values.liveTv = true;
+    const sent = posts(page);
+    const dlg = await open(page);
+    await dlg.getByRole('textbox', { name: 'Name' }).fill('Oma & Opa');
+    await dlg.getByRole('radio', { name: 'Kopie von …' }).check();
+    await dlg.getByRole('combobox', { name: 'Rolle zum Kopieren' }).selectOption({ label: 'Familie' });
+    // the option names what the copy starts with
+    await expect(dlg.getByRole('radio', { name: 'Kopie von …' })).toHaveAccessibleDescription('Mediathek · Live-TV · Wünsche · Gemeinsam · Downloads');
+    await dlg.getByRole('button', { name: 'Anlegen' }).click();
     await expect(page).toHaveURL(/\/admin\/roles\/oma-opa$/);
-    await expect(page.getByRole('heading', { level: 2, name: 'Oma & Opa' })).toBeVisible();
-    expect(api.admin.audit.some((e) => e.action === 'role.create' && (e.meta as { from?: string } | null)?.from === 'family')).toBe(true);
+    expect(sent).toEqual([{ label: 'Oma & Opa', from: 'family' }]);
+    const g = page.getByRole('group', { name: 'Kanalgruppen von Oma & Opa' });
+    for (const n of ['Sport', 'Nachrichten', 'Kinderinsel', 'Natur & Tiere']) await expect(g.getByRole('button', { name: new RegExp(`^${n}`) })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('without Live TV the Nur Live-TV option is absent', async ({ page, api }) => {
+    let dlg = await open(page);
+    await expect(dlg.getByRole('radio')).toHaveCount(5);
+    expect(await dlg.getByRole('radio').evaluateAll((r) => r.map((x) => document.getElementById(x.getAttribute('aria-labelledby')!)!.textContent))).toEqual(['Familie', 'Freund', 'Gast', 'Leer', 'Kopie von …']);
+    // Freund is where a new role starts; the summary lines name the areas
+    await expect(dlg.getByRole('radio', { name: 'Freund' })).toBeChecked();
+    await expect(dlg.getByRole('radio', { name: 'Freund' })).toHaveAccessibleDescription('Mediathek · Wünsche · Gemeinsam');
+    await page.keyboard.press('Escape');
+    api.admin.matrix.features.livetv = true;
+    dlg = await open(page);
+    expect(await dlg.getByRole('radio').evaluateAll((r) => r.map((x) => document.getElementById(x.getAttribute('aria-labelledby')!)!.textContent))).toEqual(['Familie', 'Freund', 'Gast', 'Nur Live-TV', 'Leer', 'Kopie von …']);
+  });
+
+  test('each option is ≥ 56 px; the dialog\'s height does not change when the copy select appears', async ({ page }) => {
+    const dlg = await open(page);
+    for (const o of await dlg.locator('.opt').all()) expect((await o.boundingBox())!.height).toBeGreaterThanOrEqual(56);
+    const box = page.locator('.dlg');
+    const select = dlg.getByRole('combobox', { name: 'Rolle zum Kopieren' });
+    await expect(select).toBeHidden();
+    const before = await box.boundingBox();
+    await dlg.getByRole('radio', { name: 'Kopie von …' }).check();
+    await expect(select).toBeVisible();
+    expect(await box.boundingBox()).toEqual(before);
+    // a press anywhere on an option picks it
+    await dlg.locator('.opt').filter({ hasText: 'Gast' }).click({ position: { x: 300, y: 20 } });
+    await expect(dlg.getByRole('radio', { name: 'Gast' })).toBeChecked();
+    await expect(select).toBeHidden();
+    expect(await box.boundingBox()).toEqual(before);
+  });
+
+  test('a refused start point says why and keeps the dialog', async ({ page, api }) => {
+    api.admin.matrix.features.livetv = true;
+    const dlg = await open(page);
+    await page.route('**/api/admin/roles', (r) => (r.request().method() === 'POST' ? r.fulfill({ status: 400, contentType: 'application/json', body: '{"error":"template_unavailable"}' }) : r.fallback()));
+    await dlg.getByRole('textbox', { name: 'Name' }).fill('Hafenblick');
+    await dlg.getByRole('radio', { name: 'Nur Live-TV' }).check();
+    await dlg.getByRole('button', { name: 'Anlegen' }).click();
+    await expect(dlg.getByText('Ohne Live-TV gibt es diese Vorlage nicht.')).toBeVisible();
+    await expect(page).toHaveURL(/\/admin\/roles$/);
   });
 });
 
@@ -307,7 +401,7 @@ test.describe('Rollen & Rechte: the list menu', () => {
   test('a name that is too long or empty is not sent', async ({ page }) => {
     await page.goto('/admin/roles');
     await (await rowMenu(page, 'Familie')).getByRole('button', { name: 'Duplizieren' }).click();
-    const dlg = page.getByRole('dialog', { name: 'Rolle „Familie“ duplizieren' });
+    const dlg = newRole(page);
     await dlg.getByRole('button', { name: 'Anlegen' }).click();
     await expect(dlg.getByText('Bitte einen Namen mit 1 bis 30 Zeichen eingeben.')).toBeVisible();
     await page.keyboard.press('Escape');
@@ -434,10 +528,12 @@ test.describe('Rollen & Rechte: the list menu', () => {
     await page.goto('/admin/roles');
     const dupAs = async (from: string, name: string) => {
       await (await rowMenu(page, from)).getByRole('button', { name: 'Duplizieren' }).click();
-      const dlg = page.getByRole('dialog', { name: `Rolle „${from}“ duplizieren` });
+      const dlg = newRole(page);
       await dlg.getByRole('textbox', { name: 'Name' }).fill(name);
       await dlg.getByRole('button', { name: 'Anlegen' }).click();
       await expect(toasts(page).getByText(`Rolle „${name}“ angelegt.`)).toBeVisible();
+      await expect(page.getByRole('heading', { level: 2, name })).toBeVisible(); // the copy's page
+      await page.goto('/admin/roles');
     };
     await dupAs('Familie', 'Oma & Opa');
     await dupAs('Oma & Opa', 'Nachbarn');
@@ -456,26 +552,18 @@ test.describe('Rollen & Rechte: the list menu', () => {
     await expect(again).not.toContainText(/oma-opa/);
   });
 
-  test('a failed reload after a write keeps the success and says so (duplicate, delete)', async ({ page, api }) => {
+  test('a failed reload after a delete keeps the success and says so', async ({ page, api }) => {
     extraRole(api, 'leer', 'Leer');
     await page.goto('/admin/roles');
     await expect(roleRow(page, 'Leer')).toBeVisible();
     let failedReads = 0;
     await page.route('**/api/admin/roles', async (r) => { if (r.request().method() === 'GET') { failedReads++; await r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"x"}' }); } else await r.fallback(); });
-    await (await rowMenu(page, 'Familie')).getByRole('button', { name: 'Duplizieren' }).click();
-    const dlg = page.getByRole('dialog', { name: 'Rolle „Familie“ duplizieren' });
-    await dlg.getByRole('textbox', { name: 'Name' }).fill('Zwei');
-    await dlg.getByRole('button', { name: 'Anlegen' }).click();
-    await expect(toasts(page).getByText('Rolle „Zwei“ angelegt.')).toBeVisible();
-    await expect(toasts(page).getByText('Das ließ sich nicht laden. Prüfe die Verbindung und versuche es erneut.')).toBeVisible();
-    await expect(dlg).toHaveCount(0);
-    expect(api.admin.matrix.roles.some((r) => r.label === 'Zwei')).toBe(true);
-    // delete: the success is a success, the failed read an extra note
+    // the success is a success, the failed read an extra note
     await (await rowMenu(page, 'Leer')).getByRole('button', { name: 'Löschen' }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'Löschen' }).click();
     await expect(toasts(page).getByText('Rolle „Leer“ gelöscht.')).toBeVisible();
-    await expect.poll(() => failedReads).toBe(2);
-    await expect(toasts(page).getByText('Das ließ sich nicht laden. Prüfe die Verbindung und versuche es erneut.').last()).toBeVisible();
+    await expect.poll(() => failedReads).toBe(1);
+    await expect(toasts(page).getByText('Das ließ sich nicht laden. Prüfe die Verbindung und versuche es erneut.')).toBeVisible();
     expect(api.admin.matrix.deletes).toEqual([{ role: 'leer', moveTo: null }]);
   });
 
@@ -511,14 +599,13 @@ test.describe('Rollen & Rechte: the list menu', () => {
     await expect(sheet).not.toContainText('6 → 7');
   });
 
-  test('without a bar the toast stands still (role list below 900 px)', async ({ page }) => {
+  test('without a bar the toast stands still (role list below 900 px)', async ({ page, api }) => {
+    extraRole(api, 'leer', 'Leer');
     await page.setViewportSize({ width: 800, height: 900 });
     await page.goto('/admin/roles');
-    await (await rowMenu(page, 'Familie')).getByRole('button', { name: 'Duplizieren' }).click();
-    const dlg = page.getByRole('dialog', { name: 'Rolle „Familie“ duplizieren' });
-    await dlg.getByRole('textbox', { name: 'Name' }).fill('Oma & Opa');
-    await dlg.getByRole('button', { name: 'Anlegen' }).click();
-    await expect(toasts(page).getByText('Rolle „Oma & Opa“ angelegt.')).toBeVisible();
+    await (await rowMenu(page, 'Leer')).getByRole('button', { name: 'Löschen' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Löschen' }).click();
+    await expect(toasts(page).getByText('Rolle „Leer“ gelöscht.')).toBeVisible();
     await expect(bar(page)).toHaveCount(0);
     const a = await toasts(page).boundingBox();
     await page.waitForTimeout(350);

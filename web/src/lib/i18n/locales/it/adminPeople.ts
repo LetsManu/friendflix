@@ -461,7 +461,7 @@ const dict: Translation<typeof de> = {
       adminLocked: 'Gli admin possono sempre tutto',
     },
     summary: { only: 'Solo {area}', none: 'Niente condiviso', noGroups: 'TV in diretta senza gruppo di canali' },
-    new: { title: 'Nuovo ruolo', startFrom: 'Parti da' },
+    new: { title: 'Nuovo ruolo', startFrom: 'Parti da', liveOnly: 'Solo TV in diretta', liveOnlyDesc: 'Canali senza la mediateca', empty: 'Vuoto', emptyDesc: 'Tutto spento, attivi tu', copy: 'Copia di …', copyFrom: 'Ruolo da copiare', unavailable: 'Senza TV in diretta questo modello non è disponibile.' },
     page: { back: 'Ruoli', missing: 'Questo ruolo non esiste (più).', envLocked: 'Impostato in .env' },
   },
   sentence: {

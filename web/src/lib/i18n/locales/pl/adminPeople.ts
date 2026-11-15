@@ -461,7 +461,7 @@ const dict: Translation<typeof de> = {
       adminLocked: 'Administratorzy zawsze mogą wszystko',
     },
     summary: { only: 'Tylko {area}', none: 'Nic nie udostępniono', noGroups: 'Telewizja na żywo bez grupy kanałów' },
-    new: { title: 'Nowa rola', startFrom: 'Zacznij od' },
+    new: { title: 'Nowa rola', startFrom: 'Zacznij od', liveOnly: 'Tylko telewizja na żywo', liveOnlyDesc: 'Kanały bez mediateki', empty: 'Pusta', emptyDesc: 'Wszystko wyłączone, ty włączasz', copy: 'Kopia roli …', copyFrom: 'Rola do skopiowania', unavailable: 'Bez telewizji na żywo ten szablon jest niedostępny.' },
     page: { back: 'Role', missing: 'Ta rola nie istnieje (już).', envLocked: 'Ustawione w .env' },
   },
   sentence: {

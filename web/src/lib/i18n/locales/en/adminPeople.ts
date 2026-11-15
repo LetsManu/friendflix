@@ -461,7 +461,7 @@ const dict: Translation<typeof de> = {
       adminLocked: 'Admins may always do everything',
     },
     summary: { only: 'Only {area}', none: 'Nothing shared', noGroups: 'Live TV without a channel group' },
-    new: { title: 'New role', startFrom: 'Start from' },
+    new: { title: 'New role', startFrom: 'Start from', liveOnly: 'Live TV only', liveOnlyDesc: 'Channels without the library', empty: 'Empty', emptyDesc: 'Everything off, you switch on', copy: 'Copy of …', copyFrom: 'Role to copy', unavailable: 'Without Live TV this start point is not available.' },
     page: { back: 'Roles', missing: 'This role does not exist (any more).', envLocked: 'Set in .env' },
   },
   sentence: {

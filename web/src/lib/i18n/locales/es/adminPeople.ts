@@ -461,7 +461,7 @@ const dict: Translation<typeof de> = {
       adminLocked: 'Los administradores siempre pueden hacerlo todo',
     },
     summary: { only: 'Solo {area}', none: 'Nada compartido', noGroups: 'TV en directo sin grupo de canales' },
-    new: { title: 'Nuevo rol', startFrom: 'Empezar con' },
+    new: { title: 'Nuevo rol', startFrom: 'Empezar con', liveOnly: 'Solo TV en directo', liveOnlyDesc: 'Canales sin la mediateca', empty: 'Vacío', emptyDesc: 'Todo desactivado, tú lo activas', copy: 'Copia de …', copyFrom: 'Rol que copiar', unavailable: 'Sin TV en directo, esta plantilla no está disponible.' },
     page: { back: 'Roles', missing: 'Este rol no existe (o ya no existe).', envLocked: 'Definido en .env' },
   },
   sentence: {

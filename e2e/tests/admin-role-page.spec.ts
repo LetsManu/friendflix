@@ -352,16 +352,46 @@ test.describe('Rollen & Rechte: the role page', () => {
       return page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' });
     };
     await (await ask()).getByRole('button', { name: 'Abbrechen' }).click();
-    await expect(page.getByRole('dialog', { name: 'Rolle „Crew“ duplizieren' })).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Neue Rolle' })).toHaveCount(0);
     await expect(bar(page)).toBeVisible();
     await (await ask()).getByRole('button', { name: 'Verwerfen' }).click();
-    const dlg = page.getByRole('dialog', { name: 'Rolle „Crew“ duplizieren' });
+    const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
+    await expect(dlg.getByRole('radio', { name: 'Kopie von …' })).toBeChecked();
+    await expect(dlg.getByRole('combobox', { name: 'Rolle zum Kopieren' })).toHaveValue('crew');
     await dlg.getByRole('textbox', { name: 'Name' }).fill('Hafencrew');
     await dlg.getByRole('button', { name: 'Anlegen' }).click();
     await expect(page).toHaveURL(/\/admin\/roles\/hafencrew$/);
     await expect(page.getByRole('alertdialog')).toHaveCount(0); // asked once, before the copy
     expect(api.admin.matrix.roles.length).toBe(before + 1);
     expect(api.admin.matrix.puts).toEqual([]);
+  });
+
+  test('Duplizieren with staged edits: cancelling the new-role dialog keeps them (they go only once the copy exists)', async ({ page, api }) => {
+    await page.goto('/admin/roles/crew');
+    await area(page, 'Gemeinsam').click();
+    await expect(bar(page)).toContainText('3 Änderungen');
+    const before = api.admin.matrix.roles.length;
+    await page.getByRole('button', { name: 'Aktionen für Crew' }).click();
+    await page.getByRole('dialog', { name: 'Crew' }).getByRole('button', { name: 'Duplizieren' }).click();
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
+    await expect(dlg).toBeVisible();
+    // the edits are still staged behind the dialog
+    await expect(bar(page)).toContainText('3 Änderungen');
+    await page.keyboard.press('Escape');
+    await expect(dlg).toHaveCount(0);
+    await expect(bar(page)).toContainText('3 Änderungen');
+    await expect(area(page, 'Gemeinsam')).not.toBeChecked();
+    expect(api.admin.matrix.roles.length).toBe(before);
+    // Abbrechen in the dialog keeps them too
+    await page.getByRole('button', { name: 'Aktionen für Crew' }).click();
+    await page.getByRole('dialog', { name: 'Crew' }).getByRole('button', { name: 'Duplizieren' }).click();
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await dlg.getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(bar(page)).toContainText('3 Änderungen');
+    await (await review(page)).getByRole('button', { name: 'Speichern' }).click();
+    await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
+    expect(api.admin.matrix.puts).toEqual([{ role: 'crew', body: { perms: { party: false, partySchedule: false, comments: false } } }]);
   });
 
   test('a channel group that changed meanwhile: the groups are read again, a specific message, nothing is resent', async ({ page, api }) => {
@@ -405,7 +435,7 @@ test.describe('Rollen & Rechte: the role page', () => {
     expect(api.admin.matrix.puts).toEqual([{ role: 'crew', body: { label: 'Bordcrew' } }]);
     await page.getByRole('button', { name: 'Aktionen für Bordcrew' }).click();
     await page.getByRole('dialog', { name: 'Bordcrew' }).getByRole('button', { name: 'Duplizieren' }).click();
-    const dlg = page.getByRole('dialog', { name: 'Rolle „Bordcrew“ duplizieren' });
+    const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
     await dlg.getByRole('textbox', { name: 'Name' }).fill('Hafencrew');
     await dlg.getByRole('button', { name: 'Anlegen' }).click();
     await expect(page).toHaveURL(/\/admin\/roles\/hafencrew$/);
@@ -531,7 +561,7 @@ test.describe('Rollen & Rechte: the role page saves, guards and tells', () => {
     await page.goto('/admin/roles/family');
     await page.getByRole('button', { name: 'Aktionen für Familie' }).click();
     await page.getByRole('dialog', { name: 'Familie' }).getByRole('button', { name: 'Duplizieren' }).click();
-    const dlg = page.getByRole('dialog', { name: 'Rolle „Familie“ duplizieren' });
+    const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
     await dlg.getByRole('textbox', { name: 'Name' }).fill('Oma & Opa aus dem Nachbardorf');
     await dlg.getByRole('button', { name: 'Anlegen' }).click();
     const toast = toasts(page).getByRole('listitem').filter({ hasText: 'Rolle „Oma & Opa aus dem Nachbardorf“ angelegt.' });
