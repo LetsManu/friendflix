@@ -169,6 +169,7 @@ const tr: Translation<typeof de> = {
     notConfigured: 'Portainer yapılandırılmamış.',
     unreachable: 'Portainer’a ulaşılamıyor{detail}. Ayrıntılar arka uç günlüğünde.',
     portainerError: 'Portainer hatası{detail}. Ayrıntılar arka uç günlüğünde.',
+    webhookGone: 'Portainer webhook adresi artık geçerli değil (yığın yeniden oluşturulduğunda ya da webhook’u kapatılıp açıldığında Portainer yenisini verir). Portainer’da yeni bir webhook oluştur ya da Admin → Ayarlar → Güncellemeler altında kaldırıp bunun yerine API ayarlarını kullan.',
     httpDetail: ' (HTTP {status})',
     atStep: ' – adım: {step}',
     intro: 'Portainer her 12 saatte bir otomatik güncellenir. Düğmeyle hemen güncelleyebilirsin.',
@@ -282,6 +283,7 @@ const tr: Translation<typeof de> = {
           failed: 'Portainer yeniden dağıtımı reddetti{detail}. Yığını Portainer’da ve Portainer ayarlarını Admin → Ayarlar → Güncellemeler altında kontrol et.',
           timeout: '15 dakika içinde hiçbir şey değişmedi ({at}). Yığını ve günlüklerini Portainer’da kontrol et.',
           unreachable: 'Portainer’a ulaşılamadı{code}. Admin → Ayarlar → Güncellemeler altında PORTAINER_URL’i kontrol et: arka uç bu adrese ulaşabilmeli.',
+          webhookGone: 'Portainer webhook adresi artık geçerli değil (yığın yeniden oluşturulduğunda ya da webhook’u kapatılıp açıldığında Portainer yenisini verir). Portainer’da yeni bir webhook oluştur ya da Admin → Ayarlar → Güncellemeler altında kaldırıp bunun yerine API ayarlarını kullan.',
           noTarget: 'Hiçbir şey başlatılmadı: önce “Sabit sürüm” kanalı için bir sürüm seç.',
         },
         detail: ' (HTTP {status}, adım {step})',
@@ -297,6 +299,7 @@ const tr: Translation<typeof de> = {
         foreign_stack: 'Bu yığın Portainer (ya da başka bir araç) tarafından yönetiliyor, bu yüzden güncelleyici onu yeniden oluşturmuyor. Portainer webhook’unu Admin → Ayarlar → Güncellemeler altında ayarla ya da yığını Portainer’da güncelle.',
         portainer: 'Portainer yeniden dağıtımı reddetti. Admin → Ayarlar → Güncellemeler altında webhook’u veya API’yi kontrol et.',
         portainer_unreachable: 'Portainer’a ulaşılamıyor.',
+        webhook_gone: 'Portainer webhook adresi artık geçerli değil (yığın yeniden oluşturulduğunda ya da webhook’u kapatılıp açıldığında Portainer yenisini verir). Portainer’da yeni bir webhook oluştur ya da Admin → Ayarlar → Güncellemeler altında kaldırıp bunun yerine API ayarlarını kullan.',
       },
       failReason: {
         verify_failed: 'imza doğrulaması başarısız, hiçbir şey yeniden başlatılmadı',
@@ -314,7 +317,7 @@ const tr: Translation<typeof de> = {
         unknown: 'bilinmeyen hata',
       },
       foreign: {
-        portainer: 'Bu yığın Portainer tarafından yönetiliyor. “Şimdi güncelle” onu Portainer üzerinden yeniden dağıtır (Admin → Ayarlar → Güncellemeler’deki webhook veya API). Güncelleyici bir Portainer yığınını asla kendisi yeniden oluşturmaz, bu yüzden önceki sürüme dönmek burada kullanılamaz.',
+        portainer: 'Bu yığın Portainer tarafından yönetiliyor. “Şimdi güncelle” onu Portainer üzerinden yeniden dağıtır (Admin → Ayarlar → Güncellemeler’deki API veya webhook). Güncelleyici bir Portainer yığınını asla kendisi yeniden oluşturmaz, bu yüzden önceki sürüme dönmek burada kullanılamaz.',
         manual: 'Bu yığın Portainer (ya da başka bir araç) tarafından yönetiliyor, bu yüzden güncelleyici onu güncellemiyor: buradan yeniden oluşturmak yığının kendi değişkenlerini (ör. BIND_ADDR) kaybettirirdi. Portainer webhook’unu Admin → Ayarlar → Güncellemeler altında ayarla ya da yığını Portainer’da güncelle. API için: PORTAINER_URL, PORTAINER_API_KEY ve PORTAINER_STACK_ID (Portainer’daki yığın adresinde “id=” sonrasındaki sayı).',
         started: 'Portainer yığını yeniden dağıtıyor. FriendFlix birazdan yeniden başlayacak.',
         workdir: 'Bu yığın {dir} dizininden başlatıldı, ama güncelleyici {projectDir} dizinini görüyor, bu yüzden onu yeniden oluşturmuyor (o dizindeki .env eksik kalırdı). {dir} içindeki .env dosyasına UPDATER_PROJECT_DIR={dir} yaz ve orada bir kez docker compose up -d çalıştır.',

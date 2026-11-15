@@ -16,6 +16,15 @@ const status = (over: Partial<UpdaterStatus> = {}): UpdaterStatus => ({
 afterEach(async () => { await setLocale('de'); });
 
 describe('updater panel logic', () => {
+  it('startError: a stale webhook has its own text in every locale', async () => {
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
+      await setLocale(l);
+      const t = startError({ status: 502, body: { error: 'webhook_gone' } });
+      expect(t).not.toBe(startError({ status: 502, body: { error: 'nope' } }));
+      expect(t).toMatch(/webhook/i);
+    }
+  });
+
   it('steps: the four, rollback once it ran, no health step for a self-update', () => {
     expect(visibleSteps(job())).toEqual(['pull', 'verify', 'restart', 'health']);
     expect(visibleSteps(job({ steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'failed', rollback: 'running' } }))).toEqual(['pull', 'verify', 'restart', 'health', 'rollback']);
@@ -122,6 +131,8 @@ describe('updater panel logic', () => {
     expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer_unreachable', code: 'ENOTFOUND', step: 'stack' })))
       .toBe('Portainer was not reachable (ENOTFOUND: host name cannot be resolved, use the IP instead of nas.local). Check PORTAINER_URL in Admin → Settings → Updates: it must be an address the backend can reach.');
     expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer_unreachable', code: null }))).toMatch(/^Portainer was not reachable\. /);
+    // a webhook that Portainer answers with 404: the address is stale, the text says what to do (no status, no URL)
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'webhook_gone', status: 404, step: 'webhook' }))).toBe('The Portainer webhook address is no longer valid (Portainer issues a new one when the stack is recreated or its webhook is switched off and on). Create a new webhook in Portainer, or remove it in Admin → Settings → Updates and use the API settings instead.');
     expect(redeployResult(rd({ phase: 'failed', running: false, error: 'no_target' }))).toBe('Nothing was started: choose a version for the “Fixed version” channel first.');
   });
 

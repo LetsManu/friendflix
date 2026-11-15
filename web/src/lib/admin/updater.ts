@@ -78,6 +78,7 @@ export function redeployResult(r: Redeploy): string {
   const k = 'admin.update.updater.redeploy';
   if (r.phase === 'failed') {
     if (r.error === 'no_target') return trDynamic(`${k}.result.noTarget`);
+    if (r.error === 'webhook_gone') return trDynamic(`${k}.result.webhookGone`); // the stored webhook address is stale (404)
     if (r.error === 'portainer_unreachable') {
       // the errno code (never the URL), with the same hint as the Portainer card ("host name cannot be resolved", …)
       const c = r.code && /^[A-Z_]{2,40}$/.test(r.code) ? r.code : null;
