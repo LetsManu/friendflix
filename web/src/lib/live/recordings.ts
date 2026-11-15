@@ -123,6 +123,9 @@ export async function schedule(b: ScheduleBody): Promise<{ ok: true; recording: 
 export const patchRecording = (id: string, b: { keep?: boolean; visibility?: Visibility; padBefore?: number; padAfter?: number }) =>
   api<{ recording: Recording | null }>(`/api/livetv/recordings/${enc(id)}`, { method: 'PATCH', body: b }).then((r) => r.recording);
 
+/** *Aufnahme beenden*: a running recording ends now and keeps what it recorded (unlike `deleteRecording`) */
+export const stopRecording = (id: string) => api<{ recording: Recording | null }>(`/api/livetv/recordings/${enc(id)}/stop`, { method: 'POST', body: {} }).then((r) => r.recording);
+
 /** a planned recording is cancelled, anything else deleted (the backend decides by state) */
 export const deleteRecording = (id: string, keepalive = false) => api<null>(`/api/livetv/recordings/${enc(id)}`, { method: 'DELETE', keepalive });
 
@@ -209,6 +212,8 @@ export const PLAYABLE: readonly RecState[] = ['recording', 'done', 'partial'];
 /** the *Aufnahmen* row (spec §15.7): the latest 12 playable recordings, newest first */
 export const ROW_MAX = 12;
 export const rowRecordings = (list: readonly Recording[]): Recording[] => list.filter((r) => PLAYABLE.includes(r.state)).sort(newest).slice(0, ROW_MAX);
+/** *Deine Aufnahmen* on the home page: the finished ones (done, partial), newest first, at most ROW_MAX */
+export const doneRecordings = (list: readonly Recording[]): Recording[] => list.filter((r) => r.state === 'done' || r.state === 'partial').sort(newest).slice(0, ROW_MAX);
 /** *Fertig*: what was recorded (failed ones too, with their reason) */
 export const finished = (list: readonly Recording[]): Recording[] => list.filter((r) => PLAYABLE.includes(r.state) || r.state === 'failed');
 /** *Geplant*: the profile's planned recordings, soonest first */
@@ -221,3 +226,14 @@ export const hhmm = (d: Date): string => `${String(d.getHours()).padStart(2, '0'
 
 /** how far into a recording the profile is, 0–1 (0 without a known length) */
 export const progressOf = (r: Pick<Recording, 'positionS' | 'durationS'>): number => (r.durationS && r.durationS > 0 ? Math.min(1, Math.max(0, r.positionS / r.durationS)) : 0);
+
+/**
+ * *Eigenen Zeitraum aufnehmen* from a programme (DVR follow-ups): the time-span sheet starts prefilled with this minute (a running
+ * programme) or the programme's start (an upcoming one) and the programme's end, at least one minute; the person then shortens it
+ * (the next 30 minutes, the second half).
+ */
+export function spanPreset(p: { title: string; start: string; end: string }, now: Date): { start: Date; end: Date; title: string } {
+  const minute = Math.floor(now.getTime() / 60_000) * 60_000;
+  const start = Math.max(minute, Date.parse(p.start));
+  return { start: new Date(start), end: new Date(Math.max(Date.parse(p.end), start + 60_000)), title: p.title };
+}

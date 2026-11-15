@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   conflictText, createRule, deleteRecording, deleteRule, getRecording, groupBySeries, listRecordings, PAD_MAX, patchRecording, patchRule, programme, recordingFor, schedule,
   stateLabel, stepPad, toLibrary, type Recording, finished, hhmm, KEEP_MAX, minutesOf, planned, progressOf, rowRecordings, ROW_MAX, stepKeep,
+  doneRecordings, spanPreset, stopRecording,
 } from './recordings';
 
 const at = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
@@ -111,6 +112,7 @@ describe('the calls', () => {
     ['patchRecording', () => patchRecording('r/1', { keep: true }), { recording: r1 }, r1, 'PATCH /api/livetv/recordings/r%2F1 {"keep":true}'],
     ['deleteRecording', () => deleteRecording('r/1', true), null, null, 'DELETE /api/livetv/recordings/r%2F1 keepalive'],
     ['toLibrary', () => toLibrary('r/1'), { recording: r1 }, r1, 'POST /api/livetv/recordings/r%2F1/library {}'],
+    ['stopRecording', () => stopRecording('r/1'), { recording: r1 }, r1, 'POST /api/livetv/recordings/r%2F1/stop {}'],
     ['createRule', () => createRule({ kind: 'series', channelId: null, seriesKey: 'leucht', title: 'Die Leuchtturmwärter', onlyNew: true }), { rule, forecast: null }, { rule, forecast: null },
       'POST /api/livetv/rules {"kind":"series","channelId":null,"seriesKey":"leucht","title":"Die Leuchtturmwärter","onlyNew":true}'],
     ['patchRule', () => patchRule('ru 1', { enabled: false }), { rule }, rule, 'PATCH /api/livetv/rules/ru%201 {"enabled":false}'],
@@ -158,5 +160,26 @@ describe('the list helpers', () => {
     expect(progressOf({ positionS: 900, durationS: 1800 })).toBe(0.5);
     expect(progressOf({ positionS: 4000, durationS: 1800 })).toBe(1);
     expect(progressOf({ positionS: 10, durationS: null })).toBe(0);
+  });
+});
+
+describe('less than a whole programme (DVR follow-ups)', () => {
+  const prog = { title: 'Die Leuchtturmwärter', start: at(12, 20, 15), end: at(12, 21) };
+  it('spanPreset: a running programme starts at this minute, an upcoming one at its start; both end with the programme', () => {
+    const now = new Date(2026, 10, 12, 20, 37, 10);
+    expect(spanPreset(prog, now)).toEqual({ start: new Date(2026, 10, 12, 20, 37), end: new Date(2026, 10, 12, 21), title: 'Die Leuchtturmwärter' });
+    const early = new Date(2026, 10, 12, 19, 50, 30);
+    expect(spanPreset(prog, early)).toEqual({ start: new Date(2026, 10, 12, 20, 15), end: new Date(2026, 10, 12, 21), title: 'Die Leuchtturmwärter' });
+    // in its last minute: at least one minute long
+    const last = new Date(2026, 10, 12, 20, 59, 40);
+    expect(spanPreset(prog, last).end.getTime() - spanPreset(prog, last).start.getTime()).toBe(60_000);
+  });
+  it('doneRecordings: the finished ones (done, partial) for the home row, newest first, at most ROW_MAX', () => {
+    const list = [
+      rec({ id: 'a', state: 'done', start: at(9, 20) }), rec({ id: 'b', state: 'recording', start: at(12, 20) }), rec({ id: 'c', state: 'partial', start: at(11, 20) }),
+      rec({ id: 'd', state: 'failed', start: at(10, 20) }), rec({ id: 'e', state: 'scheduled', start: at(13, 20) }),
+    ];
+    expect(doneRecordings(list).map((r) => r.id)).toEqual(['c', 'a']);
+    expect(doneRecordings(Array.from({ length: 20 }, (_, i) => rec({ id: `x${i}`, start: at(1 + i, 20) })))).toHaveLength(ROW_MAX);
   });
 });

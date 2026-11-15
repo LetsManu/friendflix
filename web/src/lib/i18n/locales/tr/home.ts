@@ -89,6 +89,7 @@ const tr: Translation<typeof de> = {
     trending: 'Bu hafta bizde',
     featured: '{name} · {owner} önerisi',
     myList: 'İzleme listesi',
+    recordings: 'Kayıtların',
     upcomingWish: 'Yakında – şimdi iste',
     top10: 'Puana göre ilk 10',
     libraryFailed: 'Kütüphane yüklenemedi.',

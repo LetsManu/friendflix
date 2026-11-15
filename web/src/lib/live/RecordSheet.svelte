@@ -12,8 +12,8 @@
   import { clock, type Prog } from './api';
   import { channelHead } from './progress';
   import {
-    conflictText, createRule, deleteRecording, deleteRule, getRecording, listRecordings, patchRecording, patchRule, programme as fetchProgramme, schedule, stepKeep, stepPad,
-    type Forecast, type ProgrammeDetail, type Rule, type ScheduleBody,
+    conflictText, createRule, deleteRecording, deleteRule, getRecording, listRecordings, patchRecording, patchRule, programme as fetchProgramme, schedule, spanPreset, stepKeep, stepPad,
+    stopRecording, type Forecast, type ProgrammeDetail, type RecState, type Rule, type ScheduleBody,
   } from './recordings';
 
   /**
@@ -24,6 +24,12 @@
    * *Trotzdem planen* (force): nothing moves when it appears. The opener shows the sheet only with `perms.liveRecord` (never for kids).
    * A bottom sheet on phones, a panel that grows in elsewhere; calm mode / reduced motion / TV / kids: at once, solid. A modal dialog
    * whose buttons are a D-pad scope; the main action takes the focus, Back / Escape (the opener's keys) or the close button close it.
+   *
+   * Less than a whole programme (DVR follow-ups): a running programme's main action reads *Ab jetzt aufnehmen* (it records from the
+   * moment asked, A-I5); *Eigenen Zeitraum aufnehmen …* asks the opener (`span`) for the time-span sheet prefilled with this channel,
+   * now (or the programme's start) and the programme's end. A running recording offers *Aufnahme beenden* (it ends now and stays,
+   * playable) and *Abbrechen und löschen*, which asks once more in the reserved conflict slot (nothing moves). The second action row is
+   * always there (an empty slot on a TV, where the time-span sheet is not offered), so a state change moves nothing.
    */
   export let channel: { id: string; number: number | null; name: string; logo: string | null };
   export let programme: Prog | null;
@@ -31,8 +37,10 @@
   export let still = false;
   /** the opener's clock (the minute store) decides *Jetzt ansehen* */
   export let now: Date = new Date();
+  /** *Eigenen Zeitraum aufnehmen …* is offered (the opener can show the time-span sheet; not on a TV) */
+  export let span = true;
 
-  const dispatch = createEventDispatcher<{ close: void; watch: { channelId: string }; changed: void }>();
+  const dispatch = createEventDispatcher<{ close: void; watch: { channelId: string }; changed: void; span: { channelId: string; start: Date; end: Date; title: string } }>();
   let box: HTMLElement | undefined;
   $: mode = (still ? 'still' : undefined) as FxMode | undefined;
   const fx = (node: Element, p: { dir: 'in' | 'out'; mode?: FxMode }) => (phone ? sheetSlide(node, p) : grow(node, { ...p, origin: '50% 50%' }));
@@ -40,6 +48,10 @@
   const PAD_DEFAULT = { before: 2, after: 5 };
   let detail: ProgrammeDetail | null = null;
   let recId: string | null = null;
+  /** the state of `recId`: a planned one is cancelled, a running one is ended (kept) or cancelled and deleted */
+  let recState: RecState | null = null;
+  /** *Abbrechen und löschen* was pressed once: the reserved slot asks again */
+  let askDelete = false;
   let rule: Rule | null = null;
   let ruleId: string | null = null;
   let busy = false;
@@ -64,6 +76,7 @@
     try {
       detail = await fetchProgramme(channel.id, programme.start);
       recId = detail.recording && (detail.recording.state === 'scheduled' || detail.recording.state === 'recording') ? detail.recording.id : null;
+      recState = recId ? detail.recording!.state : null;
       ruleId = detail.rule?.id ?? null;
       // the padding starts at the admin's defaults, or a planned recording's own
       if (!padTouched && detail.padDefaults) pad = { ...detail.padDefaults };
@@ -89,23 +102,54 @@
       if (!r.ok) { conflict = r.forecast; conflictRule = false; return; }
       conflict = null;
       recId = r.recording.id;
-      toast.success($t('live.rec.planned'));
+      recState = r.recording.state;
+      toast.success($t(running ? 'live.recPlayer.growing' : 'live.rec.planned'));
       dispatch('changed');
+      refocus();
     } catch (e) {
       toast.error(errorText(e));
     } finally { busy = false; }
   }
+  /** a planned recording is cancelled; a running one (after the second ask) is cancelled and deleted */
   async function cancel(): Promise<void> {
     if (!recId || busy) return;
     busy = true;
+    const was = recState;
     try {
       await deleteRecording(recId);
       recId = null;
-      toast.success($t('live.rec.cancelled'));
+      recState = null;
+      askDelete = false;
+      toast.success($t(was === 'recording' ? 'live.mine.deleted' : 'live.rec.cancelled'));
       dispatch('changed');
+      refocus();
     } catch (e) {
       toast.error(errorText(e));
     } finally { busy = false; }
+  }
+  /** *Aufnahme beenden*: it ends now and stays (done, playable) */
+  async function stop(): Promise<void> {
+    if (!recId || busy) return;
+    busy = true;
+    try {
+      await stopRecording(recId);
+      recId = null;
+      recState = null;
+      askDelete = false;
+      toast.success($t('live.rec.stopped'));
+      dispatch('changed');
+      refocus();
+    } catch (e) {
+      toast.error(errorText(e));
+    } finally { busy = false; }
+  }
+  function openSpan(): void {
+    if (!programme) return;
+    dispatch('span', { channelId: channel.id, ...spanPreset(programme, new Date()) });
+  }
+  /** the main action changed its button: the focus goes to the new one when it was on the old (it is gone now) */
+  function refocus(): void {
+    void tick().then(() => { if (box && (document.activeElement === document.body || document.activeElement === box)) box.querySelector<HTMLElement>('.main')?.focus(); });
   }
   async function recordSeries(): Promise<void> {
     if (!seriesKey || busy) return;
@@ -186,15 +230,29 @@
     {#if programme}
       <div class="acts">
         {#if running}<button type="button" class="frost-btn act" on:click={() => dispatch('watch', { channelId: channel.id })}>{$t('live.guide.watch')}</button>{/if}
-        {#if recId}
+        {#if recId && recState === 'recording'}
+          <button type="button" class="frost-btn act main" aria-busy={busy} disabled={!ready} on:click={stop}>{$t('live.guide.stopRecord')}</button>
+        {:else if recId}
           <button type="button" class="frost-btn act main" aria-busy={busy} disabled={!ready} on:click={cancel}>{$t('live.guide.cancelRecord')}</button>
         {:else}
-          <button type="button" class="frost-btn act main rec" aria-busy={busy} disabled={!ready} on:click={() => record(false)}><span class="dot" aria-hidden="true"></span>{$t('live.guide.record')}</button>
+          <button type="button" class="frost-btn act main rec" aria-busy={busy} disabled={!ready} on:click={() => record(false)}><span class="dot" aria-hidden="true"></span>{$t(running ? 'live.guide.recordFromNow' : 'live.guide.record')}</button>
+        {/if}
+        <!-- the second row is always there: a running recording's cancel-and-delete, else the own time span (an empty slot on a TV) -->
+        {#if recId && recState === 'recording'}
+          <button type="button" class="frost-btn act del" aria-expanded={askDelete} disabled={busy} on:click={() => (askDelete = !askDelete)}>{$t('live.guide.cancelDelete')}</button>
+        {:else if span}
+          <button type="button" class="frost-btn act" disabled={!ready} on:click={openSpan}><Icon name="clock" size={18} />{$t('live.guide.recordSpan')}</button>
+        {:else}
+          <span class="act ph" aria-hidden="true"></span>
         {/if}
       </div>
-      <!-- reserved from the start (spec "nothing may jump"): the conflict line and Trotzdem planen appear in it -->
+      <!-- reserved from the start (spec "nothing may jump"): the conflict line and Trotzdem planen appear in it, and the second ask of
+           Abbrechen und löschen -->
       <div class="cslot" aria-live="polite">
-        {#if conflict}
+        {#if askDelete && recId}
+          <p class="cline"><Icon name="alert" size={18} /><span>{$t('live.rec.deleteBody')}</span></p>
+          <button type="button" class="frost-btn act force del" aria-busy={busy} on:click={cancel}>{$t('live.mine.delete')}</button>
+        {:else if conflict}
           <p class="cline"><Icon name="alert" size={18} /><span>{conflictText(conflict)}</span></p>
           {#if !recId && !conflictRule}<button type="button" class="frost-btn act force" aria-busy={busy} on:click={() => record(true)}>{$t('live.rec.planAnyway')}</button>{/if}
         {/if}
@@ -260,6 +318,9 @@
   .acts { display: grid; gap: 10px; }
   .act { width: 100%; min-height: 44px; }
   .rec { gap: 10px; }
+  .act { gap: 8px; }
+  .act.ph { display: block; min-height: 44px; }
+  .del { color: #ffa8a8; }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--err-mark); }
   /* room for three lines of the conflict text and Trotzdem planen */
   .cslot { min-height: calc(3 * 1.35em + 44px + 18px); margin: 8px 0 6px; }
@@ -285,7 +346,7 @@
   }
   /* TV: 54 px targets, 28 px text at 1080p */
   :global(html.tv) .rsheet { width: calc(100vw / 1920 * 760); font-size: calc(100vw / 1920 * 28); }
-  :global(html.tv) .rsheet button { min-height: 54px; font-size: calc(100vw / 1920 * 28); }
+  :global(html.tv) .rsheet button, :global(html.tv) .rsheet .act.ph { min-height: 54px; font-size: calc(100vw / 1920 * 28); }
   :global(html.tv) .rsheet h2 { font-size: calc(100vw / 1920 * 36); }
   :global(html.tv) .rsheet :global(label), :global(html.tv) .rsheet .sv, :global(html.tv) .rsheet .cline { font-size: calc(100vw / 1920 * 28); }
   :global(html.tv) .sb, :global(html.tv) .x { width: 54px; height: 54px; }

@@ -8,6 +8,7 @@
   import { kidsMode } from '#lib/kids';
   import { pageStore } from '#lib/page';
   import { runAction } from '#lib/ui/action';
+  import Icon from '#lib/Icon.svelte';
   import { channels as fetchChannels, favourite, setFavouriteOrder, type LiveChannel, type LiveList } from '#lib/live/api';
   import { minute } from '#lib/live/fade';
   import FavOrderSheet from '#lib/live/FavOrderSheet.svelte';
@@ -30,7 +31,9 @@
    * The list is fetched with its ETag and refreshed every 30 s (and when the tab comes back), so a minute of programme data
    * arrives without a reload; the layout reserves every slot (rows, lines, the time-left slot), so arriving data moves nothing.
    * The *Aufnahmen* row (Phase 3 Task 8) sits below the channels on every layout (kids: read-only shares), so its arrival moves
-   * nothing above it; it refreshes with the list.
+   * nothing above it; it refreshes with the list. On desktop and phone the heading also carries an *Aufnahmen* link to Meine Aufnahmen
+   * (DVR follow-ups: the row alone sat below the whole channel list, out of sight); it is there from the first frame, nothing moves.
+   * A TV reaches the page from its side bar.
    */
   const REFRESH_MS = 30_000;
   const page = pageStore();
@@ -134,7 +137,10 @@
 <svelte:head><title>{$t('common.pageTitle', { page: $t('live.title') })}</title></svelte:head>
 
 <div class="live" class:tv={tvMode && !$kidsMode} class:kids={$kidsMode}>
-  <div class="head"><h1>{$t('live.title')}</h1></div>
+  <div class="head">
+    <h1>{$t('live.title')}</h1>
+    {#if !$kidsMode && !tvMode}<a class="recs frost-btn" href="/live/recordings"><Icon name="record" size={20} />{$t('live.recordings')}</a>{/if}
+  </div>
 
   {#if failed}
     <div class="panel failed" role="alert">
@@ -162,6 +168,8 @@
   .live { max-width: 1400px; margin: 0 auto; }
   .head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 44px; margin-bottom: 1rem; }
   h1 { margin: 0; }
+  /* the link to Meine Aufnahmen: a glass pill (44 px) at the heading's end */
+  .recs { padding: 0 16px; color: #fff; text-decoration: none; white-space: nowrap; }
   .failed { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 72px; }
   .failed p { margin: 0; }
   /* TV: the whole width of the page frame, the heading at TV size (1u = 1 px at a 1080p viewport) */

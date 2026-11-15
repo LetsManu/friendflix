@@ -35,7 +35,9 @@ test.describe('a person without libraries (phone)', () => {
     await expect(page).toHaveURL((u) => u.pathname === '/me');
     await expect(page.getByRole('main').getByRole('link', { name: 'Einstellungen', exact: true })).toBeVisible();
     const hrefs = await page.locator('main .tiles2 a, main .groups a').evaluateAll((l) => l.map((a) => a.getAttribute('href')!));
-    for (const h of hrefs) expect(h, h).toMatch(/^\/(settings|devices|remote|me|admin|diagnose)(\/|#|$)/);
+    for (const h of hrefs) expect(h, h).toMatch(/^\/(settings|devices|remote|me|admin|diagnose|live\/recordings)(\/|#|$)/);
+    // the Live-TV recordings are listed there (DVR follow-ups)
+    expect(hrefs).toContain('/live/recordings');
     await expect(page.getByRole('button', { name: 'Überrasch mich' })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Weiterschauen' })).toHaveCount(0);
   });

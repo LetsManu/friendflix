@@ -12,6 +12,8 @@
    * *Teilen…* (the owner; an inline choice of three, opened by the person), *Löschen* (the page holds it 5 s behind an undo toast);
    * *Geplant*: the time span, the *Konflikt* chip from the forecast and *Abbrechen*. The state chip, the progress line and the chip
    * slot are reserved, so arriving data moves nothing. 44 px targets; on a phone the actions wrap under the text.
+   * A running recording of the owner also offers *Jetzt beenden* (DVR follow-ups): it ends now and stays, playable; *Löschen* still
+   * removes it.
    */
   export let rec: Recording;
   export let kind: 'done' | 'planned' = 'done';
@@ -25,7 +27,7 @@
   /** *Behalten → in Bibliothek* is possible on this server (storage mode `both` with a library) */
   export let libraryExport = false;
 
-  const dispatch = createEventDispatcher<{ play: Recording; keep: Recording; share: { rec: Recording; visibility: Visibility }; delete: Recording; cancel: Recording; library: Recording }>();
+  const dispatch = createEventDispatcher<{ play: Recording; keep: Recording; share: { rec: Recording; visibility: Visibility }; delete: Recording; cancel: Recording; library: Recording; stop: Recording }>();
   let shareOpen = false;
   const day = (iso: string) => fmtDate(iso, { weekday: 'short', day: 'numeric', month: 'short' });
   $: playable = rec.state === 'recording' || rec.state === 'done' || rec.state === 'partial';
@@ -66,6 +68,9 @@
   <div class="acts">
     {#if kind === 'done'}
       {#if rec.mine}
+        {#if rec.state === 'recording'}
+          <button type="button" class="ab" aria-busy={busy} on:click={() => dispatch('stop', rec)}><span class="ic on" aria-hidden="true"><Icon name="stop" size={18} /></span>{$t('live.mine.stop')}</button>
+        {/if}
         {#if canRecord}
           <button type="button" class="ab" class:on={rec.keep} aria-pressed={rec.keep} aria-busy={busy} on:click={() => dispatch('keep', rec)}>
             <span class="ic" aria-hidden="true"><Icon name="lock" size={18} /></span>{$t('live.mine.keep')}
@@ -117,7 +122,7 @@
     background: rgba(255, 255, 255, .1); color: #fff; font: inherit; font-size: .92rem; font-weight: 600; transform: none; white-space: nowrap; }
   .ab[aria-pressed='true'] { background: var(--fr-sel); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .5); }
   .ic { display: grid; opacity: .55; }
-  .ab.on .ic { opacity: 1; }
+  .ab.on .ic, .ic.on { opacity: 1; }
   .del { color: #ffa8a8; }
   .shared { font-size: .85rem; color: rgba(255, 255, 255, .72); }
   .share { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }

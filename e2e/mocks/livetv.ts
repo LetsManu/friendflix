@@ -238,7 +238,9 @@ function recordingRoute(st: LivetvMock, m: string, p: string, body: any, J: Repl
     if (!c) return J({ error: 'not_found' }, 404);
     if (st.recConflict && !body.force) return J({ error: 'conflict', forecast: st.recConflict }, 409);
     const start = Date.parse(body.start);
-    const pr = [c.now, c.next].find((x) => x && Date.parse(x.start) === start);
+    // a programme at `start` is recorded whole; an own `end` that is not its end makes it a time span (backend recroutes.ts)
+    const found = [c.now, c.next].find((x) => x && Date.parse(x.start) === start);
+    const pr = found && (!body.end || !body.title || Date.parse(body.end) === Date.parse(found.end)) ? found : undefined;
     const end = pr ? Date.parse(pr.end) : Date.parse(body.end);
     const running = start <= st.recNow && st.recNow < end;
     const r = mockRecording({
@@ -267,6 +269,17 @@ function recordingRoute(st: LivetvMock, m: string, p: string, body: any, J: Repl
       st.recordings = r.state === 'scheduled' ? st.recordings.map((x) => (x.id === id ? { ...x, state: 'cancelled' as const } : x)) : st.recordings.filter((x) => x.id !== id);
       return none();
     }
+  }
+  if ((mm = p.match(/^\/api\/livetv\/recordings\/([^/]+)\/stop$/)) && m === 'POST') {
+    // *Aufnahme beenden*: a running recording ends now and stays (backend: 409 not_recording otherwise)
+    log();
+    const id = decodeURIComponent(mm[1]!);
+    const r = st.recordings.find((x) => x.id === id);
+    if (!r) return J({ error: 'not_found' }, 404);
+    if (r.state !== 'recording') return J({ error: 'not_recording' }, 409);
+    const next = { ...r, state: 'done' as const, growing: false, end: new Date(st.recNow).toISOString() };
+    st.recordings = st.recordings.map((x) => (x.id === id ? next : x));
+    return J({ recording: next });
   }
   if ((mm = p.match(/^\/api\/livetv\/recordings\/([^/]+)\/play$/)) && m === 'POST') {
     const id = decodeURIComponent(mm[1]!);

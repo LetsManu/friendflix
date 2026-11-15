@@ -9,12 +9,14 @@ export type MenuLink = [href: string, label: TKey, icon: string];
 export const MENU_LINKS: MenuLink[] = [
   ['/tonight', 'shell.menu.tonight', 'star'], ['/favorites', 'shell.menu.favorites', 'heart'], ['/lists', 'shell.menu.lists', 'list'], ['/history', 'shell.menu.history', 'calendar'], ['/match', 'shell.menu.match', 'users'], ['/collections', 'shell.menu.collections', 'film'], ['/upcoming', 'shell.menu.upcoming', 'calendar'], ['/requests', 'shell.menu.requests', 'gift'], ['/party', 'shell.menu.party', 'users'], ['/vote', 'shell.menu.vote', 'vote'],
   ['/now', 'shell.menu.now', 'monitor'], ['/calendar', 'shell.menu.calendar', 'calendar'], ['/stats', 'shell.menu.stats', 'bar-chart'], ['/remote', 'shell.menu.remote', 'tv'], ['/settings', 'shell.menu.settings', 'settings'], ['/devices', 'shell.menu.devices', 'monitor'],
+  // the Live-TV recordings (shown only with Live TV for this profile, capabilities FEATURE_NEEDS): the phone reaches them on Mein Bereich
+  ['/live/recordings', 'shell.menu.recordings', 'record'],
 ];
 export const DOWNLOADS_LINK: MenuLink = ['/downloads', 'shell.menu.downloads', 'download'];
 
 export const GROUPS: Array<{ title: TKey; hrefs: string[] }> = [
   { title: 'shell.menu.groups.discover', hrefs: ['/tonight', '/collections', '/upcoming', '/match', '/party', '/vote', '/now', '/calendar'] },
-  { title: 'shell.menu.groups.mine', hrefs: ['/favorites', '/lists', '/history', '/downloads', '/requests', '/stats'] },
+  { title: 'shell.menu.groups.mine', hrefs: ['/favorites', '/lists', '/history', '/downloads', '/live/recordings', '/requests', '/stats'] },
   { title: 'shell.menu.groups.account', hrefs: ['/remote', '/settings', '/devices'] },
 ];
 
@@ -47,13 +49,26 @@ export const HEADER_TABS: Array<[href: string, label: TKey]> = [['/', 'shell.nav
 /** The Live-TV entries (spec §11): they join the header and the TV rail only through `liveTabs`, i.e. while `features.livetv` is on. */
 export const LIVE_HEADER: [href: string, label: TKey] = ['/live', 'shell.nav.live'];
 export const LIVE_RAIL: [href: string, label: TKey, icon: string] = ['/live', 'shell.nav.live', 'tv'];
+/** *Aufnahmen* right after Live-TV (the owner did not find the recordings from any menu): the header and the TV rail */
+export const REC_HEADER: [href: string, label: TKey] = ['/live/recordings', 'shell.nav.recordings'];
+export const REC_RAIL: [href: string, label: TKey, icon: string] = ['/live/recordings', 'shell.nav.recordings', 'record'];
+export const LIVE_HEADERS = [LIVE_HEADER, REC_HEADER];
+export const LIVE_RAILS = [LIVE_RAIL, REC_RAIL];
 
-/** `tabs` with `entry` after *Filme* (last when there is no such entry) while `on`; the input is never changed, an entry already there is not added twice */
-export function liveTabs<T extends [string, ...unknown[]]>(tabs: T[], entry: T, on: boolean): T[] {
-  if (!on || tabs.some((t) => t[0] === entry[0])) return tabs;
+/**
+ * `tabs` with `entry` (one entry, or several in their order) after *Filme* (last when there is no such entry) while `on`; the input
+ * is never changed, an entry already there is not added twice
+ */
+export function liveTabs<T extends [string, ...unknown[]]>(tabs: T[], entry: T | readonly T[], on: boolean): T[] {
+  const add = (typeof entry[0] === 'string' ? [entry as T] : (entry as readonly T[])).filter((e) => !tabs.some((t) => t[0] === e[0]));
+  if (!on || !add.length) return tabs;
   const at = tabs.findIndex((t) => t[0] === '/browse/movies');
-  return at < 0 ? [...tabs, entry] : [...tabs.slice(0, at + 1), entry, ...tabs.slice(at + 1)];
+  return at < 0 ? [...tabs, ...add] : [...tabs.slice(0, at + 1), ...add, ...tabs.slice(at + 1)];
 }
+
+/** the one entry of `hrefs` that is active on `path`: the most specific one (Aufnahmen on /live/recordings, Live-TV on /live/watch/…), else null */
+export const activeTab = (hrefs: readonly string[], path: string): string | null =>
+  hrefs.filter((h) => isTabActive(h, path)).sort((a, b) => b.length - a.length)[0] ?? null;
 
 /**
  * `tabs` for a person with (`library`) or without the Mediathek (roles redesign §6): without it only the entries that need no
@@ -85,4 +100,4 @@ const APP_PARAMS = new Set(['ff_app', 'tv']);
  * The Alles / Serien / Filme filter of the new-titles page (`/new?type=series`) is a view of the same page, not a drill-down.
  */
 export const isRailTop = (path: string, search: string): boolean =>
-  (path === LIVE_RAIL[0] || TV_RAIL.some(([h]) => h === path)) && [...new URLSearchParams(search).keys()].every((k) => APP_PARAMS.has(k) || (path === '/new' && k === 'type'));
+  (LIVE_RAILS.some(([h]) => h === path) || TV_RAIL.some(([h]) => h === path)) && [...new URLSearchParams(search).keys()].every((k) => APP_PARAMS.has(k) || (path === '/new' && k === 'type'));

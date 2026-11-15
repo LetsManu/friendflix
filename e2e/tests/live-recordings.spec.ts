@@ -229,6 +229,25 @@ test.describe('Aufnahmen row and Meine Aufnahmen', () => {
     expect(body).toEqual({ channelId: 'ch-stern', start: new Date(2026, 10, 13, 6, 30).toISOString(), end: new Date(2026, 10, 13, 8, 0).toISOString(), title: 'Sternwarte 24' });
   });
 
+  test('Jetzt beenden ends a running recording early and keeps it', async ({ page, api }) => {
+    const running = mockRecording({ title: 'Sternstunde Physik', seriesKey: 'sternstunde physik', state: 'recording', growing: true, start: at(12, 20, 15), end: at(12, 21) });
+    const done = mockRecording({ start: at(11, 20), end: at(11, 21) });
+    await arm(page, api, [running, done]);
+    await page.goto('/live/recordings');
+    const it = items(page).filter({ hasText: 'Sternstunde Physik' });
+    await expect(it.getByText('Läuft', { exact: true })).toBeVisible();
+    // only a running recording has it
+    await expect(items(page).filter({ hasText: 'Die Leuchtturmwärter' }).getByRole('button', { name: 'Jetzt beenden' })).toHaveCount(0);
+    await it.getByRole('button', { name: 'Jetzt beenden' }).click();
+    await expect.poll(() => api.livetv.recCalls).toEqual([`POST /api/livetv/recordings/${running.id}/stop`]);
+    await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Aufnahme beendet. Das Aufgenommene bleibt erhalten.')).toBeVisible();
+    // kept: finished and playable, still in the list
+    await expect(it.getByText('Fertig', { exact: true })).toBeVisible();
+    await expect(it.getByRole('button', { name: 'Jetzt beenden' })).toHaveCount(0);
+    await expect(it.getByRole('button', { name: /^Abspielen/ })).toBeEnabled();
+    await expect(items(page)).toHaveCount(2);
+  });
+
   test('kids row shows only shared recordings, no actions', async ({ page, api }) => {
     await page.route('**/api/me', (r) => r.fulfill({ json: KID }));
     await page.addInitScript(noIntro);

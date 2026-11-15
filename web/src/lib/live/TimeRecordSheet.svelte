@@ -17,21 +17,27 @@
    * without a programme guide. Without a weekday it plans one recording (`POST /api/livetv/recordings` with `end` + `title`); with
    * weekdays it is a weekly time rule in the browser's time zone (`POST /api/livetv/rules`). A conflict shows the §20 line in a slot
    * that is reserved from the start, with *Trotzdem planen*. The UI kit's modal frame (focus trap, Escape, focus back to the trigger).
+   * Opened from a programme (the live player's *Eigenen Zeitraum aufnehmen …*, DVR follow-ups) it starts with `preset`: that channel,
+   * start, end and the programme's title, so a person records only part of it (the next 30 minutes, the second half).
    */
   export let channels: Array<{ id: string; number: number | null; name: string }>;
   export let trigger: HTMLElement | null = null;
+  /** the first values (channel, start, end, title); without it: the first channel, the next full five minutes, 60 minutes */
+  export let preset: { channelId: string; start: Date; end: Date; title: string } | null = null;
+  /** the stacking layer of the modal (the live player sits above the page) */
+  export let layer = 100;
 
   const dispatch = createEventDispatcher<{ close: void; saved: void }>();
   const two = (n: number) => String(n).padStart(2, '0');
   const now = new Date();
-  // the next full five minutes
-  const first = new Date(Math.ceil(now.getTime() / 300_000) * 300_000);
-  let channelId = channels[0]?.id ?? '';
+  // the next full five minutes, or the preset's start
+  const first = preset?.start ?? new Date(Math.ceil(now.getTime() / 300_000) * 300_000);
+  let channelId = preset && channels.some((c) => c.id === preset!.channelId) ? preset.channelId : channels[0]?.id ?? '';
   let date = `${first.getFullYear()}-${two(first.getMonth() + 1)}-${two(first.getDate())}`;
   let start = hhmm(first);
-  let duration: string | number = 60;
-  let title = '';
-  let titleTouched = false;
+  let duration: string | number = preset ? Math.max(1, Math.round((preset.end.getTime() - first.getTime()) / 60_000)) : 60;
+  let title = preset?.title ?? '';
+  let titleTouched = Boolean(preset?.title);
   let days: number[] = [];
   let busy = false;
   let conflict: Forecast | null = null;
@@ -69,7 +75,7 @@
   }
 </script>
 
-<ModalShell labelledby="ltr-title" focus="select" {trigger} locked={busy} on:close={() => dispatch('close')}>
+<ModalShell labelledby="ltr-title" focus={preset ? 'input[type="number"]' : 'select'} {trigger} {layer} locked={busy} on:close={() => dispatch('close')}>
   <form class="trs" on:submit|preventDefault={() => save(false)}>
     <header>
       <h2 id="ltr-title">{$t('live.time.title')}</h2>
