@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, open, realpath, rename, rm, statfs } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, open, readdir, realpath, rename, rm, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Log } from './log.js';
 import type { SegmentInfo, Streams } from './streams.js';
@@ -22,6 +22,8 @@ export const FINISHED_KEEP_MS = 3_600_000;
 /** a segment missing for this many target durations is an outage */
 export const GAP_TARGETS = 3;
 export const RECORDER_TICK_MS = 1_000;
+/** a folder whose recording was removed refuses a start for this long (a resume racing the delete must not bring it back) */
+export const TOMBSTONE_MS = 10 * 60_000;
 export const DIR_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PLAYLIST = 'index.m3u8';
 const DEFAULT_TARGET_S = 6;
@@ -32,6 +34,7 @@ export interface Gap { from: number; to: number }
 export interface RecordingView {
   id: string;
   channelId: string;
+  dir: string;
   state: 'recording' | 'done' | 'failed';
   segments: 'ts' | 'fmp4' | null;
   bytes: number;
@@ -41,7 +44,9 @@ export interface RecordingView {
   since: number;
 }
 export interface StartRecording { id: string; channelId: string; dir: string; endAt: number }
-export type StartResult = { ok: true; state: 'recording'; segments: 'ts' | 'fmp4' | null } | { ok: false; status: 409 | 507; error: 'stream_not_running' | 'storage_full' | 'invalid_dir' };
+export type StartResult = { ok: true; state: 'recording'; segments: 'ts' | 'fmp4' | null } | { ok: false; status: 409 | 410 | 507; error: 'stream_not_running' | 'storage_full' | 'invalid_dir' | 'removed' };
+/** `POST /v1/recordings/:id/close`: the facts of a finished folder (its playlist closed now if it was not) */
+export type CloseResult = Omit<RecordingView, 'since'> | null;
 
 /** the file operations of the recorder (tests wrap them to fail with ENOSPC) */
 export interface RecFs {
@@ -60,13 +65,21 @@ const code = (e: unknown) => (e as NodeJS.ErrnoException | null)?.code;
 
 export const nodeRecFs: RecFs = {
   async copy(src, dest) {
+    // copied under `<name>.part` and renamed: a reader never sees half a file under its final name (B-M2); a `.part` a crash left is a
+    // plain file and is replaced, anything else there (a link) is refused. The rename replaces a link at the final name, never follows it.
+    const part = `${dest}.part`;
     try {
-      await copyFile(src, dest, constants.COPYFILE_EXCL);
+      await copyFile(src, part, constants.COPYFILE_EXCL);
     } catch (e) {
-      // a file of a crash between its copy and the playlist write: a plain file is replaced, anything else (a link) is refused
-      if (code(e) !== 'EEXIST' || !(await lstat(dest)).isFile()) throw e;
-      await rm(dest);
-      await copyFile(src, dest, constants.COPYFILE_EXCL);
+      if (code(e) !== 'EEXIST' || !(await lstat(part)).isFile()) throw e;
+      await rm(part);
+      await copyFile(src, part, constants.COPYFILE_EXCL);
+    }
+    try {
+      await rename(part, dest);
+    } catch (e) {
+      await rm(part, { force: true }).catch(() => undefined);
+      throw e;
     }
     return (await lstat(dest)).size;
   },
@@ -126,6 +139,10 @@ interface Rec {
   pendingDisc: boolean;
   /** the playlist carries its ENDLIST */
   closed: boolean;
+  /** a finish is queued (B-M3): later ticks do not queue another */
+  finishing: boolean;
+  /** the recording's own end timer (B-I1) */
+  endTimer: NodeJS.Timeout | null;
   queue: Promise<void>;
 }
 
@@ -138,6 +155,8 @@ export interface RecorderOptions {
   now?: () => number;
   /** how often `tick` runs by itself; 0 = never (tests call it) */
   tickMs?: number;
+  /** each recording ends itself on a timer at its end (default: when `tickMs` > 0) */
+  endTimers?: boolean;
 }
 
 const segName = (e: Pick<Entry, 'seq' | 'ext'>) => `${e.seq}.${e.ext}`;
@@ -188,7 +207,11 @@ const writeCode = (e: unknown): RecError => (code(e) === 'ENOSPC' || code(e) ===
 export class Recorder {
   private readonly recs = new Map<string, Rec>();
   private readonly starting = new Map<string, Promise<StartResult>>();
+  /** removed recordings (id and folder) with the time they were removed: no start brings them back (A-I3, B-I3) */
+  private readonly removed = new Map<string, { dir: string; at: number }>();
   private readonly fs: RecFs;
+  /** whether each recording arms its own end timer (production); the tests drive `tick` with a clock of their own */
+  private readonly ownTimers: boolean;
   private readonly log: Log;
   private readonly now: () => number;
   private timer: NodeJS.Timeout | null = null;
@@ -198,6 +221,7 @@ export class Recorder {
     this.log = o.log ?? (() => {});
     this.now = o.now ?? Date.now;
     const every = o.tickMs ?? RECORDER_TICK_MS;
+    this.ownTimers = o.endTimers ?? every > 0;
     if (every > 0) {
       this.timer = setInterval(() => this.tick(), every);
       this.timer.unref?.();
@@ -211,13 +235,24 @@ export class Recorder {
 
   /** `POST /v1/recordings`: idempotent per id; a folder with a playlist is resumed */
   start(b: StartRecording): Promise<StartResult> {
+    if (this.isRemoved(b.id, b.dir)) return Promise.resolve({ ok: false, status: 410, error: 'removed' });
     const cur = this.recs.get(b.id);
-    if (cur?.state === 'recording') return Promise.resolve({ ok: true, state: 'recording', segments: this.segmentsOf(cur) });
+    if (cur?.state === 'recording') {
+      // the same id must name the same folder and channel (B-M7)
+      if (cur.dir !== b.dir || cur.channelId !== b.channelId) return Promise.resolve({ ok: false, status: 409, error: 'invalid_dir' });
+      return Promise.resolve({ ok: true, state: 'recording', segments: this.segmentsOf(cur) });
+    }
     const running = this.starting.get(b.id);
     if (running) return running;
     const p = this.begin(b).finally(() => this.starting.delete(b.id));
     this.starting.set(b.id, p);
     return p;
+  }
+
+  private isRemoved(id: string, dir: string): boolean {
+    const now = this.now();
+    for (const [k, v] of this.removed) if (now - v.at >= TOMBSTONE_MS) this.removed.delete(k);
+    return this.removed.has(id) || [...this.removed.values()].some((v) => v.dir === dir);
   }
 
   private segmentsOf(r: Rec): 'ts' | 'fmp4' | null {
@@ -235,7 +270,10 @@ export class Recorder {
     // another recording already writes this folder: refused (never two writers in one folder)
     for (const r of this.recs.values()) if (r.dir === b.dir && r.id !== b.id && r.state === 'recording') return { ok: false, status: 409, error: 'invalid_dir' };
     const path = join(this.o.root, b.dir);
+    // a delete or stop that came while this start awaited: the folder is not created again (A-I3, B-I3)
+    if (this.isRemoved(b.id, b.dir)) return { ok: false, status: 410, error: 'removed' };
     if (!(await this.ensureDir(b.dir))) return { ok: false, status: 409, error: 'invalid_dir' };
+    await this.cleanLeftovers(path);
     const now = this.now();
     let entries: Entry[] = [];
     let bytes = 0;
@@ -249,18 +287,39 @@ export class Recorder {
     } catch {
       return { ok: false, status: 409, error: 'invalid_dir' };
     }
+    if (this.isRemoved(b.id, b.dir)) return { ok: false, status: 410, error: 'removed' };
     const last = entries.at(-1);
     const prev = this.recs.get(b.id);
     const r: Rec = {
       id: b.id, channelId: b.channelId, dir: b.dir, path, endAt: b.endAt, state: 'recording', error: null, since: now, finishedAt: null, entries,
       nextSeq: last ? last.seq + 1 : 0, inits: new Map(), nextInit: entries.reduce((m, e) => Math.max(m, (e.init ?? -1) + 1), 0), bytes,
       gaps: prev?.dir === b.dir ? [...prev.gaps] : [], lastArrival: now, gapFrom: last ? last.pdt + last.duration * 1000 : null, pendingDisc: last !== undefined,
-      closed: false, queue: Promise.resolve(),
+      closed: false, finishing: false, endTimer: null, queue: Promise.resolve(),
     };
     this.recs.set(b.id, r);
+    this.armEnd(r);
     this.o.streams.keepAlive(b.channelId);
     this.log(`recording ${b.id} ${last ? 'resumed' : 'started'}`);
     return { ok: true, state: 'recording', segments: this.segmentsOf(r) };
+  }
+
+  /** `.part` copies and the temporary playlist a crash or a full disk left behind (plain files only) */
+  private async cleanLeftovers(path: string): Promise<void> {
+    const names = await readdir(path).catch(() => [] as string[]);
+    for (const n of names) {
+      if (!n.endsWith('.part') && n !== `${PLAYLIST}.tmp`) continue;
+      const st = await lstat(join(path, n)).catch(() => null);
+      if (st?.isFile()) await rm(join(path, n), { force: true }).catch(() => undefined);
+    }
+  }
+
+  /** the recording's own timer at its end (B-I1): it finishes itself even when nobody asks */
+  private armEnd(r: Rec): void {
+    if (r.endTimer) clearTimeout(r.endTimer);
+    r.endTimer = null;
+    if (!this.ownTimers || r.state !== 'recording') return;
+    r.endTimer = setTimeout(() => { r.endTimer = null; if (this.now() >= r.endAt) void this.finish(r, r.endAt); else this.armEnd(r); }, Math.min(Math.max(0, r.endAt - this.now()), 2 ** 31 - 1));
+    r.endTimer.unref?.();
   }
 
   /** the recording's folder below the root: created when missing; an existing one must be a real folder whose real path stays below the root */
@@ -280,13 +339,16 @@ export class Recorder {
   /** `PATCH /v1/recordings/:id`: a new end (a running recording only) */
   setEnd(id: string, endAt: number): boolean {
     const r = this.recs.get(id);
-    if (!r || r.state !== 'recording') return false;
+    if (!r || r.state !== 'recording' || r.finishing) return false;
     r.endAt = endAt;
+    this.armEnd(r);
     return true;
   }
 
   /** `DELETE /v1/recordings/:id`: stops now (ENDLIST); false = unknown */
   async stop(id: string): Promise<boolean> {
+    // a start of this id still in flight is waited for, so the stop reaches the recorder it creates (A-I3, B-I3)
+    await this.starting.get(id)?.catch(() => undefined);
     const r = this.recs.get(id);
     if (!r) return false;
     if (r.state === 'recording') await this.finish(r, this.now());
@@ -303,7 +365,7 @@ export class Recorder {
 
   list(): RecordingView[] {
     return [...this.recs.values()].map((r) => ({
-      id: r.id, channelId: r.channelId, state: r.state, segments: r.entries.length ? (r.entries.at(-1)!.ext === 'm4s' ? 'fmp4' : 'ts') : null,
+      id: r.id, channelId: r.channelId, dir: r.dir, state: r.state, segments: r.entries.length ? (r.entries.at(-1)!.ext === 'm4s' ? 'fmp4' : 'ts') : null,
       bytes: r.bytes, durationS: Math.round(r.entries.reduce((n, e) => n + e.duration, 0)), gaps: r.gaps.map((g) => ({ ...g })), error: r.error, since: r.since,
     }));
   }
@@ -314,17 +376,23 @@ export class Recorder {
    */
   async remove(id: string, dir: string): Promise<'ok' | 'not_found' | 'not_a_folder'> {
     if (!DIR_RE.test(dir)) return 'not_a_folder';
+    // no start of this recording may come back: one in flight sees the mark, a later one is refused (A-I3, B-I3)
+    this.removed.set(id, { dir, at: this.now() });
+    await this.starting.get(id)?.catch(() => undefined);
     for (const r of [...this.recs.values()]) {
       if (r.id !== id && r.dir !== dir) continue;
       if (r.state === 'recording') await this.finish(r, this.now());
       await r.queue;
+      if (r.endTimer) clearTimeout(r.endTimer);
       this.recs.delete(r.id);
     }
     const path = join(this.o.root, dir);
     const st = await lstat(path).catch(() => null);
     if (!st) return 'not_found';
-    if (st.isSymbolicLink() || !st.isDirectory()) return 'not_a_folder';
-    if ((await realpath(path)) !== join(await realpath(this.o.root), dir)) return 'not_a_folder';
+    // a refused delete (a planted link) deletes nothing, so it marks nothing either: the backend asks again
+    const refuse = () => { this.removed.delete(id); return 'not_a_folder' as const; };
+    if (st.isSymbolicLink() || !st.isDirectory()) return refuse();
+    if ((await realpath(path)) !== join(await realpath(this.o.root), dir)) return refuse();
     await rm(path, { recursive: true, force: true });
     this.log(`recording ${id} files removed`);
     return 'ok';
@@ -349,9 +417,11 @@ export class Recorder {
     for (const r of [...this.recs.values()]) {
       if (r.state !== 'recording') {
         if (r.finishedAt !== null && now - r.finishedAt >= FINISHED_KEEP_MS) this.recs.delete(r.id);
+        // a playlist whose closing write failed (a full disk) is closed as soon as there is room (B-I1)
+        else if (!r.closed && r.entries.length) r.queue = r.queue.then(() => this.writeEnd(r)).catch(() => undefined);
         continue;
       }
-      if (now >= r.endAt) { void this.finish(r, r.endAt); continue; }
+      if (now >= r.endAt) { if (!r.finishing) void this.finish(r, r.endAt); continue; }
       this.o.streams.keepAlive(r.channelId);
       if (r.entries.length && r.gapFrom === null && now - r.lastArrival >= GAP_TARGETS * targetOf(r.entries) * 1000) this.openGap(r);
     }
@@ -360,6 +430,51 @@ export class Recorder {
   close(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    for (const r of this.recs.values()) if (r.endTimer) clearTimeout(r.endTimer);
+  }
+
+  /**
+   * `POST /v1/recordings/:id/close { dir }` (B-I2): finalises a recording. A running recorder of this id finishes now. A folder without
+   * a recorder (livetv restarted after its end) gets its ENDLIST if it lacks one, and its facts are read from the playlist: bytes,
+   * duration, the gaps its date-times show. null = no such folder or no playlist.
+   */
+  async closeFolder(id: string, dir: string): Promise<CloseResult> {
+    if (!DIR_RE.test(dir) || this.isRemoved(id, dir)) return null;
+    await this.starting.get(id)?.catch(() => undefined);
+    const cur = this.recs.get(id);
+    if (cur && cur.dir === dir) {
+      if (cur.state === 'recording') await this.finish(cur, this.now());
+      else await cur.queue;
+      const { since: _since, ...facts } = this.list().find((v) => v.id === id)!;
+      return facts;
+    }
+    const path = join(this.o.root, dir);
+    const st = await lstat(path).catch(() => null);
+    if (!st?.isDirectory() || (await realpath(path)) !== join(await realpath(this.o.root), dir)) return null;
+    const text = await this.fs.read(join(path, PLAYLIST)).catch(() => null);
+    if (text === null) return null;
+    const entries = parseRecordingPlaylist(text);
+    let bytes = 0;
+    for (const e of entries) bytes += await this.fs.size(join(path, segName(e))).catch(() => 0);
+    for (const n of new Set(entries.flatMap((e) => (e.init === null ? [] : [e.init])))) bytes += await this.fs.size(join(path, initFile(n))).catch(() => 0);
+    let error: RecError | null = null;
+    if (entries.length && !text.includes('#EXT-X-ENDLIST')) {
+      try { await this.fs.writeAtomic(join(path, PLAYLIST), recordingPlaylist(entries, true)); } catch (e) { error = writeCode(e); }
+    }
+    // an outage shows as a jump of the date-times at a discontinuity (the recorder's own gaps)
+    const tolerance = GAP_TARGETS * targetOf(entries) * 1000;
+    const gaps: Gap[] = [];
+    entries.forEach((e, i) => {
+      const prev = entries[i - 1];
+      if (!prev || !e.disc) return;
+      const end = prev.pdt + prev.duration * 1000;
+      if (e.pdt - end >= Math.min(tolerance, 1000)) gaps.push({ from: end, to: e.pdt });
+    });
+    this.log(`recording ${id} closed from its folder`);
+    return {
+      id, channelId: '', dir, state: !entries.length || error ? 'failed' : 'done', segments: entries.length ? (entries.at(-1)!.ext === 'm4s' ? 'fmp4' : 'ts') : null,
+      bytes, durationS: Math.round(entries.reduce((n, e) => n + e.duration, 0)), gaps, error: !entries.length ? 'stream_gone' : error,
+    };
   }
 
   private openGap(r: Rec): void {
@@ -378,7 +493,13 @@ export class Recorder {
         init = r.inits.get(info.initPath) ?? null;
         if (init === null) {
           init = r.nextInit;
-          r.bytes += await this.fs.copy(info.initPath, join(r.path, initFile(init)));
+          try {
+            r.bytes += await this.fs.copy(info.initPath, join(r.path, initFile(init)));
+          } catch (e) {
+            // the cache dropped the init before it was copied: an outage like a dropped segment (B-M4)
+            if (code(e) === 'ENOENT' && (await lstat(r.path).then((s) => s.isDirectory(), () => false))) { this.openGap(r); return; }
+            throw e;
+          }
           r.nextInit++;
           r.inits.set(info.initPath, init);
         }
@@ -403,6 +524,8 @@ export class Recorder {
       r.bytes += size;
       r.lastArrival = this.now();
       r.pendingDisc = false;
+      // the whole playlist is rewritten per segment (B-M8): a 24-h recording of 4-s segments is about 21 600 lines (~1.7 MB) every 4 s,
+      // acceptable on a local volume; an append-only writer would have to rewrite ENDLIST and MAP lines in place instead
       await this.fs.writeAtomic(join(r.path, PLAYLIST), recordingPlaylist(r.entries, false));
       this.o.streams.keepAlive(r.channelId);
     } catch (e) {
@@ -411,6 +534,8 @@ export class Recorder {
   }
 
   private finish(r: Rec, at: number): Promise<void> {
+    r.finishing = true;
+    if (r.endTimer) { clearTimeout(r.endTimer); r.endTimer = null; }
     r.queue = r.queue.then(async () => {
       if (r.state !== 'recording') return;
       if (r.gapFrom !== null) {
@@ -421,14 +546,14 @@ export class Recorder {
         await this.fail(r, 'stream_gone');
         return;
       }
-      r.state = 'done';
-      r.finishedAt = this.now();
-      try {
-        await this.writeEnd(r);
-      } catch (e) {
-        r.state = 'failed';
-        r.error = writeCode(e);
+      // done only once the ENDLIST is on disk (one retry); a backend that collects `done` always finds a closed playlist (B-I1)
+      let err: RecError | null = null;
+      for (let i = 0; i < 2 && !r.closed; i++) {
+        try { await this.writeEnd(r); } catch (e) { err = writeCode(e); }
       }
+      r.finishedAt = this.now();
+      if (r.closed) r.state = 'done';
+      else { r.state = 'failed'; r.error = err ?? 'write_failed'; }
       this.log(`recording ${r.id} ${r.state === 'done' ? 'done' : `failed (${r.error})`}`);
     });
     return r.queue;
@@ -437,6 +562,7 @@ export class Recorder {
   /** ends the recording with a fixed code; the playlist is closed with what it has (best effort: the disk may be full) */
   private async fail(r: Rec, err: RecError): Promise<void> {
     if (r.state !== 'recording') return;
+    if (r.endTimer) { clearTimeout(r.endTimer); r.endTimer = null; }
     r.state = 'failed';
     r.error = err;
     r.finishedAt = this.now();

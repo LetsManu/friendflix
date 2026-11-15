@@ -431,7 +431,7 @@ async function recorderList(ctx: Ctx): Promise<RecorderView[] | null> {
     }).slice(0, 1000) : [];
     const error = ['storage_full', 'write_failed', 'stream_gone'].includes(o.error as string) ? (o.error as RecorderView['error']) : null;
     return [{
-      id: o.id, channelId: String(o.channelId ?? ''), state: o.state as RecorderView['state'], segments: o.segments === 'fmp4' || o.segments === 'ts' ? o.segments : null,
+      id: o.id, channelId: String(o.channelId ?? ''), dir: typeof o.dir === 'string' && UUID_RE.test(o.dir) ? o.dir : '', state: o.state as RecorderView['state'], segments: o.segments === 'fmp4' || o.segments === 'ts' ? o.segments : null,
       bytes: Math.max(0, Math.round(num(o.bytes))), durationS: Math.max(0, Math.round(num(o.durationS))), gaps, error, since: num(o.since),
     }];
   });
@@ -468,6 +468,42 @@ async function collect(ctx: Ctx, r: RecRow, e: RecorderView): Promise<void> {
   await finishHooks.finished?.(ctx, row).catch(() => undefined);
 }
 
+/** finalises a recording whose recorder livetv lost after its end (B-I2); a missing folder fails it `stream_gone` */
+async function closeLost(ctx: Ctx, r: RecRow): Promise<void> {
+  let facts: RecorderView | null;
+  try {
+    facts = await livetvCall<RecorderView>(ctx, 'POST', `/v1/recordings/${r.id}/close`, { dir: r.dir }, { timeoutMs: CALL_TIMEOUT_MS });
+  } catch (e) {
+    if (!(e instanceof LivetvError)) throw e;
+    if (e.status !== 404) return; // livetv did not answer: the next tick asks again
+    facts = null;
+  }
+  if (!facts || (facts.state !== 'done' && facts.state !== 'failed')) { await failRow(ctx, r, 'stream_gone', { from: ['recording'] }); return; }
+  await collect(ctx, r, {
+    id: r.id, channelId: r.channel_id ?? '', dir: r.dir, state: facts.state, segments: facts.segments === 'fmp4' || facts.segments === 'ts' ? facts.segments : null,
+    bytes: Math.max(0, Math.round(Number(facts.bytes) || 0)), durationS: Math.max(0, Math.round(Number(facts.durationS) || 0)),
+    gaps: Array.isArray(facts.gaps) ? facts.gaps.filter((g) => typeof g?.from === 'number' && typeof g?.to === 'number').slice(0, 1000) : [],
+    error: facts.error === 'storage_full' || facts.error === 'write_failed' || facts.error === 'stream_gone' ? facts.error : null, since: 0,
+  });
+}
+
+/** stops livetv's recorders whose row does not record; removes the folder of a cancelled or gone row (never of another state) */
+async function reapOrphans(ctx: Ctx, list: RecorderView[]): Promise<void> {
+  const live = list.filter((e) => e.state === 'recording');
+  if (!live.length) return;
+  const rows = new Map((await ctx.db.query<{ id: string; state: RecState; dir: string }>(
+    'select id, state, dir from livetv_recordings where id = any($1::uuid[])', [live.map((e) => e.id)])).rows.map((x) => [x.id, x] as const));
+  for (const e of live) {
+    const row = rows.get(e.id);
+    if (row && (row.state === 'recording' || row.state === 'starting')) continue;
+    await livetvCall(ctx, 'DELETE', `/v1/recordings/${e.id}`, undefined, { timeoutMs: CALL_TIMEOUT_MS }).catch(() => undefined);
+    const dir = row?.dir ?? e.dir;
+    if ((!row || row.state === 'cancelled') && UUID_RE.test(dir)) {
+      await livetvCall(ctx, 'POST', `/v1/recordings/${e.id}/delete`, { dir }, { timeoutMs: CALL_TIMEOUT_MS }).catch(() => undefined);
+    }
+  }
+}
+
 /** posts the recorder for a row whose stream runs; 'retry' = try again on a later tick */
 async function postRecorder(ctx: Ctx, r: RecRow): Promise<RecordingStartAnswer | 'retry' | { fail: string }> {
   try {
@@ -476,6 +512,7 @@ async function postRecorder(ctx: Ctx, r: RecRow): Promise<RecordingStartAnswer |
     if (!(e instanceof LivetvError)) throw e;
     if (e.status === 507) return { fail: 'storage_full' };
     if (e.status === 409 && e.code === 'invalid_dir') return { fail: 'write_failed' };
+    if (e.status === 410) return 'retry'; // deleted meanwhile: the launch's conditional update sees it
     return 'retry';
   }
 }
@@ -593,7 +630,9 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
         const w = r.profile_id ? who.get(r.profile_id) ?? (await owners(ctx, [r.profile_id])).get(r.profile_id) : undefined;
         if (e && e.state !== 'recording') { await collect(ctx, r, e); continue; }
         if (now >= padEnd(r)) {
-          if (!e) await failRow(ctx, r, 'stream_gone', { from: ['recording'] }); // its recorder is gone (livetv restarted after the end)
+          // its recorder is gone (livetv restarted after the end): livetv finalises the folder and reads its facts (B-I2); a recording whose
+          // folder is complete ends done, not failed
+          if (!e) await closeLost(ctx, r);
           continue; // a recorder still running past its end is stopped below
         }
         if (e) {
@@ -610,6 +649,10 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
         }
       }
     }
+
+    // (3b) orphans (A-I3, B-I3): a recorder livetv runs for a row that is not recording (cancelled, deleted, finished) is stopped; the
+    // folder of a cancelled or gone row is removed too. A row being started (`starting`) is left to its launch.
+    if (list) await reapOrphans(ctx, list);
 
     // (4) due stops: the recorder ends itself at its end; this is the net for a recorder that did not
     if (!(await renew())) return;

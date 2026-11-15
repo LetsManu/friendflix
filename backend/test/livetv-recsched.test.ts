@@ -34,6 +34,7 @@ const streams = new Map<string, StreamView>();
 const recorders = new Map<string, RecorderView>();
 let up = true;
 let recPostStatus = 200;
+let closeAnswer: Omit<RecorderView, 'id' | 'dir' | 'since'> | null = null;
 let free = 100 * 1024 ** 3;
 let keyN = 0;
 const view = (channelId: string, o: Partial<StreamView> = {}): StreamView => ({
@@ -41,7 +42,7 @@ const view = (channelId: string, o: Partial<StreamView> = {}): StreamView => ({
   lastSegmentAt: Date.now(), segments: 'ts', ...o,
 });
 const rec = (id: string, channelId: string, o: Partial<RecorderView> = {}): RecorderView => ({
-  id, channelId, state: 'recording', segments: 'ts', bytes: 0, durationS: 0, gaps: [], error: null, since: Date.now(), ...o,
+  id, channelId, dir: '0f000000-0000-4000-a000-00000000d0d0', state: 'recording', segments: 'ts', bytes: 0, durationS: 0, gaps: [], error: null, since: Date.now(), ...o,
 });
 const of = (method: string, path: RegExp | string) => calls.filter((c) => c.method === method && (typeof path === 'string' ? c.path === path : path.test(c.path)));
 function fakeLivetv() {
@@ -72,6 +73,7 @@ function fakeLivetv() {
       return { status: 204 };
     },
     'POST /v1/recordings/[0-9a-f-]+/delete': (u) => { recorders.delete(u.pathname.split('/')[3]!); return { status: 204 }; },
+    'POST /v1/recordings/[0-9a-f-]+/close': (u, _i, b: { dir: string }) => (closeAnswer ? { json: { ...closeAnswer, id: u.pathname.split('/')[3], dir: b.dir } } : { status: 404, json: { error: 'not_found' } }),
   }, calls);
 }
 
@@ -138,7 +140,7 @@ beforeEach(async () => {
     delete from livetv_channels; delete from livetv_group_roles; delete from livetv_groups; delete from livetv_sources`);
   for (const p of ['ltv', 'conv:', 'play:']) for (const k of await env.kv.keys(p)) await env.kv.del(k);
   streams.clear(); recorders.clear(); calls.length = 0;
-  up = true; recPostStatus = 200; free = 100 * 1024 ** 3;
+  up = true; recPostStatus = 200; free = 100 * 1024 ** 3; closeAnswer = null;
   fakeLivetv();
   await detectLivetv(env.ctx, 0, { strict: true });
   invalidateLiveConversions();
@@ -311,6 +313,61 @@ describe('replicas (fix round 1, A-C1)', () => {
     expect(of('DELETE', /\/v1\/recordings\//)).toEqual([]);
     expect(of('POST', '/v1/streams')).toHaveLength(1);
     expect([...recorders.keys()]).toEqual([id]);
+  });
+});
+
+describe('finalisation and orphans (fix round 1)', () => {
+  it('B-I2: a recorder lost after the end is finalised from its folder: done, no failure notice', async () => {
+    const id = await recording({ state: 'recording', mode: 'passthrough', bytes: 4000, start_at: new Date(Date.now() - 2 * HOUR), end_at: new Date(Date.now() - HOUR), pad_after_s: 60 });
+    // livetv restarted after the end: it lists no recorder, but the folder is complete
+    closeAnswer = { channelId: '', state: 'done', segments: 'ts', bytes: 9000, durationS: 3600, gaps: [], error: null };
+    await tick();
+    const r = await getRecording(env.ctx, id);
+    expect([r!.state, r!.bytes, r!.duration_s, r!.error]).toEqual(['done', '9000', 3600, null]);
+    expect(of('POST', `/v1/recordings/${id}/close`).map((c) => c.body)).toEqual([{ dir: r!.dir }]);
+    expect(await notices('livetv.rec.failed')).toEqual([]);
+    // no folder at all: failed, the owner told once
+    const gone = await recording({ channel_id: sternwarte, channel_name: 'Sternwarte 24', state: 'recording', mode: 'passthrough', start_at: new Date(Date.now() - 2 * HOUR), end_at: new Date(Date.now() - HOUR), pad_after_s: 60 });
+    closeAnswer = null;
+    await tick();
+    await tick();
+    expect((await getRecording(env.ctx, gone))!.state).toBe('failed');
+    expect(await notices('livetv.rec.failed')).toHaveLength(1);
+  });
+
+  it('A-I3/B-I3: the reconcile stops recorders whose row is not recording, and removes the folder of a cancelled or gone one', async () => {
+    const cancelled = await recording({ state: 'cancelled', start_at: new Date(Date.now() - 10 * 60_000) });
+    const finished = await recording({ channel_id: sternwarte, channel_name: 'Sternwarte 24', state: 'done', bytes: 10, start_at: new Date(Date.now() - 3 * HOUR), end_at: new Date(Date.now() - 2 * HOUR) });
+    const starting = await recording({ channel_id: hafen, channel_name: 'Hafenkanal', state: 'starting', claim_token: randomUUID(), claim_until: new Date(Date.now() + 60_000) });
+    const orphan = randomUUID();
+    const dirOf = async (id: string) => (await getRecording(env.ctx, id))?.dir ?? `${id.slice(0, 34)}d0`;
+    for (const id of [cancelled, finished, starting, orphan]) recorders.set(id, rec(id, nordlicht, { dir: await dirOf(id) }));
+    const cancelledDir = await dirOf(cancelled);
+    await tick();
+    expect(of('DELETE', /^\/v1\/recordings\/[0-9a-f-]+$/).map((c) => c.path.split('/')[3]).sort()).toEqual([cancelled, finished, orphan].sort());
+    expect(of('POST', /\/delete$/).map((c) => [c.path.split('/')[3], c.body.dir]).sort()).toEqual([[cancelled, cancelledDir], [orphan, `${orphan.slice(0, 34)}d0`]].sort());
+    expect((await getRecording(env.ctx, finished))!.state).toBe('done');
+    expect(recorders.has(starting)).toBe(true);
+  });
+
+  it('A-I3: a resume racing a delete leaves no recorder behind', async () => {
+    const id = await recording({ state: 'recording', mode: 'passthrough', start_at: new Date(Date.now() - 10 * 60_000), end_at: new Date(Date.now() + HOUR) });
+    // livetv lost the recorder; the owner deletes the recording while the resume posts it again
+    const inner = env.ctx.fetchImpl;
+    let once = true;
+    env.ctx.fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const u = new URL(String(input));
+      if (once && init?.method === 'POST' && u.pathname === '/v1/recordings') {
+        once = false;
+        const { deleteRecording } = await import('../src/livetv/recordings.js');
+        await deleteRecording(env.ctx, id, 'owner');
+      }
+      return inner(input, init);
+    }) as typeof fetch;
+    await tick();
+    await tick();
+    expect(await getRecording(env.ctx, id)).toBeNull();
+    expect([...recorders.values()].filter((r) => r.state === 'recording')).toEqual([]);
   });
 });
 

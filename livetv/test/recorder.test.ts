@@ -108,7 +108,7 @@ describe('the recorder', () => {
     expect(p).not.toContain('#EXT-X-DISCONTINUITY');
     expect(lines(p, '#EXT-X-PROGRAM-DATE-TIME:')).toEqual([0, 1, 2].map((i) => `#EXT-X-PROGRAM-DATE-TIME:${new Date(T0 + i * 4000).toISOString()}`));
     expect(readFileSync(join(root, DIR, '1.ts'))).toEqual(Buffer.alloc(188, 2));
-    expect(recorder.list()).toEqual([{ id: ID, channelId: CH, state: 'recording', segments: 'ts', bytes: 3 * 188, durationS: 12, gaps: [], error: null, since: T0 }]);
+    expect(recorder.list()).toEqual([{ id: ID, channelId: CH, dir: DIR, state: 'recording', segments: 'ts', bytes: 3 * 188, durationS: 12, gaps: [], error: null, since: T0 }]);
     expect(keepAlives.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -344,5 +344,130 @@ describe('the recording routes', () => {
     expect(existsSync(join(root, DIR))).toBe(false);
     expect(recorder.list()).toEqual([]);
     expect(await call('POST', `/v1/recordings/${ID}/delete`, { dir: DIR })).toEqual({ status: 404, json: { error: 'not_found' } });
+  });
+});
+
+describe('finalisation and races (fix round 1)', () => {
+  it('B-I1: a recording ends itself at its end on its own timer, without a tick', async () => {
+    recorder.close();
+    recorder = new Recorder({ root, streams, fs: fsSeam, tickMs: 60_000, endTimers: true });
+    await startStream();
+    const endAt = Date.now() + 300;
+    expect((await recorder.start({ id: ID, channelId: CH, dir: DIR, endAt })).ok).toBe(true);
+    await emit({ pdt: Date.now() - 1000 });
+    await vi.waitFor(() => expect(recorder.list()[0]!.state).toBe('done'), { timeout: 3000 });
+    expect(playlist().trimEnd().endsWith('#EXT-X-ENDLIST')).toBe(true);
+  });
+
+  it('B-I1: done only after the ENDLIST is written (one retry); a playlist that could not be closed is closed by the tick later', async () => {
+    let failWrites = 0;
+    const seam: RecFs = { ...fsSeam, free: async () => 50 * 1024 ** 3, writeAtomic: async (p, t) => { if (failWrites > 0 && t.includes('#EXT-X-ENDLIST')) { failWrites--; throw Object.assign(new Error('x'), { code: 'EIO' }); } return nodeRecFs.writeAtomic(p, t); } };
+    recorder.close();
+    recorder = new Recorder({ root, streams, fs: seam, now: () => clock, tickMs: 0 });
+    await startStream();
+    await recorder.start({ id: ID, channelId: CH, dir: DIR, endAt: T0 + 8000 });
+    await emit({ pdt: T0 });
+    await vi.waitFor(() => expect(segs(playlist())).toHaveLength(1));
+    failWrites = 1; // the first closing write fails, the retry works
+    clock = T0 + 8000;
+    recorder.tick();
+    await vi.waitFor(() => expect(recorder.list()[0]!.state).toBe('done'));
+    expect(playlist()).toContain('#EXT-X-ENDLIST');
+    // a full disk under ENOSPC: failed at once, the playlist closed by a later tick (no backend stop needed)
+    const id2 = '0f000000-0000-4000-a000-000000000002';
+    const dir2 = '0f000000-0000-4000-a000-0000000000d2';
+    await recorder.start({ id: id2, channelId: CH, dir: dir2, endAt: T0 + 3_600_000 });
+    await emit({ pdt: T0 + 4000 });
+    await vi.waitFor(() => expect(recorder.list().find((r) => r.id === id2)!.bytes).toBeGreaterThan(0));
+    full = true;
+    failWrites = 5;
+    await emit({ pdt: T0 + 8000 });
+    await vi.waitFor(() => expect(recorder.list().find((r) => r.id === id2)!.error).toBe('storage_full'));
+    const pl2 = () => readFileSync(join(root, dir2, 'index.m3u8'), 'utf8');
+    expect(pl2()).not.toContain('#EXT-X-ENDLIST');
+    full = false;
+    failWrites = 0;
+    recorder.tick();
+    await vi.waitFor(() => expect(pl2()).toContain('#EXT-X-ENDLIST'));
+  });
+
+  it('B-I2: close finalises a folder without a recorder: ENDLIST written, facts read from the folder', async () => {
+    await startStream();
+    await recorder.start({ id: ID, channelId: CH, dir: DIR, endAt: T0 + 3_600_000 });
+    await emit({ pdt: T0 });
+    await emit({ pdt: T0 + 4000 });
+    await emit({ pdt: T0 + 60_000, disc: true }); // after an outage
+    await vi.waitFor(() => expect(segs(playlist())).toHaveLength(3));
+    // livetv restarts after the end: a new process knows nothing of the recording
+    recorder.close();
+    recorder = newRecorder();
+    const r = await recorder.closeFolder(ID, DIR);
+    expect(r).toEqual({ id: ID, channelId: '', dir: DIR, state: 'done', segments: 'ts', bytes: 3 * 188, durationS: 12, gaps: [{ from: T0 + 8000, to: T0 + 60_000 }], error: null });
+    expect(playlist().trimEnd().endsWith('#EXT-X-ENDLIST')).toBe(true);
+    expect(await recorder.closeFolder(ID, '0f000000-0000-4000-a000-0000000000ee')).toBeNull();
+  });
+
+  it('A-I3/B-I3: stop and remove during an in-flight start leave no recorder and do not recreate the folder', async () => {
+    let releaseFree!: () => void;
+    const slow: RecFs = { ...fsSeam, free: () => new Promise((r) => { releaseFree = () => r(50 * 1024 ** 3); }) };
+    recorder.close();
+    recorder = new Recorder({ root, streams, fs: slow, now: () => clock, tickMs: 0 });
+    await startStream();
+    const p = recorder.start({ id: ID, channelId: CH, dir: DIR, endAt: T0 + 3_600_000 });
+    await vi.waitFor(() => expect(releaseFree).toBeTypeOf('function'));
+    const removing = recorder.remove(ID, DIR);
+    releaseFree();
+    expect(await p).toEqual({ ok: false, status: 410, error: 'removed' });
+    expect(await removing).toBe('not_found');
+    expect(recorder.list()).toEqual([]);
+    expect(existsSync(join(root, DIR))).toBe(false);
+    // and a later start (a resume racing the delete) is refused
+    expect(await recorder.start({ id: ID, channelId: CH, dir: DIR, endAt: T0 + 3_600_000 })).toEqual({ ok: false, status: 410, error: 'removed' });
+    // a stop during a start reaches the recorder that start creates
+    let release2!: () => void;
+    const slow2: RecFs = { ...fsSeam, free: () => new Promise((r) => { release2 = () => r(50 * 1024 ** 3); }) };
+    recorder.close();
+    recorder = new Recorder({ root, streams, fs: slow2, now: () => clock, tickMs: 0 });
+    const id3 = '0f000000-0000-4000-a000-000000000003';
+    const p3 = recorder.start({ id: id3, channelId: CH, dir: '0f000000-0000-4000-a000-0000000000d3', endAt: T0 + 3_600_000 });
+    await vi.waitFor(() => expect(release2).toBeTypeOf('function'));
+    const stopping = recorder.stop(id3);
+    release2();
+    await p3;
+    expect(await stopping).toBe(true);
+    expect(recorder.list().find((r) => r.id === id3)?.state).not.toBe('recording');
+  });
+
+  it('B-M7: a repeated POST of a running id with another folder or channel is refused', async () => {
+    await startStream();
+    await recorder.start({ id: ID, channelId: CH, dir: DIR, endAt: T0 + 3_600_000 });
+    expect(await recorder.start({ id: ID, channelId: CH, dir: '0f000000-0000-4000-a000-0000000000d4', endAt: T0 + 3_600_000 })).toEqual({ ok: false, status: 409, error: 'invalid_dir' });
+    expect(await recorder.start({ id: ID, channelId: 'ch-hafen', dir: DIR, endAt: T0 + 3_600_000 })).toEqual({ ok: false, status: 409, error: 'invalid_dir' });
+  });
+
+  it('B-M4: an init file the cache dropped before the copy is a gap, not a write failure', async () => {
+    await startStream();
+    await recorder.start({ id: ID, channelId: CH, dir: DIR, endAt: T0 + 3_600_000 });
+    await emit({ pdt: T0, init: 0 });
+    await vi.waitFor(() => expect(segs(playlist())).toHaveLength(1));
+    // a new init whose file is gone by the time the recorder copies it
+    const c = ctxOf!;
+    writeFileSync(join(c.dir, 'z.m4s'), 'x');
+    await c.segment({ file: 'z.m4s', duration: 4, bytes: 1, pdt: T0 + 4000, init: 7 });
+    await emit({ pdt: T0 + 8000, init: 0 });
+    await vi.waitFor(() => expect(segs(playlist())).toHaveLength(2));
+    expect(recorder.list()[0]).toMatchObject({ state: 'recording', error: null });
+    expect(recorder.list()[0]!.gaps).toHaveLength(1);
+  });
+
+  it('B-M2: segments arrive under .part and are renamed; leftovers are cleaned on a resume', async () => {
+    await startStream();
+    mkdirSync(join(root, DIR), { recursive: true });
+    writeFileSync(join(root, DIR, '0.ts.part'), 'half');
+    writeFileSync(join(root, DIR, 'index.m3u8.tmp'), 'half');
+    await recorder.start({ id: ID, channelId: CH, dir: DIR, endAt: T0 + 3_600_000 });
+    await emit({ pdt: T0 });
+    await vi.waitFor(() => expect(segs(playlist())).toHaveLength(1));
+    expect(readdirSync(join(root, DIR)).sort()).toEqual(['0.ts', 'index.m3u8']);
   });
 });

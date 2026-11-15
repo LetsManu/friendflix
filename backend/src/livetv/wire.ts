@@ -128,7 +128,7 @@ export interface BenchAnswer { speed: number; encoder: Encoder; seconds: number 
 
 /** the `POST /v1/recordings` body (plan Phase 3 Task 2; livetv/src/recorder.ts `StartRecording`): the stream must run already */
 export interface RecordingStartBody { id: string; channelId: string; dir: string /* uuid folder under /recordings */; endAt: number /* epoch ms */ }
-/** its answer (200); refusals are 409 `stream_not_running` / `invalid_dir` and 507 `storage_full` */
+/** its answer (200); refusals are 409 `stream_not_running` / `invalid_dir`, 410 `removed` (deleted meanwhile) and 507 `storage_full` */
 export interface RecordingStartAnswer { state: 'recording'; segments: Segments | null }
 /** livetv/src/recorder.ts `RecError` */
 export type RecorderError = 'storage_full' | 'write_failed' | 'stream_gone';
@@ -138,6 +138,7 @@ export interface RecorderGap { from: number; to: number }
 export interface RecorderView {
   id: string;
   channelId: string;
+  dir: string;
   state: 'recording' | 'done' | 'failed';
   segments: Segments | null;
   bytes: number;

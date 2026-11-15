@@ -69,6 +69,17 @@ export function recordingRoutes(rec: Recorder, o: { now?: () => number; library?
       },
     },
     {
+      // finalise a recording (B-I2): a running one ends now; a folder whose recorder livetv lost (a restart after its end) gets its ENDLIST
+      // and answers its facts read from the playlist
+      method: 'POST', path: new RegExp(`^/v1/recordings/${ID}/close$`),
+      handle: async (c) => {
+        const b = obj(c.json);
+        if (!b || typeof b.dir !== 'string' || !DIR_RE.test(b.dir)) return invalid('dir');
+        const r = await rec.closeFolder(c.params[0]!, b.dir);
+        return r ? { status: 200, json: r } : notFound;
+      },
+    },
+    {
       // the library mode (Task 6): one file in the Jellyfin library folder, concatenated without re-encoding (a running recording never)
       method: 'POST', path: new RegExp(`^/v1/recordings/${ID}/export$`),
       handle: async (c) => {
