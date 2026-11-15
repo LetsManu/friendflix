@@ -13,7 +13,7 @@
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import { avatarBg, initial } from '#lib/avatars';
-  import { HEADER_TABS, LIVE_HEADER, isTabActive, libraryTabs, liveTabs, navLabel } from '#lib/menu';
+  import { HEADER_TABS, LIVE_HEADERS, activeTab, libraryTabs, liveTabs, navLabel } from '#lib/menu';
   import { areas, features } from '#lib/capabilities';
   import { categoryHref, kindFromPath, type Kind } from '#lib/mobile';
   import { langLabel } from '#lib/langs';
@@ -33,8 +33,10 @@
   import { nextId } from './searchSheet';
   import { menuKeys } from '#lib/ui/menuKeys';
 
-  /** the header tabs: Live-TV after Filme while the feature is on; without the Mediathek only Live-TV (roles redesign §6) */
-  $: tabs = liveTabs(libraryTabs(HEADER_TABS, $areas.library), LIVE_HEADER, $features.livetv);
+  /** the header tabs: Live-TV and Aufnahmen after Filme while the feature is on; without the Mediathek only those (roles redesign §6) */
+  $: tabs = liveTabs(libraryTabs(HEADER_TABS, $areas.library), LIVE_HEADERS, $features.livetv);
+  /** the one active tab: the most specific (Aufnahmen on /live/recordings, Live-TV elsewhere under /live) */
+  $: act = activeTab(tabs.map((x) => x[0]), path);
   /** Categories, the search and "Überrasch mich" are library things */
   $: library = $areas.library;
   export let path: string;
@@ -414,7 +416,7 @@
     <span class="sclip" aria-hidden="true"></span>
     <div class="track" bind:this={track}>
       <span class="fill" aria-hidden="true" bind:this={fill}><i class="cap"></i><i class="mid" bind:this={mid}></i><i class="cap" bind:this={capR}></i></span>
-      {#each tabs as [href, label] (href)}<a {href} class="tab" class:active={isTabActive(href, path)} class:gone={collapse && !isTabActive(href, path)} aria-current={isTabActive(href, path) ? 'page' : undefined}>{$t(navLabel(label, $features.requests))}</a>{/each}
+      {#each tabs as [href, label] (href)}<a {href} class="tab" class:active={href === act} class:gone={collapse && href !== act} aria-current={href === act ? 'page' : undefined}>{$t(navLabel(label, $features.requests))}</a>{/each}
       {#if library}<div class="pop-anchor" class:gone={collapse} on:focusout={onAnchorOut}>
         <!-- a disclosure (links and filters in a region), not a menu: no aria-haspopup -->
         <button type="button" class="tab cbtn" aria-expanded={cats} aria-controls={cats ? 'ff-cats' : undefined} bind:this={catBtn} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>

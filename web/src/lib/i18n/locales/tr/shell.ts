@@ -18,6 +18,7 @@ const tr: Translation<typeof de> = {
     newOnly: 'Yeni',
     myList: 'İzleme listesi',
     live: 'Canlı TV',
+    recordings: 'Kayıtlar',
     categories: 'Kategoriler',
   },
   mobile: {
@@ -82,6 +83,7 @@ const tr: Translation<typeof de> = {
     accountSettings: 'Hesap ve ayarlar',
     devices: 'Cihazlar',
     downloads: 'İndirilenler',
+    recordings: 'Kayıtlar',
     surprise: 'Beni şaşırt',
     help: 'Yardım',
     admin: 'Yönetici',

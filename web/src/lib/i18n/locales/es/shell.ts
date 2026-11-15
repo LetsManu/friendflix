@@ -18,6 +18,7 @@ const es: Translation<typeof de> = {
     newOnly: 'Novedades',
     myList: 'Guardados',
     live: 'TV en directo',
+    recordings: 'Grabaciones',
     categories: 'Categorías',
   },
   mobile: {
@@ -82,6 +83,7 @@ const es: Translation<typeof de> = {
     accountSettings: 'Cuenta y ajustes',
     devices: 'Dispositivos',
     downloads: 'Descargas',
+    recordings: 'Grabaciones',
     surprise: 'Sorpréndeme',
     help: 'Ayuda',
     admin: 'Administración',

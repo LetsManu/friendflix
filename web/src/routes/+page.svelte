@@ -16,6 +16,7 @@
   import Row from '#lib/Row.svelte';
   import ThemedListRows from '#lib/ThemedListRows.svelte';
   import UpcomingRow from '#lib/UpcomingRow.svelte';
+  import HomeRecordings from '#lib/live/HomeRecordings.svelte';
   import HandoffCard from '#lib/handoff/HandoffCard.svelte';
   import { dismiss as dismissHandoff, isDismissed, loadHandoff, shouldTakeFocus, type Handoff } from '#lib/handoff/handoff';
   import { failedParts, firstNonEmptyTab, homeCache, swrLoad, type HomePart, type HomeResponse } from '#lib/home';
@@ -364,6 +365,8 @@
   <Row title={$t('home.rows.myList')} items={mine} href="/watchlist" />
   {#if more[1]}<Row title={$t('together.because', { name: more[1].because.name })} items={more[1].items} reco={{ row: 'because_more', engine: more[1].engine ?? becauseEngine }} />{/if}
   {/if}
+  <!-- the finished Live-TV recordings (DVR follow-ups): only with Live TV and something finished; not on a TV (its side bar has Aufnahmen) -->
+  {#if !tv}<HomeRecordings />{/if}
   <UpcomingRow type="movie" title={$t('home.rows.upcomingWish')} />
   <!-- the second ranked row never directly follows the first one -->
   {#each views as v, i (v.id)}

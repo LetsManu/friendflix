@@ -103,7 +103,7 @@ export const areas = writable<Areas>(areasFrom(undefined));
 
 /** pages that only make sense with a capability or a feature (menus, footer, admin nav): href -> required flag */
 const NEEDS: Record<string, Exclude<keyof ServerCaps, 'segments'>> = { '/calendar': 'upcoming' };
-const FEATURE_NEEDS: Record<string, keyof Features> = { '/upcoming': 'requests', '/admin/requests': 'requests' };
+const FEATURE_NEEDS: Record<string, keyof Features> = { '/upcoming': 'requests', '/admin/requests': 'requests', '/live/recordings': 'livetv' };
 /** ... or a right of the acting profile (lib/perms.ts); votes are part of the watch parties (`/api/polls` needs `party`) */
 const PERM_NEEDS: Record<string, PermKey> = { '/party': 'party', '/vote': 'party' };
 /**
