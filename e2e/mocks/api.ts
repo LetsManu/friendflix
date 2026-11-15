@@ -6,7 +6,7 @@ import { pngFor } from './png.js';
 import { adminRoute, adminState, type AdminState } from './admin.js';
 import { settingsRoute, settingsState, type SettingsMock } from './settings.js';
 import { setupRoute, type SetupMock } from './setup.js';
-import { updaterRoute, type UpdaterMock } from './updater.js';
+import { startRedeploy, updaterRoute, updaterState, type UpdaterMock } from './updater.js';
 import { syscheckDrip, syscheckRoute, syscheckSocket, syscheckState, syscheckUpload, type SyscheckMock } from './syscheck.js';
 import { livetvMedia, livetvRoute, livetvState, type LivetvMock } from './livetv.js';
 
@@ -563,6 +563,14 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (p === '/api/admin/systemcheck') { const r = syscheckRoute(st.syscheck, m, p, sp, J); if (r) return r; }
     if (st.asAdmin) { const r = syscheckUpload(st.syscheck, m, p, route); if (r) return r; }
     if (p.startsWith('/api/admin/updater') && st.asAdmin) { const r = updaterRoute(st.updater, st.settings, m, p, J); if (r) return r; }
+    // Admin → Update without an updater: the backend records the Portainer redeploy it started (redeploy.ts); the page follows that
+    // record through GET /api/admin/updater (present: false), judged from this backend's build alone (no services listing)
+    if (p === '/api/admin/update' && m === 'POST' && st.asAdmin && !st.updater?.present) {
+      const ch = st.settings.groups.flatMap((g) => g.items).find((i) => i.key === 'UPDATE_CHANNEL')?.value;
+      st.updater ??= updaterState(false);
+      startRedeploy(st.updater, ch === 'nightly' ? 'nightly' : 'latest', false);
+      return J({ ok: true, mode: 'webhook' }, 202);
+    }
     if (p.startsWith('/api/admin/settings')) { st.settings.livetvInstalled = st.admin.livetv.installed; const r = settingsRoute(st.settings, m, p, body(), J); if (r) return r; }
     if (p.startsWith('/api/admin/')) {
       // Live TV: the offer is hidden by the LIVETV_OFFER_HIDDEN setting (the "Nicht mehr anzeigen" save and the Settings switch)

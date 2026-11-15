@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { get } from 'svelte/store';
 import { hasKey, setLocale, tr } from '#lib/i18n';
 import { buildInfo, loadBuild, parseBuild, versionText } from '#lib/version/build';
-import { CHANNELS, PULL_COMMAND, pullCommand, envLineFor, isUpToDate, showSnippet, snippetReason, stepChannel, type ChannelInfo } from './updateChannel';
+import { CHANNELS, PULL_COMMAND, pullCommand, envLineFor, isUpToDate, showSnippet, snippetReason, stepChannel, updateTarget, type ChannelInfo } from './updateChannel';
 
 const ch = (over: Partial<ChannelInfo> = {}): ChannelInfo => ({ selected: 'stable', running: 'stable', build: 'release', label: '1.1.0', locked: false, envLine: 'FF_TAG=latest', ...over });
 
@@ -96,5 +96,15 @@ describe('update channel', () => {
     }
     await setLocale('en');
     expect(tr('admin.update.channel.note')).toContain('never touches Docker');
+  });
+
+  it('updateTarget: the confirm names what Portainer will install on the selected channel, not main\'s newest commit', () => {
+    const base = { current: { sha: 'c0be6c5deadbeef', version: '1.0.0' }, latest: { sha: 'ff00aa1deadbeef' }, release: { version: '1.1.0', codename: 'Arancini' } };
+    expect(updateTarget({ ...base, channel: ch() })).toBe('1.1.0 · Arancini');
+    expect(updateTarget({ ...base, channel: ch({ selected: 'nightly' }) })).toBe('ff00aa1');
+    expect(updateTarget({ ...base, channel: ch({ selected: 'pinned', version: '1.0.5' }) })).toBe('1.0.5');
+    // before the first release (stable) and older backends without a channel: the newest build, else what runs
+    expect(updateTarget({ ...base, release: null, channel: ch() })).toBe('ff00aa1');
+    expect(updateTarget({ current: base.current, latest: null, release: null })).toBe('c0be6c5');
   });
 });

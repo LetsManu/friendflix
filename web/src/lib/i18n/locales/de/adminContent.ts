@@ -140,8 +140,6 @@ export default {
     checked: 'Auf Updates geprüft.',
     checkedUpToDate: 'Du bist auf dem neuesten Stand.',
     confirmBody: 'Das Portal wird auf Version {sha} aktualisiert und ist dabei kurz nicht erreichbar.',
-    working: 'Läuft seit {s} s …',
-    step: { started: 'Update angestoßen', restarting: 'Dienste starten neu', newversion: 'Neue Version startet', done: 'Fertig – die Seite lädt neu' },
     loadFailed: 'Die Versionsinfos konnten nicht geladen werden.',
     commit: 'Änderung',
     author: 'Autor',

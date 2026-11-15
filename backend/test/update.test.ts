@@ -169,6 +169,19 @@ describe('admin update', () => {
     expect((await env.app.inject({ url: '/api/admin/update', cookies: u.cookies })).statusCode).toBe(403);
   });
 
+  it('"reload anyway": POST { force: true } records a forced redeploy (audited); no body (an older page) is not forced', async () => {
+    const { admin } = await setup({ PORTAINER_WEBHOOK_URL: HOOK });
+    const r = await env.app.inject({ method: 'POST', url: '/api/admin/update', cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: { force: true } });
+    expect(r.statusCode).toBe(202);
+    expect(JSON.parse((await env.kv.get(REDEPLOY_KEY))!)).toMatchObject({ v: 1, forced: true });
+    const a = await env.pool.query("select meta from audit_log where action='system.update'");
+    expect(a.rows[0].meta).toMatchObject({ forced: true });
+    await env.kv.del(REDEPLOY_LOCK); await env.kv.del(REDEPLOY_KEY);
+    const { redeployViaPortainer } = await import('../src/updates.js');
+    expect((await redeployViaPortainer(env.ctx, null, 'webhook')).ok).toBe(true);
+    expect(JSON.parse((await env.kv.get(REDEPLOY_KEY))!).forced).toBeUndefined();
+  });
+
   it('webhook mode posts to the URL, audits, and leaks no secret', async () => {
     const { post, get } = await setup({ PORTAINER_WEBHOOK_URL: HOOK });
     const g = await get();
@@ -396,7 +409,7 @@ describe('admin update', () => {
     // one redeploy at a time: forget the first (it would end by its timeout) before the second
     await env.kv.del(REDEPLOY_LOCK); await env.kv.del(REDEPLOY_KEY);
     const v = await late(500);
-    expect(v).toMatchObject({ phase: 'failed', running: false, error: 'portainer', step: 'redeploy', status: 500 });
+    expect(v).toMatchObject({ phase: 'failed', running: false, error: 'portainer', step: 'redeploy', status: 500, at: 'pulling' }); // Portainer was at work: not "refused before anything ran"
     expect(JSON.stringify(v)).not.toContain('secret detail');
     const a = await env.pool.query("select meta from audit_log where action='system.update_result' order by id");
     expect(a.rows.at(-1).meta).toMatchObject({ result: 'failed', late: true, status: 500, step: 'redeploy' });
