@@ -24,6 +24,8 @@ export interface MockRecording {
   start: string; end: string; padBefore: number; padAfter: number; state: 'scheduled' | 'recording' | 'done' | 'partial' | 'failed' | 'cancelled';
   error: string | null; gaps: number; durationS: number | null; bytes: number; keep: boolean; visibility: 'private' | 'account' | 'everyone'; mine: boolean;
   seriesKey: string | null; ruleId: string | null; positionS: number; watched: boolean; deleteAfter: string | null; storage: 'ff' | 'library'; growing: boolean;
+  /** an own planned recording: the forecast's verdict (the *Konflikt* chip of *Geplant*) */
+  conflict?: boolean;
 }
 export interface MockRule {
   id: string; kind: 'series' | 'time'; channelId: string | null; seriesKey: string | null; title: string; onlyNew: boolean; keepMax: number | null;

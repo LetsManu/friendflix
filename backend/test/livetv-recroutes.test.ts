@@ -206,6 +206,22 @@ describe('scheduling', () => {
     expect(f.json().forecast.conflict).toBe(true);
   });
 
+  it('the list marks the profile\'s planned recordings that conflict (the Konflikt chip of Geplant, Phase 3 Task 8)', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
+    const sat = await channel('Satkanal', { kind: 'srt' });
+    invalidateLivetvRights();
+    const first = await row({ channel_id: hafen, channel_name: 'Hafenkanal' });
+    const alone = (await call(anna, 'GET', '/api/livetv/recordings?state=scheduled')).json().recordings;
+    expect(alone.map((r: { id: string; conflict?: boolean }) => [r.id, r.conflict])).toEqual([[first, false]]);
+    const second = await row({ channel_id: sat, channel_name: 'Satkanal', title: 'Die Leuchtturmwärter' });
+    const both = (await call(anna, 'GET', '/api/livetv/recordings')).json().recordings as Array<{ id: string; conflict?: boolean }>;
+    expect(Object.fromEntries(both.map((r) => [r.id, r.conflict]))).toEqual({ [first]: true, [second]: true });
+    // a finished recording carries no forecast
+    const done = await row({ channel_id: nordlicht, state: 'done', start_at: new Date(T() - 5 * HOUR), end_at: new Date(T() - 4 * HOUR), bytes: 1 });
+    const all = (await call(anna, 'GET', '/api/livetv/recordings?state=done')).json().recordings as Array<{ id: string; conflict?: boolean }>;
+    expect(all.find((r) => r.id === done)).not.toHaveProperty('conflict');
+  });
+
   it('forecast counts a channel once for two recordings', async () => {
     env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
     await row({ channel_id: hafen, channel_name: 'Hafenkanal' });

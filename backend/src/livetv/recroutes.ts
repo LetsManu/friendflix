@@ -8,7 +8,7 @@ import type { Ctx } from '../ctx.js';
 import { permsOf, requirePerm } from '../permGuard.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { livetvInstalled, livetvSystem } from './detect.js';
-import { adminListRecordings, deleteRecording, effectiveStorage, getRecording, libraryModeAvailable, listRecordings, mayRecord, progKey, recordingView, recordSettings, seriesKeyOf, setKeep, setVisibility, visibleRecording, REC_STATES, VISIBILITIES, type RecState } from './recordings.js';
+import { adminListRecordings, deleteRecording, effectiveStorage, getRecording, libraryModeAvailable, listRecordings, mayRecord, progKey, recordingView, recordSettings, seriesKeyOf, type RecordingView, setKeep, setVisibility, visibleRecording, REC_STATES, VISIBILITIES, type RecState } from './recordings.js';
 import { expandRules, forecast, insertScheduled, programmeAt, releaseReservation, validTz, type RuleRow } from './recsched.js';
 import { exportToLibrary, usage } from './recstore.js';
 import { channelAllowed } from './rights.js';
@@ -52,6 +52,8 @@ const deleteAllBody = z.object({ confirm: z.literal('LÖSCHEN') }).strict();
 const playBody = z.object({ via: z.enum(['local', 'chromecast', 'airplay']).optional() }).strict();
 const createLibraryBody = z.object({ name: z.string().trim().min(1).max(60).optional(), kind: z.enum(['homevideos', 'mixed']).optional() }).strict();
 const MAX_SPAN_MS = 24 * 3_600_000;
+/** at most this many planned recordings get a forecast in one list answer */
+const FORECAST_LIST_MAX = 50;
 /** an HD recording (about 6 Mbit/s) fills this many bytes an hour: the storage card's "noch ca. … h in HD" */
 export const HD_BYTES_PER_HOUR = 2_700_000_000;
 
@@ -144,7 +146,14 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     const q = req.query as { state?: string };
     const state = q.state === 'done' || q.state === 'scheduled' || q.state === 'all' ? q.state : 'all';
     const { user: u, profile } = who(req);
-    const recordings = await listRecordings(ctx, u, profile, { state });
+    const recordings: Array<RecordingView & { conflict?: boolean }> = await listRecordings(ctx, u, profile, { state });
+    // *Geplant*'s Konflikt chip (plan Phase 3 Task 8): the profile's own planned recordings carry the forecast's verdict (bounded)
+    let checked = 0;
+    for (const v of recordings) {
+      if (!v.mine || v.state !== 'scheduled' || !v.channel.id || checked++ >= FORECAST_LIST_MAX) continue;
+      const fc = await forecast(ctx, { channelId: v.channel.id, from: Date.parse(v.start) - v.padBefore * 60_000, to: Date.parse(v.end) + v.padAfter * 60_000, exceptId: v.id });
+      v.conflict = fc.conflict;
+    }
     const rules = profile.kids ? [] : (await ctx.db.query<RuleRow>('select * from livetv_recording_rules where profile_id = $1 order by created_at', [profile.id])).rows.map(ruleView);
     reply.header('cache-control', 'no-store');
     return { recordings, rules };

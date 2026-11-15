@@ -8,6 +8,8 @@
   import { fadeIn } from './fade';
   import { createLongOk, LONG_OK_MS } from './longok';
   import { rowName } from './progress';
+  import RecordingsRow from './RecordingsRow.svelte';
+  import type { Recording } from './recordings';
 
   /**
    * Live TV for a kids profile (spec §11.4): the favourites above, then a grid of big channel tiles (logo, name, the *Jetzt*
@@ -22,6 +24,8 @@
   export let loading = false;
   /** the person has no channel at all */
   export let none = false;
+  /** the shared kid-friendly recordings the server sends a kids profile (read-only row below the channels; null while loading) */
+  export let recordings: Recording[] | null = null;
 
   const dispatch = createEventDispatcher<{ open: LiveChannel; star: LiveChannel; order: HTMLElement }>();
 
@@ -105,6 +109,7 @@
       {/if}
     {/each}
   {/if}
+  <RecordingsRow {recordings} kids />
 </div>
 
 <style>

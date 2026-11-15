@@ -42,6 +42,8 @@ export interface Recording {
   deleteAfter: string | null;
   storage: 'ff' | 'library';
   growing: boolean;
+  /** an own planned recording: the forecast's verdict (*Geplant*'s *Konflikt* chip) */
+  conflict?: boolean;
 }
 
 /** a recording rule (backend `ruleView`) */
@@ -210,6 +212,21 @@ export function groupBySeries(list: readonly Recording[]): RecGroup[] {
   }
   return out;
 }
+
+/** the states a recording can be played in (the row's tiles, *Fertig*) */
+export const PLAYABLE: readonly RecState[] = ['recording', 'done', 'partial'];
+/** the *Aufnahmen* row (spec §15.7): the latest 12 playable recordings, newest first */
+export const ROW_MAX = 12;
+export const rowRecordings = (list: readonly Recording[]): Recording[] => list.filter((r) => PLAYABLE.includes(r.state)).sort(newest).slice(0, ROW_MAX);
+/** *Fertig*: what was recorded (failed ones too, with their reason) */
+export const finished = (list: readonly Recording[]): Recording[] => list.filter((r) => PLAYABLE.includes(r.state) || r.state === 'failed');
+/** *Geplant*: the profile's planned recordings, soonest first */
+export const planned = (list: readonly Recording[]): Recording[] => list.filter((r) => r.state === 'scheduled').sort((a, b) => -newest(a, b));
+/** minutes of a recording: its recorded length, else its planned span */
+export const minutesOf = (r: Pick<Recording, 'durationS' | 'start' | 'end'>): number =>
+  Math.max(1, Math.round(r.durationS !== null && r.durationS > 0 ? r.durationS / 60 : (Date.parse(r.end) - Date.parse(r.start)) / 60_000));
+/** "HH:MM" of a local time, for a time rule's start */
+export const hhmm = (d: Date): string => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 
 /** how far into a recording the profile is, 0–1 (0 without a known length) */
 export const progressOf = (r: Pick<Recording, 'positionS' | 'durationS'>): number => (r.durationS && r.durationS > 0 ? Math.min(1, Math.max(0, r.positionS / r.durationS)) : 0);
