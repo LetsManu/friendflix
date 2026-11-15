@@ -11,9 +11,14 @@ import { describe, expect, it } from 'vitest';
  * finding's detail (a keyframes name, a selector or the source line). Every key must still match something.
  */
 const ALLOW: Record<string, string> = {
-  // TV focus design (the owner keeps it): focused tiles, rows and buttons on html.tv
-  'app.css:html.tv': 'TV focus scale; the TV focus design the owner keeps',
-  'lib/tv/:': 'TV focus tiles and rails; the TV focus design the owner keeps',
+  // TV focus design (the owner keeps it): focused tiles, rows and buttons on html.tv. One key per finding; a focus scale on an element
+  // that holds text is TEMPORARY until stage 5 (TV menus) decides it
+  'app.css:html.tv .card:focus-within': 'TEMPORARY: text-bearing TV focus scale (a card with its caption and badges); owner decision in stage 5 (TV menus)',
+  'app.css:html.tv .tv-btn:focus-visible': 'TEMPORARY: text-bearing TV focus scale (the text buttons of TV dialogs and menus); owner decision in stage 5 (TV menus)',
+  'lib/tv/TvRail.svelte:a:focus-visible': 'TEMPORARY: text-bearing TV focus scale (a side bar link holds its label); owner decision in stage 5 (TV menus)',
+  'lib/tv/TvCategoryRow.svelte:.cat:focus-visible': 'TEMPORARY: text-bearing TV focus scale (a category tile holds the genre name); owner decision in stage 5 (TV menus)',
+  'lib/tv/TvFocusTile.svelte:@keyframes tv-settle': 'TV hero backdrop settling as it comes in; the .bg image only',
+  'lib/tv/TvFocusTile.svelte:@keyframes tv-drift': 'TV hero backdrop drift; the .drift box holds only the backdrop image',
   'lib/BrandHubs.svelte::global(html.tv)': 'TV focus tile; the TV focus design',
   'lib/BrandHubs.svelte:.tile:hover, .tile:focus-visible': 'brand logo tile lift; logo artwork only (the reduced-motion rule drops it)',
   'lib/LangPick.svelte:.tvlp': 'TV focus option; the TV focus design',
@@ -22,7 +27,8 @@ const ALLOW: Record<string, string> = {
   'lib/detail/TvEpisodes.svelte::global(html.tv)': 'TV focus row; the TV focus design',
   'lib/detail/TvSub.svelte:.rcol': 'TV focus on a cast avatar image; no text in the scaled box',
   'lib/live/FavOrderSheet.svelte:.tv .row:focus-within': 'TV focus row; the TV focus design',
-  'lib/live/FavTiles.svelte:.tv .': 'TV focus tile; the TV focus design',
+  'lib/live/FavTiles.svelte:.tv .ordnen:focus-visible': 'TEMPORARY: text-bearing TV focus scale (the Ordnen button); owner decision in stage 5 (TV menus)',
+  'lib/live/FavTiles.svelte:.tv .tile:focus-visible': 'TEMPORARY: text-bearing TV focus scale (a channel tile with its name and programme); owner decision in stage 5 (TV menus)',
   'lib/live/GroupChips.svelte:.tv .chip': 'TV focus chip; the TV focus design',
   'lib/live/PanelRow.svelte::global(html.tv)': 'TV focus row; the TV focus design',
   'lib/live/RecordingsRow.svelte:.tv .rtile:focus-visible': 'TV focus tile; the TV focus design',
@@ -41,6 +47,10 @@ const ALLOW: Record<string, string> = {
   'lib/player/ScenesPanel.svelte:{:else if fr}': 'scene sprite frame; an image',
   'lib/Player.svelte:.track:hover .knob': 'seek knob dot; no text',
   'lib/Row.svelte:.row .pg': 'row arrow icon on hover / focus; icon only',
+  'lib/CastButton.svelte:.ic:hover': 'cast icon button hover; icon only',
+  'lib/Player.svelte:.ic:hover:not(:disabled)': 'player icon button hover; icon only (inside the desk pill, where the text tooltip lives, the button does not scale)',
+  'lib/Player.svelte:.pill .ic:hover:not(:disabled) > :global(svg)': 'the icon of a desk pill button; the svg only, its tooltip stays',
+  'routes/party/[id]/+page.svelte:.em:hover': 'reaction emoji button hover; a single glyph, no readable text',
   'lib/RatingButton.svelte:.opt:hover svg': 'rating icon; icon only',
   'routes/kids/KidsTile.svelte:.tile:hover img': 'kids tile artwork; images only',
   'lib/detail/DetailTv.svelte:img.animate': 'TV detail backdrop settle; an image',
@@ -62,11 +72,16 @@ const ALLOW: Record<string, string> = {
   'lib/Intro.svelte:@keyframes ff-play': 'splash play mark inside the logo SVG; no text',
   'lib/Intro.svelte:@keyframes ff-flare': 'splash flare; no text',
   'lib/Intro.svelte:@keyframes ff-ring': 'splash ring; no text',
-  // TEMPORARY, text-bearing and outside this stage (reported to the controller): hover / desktop preview cards zoom out of their card
-  'lib/HoverPreview.svelte:el.animate': 'TEMPORARY: card-to-preview FLIP zoom of a text-bearing preview; own stage, tracked in the report',
-  'lib/desk/DeskPreview.svelte:grow = el.animate': 'TEMPORARY: card-to-preview FLIP zoom of a text-bearing preview; own stage, tracked in the report',
-  'lib/desk/DeskPreview.svelte:shrink = el.animate': 'TEMPORARY: preview-to-card FLIP shrink of a text-bearing preview; own stage, tracked in the report',
-  'lib/phone/Carousel.svelte:transform:translate3d': 'TEMPORARY: scroll-driven side-card depth of the home carousel, not a pop-up (Stage 6)',
+  // TEMPORARY, text-bearing and outside this stage: the hover / desktop preview cards zoom out of their card (stage 2), the phone
+  // carousel's side cards (stage 3), the quiet hero title (stage 6)
+  'lib/HoverPreview.svelte:el.animate': 'TEMPORARY: card-to-preview FLIP zoom of a text-bearing preview; stage 2 (desktop menus)',
+  'lib/desk/DeskPreview.svelte:grow = el.animate': 'TEMPORARY: card-to-preview FLIP zoom of a text-bearing preview; stage 2 (desktop menus)',
+  'lib/desk/DeskPreview.svelte:shrink = el.animate': 'TEMPORARY: preview-to-card FLIP shrink of a text-bearing preview; stage 2 (desktop menus)',
+  'lib/phone/Carousel.svelte:transform:translate3d': 'TEMPORARY: scroll-driven side-card depth of the home carousel, not a pop-up; stage 3 (phone)',
+  'lib/Hero.svelte:.hero.quiet h1': 'TEMPORARY: the quiet hero shrinks its title (0.9 s), not a pop-up; stage 6 (audit leftovers)',
+  // svelte/animate flip: it scales only an item whose own size changed between its two places; these keep their size and glide
+  'lib/ui/ToastHost.svelte:svelte/animate': 'toast reorder glide; each toast keeps its size, so flip only translates',
+  'lib/admin/rights/RoleList.svelte:svelte/animate': 'role row reorder glide; a row keeps its size, so flip only translates',
 };
 
 const SRC = join(__dirname, '..', '..');
@@ -82,7 +97,11 @@ function walk(dir: string, out: string[] = []): string[] {
 
 const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1').replace(/<!--[\s\S]*?-->/g, ' ');
 const ws = (s: string) => s.replace(/\s+/g, ' ').trim();
-const STATE = /:active|\.pressed|:focus|\.open\b|\.in\b|\.out\b/;
+const STATE = /:active|\.pressed|:focus|:hover|\.open\b|\.in\b|\.out\b|\.on\b|\.show\b|\.shown\b|\.quiet\b|\[open\]|\[aria-expanded/;
+/** a uniform scale in any spelling: `scale()`, `scale3d()`, the `scale` property and `zoom` (a one-axis scaleX / scaleY is a bar's
+ * fill, never text) */
+const SCALE_FN = /scale(3d)?\(/;
+const SCALE_DECL = /(^|[;{\s])(scale|zoom)\s*:\s*[^;]*\d/;
 const SPRING_FILES = /(^|\/)lib\/ui\/|lib\/glass\/fx\.ts|MoreActions|ListMenu|\/desk\/|live\/[^/]*Sheet|admin\/.*Sheet|Dialog/;
 const SPRING = /springEase|springAt|--m-spring|--fr-spring|--tv-spring/;
 
@@ -122,12 +141,14 @@ function scan(): Finding[] {
     rest += raw.slice(from);
     const code = file.endsWith('.css') ? '' : stripComments(rest);
     for (const b of cssBlocks(stripComments(css))) {
-      if (b.at === 'keyframes' && /scale\(/.test(b.body)) found.push({ file, detail: b.sel });
-      else if (!b.at && /transform\s*:[^;]*scale\(/.test(b.body) && STATE.test(b.sel)) found.push({ file, detail: b.sel });
+      if (b.at === 'keyframes' && (SCALE_FN.test(b.body) || SCALE_DECL.test(b.body))) found.push({ file, detail: b.sel });
+      else if (!b.at && STATE.test(b.sel) && (/transform\s*:[^;]*scale(3d)?\(/.test(b.body) || SCALE_DECL.test(b.body))) found.push({ file, detail: b.sel });
     }
     // a JS string (or markup style) building a transform
-    for (const line of code.split('\n')) if (/scale\(/.test(line)) found.push({ file, detail: ws(line).slice(0, 160) });
+    for (const line of code.split('\n')) if (SCALE_FN.test(line) || /\b(scale|zoom)\s*:\s*['"`\d.]/.test(line)) found.push({ file, detail: ws(line).slice(0, 160) });
     if (/import\s*\{[^}]*\bscale\b[^}]*\}\s*from\s*['"]svelte\/transition['"]/.test(code)) found.push({ file, detail: "import { scale } from 'svelte/transition'" });
+    // svelte/animate's flip scales an item whose size changed between its two places
+    if (/import\s*\{[^}]*\bflip\b[^}]*\}\s*from\s*['"]svelte\/animate['"]/.test(code)) found.push({ file, detail: "import { flip } from 'svelte/animate'" });
     if (SPRING_FILES.test('/' + file) || SPRING_FILES.test(file)) {
       for (const line of stripComments(raw).split('\n')) if (SPRING.test(line)) found.push({ file, detail: 'spring in pop-up code: ' + ws(line).slice(0, 140) });
     }
