@@ -36,7 +36,7 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     await expect(confirm).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0); // inline, no pop-up
     await confirm.getByRole('button', { name: 'Ja, starten' }).click();
-    await expect(steps(page)).toHaveCount(4);
+    await expect(steps(page)).toHaveCount(5); // the rollback row is listed from the start (skipped unless it runs)
     // the running row is the current step; the primary button is busy while it runs
     await expect(c.locator('li[aria-current="step"]')).toHaveCount(1);
     await expect(c.getByRole('button', { name: 'Jetzt aktualisieren' })).toBeDisabled();
@@ -188,8 +188,15 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
       services: null, error: null, status: null, step: null, code: null, at: null };
     await page.goto('/admin/update'); // found running: the page follows it without a click
     const result = card(page).locator('[data-result="failed"]');
-    await expect(result).toContainText('Portainer hat das Neu-Deployen abgelehnt (HTTP 500, Schritt Neu-Deployen)', { timeout: 15_000 });
-    await expect(result).toHaveAttribute('role', 'alert');
+    // accepted, then failed while pulling: the note says so with the row's label, never "abgelehnt", never the API step code
+    await expect(result).toContainText('Portainer hat das Update begonnen, es brach aber bei „Portainer lädt die Images“ ab (HTTP 500).', { timeout: 15_000 });
+    await expect(result).not.toContainText('abgelehnt');
+    await expect(result).not.toContainText('Neu-Deployen');
+    await expect(result).toHaveAttribute('role', 'alert'); // seen happening
+    // the advice is folded away
+    await expect(result.getByText('Die Logs des Stacks in Portainer nennen den Grund', { exact: false })).toBeHidden();
+    await result.getByText('Was tun?').click();
+    await expect(result.getByText('Die Logs des Stacks in Portainer nennen den Grund', { exact: false })).toBeVisible();
     // refused while Portainer pulled (after "started"): the request went through, the pull failed, the rest never ran
     const progress = card(page).locator('[data-redeploy="failed"]');
     await expect(progress.locator('[data-step="request"]')).toHaveAttribute('data-state', 'ok');

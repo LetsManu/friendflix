@@ -26,8 +26,10 @@ describe('updater panel logic', () => {
   });
 
   it('steps: the four, rollback once it ran, no health step for a self-update', () => {
-    expect(visibleSteps(job())).toEqual(['pull', 'verify', 'restart', 'health']);
+    // an update lists its rollback from the start (skipped until it runs): the list never grows mid-run
+    expect(visibleSteps(job())).toEqual(['pull', 'verify', 'restart', 'health', 'rollback']);
     expect(visibleSteps(job({ steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'failed', rollback: 'running' } }))).toEqual(['pull', 'verify', 'restart', 'health', 'rollback']);
+    expect(visibleSteps(job({ action: 'rollback' }))).toEqual(['pull', 'verify', 'restart', 'health']);
     expect(visibleSteps(job({ action: 'self-update' }))).toEqual(['pull', 'verify', 'restart']);
   });
 
@@ -103,7 +105,7 @@ describe('updater panel logic', () => {
       'failReason.compose_config', 'failReason.unknown', 'unauthorized', 'invalid', 'log', 'auto.title', 'auto.label', 'auto.off', 'auto.window', 'auto.time',
       'auto.save', 'auto.saved', 'auto.locked', 'auto.hint', 'auto.timeInvalid', 'foreign.portainer', 'foreign.manual', 'foreign.started', 'foreign.workdir', 'confirm.updatePortainer', 'error.foreign_stack', 'error.portainer',
       'error.portainer_unreachable', 'failReason.foreign_stack', 'failReason.config_mismatch',
-      'flow.stepOf', 'flow.done', 'flow.stopped', 'flow.duration', 'flow.code', 'flow.retry', 'flow.label', 'redeploy.step.request', 'redeploy.detailStep',
+      'flow.stepOf', 'flow.done', 'flow.stopped', 'flow.duration', 'flow.code', 'flow.retry', 'flow.label', 'flow.advice', 'flow.noAnswer', 'result.failedAt', 'redeploy.head.failedAt', 'redeploy.advice.failedAt', 'redeploy.httpStatus', 'redeploy.step.request', 'redeploy.detailStep',
       'redeploy.stepName.webhook', 'redeploy.stepName.stack', 'redeploy.stepName.stack_file', 'redeploy.stepName.redeploy', 'redeploy.stepName.deploy'];
     for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
       await setLocale(l);
@@ -130,20 +132,26 @@ describe('updater panel logic', () => {
     expect(redeployRunning({ present: false, redeploy: rd({ phase: 'done', running: false }) })).toBe(false);
     expect(redeployRunning({ present: false })).toBe(false);
     await setLocale('en');
-    expect(redeployResult(rd())).toBe('');
-    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer', status: 500, step: 'redeploy' }))).toBe('Portainer refused the redeploy (HTTP 500, step redeploy). Check the stack in Portainer and the Portainer settings in Admin → Settings → Updates.');
-    // the step by name, never its code; a stack in error has no HTTP status but still says where
-    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer', status: 401, step: 'stack' }))).toContain('(HTTP 401, step stack lookup)');
-    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer', status: null, step: 'deploy', at: 'recreating' }))).toContain('refused the redeploy (step stack start).');
-    expect(redeployResult(rd({ phase: 'unchanged', running: false, tag: 'nightly' }))).toContain('the images for nightly have nothing newer');
-    expect(redeployResult(rd({ phase: 'timeout', running: false, at: 'recreating' }))).toBe('Nothing changed within 15 minutes (Recreate containers). Check the stack and its logs in Portainer.');
-    // not reachable: its own text with the errno code and the hint; a fixed version without a number: its own text
-    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer_unreachable', code: 'ENOTFOUND', step: 'stack' })))
-      .toBe('Portainer was not reachable (ENOTFOUND: host name cannot be resolved, use the IP instead of nas.local). Check PORTAINER_URL in Admin → Settings → Updates: it must be an address the backend can reach.');
-    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer_unreachable', code: null }))).toMatch(/^Portainer was not reachable\. /);
-    // a webhook that Portainer answers with 404: the address is stale, the text says what to do (no status, no URL)
-    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'webhook_gone', status: 404, step: 'webhook' }))).toBe('The Portainer webhook address is no longer valid (Portainer issues a new one when the stack is recreated or its webhook is switched off and on). Create a new webhook in Portainer, or remove it in Admin → Settings → Updates and use the API settings instead.');
-    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'no_target' }))).toBe('Nothing was started: choose a version for the “Fixed version” channel first.');
+    expect(redeployResult(rd())).toEqual({ text: '', advice: '' });
+    // a one-sentence headline, the advice apart (it goes into "What to do?")
+    // refused on the request row: "refused", with the HTTP status and the step by name (never its code)
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer', status: 401, step: 'stack' }))).toEqual({
+      text: 'Portainer refused the update (HTTP 401, step stack lookup).', advice: 'Check the stack in Portainer and the Portainer settings in Admin → Settings → Updates.' });
+    // accepted, then failed in a later row: never "refused", the row by its label, no API step code
+    const at = redeployResult(rd({ phase: 'failed', running: false, error: 'portainer', status: 500, step: 'redeploy', at: 'pulling' }));
+    expect(at.text).toBe('Portainer started the update, but it stopped at “Portainer pulls the images” (HTTP 500).');
+    expect(at.text).not.toMatch(/refused|redeploy\b/);
+    expect(at.advice).toContain('logs');
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer', status: null, step: 'deploy', at: 'recreating' })).text).toBe('Portainer started the update, but it stopped at “Recreate containers”.');
+    expect(redeployResult(rd({ phase: 'unchanged', running: false, tag: 'nightly' }))).toEqual({ text: 'Portainer finished but recreated nothing.', advice: 'The images for nightly have nothing newer, or the stack does not use FF_TAG.' });
+    expect(redeployResult(rd({ phase: 'timeout', running: false, at: 'recreating' }))).toEqual({ text: 'Nothing changed at “Recreate containers” within 15 minutes.', advice: 'Check the stack and its logs in Portainer.' });
+    // not reachable: the errno code and the hint in the headline; a fixed version without a number: its own text
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer_unreachable', code: 'ENOTFOUND', step: 'stack' })).text)
+      .toBe('Portainer was not reachable (ENOTFOUND: host name cannot be resolved, use the IP instead of nas.local).');
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer_unreachable', code: null })).text).toBe('Portainer was not reachable.');
+    // a webhook that Portainer answers with 404: the address is stale, the advice says what to do (no status, no URL)
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'webhook_gone', status: 404, step: 'webhook' }))).toMatchObject({ text: 'The Portainer webhook address is no longer valid.' });
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'no_target' })).text).toBe('Nothing was started: no version is chosen for “Fixed version”.');
   });
 
   it('the Portainer API set up only in part: the missing setting is named with where the stack ID is; such a stack counts as Portainer\'s', async () => {

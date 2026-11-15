@@ -23,13 +23,18 @@
   export let bar = true;
   /** the reserved box for the result note (off: no note, no box) */
   export let note = true;
+  /** announce the running step (off where the card around it has its own live region: Live TV) */
+  export let live = true;
   const dispatch = createEventDispatcher<{ retry: void }>();
   const STATES: readonly RowState[] = ['waiting', 'running', 'ok', 'failed', 'skipped'];
 
   $: outcome = flow.outcome ?? 'running';
   $: current = flow.rows.find((r) => r.state === 'running') ?? null;
   // $t: re-read on a language switch
-  $: live = (void $t, current ? `${flow.count ?? ''} ${current.label}: ${stateLabel('running')}` : '');
+  $: announced = (void $t, current ? `${flow.count ?? ''} ${current.label}: ${stateLabel('running')}` : '');
+  /** a failure is an alert only when it was seen happening; an old outcome on page load is a status */
+  let seenRunning = false;
+  $: if (outcome === 'running') seenRunning = true;
   const sub = (r: StepRow) => r.sub ?? '';
 </script>
 
@@ -38,7 +43,7 @@
   {#if bar}
     <div class="top">
       <span class="lbl" class:recon={flow.reconnecting} data-reconnecting={flow.reconnecting ? '' : undefined}>
-        {#if flow.reconnecting}<Icon name="refresh" size={14} />{/if}{flow.label ?? ''}
+        {#if flow.reconnecting}<Icon name="refresh" size={14} />{/if}<span title={flow.label ?? ''}>{flow.label ?? ''}</span>
       </span>
       <span class="cnt">{flow.count ?? ''}</span>
     </div>
@@ -47,7 +52,7 @@
     </div>
   {/if}
   <!-- the state for screen readers: the running step (polite); a failure is the note's alert -->
-  <p class="sr-only" aria-live="polite">{live}</p>
+  {#if live}<p class="sr-only" aria-live="polite">{announced}</p>{/if}
   <ol class="steps">
     {#each flow.rows as r, i (r.key)}
       <li class="row st-{r.state}" style="--i: {i}" data-step={r.key} data-state={r.state} aria-current={r.state === 'running' ? 'step' : undefined}>
@@ -55,7 +60,7 @@
         <span class="sheen" aria-hidden="true"></span>
         {#if i < flow.rows.length - 1}<span class="wire" aria-hidden="true"><i></i></span>{/if}
         <span class="dot" aria-hidden="true">
-          <span class="ring"></span><span class="spin"></span><span class="fillc"></span>
+          <span class="d-ring"></span><span class="spin"></span><span class="fillc"></span>
           <span class="ic ic-ok"><Icon name="check" size={16} /></span><span class="ic ic-bad"><Icon name="x" size={14} /></span>
         </span>
         <span class="name">{r.label}{#if r.sub !== undefined}<span class="sub" data-count>{sub(r)}</span>{/if}{#if r.took}<span class="sub took">{r.took}</span>{/if}</span>
@@ -69,10 +74,18 @@
     <div class="result">
       {#if flow.note}
         {@const n = flow.note}
-        <div class="note n-{n.tone}" role={n.tone === 'bad' ? 'alert' : 'status'} data-result={n.result}>
+        <!-- a one-sentence headline; the advice folds away under "What to do?" (it opens below, nothing above moves) -->
+        <div class="note n-{n.tone}" role={n.tone === 'bad' && seenRunning ? 'alert' : 'status'} data-result={n.result}>
           <Icon name={n.tone === 'ok' ? 'check' : n.tone === 'neutral' ? 'info' : 'alert'} size={22} />
-          <p><b>{n.text}</b>{#if n.detail}{' '}<span class="muted">{n.detail}</span>{/if}</p>
-          {#if n.retry}<Button variant="secondary" icon="refresh" on:click={() => dispatch('retry')}>{$t('admin.update.updater.flow.retry')}</Button>{/if}
+          <div class="body">
+            <p><b>{n.text}</b>{#if n.detail}{' '}<span class="muted">{n.detail}</span>{/if}</p>
+            {#if n.retry || n.advice}
+              <div class="acts">
+                {#if n.retry}<Button variant="secondary" icon="refresh" on:click={() => dispatch('retry')}>{$t('admin.update.updater.flow.retry')}</Button>{/if}
+                {#if n.advice}<details class="adv"><summary>{$t('admin.update.updater.flow.advice')}</summary><p>{n.advice}</p></details>{/if}
+              </div>
+            {/if}
+          </div>
         </div>
       {/if}
     </div>
@@ -82,8 +95,10 @@
 <style>
   .flow { display: grid; gap: 12px; min-width: 0; max-width: 40rem; }
   h3 { margin: 0; font-size: 1rem; }
-  .top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .2rem .8rem; font-size: .85rem; color: var(--mut); min-width: 0; }
-  .lbl { display: inline-flex; align-items: center; gap: .3rem; min-width: 0; overflow-wrap: anywhere; }
+  /* one line whatever the label says (running, reconnecting, the end time): the list below never moves */
+  .top { display: flex; justify-content: space-between; gap: .8rem; font-size: .85rem; line-height: 1.5; color: var(--mut); min-width: 0; }
+  .lbl { display: inline-flex; align-items: center; gap: .3rem; min-width: 0; }
+  .lbl > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .lbl.recon { color: var(--fg); }
   .cnt { font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
   /* the bar: one fill scaled from the left (transform only), a glint while it runs */
@@ -112,7 +127,7 @@
 
   .dot { grid-area: dot; position: relative; width: 32px; height: 32px; margin-left: 4px; display: grid; place-items: center; }
   .dot > span { position: absolute; inset: 0; border-radius: 50%; }
-  .ring { border: 2px solid var(--surface-2); }
+  .d-ring { border: 2px solid var(--surface-2); }
   .spin { border: 2px solid transparent; border-top-color: var(--acc); border-right-color: var(--acc); opacity: 0; transition: opacity var(--m-d-s); }
   .row.st-running .spin { opacity: 1; animation: ff-spin .9s linear infinite; }
   .fillc { background: var(--ok); transform: scale(.4); opacity: 0; }
@@ -123,7 +138,7 @@
   @keyframes ff-pop { 0% { transform: scale(.4); opacity: 0; } 60% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
   .row.st-failed .dot { animation: ff-shake 420ms 80ms cubic-bezier(.36, .07, .19, .97); }
   @keyframes ff-shake { 20% { transform: translateX(-4px); } 40% { transform: translateX(4px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(2px); } }
-  .row.st-skipped .ring { border-style: dashed; }
+  .row.st-skipped .d-ring { border-style: dashed; }
   /* the wire from this dot to the next (rows of one height: from below the dot to the next dot's top, over the 6 px gap) */
   .wire { position: absolute; left: 25px; top: calc(50% + 18px); height: calc(100% - 30px); width: 2px; border-radius: 2px; background: var(--line); overflow: hidden; }
   .wire i { position: absolute; inset: 0; background: var(--ok); transform: scaleY(0); transform-origin: 50% 0; transition: transform var(--m-d-l) var(--fr-out); }
@@ -144,11 +159,18 @@
   .b.b-failed { background: var(--wash-err); color: var(--err-mark); }
 
   /* the note's box is there from the start: the outcome slides into it, nothing below moves */
-  .result { min-height: 5.25rem; display: grid; }
-  .note { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px 14px; padding: 14px 18px; border-radius: var(--fr-r-tile); opacity: 0; transform: translateY(10px) scale(.98);
+  /* reserved for a closed note: up to two headline lines, the detail, the retry / "What to do?" row (phones: more lines, the two stacked) */
+  .result { min-height: 9rem; display: grid; align-content: start; }
+  .note { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px 14px; padding: 14px 18px; border-radius: var(--fr-r-tile); opacity: 0; transform: translateY(10px) scale(.98);
     animation: ff-note 420ms var(--fr-spring) forwards; min-width: 0; }
   @keyframes ff-note { to { opacity: 1; transform: none; } }
+  .body { display: grid; gap: 10px; min-width: 0; }
   .note p { margin: 0; min-width: 0; overflow-wrap: break-word; }
+  /* the retry button under the text at every width; "What to do?" beside it, its text opens below the row */
+  .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+  .adv summary { display: inline-flex; align-items: center; min-height: 44px; cursor: pointer; color: var(--fg); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+  .adv[open] { flex-basis: 100%; }
+  .adv p { color: var(--mut); padding-bottom: 4px; }
   .note b { font-weight: 600; }
   .note > :global(svg) { flex: none; }
   .note.n-ok { background: var(--wash-ok); border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent); } .note.n-ok > :global(svg) { color: var(--ok); }
@@ -159,9 +181,13 @@
     /* phones: the badge goes under the name, rows stay one height */
     .row { grid-template-columns: 40px minmax(0, 1fr); grid-template-areas: 'dot name' 'dot state'; row-gap: 4px; min-height: 84px; }
     .state { justify-items: start; }
-    /* the retry button under the text, never squeezing it */
-    .note { grid-template-columns: auto minmax(0, 1fr); }
-    .note > :global(:last-child:not(p)) { grid-column: 2; justify-self: start; }
+    /* phones: the label on up to two lines, the count on its own: room for three lines from the start */
+    .top { flex-direction: column; justify-content: flex-start; gap: 0; min-height: 4.5em; }
+    .lbl > span { white-space: normal; overflow-wrap: anywhere; }
+    /* phones: the text takes the whole width (the tone stays in the colour and the words), the box fits a closed note */
+    .result { min-height: 15rem; }
+    .note { grid-template-columns: minmax(0, 1fr); padding: 14px 16px; }
+    .note > :global(svg) { display: none; }
   }
   /* reduced motion and calm mode: every state at once, nothing moves */
   @media (prefers-reduced-motion: reduce) {

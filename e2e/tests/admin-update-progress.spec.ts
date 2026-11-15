@@ -66,8 +66,9 @@ test.describe('admin update progress (desktop)', () => {
     await expect(state(list, 'request')).toHaveAttribute('data-state', 'failed');
     for (const st of ['pulling', 'recreating', 'health']) await expect(state(list, st)).toHaveAttribute('data-state', 'skipped');
     const note = list.locator('[data-result="failed"]');
-    await expect(note).toHaveAttribute('role', 'alert');
-    await expect(note).toContainText('(HTTP 401, Schritt Stack-Abfrage)');
+    // an old outcome found on load is a status, not an alert (it is shown for two days)
+    await expect(note).toHaveAttribute('role', 'status');
+    await expect(note).toContainText('Portainer hat das Update abgelehnt (HTTP 401, Schritt Stack-Abfrage).');
     await note.getByRole('button', { name: 'Erneut versuchen' }).click();
     await expect(page.getByRole('alertdialog', { name: /Portal jetzt aktualisieren/ })).toBeVisible();
   });
@@ -109,5 +110,77 @@ test.describe('admin update progress (desktop)', () => {
     await expect(card(page).locator('[data-updater]')).toBeVisible();
     await expect(card(page).locator('[data-result]')).toHaveCount(0);
     await expect(card(page)).not.toContainText('abgeschlossen');
+  });
+
+  test('a Live TV job still running: the update button waits and the card says why (no list of another page\'s job)', async ({ page, api }) => {
+    api.updater = updaterState(true);
+    api.updater.job = { id: 'fedcba9876543210', action: 'livetv-enable', state: 'running', step: 'pull', from: null, to: 'sha-c0be6c5', startedAt: new Date().toISOString(),
+      finishedAt: null, error: null, steps: { pull: 'running', verify: 'pending', restart: 'pending', health: 'pending', rollback: 'skipped' } };
+    api.updater.downPolls = 0;
+    await page.goto('/admin/update');
+    await expect(card(page).locator('[data-busy]')).toContainText('Es läuft bereits ein Auftrag.');
+    await expect(card(page).getByRole('button', { name: 'Jetzt aktualisieren' })).toBeDisabled();
+    await expect(card(page).locator('ol.steps')).toHaveCount(0);
+  });
+
+  test('"reload anyway" of the same build: the POST says force, the redeploy ends done (not unchanged or a timeout)', async ({ page, api }) => {
+    api.updater = { ...updaterState(false), downPolls: 1 };
+    await page.route('**/api/admin/update', (r) => (r.request().method() !== 'GET' ? r.fallback() : r.fulfill({ json: {
+      current: { sha: 'c0be6c5deadbeef', builtAt: new Date().toISOString(), version: '1.0.0', codename: 'Arancini' }, release: null, updateAvailable: false,
+      latest: { sha: 'c0be6c5deadbeef', date: new Date().toISOString(), runUrl: 'https://example.org/run' }, behind: 0, portainer: { configured: true, mode: 'webhook' }, autoUpdateNote: true, commits: [],
+    } })));
+    await page.goto('/admin/update');
+    const go = apply(page).getByRole('button', { name: 'Jetzt aktualisieren' });
+    await expect(go).toBeDisabled(); // up to date
+    await apply(page).getByText('trotzdem neu laden').click();
+    await go.click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await expect.poll(() => api.log.find((l) => l.startsWith('POST /api/admin/update'))).toContain('"force":true');
+    await expect(apply(page).locator('[data-result="done"]')).toBeVisible({ timeout: 20_000 });
+  });
+
+  test('nothing newer: a neutral note (status, no retry, nothing failed), the rows say Portainer pulled and recreated nothing', async ({ page, api }) => {
+    api.updater = { ...updaterState(false), redeployOutcome: 'unchanged' };
+    await page.goto('/admin/update');
+    await apply(page).getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    const note = apply(page).locator('[data-result="unchanged"]');
+    await expect(note).toContainText('Portainer ist fertig, hat aber nichts neu erstellt.', { timeout: 15_000 });
+    await expect(note).toHaveAttribute('role', 'status');
+    await expect(note.getByRole('button', { name: 'Erneut versuchen' })).toHaveCount(0);
+    const list = apply(page).locator('[data-redeploy]');
+    for (const st of ['request', 'pulling']) await expect(state(list, st)).toHaveAttribute('data-state', 'ok');
+    for (const st of ['recreating', 'health']) await expect(state(list, st)).toHaveAttribute('data-state', 'skipped');
+    await expect(list.locator('[data-state="failed"]')).toHaveCount(0);
+  });
+
+  test('the start refused by Portainer (502): a toast, and the recorded refusal on the request row', async ({ page, api }) => {
+    api.updater = updaterState(false);
+    await page.route('**/api/admin/update', (r) => {
+      if (r.request().method() !== 'POST') return r.fallback();
+      // what the backend does: it records the refusal, then answers 502
+      api.updater!.redeploy = { id: 'abcdef0123456789', mode: 'api', tag: 'latest', phase: 'failed', running: false, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
+        services: null, error: 'portainer', status: 401, step: 'stack', code: null, at: null };
+      return r.fulfill({ status: 502, contentType: 'application/json', body: '{"error":"portainer","status":401,"step":"stack"}' });
+    });
+    await page.goto('/admin/update');
+    await apply(page).getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await expect(page.getByRole('region', { name: 'Hinweise' }).getByText(/Portainer-Fehler \(HTTP 401\)/)).toBeVisible();
+    const list = apply(page).locator('[data-redeploy="failed"]');
+    await expect(state(list, 'request')).toHaveAttribute('data-state', 'failed');
+    await expect(list.locator('[data-result="failed"]')).toContainText('abgelehnt (HTTP 401, Schritt Stack-Abfrage)');
+  });
+
+  test('nothing jumps when the failure lands: the card below keeps its place', async ({ page, api }) => {
+    api.updater = { ...updaterState(false), redeployOutcome: 'failed' };
+    await page.goto('/admin/update');
+    await apply(page).getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    const below = page.getByRole('region', { name: 'Änderungen' });
+    await expect(apply(page).locator('li[aria-current="step"]')).toHaveCount(1);
+    const y0 = (await below.boundingBox())!.y;
+    await expect(apply(page).locator('[data-result="failed"]')).toBeVisible({ timeout: 15_000 });
+    expect((await below.boundingBox())!.y).toBe(y0);
   });
 });

@@ -13,8 +13,10 @@ import type { Ctx } from './ctx.js';
  *   health      every service runs the new build, not all of them healthy yet
  *   done        a new build runs (or, of the same build, a change was seen) and every service is up and healthy
  *   unchanged   Portainer finished, but nothing was recreated (the tag had nothing newer, or the stack does not use FF_TAG)
- *   failed      Portainer refused the redeploy, also when its answer came only after the page was told "started" (`at`:
- *               null = refused before anything ran; pulling / recreating = a late refusal, or a stack in error after recreating)
+ *   failed      Portainer refused the redeploy, also when its answer came only after the page was told "started" (`at`, from
+ *               the step and status: null = refused before anything ran (stack lookup, stack file, any 4xx, not reachable);
+ *               pulling = the redeploy call (it pulls and recreates before it answers) failed with a 5xx or no status, recreating
+ *               when a service was already seen changed or the stack ended in error)
  *   timeout     no end within 15 minutes (`at`: the phase it hung in)
  *
  * Judging the services needs the updater's listing. Without an updater (UPDATER_URL unset, or none answered when the redeploy
@@ -42,6 +44,8 @@ interface Rec {
   id: string; mode: 'webhook' | 'api'; startedAt: number; from: string; tag: string;
   /** an updater listed the services when the redeploy began (else this backend's build decides alone) */
   updater: boolean;
+  /** "reload anyway" of the same build: a restart of this backend is then the change (optional: older records lack it) */
+  forced?: boolean;
   /** Portainer's answer to the final call: none yet, 2xx (`answeredAt`), or a refusal */
   answer: 'pending' | 'ok' | 'failed'; answeredAt: number | null;
   /** the 2xx came once Portainer was done (its API before 2.36 redeploys, then answers; not "deploying" in the answer) */
@@ -81,7 +85,7 @@ function parse(raw: string | null): Rec | null {
   try { o = JSON.parse(raw) as Record<string, unknown>; } catch { return null; }
   if (!o || typeof o !== 'object' || o.v !== 1) return null;
   const ok = str(o.id, /^[0-9a-f]{16}$/) && (o.mode === 'webhook' || o.mode === 'api') && typeof o.startedAt === 'number' && Number.isFinite(o.startedAt)
-    && str(o.from, /^[A-Za-z0-9._-]{1,64}$/) && str(o.tag, /^[A-Za-z0-9._-]{1,64}$/) && typeof o.updater === 'boolean'
+    && str(o.from, /^[A-Za-z0-9._-]{1,64}$/) && str(o.tag, /^[A-Za-z0-9._-]{1,64}$/) && typeof o.updater === 'boolean' && (o.forced === undefined || typeof o.forced === 'boolean')
     && (o.answer === 'pending' || o.answer === 'ok' || o.answer === 'failed') && numOrNull(o.answeredAt) && typeof o.sync === 'boolean' && typeof o.changed === 'boolean'
     && (o.error === null || str(o.error, /^[a-z_]{1,40}$/)) && (o.step === null || str(o.step, /^[a-z_]{1,20}$/)) && numOrNull(o.status)
     && (o.code === null || str(o.code, /^[A-Z_]{2,40}$/)) && phaseOrNull(o.final) && numOrNull(o.finishedAt) && phaseOrNull(o.at);
@@ -134,11 +138,11 @@ const release = (ctx: Ctx, id: string) => ctx.kv.delIfEquals(REDEPLOY_LOCK, id).
  * Records the redeploy that is about to be handed to Portainer (`id` from claimRedeploy) and holds the slot for it. false when
  * it could not be recorded (the store or its mutex not available): the caller gives the slot back and sends nothing.
  */
-export async function beginRedeploy(ctx: Ctx, id: string, mode: 'webhook' | 'api', tag: string, updater: boolean, now = Date.now(), waitMs = 3_000): Promise<boolean> {
+export async function beginRedeploy(ctx: Ctx, id: string, mode: 'webhook' | 'api', tag: string, updater: boolean, now = Date.now(), waitMs = 3_000, forced = false): Promise<boolean> {
   // the slot first: a record must never stay "pending" for a redeploy that was not sent (a phantom "pulling", busy for 15 min)
   if (!(await ctx.kv.refreshIfEquals(REDEPLOY_LOCK, id, HOLD_S).catch(() => false))) return false;
   const ok = await locked(ctx, () => write(ctx, {
-    v: 1, id, mode, startedAt: now, from: ctx.cfg.GIT_SHA, tag, updater, answer: 'pending', answeredAt: null, sync: false, changed: false,
+    v: 1, id, mode, startedAt: now, from: ctx.cfg.GIT_SHA, tag, updater, ...(forced ? { forced: true } : {}), answer: 'pending', answeredAt: null, sync: false, changed: false,
     error: null, step: null, status: null, code: null, final: null, finishedAt: null, at: null,
   }), waitMs);
   return ok === true;
@@ -147,8 +151,20 @@ export async function beginRedeploy(ctx: Ctx, id: string, mode: 'webhook' | 'api
 /** gives the slot back when nothing was recorded or started (Portainer refused at once is settled instead) */
 export const abandonRedeploy = release;
 
-/** `late`: the refusal came after "started" went out (Portainer was already at work) */
-export type Answer = { ok: true; sync: boolean } | { ok: false; error: string; step: string; status: number | null; code?: string; late?: boolean };
+export type Answer = { ok: true; sync: boolean } | { ok: false; error: string; step: string; status: number | null; code?: string };
+
+/**
+ * Where a refusal happened, from what the failed call does (not from when it answered): the stack lookup, its file, any 4xx or an
+ * unreachable Portainer = refused before anything ran (null); the redeploy call / webhook pulls and recreates before it answers,
+ * so its 5xx or missing status failed in there (pulling, or recreating once a service was seen changed); a stack in error after
+ * deploying (Status 4) failed recreating.
+ */
+export function failedAt(a: { error: string; step: string; status: number | null }, changed: boolean): RedeployPhase | null {
+  if (a.step === 'deploy') return 'recreating';
+  if (a.error === 'portainer_unreachable') return null;
+  if ((a.step === 'redeploy' || a.step === 'webhook') && (a.status === null || a.status >= 500)) return changed ? 'recreating' : 'pulling';
+  return null;
+}
 /**
  * Portainer's answer (also a late one, after "started" went out): a refusal ends the redeploy as failed and frees the slot.
  * Under the mutex, a few tries; then written without it: a lost refusal is worse than a rare overwrite of a stored end.
@@ -159,9 +175,7 @@ export async function settleRedeploy(ctx: Ctx, id: string, a: Answer, now = Date
     if (!r || r.id !== id || r.answer !== 'pending' || (r.final && !(r.final === 'timeout' && !a.ok))) return true;
     if (a.ok) Object.assign(r, { answer: 'ok', answeredAt: now, sync: a.sync });
     else {
-      // where it failed: a stack in error (Status 4) was deployed, so it failed recreating; a late refusal while Portainer pulled, or
-      // recreated once a service was seen changed; a refusal at once happened before anything ran
-      const at: RedeployPhase | null = a.step === 'deploy' ? 'recreating' : a.late ? (r.changed ? 'recreating' : 'pulling') : null;
+      const at = failedAt(a, r.changed);
       Object.assign(r, { answer: 'failed', answeredAt: now, error: a.error, step: a.step, status: a.status, code: a.code ?? null, final: 'failed', finishedAt: now, at });
     }
     await write(ctx, r);
@@ -179,7 +193,11 @@ const healthy = (s: ServiceSeen) => s.state === 'running' && (s.health === '' ||
  * unset), null = an updater is set up but gave no listing now. A phase that ended is stored (and the slot freed), so a later read
  * (another update by hand, a restart) does not change it.
  */
-export async function redeployView(ctx: Ctx, services: readonly ServiceSeen[] | null | undefined, now = Date.now(), bootedAt = BOOTED_AT, again = true): Promise<RedeployView | null> {
+export function redeployView(ctx: Ctx, services: readonly ServiceSeen[] | null | undefined, now = Date.now(), bootedAt = BOOTED_AT): Promise<RedeployView | null> {
+  return judge(ctx, services, now, bootedAt, true);
+}
+
+async function judge(ctx: Ctx, services: readonly ServiceSeen[] | null | undefined, now: number, bootedAt: number, again: boolean): Promise<RedeployView | null> {
   const r = await read(ctx);
   if (!r) return null;
   const fromTag = /^[0-9a-f]{7,40}$/.test(r.from) ? `sha-${r.from.slice(0, 7)}` : null;
@@ -191,9 +209,10 @@ export async function redeployView(ctx: Ctx, services: readonly ServiceSeen[] | 
     // none: judge by this backend alone; down: an updater that listed the services at the start does not answer now
     const listing = services === undefined || !r.updater ? 'none' : seen.length ? 'list' : 'down';
     const changedNow = listing === 'list' && seen.some((s) => s.state !== 'running' || onNew(s));
-    const changed = r.changed || changedNow;
     const newBuild = ctx.cfg.GIT_SHA !== r.from;
     const restarted = bootedAt > r.startedAt;
+    // a forced reload of the same build: this backend recreated is the change (without a listing nothing else could show it)
+    const changed = r.changed || changedNow || (r.forced === true && restarted);
     const finished = r.answer === 'ok' && r.sync;
     // a restart of the same build alone proves nothing (a crash, a reboot): only with a change seen, or Portainer saying done
     if (newBuild || (changed && (restarted || finished))) {
@@ -230,7 +249,7 @@ export async function redeployView(ctx: Ctx, services: readonly ServiceSeen[] | 
       if (stored === undefined && FINAL.includes(phase)) return view({ ...r, finishedAt: now, at }, phase, counts);
       // Portainer's answer landed between the read and the store: the phase was judged from the older record, judge it again
       // (once: the answer changes only from pending) instead of reporting an end that was never stored
-      if (stored && stored.id === r.id && stored.answer !== r.answer && again) return redeployView(ctx, services, now, bootedAt, false);
+      if (stored && stored.id === r.id && stored.answer !== r.answer && again) return judge(ctx, services, now, bootedAt, false);
     }
   }
   return view(r, phase, counts);

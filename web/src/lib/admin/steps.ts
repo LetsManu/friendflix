@@ -22,6 +22,8 @@ export interface FlowNote {
   text: string;
   /** the real total duration and, for a failed job, its error code */
   detail: string;
+  /** what to do (folded away under "What to do?" so the note keeps its height); '' = none */
+  advice: string;
   /** a failure: the note offers to try again */
   retry: boolean;
 }
@@ -77,11 +79,14 @@ export function jobFlow(job: UpdaterJob, o: FlowOpts & { steps?: readonly StepNa
     : `${trDynamic(`${U}.lastJob`)} ${fmtDateTime(job.finishedAt ?? job.startedAt)}`;
   let note: FlowNote | null = null;
   if (!running) {
+    // one sentence (the failed row by its label); the reason, often long, is the advice
+    const failedRow = rows.find((r) => r.state === 'failed');
     const text = job.state === 'succeeded' ? trDynamic(`${U}.result.succeeded`, { to: job.to })
       : job.state === 'rolled_back' ? trDynamic(`${U}.result.rolled_back`, { from: job.from ?? trDynamic(`${U}.none`) })
-        : trDynamic(`${U}.result.failed`, { reason: failReason(job.error) });
+        : failedRow ? trDynamic(`${U}.result.failedAt`, { row: failedRow.label }) : trDynamic(`${U}.result.failed`, { reason: failReason(job.error) });
     const code = job.error && /^[a-z_]{1,40}$/.test(job.error) ? trDynamic(`${U}.flow.code`, { code: job.error }) : '';
-    note = { tone: outcome === 'ok' ? 'ok' : 'bad', result: job.state, text, detail: [took(job.startedAt, job.finishedAt), code].filter(Boolean).join(' · '), retry: outcome === 'failed' };
+    const advice = outcome === 'failed' && (job.state === 'rolled_back' || failedRow) ? failReason(job.error) : '';
+    note = { tone: outcome === 'ok' ? 'ok' : 'bad', result: job.state, text, advice, detail: [took(job.startedAt, job.finishedAt), code].filter(Boolean).join(' · '), retry: outcome === 'failed' };
   }
   return { rows, outcome, label, reconnecting: running && Boolean(o.reconnecting), note, ...frame(rows, outcome) };
 }
@@ -104,8 +109,9 @@ export function redeployFlow(r: Redeploy, o: FlowOpts = {}): StepFlow {
     : `${trDynamic(`${k}.last`)} ${fmtDateTime(r.finishedAt ?? r.startedAt)}`;
   // while containers are recreated, the bar follows the services on the new build
   const partial = r.phase === 'recreating' && r.services && r.services.total > 0 ? Math.min(0.9, Math.max(0.15, r.services.updated / r.services.total)) : undefined;
+  const res = redeployResult(r);
   const note: FlowNote | null = running ? null : {
-    tone: outcome === 'ok' ? 'ok' : outcome === 'neutral' ? 'neutral' : 'bad', result: r.phase, text: redeployResult(r),
+    tone: outcome === 'ok' ? 'ok' : outcome === 'neutral' ? 'neutral' : 'bad', result: r.phase, text: res.text, advice: res.advice,
     detail: outcome === 'failed' ? '' : took(r.startedAt, r.finishedAt), retry: outcome === 'failed',
   };
   return { rows, outcome, label, reconnecting: running && Boolean(o.reconnecting), note, ...frame(rows, outcome, partial) };

@@ -33,10 +33,12 @@ export interface UpdaterMock {
    * the last update handed to Portainer (GET redeploy, backend redeploy.ts). After "update now" on a Portainer stack (or, without an
    * updater, POST /api/admin/update) it advances one phase per poll: pulling → recreating (1 of 3) → `downPolls` polls answered 502
    * (Portainer recreates the backend) → `awayPolls` polls where the updater does not answer (present: false, the record still comes)
-   * → health → `redeployOutcome` (done, or failed: Portainer's late refusal, HTTP 500 at the redeploy step while it pulled).
+   * → health → `redeployOutcome` (done, or failed: Portainer's late refusal, HTTP 500 at the redeploy step while it pulled; or
+   * unchanged: Portainer answered done and nothing was recreated). Without a services listing (no updater) the real backend only
+   * ever reports pulling and the end, so neither does this: pulling → `downPolls` 502 → the outcome.
    */
   redeploy?: any;
-  redeployOutcome?: 'done' | 'failed';
+  redeployOutcome?: 'done' | 'failed' | 'unchanged';
   awayPolls?: number;
 }
 type Reply = (b: unknown, status?: number) => Promise<void>;
@@ -55,11 +57,22 @@ function advanceRedeploy(u: UpdaterMock): boolean {
     if (n >= 1) Object.assign(r, { phase: 'failed', running: false, finishedAt: new Date().toISOString(), error: 'portainer', status: 500, step: 'redeploy', at: 'pulling' });
     return true;
   }
+  if (u.redeployOutcome === 'unchanged') {
+    if (n >= 1) Object.assign(r, { phase: 'unchanged', running: false, finishedAt: new Date().toISOString() });
+    return true;
+  }
+  if (r.services === null) {
+    // no listing: this backend's own build decides; it is away while Portainer recreates it, then the new build answers: done
+    if (n === 0) return true; // the first read after the start: still pulling
+    if (n < 1 + u.downPolls) return false;
+    Object.assign(r, { phase: 'done', running: false, finishedAt: new Date().toISOString() });
+    return true;
+  }
   const away = u.awayPolls ?? 0;
-  if (n === 0) Object.assign(r, { phase: 'recreating', services: r.services ? { updated: 1, total: 3 } : null });
+  if (n === 0) Object.assign(r, { phase: 'recreating', services: { updated: 1, total: 3 } });
   else if (n < 1 + u.downPolls) return false; // Portainer recreates the backend
-  else if (n < 1 + u.downPolls + away) Object.assign(r, { phase: 'recreating', services: r.services ? { updated: 2, total: 3 } : null });
-  else if (n === 1 + u.downPolls + away) Object.assign(r, { phase: 'health', services: r.services ? { updated: 3, total: 3 } : null });
+  else if (n < 1 + u.downPolls + away) Object.assign(r, { phase: 'recreating', services: { updated: 2, total: 3 } });
+  else if (n === 1 + u.downPolls + away) Object.assign(r, { phase: 'health', services: { updated: 3, total: 3 } });
   else Object.assign(r, { phase: 'done', running: false, finishedAt: new Date().toISOString() });
   return true;
 }

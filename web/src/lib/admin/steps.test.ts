@@ -28,12 +28,12 @@ afterEach(async () => { await setLocale('de'); });
 describe('updater job -> rows', () => {
   it('running: pending is "waiting", the running row is marked, the label counts the seconds from the job\'s own start (it survives a reload)', () => {
     const f = jobFlow(job({ step: 'verify', steps: { pull: 'ok', verify: 'running', restart: 'pending', health: 'pending', rollback: 'skipped' } }), { now: T + 12_000 });
-    expect(f.rows.map((r) => r.key)).toEqual(['pull', 'verify', 'restart', 'health']);
-    expect(states(f.rows)).toEqual({ pull: 'ok', verify: 'running', restart: 'waiting', health: 'waiting' });
+    expect(f.rows.map((r) => r.key)).toEqual(['pull', 'verify', 'restart', 'health', 'rollback']);
+    expect(states(f.rows)).toEqual({ pull: 'ok', verify: 'running', restart: 'waiting', health: 'waiting', rollback: 'skipped' });
     expect(f.rows[0]!.label).toBe('Download images');
-    expect(f).toMatchObject({ outcome: 'running', reconnecting: false, note: null, count: 'Step 2 of 4' });
+    expect(f).toMatchObject({ outcome: 'running', reconnecting: false, note: null, count: 'Step 2 of 5' });
     expect(f.label).toContain('12');
-    expect(f.progress).toBeCloseTo(1.5 / 4);
+    expect(f.progress).toBeCloseTo(1.5 / 5);
     // no per-step times from the updater: nothing invented
     expect(f.rows.every((r) => r.took === undefined)).toBe(true);
   });
@@ -60,14 +60,17 @@ describe('updater job -> rows', () => {
     expect(f).toMatchObject({ outcome: 'failed', count: 'Stopped at step 4 of 5' });
     expect(f.note).toMatchObject({ tone: 'bad', result: 'rolled_back', retry: true });
     expect(f.note!.detail).toContain('Error code: unhealthy');
+    expect(f.note!.advice).toBe('not healthy in time');
   });
 
   it('failed early: later steps are "skipped", the bar stops where it failed', () => {
     const f = jobFlow(job({ state: 'failed', error: 'verify_failed', finishedAt: iso(5_000), steps: { pull: 'ok', verify: 'failed', restart: 'skipped', health: 'skipped', rollback: 'skipped' } }));
-    expect(states(f.rows)).toEqual({ pull: 'ok', verify: 'failed', restart: 'skipped', health: 'skipped' });
-    expect(f.progress).toBeCloseTo(1 / 4);
+    expect(states(f.rows)).toMatchObject({ pull: 'ok', verify: 'failed', restart: 'skipped', health: 'skipped' });
+    expect(f.progress).toBeCloseTo(1 / 5);
     expect(f.note).toMatchObject({ tone: 'bad', result: 'failed', retry: true });
-    expect(f.note!.text).toContain('signature check failed');
+    // one sentence naming the row; the long reason is the advice
+    expect(f.note!.text).toBe('Job failed at “Check signatures”.');
+    expect(f.note!.advice).toContain('signature check failed');
   });
 
   it('Live TV passes its own steps (a disable has only the restart)', () => {
@@ -97,12 +100,15 @@ describe('Portainer redeploy -> rows (updater card)', () => {
     expect(states(f.rows)).toEqual({ request: 'failed', pulling: 'skipped', recreating: 'skipped', health: 'skipped' });
     expect(f).toMatchObject({ outcome: 'failed', count: 'Stopped at step 1 of 4' });
     expect(f.note).toMatchObject({ tone: 'bad', result: 'failed', retry: true });
-    expect(f.note!.text).toContain('HTTP 401, step stack lookup');
+    expect(f.note!.text).toBe('Portainer refused the update (HTTP 401, step stack lookup).');
   });
 
   it('a refusal after "started" fails the step Portainer was in', () => {
     const f = redeployFlow(rd({ phase: 'failed', running: false, finishedAt: iso(60_000), error: 'portainer', status: 500, step: 'redeploy', at: 'pulling' }));
     expect(states(f.rows)).toEqual({ request: 'ok', pulling: 'failed', recreating: 'skipped', health: 'skipped' });
+    // the request went through: the note says so, names the failed row, and never "refused"
+    expect(f.note!.text).toBe('Portainer started the update, but it stopped at “Portainer pulls the images” (HTTP 500).');
+    expect(f.count).toBe('Stopped at step 2 of 4');
   });
 
   it('unchanged: a neutral note, no retry, nothing failed', () => {
@@ -117,6 +123,7 @@ describe('Portainer redeploy -> rows (updater card)', () => {
     expect(states(f.rows)).toEqual({ request: 'ok', pulling: 'ok', recreating: 'ok', health: 'failed' });
     expect(f.note).toMatchObject({ tone: 'bad', result: 'timeout', retry: true });
     expect(f.note!.text).toContain('15 minutes');
+    expect(f.note!.text).toContain('Health check');
   });
 });
 

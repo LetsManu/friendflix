@@ -130,9 +130,9 @@
     if (!VERSION_RE.test(v)) { pinErr = tr('admin.update.channel.versionInvalid'); return; }
     void pick('pinned', v);
   }
-  async function loadUpdater(): Promise<boolean> {
+  async function loadUpdater(signal?: AbortSignal): Promise<boolean> {
     try {
-      const next = await api<UpdaterView>('/api/admin/updater');
+      const next = await api<UpdaterView>('/api/admin/updater', { signal });
       up = up ? mergeView(up, next).view : next;
       return true;
     } catch { up = up ?? { present: false }; return false; }
@@ -182,7 +182,8 @@
   async function start() {
     if (!u || !(await confirm({ title: tr('admin.update.confirm'), body: tr('adminContent.update.confirmBody', { sha: updateTarget(u) }), danger: true, confirmLabel: tr('admin.update.updateNow') }))) return;
     const res = await runAction({
-      key: 'update:start', run: () => api('/api/admin/update', { method: 'POST' }), error: updateError,
+      // "reload anyway" of the same build: the backend then counts its own restart as the change (redeploy.ts forced)
+      key: 'update:start', run: () => api('/api/admin/update', { method: 'POST', body: upToDate && force ? { force: true } : {} }), error: updateError,
     });
     // started, or refused by Portainer (recorded too, with the step): the backend's record says which
     if (res.ok || (res.error as { status?: number } | undefined)?.status === 502) {
@@ -304,7 +305,10 @@
     {#if flow && redeploy}
       <div class="prog" data-redeploy={redeploy.phase}>
         {#key redeploy.id}<StepList {flow} title={$t('admin.update.updater.redeploy.title')} on:retry={start} />{/key}
-        {#if watchTimeout}<p class="err small" role="alert">{$t('admin.update.updater.watchTimeout')}</p>{/if}
+        {#if watchTimeout}
+          <p class="err small" role="alert">{$t('admin.update.updater.flow.noAnswer')}</p>
+          <Button variant="secondary" icon="refresh" on:click={() => { void loadUpdater().then(follow); }}>{$t('admin.update.check')}</Button>
+        {/if}
       </div>
     {/if}
   </AdminCard>

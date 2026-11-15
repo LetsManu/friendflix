@@ -260,7 +260,7 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api', onLate?: 
  * `actor` null = the automatic update. Used by Admin -> Update without the updater and by the updater path when the stack is
  * Portainer's (updater.ts startJob / autoUpdateTick).
  */
-export async function redeployViaPortainer(ctx: Ctx, actor: string | null, mode: 'webhook' | 'api', info?: UpdateInfo, opts: { updater?: boolean } = {}): Promise<TriggerResult> {
+export async function redeployViaPortainer(ctx: Ctx, actor: string | null, mode: 'webhook' | 'api', info?: UpdateInfo, opts: { updater?: boolean; forced?: boolean } = {}): Promise<TriggerResult> {
   // one redeploy at a time, across backend instances: a second start while one runs is refused (busy), nothing is sent
   const id = await claimRedeploy(ctx);
   if (!id) return { ok: false, status: null, error: 'busy', step: mode === 'webhook' ? 'webhook' : 'stack' };
@@ -269,9 +269,9 @@ export async function redeployViaPortainer(ctx: Ctx, actor: string | null, mode:
   try {
     i = info ?? await updateInfo(ctx);
     await audit(ctx, actor, 'system.update', undefined, {
-      from: i.current.sha, to: i.latest?.sha ?? null, fromVersion: i.current.version, toVersion: i.release?.version ?? null, mode, tag: channelTag(ctx.cfg.UPDATE_CHANNEL, ctx.cfg.UPDATE_VERSION), ...auto,
+      from: i.current.sha, to: i.latest?.sha ?? null, fromVersion: i.current.version, toVersion: i.release?.version ?? null, mode, tag: channelTag(ctx.cfg.UPDATE_CHANNEL, ctx.cfg.UPDATE_VERSION), ...auto, ...(opts.forced ? { forced: true } : {}),
     });
-    if (!(await beginRedeploy(ctx, id, mode, channelTag(ctx.cfg.UPDATE_CHANNEL, ctx.cfg.UPDATE_VERSION), opts.updater === true))) {
+    if (!(await beginRedeploy(ctx, id, mode, channelTag(ctx.cfg.UPDATE_CHANNEL, ctx.cfg.UPDATE_VERSION), opts.updater === true, Date.now(), 3_000, opts.forced === true))) {
       // not recorded (the store or its mutex not available): nothing is sent, the page could not follow it
       await abandonRedeploy(ctx, id);
       await audit(ctx, actor, 'system.update_result', undefined, { mode, toVersion: i.release?.version ?? null, ...auto, result: 'failed', error: 'unavailable' });
@@ -289,7 +289,7 @@ export async function redeployViaPortainer(ctx: Ctx, actor: string | null, mode:
     if (!a.ok && !a.deploy && (a.status === null || a.status >= 502)) return;
     const step = !a.ok && a.deploy ? 'deploy' : 'redeploy';
     const error = !a.ok && mode === 'webhook' && a.status === 404 ? 'webhook_gone' : 'portainer';
-    void settleRedeploy(ctx, id, a.ok ? { ok: true, sync: a.sync } : { ok: false, error, step, status: a.status, late: true })
+    void settleRedeploy(ctx, id, a.ok ? { ok: true, sync: a.sync } : { ok: false, error, step, status: a.status })
       .then(() => (a.ok ? undefined : audit(ctx, actor, 'system.update_result', undefined, { mode, ...auto, result: 'failed', late: true, error, step, status: a.status })))
       .catch(() => undefined);
   };

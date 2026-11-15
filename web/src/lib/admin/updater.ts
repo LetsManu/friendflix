@@ -79,26 +79,34 @@ export function redeploySteps(r: Pick<Redeploy, 'phase' | 'at'>): Record<Redeplo
   }
 }
 
-/** the outcome line of a finished redeploy ('' while it runs); the HTTP status and step of a refusal, never more */
-export function redeployResult(r: Redeploy): string {
+/**
+ * The outcome of a finished redeploy as a one-sentence headline and the advice apart (StepList puts it under "What to do?"); both
+ * '' while it runs. Refused on the request row (`at` null): "refused", with the HTTP status and the step by name. Accepted, then
+ * failed in a later row (`at`): "started, but stopped at <row label>", never "refused" and never the API step code.
+ */
+export function redeployResult(r: Redeploy): { text: string; advice: string } {
   const k = 'admin.update.updater.redeploy';
+  const row = (p: RedeployPhase | null, fallback: RedeployStep) => trDynamic(`${k}.step.${p && REDEPLOY_STEPS.includes(p as RedeployStep) ? p : fallback}`);
+  const out = (key: string, vars: Record<string, string> = {}) => ({ text: trDynamic(`${k}.head.${key}`, vars), advice: trDynamic(`${k}.advice.${key}`, vars) });
   if (r.phase === 'failed') {
-    if (r.error === 'no_target') return trDynamic(`${k}.result.noTarget`);
-    if (r.error === 'webhook_gone') return trDynamic(`${k}.result.webhookGone`); // the stored webhook address is stale (404)
+    if (r.error === 'no_target') return out('noTarget');
+    if (r.error === 'webhook_gone') return out('webhookGone'); // the stored webhook address is stale (404)
     if (r.error === 'portainer_unreachable') {
       // the errno code (never the URL), with the same hint as the Portainer card ("host name cannot be resolved", …)
       const c = r.code && /^[A-Z_]{2,40}$/.test(r.code) ? r.code : null;
       const hint = c && hasKey(`admin.update.hint.${c}`) ? `: ${trDynamic(`admin.update.hint.${c}`)}` : '';
-      return trDynamic(`${k}.result.unreachable`, { code: c ? ` (${c}${hint})` : '' });
+      return out('unreachable', { code: c ? ` (${c}${hint})` : '' });
     }
-    // the step by its name (an unknown code as it is); without an HTTP status (a stack in error) only the step
+    if (r.at && r.at !== 'pulling' && r.at !== 'recreating' && r.at !== 'health') return out('failed', { detail: '' });
+    if (r.at) return out('failedAt', { row: row(r.at, 'pulling'), status: r.status !== null ? trDynamic(`${k}.httpStatus`, { status: String(r.status) }) : '' });
+    // the step by its name (an unknown code as it is); without an HTTP status only the step
     const step = r.step && /^[a-z_]{1,20}$/.test(r.step) && hasKey(`${k}.stepName.${r.step}`) ? trDynamic(`${k}.stepName.${r.step}`) : r.step;
-    const detail = r.status !== null ? trDynamic(`${k}.detail`, { status: String(r.status), step: step ?? '?' }) : step ? trDynamic(`${k}.detailStep`, { step }) : '';
-    return trDynamic(`${k}.result.failed`, { detail });
+    return out('failed', { detail: r.status !== null ? trDynamic(`${k}.detail`, { status: String(r.status), step: step ?? '?' }) : step ? trDynamic(`${k}.detailStep`, { step }) : '' });
   }
-  if (r.phase === 'timeout') return trDynamic(`${k}.result.timeout`, { at: trDynamic(`${k}.step.${(r.at && REDEPLOY_STEPS.includes(r.at as RedeployStep) ? r.at : 'pulling')}`) });
-  if (r.phase === 'done' || r.phase === 'unchanged') return trDynamic(`${k}.result.${r.phase}`, { tag: r.tag });
-  return '';
+  if (r.phase === 'timeout') return out('timeout', { row: row(r.at, 'pulling') });
+  if (r.phase === 'unchanged') return out('unchanged', { tag: r.tag });
+  if (r.phase === 'done') return { text: trDynamic(`${k}.result.done`), advice: '' };
+  return { text: '', advice: '' };
 }
 
 /** the note when the Portainer API is set up only in part (null when nothing is missing) */
@@ -107,10 +115,13 @@ export function portainerMissing(p: Pick<PortainerSetup, 'missing'> | null | und
   return m.length ? trDynamic('admin.update.updater.portainerMissing', { fields: m.join(', ') }) : null;
 }
 
-/** the four steps, plus the rollback once it ran (self-update: no health step) */
+/**
+ * the four steps (self-update: no health step); an update lists its rollback from the start (skipped unless it runs), so the list
+ * never grows mid-run; other jobs show it once it ran
+ */
 export function visibleSteps(j: UpdaterJob): StepName[] {
   const base = MAIN_STEPS.filter((s) => !(j.action === 'self-update' && s === 'health'));
-  return j.steps.rollback !== 'skipped' && j.steps.rollback !== 'pending' ? [...base, 'rollback'] : base;
+  return j.action === 'update' || (j.steps.rollback !== 'skipped' && j.steps.rollback !== 'pending') ? [...base, 'rollback'] : base;
 }
 
 /** a readable reason for a job's error code (unknown codes: "unknown error"; the code itself is never shown raw) */
@@ -128,7 +139,7 @@ export function startError(e: unknown): string {
   return trDynamic('admin.update.updater.error.generic');
 }
 
-/** poll every 2 s while a job runs, every 3 s while the backend is away; give up after 15 minutes */
+/** poll every 2 s while a job runs, from 3 s while the backend is away (watch.ts backs off to 10 s); give up after 15 minutes */
 export const POLL_MS = 2_000;
 export const RECONNECT_MS = 3_000;
 export const WATCH_MAX_MS = 15 * 60_000;

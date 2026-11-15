@@ -57,9 +57,9 @@
   let watchedRedeploy: string | null = null;
   $: flow = (void $t, shown === 'job' && s?.job ? jobFlow(s.job, { reconnecting, now }) : shown === 'redeploy' && redeploy ? redeployFlow(redeploy, { reconnecting, now }) : null);
 
-  async function refresh(): Promise<boolean> {
+  async function refresh(signal?: AbortSignal): Promise<boolean> {
     try {
-      const m = mergeView(view, await api<UpdaterView>('/api/admin/updater'));
+      const m = mergeView(view, await api<UpdaterView>('/api/admin/updater', { signal }));
       view = m.view; away = m.away;
       return true;
     } catch { return false; }
@@ -170,12 +170,19 @@
       </div>
     {/if}
 
+    {#if running && shown !== 'job'}
+      <!-- another job of the updater runs (Live TV's): it is shown on its own page, the buttons wait for it -->
+      <p class="muted small busy" role="status" data-busy>{$t('admin.update.updater.error.busy')}</p>
+    {/if}
     {#if flow}
       <div class="prog" data-redeploy={shown === 'redeploy' && redeploy ? redeploy.phase : undefined} data-job={shown === 'job' ? s.job?.state : undefined}>
         {#key shown === 'redeploy' ? redeploy?.id : s.job?.id}
           <StepList {flow} title={shown === 'redeploy' ? $t('admin.update.updater.redeploy.title') : ''} on:retry={retry} />
         {/key}
-        {#if watchTimeout}<p class="err small" role="alert">{$t('admin.update.updater.watchTimeout')}</p>{/if}
+        {#if watchTimeout}
+          <p class="err small" role="alert">{$t('admin.update.updater.watchTimeout')}</p>
+          <Button variant="secondary" icon="refresh" on:click={() => { void refresh().then(() => { if (isRunning(statusOf(view)?.job) || redeployRunning(view)) watch(); else watchTimeout = false; }); }}>{$t('admin.update.check')}</Button>
+        {/if}
       </div>
     {/if}
 
@@ -214,6 +221,7 @@
   .prog { margin-top: 1.2rem; display: grid; gap: .8rem; max-width: 40rem; min-width: 0; }
   .v { font-weight: 600; }
   .small { font-size: .88rem; margin: 0; }
+  .busy { margin-top: 1rem; }
   .err { color: var(--err); }
   .log { margin-top: 1rem; } .log summary, .self summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
   .log pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; max-height: 16rem; overflow: auto; margin: 0; }

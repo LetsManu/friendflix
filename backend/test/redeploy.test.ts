@@ -165,25 +165,44 @@ describe('Portainer redeploy phases', () => {
     expect(await redeployView(ctx, all('sha-aaaaaaa'), T0 + 4_000, BEFORE)).toMatchObject({ phase: 'unchanged' });
   });
 
-  it('a failure names where it happened: refused at once = before anything ran (at null), a late refusal while pulling or recreating, a stack in error after recreating', async () => {
-    const fast = ctxOf();
-    const f = await start(fast);
-    await settleRedeploy(fast, f, { ok: false, error: 'portainer', step: 'stack', status: 401 }, T0 + 1_000);
-    expect(await redeployView(fast, null, T0 + 2_000, BEFORE)).toMatchObject({ phase: 'failed', at: null, step: 'stack' });
-    const late = ctxOf();
-    const l = await start(late);
-    await settleRedeploy(late, l, { ok: false, error: 'portainer', step: 'redeploy', status: 500, late: true }, T0 + 60_000);
-    expect(await redeployView(late, null, T0 + 61_000, BEFORE)).toMatchObject({ phase: 'failed', at: 'pulling' });
-    const seen = ctxOf();
-    const s = await start(seen);
-    // a service was seen recreated before Portainer's refusal came in
-    expect(await redeployView(seen, all('sha-aaaaaaa', { web: svc('web', 'sha-aaaaaaa', 'exited', '') }), T0 + 20_000, BEFORE)).toMatchObject({ phase: 'recreating' });
-    await settleRedeploy(seen, s, { ok: false, error: 'portainer', step: 'redeploy', status: 500, late: true }, T0 + 60_000);
-    expect(await redeployView(seen, null, T0 + 61_000, BEFORE)).toMatchObject({ phase: 'failed', at: 'recreating' });
-    const deploy = ctxOf();
-    const d = await start(deploy);
-    await settleRedeploy(deploy, d, { ok: false, error: 'portainer', step: 'deploy', status: null }, T0 + 3_000);
-    expect(await redeployView(deploy, null, T0 + 4_000, BEFORE)).toMatchObject({ phase: 'failed', at: 'recreating', step: 'deploy' });
+  it('a failure names where it happened, from the step and status (never from timing): refused = request row; a 5xx / no status of the redeploy call = pulling (recreating once a change was seen); a stack in error = recreating', async () => {
+    const at = async (a: { step: string; status: number | null; error?: string }, seen = false) => {
+      const ctx = ctxOf();
+      const id = await start(ctx);
+      if (seen) expect(await redeployView(ctx, all('sha-aaaaaaa', { web: svc('web', 'sha-aaaaaaa', 'exited', '') }), T0 + 20_000, BEFORE)).toMatchObject({ phase: 'recreating' });
+      await settleRedeploy(ctx, id, { ok: false, error: a.error ?? 'portainer', step: a.step, status: a.status }, T0 + 30_000);
+      return (await redeployView(ctx, null, T0 + 31_000, BEFORE))!;
+    };
+    expect(await at({ step: 'stack', status: 401 })).toMatchObject({ phase: 'failed', at: null, step: 'stack' });
+    expect((await at({ step: 'stack_file', status: 500 })).at).toBeNull();
+    expect((await at({ step: 'redeploy', status: 404 })).at).toBeNull(); // a 4xx: refused, nothing ran
+    expect((await at({ step: 'webhook', status: 404, error: 'webhook_gone' })).at).toBeNull();
+    // the redeploy call pulls and recreates before it answers: a fast 5xx failed in there, not at the request
+    expect((await at({ step: 'redeploy', status: 500 })).at).toBe('pulling');
+    expect((await at({ step: 'webhook', status: 502 })).at).toBe('pulling');
+    expect((await at({ step: 'redeploy', status: null })).at).toBe('pulling');
+    expect((await at({ step: 'redeploy', status: 500 }, true)).at).toBe('recreating');
+    expect((await at({ step: 'deploy', status: null })).at).toBe('recreating');
+    // not reachable: the request never got to Portainer
+    expect((await at({ step: 'redeploy', status: null, error: 'portainer_unreachable' })).at).toBeNull();
+  });
+
+  it('a forced redeploy of the same build: a restart counts as the change, so it ends done (not unchanged or timeout) also without a listing', async () => {
+    const kv = new MemoryKV();
+    const id = (await claimRedeploy(ctxOf(OLD, kv), T0))!;
+    expect(await beginRedeploy(ctxOf(OLD, kv), id, 'webhook', 'latest', false, T0, 3_000, true)).toBe(true);
+    expect(JSON.parse((await kv.get(REDEPLOY_KEY))!)).toMatchObject({ v: 1, forced: true });
+    expect(await redeployView(ctxOf(OLD, kv), undefined, T0 + 5_000, BEFORE)).toMatchObject({ phase: 'pulling', running: true });
+    // the same build answers again from a process younger than the redeploy: Portainer recreated it
+    expect(await redeployView(ctxOf(OLD, kv), undefined, T0 + 50_000, T0 + 40_000)).toMatchObject({ phase: 'done', running: false });
+    // not forced: the same restart proves nothing (a crash, a reboot)
+    const kv2 = new MemoryKV();
+    await start(ctxOf(OLD, kv2), 'webhook', false);
+    expect(await redeployView(ctxOf(OLD, kv2), undefined, T0 + 50_000, T0 + 40_000)).toMatchObject({ phase: 'pulling' });
+    // an older record without the field parses as before; a wrong type is not trusted
+    const r = JSON.parse((await kv.get(REDEPLOY_KEY))!);
+    await kv.set(REDEPLOY_KEY, JSON.stringify({ ...r, forced: 'yes' }), 60);
+    expect(await redeployView(ctxOf(OLD, kv), undefined)).toBeNull();
   });
 
   it('a late "ok" landing between the read and the store: the phase is judged again from the newer record, never an end that was not stored', async () => {

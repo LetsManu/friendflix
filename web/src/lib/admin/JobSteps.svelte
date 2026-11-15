@@ -17,4 +17,5 @@
   $: flow = (void $t, jobFlow({ id: '', from: null, to: '', startedAt: '', finishedAt: null, error: null, ...job } as UpdaterJob, { steps }));
 </script>
 
-<StepList {flow} bar={false} note={false} />
+<!-- the Live TV card around it has its own live region: no second announcement -->
+<StepList {flow} bar={false} note={false} live={false} />
