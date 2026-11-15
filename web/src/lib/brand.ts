@@ -155,7 +155,7 @@ const docOrNull = (): Document | null => (typeof document === 'undefined' ? null
 function retitle(doc: Document, from: string, to: string): void {
   if (from === to) return;
   if (doc.title === from) { doc.title = to; return; }
-  const MARK = '';
+  const MARK = '\uE002'; // a private-use character no title contains
   const [pre = '', post = ''] = tr('common.pageTitle', { page: MARK, app: from }).split(MARK);
   const title = doc.title;
   if (title.length >= pre.length + post.length && title.startsWith(pre) && title.endsWith(post)) {

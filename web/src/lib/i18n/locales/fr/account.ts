@@ -71,7 +71,7 @@ const fr: Translation<typeof de> = {
     saveFailed: 'Impossible d’enregistrer la langue.',
     instanceTitle: 'Langue de l’instance',
     instanceTitleEn: 'Instance language',
-    instanceIntro: 'Choisissez la langue par défaut pour tous les utilisateurs de ce {app}. Chacun pourra ensuite choisir sa propre langue dans son profil.',
+    instanceIntro: 'Choisissez la langue par défaut pour tous les utilisateurs de {app}. Chacun pourra ensuite choisir sa propre langue dans son profil.',
     instanceSave: 'Enregistrer comme langue par défaut',
     settingsTitle: 'Langue',
     settingsHint: 'S’applique à ce profil sur tous vos appareils. La langue par défaut de cette instance est : {name}.',

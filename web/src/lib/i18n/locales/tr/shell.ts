@@ -111,7 +111,7 @@ const tr: Translation<typeof de> = {
   pending: {
     title: 'Bu cihaz onay bekliyor',
     intro: 'Güvenlik nedeniyle her yeni cihazın bir kez onaylanması gerekir. Şöyle yapabilirsin:',
-    step1: '{app}’i oturumunu zaten açtığın bir cihazda aç.',
+    step1: '{app} uygulamasını, oturumunu zaten açtığın bir cihazda aç.',
     step2: 'Üstteki zile dokun (“Yeni bir cihaz onayını bekliyor” yazar) ya da profil menüsünden <b>Cihazlar</b>’ı seç.',
     step3: 'Bu cihazın yanındaki <b>Onayla</b>’ya bas. Bu sayfa ardından kendiliğinden açılır.',
     admin: 'Elinde başka cihaz yok mu? Bir yönetici cihazı <b>Yönetici → Cihazlar</b> bölümünden onaylayabilir.',

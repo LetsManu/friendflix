@@ -76,7 +76,7 @@ const pl: Translation<typeof de> = {
     saveFailed: 'Nie udało się zapisać języka.',
     instanceTitle: 'Język instancji',
     instanceTitleEn: 'Instance language',
-    instanceIntro: 'Wybierz domyślny język dla wszystkich w tym {app}. Każda osoba może potem wybrać własny język w swoim profilu.',
+    instanceIntro: 'Wybierz domyślny język dla wszystkich użytkowników {app}. Każda osoba może potem wybrać własny język w swoim profilu.',
     instanceSave: 'Zapisz jako domyślny',
     settingsTitle: 'Język',
     settingsHint: 'Dotyczy tego profilu na wszystkich urządzeniach. Domyślny język tej instancji to: {name}.',

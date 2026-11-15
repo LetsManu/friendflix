@@ -181,7 +181,7 @@ export function freshState(): MockState {
     ],
     revokedOthers: 2,
     loginArt: { status: 200, images: [] },
-    brand: DEFAULT_BRAND_ANSWER,
+    brand: structuredClone(DEFAULT_BRAND_ANSWER), // a copy per test: a spec may change it
     security: {
       mfa: { totp: true, webauthn: false, static: true },
       devices: [{ id: '11', type: 'totp', name: 'Pixel 8', lastUsed: null }, { id: '21', type: 'static', name: 'Recovery', lastUsed: null }],

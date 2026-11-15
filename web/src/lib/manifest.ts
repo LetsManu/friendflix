@@ -55,19 +55,49 @@ function symbolIcons(url: string) {
 /** how long the manifest route waits for the backend's brand before it answers with the defaults */
 export const BRAND_TIMEOUT_MS = 2000;
 
+/** the backend's answer, or null (no backend configured, no answer in time, or anything but a brand) */
+async function fetchBrand(backend: string | undefined, fetchFn: typeof fetch): Promise<LoadedBrand | null> {
+  if (!backend || !/^https?:\/\//.test(backend)) return null;
+  try {
+    const r = await fetchFn(new URL(BRAND_URL, backend), { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(BRAND_TIMEOUT_MS) });
+    if (!r.ok) return null;
+    return parseBrand(await r.json());
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The brand for the manifest, fetched from the backend's public route over the internal network (`backend`: BACKEND_URL, e.g.
  * http://backend:3000). The defaults when no backend is configured, it does not answer in time or answers anything else.
  */
 export async function manifestBrand(backend: string | undefined, fetchFn: typeof fetch = fetch): Promise<LoadedBrand> {
-  if (!backend || !/^https?:\/\//.test(backend)) return DEFAULT_LOADED;
-  try {
-    const r = await fetchFn(new URL(BRAND_URL, backend), { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(BRAND_TIMEOUT_MS) });
-    if (!r.ok) return DEFAULT_LOADED;
-    return parseBrand(await r.json()) ?? DEFAULT_LOADED;
-  } catch {
-    return DEFAULT_LOADED;
+  return (await fetchBrand(backend, fetchFn)) ?? DEFAULT_LOADED;
+}
+
+/** how long the manifest route reuses the backend's brand, and how long a failed fetch (the defaults) */
+export const BRAND_CACHE_MS = 60_000;
+export const BRAND_FAIL_CACHE_MS = 10_000;
+
+let memo: { at: number; ttl: number; backend: string | undefined; value: Promise<LoadedBrand | null> } | null = null;
+
+/**
+ * manifestBrand, remembered in this process: every request of the web container reaches the backend from the same address, so
+ * uncached they would share (and could exhaust) one rate-limit bucket of the public route. A brand is reused for 60 s, a failure
+ * (answered with the defaults) for 10 s; concurrent requests share one fetch.
+ */
+export async function cachedManifestBrand(backend: string | undefined, fetchFn: typeof fetch = fetch, now = Date.now()): Promise<LoadedBrand> {
+  if (!memo || memo.backend !== backend || now - memo.at >= memo.ttl) {
+    const entry: NonNullable<typeof memo> = { at: now, ttl: BRAND_CACHE_MS, backend, value: fetchBrand(backend, fetchFn) };
+    memo = entry;
+    void entry.value.then((b) => { if (!b) entry.ttl = BRAND_FAIL_CACHE_MS; });
   }
+  return (await memo.value) ?? DEFAULT_LOADED;
+}
+
+/** tests: forget the remembered brand */
+export function resetManifestBrandCache(): void {
+  memo = null;
 }
 
 /** `?lang` (only the 7 supported codes), else the best Accept-Language match (q-weighted), else German. */

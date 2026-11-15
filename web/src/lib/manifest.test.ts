@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { LOCALE_CODES, trIn, loadLocale } from '#lib/i18n';
 import { DEFAULT_LOADED, parseBrand } from '#lib/brand';
 import { deriveTokens } from '#lib/brandColors';
-import { chooseLang, manifestBrand, manifestFor } from './manifest';
+import { BRAND_CACHE_MS, BRAND_FAIL_CACHE_MS, cachedManifestBrand, chooseLang, manifestBrand, manifestFor, resetManifestBrandCache } from './manifest';
 
 describe('manifest language', () => {
   it('?lang is whitelisted to the supported codes', () => {
@@ -79,5 +79,27 @@ describe('manifest brand', () => {
     expect(await manifestBrand(undefined, never as unknown as typeof fetch)).toBe(DEFAULT_LOADED);
     expect(await manifestBrand('file:///etc/passwd', never as unknown as typeof fetch)).toBe(DEFAULT_LOADED);
     expect(never).not.toHaveBeenCalled();
+  });
+
+  it('the route reuses the brand for a minute, a failure for 10 s; concurrent requests share one fetch', async () => {
+    resetManifestBrandCache();
+    let fail = false;
+    const f = vi.fn(async () => (fail ? new Response('{}', { status: 502 }) : new Response(JSON.stringify(answer()))));
+    const fx = f as unknown as typeof fetch;
+    const B = 'http://backend:3000';
+    const [a, b] = await Promise.all([cachedManifestBrand(B, fx, 0), cachedManifestBrand(B, fx, 0)]);
+    expect([a.name, b.name]).toEqual(['Nordlicht Kino', 'Nordlicht Kino']);
+    expect(f).toHaveBeenCalledTimes(1);
+    expect((await cachedManifestBrand(B, fx, BRAND_CACHE_MS - 1)).name).toBe('Nordlicht Kino');
+    expect(f).toHaveBeenCalledTimes(1);
+    fail = true;
+    expect(await cachedManifestBrand(B, fx, BRAND_CACHE_MS)).toBe(DEFAULT_LOADED); // expired: fetched again, failed
+    expect(f).toHaveBeenCalledTimes(2);
+    expect(await cachedManifestBrand(B, fx, BRAND_CACHE_MS + BRAND_FAIL_CACHE_MS - 1)).toBe(DEFAULT_LOADED);
+    expect(f).toHaveBeenCalledTimes(2);
+    fail = false;
+    expect((await cachedManifestBrand(B, fx, BRAND_CACHE_MS + BRAND_FAIL_CACHE_MS)).name).toBe('Nordlicht Kino'); // a failure is retried after 10 s
+    expect(f).toHaveBeenCalledTimes(3);
+    resetManifestBrandCache();
   });
 });

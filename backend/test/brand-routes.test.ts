@@ -158,6 +158,20 @@ describe('brand routes', () => {
     const family = '\u{1f468}\u200d\u{1f469}\u200d\u{1f467}';
     const zwj = await as(admin, 'PUT', '/api/admin/brand', { rev: rev + 1, brand: { name: `Kino ${family}` } });
     expect([zwj.statusCode, zwj.json().brand.name]).toEqual([200, `Kino ${family}`]);
+    // the non-joiner of Persian and Indic names (Persian "Filmkhaneh" with U+200C), and a subdivision flag (Scotland: tag characters)
+    const persian = '\u0641\u06cc\u0644\u0645\u200c\u062e\u0627\u0646\u0647';
+    const scotland = '\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}';
+    let r2 = zwj.json().rev as number;
+    for (const name of [persian, `Kino ${scotland}`]) {
+      const ok2 = await as(admin, 'PUT', '/api/admin/brand', { rev: r2, brand: { name } });
+      expect([ok2.statusCode, ok2.json().brand.name], name).toEqual([200, name]);
+      r2 = ok2.json().rev;
+    }
+    // tag characters anywhere else stay refused: alone, after another emoji, without the cancel tag
+    for (const name of ['Kino\u{e0067}\u{e0062}', '\u{1f3ac}\u{e0067}\u{e007f}', '\u{1f3f4}\u{e0067}\u{e0062}']) {
+      const bad = await as(admin, 'PUT', '/api/admin/brand', { rev: r2, brand: { name } });
+      expect([bad.statusCode, bad.json()], name).toEqual([400, { error: 'invalid', field: 'name' }]);
+    }
   });
 
   it('the website is stored as one canonical absolute URL', async () => {

@@ -70,7 +70,7 @@ export default {
     /** shown to the admin once (no instance default stored yet); bilingual on purpose */
     instanceTitle: 'Sprache der Instanz',
     instanceTitleEn: 'Instance language',
-    instanceIntro: 'Wähle die Standardsprache für alle auf diesem {app}. Jede Person kann danach in ihrem Profil eine eigene Sprache wählen.',
+    instanceIntro: 'Wähle die Standardsprache für alle, die {app} nutzen. Jede Person kann danach in ihrem Profil eine eigene Sprache wählen.',
     instanceSave: 'Als Standard speichern',
     settingsTitle: 'Sprache',
     settingsHint: 'Gilt für dieses Profil auf allen Geräten. Die Standardsprache dieser Instanz ist {name}.',

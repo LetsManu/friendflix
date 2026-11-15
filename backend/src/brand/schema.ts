@@ -10,13 +10,18 @@ import { z } from 'zod';
 
 /**
  * Characters a brand text must not contain: C0/C1 controls; every format character (\p{Cf}: the bidi embedding/override/isolate marks
- * U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069, zero-width spaces, the BOM, the soft hyphen, tag characters), except U+200D, the
- * joiner of emoji sequences; the line and paragraph separators; and the Hangul fillers, letters that render as nothing. A name must not
- * reorder the text around it, look empty, or carry a line break into a title or the manifest.
+ * U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069, zero-width spaces, the BOM, the soft hyphen, stray tag characters), except
+ * U+200D (the joiner of emoji sequences) and U+200C (the non-joiner Persian and Indic names need); the line and paragraph separators;
+ * and the Hangul fillers, letters that render as nothing. A name must not reorder the text around it, look empty, or carry a line break
+ * into a title or the manifest. Tag characters are fine inside a subdivision flag (U+1F3F4, tags, U+E007F: the Scotland flag).
  */
-const CONTROL = /[\p{Cc}\p{Zl}\p{Zp}\u115f\u1160\u3164\uffa0]|(?!\u200d)\p{Cf}/u;
+const CONTROL = /[\p{Cc}\p{Zl}\p{Zp}\u115f\u1160\u3164\uffa0]|(?![\u200c\u200d])\p{Cf}/u;
 /** the same, but line breaks are allowed (the about text) */
-const CONTROL_EXCEPT_NEWLINE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\p{Zl}\p{Zp}\u115f\u1160\u3164\uffa0]|(?!\u200d)\p{Cf}/u;
+const CONTROL_EXCEPT_NEWLINE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\p{Zl}\p{Zp}\u115f\u1160\u3164\uffa0]|(?![\u200c\u200d])\p{Cf}/u;
+/** a subdivision flag emoji: the black flag, its tag characters and the cancel tag */
+const FLAG_TAGS = /\u{1f3f4}[\u{e0020}-\u{e007e}]+\u{e007f}/gu;
+/** whether `s` has a refused character (`control`), the tags of a subdivision flag allowed */
+const hasControl = (s: string, control: RegExp) => control.test(s.replace(FLAG_TAGS, '\u{1f3f4}'));
 /** something a person can see: a letter, a digit or a symbol (an emoji is a symbol; the blank braille pattern is not) */
 const VISIBLE = /(?!\u2800)[\p{L}\p{N}\p{S}]/u;
 
@@ -24,7 +29,7 @@ const VISIBLE = /(?!\u2800)[\p{L}\p{N}\p{S}]/u;
 const chars = (s: string) => [...s].length;
 
 const text = (max: number, min = 0, control = CONTROL) =>
-  z.string().transform((s) => s.trim()).refine((s) => chars(s) >= min && chars(s) <= max && !control.test(s));
+  z.string().transform((s) => s.trim()).refine((s) => chars(s) >= min && chars(s) <= max && !hasControl(s, control));
 
 /**
  * http(s) only, no credentials in the URL, at most 200 characters; '' = none. Stored as the parsed URL's href, so every consumer gets

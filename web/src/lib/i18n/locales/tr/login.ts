@@ -69,7 +69,7 @@ const login: Translation<typeof de> = {
   notice: {
     unavailableTimeout: 'Oturum açma hizmeti çok geç yanıt verdi. Birazdan tekrar dene.',
     unavailableUnreachable: '{app} şu anda oturum açma hizmetine ulaşamıyor. Birazdan tekrar dene.',
-    unavailableServiceToken: 'Oturum açma hizmeti {app}\'in erişimini reddediyor. Bir yönetici bunu Yönetim → Durum → Oturum açma altında onarabilir.',
+    unavailableServiceToken: 'Oturum açma hizmeti {app} uygulamasının erişimini reddediyor. Bir yönetici bunu Yönetim → Durum → Oturum açma altında onarabilir.',
     classicTitle: 'Giriş sayfasında devam et',
     classicText: 'Bu adım yalnızca giriş sayfasında çalışır.',
     classic: 'Giriş sayfasında devam et',
@@ -108,7 +108,7 @@ const login: Translation<typeof de> = {
       authentik_user_not_found: 'Hesabın oturum açma hizmetinde bulunamadı. Bir yöneticiye sor.',
     },
     problem: {
-      service_token: 'Güvenlik ayarların şu anda okunamıyor: oturum açma hizmeti {app}\'in erişimini reddediyor. Bir yönetici bunu Yönetim → Durum → Oturum açma altında onarabilir.',
+      service_token: 'Güvenlik ayarların şu anda okunamıyor: oturum açma hizmeti {app} uygulamasının erişimini reddediyor. Bir yönetici bunu Yönetim → Durum → Oturum açma altında onarabilir.',
       unreachable: 'Güvenlik ayarların şu anda okunamıyor: oturum açma hizmeti yanıt vermiyor.',
       error: 'Güvenlik ayarların şu anda okunamıyor.',
       not_configured: '{app}, oturum açma hizmetinin API\'sine bağlı değil; bu ayarlar oturum açma sayfasında yönetilir.',
@@ -178,7 +178,7 @@ const login: Translation<typeof de> = {
       add: 'Geçiş anahtarı ekle',
       addClassic: 'Giriş sayfasında ekle',
       note: 'Burada oluşturduğun geçiş anahtarları {app} için geçerlidir.',
-      renew: 'Geçiş anahtarlarını daha önce giriş sayfasında mı oluşturdun? Onlar {app}’te geçmez. Burada bir kez yeni bir geçiş anahtarı ekle.',
+      renew: 'Geçiş anahtarlarını daha önce giriş sayfasında mı oluşturdun? Onlar {app} içinde geçmez. Burada bir kez yeni bir geçiş anahtarı ekle.',
       exists: 'Bu cihazda hesabın için zaten bir geçiş anahtarı var. Giriş yapmak için onu kullan ya da parola uygulamasından kaldır.',
       unsupportedOptions: 'Bu cihaz geçiş anahtarının gereksinimlerini karşılayamıyor.',
       failed: 'Geçiş anahtarı oluşturulamadı.',
