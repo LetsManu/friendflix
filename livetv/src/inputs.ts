@@ -57,9 +57,9 @@ export class AudioUnavailable extends Error {
  * Why an HLS input ended its run by itself (fixed codes; the driver logs them): `restart` the provider's sequence went back
  * (follow), `gap` segments were missed, `discontinuity` one rendition of a pair has one the other does not carry (these three in
  * a strict pair only: a single playlist starts again at the edge, ffmpeg smooths its timestamps), `segments_failed`
- * SEGMENT_FAILS segments in a row could not be loaded.
+ * SEGMENT_FAILS segments in a row could not be loaded, `not_advancing` the playlist showed nothing new for advanceTimeoutMs.
  */
-export type InputEndCode = 'restart' | 'gap' | 'discontinuity' | 'segments_failed';
+export type InputEndCode = 'restart' | 'gap' | 'discontinuity' | 'segments_failed' | 'not_advancing';
 /** ends of a run that are the provider's doing, not a broken rendition: the separate audio is not blamed for them (audioFault) */
 const NOT_A_FAULT: ReadonlySet<InputEndCode> = new Set(['restart', 'discontinuity']);
 export class InputEnd extends Error {
@@ -129,6 +129,13 @@ export const SEGMENT_FAILS = 3;
  */
 export const MAX_HOLE_S = 8;
 
+/**
+ * A playlist that showed nothing new for this long ends its input (H2): 3 target durations, at least 12 s, at most 20 s. In a pair
+ * ffmpeg reads both renditions in lockstep, so one that stops advancing holds the whole output (and blocks the other's pipe);
+ * ending the run here is well before the driver's stall watchdog (STALL_MS, 32 s), and the restart resumes where it was.
+ */
+export const advanceTimeoutMs = (targetDuration: number): number => Math.min(20_000, Math.max(12_000, 3 * targetDuration * 1000));
+
 interface Follow {
   /** the media sequence to start at (an aligned start, alignStart); null or missing: the newest START_SEGMENTS */
   from?: number | null;
@@ -158,7 +165,8 @@ const isFatal = (e: unknown): boolean => e instanceof PlaylistRefused || (e inst
 /**
  * An HLS input as one byte stream: the newest segments first (or from `o.from`), then every new one in order. A stale read is no
  * update (follow). A segment that fails is asked for once more, then skipped; SEGMENT_FAILS in a row (in a pair also a hole over
- * MAX_HOLE_S) end the input (`segments_failed`). A failed playlist poll is tried again at the next poll.
+ * MAX_HOLE_S) end the input (`segments_failed`). A failed playlist poll is tried again at the next poll; a playlist that gives
+ * nothing new for advanceTimeoutMs (failed polls and stale reads included) ends it (`not_advancing`).
  */
 async function* hlsBytes(first: { text: string; base: string; url: string }, get: Get, signal: AbortSignal, o: Follow = {}): AsyncGenerator<Uint8Array> {
   let pl = { text: first.text, base: first.base };
@@ -170,6 +178,8 @@ async function* hlsBytes(first: { text: string; base: string; url: string }, get
   /** segments skipped in a row and their seconds */
   let failed = 0;
   let hole = 0;
+  /** when the playlist last gave a new segment (taken or skipped), for advanceTimeoutMs */
+  let progress = Date.now();
   const side = o.side ? `${o.side} ` : '';
   /** `onSkip`: the pair broke its order and is aligned again; a rendition that could not be loaded is not that */
   const end = (code: InputEndCode) => { if (code !== 'segments_failed') o.onSkip?.(); return new InputEnd(code); };
@@ -211,13 +221,16 @@ async function* hlsBytes(first: { text: string; base: string; url: string }, get
         if (failed >= SEGMENT_FAILS || (o.strict && hole > MAX_HOLE_S)) throw end('segments_failed');
         o.log?.(`${side}segment skipped after a retry (${r.failed})`);
         last = s.seq;
+        progress = Date.now();
         continue;
       }
       failed = 0;
       hole = 0;
       yield* r.body;
       last = s.seq;
+      progress = Date.now();
     }
+    if (f.take.length === 0 && Date.now() - progress >= advanceTimeoutMs(p.targetDuration)) throw end('not_advancing');
     if (!(await wait(Math.min(MAX_POLL_S, Math.max(MIN_POLL_S, p.targetDuration / 2)) * 1000, signal))) return;
     try {
       const r = await get(first.url, PLAYLIST_MAX_BYTES, PLAYLIST_TIMEOUT_MS);
