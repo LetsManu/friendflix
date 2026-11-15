@@ -143,8 +143,6 @@ const dict: Translation<typeof de> = {
     checked: 'Checked for updates.',
     checkedUpToDate: 'You are up to date.',
     confirmBody: 'The portal is updated to version {sha} and is briefly unavailable meanwhile.',
-    working: 'Running for {s} s …',
-    step: { started: 'Update triggered', restarting: 'Services are restarting', newversion: 'New version is starting', done: 'Done – the page reloads' },
     loadFailed: 'The version info could not be loaded.',
     commit: 'Change',
     author: 'Author',

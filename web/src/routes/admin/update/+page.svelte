@@ -6,6 +6,9 @@
    * confirm + progress steps (Portainer redeploy), changelog. Without the updater (compose.no-updater.yaml) the channel switch only saves
    * UPDATE_CHANNEL (the images follow FF_TAG); with it (GET /api/admin/updater answers present) the updater card replaces the
    * Portainer card and installs the selected channel itself (UpdaterCard.svelte). The backend never touches Docker.
+   * Without an updater the redeploy is followed from the backend's record (GET /api/admin/updater `redeploy`, backend redeploy.ts),
+   * the same one the updater card follows: no page-only state, so a reload mid-update resumes it, and it ends as the backend
+   * judged it (done, unchanged, failed with the step, timeout after 15 minutes).
    */
   import { onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
@@ -15,16 +18,19 @@
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import { saveSettings } from '#lib/admin/settings/api';
-  import { CHANNELS, VERSION_RE, pullCommand, envLineFor, isUpToDate, showSnippet, snippetReason, stepChannel, switching, type ChannelInfo, type SelectedChannel } from '#lib/admin/updateChannel';
-  import { portainerMissing, statusOf, type UpdaterView } from '#lib/admin/updater';
+  import { CHANNELS, VERSION_RE, pullCommand, envLineFor, isUpToDate, showSnippet, snippetReason, stepChannel, switching, updateTarget, type ChannelInfo, type SelectedChannel } from '#lib/admin/updateChannel';
+  import { mergeView, portainerMissing, redeployRunning, statusOf, type UpdaterView } from '#lib/admin/updater';
   import UpdaterCard from '#lib/admin/UpdaterCard.svelte';
+  import Halo from '#lib/admin/Halo.svelte';
+  import StepList from '#lib/admin/StepList.svelte';
+  import { redeployFlow } from '#lib/admin/steps';
+  import { watcher } from '#lib/admin/watch';
   import Field from '#lib/ui/Field.svelte';
   import CopyField from '#lib/ui/CopyField.svelte';
   import { toast } from '#lib/ui/toast';
   import { confirm } from '#lib/ui/confirm';
   import Button from '#lib/ui/Button.svelte';
   import DataTable from '#lib/ui/DataTable.svelte';
-  import Progress from '#lib/ui/Progress.svelte';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import StatusPill from '#lib/ui/StatusPill.svelte';
   import Toggle from '#lib/ui/Toggle.svelte';
@@ -69,9 +75,7 @@
 
   let u: Info | null = null, loadErr = false;
   let force = false;
-  let phase: '' | 'started' | 'restarting' | 'newversion' | 'done' | 'timeout' = '';
-  let timer: ReturnType<typeof setInterval> | undefined;
-  let t0 = 0, now = Date.now();
+  let now = Date.now();
   const sha7 = (s: string) => s.slice(0, 7);
   const dt = (d?: string | null) => (d ? fmtDateTime(d) : tr('admin.update.unknown'));
   /** release-based when a release exists, else the commit comparison with main (older backends send no release fields) */
@@ -126,9 +130,22 @@
     if (!VERSION_RE.test(v)) { pinErr = tr('admin.update.channel.versionInvalid'); return; }
     void pick('pinned', v);
   }
-  async function loadUpdater() {
-    try { up = await api<UpdaterView>('/api/admin/updater'); } catch { up = up ?? { present: false }; }
+  async function loadUpdater(signal?: AbortSignal): Promise<boolean> {
+    try {
+      const next = await api<UpdaterView>('/api/admin/updater', { signal });
+      up = up ? mergeView(up, next).view : next;
+      return true;
+    } catch { up = up ?? { present: false }; return false; }
   }
+  /** the page's own follow (no updater card): a failed poll is the backend restarting, "reconnecting"; the end reloads the version */
+  const w = watcher({
+    poll: loadUpdater,
+    busy: () => Boolean(up && !up.present && redeployRunning(up)),
+    tick: (ok) => { now = Date.now(); reconnecting = !ok; },
+    done: () => { reconnecting = false; void load(); },
+    timeout: () => { reconnecting = false; watchTimeout = true; },
+  });
+  function follow() { watchTimeout = false; if (up && !up.present && redeployRunning(up)) w.start(); }
   function segKey(e: KeyboardEvent) {
     const next = stepChannel(sel, e.key);
     if (!next) return;
@@ -138,7 +155,11 @@
   }
   const verLabel = (v: string, c?: string | null) => (c ? `${v} · ${c}` : v);
   $: busy = $busyKeys.has('update:check') || $busyKeys.has('update:start');
-  $: running = phase === 'started' || phase === 'restarting' || phase === 'newversion';
+  /** without an updater: the last redeploy from the backend's record, followed while it runs */
+  $: redeploy = up && !up.present ? (up.redeploy ?? null) : null;
+  $: running = Boolean(redeploy?.running);
+  let reconnecting = false, watchTimeout = false;
+  $: flow = redeploy ? (void $t, redeployFlow(redeploy, { reconnecting, now })) : null;
 
   async function load() {
     loadErr = false;
@@ -146,6 +167,8 @@
     try { u = await api<Info>('/api/admin/update'); } catch { loadErr = true; }
     await upd;
     pinDraft = u?.channel?.version ?? pinDraft;
+    // a redeploy found running (a reload mid-update): followed without a click
+    if (!w.running) follow();
   }
   function check() {
     void runAction({
@@ -157,36 +180,23 @@
   }
 
   async function start() {
-    if (!u || !(await confirm({ title: tr('admin.update.confirm'), body: tr('adminContent.update.confirmBody', { sha: u.latest ? sha7(u.latest.sha) : sha7(u.current.sha) }), danger: true, confirmLabel: tr('admin.update.updateNow') }))) return;
+    if (!u || !(await confirm({ title: tr('admin.update.confirm'), body: tr('adminContent.update.confirmBody', { sha: updateTarget(u) }), danger: true, confirmLabel: tr('admin.update.updateNow') }))) return;
     const res = await runAction({
-      key: 'update:start', run: () => api('/api/admin/update', { method: 'POST' }), error: updateError,
+      // "reload anyway" of the same build: the backend then counts its own restart as the change (redeploy.ts forced)
+      key: 'update:start', run: () => api('/api/admin/update', { method: 'POST', body: upToDate && force ? { force: true } : {} }), error: updateError,
     });
-    if (!res.ok || !u) return;
-    phase = 'started'; t0 = Date.now(); now = t0;
-    const target = u.latest?.sha ?? u.current.sha;
-    const from = u.current.sha;
-    let down = false; // a forced reload of the same version is only detectable by the restart gap
-    timer = setInterval(async () => {
-      now = Date.now();
-      if (now - t0 > 5 * 60_000) { stop(); phase = 'timeout'; return; }
-      try {
-        const r = await fetch('/api/version', { cache: 'no-store' });
-        if (!r.ok) throw new Error();
-        const { sha } = await r.json();
-        if (sha === target && (sha !== from || down)) { stop(); phase = 'done'; setTimeout(() => location.reload(), 2500); }
-        else if (down) phase = 'newversion';
-      } catch { down = true; phase = 'restarting'; }
-    }, 3000);
+    // started, or refused by Portainer (recorded too, with the step): the backend's record says which
+    if (res.ok || (res.error as { status?: number } | undefined)?.status === 502) {
+      await loadUpdater();
+      follow();
+    }
   }
-  function stop() { clearInterval(timer); timer = undefined; }
   onMount(() => {
     void load();
   });
-  onDestroy(stop);
-
-  const STEPS = ['started', 'restarting', 'newversion', 'done'] as const;
-  $: stepIdx = phase === 'timeout' ? -1 : STEPS.indexOf(phase as (typeof STEPS)[number]);
-  $: elapsed = phase && t0 ? Math.max(0, Math.round((now - t0) / 1000)) : 0;
+  onDestroy(w.stop);
+  const clock = setInterval(() => { if (w.running) now = Date.now(); }, 1000);
+  onDestroy(() => clearInterval(clock));
 
   $: commitCols = [
     { key: 'message', label: $t('adminContent.update.commit'), value: (c) => c.message, primary: true, sortable: false },
@@ -287,26 +297,17 @@
       <p class="muted"><Rich text={$t('admin.update.setup')} /></p>
     {:else}
       <div class="apply">
-        <Button icon="download" pending={$busyKeys.has('update:start')} disabled={running || busy || (upToDate && !force)} on:click={start}>{$t('admin.update.updateNow')}</Button>
+        <Halo live={running}><Button icon="download" pending={$busyKeys.has('update:start') || running} disabled={running || busy || (upToDate && !force)} on:click={start}>{$t('admin.update.updateNow')}</Button></Halo>
         {#if upToDate}<Toggle label={$t('admin.update.force')} bind:checked={force} disabled={running} />{/if}
       </div>
     {/if}
 
-    {#if phase}
-      <div class="prog" aria-live="polite">
-        {#if phase === 'timeout'}
-          <p class="err" role="alert"><Icon name="alert" size={18} /> {$t('admin.update.timeout')}</p>
-          <Button variant="secondary" icon="refresh" on:click={() => { phase = ''; void load(); }}>{$t('admin.update.check')}</Button>
-        {:else}
-          <Progress value={phase === 'done' ? 100 : null} label={phase === 'done' ? $t('admin.update.done') : $t('adminContent.update.working', { s: elapsed })} />
-          <ol class="steps">
-            {#each STEPS as s, i (s)}
-              <li class:done={i < stepIdx || phase === 'done'} class:cur={i === stepIdx && phase !== 'done'} aria-current={i === stepIdx && phase !== 'done' ? 'step' : undefined}>
-                <span class="dot" aria-hidden="true">{#if i < stepIdx || phase === 'done'}<Icon name="check" size={14} />{:else if i === stepIdx}<span class="spinner"></span>{/if}</span>
-                <span>{$t(`adminContent.update.step.${s}` as 'adminContent.update.step.started')}</span>
-              </li>
-            {/each}
-          </ol>
+    {#if flow && redeploy}
+      <div class="prog" data-redeploy={redeploy.phase}>
+        {#key redeploy.id}<StepList {flow} title={$t('admin.update.updater.redeploy.title')} on:retry={start} />{/key}
+        {#if watchTimeout}
+          <p class="err small" role="alert">{$t('admin.update.updater.flow.noAnswer')}</p>
+          <Button variant="secondary" icon="refresh" on:click={() => { void loadUpdater().then(follow); }}>{$t('admin.update.check')}</Button>
         {/if}
       </div>
     {/if}
@@ -336,12 +337,8 @@
   .small { font-size: .88rem; margin: .8rem 0 0; }
   .pending { color: var(--warn, #f5b942); }
   .apply { display: flex; align-items: center; gap: 1.2rem; flex-wrap: wrap; }
-  .prog { margin-top: 1.2rem; display: grid; gap: 1rem; max-width: 36rem; }
-  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
-  .steps li { display: flex; align-items: center; gap: .7rem; color: var(--mut); }
-  .steps li.cur { color: var(--fg); font-weight: 600; } .steps li.done { color: var(--fg); }
-  .dot { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 2px solid #46505a; flex: none; font-size: .7rem; }
-  .done .dot { background: var(--ok); border-color: var(--ok); color: #06210e; } .cur .dot { border-color: var(--warn); color: var(--warn); }
+  .prog { margin-top: 1.2rem; display: grid; gap: .8rem; max-width: 40rem; min-width: 0; }
+  .err { color: var(--err); }
   .sk { display: grid; gap: .8rem; }
   .v { font-weight: 600; }
   .notes { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: .8rem; }
