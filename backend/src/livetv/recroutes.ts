@@ -9,7 +9,7 @@ import { permsOf, requirePerm } from '../permGuard.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { livetvInstalled, livetvSystem } from './detect.js';
 import { adminListRecordings, deleteRecording, effectiveStorage, getRecording, libraryModeAvailable, listRecordings, mayRecord, progKey, recordingView, recordSettings, seriesKeyOf, type RecordingView, setKeep, setVisibility, visibleRecording, REC_STATES, VISIBILITIES, type RecState } from './recordings.js';
-import { expandRules, forecast, insertScheduled, programmeAt, releaseReservation, validTz, type RuleRow } from './recsched.js';
+import { expandRules, forecast, insertScheduled, programmeAt, releaseReservation, stopRecording, validTz, type RuleRow } from './recsched.js';
 import { exportToLibrary, usage } from './recstore.js';
 import { channelAllowed } from './rights.js';
 import { invalidateRecordingUses } from './streams.js';
@@ -54,6 +54,8 @@ const deleteAllBody = z.object({ confirm: z.literal('LÖSCHEN') }).strict();
 const playBody = z.object({ via: z.enum(['local', 'chromecast', 'airplay']).optional() }).strict();
 const createLibraryBody = z.object({ name: z.string().trim().min(1).max(60).optional(), kind: z.enum(['homevideos', 'mixed']).optional() }).strict();
 const MAX_SPAN_MS = 24 * 3_600_000;
+/** a time span may start this much before the request (a form opened a moment ago); earlier would be a past that cannot be recorded */
+export const SPAN_START_LEAD_MS = 5 * 60_000;
 /** at most this many planned recordings get a forecast in one list answer */
 const FORECAST_LIST_MAX = 50;
 /** an HD recording (about 6 Mbit/s) fills this many bytes an hour: the storage card's "noch ca. … h in HD" */
@@ -116,13 +118,17 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!(await mayRecord(ctx, u, profile))) return reply.code(403).send({ error: 'record_forbidden' });
     if (!(await channelAllowed(ctx, u, profile, b.data.channelId))) return notFound(reply);
     const start = Date.parse(b.data.start);
-    const prog = await programmeAt(ctx, b.data.channelId, start);
+    // a programme at `start` is recorded whole (it follows the guide; a running one records from now on, A-I5); an own `end` that
+    // is not the programme's end makes it a time span (part of a programme: the next 30 minutes, the second half)
+    const found = await programmeAt(ctx, b.data.channelId, start);
+    const ownEnd = b.data.end && b.data.title ? Date.parse(b.data.end) : null;
+    const prog = found && (ownEnd === null || ownEnd === found.end) ? found : null;
     let end: number;
     if (prog) end = prog.end;
-    else if (b.data.end && b.data.title) end = Date.parse(b.data.end);
+    else if (ownEnd !== null) end = ownEnd;
     else return notFound(reply);
     if (!(end > start) || end - start > MAX_SPAN_MS) return reply.code(400).send({ error: 'invalid', field: 'end' });
-    if (end <= Date.now()) return reply.code(400).send({ error: 'invalid', field: 'start' });
+    if (end <= Date.now() || (!prog && start < Date.now() - SPAN_START_LEAD_MS)) return reply.code(400).send({ error: 'invalid', field: 'start' });
     const existing = async () => (await ctx.db.query<{ id: string }>(
       "select id from livetv_recordings where profile_id = $1 and channel_id = $2 and start_at = $3 and state in ('scheduled','starting','recording')", [profile.id, b.data.channelId, new Date(start)])).rows[0];
     const dup = await existing();
@@ -222,6 +228,22 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     await deleteRecording(ctx, id, 'owner');
     if (r.channel_id) await releaseReservation(ctx, r.channel_id).catch(() => undefined);
     return reply.code(204).send();
+  });
+
+  /**
+   * *Aufnahme beenden* (the owner): a running recording ends now and keeps what it has (done, or partial with its gaps), unlike DELETE,
+   * which removes it. 409 `not_recording` for anything that is not recording (a planned one is cancelled with DELETE).
+   */
+  app.post('/api/livetv/recordings/:id/stop', ownerWrite, async (req, reply) => {
+    if (!livetvInstalled(ctx)) return off(reply);
+    const id = idParam(req);
+    if (!id) return notFound(reply);
+    const { user: u, profile } = who(req);
+    const r = await visibleRecording(ctx, u, profile, id);
+    if (!r) return notFound(reply);
+    if (r.profile_id !== profile.id) return reply.code(403).send({ error: 'forbidden' });
+    if ((await stopRecording(ctx, id)) === 'not_recording') return reply.code(409).send({ error: 'not_recording' });
+    return { recording: await recordingView(ctx, u, profile, id) };
   });
 
   /** *Behalten → in Bibliothek* (mode `both`, spec §15.3): the owner's finished recording is copied into the Jellyfin library and kept */
