@@ -296,7 +296,7 @@ const dict: Translation<typeof de> = {
     libsNoneLine: 'Kütüphane olmadan {name} yalnızca canlı TV görür.',
   },
   roles: {
-    intro: 'Her rolün neler yapabileceği. Değişiklikler yalnızca “Kaydet” ile geçerli olur ve mevcut hesaplara da uygulanır.',
+    intro: 'Her rolün neler yapabileceği. Bir rolü kendi sayfasında düzenlersin; kaydedilen değişiklikler mevcut hesaplara da uygulanır.',
     default: 'Varsayılan değer',
     requests: 'İstekler',
     playback: 'Oynatma',

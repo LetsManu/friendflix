@@ -296,7 +296,7 @@ const dict: Translation<typeof de> = {
     libsNoneLine: 'Bez biblioteki {name} widzi tylko telewizję na żywo.',
   },
   roles: {
-    intro: 'Co może robić każda rola. Zmiany obowiązują dopiero po kliknięciu „Zapisz” i dotyczą też istniejących kont.',
+    intro: 'Co może robić każda rola. Rolę edytujesz na jej własnej stronie; zapisane zmiany dotyczą też istniejących kont.',
     default: 'Wartość domyślna',
     requests: 'Prośby',
     playback: 'Odtwarzanie',

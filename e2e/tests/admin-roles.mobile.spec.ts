@@ -199,6 +199,12 @@ test.describe('Rollen & Rechte (phone)', () => {
     const box = (await page.locator('.dlg').boundingBox())!;
     expect(box.y).toBeGreaterThanOrEqual(0);
     expect(box.y + box.height).toBeLessThanOrEqual(640);
+    // a long area line never widens the dialog past the screen (it ends in "…")
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(360);
+    await dlg.getByRole('radio', { name: 'Kopie von …' }).check();
+    const wide = (await page.locator('.dlg').boundingBox())!;
+    expect(wide.x + wide.width).toBeLessThanOrEqual(360);
     await dlg.getByRole('button', { name: 'Anlegen' }).scrollIntoViewIfNeeded();
     await expect(dlg.getByRole('button', { name: 'Anlegen' })).toBeInViewport();
   });

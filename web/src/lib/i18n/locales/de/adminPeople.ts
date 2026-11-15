@@ -298,7 +298,7 @@ export default {
     libsNoneLine: 'Ohne Bibliothek sieht {name} nur Live-TV.',
   },
   roles: {
-    intro: 'Was jede Rolle darf. Änderungen gelten erst nach „Speichern“ und werden auch auf bestehende Konten angewendet.',
+    intro: 'Was jede Rolle darf. Du bearbeitest eine Rolle auf ihrer Seite; gespeicherte Änderungen gelten auch für bestehende Konten.',
     default: 'Standardwert',
     requests: 'Wünsche',
     playback: 'Wiedergabe',

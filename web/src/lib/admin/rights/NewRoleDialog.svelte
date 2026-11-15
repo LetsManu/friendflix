@@ -97,6 +97,10 @@
   .ti { font-weight: 700; }
   /* one line: a long area line ends in "…" instead of growing the row (nothing moves when the copied role changes) */
   .de { font-size: .84rem; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1.3em; }
+  /* the one-line texts must not size the dialog (ModalShell centres it in a grid track sized to its content): they take the room
+     they get and never widen the panel past the screen */
+  .tx { flex: 1 1 0; width: 0; }
+  form { min-width: 0; max-width: calc(100vw - 2rem - 2.8rem); }
   .src { margin-top: .6rem; visibility: hidden; opacity: 0; transition: opacity 150ms var(--fr-out, ease-out); }
   .src.shown { visibility: visible; opacity: 1; }
   .acts { display: flex; justify-content: flex-end; gap: .6rem; margin-top: 1.2rem; flex-wrap: wrap; }

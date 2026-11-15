@@ -296,7 +296,7 @@ const dict: Translation<typeof de> = {
     libsNoneLine: 'Without a library {name} sees only live TV.',
   },
   roles: {
-    intro: 'What each role may do. Changes only apply after “Save” and are also applied to existing accounts.',
+    intro: 'What each role may do. You edit a role on its own page; saved changes also apply to existing accounts.',
     default: 'Default value',
     requests: 'Requests',
     playback: 'Playback',
