@@ -106,7 +106,7 @@ const settings: Translation<typeof de> = {
     PLEX_URL: { invalid_url: 'Please enter only the server address: starting with http:// or https://, without user name and password, and nothing after ? or #. The token goes in the Plex token field.' },
   },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
-  options: { auto: 'Automatic', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (own taste model)', shadow: 'Shadow (v2 beside v1)' }, UPDATE_CHANNEL: { stable: 'Stable', nightly: 'Nightly', pinned: 'Fixed version' }, AUTO_UPDATE: { off: 'Off', 'nightly-window': 'Nightly window' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatic', off: 'Off' }, LIVETV_ENCODER: { auto: 'Automatic', qsv: 'Intel Quick Sync (QSV)', vaapi: 'VA-API', nvenc: 'NVIDIA NVENC', software: 'Software (processor)' } },
+  options: { auto: 'Automatic', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (own taste model)', shadow: 'Shadow (v2 beside v1)' }, UPDATE_CHANNEL: { stable: 'Stable', nightly: 'Nightly', pinned: 'Fixed version' }, AUTO_UPDATE: { off: 'Off', 'nightly-window': 'Nightly window' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatic', off: 'Off' }, LIVETV_ENCODER: { auto: 'Automatic', qsv: 'Intel Quick Sync (QSV)', vaapi: 'VA-API', nvenc: 'NVIDIA NVENC', software: 'Software (processor)' }, LIVETV_RECORD_STORAGE: { ff: 'FriendFlix folder', library: 'Jellyfin library', both: 'Both' } },
   keys: {
     PUBLIC_URL: { label: 'Public address', help: 'The address everyone uses to reach FriendFlix, e.g. https://friend.example.com. Links, sign-in and streaming are built on it.' },
     WEBHOOK_SECRET: { label: 'Webhook secret', help: 'Shared secret for the webhooks of the media server and the request service.' },
@@ -167,6 +167,14 @@ const settings: Translation<typeof de> = {
     LIVETV_SRT_HOST: { label: 'Address for pushed streams', help: 'The server address the setup of pushed streams (SRT) shows: a host name or IP address, without srt:// or a port. Empty = the host of the public address. If the public name runs through a CDN that does not pass UDP (e.g. Cloudflare with the proxy on), enter a DNS-only name or the public IP here.' },
     LIVETV_DVR_MINUTES: { label: 'Live TV rewind buffer (minutes)', help: '0 to 120 minutes. 120 minutes of an HD channel take about 5 GB of cache; LIVETV_CACHE_MAX_GB (default 6) limits all channels together.' },
     LIVETV_MAX_BITRATE: { label: 'Highest Live TV bitrate (bit/s)', help: 'Of an HLS channel\'s variants, Live TV takes the best one up to this bitrate (1,000,000 to 40,000,000, default 10,000,000 = 10 Mbit/s). Applies from the next channel start.' },
+    LIVETV_RECORD_STORAGE: { label: 'Where recordings are stored', help: 'FriendFlix folder (default): recordings stay in the recordings volume and play through FriendFlix. Jellyfin library: after the end, one file in the library\'s recordings folder. Both: in the FriendFlix folder, with “Keep → in library”.' },
+    LIVETV_RECORD_LIBRARY_ID: { label: 'Jellyfin library for recordings', help: 'The library the library modes put recordings into (its ID). Whoever sees this library sees every recording in it.' },
+    LIVETV_RECORD_LIBRARY_JF_PATH: { label: 'Recordings folder as Jellyfin sees it', help: 'The folder Live TV writes through RECORDINGS_LIBRARY_PATH, as Jellyfin sees it (default /media/Aufnahmen).' },
+    LIVETV_RECORD_LIMIT_GB: { label: 'Recordings storage limit (GB)', help: '1 to 100,000 GB, default 200. From 90 %, the oldest recordings that are not kept are deleted after a 24-hour notice.' },
+    LIVETV_RECORD_RETENTION_DAYS: { label: 'Delete recordings after watching (days)', help: '0 to 365 days after watching, default 30; 0 = never. Unwatched and kept recordings stay.' },
+    LIVETV_RECORD_PAD_BEFORE_MIN: { label: 'Recording lead time (minutes)', help: '0 to 30 minutes, default 2. Can be changed per recording and series.' },
+    LIVETV_RECORD_PAD_AFTER_MIN: { label: 'Recording overrun (minutes)', help: '0 to 120 minutes, default 5. Can be changed per recording and series.' },
+    LIVETV_RECORD_MAX_PARALLEL: { label: 'Simultaneous recordings (channels)', help: '1 to 8 channels at once, default 4. More gives a warning when planning.' },
     GITHUB_TOKEN: { label: 'GitHub token', help: 'Optional: higher request limit when looking for new versions.' },
     PORTAINER_WEBHOOK_URL: { label: 'Portainer stack webhook', help: 'Webhook address of the stack for one-click updates. The address itself is the key.' },
     PORTAINER_URL: { label: 'Portainer address', help: 'Instead of the webhook: Portainer address, with API key and stack ID.' },

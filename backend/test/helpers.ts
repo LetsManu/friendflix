@@ -47,6 +47,8 @@ export const cfg: Config = {
   AUTHENTIK_WEBAUTHN_SETUP_FLOW: 'default-authenticator-webauthn-setup', AUTHENTIK_PASSWORD_CHANGE_FLOW: 'default-password-change',
   AUTHENTIK_INVALIDATION_FLOW: 'default-invalidation-flow', AUTHENTIK_EMAIL_CHANGE_FLOW: 'friendflix-email-change', PASSKEYS_IN_APP: 'auto', LOGIN_COVER_WALL: 'true', POSTPLAY_ENABLED: 'true', HEVC_STREAMS: 2, SURROUND_AUDIO: 'true',
   CONVERSION_PRIORITY: 'films', LIVETV_ENCODER: 'auto', LIVETV_SRT_HOST: undefined, LIVETV_DVR_MINUTES: 30, LIVETV_MAX_BITRATE: 10_000_000,
+  LIVETV_RECORD_STORAGE: 'ff', LIVETV_RECORD_LIBRARY_ID: undefined, LIVETV_RECORD_LIBRARY_JF_PATH: '/media/Aufnahmen', LIVETV_RECORD_LIMIT_GB: 200,
+  LIVETV_RECORD_RETENTION_DAYS: 30, LIVETV_RECORD_PAD_BEFORE_MIN: 2, LIVETV_RECORD_PAD_AFTER_MIN: 5, LIVETV_RECORD_MAX_PARALLEL: 4,
 };
 
 export type Handler = (url: URL, init: RequestInit, body: any) => { status?: number; json?: unknown; raw?: string | Uint8Array; type?: string } | undefined;
