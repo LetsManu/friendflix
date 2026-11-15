@@ -121,7 +121,7 @@ test.describe('the delete dialogs', () => {
   });
 });
 
-test('a dialog over a scrolled page with a classic scrollbar: the fixed header and the page content stay put', async ({ page, api }) => {
+test('a dialog over a scrolled page with a classic scrollbar: the fixed header, the sticky side bar and the page content stay put', async ({ page, api }) => {
   extraRole(api, 'oma', 'Oma', 2, 1);
   extraRole(api, 'leer', 'Leer');
   await page.setViewportSize({ width: 1280, height: 600 });
@@ -134,8 +134,11 @@ test('a dialog over a scrolled page with a classic scrollbar: the fixed header a
   const header = page.getByRole('button', { name: /^Profilmenü/ }); // right-aligned in the fixed header: it would move first
   const brand = page.getByRole('link', { name: 'FriendFlix Startseite' });
   const content = page.getByRole('list', { name: 'Rollen' });
-  const boxes = async () => ({ header: await header.boundingBox(), brand: await brand.boundingBox(), content: await content.boundingBox(), y: await page.evaluate(() => scrollY) });
+  // sticky: the admin side bar would re-anchor to <body> (and jump) if the lock made <body> a scroll container
+  const side = page.getByRole('navigation', { name: 'Admin-Bereiche' });
+  const boxes = async () => ({ header: await header.boundingBox(), brand: await brand.boundingBox(), content: await content.boundingBox(), side: await side.boundingBox(), y: await page.evaluate(() => scrollY) });
   const before = await boxes();
+  expect(before.side!.y).toBeGreaterThan(0); // stuck below the header, on screen
   // a script click: Playwright's own click would first scroll the button (now under the fixed header) into view
   await page.getByRole('button', { name: 'Neue Rolle' }).evaluate((b: HTMLElement) => b.click());
   const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
@@ -162,4 +165,50 @@ test('a plain (not dangerous) confirm: white text on the coral confirm button', 
   expect(await dlg.getByRole('button', { name: 'Abbrechen' }).evaluate((el) => getComputedStyle(el).color)).toBe('rgb(255, 255, 255)');
   await dlg.getByRole('button', { name: 'Abbrechen' }).click();
   await expect(dlg).toHaveCount(0);
+});
+
+test.describe('with full motion', () => {
+  test.use({ reducedMotion: 'no-preference' });
+
+  test('the glass stays frosted while the dialog fades in: no ancestor of the panel goes below opacity 1, the scrim fades on its own', async ({ page }) => {
+    await page.addInitScript(() => {
+      sessionStorage.setItem('ff-intro-seen', '1');
+      localStorage.setItem('ff-intro:p1', JSON.stringify({ show: false, sound: false }));
+      (window as unknown as { __ffDeskGuard: unknown }).__ffDeskGuard = { slowMs: 1000, frames: 8 }; // a guard no test host trips
+    });
+    // a tenth of the speed: the 220 ms open spans many frames to sample (the keyframes are the same)
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Animation.enable');
+    await cdp.send('Animation.setPlaybackRate', { playbackRate: 0.1 });
+    await page.goto('/admin/roles');
+    await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
+    await page.evaluate(() => {
+      const w = window as unknown as { __dlgFrames: Array<{ panel: number; scrim: number; ancestors: number; blur: string }> };
+      w.__dlgFrames = [];
+      const t0 = performance.now();
+      const step = () => {
+        const dlg = document.querySelector<HTMLElement>('.ff-dlg');
+        if (dlg) {
+          let lowest = 1;
+          for (let e = dlg.parentElement; e; e = e.parentElement) lowest = Math.min(lowest, Number(getComputedStyle(e).opacity));
+          const scrim = dlg.parentElement!.querySelector('.scrim');
+          w.__dlgFrames.push({ panel: Number(getComputedStyle(dlg).opacity), scrim: scrim ? Number(getComputedStyle(scrim).opacity) : -1, ancestors: lowest, blur: getComputedStyle(dlg).backdropFilter });
+        }
+        if (performance.now() - t0 < 3500) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    });
+    await page.getByRole('button', { name: 'Neue Rolle' }).click();
+    await expect(page.getByRole('dialog', { name: 'Neue Rolle' })).toBeVisible();
+    await page.waitForTimeout(3600);
+    const frames = await page.evaluate(() => (window as unknown as { __dlgFrames: Array<{ panel: number; scrim: number; ancestors: number; blur: string }> }).__dlgFrames);
+    const mid = frames.filter((f) => f.panel > 0.05 && f.panel < 0.95);
+    expect(mid.length, JSON.stringify(frames.slice(0, 8))).toBeGreaterThan(3); // the open was caught mid-flight, several times
+    for (const f of frames) {
+      expect(f.ancestors, JSON.stringify(f)).toBe(1); // the panel's backdrop root stays the page: the blur sees what is behind
+      expect(f.blur, JSON.stringify(f)).toContain('blur(38px)');
+    }
+    expect(frames.some((f) => f.scrim > 0 && f.scrim < 1)).toBe(true); // the scrim fades as its own layer
+    expect(frames.at(-1)).toMatchObject({ panel: 1, scrim: 1, ancestors: 1 });
+  });
 });

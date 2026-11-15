@@ -63,27 +63,29 @@
 <ModalShell bind:this={shell} labelledby="{id}-t" focus="input" width={480} {trigger} locked={busy} on:close={cancel}>
   <form on:submit|preventDefault={submit}>
     <h2 id="{id}-t" class="dlg-title">{$t('adminPeople.roles.new.title')}</h2>
-    <Field label={$t('adminPeople.roles.fLabel')} bind:value={name} maxlength={30} error={bad} disabled={busy} autocomplete="off" />
-    <fieldset class="starts" disabled={busy}>
-      <legend>{$t('adminPeople.roles.new.startFrom')}</legend>
-      {#each options as o (o.key)}
-        <div class="row" class:copy={o.key === 'copy'}>
-          <label class="opt" class:on={start === o.key}>
-            <input type="radio" name="{id}-start" value={o.key} bind:group={start} on:change={() => void picked(o.key)} aria-labelledby="{id}-{o.key}-t" aria-describedby={o.desc ? `${id}-${o.key}-d` : undefined} />
-            <span class="tx">
-              <span class="ti" id="{id}-{o.key}-t">{o.title}</span>
-              <span class="de" id="{id}-{o.key}-d">{o.desc}</span>
-            </span>
-          </label>
-          {#if o.key === 'copy'}
-            <!-- the copy's select, at the end of its row: always laid out (unseen until the copy is picked), so nothing moves -->
-            <div class="src" bind:this={srcRow} class:shown={copying} aria-hidden={copying ? undefined : 'true'} inert={!copying}>
-              <Select label={$t('adminPeople.roles.new.copyFrom')} hideLabel options={sources} bind:value={source} disabled={busy || !copying} />
-            </div>
-          {/if}
-        </div>
-      {/each}
-    </fieldset>
+    <div class="dlg-main">
+      <Field label={$t('adminPeople.roles.fLabel')} bind:value={name} maxlength={30} error={bad} disabled={busy} autocomplete="off" />
+      <fieldset class="starts" disabled={busy}>
+        <legend>{$t('adminPeople.roles.new.startFrom')}</legend>
+        {#each options as o (o.key)}
+          <div class="row" class:copy={o.key === 'copy'}>
+            <label class="opt" class:on={start === o.key}>
+              <input type="radio" name="{id}-start" value={o.key} bind:group={start} on:change={() => void picked(o.key)} aria-labelledby="{id}-{o.key}-t" aria-describedby={o.desc ? `${id}-${o.key}-d` : undefined} />
+              <span class="tx">
+                <span class="ti" id="{id}-{o.key}-t">{o.title}</span>
+                <span class="de" id="{id}-{o.key}-d">{o.desc}</span>
+              </span>
+            </label>
+            {#if o.key === 'copy'}
+              <!-- the copy's select, at the end of its row: always laid out (unseen until the copy is picked), so nothing moves -->
+              <div class="src" bind:this={srcRow} class:shown={copying} aria-hidden={copying ? undefined : 'true'} inert={!copying}>
+                <Select label={$t('adminPeople.roles.new.copyFrom')} hideLabel options={sources} bind:value={source} disabled={busy || !copying} />
+              </div>
+            {/if}
+          </div>
+        {/each}
+      </fieldset>
+    </div>
     <!-- the server's refusal (a template gone, a name taken): its line is always there, so the buttons never move -->
     <p class="dlg-err" role="alert">{error}</p>
     <div class="dlg-acts">
@@ -95,7 +97,7 @@
 
 <style>
   form { min-width: 0; }
-  form > :global(.field) { margin-top: 4px; }
+  .dlg-main > :global(.field) { margin-top: 4px; }
   .starts { border: 0; margin: 16px 0 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
   legend { padding: 0; margin-bottom: 8px; font-size: .95rem; color: var(--fg); }
   .row { position: relative; min-width: 0; }

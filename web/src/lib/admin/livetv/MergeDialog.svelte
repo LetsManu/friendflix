@@ -43,9 +43,11 @@
 <ModalShell bind:this={shell} role="alertdialog" labelledby="{id}-t" describedby="{id}-b" focus="select" {trigger} locked={pending} on:close={cancel}>
   <form on:submit|preventDefault={confirm}>
     <h2 id="{id}-t" class="dlg-title">{$t('adminLive.grp.mergeTitle')}</h2>
-    <p class="dlg-body" id="{id}-b">{$t('adminLive.grp.mergeBody', { names: chipsText(others.map((g) => g.name), 3), into: target?.name ?? '' })}</p>
-    <div class="into"><Select label={$t('adminLive.grp.mergeInto')} bind:value={into} {options} disabled={pending} /></div>
-    <p class="warn" role="note"><Icon name="alert" size={16} /><span>{warning}</span></p>
+    <div class="dlg-main">
+      <p class="dlg-body" id="{id}-b">{$t('adminLive.grp.mergeBody', { names: chipsText(others.map((g) => g.name), 3), into: target?.name ?? '' })}</p>
+      <div class="into"><Select label={$t('adminLive.grp.mergeInto')} bind:value={into} {options} disabled={pending} /></div>
+      <p class="warn" role="note"><Icon name="alert" size={16} /><span>{warning}</span></p>
+    </div>
     <!-- the server's refusal: its line is always there, so the buttons never move -->
     <p class="dlg-err" role="alert">{error}</p>
     <div class="dlg-acts">

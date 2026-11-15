@@ -37,12 +37,14 @@
   <ModalShell role="alertdialog" labelledby="cf-t" describedby={req.body ? 'cf-b' : undefined} layer={130} bind:box on:close={() => answer(false)}>
     <form on:submit|preventDefault={submit}>
       <h2 id="cf-t" class="dlg-title">{req.title}</h2>
-      {#if req.body}<p id="cf-b" class="dlg-body">{req.body}</p>{/if}
-      {#if req.typed}
-        <label class="typed"><span>{$t('ui.confirm.typeToConfirm', { word: req.typed })}</span>
-          <input bind:value={typedVal} autocomplete="off" autocapitalize="off" spellcheck="false" />
-        </label>
-      {/if}
+      <div class="dlg-main">
+        {#if req.body}<p id="cf-b" class="dlg-body">{req.body}</p>{/if}
+        {#if req.typed}
+          <label class="typed"><span>{$t('ui.confirm.typeToConfirm', { word: req.typed })}</span>
+            <input bind:value={typedVal} autocomplete="off" autocapitalize="off" spellcheck="false" />
+          </label>
+        {/if}
+      </div>
       <!-- the shared status line's room (a confirm has no refusal of its own): the same space above the buttons as every dialog -->
       <div class="dlg-err" aria-hidden="true"></div>
       <div class="dlg-acts">

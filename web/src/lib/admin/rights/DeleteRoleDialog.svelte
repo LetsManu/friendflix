@@ -43,8 +43,10 @@
 <ModalShell bind:this={shell} role="alertdialog" labelledby="{id}-t" describedby="{id}-b" focus="select" {trigger} locked={busy} on:close={cancel}>
   <form on:submit|preventDefault={submit}>
     <h2 id="{id}-t" class="dlg-title">{$t('adminPeople.roles.deleteTitle', { name })}</h2>
-    <p id="{id}-b" class="dlg-body">{line}</p>
-    <div class="to"><Select label={$t('adminPeople.roles.deleteTo')} {options} bind:value={to} disabled={busy} /></div>
+    <div class="dlg-main">
+      <p id="{id}-b" class="dlg-body">{line}</p>
+      <div class="to"><Select label={$t('adminPeople.roles.deleteTo')} {options} bind:value={to} disabled={busy} /></div>
+    </div>
     <!-- the server's refusal: its line is always there, so the buttons never move -->
     <p class="dlg-err" role="alert">{error}</p>
     <div class="dlg-acts">

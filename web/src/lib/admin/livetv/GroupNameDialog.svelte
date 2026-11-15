@@ -39,7 +39,7 @@
   <form on:submit|preventDefault={submit}>
     <h2 id="{id}-t" class="dlg-title">{title}</h2>
     <!-- a refusal is about the name (taken, too long): it stays the field's error; the status line keeps the row's place -->
-    <Field label={$t('adminLive.grp.nameLabel')} bind:value={name} maxlength={40} error={bad || error} disabled={busy} autocomplete="off" />
+    <div class="dlg-main"><Field label={$t('adminLive.grp.nameLabel')} bind:value={name} maxlength={40} error={bad || error} disabled={busy} autocomplete="off" /></div>
     <div class="dlg-err" aria-hidden="true"></div>
     <div class="dlg-acts">
       <Button variant="glass" disabled={busy} on:click={() => shell.dismiss()}>{$t('common.cancel')}</Button>
