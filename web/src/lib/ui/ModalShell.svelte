@@ -54,7 +54,8 @@
 </div>
 
 <style>
-  .ov { position: fixed; inset: 0; background: rgba(0, 0, 0, .6); display: grid; place-items: center; padding: max(1rem, var(--safe-top)) 1rem max(1rem, var(--safe-bottom)); }
+  /* one column as wide as the window (minus the gutter): long one-line texts inside cannot widen the panel past the screen */
+  .ov { position: fixed; inset: 0; background: rgba(0, 0, 0, .6); display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: max(1rem, var(--safe-top)) 1rem max(1rem, var(--safe-bottom)); }
   /* the glass material, its 24 px corners and shadow come from .frost / .frost-panel / .frost-safe (app.css) */
   .dlg { width: min(var(--dlg-w), 100%); max-height: calc(100dvh - 2rem); overflow: auto; overscroll-behavior: contain; padding: 28px 28px 22px; }
   @media (max-width: 420px) { .dlg { padding: 24px 20px 16px; } }

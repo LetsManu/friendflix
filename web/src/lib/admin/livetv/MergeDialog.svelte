@@ -42,25 +42,22 @@
 
 <ModalShell bind:this={shell} role="alertdialog" labelledby="{id}-t" describedby="{id}-b" focus="select" {trigger} locked={pending} on:close={cancel}>
   <form on:submit|preventDefault={confirm}>
-    <h2 id="{id}-t">{$t('adminLive.grp.mergeTitle')}</h2>
-    <p class="body" id="{id}-b">{$t('adminLive.grp.mergeBody', { names: chipsText(others.map((g) => g.name), 3), into: target?.name ?? '' })}</p>
-    <Select label={$t('adminLive.grp.mergeInto')} bind:value={into} {options} disabled={pending} />
+    <h2 id="{id}-t" class="dlg-title">{$t('adminLive.grp.mergeTitle')}</h2>
+    <p class="dlg-body" id="{id}-b">{$t('adminLive.grp.mergeBody', { names: chipsText(others.map((g) => g.name), 3), into: target?.name ?? '' })}</p>
+    <div class="into"><Select label={$t('adminLive.grp.mergeInto')} bind:value={into} {options} disabled={pending} /></div>
     <p class="warn" role="note"><Icon name="alert" size={16} /><span>{warning}</span></p>
-    {#if error}<p class="err" role="alert">{error}</p>{/if}
-    <div class="acts">
-      <Button variant="ghost" disabled={pending} on:click={() => shell.dismiss()}>{$t('common.cancel')}</Button>
+    <!-- the server's refusal: its line is always there, so the buttons never move -->
+    <p class="dlg-err" role="alert">{error}</p>
+    <div class="dlg-acts">
+      <Button variant="glass" disabled={pending} on:click={() => shell.dismiss()}>{$t('common.cancel')}</Button>
       <Button type="submit" {pending}>{$t('adminLive.grp.mergeDo')}</Button>
     </div>
   </form>
 </ModalShell>
 
 <style>
-  h2 { margin: 0; font-size: 1.2rem; overflow-wrap: anywhere; }
-  .body { margin: .6rem 0 1rem; color: var(--mut); overflow-wrap: anywhere; }
-  .warn { display: flex; gap: .5rem; align-items: flex-start; margin: 1rem 0 0; padding: .6rem .8rem; border-radius: 12px; background: var(--wash-warn); color: var(--warn); font-weight: 600; font-size: .9rem; }
+  .into { margin-top: 14px; }
+  .warn { display: flex; gap: .5rem; align-items: flex-start; margin: 14px 0 0; padding: .6rem .8rem; border-radius: 12px; background: var(--wash-warn); color: var(--warn); font-weight: 600; font-size: .9rem; }
   .warn :global(svg) { flex: none; margin-top: .15em; }
   .warn span { overflow-wrap: anywhere; }
-  .err { margin: .6rem 0 0; color: var(--err); font-weight: 600; }
-  .acts { display: flex; justify-content: flex-end; gap: .6rem; margin-top: 1.2rem; flex-wrap: wrap; }
-  @media (max-width: 420px) { .acts { flex-direction: column-reverse; } .acts :global(.ui-btn) { width: 100%; } }
 </style>

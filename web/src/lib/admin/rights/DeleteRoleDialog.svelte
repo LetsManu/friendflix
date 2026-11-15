@@ -5,7 +5,8 @@
    * Deleting a role somebody still holds (spec §2.1): "6 Personen und 1 offene Einladung bekommen die Rolle:" and a `Select` of the
    * roles they move to (never the role itself or admin), then *Löschen*. The counts come from the server's 409 `role_in_use`.
    * `confirm` carries the chosen role's key; the page runs the delete (`busy`, `error` come back from it). A modal alertdialog:
-   * Tab stays inside, Escape or a press on the dimmed page cancels, the focus returns to `trigger`. Mounted while open.
+   * Tab stays inside, Escape or a press on the dimmed page cancels, the focus returns to `trigger`. A refused delete is the status line
+   * above the buttons (`.dlg-err`). Mounted while open.
    *   <DeleteRoleDialog name="Oma & Opa" targets={others} accounts={6} invites={1} {busy} {error} on:confirm={(e) => run(e.detail)} on:cancel={close} />
    */
   import { createEventDispatcher } from 'svelte';
@@ -41,19 +42,18 @@
 
 <ModalShell bind:this={shell} role="alertdialog" labelledby="{id}-t" describedby="{id}-b" focus="select" {trigger} locked={busy} on:close={cancel}>
   <form on:submit|preventDefault={submit}>
-    <h2 id="{id}-t">{$t('adminPeople.roles.deleteTitle', { name })}</h2>
-    <p id="{id}-b" class="body">{line}</p>
-    <Select label={$t('adminPeople.roles.deleteTo')} {options} bind:value={to} disabled={busy} error={error} />
-    <div class="acts">
-      <Button variant="ghost" disabled={busy} on:click={() => shell.dismiss()}>{$t('common.cancel')}</Button>
+    <h2 id="{id}-t" class="dlg-title">{$t('adminPeople.roles.deleteTitle', { name })}</h2>
+    <p id="{id}-b" class="dlg-body">{line}</p>
+    <div class="to"><Select label={$t('adminPeople.roles.deleteTo')} {options} bind:value={to} disabled={busy} /></div>
+    <!-- the server's refusal: its line is always there, so the buttons never move -->
+    <p class="dlg-err" role="alert">{error}</p>
+    <div class="dlg-acts">
+      <Button variant="glass" disabled={busy} on:click={() => shell.dismiss()}>{$t('common.cancel')}</Button>
       <Button type="submit" variant="danger" solid pending={busy} disabled={!to}>{$t('adminPeople.roles.delete')}</Button>
     </div>
   </form>
 </ModalShell>
 
 <style>
-  h2 { margin: 0; font-size: 1.2rem; overflow-wrap: anywhere; }
-  .body { color: var(--mut); margin: .8rem 0 1rem; overflow-wrap: anywhere; }
-  .acts { display: flex; justify-content: flex-end; gap: .6rem; margin-top: 1.4rem; flex-wrap: wrap; }
-  @media (max-width: 420px) { .acts { flex-direction: column-reverse; } .acts :global(.ui-btn) { width: 100%; } }
+  .to { margin-top: 14px; }
 </style>

@@ -207,7 +207,7 @@ test.describe('Rollen & Rechte (phone)', () => {
     await expect(m.getByRole('button', { name: 'Löschen' })).toHaveCount(0);
   });
 
-  test('Neue Rolle on a phone: the options fit, nothing overflows, the dialog scrolls inside itself', async ({ page }) => {
+  test('Neue Rolle on a phone: the options fit, nothing overflows, the dialog scrolls inside itself; one-line area lines', async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 640 });
     await page.goto('/admin/roles');
     await page.getByRole('button', { name: 'Neue Rolle' }).click();
@@ -221,9 +221,9 @@ test.describe('Rollen & Rechte (phone)', () => {
     // a long area line never widens the dialog past the screen (it ends in "…")
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(360);
-    // the area lines wrap instead of being cut
-    for (const d of await dlg.locator('.opt .de').all()) expect(await d.evaluate((el) => el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight + 1)).toBe(true);
-    await expect(dlg.locator('.opt').filter({ hasText: 'Familie' })).toContainText('Downloads');
+    // each area line is one line (the dialog mockup); a long one ends in "…" on screen and stays whole as the radio's description
+    for (const d of await dlg.locator('.opt .de').all()) expect((await d.boundingBox())!.height).toBeLessThan(24);
+    await expect(dlg.getByRole('radio', { name: 'Familie' })).toHaveAccessibleDescription('Mediathek · Wünsche · Gemeinsam · Downloads');
     await dlg.getByRole('radio', { name: 'Kopie von …' }).check();
     const wide = (await page.locator('.dlg').boundingBox())!;
     expect(wide.x + wide.width).toBeLessThanOrEqual(360);

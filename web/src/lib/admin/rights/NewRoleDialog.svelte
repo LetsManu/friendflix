@@ -4,11 +4,12 @@
   /**
    * *Neue Rolle* (roles redesign §5.2): the name (1 to 30 characters, the role write's bounds), then where the role starts — a radio
    * list of the server's templates (Familie, Freund, Gast, Nur Live-TV while Live TV is installed, Leer), each a ≥ 56 px row with its
-   * title and the areas it starts with, and *Kopie von …* with a role select. The select's row is always laid out (unseen until the
-   * copy is picked), so the dialog never changes its height. *Duplizieren* opens it with the copy of its role picked (`from`).
+   * title and, on one line, the areas it starts with, and *Kopie von …* with a role select. The select sits at the end of the copy's
+   * row, always laid out (unseen until the copy is picked), so the dialog never changes its height and nothing stands empty between
+   * the options and the buttons. *Duplizieren* opens it with the copy of its role picked (`from`).
    * `submit` carries the POST body (newRole.ts); the page creates the role (`busy`, `error` come back) and opens its page. The
-   * server's refusal is the dialog's line above the buttons (reserved), not the name's error. The area lines wrap; the copy's line
-   * keeps two lines of room (it changes with the role picked). Picking the copy scrolls its select into view (phones).
+   * server's refusal is the dialog's status line above the buttons (reserved, `.dlg-err`), not the name's error. Picking the copy
+   * scrolls its select into view (short screens).
    * A modal dialog (ModalShell): the name starts focused, Tab stays inside, Escape or the dimmed page cancels.
    *   <NewRoleDialog {matrix} from="family" {busy} {error} {trigger} on:submit={(e) => create(e.detail)} on:cancel={close} />
    */
@@ -59,14 +60,14 @@
   }
 </script>
 
-<ModalShell bind:this={shell} labelledby="{id}-t" focus="input" {trigger} locked={busy} on:close={cancel}>
+<ModalShell bind:this={shell} labelledby="{id}-t" focus="input" width={480} {trigger} locked={busy} on:close={cancel}>
   <form on:submit|preventDefault={submit}>
-    <h2 id="{id}-t">{$t('adminPeople.roles.new.title')}</h2>
-    <div class="body">
-      <Field label={$t('adminPeople.roles.fLabel')} bind:value={name} maxlength={30} error={bad} disabled={busy} autocomplete="off" />
-      <fieldset class="starts" disabled={busy}>
-        <legend>{$t('adminPeople.roles.new.startFrom')}</legend>
-        {#each options as o (o.key)}
+    <h2 id="{id}-t" class="dlg-title">{$t('adminPeople.roles.new.title')}</h2>
+    <Field label={$t('adminPeople.roles.fLabel')} bind:value={name} maxlength={30} error={bad} disabled={busy} autocomplete="off" />
+    <fieldset class="starts" disabled={busy}>
+      <legend>{$t('adminPeople.roles.new.startFrom')}</legend>
+      {#each options as o (o.key)}
+        <div class="row" class:copy={o.key === 'copy'}>
           <label class="opt" class:on={start === o.key}>
             <input type="radio" name="{id}-start" value={o.key} bind:group={start} on:change={() => void picked(o.key)} aria-labelledby="{id}-{o.key}-t" aria-describedby={o.desc ? `${id}-${o.key}-d` : undefined} />
             <span class="tx">
@@ -74,52 +75,53 @@
               <span class="de" id="{id}-{o.key}-d">{o.desc}</span>
             </span>
           </label>
-        {/each}
-      </fieldset>
-      <!-- the select's row is always there (unseen until the copy is picked): the dialog keeps its height -->
-      <div class="src" bind:this={srcRow} class:shown={copying} aria-hidden={copying ? undefined : 'true'} inert={!copying}>
-        <Select label={$t('adminPeople.roles.new.copyFrom')} options={sources} bind:value={source} disabled={busy || !copying} />
-      </div>
-    </div>
+          {#if o.key === 'copy'}
+            <!-- the copy's select, at the end of its row: always laid out (unseen until the copy is picked), so nothing moves -->
+            <div class="src" bind:this={srcRow} class:shown={copying} aria-hidden={copying ? undefined : 'true'} inert={!copying}>
+              <Select label={$t('adminPeople.roles.new.copyFrom')} hideLabel options={sources} bind:value={source} disabled={busy || !copying} />
+            </div>
+          {/if}
+        </div>
+      {/each}
+    </fieldset>
     <!-- the server's refusal (a template gone, a name taken): its line is always there, so the buttons never move -->
-    <p class="err" role="alert">{error}</p>
-    <div class="acts">
-      <Button variant="ghost" disabled={busy} on:click={() => shell.dismiss()}>{$t('common.cancel')}</Button>
+    <p class="dlg-err" role="alert">{error}</p>
+    <div class="dlg-acts">
+      <Button variant="glass" disabled={busy} on:click={() => shell.dismiss()}>{$t('common.cancel')}</Button>
       <Button type="submit" pending={busy}>{$t('adminPeople.roles.create')}</Button>
     </div>
   </form>
 </ModalShell>
 
 <style>
-  h2 { margin: 0; font-size: 1.2rem; overflow-wrap: anywhere; }
-  /* the content scrolls inside the dialog on short screens; the title and the buttons stay */
-  .body { max-height: calc(100dvh - 14rem); overflow-y: auto; margin: 0 -.4rem; padding: 0 .4rem .5rem; overscroll-behavior: contain; }
-  .body > :global(.field) { margin-top: 1rem; }
-  .starts { border: 0; margin: 1rem 0 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: .35rem; }
-  legend { padding: 0; margin-bottom: .45rem; font-size: .95rem; color: var(--fg); }
-  /* an option: a ≥ 56 px row, the whole row picks it; the ring goes around the row */
-  .opt { display: flex; align-items: center; gap: .8rem; min-height: 56px; box-sizing: border-box; padding: .45rem .8rem; border-radius: 12px; cursor: pointer;
-    background: rgba(255, 255, 255, .04); box-shadow: inset 0 0 0 1px #323a43; }
-  .opt:hover { background: rgba(255, 255, 255, .07); }
-  .opt.on { background: rgba(255, 79, 109, .12); box-shadow: inset 0 0 0 1.5px var(--acc); }
+  form { min-width: 0; }
+  form > :global(.field) { margin-top: 4px; }
+  .starts { border: 0; margin: 16px 0 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  legend { padding: 0; margin-bottom: 8px; font-size: .95rem; color: var(--fg); }
+  .row { position: relative; min-width: 0; }
+  /* an option (the mockup): a ≥ 56 px row, the whole row picks it; the picked one a light glass row; the ring goes around the row */
+  .opt { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 12px; align-items: start; min-height: 56px; box-sizing: border-box; padding: 10px 12px;
+    border-radius: 14px; border: 1px solid transparent; background: transparent; color: #f5f5f5; cursor: pointer; }
+  .opt:hover { background: rgba(255, 255, 255, .05); }
+  .opt.on { background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .18); }
   .opt:has(input:focus-visible) { outline: 2px solid #fff; outline-offset: 2px; }
-  .opt input { width: 20px; height: 20px; margin: 0; flex: none; accent-color: var(--acc); outline: none; }
-  .tx { min-width: 0; display: flex; flex-direction: column; gap: .1rem; }
-  .ti { font-weight: 700; }
-  /* one line: a long area line ends in "…" instead of growing the row (nothing moves when the copied role changes) */
-  .de { font-size: .84rem; color: var(--mut); line-height: 1.35; overflow-wrap: anywhere; }
-  /* the copy's line changes with the role picked: two lines of room, so its row never grows when it changes */
-  .opt:last-child .de { min-height: 2.7em; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-  /* the texts must not size the dialog (ModalShell centres it in a grid track sized to its content): they take the room they get
-     and never widen the panel past the screen */
-  .tx { flex: 1 1 0; width: 0; }
-  form { min-width: 0; max-width: calc(100vw - 2rem - 2.8rem); }
-  .src { margin-top: .6rem; scroll-margin-bottom: .5rem; visibility: hidden; opacity: 0; transition: opacity 150ms var(--fr-out, ease-out); }
+  /* the radio: a grey ring, coral with a dot when picked */
+  .opt input { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; min-height: 0; margin: 2px 2px 0; padding: 0; flex: none; border: 2px solid #8f98a2; border-radius: 50%;
+    background: transparent; outline: none; box-shadow: none; cursor: pointer; }
+  .opt input:hover { border-color: #b3bac2; }
+  .opt input:checked { border-color: var(--acc-light); background: radial-gradient(circle, var(--acc-light) 0 4px, transparent 4.5px); }
+  .tx { min-width: 0; display: flex; flex-direction: column; }
+  .ti { font-size: 15px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+  /* one line: a long area line ends in "…" (the full line is the radio's description); nothing moves when it changes */
+  .de { margin-top: 2px; font-size: 13px; line-height: 1.35; color: #b3bac2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .de:empty { display: none; }
+  /* the copy's row keeps room at its end for the select */
+  .copy { --src-w: min(180px, 46%); }
+  .copy .opt { padding-right: calc(var(--src-w) + 20px); }
+  .src { position: absolute; top: 0; bottom: 0; right: 8px; width: var(--src-w); display: flex; align-items: center; scroll-margin-bottom: 8px;
+    visibility: hidden; opacity: 0; transition: opacity 150ms var(--fr-out, ease-out); }
+  .src > :global(.field) { width: 100%; }
   .src.shown { visibility: visible; opacity: 1; }
-  .err { margin: .6rem 0 0; min-height: 1.35em; line-height: 1.35; font-size: .88rem; color: var(--err); }
-  .acts { display: flex; justify-content: flex-end; gap: .6rem; margin-top: .6rem; flex-wrap: wrap; }
-  /* phones: the buttons stack (full width), the content takes their room from the scroller */
-  @media (max-width: 420px) { .acts { flex-direction: column-reverse; } .acts :global(.ui-btn) { width: 100%; } .body { max-height: calc(100dvh - 18rem); } }
   :global(html.m-still) .src { transition: none; }
   @media (prefers-reduced-motion: reduce) { .src { transition: none; } }
 </style>

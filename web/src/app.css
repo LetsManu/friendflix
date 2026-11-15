@@ -234,6 +234,22 @@ html:not(.m-glass) .frost-flat::before, html.tv .frost-flat::before, html.kids .
 html:not(.m-glass) .panel::before, html.tv .panel::before, html.kids .panel::before,
 html:not(.m-glass) .frost-btn::before, html.tv .frost-btn::before, html.kids .frost-btn::before { display: none; }
 html.m-still .frost-sheen, html.m-still .frost-tint, html.tv .frost-sheen, html.kids .frost-sheen { display: none; }
+/* ---- Dialogs (lib/ui/ModalShell.svelte, the owner-approved dialog mockup): one title, body, status line and button row. The row
+   is [secondary, primary] in the DOM, the primary on the right; under 420 px it stacks, full width, the primary on top. Every
+   button is a 44 px pill: the secondary the glass pill (.frost-btn), the primary coral (--acc-fill), a danger primary solid red.
+   A busy button keeps its width: the label goes transparent, the spinner sits over it. ---- */
+.dlg-title { margin: 0 0 10px; font-size: 21px; font-weight: 800; line-height: 1.25; letter-spacing: normal; overflow-wrap: anywhere; }
+.dlg-body { margin: 0; font-size: 15px; line-height: 1.5; color: #c9ced4; overflow-wrap: anywhere; }
+/* the status line's room is always there (a refusal appears without moving the buttons) */
+.dlg-err { min-height: 22px; margin: 10px 0 8px; font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--err-mark); overflow-wrap: anywhere; }
+.dlg-acts { display: flex; justify-content: flex-end; gap: 10px; }
+.dlg-acts > :is(button, .btn) { position: relative; min-height: 44px; padding: 0 22px; border-radius: var(--fr-r-pill); font-size: 15px; font-weight: 700; }
+/* opacity, not visibility: a hidden label would take the busy button's accessible name with it */
+.dlg-acts > [aria-busy='true'] .ui-lbl { opacity: 0; }
+.dlg-acts > [aria-busy='true'] .spinner { position: absolute; left: 50%; top: 50%; margin: -.5em 0 0 -.5em; }
+@media (max-width: 420px) { .dlg-acts { flex-direction: column-reverse; } .dlg-acts > :is(button, .btn) { width: 100%; } }
+/* fields in a dialog show one ring: the white outline 2 px off the field, no dark companion shadow with it */
+.ff-dlg :is(input:not([type='checkbox']):not([type='radio']), select, textarea):focus-visible { outline: 2px solid #fff; outline-offset: 2px; box-shadow: none; }
 /* text on the light glass over the ambient background (.panel and the .frost-text surfaces: settings, /me, phone search):
    the mockup's hierarchy, AA on the light card over the brightest glow, on the raw ambient and on the solid fallback
    (lib/glass/pages.test.ts): dim text white .72, hints white .66, the status colours a step lighter, links and coral text lighter */
