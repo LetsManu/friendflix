@@ -159,8 +159,9 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   /** *Behalten*, *Teilen…* (owner or admin), padding (owner, while scheduled) */
-  // an owner may always narrow a share and delete their own recordings, also after their role lost `liveRecord` (A-M13); widening a
-  // share, keep and padding still need it (checked inside)
+  // an owner may narrow a share and delete their own recordings while Live TV is installed, also after their role lost `liveRecord` (A-M13;
+  // recordings live in the Live-TV area, so with Live-TV off for the role the owner gets 404; an admin can always delete); widening a share,
+  // keep and padding need `liveRecord` and `liveTv` (checked inside)
   const ownerWrite = { preHandler: requireUser(ctx), config: writeLimit };
   app.patch('/api/livetv/recordings/:id', ownerWrite, async (req, reply) => {
     const id = idParam(req);

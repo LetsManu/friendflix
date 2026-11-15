@@ -218,7 +218,7 @@
             {@const row = rowOf.get(f.key)!}
             {@const label = $locale && fieldLabel(f.key)}
             <li class="row">
-              <div class="lab"><span class="nm">{label}</span><span class="role">{roleText(f, row)}{#if needsLivetv(f, staged, rowOf)} · {$t('adminPeople.roles.areas.needsLivetv')}{/if}</span></div>
+              <div class="lab"><span class="nm">{label}</span><span class="role">{roleText(f, row)}</span>{#if f.key === 'liveRecord'}<span class="role need">{needsLivetv(f, staged, rowOf) ? $t('adminPeople.roles.areas.needsLivetv') : ''}</span>{/if}</div>
               <div class="ctl">
                 {#if isLocked(f)}
                   <span class="locked">{$t('adminPeople.roles.adminLocked')}</span>
@@ -316,6 +316,8 @@
   .row:first-child { border-top: 0; }
   .lab { display: flex; flex-direction: column; min-width: 0; }
   .nm { overflow-wrap: anywhere; }
+  /* the Live-TV hint's line is always there on its row, so staging Live-TV moves nothing */
+  .need { min-height: 1.3em; }
   .role { font-size: .82rem; color: var(--mut); overflow-wrap: anywhere; }
   .ctl { display: flex; align-items: center; gap: .6rem; min-width: 0; }
   .ctl > :global(.fc) { flex: 1; }
