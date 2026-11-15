@@ -249,6 +249,27 @@ describe('EPG follow', () => {
     expect((await getRecording(env.ctx, r!.id))!.start_at.getTime() - t).toBe(25 * MIN);
   });
 
+  it('A-I1: a cancelled airing is never planned again when its programme moves or the offset changes', async () => {
+    const t = t0();
+    await prog('Nordlicht TV.de', t, { episode: 'S01E01' });
+    await rule({ channel_id: nordlicht, series_key: 'die leuchtturmwärter', only_new: false });
+    await expandRules(env.ctx);
+    const [r] = await rows();
+    const { deleteRecording } = await import('../src/livetv/recordings.js');
+    expect(await deleteRecording(env.ctx, r!.id, 'owner')).toBe('cancelled');
+    // the guide moves the programme by five minutes
+    await env.pool.query("update livetv_programmes set start_at = start_at + interval '5 minutes', end_at = end_at + interval '5 minutes'");
+    await afterEpgImport(env.ctx, src);
+    expect((await rows("state <> 'cancelled'"))).toEqual([]);
+    // and an offset change of the channel
+    await env.pool.query('update livetv_channels set epg_shift_override_min = 30 where id = $1', [nordlicht]);
+    await followEpg(env.ctx);
+    await expandRules(env.ctx);
+    expect((await rows("state <> 'cancelled'"))).toEqual([]);
+    // the cancelled row followed its programme
+    expect((await getRecording(env.ctx, r!.id))!.start_at.getTime()).toBe(t + 35 * MIN);
+  });
+
   it('a channel EPG offset change moves scheduled recordings', async () => {
     const t = t0();
     await prog('Nordlicht TV.de', t, { episode: 'S01E01' });

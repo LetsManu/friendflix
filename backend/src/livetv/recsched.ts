@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
 import { conversionLimit, dropReservation, holdback, reserveConversion } from '../convbudget.js';
+import { recordError } from '../errorlog.js';
 import type { Ctx } from '../ctx.js';
 import { m } from '../i18n.js';
 import type { MsgKey } from '../messages.js';
@@ -51,6 +52,9 @@ const CALL_TIMEOUT_MS = 10_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const event = (ctx: Ctx, e: Omit<LiveEvent, 'at'>) => pushEvent(ctx, e).catch(() => undefined);
+/** a failure of the scheduler worth an admin's look: a fixed code in the error log (Admin → Status), never a title, path or token */
+export const logCode = (ctx: Pick<Ctx, 'kv' | 'cfg'>, code: string): void => { void recordError(ctx, { source: 'job', code: `livetv-rec-${code}` }).catch(() => undefined); };
+const pgCode = (e: unknown): string => (e && typeof e === 'object' && typeof (e as { code?: unknown }).code === 'string' ? (e as { code: string }).code : 'unknown');
 
 // ---- the guide ----
 
@@ -248,10 +252,10 @@ export async function expandRules(ctx: Ctx, now: number = Date.now(), o: { ruleI
       }
     } else {
       const mine = (await ctx.db.query<{ episode: string | null; subtitle: string | null; state: RecState; channel_id: string | null; prog_key: string | null; start_at: Date }>(
-        "select episode, subtitle, state, channel_id, prog_key, start_at from livetv_recordings where rule_id = $1 and state in ('scheduled','starting','recording','done','partial')", [r.id])).rows;
-      const done = new Set(mine.flatMap((x) => { const k = episodeKey(x); return k ? [k] : []; }));
-      // an airing this rule planned already (it may have moved and not followed yet): never a second row for it
-      const already = (cid: string, p: Prog) => mine.some((x) => (x.state === 'scheduled' || x.state === 'starting' || x.state === 'recording') && x.channel_id === cid && x.prog_key === progKey(p)
+        "select episode, subtitle, state, channel_id, prog_key, start_at from livetv_recordings where rule_id = $1 and state in ('scheduled','starting','recording','done','partial','cancelled')", [r.id])).rows;
+      const done = new Set(mine.filter((x) => x.state !== 'cancelled').flatMap((x) => { const k = episodeKey(x); return k ? [k] : []; }));
+      // an airing this rule planned already, or one the owner cancelled (it may have moved and not followed yet): never a second row (A-I1)
+      const already = (cid: string, p: Prog) => mine.some((x) => (x.state === 'scheduled' || x.state === 'starting' || x.state === 'recording' || x.state === 'cancelled') && x.channel_id === cid && x.prog_key === progKey(p)
         && Math.abs(x.start_at.getTime() - p.start) <= FOLLOW_WINDOW_MS);
       const candidates = (chans.get(r.id) ?? []).flatMap((cid) => (progs.get(cid) ?? []).map((p) => ({ cid, p })))
         .filter(({ p }) => seriesKeyOf({ title: p.title, series_key: p.seriesKey }) === r.series_key)
@@ -286,9 +290,10 @@ export async function expandRules(ctx: Ctx, now: number = Date.now(), o: { ruleI
  * offset change of the channel or source, DST. Without a match it keeps its time. Answers how many moved.
  */
 export async function followEpg(ctx: Ctx, now: number = Date.now()): Promise<number> {
-  const rows = (await ctx.db.query<Pick<RecRow, 'id' | 'channel_id' | 'start_at' | 'end_at' | 'prog_key' | 'pad_before_s'>>(
-    `select id, channel_id, start_at, end_at, prog_key, pad_before_s from livetv_recordings
-      where state = 'scheduled' and follow_epg and prog_key is not null and channel_id is not null and start_at - make_interval(secs => pad_before_s) > $1
+  const rows = (await ctx.db.query<Pick<RecRow, 'id' | 'state' | 'channel_id' | 'start_at' | 'end_at' | 'prog_key' | 'pad_before_s'>>(
+    `select id, state, channel_id, start_at, end_at, prog_key, pad_before_s from livetv_recordings
+      where (state = 'scheduled' or (state = 'cancelled' and delete_after is null)) and follow_epg and prog_key is not null and channel_id is not null
+        and start_at - make_interval(secs => pad_before_s) > $1
       order by start_at`, [new Date(now)])).rows;
   if (!rows.length) return 0;
   const maps = new Map((await epgMaps(ctx, [...new Set(rows.map((r) => r.channel_id!))])).map((x) => [x.channelId, x] as const));
@@ -300,9 +305,14 @@ export async function followEpg(ctx: Ctx, now: number = Date.now()): Promise<num
     const list = (await programmes(ctx, [mp], at - FOLLOW_WINDOW_MS, at + FOLLOW_WINDOW_MS + 1)).get(mp.channelId) ?? [];
     const best = list.filter((p) => progKey(p) === r.prog_key).sort((a, b) => Math.abs(a.start - at) - Math.abs(b.start - at))[0];
     if (!best || (best.start === at && best.end === r.end_at.getTime())) continue;
-    const u = await ctx.db.query("update livetv_recordings set start_at = $2, end_at = $3 where id = $1 and state = 'scheduled'", [r.id, new Date(best.start), new Date(best.end)])
-      .catch(() => ({ rowCount: 0 })); // the profile has another recording of this channel at the new time: it stays
-    if (u.rowCount) {
+    // a cancelled airing follows too: it keeps blocking that airing for its rule (A-I1)
+    const u = await ctx.db.query("update livetv_recordings set start_at = $2, end_at = $3 where id = $1 and state in ('scheduled','cancelled')", [r.id, new Date(best.start), new Date(best.end)])
+      .catch((e: unknown) => {
+        // a unique violation: the profile has another recording of this channel (or the rule this airing) at the new time; it stays
+        if (pgCode(e) !== '23505') logCode(ctx, `follow-${pgCode(e)}`);
+        return { rowCount: 0 };
+      });
+    if (u.rowCount && r.state === 'scheduled') {
       moved++;
       await event(ctx, { level: 'info', code: 'rec_moved', channelId: r.channel_id!, recordingId: r.id });
     }
@@ -316,7 +326,7 @@ export async function afterEpgImport(ctx: Ctx, _sourceId: string): Promise<void>
   await followEpg(ctx);
   await expandRules(ctx);
 }
-setAfterEpgImport(afterEpgImport);
+setAfterEpgImport((ctx, sourceId) => afterEpgImport(ctx, sourceId).catch((e: unknown) => { logCode(ctx, `epg-import-${pgCode(e)}`); }));
 
 /** a running EPG recording grows when its programme's end moved later (≤ +3 h); it never shrinks. Answers the new end or null. */
 async function grow(ctx: Ctx, r: RecRow): Promise<number | null> {
