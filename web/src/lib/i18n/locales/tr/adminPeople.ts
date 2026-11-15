@@ -373,7 +373,7 @@ const dict: Translation<typeof de> = {
     moveLeft: 'Sola taşı',
     moveRight: 'Sağa taşı',
     deleteMove: '{people} ve {invites} şu rolü alır:',
-    compare: 'Karşılaştır',
+    compare: { title: 'Rolleri karşılaştır', tab: 'Karşılaştır' },
     compareQValue: 'Role göre {right}',
     q: {
       transcoding: 'Kimler dönüştürebilir?',
@@ -460,6 +460,8 @@ const dict: Translation<typeof de> = {
       adminLocked: 'Yöneticiler her zaman her şeyi yapabilir',
     },
     summary: { only: 'Yalnızca {area}', none: 'Hiçbir şey paylaşılmadı', noGroups: 'Kanal grubu olmadan canlı TV' },
+    new: { title: 'Yeni rol', startFrom: 'Şununla başla' },
+    page: { back: 'Roller', missing: 'Bu rol yok (artık yok).', envLocked: '.env içinde tanımlı' },
   },
   sentence: {
     roleUpdate: '{actor}, {target} rolünü değiştirdi',

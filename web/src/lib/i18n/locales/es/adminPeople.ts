@@ -373,7 +373,7 @@ const dict: Translation<typeof de> = {
     moveLeft: 'Mover a la izquierda',
     moveRight: 'Mover a la derecha',
     deleteMove: '{people} y {invites} reciben el rol:',
-    compare: 'Comparar',
+    compare: { title: 'Comparar roles', tab: 'Comparar' },
     compareQValue: '{right} por rol',
     q: {
       transcoding: '¿Quién puede transcodificar?',
@@ -460,6 +460,8 @@ const dict: Translation<typeof de> = {
       adminLocked: 'Los administradores siempre pueden hacerlo todo',
     },
     summary: { only: 'Solo {area}', none: 'Nada compartido', noGroups: 'TV en directo sin grupo de canales' },
+    new: { title: 'Nuevo rol', startFrom: 'Empezar con' },
+    page: { back: 'Roles', missing: 'Este rol no existe (o ya no existe).', envLocked: 'Definido en .env' },
   },
   sentence: {
     roleUpdate: '{actor} cambió el rol {target}',

@@ -629,7 +629,7 @@ test.describe('admin: Live TV in the people pages (desktop)', () => {
 
   test('role matrix shows the Kanalgruppen row only with Live TV', async ({ page, api }) => {
     api.admin.matrix.features.livetv = false;
-    await page.goto('/admin/roles');
+    await page.goto('/admin/roles?view=compare');
     await expect(page.getByRole('grid', { name: 'Rechte der Rollen' })).toBeVisible();
     await expect(page.getByRole('rowheader', { name: 'Kanalgruppen' })).toHaveCount(0);
     await expect(page.getByRole('rowheader', { name: 'Live-TV', exact: true })).toHaveCount(0);
@@ -645,7 +645,7 @@ test.describe('admin: Live TV in the people pages (desktop)', () => {
   });
 
   test('role sheet lists the role\'s channel groups as chips', async ({ page, api }) => {
-    await page.goto('/admin/roles');
+    await page.goto('/admin/roles?view=compare');
     await page.locator('button.rn', { hasText: 'Familie' }).click();
     const sheet = page.getByRole('dialog', { name: 'Rolle „Familie“' });
     const sec = sheet.getByRole('region', { name: 'Kanalgruppen' });

@@ -375,7 +375,7 @@ export default {
     moveLeft: 'Nach links',
     moveRight: 'Nach rechts',
     deleteMove: '{people} und {invites} bekommen die Rolle:',
-    compare: 'Vergleich',
+    compare: { title: 'Rollen vergleichen', tab: 'Vergleichen' },
     compareQValue: '{right} je Rolle',
     q: {
       transcoding: 'Wer darf umwandeln?',
@@ -462,6 +462,8 @@ export default {
       adminLocked: 'Admins dürfen immer alles',
     },
     summary: { only: 'Nur {area}', none: 'Nichts freigegeben', noGroups: 'Live-TV ohne Kanalgruppe' },
+    new: { title: 'Neue Rolle', startFrom: 'Starten mit' },
+    page: { back: 'Rollen', missing: 'Diese Rolle gibt es nicht (mehr).', envLocked: 'Steht in der .env' },
   },
   sentence: {
     roleUpdate: '{actor} hat die Rolle {target} geändert',

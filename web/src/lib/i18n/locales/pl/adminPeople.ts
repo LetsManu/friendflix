@@ -373,7 +373,7 @@ const dict: Translation<typeof de> = {
     moveLeft: 'Przesuń w lewo',
     moveRight: 'Przesuń w prawo',
     deleteMove: '{people} i {invites} otrzymają rolę:',
-    compare: 'Porównaj',
+    compare: { title: 'Porównaj role', tab: 'Porównaj' },
     compareQValue: '{right} według roli',
     q: {
       transcoding: 'Kto może konwertować?',
@@ -460,6 +460,8 @@ const dict: Translation<typeof de> = {
       adminLocked: 'Administratorzy zawsze mogą wszystko',
     },
     summary: { only: 'Tylko {area}', none: 'Nic nie udostępniono', noGroups: 'Telewizja na żywo bez grupy kanałów' },
+    new: { title: 'Nowa rola', startFrom: 'Zacznij od' },
+    page: { back: 'Role', missing: 'Ta rola nie istnieje (już).', envLocked: 'Ustawione w .env' },
   },
   sentence: {
     roleUpdate: '{actor} zmienił(a) rolę {target}',

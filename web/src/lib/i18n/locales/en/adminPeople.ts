@@ -373,7 +373,7 @@ const dict: Translation<typeof de> = {
     moveLeft: 'Move left',
     moveRight: 'Move right',
     deleteMove: '{people} and {invites} get the role:',
-    compare: 'Compare',
+    compare: { title: 'Compare roles', tab: 'Compare' },
     compareQValue: '{right} by role',
     q: {
       transcoding: 'Who may transcode?',
@@ -460,6 +460,8 @@ const dict: Translation<typeof de> = {
       adminLocked: 'Admins may always do everything',
     },
     summary: { only: 'Only {area}', none: 'Nothing shared', noGroups: 'Live TV without a channel group' },
+    new: { title: 'New role', startFrom: 'Start from' },
+    page: { back: 'Roles', missing: 'This role does not exist (any more).', envLocked: 'Set in .env' },
   },
   sentence: {
     roleUpdate: '{actor} changed the role {target}',
