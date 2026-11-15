@@ -147,6 +147,15 @@ describe.each(['compose.prod.yaml', 'compose.yaml'])('%s livetv', (file) => {
     expect(b).not.toMatch(/bootstrap:\/run/);
   });
 
+  it('recordings (Phase 3): livetv writes the recordings folder, the gateway reads it read-only, the backend never mounts it', () => {
+    expect(service(src, 'gateway')).toContain('${RECORDINGS_PATH:-recordings}:/data/recordings:ro');
+    expect(service(src, 'gateway')).toContain('RECORDINGS_DIR: /data/recordings');
+    expect(service(src, 'backend')).not.toMatch(/recordings/);
+    const writers = src.split(/\n {2}(?=[a-z-]+:\n)/).slice(1).filter((b) => /RECORDINGS_PATH:-recordings\}:\/[a-z/]+(?!:ro)\s/.test(b)).map((b) => b.split(':')[0]);
+    expect(writers).toEqual(['livetv']);
+    expect(src.slice(src.indexOf('\nvolumes:\n'))).toMatch(/^ {2}recordings:/m);
+  });
+
   it('only the bootstrap service writes the livetv key volume, only livetv reads it', () => {
     expect(service(src, 'bootstrap')).toContain('bootstrap-livetv:/run/friendflix-livetv\n');
     const users = src.split(/\n {2}(?=[a-z-]+:\n)/).slice(1).filter((b) => b.includes('bootstrap-livetv:/run')).map((b) => b.split(':')[0]);

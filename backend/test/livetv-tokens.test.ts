@@ -4,14 +4,17 @@
  * Live TV Phase 1, Task 30: live tokens (spec §7.1), pinning, `/internal/authz/live` and revocation. Only the hash is stored; the
  * token is never logged.
  */
+import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { hashToken } from '../src/cast.js';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { revokeSessions } from '../src/devices.js';
 import { getLive } from '../src/live.js';
+import { deleteRecording, setVisibility } from '../src/livetv/recordings.js';
 import { invalidateLivetvRights } from '../src/livetv/rights.js';
 import {
-  beatLiveToken, LIVE_CAP_S, liveSidHash, liveViewKey, MAX_LIVE_TOKENS, mintLiveToken, resolveLiveToken, VIEW_TTL_S, type LiveTokenRec,
+  beatLiveToken, LIVE_CAP_S, liveSidHash, liveViewKey, MAX_LIVE_TOKENS, mintLiveToken, mintRecToken, resolveLiveToken, resolveRecToken, revokeChannelTokens, VIEW_TTL_S,
+  type LiveTokenRec,
 } from '../src/livetv/tokens.js';
 import { invalidateRights } from '../src/rights.js';
 import { invalidateRoles } from '../src/roles.js';
@@ -465,5 +468,93 @@ describe('live tokens', () => {
       expect(all).not.toContain(token);
       expect(all).not.toContain(token.slice(0, 20));
     } finally { spies.forEach((s) => s.mockRestore()); }
+  });
+});
+
+describe('recording tokens (Phase 3)', () => {
+  let adminProfile = '';
+  let adm = admin;
+  const rec = async (o: Record<string, unknown> = {}) => {
+    const row: Record<string, unknown> = {
+      id: randomUUID(), profile_id: ANNA, user_id: ANNA, channel_id: nord, channel_name: 'Nordlicht TV', title: 'Sternstunde Physik',
+      start_at: new Date(Date.now() - 2 * 3_600_000), end_at: new Date(Date.now() - 3_600_000), pad_before_s: 120, pad_after_s: 300, storage: 'ff',
+      dir: randomUUID(), state: 'done', bytes: 4096, duration_s: 3600, segments: 'ts', ...o,
+    };
+    const keys = Object.keys(row);
+    await env.pool.query(`insert into livetv_recordings(${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')})`, Object.values(row));
+    return { id: row.id as string, dir: row.dir as string };
+  };
+  const play = (id: string, body: Record<string, unknown> = {}) =>
+    env.app.inject({ method: 'POST', url: `/api/livetv/recordings/${id}/play`, cookies: adm.cookies, headers: { 'x-csrf-token': adm.csrf }, payload: body });
+  const authzRec = (token: string, ip = IP1) => env.app.inject({ method: 'POST', url: '/internal/authz/rec', headers: H, payload: { token, ip } });
+  const annaRec = (recordingId: string) => mintRecToken(env.ctx, {
+    userId: ANNA, profileId: ANNA, deviceId: 'dev-anna-1', sidHash: SID_A, recordingId, channelId: nord, channelName: 'Nordlicht TV', via: 'local', remote: false,
+  }, 7200);
+  beforeEach(async () => {
+    await env.pool.query('delete from livetv_recordings');
+    adm = await env.login(); // earlier tests of this file end the admin's first session
+    adminProfile = (await env.pool.query<{ id: string }>('select id from profiles where user_id = $1 and is_owner', [adminId])).rows[0]!.id;
+  });
+
+  it('play mints a rec token for a visible recording, 404 otherwise', async () => {
+    const mine = await rec({ profile_id: adminProfile, user_id: adminId });
+    const r = await play(mine.id);
+    expect(r.statusCode, r.body).toBe(200);
+    const b = r.json();
+    expect(b).toMatchObject({ url: `/media/r/${b.token}/index.m3u8`, growing: false, segments: 'ts', durationS: 3600, positionS: 0 });
+    expect(b.expiresAt).toBeGreaterThan(Date.now() + 7_100_000);
+    expect(b.expiresAt).toBeLessThan(Date.now() + 7_300_000);
+    expect(r.headers['cache-control']).toBe('no-store');
+    const a = await authzRec(b.token);
+    expect([a.statusCode, a.json()]).toEqual([200, { dir: mine.dir, growing: false, maxAgeS: 2 }]);
+    expect((await authzRec(b.token, IP2)).statusCode).toBe(403); // pinned
+    // a recording token is no viewer of the channel and no live token; a live token is no recording token
+    expect(await env.kv.get(liveViewKey(hashToken(b.token)))).toBeNull();
+    expect(await status(b.token)).toBe(401);
+    expect((await authzRec((await mint()).token)).statusCode).toBe(401);
+    // Anna's private recording is unknown to the admin's profile; a plan is not playable
+    expect((await play((await rec()).id)).statusCode).toBe(404);
+    const plan = await rec({ profile_id: adminProfile, user_id: adminId, state: 'scheduled', bytes: 0, start_at: new Date(Date.now() + 3_600_000), end_at: new Date(Date.now() + 7_200_000) });
+    expect((await play(plan.id)).json()).toEqual({ error: 'not_ready' });
+  });
+
+  it('growing playlist is no-store: the authz says growing while it records; the cap follows its end', async () => {
+    const r = await rec({ profile_id: adminProfile, user_id: adminId, state: 'recording', start_at: new Date(Date.now() - 600_000), end_at: new Date(Date.now() + 1_800_000), duration_s: 600 });
+    const b = (await play(r.id)).json();
+    expect(b.growing).toBe(true);
+    expect(b.expiresAt).toBeGreaterThan(Date.now() + 1_800_000 + 300_000 + 3_500_000);
+    expect(b.expiresAt).toBeLessThan(Date.now() + 1_800_000 + 300_000 + 3_700_000);
+    expect((await authzRec(b.token)).json()).toEqual({ dir: r.dir, growing: true, maxAgeS: 2 });
+    // the beat renews it like a live token
+    expect((await beatLiveToken(env.ctx, b.token, { userId: adminId, sidHash: liveSidHash(adm.cookies.ff_sid!), ip: IP1 })).ok).toBe(true);
+  });
+
+  it('rec token is revoked when the recording is deleted (410)', async () => {
+    const r = await rec();
+    const { token } = await annaRec(r.id);
+    expect((await resolveRecToken(env.ctx, token, IP1)).status).toBe(200);
+    expect(await deleteRecording(env.ctx, r.id, 'owner')).toBe('deleted');
+    expect(await resolveRecToken(env.ctx, token, IP1)).toEqual({ status: 410 });
+    expect((await authzRec(token)).json()).toEqual({ error: 'gone' });
+  });
+
+  it('visibility change to private revokes other profiles\' tokens', async () => {
+    const r = await rec({ visibility: 'everyone' });
+    const theirs = (await play(r.id)).json().token as string; // the admin's profile sees it while it is shared with everyone
+    const own = (await annaRec(r.id)).token;
+    expect((await authzRec(theirs)).statusCode).toBe(200);
+    await setVisibility(env.ctx, { userId: ANNA, profileId: ANNA, admin: false }, r.id, 'private');
+    expect((await authzRec(theirs)).statusCode).toBe(410);
+    expect((await resolveRecToken(env.ctx, own, IP1)).status).toBe(200);
+    // an admin's channel stop never ends a recording's playback
+    await revokeChannelTokens(env.ctx, nord);
+    expect((await resolveRecToken(env.ctx, own, IP1)).status).toBe(200);
+  });
+
+  it('a recording that now lives only in the library is gone for its tokens', async () => {
+    const r = await rec();
+    const { token } = await annaRec(r.id);
+    await env.pool.query("update livetv_recordings set storage = 'library', library_path = 'Sternstunde Physik/Sternstunde Physik – 2026-11-15 20.15.ts' where id = $1", [r.id]);
+    expect(await resolveRecToken(env.ctx, token, IP1)).toEqual({ status: 410 });
   });
 });

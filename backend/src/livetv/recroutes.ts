@@ -11,6 +11,8 @@ import { livetvInstalled, livetvSystem } from './detect.js';
 import { adminListRecordings, deleteRecording, getRecording, listRecordings, mayRecord, progKey, recordingView, recordSettings, seriesKeyOf, setKeep, setVisibility, visibleRecording, REC_STATES, type RecState } from './recordings.js';
 import { expandRules, forecast, insertScheduled, programmeAt, releaseReservation, validTz, type RuleRow } from './recsched.js';
 import { channelAllowed } from './rights.js';
+import { LIVE_CAP_S, liveSidHash, mintRecToken } from './tokens.js';
+import { isHomeRequest } from '../netaddr.js';
 
 /**
  * The recording routes (spec §15.8, plan Phase 3 Task 4). User side (`requireUser`): the programme detail, scheduling with the conflict
@@ -44,6 +46,7 @@ const rulePatch = z.object({
   enabled: z.boolean().optional(), title: z.string().trim().min(1).max(200).optional(),
 }).strict();
 const deleteAllBody = z.object({ confirm: z.literal('LÖSCHEN') }).strict();
+const playBody = z.object({ via: z.enum(['local', 'chromecast', 'airplay']).optional() }).strict();
 const MAX_SPAN_MS = 24 * 3_600_000;
 /** an HD recording (about 6 Mbit/s) fills this many bytes an hour: the storage card's "noch ca. … h in HD" */
 export const HD_BYTES_PER_HOUR = 2_700_000_000;
@@ -189,6 +192,37 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     await deleteRecording(ctx, id, 'owner');
     if (r.channel_id) await releaseReservation(ctx, r.channel_id).catch(() => undefined);
     return reply.code(204).send();
+  });
+
+  /**
+   * Plays a recording this profile sees (kids too, spec §15.7): a `rec` token for `/media/r/<token>/index.m3u8` (plan: a POST, it mints a
+   * credential). 404 not visible; 409 `not_ready` while nothing is recorded; 409 `in_library` once it lives only in the Jellyfin library.
+   */
+  app.post('/api/livetv/recordings/:id/play', { ...user, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const id = idParam(req);
+    if (!id) return notFound(reply);
+    const b = playBody.safeParse(req.body ?? {});
+    if (!b.success) return invalid(reply, b.error);
+    const { user: u, profile } = who(req);
+    const r = await visibleRecording(ctx, u, profile, id);
+    if (!r) return notFound(reply);
+    if (r.storage === 'library' && r.library_path !== null) return reply.code(409).send({ error: 'in_library' });
+    if (r.state === 'scheduled' || Number(r.bytes) === 0) return reply.code(409).send({ error: 'not_ready' });
+    const deviceId = req.session!.deviceId;
+    if (!deviceId) return reply.code(403).send({ error: 'device_pending' });
+    const growing = r.state === 'recording';
+    const HOUR_MS = 3_600_000;
+    const capMs = growing ? r.end_at.getTime() + r.pad_after_s * 1000 + HOUR_MS - Date.now() : (r.duration_s ?? 0) * 1000 + HOUR_MS;
+    const minted = await mintRecToken(ctx, {
+      userId: u.id, profileId: profile.id, deviceId, sidHash: liveSidHash(req.sid!), recordingId: r.id, channelId: r.channel_id ?? '', channelName: r.channel_name,
+      via: b.data.via ?? 'local', remote: !isHomeRequest(req, ctx.cfg.HOME_NETWORKS),
+    }, Math.min(LIVE_CAP_S, Math.ceil(capMs / 1000)));
+    const pos = (await ctx.db.query<{ position_s: number }>('select position_s from livetv_recording_progress where profile_id = $1 and recording_id = $2', [profile.id, id])).rows[0];
+    reply.header('cache-control', 'no-store');
+    return {
+      token: minted.token, url: `/media/r/${minted.token}/index.m3u8`, growing, segments: r.segments ?? 'ts', durationS: r.duration_s, positionS: pos?.position_s ?? 0,
+      expiresAt: minted.expiresAt,
+    };
   });
 
   /** progress of a recording this profile sees (kids too); the owner's ≥ 90 % (or `played`) marks it watched (retention) */

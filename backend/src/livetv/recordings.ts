@@ -242,15 +242,18 @@ export interface Actor { userId: string; profileId: string; admin: boolean }
 const mayChange = (r: RecRow, a: Actor) => r.profile_id === a.profileId || a.admin;
 
 /**
- * Hooks of later tasks, called when a recording's audience shrinks or it goes: its playback tokens (Task 5) and download licences
- * (Phase 3c, `onRecordingDeleted`). Registered by those modules; empty = nothing to revoke.
+ * What else goes when a recording's audience shrinks or it is deleted: its playback tokens (tokens.ts, loaded on use: tokens.ts reads
+ * recordings through this module, so it is not imported at load) and, from Phase 3c, its download licences (`onRecordingDeleted`,
+ * registered by that module; empty = none).
  */
 export interface RecHooks {
   /** revoke the recording's playback tokens; `keepProfile`: tokens of that profile stay (the owner after a visibility change) */
-  revokeTokens?: (ctx: Ctx, recordingId: string, o?: { keepProfile?: string }) => Promise<void>;
+  revokeTokens: (ctx: Ctx, recordingId: string, o?: { keepProfile?: string }) => Promise<void>;
   onRecordingDeleted?: (ctx: Ctx, recordingId: string) => Promise<void>;
 }
-export const recHooks: RecHooks = {};
+export const recHooks: RecHooks = {
+  revokeTokens: async (ctx, id, o) => { await (await import('./tokens.js')).revokeRecordingTokens(ctx, id, o); },
+};
 
 /** *Behalten* (spec §15.5): owner or admin; null = not found or not allowed */
 export async function setKeep(ctx: Ctx, a: Actor, id: string, keep: boolean): Promise<RecRow | null> {
@@ -270,7 +273,7 @@ export async function setVisibility(ctx: Ctx, a: Actor, id: string, visibility: 
     "update livetv_recordings set visibility = $2, shared_by = case when $2 = 'private' then null else $3::uuid end where id = $1 and state <> 'cancelled' returning *",
     [id, visibility, a.userId])).rows[0] ?? null;
   if (next && next.visibility !== r.visibility && r.visibility !== 'private') {
-    await recHooks.revokeTokens?.(ctx, id, r.profile_id ? { keepProfile: r.profile_id } : {}).catch(() => undefined);
+    await recHooks.revokeTokens(ctx, id, r.profile_id ? { keepProfile: r.profile_id } : {}).catch(() => undefined);
   }
   return next;
 }
@@ -324,7 +327,7 @@ export async function deleteRecording(ctx: Ctx, id: string, by: 'owner' | 'admin
     `update livetv_recordings r set state = 'cancelled', delete_after = now() from (select state as was from livetv_recordings where id = $1 for update) o
       where r.id = $1 returning o.was`, [id])).rows[0];
   if (!marked) return 'not_found';
-  await recHooks.revokeTokens?.(ctx, id).catch(() => undefined);
+  await recHooks.revokeTokens(ctx, id).catch(() => undefined);
   await recHooks.onRecordingDeleted?.(ctx, id).catch(() => undefined);
   return (await purgeRecording(ctx, r, { stop: marked.was === 'recording' || r.state === 'recording' })) ? 'deleted' : 'pending';
 }

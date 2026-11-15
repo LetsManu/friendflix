@@ -65,6 +65,8 @@ so a host firewall rule alone does not close the range; `LIVETV_SRT_BIND` does. 
 
 Other settings: `LIVETV_CACHE_MAX_GB` (default 6, the disposable segment cache), `LIVETV_URL` (only if you move the service), `RECORDINGS_PATH` (host folder for recordings, Phase 3; default the named volume `recordings`; absolute path, writable by uid 10001).
 
+**Recordings folder (since recordings, Phase 3).** `livetv` writes recordings into `RECORDINGS_PATH` (default the named volume `recordings`), and the gateway serves them **read-only** from the same folder (`${RECORDINGS_PATH:-recordings}:/data/recordings:ro`, environment `RECORDINGS_DIR=/data/recordings`). The backend never mounts it, and no container gets the Docker socket. While Live TV is off the gateway mount is an empty volume and changes nothing. A **Portainer stack** from before recordings needs these two lines in its `gateway` service (or the stack file of the current release): under `environment:` `RECORDINGS_DIR: /data/recordings`, under `volumes:` `- ${RECORDINGS_PATH:-recordings}:/data/recordings:ro`; then *Update the stack*. With a host folder in `RECORDINGS_PATH` create it first and give it to uid 10001 (`mkdir -p <folder> && chown 10001:10001 <folder>`), otherwise Docker creates it as root and recordings fail with a write error. Without the gateway lines recordings are still made, but playing them answers 503.
+
 ## Sources
 
 *Admin → Live-TV → Quellen.* A source is either a provider list (*Anbieterliste*: an M3U URL, optionally an XMLTV URL for the programme guide) or your own streams (*Eigene Streams*, created on first use). Provider URLs and passwords are stored encrypted and never shown again; when you edit a source the field stays empty ("unverändert lassen").

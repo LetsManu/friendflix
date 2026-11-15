@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { internalSecret, need, optional } from './env.js';
+import { internalSecret, need, optional, recordingsDir } from './env.js';
 import { createGateway } from './gateway.js';
 import { watchUntrustedHost } from './peers.js';
 import { createRemoteConfig } from './remoteConfig.js';
@@ -28,6 +28,7 @@ const { server } = createGateway({
   internalSecret: secret,
   downloadDir: process.env.DOWNLOAD_DIR || undefined,
   livetvUrl,
+  recordingsDir: recordingsDir(process.env),
   metricsToken: process.env.METRICS_TOKEN || undefined,
 });
 const port = Number(process.env.PORT ?? 4000);

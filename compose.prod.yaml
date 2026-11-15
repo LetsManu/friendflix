@@ -283,9 +283,11 @@ services:
       METRICS_TOKEN: ${METRICS_TOKEN:-}
       DOWNLOAD_DIR: /data/downloads
       LIVETV_URL: ${LIVETV_URL:-http://livetv:8090} # the optional livetv service (profile livetv); serves /media/l/<token>/...
+      RECORDINGS_DIR: /data/recordings # Live TV recordings (serves /media/r/<token>/...); an empty volume while Live TV is off
     group_add: ["10001"] # reads bootstrap-gateway (internal_secret only: never the database password or the encryption key)
     volumes:
       - ${DOWNLOADS_PATH:-downloads}:/data/downloads:ro # same folder as the backend, read-only
+      - ${RECORDINGS_PATH:-recordings}:/data/recordings:ro # the folder livetv records into, read-only (livetv alone writes it)
       - bootstrap-gateway:/run/friendflix-gateway:ro
     depends_on:
       bootstrap: { condition: service_completed_successfully }
