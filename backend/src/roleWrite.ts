@@ -10,6 +10,7 @@ import { fetchLibraries, knownLibraries, missingLibraries, type Library } from '
 import { defaultLimit } from './requestlimit.js';
 import { diffRights, invalidateRights, roleRights, same, valueOf, type RightKey, type RightSource } from './rights.js';
 import { invitableRoles, listRoles, roleLabelArgs, type RoleRow } from './rolecat.js';
+import { rolePresets, type RoleTemplatePreset } from './roleTemplates.js';
 import { areasOf, type Areas } from './areas.js';
 import { livetvInstalled } from './livetv/detect.js';
 import { releasedGroupsSummary, roleGroupIds, roleGroupNames, setRoleGroupsIn } from './livetv/groups.js';
@@ -206,6 +207,8 @@ export interface RolesOverview {
     fields: MatrixField[]; features: ReturnType<typeof featureFlags>; roles: MatrixRole[]; libraries: Library[];
     /** the released Live TV groups (group order, channel counts) and how many wait for a release; null while Live TV is not installed */
     livetv: Awaited<ReturnType<typeof releasedGroupsSummary>> | null;
+    /** the start points of a new role (Nur Live-TV only while Live TV is installed) */
+    templates: RoleTemplatePreset[];
   };
 }
 
@@ -259,6 +262,6 @@ export async function rolesOverview(ctx: Ctx): Promise<RolesOverview> {
   }
   return {
     roles, invitable, limits,
-    matrix: { fields: MATRIX_FIELDS.map((f) => ({ ...f, ...(f.options ? { options: [...f.options] } : {}) })), features: featureFlags(ctx), roles: matrixRoles, libraries: libs ?? [], livetv },
+    matrix: { fields: MATRIX_FIELDS.map((f) => ({ ...f, ...(f.options ? { options: [...f.options] } : {}) })), features: featureFlags(ctx), roles: matrixRoles, libraries: libs ?? [], livetv, templates: rolePresets(livetvInstalled(ctx)) },
   };
 }

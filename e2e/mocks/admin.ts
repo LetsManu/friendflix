@@ -419,6 +419,20 @@ export const areasOfMock = (v: Record<string, unknown>) => ({
   library: v.libraries === 'all' || (Array.isArray(v.libraries) && v.libraries.length > 0),
   livetv: v.liveTv === true, requests: v.requests === true, together: v.party === true || v.comments === true, downloads: v.download === true,
 });
+/** backend/src/roleTemplates.ts ROLE_PRESETS: the start points of a new role (patch values flattened, perms included) */
+const OFF = (keys: string[]) => Object.fromEntries(keys.map((k) => [k, false]));
+export const ROLE_PRESETS_MOCK: Array<{ key: string; base: 'family' | 'friend' | 'guest'; values: Record<string, unknown> }> = [
+  { key: 'family', base: 'family', values: {} },
+  { key: 'friend', base: 'friend', values: {} },
+  { key: 'guest', base: 'guest', values: {} },
+  { key: 'liveOnly', base: 'friend', values: { libraries: [], download: false, ...OFF(['requests', 'party', 'partySchedule', 'comments', 'liveRecord']), liveTv: true } },
+  { key: 'empty', base: 'guest', values: { libraries: [], download: false, ...OFF(['requests', 'cast', 'party', 'partySchedule', 'comments', 'liveTv', 'liveRecord']) } },
+];
+/** a preset's values as the backend's patch: template fields, switches under `perms` */
+const presetPatch = (v: Record<string, unknown>) => {
+  const perms = Object.fromEntries(Object.entries(v).filter(([k]) => PERM_KEYS_MOCK.includes(k)));
+  return { ...Object.fromEntries(Object.entries(v).filter(([k]) => !PERM_KEYS_MOCK.includes(k))), ...(Object.keys(perms).length ? { perms } : {}) };
+};
 const PERM_KEYS_MOCK = ['requests', 'cast', 'party', 'partySchedule', 'comments', 'liveTv', 'liveRecord'];
 const MEDIA_KEYS_MOCK = ['libraries', 'maxParentalRating', 'maxStreams', 'maxBitrate', 'transcoding', 'maxHeight', 'download'];
 const MATRIX_BASE_VALUES: Record<string, unknown> = {
@@ -1640,6 +1654,10 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
         livetv: mx.features.livetv
           ? { groups: released.map((g) => ({ id: g.id, name: g.name, kidFriendly: g.kidFriendly, channels: g.channels })), pending: st.livetv.area.groups.filter((g) => !g.released).length }
           : null,
+        // backend rolePresets: Nur Live-TV only while Live TV is installed
+        templates: ROLE_PRESETS_MOCK.filter((t) => mx.features.livetv || t.key !== 'liveOnly').map((t) => ({
+          key: t.key, base: t.base, patch: presetPatch(t.values), areas: areasOfMock({ ...MATRIX_BASE_VALUES, ...MATRIX_INHERITED[t.base], ...t.values }),
+        })),
         roles: rows.map((r, position) => ({
           key: r.key, label: r.label, builtinLabel: r.builtinLabel, base: r.base, origin: r.origin, invitable: r.invitable, position,
           envGone: r.envGone, stored: r.stored, accounts: r.accounts, profiles: r.profiles, kidsProfiles: r.kidsProfiles, values: r.values, sources: r.sources, missingLibraries: r.missingLibraries,
@@ -1665,18 +1683,37 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     return ok();
   }
   if (p === '/api/admin/roles' && m === 'POST') {
-    const src = st.matrix.roles.find((r) => r.key === body?.from);
-    if (!src) return J({ error: 'not_found' }, 404);
+    // either a copy ({ label, from }) or a start point ({ label, template }), never both (the backend's strict union)
+    if ((body?.from === undefined) === (body?.template === undefined)) return J({ error: 'bad_request' }, 400);
+    const preset = body?.template === undefined ? undefined : ROLE_PRESETS_MOCK.find((t) => t.key === body.template);
+    const src = body?.from === undefined ? undefined : st.matrix.roles.find((r) => r.key === body.from);
+    if (body?.template !== undefined && !preset) return J({ error: 'bad_request' }, 400);
+    if (body?.from !== undefined && !src) return J({ error: 'not_found' }, 404);
+    if (preset?.key === 'liveOnly' && !st.matrix.features.livetv) return J({ error: 'template_unavailable' }, 400);
     const label = typeof body?.label === 'string' ? body.label.trim() : '';
     if (!label || label.length > 30) return J({ error: 'bad_request' }, 400);
     let key = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'role';
     if (!/^[a-z]/.test(key)) key = `r-${key}`;
     const taken = new Set(st.matrix.roles.map((r) => r.key));
     for (let n = 2; taken.has(key); n++) key = `${key.replace(/-\d+$/, '')}-${n}`;
-    const copy: MatrixMockRole = { ...src, key, label, builtinLabel: false, origin: 'admin', stored: true, envGone: false, accounts: 0, profiles: 0, kidsProfiles: 0, invites: 0, values: { ...src.values }, sources: Object.fromEntries(Object.keys(src.values).map((k) => [k, 'role' as const])), missingLibraries: [] };
+    let made: MatrixMockRole;
+    if (src) {
+      made = { ...src, key, label, builtinLabel: false, origin: 'admin', stored: true, envGone: false, accounts: 0, profiles: 0, kidsProfiles: 0, invites: 0, values: { ...src.values }, sources: Object.fromEntries(Object.keys(src.values).map((k) => [k, 'role' as const])), missingLibraries: [] };
+      // backend createRole: the copy keeps the source's channel groups (a copy of admin: every released group)
+      let groups = 0;
+      for (const g of st.livetv.area.groups) if (src.key === 'admin' ? g.released : g.roles.includes(src.key)) { g.roles = [...g.roles, key]; groups++; }
+      log('role.create', key, { from: src.key, label, groups });
+    } else {
+      const t = preset!;
+      const values = { ...MATRIX_BASE_VALUES, ...MATRIX_INHERITED[t.base], ...t.values };
+      made = {
+        key, label, builtinLabel: false, base: t.base, origin: 'admin', invitable: true, stored: true, accounts: 0, profiles: 0, kidsProfiles: 0, invites: 0, envGone: false,
+        values, sources: Object.fromEntries(Object.keys(values).map((k) => [k, Object.hasOwn(t.values, k) ? 'role' as const : 'default' as const])), missingLibraries: [],
+      };
+      log('role.create', key, { template: t.key, label });
+    }
     const at = st.matrix.roles.findIndex((r) => !r.stored);
-    st.matrix.roles.splice(at < 0 ? st.matrix.roles.length : at, 0, copy);
-    log('role.create', key, { from: src.key, label });
+    st.matrix.roles.splice(at < 0 ? st.matrix.roles.length : at, 0, made);
     return J({ key }, 201);
   }
   if ((mm = p.match(/^\/api\/admin\/roles\/([^/]+)$/)) && m === 'PUT') {

@@ -17,7 +17,8 @@ import { claimHevcProbe, hevcBusyReason, hevcProbeRunning, hevcProbeWanted, hevc
 import { activeStreams } from '../playstats.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
-import { RoleInUse, createRole, deleteRole, orderRoles, roleExists, roleLabelArgs } from '../rolecat.js';
+import { RoleInUse, createRole, createRoleFromTemplate, deleteRole, orderRoles, roleExists, roleLabelArgs } from '../rolecat.js';
+import { ROLE_PRESET_KEYS } from '../roleTemplates.js';
 import { invalidateRoles } from '../roles.js';
 import { rolePatch, roleLabelInput, rolesOverview, writeRole } from '../roleWrite.js';
 import { cleanDeviceName } from '../deviceName.js';
@@ -300,10 +301,18 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true, reapplied };
   });
 
-  // duplicates a role: the new row holds a full snapshot of `from` (the key is derived from the label)
+  // a new role (the key is derived from the label): `from` duplicates a role (a full snapshot of it, with its channel groups),
+  // `template` starts from a preset (roleTemplates.ts); 400 template_unavailable for liveOnly without Live TV
   app.post('/api/admin/roles', admin, async (req, reply) => {
-    const body = z.object({ label: roleLabelInput, from: z.string().min(1).max(64) }).strict().parse(req.body);
-    return reply.code(201).send({ key: await createRole(ctx, req.user!.id, body.label, body.from) });
+    const body = z.union([
+      z.object({ label: roleLabelInput, from: z.string().min(1).max(64) }).strict(),
+      z.object({ label: roleLabelInput, template: z.enum(ROLE_PRESET_KEYS) }).strict(),
+    ]).parse(req.body);
+    if ('template' in body && body.template === 'liveOnly' && !livetvInstalled(ctx)) return reply.code(400).send({ error: 'template_unavailable' });
+    const key = 'from' in body
+      ? await createRole(ctx, req.user!.id, body.label, body.from)
+      : await createRoleFromTemplate(ctx, req.user!.id, body.label, body.template);
+    return reply.code(201).send({ key });
   });
 
   // `order` is a reserved role key (a static route wins over `:role`)

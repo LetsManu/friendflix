@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import pg from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Ctx } from '../src/ctx.js';
 import { forgetLibraries } from '../src/libraries.js';
 import { DEFAULT_PERMS, MATRIX_FIELDS } from '../src/perms.js';
@@ -11,6 +11,13 @@ import { ROLE_KEY_RE, deleteRole, invitableRoles, slugKey, syncRoles } from '../
 import { invalidateRoles } from '../src/roles.js';
 import { writeRole } from '../src/roleWrite.js';
 import { TEST_DB, makeEnv, type TestEnv } from './helpers.js';
+
+// Live TV is not installed unless a test says so (roles redesign: the liveOnly template and matrix.livetv follow it)
+const installed = { v: false };
+vi.mock('../src/livetv/detect.js', async (orig) => ({
+  ...(await orig<typeof import('../src/livetv/detect.js')>()),
+  livetvInstalled: vi.fn(() => installed.v),
+}));
 
 // Users & permissions Task 3: GET /api/admin/roles (legacy fields + the role matrix) and PUT /api/admin/roles/:role (partial writes into
 // role_settings.template / perms, dual-written old columns, one role.update audit entry, policy re-apply only for media-enforced fields).
@@ -49,6 +56,7 @@ beforeEach(async () => {
   folders = [{ Id: 'f1', Name: 'Filme' }, { Id: 'f2', Name: 'Serien' }];
   forgetLibraries(env.ctx);
   failFor = '';
+  installed.v = false;
 });
 
 const call = (s: Sess, method: 'GET' | 'PUT' | 'POST' | 'DELETE', url: string, payload?: object) =>
@@ -502,12 +510,126 @@ describe('catalogue writes', () => {
     expect(stored.requests_per_month).toBe(fam.values.requestsPerMonth);
     expect(Object.keys(stored.template).length).toBeGreaterThan(5);
     expect((await env.pool.query("select actor, meta from audit_log where action='role.create' and target=$1", [key])).rows)
-      .toEqual([{ actor: expect.any(String), meta: { from: 'family', label: 'Oma & Opa' } }]);
+      .toEqual([{ actor: expect.any(String), meta: { from: 'family', label: 'Oma & Opa', groups: 0 } }]);
     // later edits of the source do not reach the copy
     await put('family', { maxStreams: 5, perms: { comments: true } });
     const after = await roleOf(key);
     expect(after.values.maxStreams).toBe(3);
     expect(after.values.comments).toBe(false);
+  });
+
+  // roles redesign Task 4: copies keep the Live TV channel groups; new roles from templates
+  const group = async (name: string, released = true, roles: string[] = []) => {
+    const id = (await env.pool.query<{ id: string }>(
+      `insert into livetv_groups(id, name, kid_friendly, released, position)
+       values (gen_random_uuid(), $1, false, $2, (select coalesce(max(position) + 1, 0) from livetv_groups)) returning id`, [name, released])).rows[0]!.id;
+    for (const r of roles) await env.pool.query('insert into livetv_group_roles(group_id, role) values ($1, $2)', [id, r]);
+    return id;
+  };
+  const grants = async (role: string) => (await env.pool.query<{ group_id: string }>('select group_id from livetv_group_roles where role = $1', [role])).rows.map((r) => r.group_id).sort();
+  const createAudit = async (key: string) => (await env.pool.query("select meta from audit_log where action='role.create' and target=$1", [key])).rows.map((r) => r.meta);
+
+  it("duplicate copies the source's channel groups, released and unreleased; audit groups 2", async () => {
+    await env.pool.query('delete from livetv_groups');
+    try {
+      const nord = await group('Nordlicht TV', true, ['family']);
+      const neu = await group('DE | Neu', false, ['family']);
+      await group('Hafenkanal', true, ['friend']);
+      const key = await dup('Oma & Opa', 'family');
+      expect(await grants(key)).toEqual([nord, neu].sort());
+      expect(await createAudit(key)).toEqual([{ from: 'family', label: 'Oma & Opa', groups: 2 }]);
+      expect((await roleOf(key)).livetvGroupIds).toEqual([nord]);
+    } finally {
+      await env.pool.query('delete from livetv_groups');
+    }
+  });
+
+  it('duplicate of admin grants every released group', async () => {
+    await env.pool.query('delete from livetv_groups');
+    try {
+      const nord = await group('Nordlicht TV');
+      const hafen = await group('Hafenkanal', true, ['friend']);
+      await group('DE | Neu', false);
+      const key = await dup('Chefs', 'admin');
+      expect(await grants(key)).toEqual([nord, hafen].sort());
+      expect(await createAudit(key)).toEqual([{ from: 'admin', label: 'Chefs', groups: 2 }]);
+    } finally {
+      await env.pool.query('delete from livetv_groups');
+    }
+  });
+
+  const fromTemplate = (label: string, template: string) => post({ label, template });
+  const none = { library: false, livetv: false, requests: false, together: false, downloads: false };
+
+  it("template friend: new role with base friend, no role_settings row, every source 'default'", async () => {
+    const r = await fromTemplate('Nachbarn', 'friend');
+    expect(r.statusCode).toBe(201);
+    const { key } = r.json();
+    expect(key).toBe('nachbarn');
+    expect(await row(key)).toBeUndefined();
+    const role = await roleOf(key);
+    expect(role).toMatchObject({ label: 'Nachbarn', base: 'friend', origin: 'admin', invitable: true, livetvGroupIds: [] });
+    expect(Object.values(role.sources).every((v) => v === 'default')).toBe(true);
+    expect(role.values).toEqual((await roleOf('friend')).values);
+    expect(role.areas).toEqual({ library: true, livetv: true, requests: true, together: true, downloads: false });
+    expect(await createAudit(key)).toEqual([{ template: 'friend', label: 'Nachbarn' }]);
+    for (const [label, t, base] of [['Sippe', 'family', 'family'], ['Besuch', 'guest', 'guest']] as const) {
+      const k = (await fromTemplate(label, t)).json().key as string;
+      expect((await roleOf(k)).base).toBe(base);
+      expect(await row(k)).toBeUndefined();
+    }
+  });
+
+  it("template liveOnly: libraries [], download false, requests/party/partySchedule/comments/liveRecord false, liveTv true; areas = livetv only; no groups", async () => {
+    installed.v = true;
+    await env.pool.query('delete from livetv_groups');
+    await group('Nordlicht TV', true, ['friend']);
+    try {
+      const r = await fromTemplate('Nur Fernsehen', 'liveOnly');
+      expect(r.json()).toEqual({ key: 'nur-fernsehen' });
+      expect(r.statusCode).toBe(201);
+      const { key } = r.json();
+      const role = await roleOf(key);
+      expect(role.base).toBe('friend');
+      expect(role.values).toMatchObject({ libraries: [], download: false, requests: false, party: false, partySchedule: false, comments: false, liveRecord: false, liveTv: true, cast: true });
+      expect(role.sources).toMatchObject({ libraries: 'role', download: 'role', requests: 'role', liveTv: 'role', maxStreams: 'default', requestsPerMonth: 'default', cast: 'default' });
+      expect(role.areas).toEqual({ ...none, livetv: true });
+      expect(role.livetvGroupIds).toEqual([]);
+      expect(await grants(key)).toEqual([]);
+      expect(await createAudit(key)).toEqual([{ template: 'liveOnly', label: 'Nur Fernsehen' }]);
+    } finally {
+      await env.pool.query('delete from livetv_groups');
+    }
+  });
+
+  it('template empty: every area false', async () => {
+    const { key } = (await fromTemplate('Leer', 'empty')).json();
+    const role = await roleOf(key);
+    expect(role.base).toBe('guest');
+    expect(role.areas).toEqual(none);
+    expect(role.values).toMatchObject({ libraries: [], download: false, requests: false, party: false, partySchedule: false, comments: false, cast: false, liveTv: false, liveRecord: false });
+  });
+
+  it('template liveOnly without Live TV → 400 template_unavailable; GET matrix.templates has no liveOnly', async () => {
+    const r = await fromTemplate('Nur Fernsehen', 'liveOnly');
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toEqual({ error: 'template_unavailable' });
+    expect((await env.pool.query("select 1 from roles where origin = 'admin'")).rowCount).toBe(0);
+    const templates = (await get()).matrix.templates as Array<{ key: string; base: string; patch: object; areas: object }>;
+    expect(templates.map((t) => t.key)).toEqual(['family', 'friend', 'guest', 'empty']);
+    expect(templates.find((t) => t.key === 'guest')).toEqual({ key: 'guest', base: 'guest', patch: {}, areas: { library: true, livetv: true, requests: true, together: true, downloads: false } });
+    expect(templates.find((t) => t.key === 'empty')!.areas).toEqual(none);
+    installed.v = true;
+    const live = ((await get()).matrix.templates as Array<{ key: string; areas: object }>);
+    expect(live.map((t) => t.key)).toEqual(['family', 'friend', 'guest', 'liveOnly', 'empty']);
+    expect(live.find((t) => t.key === 'liveOnly')!.areas).toEqual({ ...none, livetv: true });
+  });
+
+  it('a body with both from and template → 400', async () => {
+    expect((await post({ label: 'Beides', from: 'family', template: 'friend' })).statusCode).toBe(400);
+    expect((await post({ label: 'Nichts' })).statusCode).toBe(400);
+    expect((await post({ label: 'Falsch', template: 'admin' })).statusCode).toBe(400);
+    expect((await env.pool.query("select 1 from roles where origin = 'admin'")).rowCount).toBe(0);
   });
 
   it('a duplicate writes unlimited wishes explicitly', async () => {

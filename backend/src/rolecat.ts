@@ -5,6 +5,8 @@ import { auditInTx } from './audit.js';
 import type { Ctx } from './ctx.js';
 import { DEFAULT_PERMS, PERM_KEYS } from './perms.js';
 import { invalidateRights, roleRights } from './rights.js';
+import { defaultLimit } from './requestlimit.js';
+import { ROLE_PRESETS, type RolePresetKey } from './roleTemplates.js';
 import { HttpError, setRole } from './users.js';
 // roles.ts and rolecat.ts import each other (invalidateRoles clears the catalogue; the catalogue needs DEFAULT_ROLES): neither may use
 // the other's exports at module load, only inside functions
@@ -135,10 +137,37 @@ export function slugKey(label: string, taken: ReadonlySet<string>): string {
 
 const lockRole = (c: pg.PoolClient, key: string) => c.query('select pg_advisory_xact_lock(hashtext($1))', [`role:${key}`]);
 
+/** inserts the catalogue row of a new admin role at the end (the key from the label, a free one; a clash is retried); answers the key */
+async function insertRole(c: pg.PoolClient, ctx: CatCtx, actor: string | null, label: string, base: string, invitable: boolean): Promise<string> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const taken = new Set((await c.query<{ key: string }>('select key from roles')).rows.map((r) => r.key));
+    for (const k of Object.keys(ctx.roles)) taken.add(k);
+    const candidate = slugKey(label, taken);
+    await c.query('savepoint ins');
+    const ins = await c.query(
+      `insert into roles(key, label, base, origin, invitable, position, created_by)
+       select $1, $2, $3, 'admin', $4, coalesce(max(position), -1) + 1, $5 from roles on conflict (key) do nothing returning key`,
+      [candidate, label, base, invitable, actor]);
+    await c.query('release savepoint ins');
+    if (ins.rowCount) return candidate;
+  }
+  throw new HttpError(409, 'key_conflict');
+}
+
+/** a role_settings row as the role editor writes it: template, switches, wish limit and the dual-written old columns */
+async function insertSettings(c: pg.PoolClient, key: string, requestsPerMonth: number | null, template: Record<string, unknown>, perms: Record<string, unknown>): Promise<void> {
+  const cols = Object.values(LEGACY_COLUMNS);
+  await c.query(
+    `insert into role_settings(role, requests_per_month, template, perms, ${cols.join(', ')}) values ($1, $2, $3, $4, ${cols.map((_, i) => `$${i + 5}`).join(', ')})`,
+    [key, requestsPerMonth, JSON.stringify(template), JSON.stringify(perms), ...legacyColumns(readTemplate(template))]);
+}
+
 /**
  * Duplicates a role (spec §4.2): a new admin role holding a full snapshot of the source's effective template, switches and wish limit
  * (later edits of the source do not reach it). The source is read under its role lock. Admin rights belong to the key `admin`, so a
  * copy of admin has base `family`, the family switches (only admin's numbers are copied) and is invitable; every other copy keeps the source's base and invitable flag. Returns the new key.
+ * The copy also gets the source's Live TV channel groups (released and unreleased grants); a copy of admin, which has no grant rows,
+ * gets every released group (what admin sees). Audited `role.create { from, label, groups }`.
  */
 export async function createRole(ctx: Ctx, actor: string | null, label: string, from: string): Promise<string> {
   if (!(await roleExists(ctx, from))) throw new HttpError(404, 'not_found');
@@ -155,25 +184,40 @@ export async function createRole(ctx: Ctx, actor: string | null, label: string, 
     const invitable = isAdmin ? true : src?.invitable ?? true;
     const template = Object.fromEntries(TEMPLATE_KEYS.map((k) => [k, rights.template[k]]));
     const perms = Object.fromEntries(PERM_KEYS.map((k) => [k, (isAdmin ? DEFAULT_PERMS.family : rights.perms)[k]]));
-    const cols = Object.values(LEGACY_COLUMNS);
-    let key = '';
-    for (let attempt = 0; attempt < 5 && !key; attempt++) {
-      const taken = new Set((await c.query<{ key: string }>('select key from roles')).rows.map((r) => r.key));
-      for (const k of Object.keys(ctx.roles)) taken.add(k);
-      const candidate = slugKey(label, taken);
-      await c.query('savepoint ins');
-      const ins = await c.query(
-        `insert into roles(key, label, base, origin, invitable, position, created_by)
-         select $1, $2, $3, 'admin', $4, coalesce(max(position), -1) + 1, $5 from roles on conflict (key) do nothing returning key`,
-        [candidate, label, base, invitable, actor]);
-      if (ins.rowCount) key = candidate;
-      await c.query('release savepoint ins');
-    }
-    if (!key) throw new HttpError(409, 'key_conflict');
-    await c.query(
-      `insert into role_settings(role, requests_per_month, template, perms, ${cols.join(', ')}) values ($1, $2, $3, $4, ${cols.map((_, i) => `$${i + 5}`).join(', ')})`,
-      [key, rights.template.requestsPerMonth, JSON.stringify(template), JSON.stringify(perms), ...legacyColumns(readTemplate(template))]);
-    await auditInTx({ db: c }, actor, 'role.create', key, { from, label });
+    const key = await insertRole(c, ctx, actor, label, base, invitable);
+    await insertSettings(c, key, rights.template.requestsPerMonth, template, perms);
+    const groups = (isAdmin
+      ? await c.query('insert into livetv_group_roles(group_id, role) select id, $1 from livetv_groups where released', [key])
+      : await c.query('insert into livetv_group_roles(group_id, role) select group_id, $1 from livetv_group_roles where role = $2', [key, from])).rowCount ?? 0;
+    await auditInTx({ db: c }, actor, 'role.create', key, { from, label, groups });
+    await c.query('commit');
+    invalidateRoles(ctx);
+    invalidateRights();
+    return key;
+  } catch (e) {
+    await c.query('rollback').catch(() => undefined);
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+/**
+ * A new admin role from a start point (roles redesign §4.4): the catalogue row with the preset's base (invitable), and a role_settings
+ * row only for a preset that changes something (Nur Live-TV, Leer); Familie/Freund/Gast store nothing and read "Standard". No channel
+ * groups. Audited `role.create { template, label }`. The route refuses Nur Live-TV while Live TV is not installed (400
+ * template_unavailable; this module stays clear of the Live TV detection, which would close an import cycle).
+ */
+export async function createRoleFromTemplate(ctx: Ctx, actor: string | null, label: string, template: RolePresetKey): Promise<string> {
+  const { base, patch } = ROLE_PRESETS[template];
+  const c = await (ctx.db as pg.Pool).connect();
+  try {
+    await c.query('begin');
+    const key = await insertRole(c, ctx, actor, label, base, true);
+    const { perms, ...fields } = patch;
+    const stored = Object.fromEntries(TEMPLATE_KEYS.filter((k) => Object.hasOwn(fields, k)).map((k) => [k, fields[k]]));
+    if (Object.keys(stored).length || Object.keys(perms ?? {}).length) await insertSettings(c, key, defaultLimit(base), stored, { ...perms });
+    await auditInTx({ db: c }, actor, 'role.create', key, { template, label });
     await c.query('commit');
     invalidateRoles(ctx);
     invalidateRights();
