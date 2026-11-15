@@ -20,7 +20,7 @@ const epoch = (v: unknown): v is number => typeof v === 'number' && Number.isInt
 
 const LIBRARY_STATUS: Record<LibraryError['code'], number> = {
   no_library: 404, not_found: 404, invalid: 400, library_not_writable: 409, library_not_dedicated: 409, storage_full: 507, write_failed: 409,
-  export_failed: 502, verify_failed: 502,
+  export_failed: 502, verify_failed: 502, busy: 409,
 };
 const libraryError = (e: unknown): Answer => {
   if (!(e instanceof LibraryError)) throw e;

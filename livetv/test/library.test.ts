@@ -5,10 +5,10 @@
  * it, and an empty "library" folder standing in for the overlay's `/library` mount.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, fstatSync, mkdirSync, mkdtempSync, readFileSync, readSync, readdirSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { existsSync, fstatSync, mkdirSync, mkdtempSync, readFileSync, readSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EXPORT_BUDGET_MS, Library, LibraryError, MARKER, sanitizeName } from '../src/library.js';
 import { recordingPlaylist } from '../src/recorder.js';
 import { createRun, type Run, type RunOptions } from '../src/run.js';
@@ -195,6 +195,53 @@ describe('the library export', () => {
     expect(readdirSync(join(recRoot, DIR)).filter((n) => n.startsWith('.'))).toEqual([]);
     // the default budget stays below the backend's wait (recstore.ts EXPORT_TIMEOUT_MS, 30 min) with room to spare
     expect(EXPORT_BUDGET_MS).toBeLessThanOrEqual(25 * 60_000);
+  });
+
+  it('I1: a part file an interrupted export left is swept at start and taken back after the budget; a fresh one is never touched', async () => {
+    recording({ n: 3 });
+    const at = { dir: DIR, folder: 'Hafenkanal', file: 'Nacht' };
+    writeFileSync(join(libRoot, MARKER), ''); // FriendFlix's folder already (an earlier export marked it)
+    mkdirSync(join(libRoot, 'Hafenkanal'));
+    const part = join(libRoot, 'Hafenkanal', '.Nacht.ts.part');
+    // a part file of a running export (fresh): this export waits, the other one's file stays
+    writeFileSync(part, 'half of an export');
+    expect(await code(lib.export(ID, at))).toBe('busy');
+    expect(readFileSync(part, 'utf8')).toBe('half of an export');
+    // older than the export budget: nobody can still be writing it; it goes and the export runs
+    const old = new Date(Date.now() - EXPORT_BUDGET_MS - 60_000);
+    utimesSync(part, old, old);
+    expect((await lib.export(ID, at)).path).toBe('Hafenkanal/Nacht.ts');
+    // after a restart: livetv sweeps part files one level below the library (plain files of that name pattern only, never through a link)
+    writeFileSync(join(libRoot, 'Hafenkanal', '.Folge 2.ts.part'), 'x');
+    const outside = mkdtempSync(join(tmpdir(), 'ltv-outside-'));
+    writeFileSync(join(outside, 'keep.ts'), 'keep');
+    symlinkSync(join(outside, 'keep.ts'), join(libRoot, 'Hafenkanal', '.Folge 3.ts.part'));
+    writeFileSync(join(libRoot, 'Hafenkanal', 'Folge 4.ts.part'), 'not ours: no leading dot');
+    mkdirSync(join(libRoot, 'Hafenkanal', '.Ordner.ts.part'));
+    await new Library({ root: libRoot, recordingsRoot: recRoot, run: fakeRun }).sweepParts();
+    expect(readdirSync(join(libRoot, 'Hafenkanal')).sort()).toEqual(['.Folge 3.ts.part', '.Ordner.ts.part', 'Folge 4.ts.part', 'Nacht.ts']);
+    expect(readFileSync(join(outside, 'keep.ts'), 'utf8')).toBe('keep');
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('M1: one export at a time: a second one while the first runs answers busy before it checks any space', async () => {
+    recording({ n: 3 });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let entered = false;
+    fake.beforeRemux = () => { entered = true; };
+    const slowRun: Run = async (cmd, args, o) => { if (args.includes('concat')) await gate; return fakeRun(cmd, args, o); };
+    let asked = 0;
+    const one = new Library({ root: libRoot, recordingsRoot: recRoot, run: slowRun, free: async () => { asked++; return null; } });
+    const first = one.export(ID, { dir: DIR, folder: 'Hafenkanal', file: 'Nacht' });
+    await vi.waitFor(() => expect(asked).toBeGreaterThan(0));
+    const before = asked;
+    expect(await code(one.export(ID, { dir: DIR, folder: 'Sternwarte 24', file: 'Nacht' }))).toBe('busy');
+    expect(asked).toBe(before); // no space reading for the refused one
+    release();
+    expect((await first).path).toBe('Hafenkanal/Nacht.ts');
+    expect(entered).toBe(true);
+    expect((await one.export(ID, { dir: DIR, folder: 'Sternwarte 24', file: 'Nacht' })).path).toBe('Sternwarte 24/Nacht.ts');
   });
 
   it.skipIf(!existsSync('/usr/bin/ffmpeg') || !existsSync('/usr/bin/ffprobe'))('B-I8: a recording whose init changes mid-way exports as one file that decodes, both pictures in it', async () => {

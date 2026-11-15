@@ -236,6 +236,7 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   const verifier: Verifier = { key: cfg.key, cache: new ReplayCache(), notBefore: Date.now() };
   const run = createRun();
   const library = new Library({ root: cfg.libraryDir, recordingsRoot: cfg.recordingsDir, log, run });
+  await library.sweepParts(); // I1: no export runs yet; what an earlier process left behind goes
   const system = systemView({ fs, run, cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts, recordingsDir: cfg.recordingsDir, library: () => library.facts() });
   // the encoders /v1/system lists, asked once (a failed or empty answer is asked again next time)
   let encoderList: Encoder[] | null = null;

@@ -246,6 +246,16 @@ describe('storage modes (spec §15.3)', () => {
     expect((await listEvents(env.ctx)).filter((e) => e.code === 'rec_export_failed').map((e) => e.reason)).toEqual(['storage_full']);
   });
 
+  it('I1/M1: livetv busy with another export keeps the export pending for the next run, not failed', async () => {
+    env.ctx.cfg = { ...cfg, LIVETV_RECORD_STORAGE: 'library', LIVETV_RECORD_LIBRARY_ID: 'lib-aufnahmen' };
+    exportAnswer = { status: 409, json: { error: 'busy' } };
+    const id = await row({ storage: 'library' });
+    await env.pool.query("update livetv_recordings set export_state = 'pending' where id = $1", [id]);
+    expect(await exportToLibrary(env.ctx, id)).toBe('busy');
+    expect(await state(id)).toMatchObject({ state: 'done', library_path: null, export_state: 'pending' });
+    expect((await listEvents(env.ctx)).filter((e) => e.code === 'rec_export_failed')).toEqual([]);
+  });
+
   it('both: Behalten → in Bibliothek copies it, keeps the FriendFlix folder and protects it', async () => {
     env.ctx.cfg = { ...cfg, LIVETV_RECORD_STORAGE: 'both', LIVETV_RECORD_LIBRARY_ID: 'lib-aufnahmen' };
     const id = await row({ delete_after: new Date(Date.now() + DAY) });

@@ -25,6 +25,8 @@ export const NAME_MAX = 120;
  * that still finishes and renames a file no row tracks; the 5 min left cover the request and the rename.
  */
 export const EXPORT_BUDGET_MS = 25 * 60_000;
+/** the export's own part files: `.<name>.ts.part` (I1) */
+const PART_RE = /^\..+\.ts\.part$/;
 const REMUX_TIMEOUT_MS = 20 * 60_000;
 const PROBE_TIMEOUT_MS = 2 * 60_000;
 /** how far the exported file's duration may be from the playlist's (or 1 % of it, if more) */
@@ -35,7 +37,7 @@ export const EXPORT_MARGIN_MIN = 1024 ** 3;
 export const RECORDING_RESERVE = 2 * 1024 ** 3;
 
 export class LibraryError extends Error {
-  constructor(readonly code: 'no_library' | 'library_not_writable' | 'library_not_dedicated' | 'not_found' | 'invalid' | 'storage_full' | 'write_failed' | 'export_failed' | 'verify_failed') { super(code); }
+  constructor(readonly code: 'no_library' | 'library_not_writable' | 'library_not_dedicated' | 'not_found' | 'invalid' | 'storage_full' | 'write_failed' | 'export_failed' | 'verify_failed' | 'busy') { super(code); }
 }
 
 /** a file or folder name livetv may create: no `/`, `\`, `..`, control characters or leading dots, at most 120 characters; '' = unusable */
@@ -121,6 +123,40 @@ export class Library {
    * " (2)" … " (9)". Answers the path relative to the library and the bytes written.
    */
   async export(id: string, b: { dir: string; folder: string; file: string }): Promise<{ path: string; bytes: number }> {
+    // M1: one export at a time, so the free-space check below sees no other export's copy in flight; a second one answers `busy` at
+    // once (the backend keeps it pending and tries again) rather than waiting in a queue that would eat its time budget
+    if (this.exporting) throw new LibraryError('busy');
+    this.exporting = true;
+    try {
+      return await this.exportOne(id, b);
+    } finally {
+      this.exporting = false;
+    }
+  }
+
+  private exporting = false;
+
+  /**
+   * I1: part files an export left when livetv stopped under it (`.<name>.ts.part`, one level below the library). Run at start, before
+   * any export: plain files of that name only, checked with lstat (a link or a folder of that name stays, and is never followed).
+   */
+  async sweepParts(): Promise<number> {
+    const root = await realpath(this.o.root).catch(() => null);
+    if (!root || !(await lstat(root).catch(() => null))?.isDirectory()) return 0;
+    let n = 0;
+    for (const d of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+      if (!d.isDirectory()) continue;
+      for (const f of await readdir(join(root, d.name)).catch(() => [] as string[])) {
+        if (!PART_RE.test(f)) continue;
+        const p = join(root, d.name, f);
+        if ((await lstat(p).catch(() => null))?.isFile() && (await unlink(p).then(() => true, () => false))) n++;
+      }
+    }
+    if (n) this.o.log?.(`library: ${n} part files of interrupted exports removed`);
+    return n;
+  }
+
+  private async exportOne(id: string, b: { dir: string; folder: string; file: string }): Promise<{ path: string; bytes: number }> {
     const deadline = Date.now() + (this.o.budgetMs ?? EXPORT_BUDGET_MS);
     if (!DIR_RE.test(b.dir)) throw new LibraryError('invalid');
     const folderName = sanitizeName(b.folder);
@@ -147,9 +183,7 @@ export class Library {
     const work = join(src, '.export');
     // the part file is created and opened here, never through a link, and stays open: ffmpeg writes into this descriptor (`pipe:1`) and
     // the checks read it back through it (`/proc/self/fd/0`), so nothing reopens the library path while the export runs (N1)
-    const fh = await open(part, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644).catch((e: unknown) => {
-      throw new LibraryError(code(e) === 'EACCES' || code(e) === 'EROFS' || code(e) === 'EPERM' ? 'library_not_writable' : 'write_failed');
-    });
+    const fh = await openPart(part);
     let bytes: number;
     try {
       await rm(work, { recursive: true, force: true });
@@ -308,4 +342,23 @@ async function writeRuns(src: string, work: string, entries: ReturnType<typeof p
     if (wrote) names.push(name);
   }
   return names;
+}
+
+/**
+ * The part file, created and opened without following a link (N1). One that exists already (I1) is another export's while it is younger
+ * than the export budget (`busy`: the backend tries again later); older, it is the leftover of an export livetv was stopped under: a
+ * plain file is removed (lstat, never through a link) and the open tried once more.
+ */
+async function openPart(part: string) {
+  const create = () => open(part, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
+  const fail = (e: unknown) => new LibraryError(code(e) === 'EACCES' || code(e) === 'EROFS' || code(e) === 'EPERM' ? 'library_not_writable' : 'write_failed');
+  try {
+    return await create();
+  } catch (e) {
+    if (code(e) !== 'EEXIST') throw fail(e);
+  }
+  const st = await lstat(part).catch(() => null);
+  if (st && (!st.isFile() || Date.now() - st.mtimeMs < EXPORT_BUDGET_MS)) throw new LibraryError('busy');
+  if (st) await unlink(part).catch(() => undefined);
+  return create().catch((e: unknown) => { throw code(e) === 'EEXIST' ? new LibraryError('busy') : fail(e); });
 }

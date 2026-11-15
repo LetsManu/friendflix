@@ -107,6 +107,8 @@ async function exportLocked(ctx: Ctx, id: string, o: { keep?: boolean }): Promis
   try {
     ans = await livetvCall<ExportAnswer>(ctx, 'POST', `/v1/recordings/${r.id}/export`, { dir: r.dir, folder, file: `${r.title} – ${stamp(r.start_at)}` }, { timeoutMs: EXPORT_TIMEOUT_MS });
   } catch (e) {
+    // livetv runs one export at a time (M1) and keeps a younger part file of another export (I1): this one stays pending for the next run
+    if (e instanceof LivetvError && e.code === 'busy') return 'busy';
     if (e instanceof LivetvError) return fail(/^[a-z_]{1,40}$/.test(e.code) ? e.code : 'export_failed');
     throw e;
   }
