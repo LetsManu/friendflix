@@ -5,7 +5,8 @@ export function autofocus(node: HTMLElement) {
   queueMicrotask(() => { node.focus(); if (node instanceof HTMLInputElement) node.select(); });
 }
 
-const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+/** the controls Tab can reach (dialogKeys' trap, ModalShell's first focus) */
+export const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
 /**
  * Svelte action for dialogs and sheets: Escape calls `close`, Tab stays inside the node.

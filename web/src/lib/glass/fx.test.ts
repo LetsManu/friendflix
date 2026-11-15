@@ -9,6 +9,7 @@ vi.mock('#lib/tv/motion', () => ({ motionLevel: () => m.level, watchFrames: () =
 import {
   COUNT_MS, countAt, cubicBezier, fxMode, grow, growBoth, growFrom, GROW_IN_MS, GROW_OUT_MS, growShift, emphOut, inEase, outEase, PILL_MID, pillParts,
   REDUCED_MS, rippleBox, scrimFade, twoWay, SHEET_IN_MS, SHEET_OUT_MS, sheetSlide, springEase, TOAST_IN_MS, TOAST_OUT_MS, toastRise, barRise, BAR_IN_MS, BAR_OUT_MS,
+  dialogRise, dialogBoth, DIALOG_IN_MS, DIALOG_OUT_MS,
 } from './fx';
 
 type Cfg = ReturnType<typeof grow>;
@@ -305,8 +306,8 @@ describe('pill, count-up, ripple', () => {
 });
 
 describe('the frame guard watches glass motion', () => {
-  it('grow, sheetSlide and toastRise pulse it when built with full motion, never in the reduced set or when still', () => {
-    for (const make of [grow, sheetSlide, toastRise]) {
+  it('grow, sheetSlide, toastRise and dialogRise pulse it when built with full motion, never in the reduced set or when still', () => {
+    for (const make of [grow, sheetSlide, toastRise, dialogRise]) {
       m.watched = 0;
       make(node, { mode: 'full' });
       make(node, { dir: 'out', mode: 'full' });
@@ -343,5 +344,73 @@ describe('barRise (the cast bar)', () => {
     const still = barRise(node, { mode: 'still' });
     expect(still.duration).toBe(0);
     expect(still.css(0, 1)).toBe('');
+  });
+});
+
+describe('dialogRise (ModalShell)', () => {
+  const ty = (css: string) => /^transform:translateY\((-?\d+)px\);opacity:([\d.]+)$/.exec(css);
+  it('dialogRise never scales and moves at most 10 px, in whole pixels', () => {
+    for (const dir of ['in', 'out'] as const) {
+      const d = dialogRise(node, { dir, mode: 'full' });
+      for (let i = 0; i <= 20; i++) {
+        const t = i / 20, css = d.css(t, 1 - t);
+        expect(css).not.toMatch(/scale|zoom|font-size|letter-spacing/);
+        const m = ty(css)!;
+        expect(m, css).not.toBeNull();
+        expect(Number(m[1])).toBeGreaterThanOrEqual(0);
+        expect(Number(m[1])).toBeLessThanOrEqual(10);
+        expect(Number(m[2])).toBe(t);
+      }
+      expect(d.css(0, 1)).toBe('transform:translateY(10px);opacity:0');
+      expect(d.css(1, 0)).toBe('transform:translateY(0px);opacity:1');
+      expect(d.css(0.5, 0.5)).toBe('transform:translateY(5px);opacity:0.5');
+    }
+  });
+
+  it('dialogRise is symmetric: the close at t stands where the open stood at t', () => {
+    const fin = dialogRise(node, { mode: 'full' }), fout = dialogRise(node, { dir: 'out', mode: 'full' });
+    for (const t of ts) expect(fout.css(t, 1 - t)).toBe(fin.css(t, 1 - t));
+    // a close mid-open (Svelte starts the close from the current t) continues from the same frame
+    for (const p of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+      const now = fin.easing(p);
+      expect(fout.css(now + (0 - now) * fout.easing(0), 1 - now)).toBe(fin.css(now, 1 - now));
+    }
+  });
+
+  it('dialogRise per mode: 220 ms emphOut in, 150 ms inEase out; the reduced set fades 160 ms; still is instant', () => {
+    const fin = dialogRise(node, { mode: 'full' });
+    expect([fin.duration, DIALOG_IN_MS, fin.delay]).toEqual([220, 220, 0]);
+    expect(fin.easing).toBe(emphOut);
+    const fout = dialogRise(node, { dir: 'out', mode: 'full' });
+    expect([fout.duration, DIALOG_OUT_MS]).toEqual([150, 150]);
+    expect(fout.easing).toBe(inEase);
+    for (const e of [fin.easing, fout.easing]) {
+      const v = Array.from({ length: 201 }, (_, i) => e(i / 200));
+      expect(Math.max(...v)).toBeLessThanOrEqual(1);
+      expect(Math.min(...v)).toBeGreaterThanOrEqual(0);
+    }
+    const red = dialogRise(node, { dir: 'out', mode: 'reduced' });
+    expect(red.duration).toBe(160);
+    expect(red.css(0.5, 0.5)).toBe('opacity:0.5');
+    expect(red.easing(0.3)).toBe(0.3);
+    for (const dir of ['in', 'out'] as const) {
+      const still = dialogRise(node, { dir, mode: 'still' });
+      expect(still.duration).toBe(0);
+      expect(still.css(0, 1)).toBe('');
+    }
+    // the page's mode by default: calm mode is instant
+    m.allowed = false;
+    expect(dialogRise(node).duration).toBe(0);
+    m.allowed = true; m.level = 'full';
+    expect(dialogRise(node).duration).toBe(220);
+  });
+
+  it('dialogBoth picks the direction once Svelte knows it', () => {
+    const b = dialogBoth(node, { mode: 'full' });
+    expect(b({ direction: 'in' }).duration).toBe(220);
+    expect(b({ direction: 'out' }).duration).toBe(150);
+    expect(b({ direction: 'out' }).easing).toBe(inEase);
+    expect(b().duration).toBe(220);
+    expect(dialogBoth(node, { mode: 'still' })({ direction: 'out' }).duration).toBe(0);
   });
 });

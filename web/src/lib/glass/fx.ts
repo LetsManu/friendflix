@@ -178,6 +178,31 @@ export function barRise(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode }
   return { duration: out ? BAR_OUT_MS : BAR_IN_MS, delay: 0, easing: out ? inEase : outEase, css: (t, u) => `transform:translateY(${Math.round(u * 160) / 10}px);opacity:${Math.min(1, Math.max(0, t))}` };
 }
 
+export const DIALOG_IN_MS = 220;
+export const DIALOG_OUT_MS = 150;
+const DIALOG_RISE_PX = 10;
+/**
+ * Svelte transition: a dialog (ModalShell) fades and rises 10 px into place and goes back the same way; text never scales. Full
+ * motion: emphOut (220 ms) in, `inEase` (150 ms) out. The css is one function of t (whole pixels), so the close at t stands where
+ * the open stood at t and a close mid-open continues without a jump. Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
+ */
+export function dialogRise(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode } = {}): Cfg {
+  const mode = watched(p.mode ?? fxMode());
+  if (mode === 'still') return { duration: 0, delay: 0, easing: linear, css: () => '' };
+  if (mode === 'reduced') return { duration: REDUCED_MS, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
+  const out = p.dir === 'out';
+  return {
+    duration: out ? DIALOG_OUT_MS : DIALOG_IN_MS,
+    delay: 0,
+    easing: out ? inEase : emphOut,
+    css: (t) => `transform:translateY(${Math.round(DIALOG_RISE_PX * (1 - t)) + 0}px);opacity:${Math.min(1, Math.max(0, t))}`,
+  };
+}
+/** dialogRise as a bidirectional transition: `transition:dialogBoth` */
+export function dialogBoth(node: Element, p: { mode?: FxMode } = {}): (o?: { direction?: 'in' | 'out' | 'both' }) => Cfg {
+  return twoWay((dir) => dialogRise(node, { ...p, dir }));
+}
+
 /** Svelte transition: a sheet's scrim fades (200 ms; the reduced set's 160 ms; instant when still) */
 export function scrimFade(_node: Element, p: { mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number) => string } {
   const mode = p.mode ?? fxMode();
