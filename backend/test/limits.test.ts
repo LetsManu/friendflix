@@ -8,6 +8,7 @@ import { forgetAuth } from '../src/routes/internal.js';
 import { effectiveRole } from '../src/roles.js';
 import { applyRole } from '../src/users.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
+import { sessionHash } from '../src/session.js';
 
 vi.mock('../src/downloadprep.js', async (orig) => ({ ...(await orig<typeof import('../src/downloadprep.js')>()), enqueueJob: async () => undefined }));
 
@@ -148,7 +149,7 @@ describe('enforcement', () => {
   it('gateway authz uses the user remote cap', async () => {
     await setUserLimits(env.ctx, await uid('Fred'), { ...NONE, remoteBitrate: 3_000_000 });
     const sid = friend.cookies.ff_sid!;
-    forgetAuth(sid);
+    forgetAuth(sessionHash(sid));
     const authz = (ip: string) => env.app.inject({ method: 'POST', url: '/internal/authz', headers: H, payload: { sid, ip } });
     expect((await authz('203.0.113.9')).json().maxBitrate).toBe(3_000_000);
     expect((await authz('192.168.1.10')).json().maxBitrate).toBe(20_000_000);

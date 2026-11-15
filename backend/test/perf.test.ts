@@ -9,7 +9,7 @@ import { ITEM_MEMO_MAX, JellyfinService } from '../src/jellyfin/service.js';
 import { MemoryKV } from '../src/kv.js';
 import { itemsByIds, libraryBecause } from '../src/routes/discover.js';
 import { forgetAuth } from '../src/routes/internal.js';
-import { requireUser } from '../src/session.js';
+import { requireUser, sessionKey, sessionHash } from '../src/session.js';
 import type { Ctx } from '../src/ctx.js';
 import type { JfUser } from '../src/types.js';
 import { isSetupComplete } from '../src/setup/state.js';
@@ -286,7 +286,7 @@ describe('HTTP: compression, Server-Timing, media authz single flight, "because"
     let loads = 0;
     let fail = false;
     env.kv.get = async (k: string) => {
-      if (k === `sess:${sid}`) {
+      if (k === sessionKey(sid)) {
         loads++;
         await sleep(20);
         if (fail) throw new Error('redis down');
@@ -294,11 +294,11 @@ describe('HTTP: compression, Server-Timing, media authz single flight, "because"
       return realGet(k);
     };
     try {
-      forgetAuth(sid);
+      forgetAuth(sessionHash(sid));
       const rs = await Promise.all(Array.from({ length: 30 }, authz));
       expect(rs.every((r) => r.statusCode === 200 && r.json().token)).toBe(true);
       expect(loads).toBe(1);
-      forgetAuth(sid);
+      forgetAuth(sessionHash(sid));
       fail = true;
       const bad = await Promise.all(Array.from({ length: 5 }, authz));
       expect(bad.every((r) => r.statusCode === 500)).toBe(true);

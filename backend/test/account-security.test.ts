@@ -12,6 +12,7 @@ import { makeEnv, type TestEnv } from './helpers.js';
 import {
   AK_CFG, ANNA, BEN, browser, executorPosts, freshIp, installWorld, jsonResponse, LOGIN, loginStages, RIGHT, STATIC_TYPE, TOTP_TYPE, type World, WEBAUTHN_TYPE,
 } from './reauth-fake.js';
+import { sessionKey } from '../src/session.js';
 
 // Block 23 phase 3, Task 10: in-app re-authentication (reauth → then), the security setup flows and the account's device routes.
 
@@ -55,12 +56,12 @@ describe('re-authentication, security actions', () => {
     w.devices = [{ pk: 11, type: TOTP_TYPE, name: 'Phone', owner: ANNA.pk }, { pk: 99, type: TOTP_TYPE, name: 'Bens', owner: BEN.pk }];
   };
   const audits = async (action: string) => (await env.pool.query<{ actor: string; meta: Record<string, unknown> }>('select actor, meta from audit_log where action=$1 order by id', [action])).rows;
-  const sessionOf = async (s: { cookies: Record<string, string> }) => JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!) as Session;
+  const sessionOf = async (s: { cookies: Record<string, string> }) => JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!) as Session;
   const setReauthAt = async (s: { cookies: Record<string, string> }, at: number | undefined) => {
     const sess = await sessionOf(s);
     if (at === undefined) delete sess.reauthAt;
     else sess.reauthAt = at;
-    await env.kv.set(`sess:${s.cookies.ff_sid}`, JSON.stringify(sess), 600);
+    await env.kv.set(sessionKey(s.cookies.ff_sid!), JSON.stringify(sess), 600);
   };
   const del = (s: { cookies: Record<string, string>; csrf: string }, path: string) =>
     env.app.inject({ method: 'DELETE', url: `/api/account/security/devices/${path}`, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf } });
@@ -267,7 +268,7 @@ describe('re-authentication, security actions', () => {
         // another person's signed-in session
         const otherSid = 'other-person-sid';
         const mine = await sessionOf(t.s);
-        await env.kv.set(`sess:${otherSid}`, JSON.stringify({ ...mine, userId: `${mine.userId}-other`, csrf: 'other-persons-csrf' }), 600);
+        await env.kv.set(sessionKey(otherSid), JSON.stringify({ ...mine, userId: `${mine.userId}-other`, csrf: 'other-persons-csrf' }), 600);
         const other = { cookies: { ff_sid: otherSid }, csrf: 'other-persons-csrf' };
         const refused = [
           await t.answer({}, { token: null }),
@@ -412,12 +413,12 @@ describe('re-authentication, security actions', () => {
     const step = (await b.reauth('change-password')).json() as { stage: string; step: string; fields: Array<{ key: string }> };
     expect(step.stage).toBe('prompt');
     // nothing is revoked while the new password is only asked for
-    expect(await env.kv.get(`sess:${other.cookies.ff_sid}`)).toBeTruthy();
+    expect(await env.kv.get(sessionKey(other.cookies.ff_sid!))).toBeTruthy();
     const body = Object.fromEntries(step.fields.map((f) => [f.key, NEW_PW]));
     const done = await b.post('answer', { step: step.step, stage: 'prompt', ...body });
     expect(done.json()).toEqual({ stage: 'done', next: '/me/account' });
-    expect(await env.kv.get(`sess:${other.cookies.ff_sid}`)).toBeNull();
-    expect(await env.kv.get(`sess:${s.cookies.ff_sid}`)).toBeTruthy();
+    expect(await env.kv.get(sessionKey(other.cookies.ff_sid!))).toBeNull();
+    expect(await env.kv.get(sessionKey(s.cookies.ff_sid!))).toBeTruthy();
     expect((await env.app.inject({ url: '/api/me', cookies: other.cookies })).statusCode).toBe(401);
     const userId = (await sessionOf(s)).userId;
     expect((await env.pool.query("select actor, target, meta from audit_log where action = 'session.revoke_others'")).rows)
@@ -431,7 +432,7 @@ describe('re-authentication, security actions', () => {
     const step = (await b.reauth('change-password')).json() as { stage: string };
     expect(step.stage).toBe('prompt');
     expect((await b.post('cancel', {})).statusCode).toBe(200);
-    expect(await env.kv.get(`sess:${other.cookies.ff_sid}`)).toBeTruthy();
+    expect(await env.kv.get(sessionKey(other.cookies.ff_sid!))).toBeTruthy();
   });
 
   it('reauth then setup-totp returns totp-setup and finishing ends the Authentik session', async () => {

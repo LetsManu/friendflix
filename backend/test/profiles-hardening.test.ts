@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { freshAuth, SIGNIN_MAX_AGE } from '../src/oidc.js';
 import { ownerProfile } from '../src/profiles.js';
 import { makeEnv, type Handler, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 let env: TestEnv;
@@ -109,7 +110,7 @@ describe('profile hardening', () => {
     const kid5 = sidOf(await call(b, 'POST', `/api/profiles/${p.id}/select`, { pin: '3333' }), b);
     expect((await call(kid5, 'GET', '/api/me')).json().profileChosen).toBe(true);
     expect((await call(owner, 'DELETE', `/api/profiles/${p.id}`)).statusCode).toBe(200);
-    const sess = JSON.parse((await env.kv.get(`sess:${kid5.cookies.ff_sid}`))!);
+    const sess = JSON.parse((await env.kv.get(sessionKey(kid5.cookies.ff_sid!)))!);
     expect(sess.profileId).toBeUndefined();
   });
 

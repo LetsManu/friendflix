@@ -21,7 +21,7 @@ import { PERM_KEYS, readPerms, type PermKey } from '../perms.js';
 import { invalidateRights, roleRights } from '../rights.js';
 import { requestsEnabled } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
-import { requireAdmin, type Session } from '../session.js';
+import { SESSION_PREFIX, requireAdmin, type Session } from '../session.js';
 import type { ProfileRow, UserRow } from '../types.js';
 import { rightsBody, rightsView, writeRights, type RightsBody } from '../userRights.js';
 import { HttpError, accessEnded, accountSerial, applyRole, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser, type LockReason } from '../users.js';
@@ -165,7 +165,7 @@ const hours = (seconds: string | number) => Math.round(Number(seconds) / 360) / 
 async function liveSessions(ctx: Ctx, userId: string) {
   const perDevice = new Map<string, number>();
   const profileSeen = new Map<string, number>();
-  for (const k of await ctx.kv.keys('sess:')) {
+  for (const k of await ctx.kv.keys(SESSION_PREFIX)) {
     const raw = await ctx.kv.get(k);
     if (!raw) continue;
     const s = JSON.parse(raw) as Session;

@@ -33,7 +33,14 @@ export interface KV {
   indexRemove(key: string, member: string): Promise<void>;
   /** The members that have not expired (expired ones are dropped on the way). */
   indexMembers(key: string): Promise<string[]>;
+  /**
+   * Atomically moves `from` to `to` with its remaining ttl (a legacy session key to its hashed name). When `to` already exists it
+   * is kept and `from` is deleted. True if `from` was moved.
+   */
+  move(from: string, to: string): Promise<boolean>;
   ping(): Promise<boolean>;
+  /** Whether the store writes its append-only file (Redis INFO persistence `aof_enabled`); null = not known (no such store). */
+  aofEnabled(): Promise<boolean | null>;
 }
 
 export class RedisKV implements KV {
@@ -100,8 +107,18 @@ export class RedisKV implements KV {
     const lua = "redis.call('zremrangebyscore', KEYS[1], '-inf', ARGV[1]) return redis.call('zrange', KEYS[1], 0, -1)";
     return (await this.redis.eval(lua, 1, key, String(Date.now()))) as string[];
   }
+  async move(from: string, to: string) {
+    // RENAMENX keeps the ttl; a hashed key written meanwhile wins and the old one goes
+    const lua = "if redis.call('exists', KEYS[1]) == 0 then return 0 end if redis.call('renamenx', KEYS[1], KEYS[2]) == 1 then return 1 end redis.call('del', KEYS[1]) return 0";
+    return (await this.redis.eval(lua, 2, from, to)) === 1;
+  }
   async ping() {
     return (await this.redis.ping()) === 'PONG';
+  }
+  async aofEnabled() {
+    // INFO only (never CONFIG): the line `aof_enabled:1` of the persistence section
+    const m = /^aof_enabled:(\d)/m.exec(await this.redis.info('persistence'));
+    return m ? m[1] === '1' : null;
   }
 }
 
@@ -197,7 +214,20 @@ export class MemoryKV implements KV {
     const now = Date.now();
     return Object.entries(this.index(key)).filter(([, e]) => e > now).map(([m]) => m);
   }
+  async move(from: string, to: string) {
+    const e = this.live(from) === null ? undefined : this.m.get(from);
+    if (!e) return false;
+    this.m.delete(from);
+    if (this.live(to) !== null) return false;
+    this.m.set(to, e);
+    return true;
+  }
+  /** what aofEnabled() answers (tests set it; an in-memory store has no file) */
+  aof: boolean | null = null;
   async ping() {
     return true;
+  }
+  async aofEnabled() {
+    return this.aof;
   }
 }

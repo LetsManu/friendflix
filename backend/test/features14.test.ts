@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { previews } from '../src/previews.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 const [A, B, C, D, E] = ['a', 'b', 'c', 'd', 'e'].map((c) => c.repeat(32));
 const LEA_JF = '1'.repeat(32);
@@ -215,6 +216,6 @@ describe('upcoming (Seerr) and subtitles', () => {
 /** Gives Lea a real session (same shape the login flow creates) so she can call the API. */
 async function makeLeaSession() {
   const sid = 'lea-session-' + 'x'.repeat(30);
-  await env.kv.set(`sess:${sid}`, JSON.stringify({ userId: leaId, csrf: 'leacsrf', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
+  await env.kv.set(sessionKey(sid), JSON.stringify({ userId: leaId, csrf: 'leacsrf', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
   return { cookies: { ff_sid: sid }, csrf: 'leacsrf' };
 }
