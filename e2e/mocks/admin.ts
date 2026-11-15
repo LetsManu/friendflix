@@ -1732,7 +1732,8 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     if (wantGroups !== undefined) {
       if (role.key === 'admin') return J({ error: 'admin_groups_locked' }, 400);
       if (!role.stored) return J({ error: 'not_in_catalogue' }, 400);
-      if (!Array.isArray(wantGroups) || wantGroups.some((id) => !groupsBefore.some((g) => g.id === id))) return J({ error: 'invalid', field: 'livetvGroups' }, 400);
+      if (!Array.isArray(wantGroups)) return J({ error: 'bad_request' }, 400); // the backend's zod shape
+      if (wantGroups.some((id) => !groupsBefore.some((g) => g.id === id))) return J({ error: 'invalid', field: 'livetvGroups' }, 400);
     }
     st.matrix.puts.push({ role: role.key, body });
     const media = Object.keys(body ?? {}).some((k) => MEDIA_KEYS_MOCK.includes(k));
