@@ -82,8 +82,15 @@
   import PhoneTitle from '#lib/player/phone/PhoneTitle.svelte';
   import PhoneTopBar from '#lib/player/phone/PhoneTopBar.svelte';
   import ProgressLine from '#lib/player/phone/ProgressLine.svelte';
+  import { jellyfinSource, type PlaybackSource } from '#lib/player/source';
 
   export let itemId: string;
+  /**
+   * What plays (lib/player/source.ts, spec §15.7): none = the library item `itemId` through today's calls (jellyfinSource); a
+   * FriendFlix recording brings its own `recordingSource`. The seam points: the info request (`load`), the reports (`send`), the gone
+   * state, and `caps` for the parts only a library item has (episodes, credits, scenes, trickplay, quality, bookmarks, subtitle search).
+   */
+  export let source: PlaybackSource | null = null;
   /** shown on the phone's remote while this plays */
   export let title = '';
   /** centred in the control bar: series / film name and, for episodes, "F3 Folgentitel" */
@@ -147,6 +154,13 @@
   const dispatch = createEventDispatcher();
 
   type Info = PlaybackDto;
+  $: jf = jellyfinSource(itemId);
+  /** a recording plays through its own source (no library item behind it) */
+  $: srcRec = source !== null && source.kind === 'recording' ? source : null;
+  $: caps = (source ?? jf).caps;
+  /** the recording was deleted or is no longer shared (a 410): the error box without *Erneut versuchen* */
+  let gone = false;
+  function showGone() { gone = true; cancelFirstFrame(); clearTimeout(retryT); reconnecting = 0; waiting = false; hls?.stopLoad(); video?.pause(); errTitle = tr('live.recPlayer.gone'); error = tr('live.recPlayer.goneBody'); }
   let info: Info | null = null, hls: Hls | null = null, error = '', mode = '', audioIndex: number | undefined, subIndex = -1;
   let segments: Array<{ type: string; start: number; end: number }> = [];
   let progressTimer: ReturnType<typeof setInterval>, started = false, stopped = false;
@@ -261,7 +275,7 @@
   /** desktop: heights of the timeline row and the pill row (the skip button sits just above the timeline, not above the title) */
   let tlH = 0, rowH = 0, ttlH = 0;
   $: ccOn = phone && !phoneUi && showUi && !locked && !error && !reconnecting && !(posterOn && !posterOut);
-  $: phoneChip = phone && Boolean(info && mode && !remote);
+  $: phoneChip = phone && Boolean(info && mode && !remote) && caps.abr;
   /** height of the bottom bar: panels, the skip button and the page's cards sit above it (phones only; elsewhere the old fixed offsets apply) */
   $: barVar = (phone && ctlH ? `;--bar-h:${ctlH}px` : '') + (ctlH ? `;--ctl-h:${ctlH}px` : '')
     + ((desk || phoneUi) && tlH && rowH ? `;--tl-h:${tlH}px;--row-h:${rowH}px` : '') + (desk && ttlH ? `;--ttl-h:${ttlH}px` : '');
@@ -339,7 +353,7 @@
   /** after 8 s paused without a key (TV, not in calm mode): dimmed picture + "You're watching" */
   $: pauseOn = tvUi && paused && started && !error && !remote && !locked && !reconnecting && menu === '' && !sp.active && !xray && !peek && !subDlg && !help && credits === 'off'
     && pauseScreenDue(pausedAt, lastActive, tick, $prefs.calm === true);
-  $: tvButtons = tvPlayerButtons({ isEpisode: Boolean(seriesId), hasNext });
+  $: tvButtons = tvPlayerButtons({ isEpisode: Boolean(seriesId) && caps.episodes, hasNext }).filter((b) => b !== 'quality' || caps.abr);
   $: tvSub = item?.seriesName && item.indexNumber !== undefined && item.indexNumber !== null
     ? $t('tv.player.episode', { s: item.parentIndexNumber ?? 1, e: item.indexNumber, name: item.name }) : barSub;
   /** desktop and phone pause screens (spec 2026-11-08 §3): 5 s after the pause or the last input, unless something else is on screen */
@@ -412,10 +426,17 @@
     if (airInfo?.joined) return undefined; // a joined AirPlay token: the server reports per episode (a page report would stop episode 1 at the wrong position)
     if (swapping && kind === 'progress') return undefined; // the fresh element is still on its way to the position
     lastSent = Date.now();
-    const r = report && info && api(`/api/playback/${kind}`, { method: 'POST', body: body(), keepalive }).catch(() => undefined);
+    const r = report && info && (srcRec ? recReport(srcRec, kind, keepalive) : jf.report(kind, body(), keepalive).catch(() => undefined));
     if (kind === 'stop') lastStop = r;
     return r;
   };
+
+  /** a recording's reports (source seam): start / progress as a position with its state, stop ends the token too */
+  async function recReport(s: PlaybackSource, kind: 'start' | 'progress' | 'stop', keepalive: boolean): Promise<void> {
+    const pos = video?.currentTime ?? lastPos;
+    if (kind !== 'stop') return s.progress(pos, video?.paused ? 'paused' : 'playing', { keepalive });
+    await Promise.all([s.progress(pos, 'stopped', { keepalive }), s.stop({ keepalive })]); // both leave at once (a page unload)
+  }
 
   // ---- start-time measurement per playback session (lib/player/timing.ts): sent once on stop / pagehide / end; never in a
   //      watch party, while casting / AirPlay or for a stream handed to the cast engine (offline playback has its own player) ----
@@ -429,7 +450,7 @@
       sampleFrames();
       timing.sound(fxToPref(fx), Boolean(fxEngine?.routed));
       const r = timing.finish({ device: deviceClass({ coarse, tv: tvMode() }), effectiveType: effectiveType(navigator) });
-      if (r && !partyMode && !remote && !handedOff && !airInfo && !airOn) sendTiming(r, { csrf: getCsrf(), profile: getActiveProfile() });
+      if (r && !partyMode && !remote && !handedOff && !airInfo && !airOn && !srcRec) sendTiming(r, { csrf: getCsrf(), profile: getActiveProfile() });
     } catch { /* measuring must never break playback */ }
   }
 
@@ -441,7 +462,7 @@
   let probeT: ReturnType<typeof setTimeout> | undefined, probedPs = '', trackSwitching = false;
   function probeStream() {
     const ps = info?.playSessionId;
-    if (!ps || probedPs === ps || mode !== 'hls' || !timing.active || partyMode || remote || airOn || airInfo || handedOff) return;
+    if (!ps || probedPs === ps || mode !== 'hls' || !timing.active || partyMode || remote || airOn || airInfo || handedOff || srcRec) return;
     probedPs = ps;
     clearTimeout(probeT);
     probeT = setTimeout(() => {
@@ -501,6 +522,7 @@
    * stream is given. A second refusal shows the busy state alone. An ABR step-down passes none (its old rung stalled).
    */
   async function load(startSec?: number, restore?: { undo: () => void; toast: string }): Promise<'busy' | undefined> {
+    if (srcRec) return loadSource(srcRec, startSec);
     cancelFirstFrame();
     error = ''; errNote = '';
     // a retry / track reload continues the running session (its clock keeps going); a quality switch starts a new one, flagged
@@ -524,7 +546,7 @@
     const startRung = !abr && reqHint === 'network' && noEstimateStart(quality, loadStoredEstimate());
     const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang, caps: appCaps(), fellBack: fell?.what, prevPs: fell?.prevPs, startRung });
     probedCaps = isProbedBlock(body.caps);
-    const ask = () => api<Info | null>('/api/playback/info', { method: 'POST', body });
+    const ask = () => jf.request(body);
     // the next episode prepared during the countdown, else a hovered/focused play button: its request is (usually) already answered;
     // a failed prefetch is simply asked again
     const fromNext = first ? takeNext(itemId, body) : null;
@@ -572,6 +594,31 @@
     void attach(startSec ?? info.resumeTicks / 10_000_000);
   }
 
+  /**
+   * A recording (source seam): its token URL as the HLS stream of a synthetic info (no tracks, no session of the media server), resumed
+   * at its saved position unless the caller names one. Network hiccups retry like a film; a gone recording shows the gone state.
+   */
+  async function loadSource(s: PlaybackSource, startSec?: number): Promise<undefined> {
+    cancelFirstFrame();
+    error = ''; errNote = '';
+    s.onGone = showGone;
+    try {
+      const si = await s.info(startSec);
+      if (destroyed) return;
+      const from = startSec ?? si.positionS;
+      lastPos = from; posKnown = true;
+      info = { playSessionId: `${s.kind}:${s.id}`, mediaSourceId: '', hlsUrl: si.url, resumeTicks: Math.floor(si.positionS * 10_000_000), maxBitrate: 0, audioTracks: [], subtitles: [] };
+      void attach(from);
+    } catch (e) {
+      if ((e as { gone?: boolean } | null)?.gone) { showGone(); return; }
+      if (!(e instanceof ApiError) || e.status >= 500) { recover('network', true); return; }
+      reconnecting = 0;
+      errTitle = tr('player.error.title');
+      error = e.status === 409 && (e.body as { error?: string } | null)?.error === 'not_ready' ? tr('live.recPlayer.notReady') : tr('player.error.generic');
+    }
+    return undefined;
+  }
+
   let attachSeq = 0;
   /** `swap`: the same stream again on a fresh element (restorePlain): no new start, no reports, the viewer's tracks stay */
   async function attach(startSec: number, swap = false) {
@@ -608,7 +655,7 @@
       if ((isTvApp() || probedCaps) && !rec.forcedHls && !swap) cancelFirstFrame = watchFirstFrame(video, firstFrameMs(), () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos(), true); }, { running: wantAutoplay });
     } else if (H?.isSupported()) {
       const HC = H;
-      hls = new HC(hlsConfig(startSec));
+      hls = new HC(srcRec ? { ...hlsConfig(startSec), startPosition: Math.max(0, startSec) } : hlsConfig(startSec));
       hls.loadSource(info.hlsUrl);
       hls.attachMedia(video);
       hls.on(HC.Events.LEVEL_LOADED, (_e, d) => timing.manifest(d.details.targetduration)); // the variant playlist: the last step before the first fragment
@@ -623,6 +670,7 @@
         if (i >= 0 && hls) hls.currentLevel = i;
       });
       hls.on(HC.Events.ERROR, (_e, d) => {
+        if (srcRec && (d.response?.code === 410 || d.response?.code === 404) && d.fatal) { showGone(); return; } // a deleted recording's token
         // a codec the device cannot append (bufferAddCodecError is not fatal in hls.js) in an HEVC / surround stream: give that up at once
         const codec = isCodecError(d.details) && mode === 'hls' && (activeFeatures().hevc || activeFeatures().surround);
         if (!d.fatal && !codec) return;
@@ -898,7 +946,7 @@
   function airRow() { if (tvSession?.kind === 'airplay') changeAirPlay(); else air?.pick(); }
   $: airAvail = Boolean(air && (airState.available || airOn || airState.ready || airState.busy)) || tvSession?.kind === 'airplay';
   /** something to choose from: Cast devices in reach or an AirPlay target (the remote screen has its own chip) */
-  $: playOnShown = $perms.cast && !partyMode && !remote && (Boolean($castState.available || $castState.connected) || airAvail);
+  $: playOnShown = $perms.cast && !partyMode && !remote && !srcRec && (Boolean($castState.available || $castState.connected) || airAvail);
   $: playOnLabel = $t('player.castPicker.open');
   $: playOnEp = item?.type === 'Episode' || item?.seriesId ? episodeCode({ subtitle: '' }, item, $t) : '';
 
@@ -1739,11 +1787,11 @@
     const attached = attachToCast();
     if (!attached) load(startAt);
     castOff = onCastEvent(handleCast);
-    if (!partyMode) void initCast();
-    if (!attached) void initAirPlay();
-    loadBookmarks();
-    if ($serverCaps.chapters) api(`/api/items/${itemId}/chapters`).then((r) => (chapters = r?.supported ? normalizeChapters(r.chapters) : [])).catch(() => undefined);
-    if ($serverCaps.segments.length) api(`/api/items/${itemId}/segments`).then((r) => (segments = (r.segments as typeof segments).map((x) => ({ ...x, type: String(x.type).toLowerCase() })).filter((x) => segmentShown($serverCaps, x.type)))).catch(() => undefined);
+    if (!partyMode && !srcRec) void initCast();
+    if (!attached && !srcRec) void initAirPlay();
+    if (caps.bookmarks) loadBookmarks();
+    if ($serverCaps.chapters && caps.scenes) api(`/api/items/${itemId}/chapters`).then((r) => (chapters = r?.supported ? normalizeChapters(r.chapters) : [])).catch(() => undefined);
+    if ($serverCaps.segments.length && caps.credits) api(`/api/items/${itemId}/segments`).then((r) => (segments = (r.segments as typeof segments).map((x) => ({ ...x, type: String(x.type).toLowerCase() })).filter((x) => segmentShown($serverCaps, x.type)))).catch(() => undefined);
     progressTimer = setInterval(() => { if (started && !stopped) send('progress'); }, 10_000);
     pipOk = Boolean(document.pictureInPictureEnabled) && !video?.disablePictureInPicture;
     // every 5 s: direct-play bandwidth sample + step-up check; every 30 s the estimate is remembered
@@ -1856,7 +1904,7 @@
     <div class="center errov" role="alertdialog" aria-labelledby="perr-t" aria-describedby="perr-d">
       <div class="errbox ui" on:click|stopPropagation on:keydown|stopPropagation role="presentation">
         <b id="perr-t">{errTitle}</b><p id="perr-d">{error}</p>
-        <div class="flex"><button class="btn light go" data-autofocus on:click={retryManually}>{$t('player.error.retry')}</button><button class="sec" on:click={leave}>{$t('player.error.back')}</button></div>
+        <div class="flex">{#if !gone}<button class="btn light go" data-autofocus on:click={retryManually}>{$t('player.error.retry')}</button>{/if}<button class="sec" data-autofocus={gone ? '' : undefined} on:click={leave}>{$t('player.error.back')}</button></div>
       </div>
     </div>
   {:else if reconnecting}
@@ -2032,13 +2080,13 @@
           <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.back10')} data-label={desk ? $t('player.controls.back10') : undefined} on:click={() => seekBy(-10)}><Icon name="rewind10" size={ICON} /></button>
           <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.forward10')} data-label={desk ? $t('player.controls.forward10') : undefined} on:click={() => seekBy(10)}><Icon name="forward10" size={ICON} /></button>
         {/if}
-        {#if desk && info && mode && !remote}<QualityChip bind:open={chipOpen} direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
+        {#if desk && info && mode && !remote && caps.abr}<QualityChip bind:open={chipOpen} direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
         {#if !phoneUi && (!phone || volOk) && tvSession?.kind !== 'airplay'}<div class="vol">
           <button class="ic" aria-label={muted ? $t('player.unmute') : $t('player.mute')} data-label={desk ? (muted ? $t('player.unmute') : $t('player.mute')) : undefined} on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : volume < 0.5 ? 'volume-low' : 'volume'} size={ICON} /></button>
           {#if !phone}<input class="vslider" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} aria-label={$t('player.volume.label')} on:input={(e) => setVolume(Number(e.currentTarget.value))} />{/if}
         </div>{/if}
         {#if !phone && !desk}<span class="clock">{fmtClock(shown)} / {fmtClock(duration)}</span>{/if}
-        {#if info && mode && !remote && !phone && !desk}<QualityChip bind:open={chipOpen} direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
+        {#if info && mode && !remote && !phone && !desk && caps.abr}<QualityChip bind:open={chipOpen} direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
       </div>
       {#if !phone && !desk}<div class="mid" title={barSub ? `${barTitle} · ${barSub}` : barTitle}>{#if barTitle}<b>{barTitle}</b>{#if barSub}<span>{barSub}</span>{/if}{/if}</div>{/if}
       <div class="grp right" class:pill={desk || phoneUi} class:tp={phoneUi} role={phoneUi ? 'group' : undefined} aria-label={phoneUi ? $t('player.phone.tools') : undefined}>
@@ -2057,7 +2105,7 @@
           </div>
         {/if}
         {#if !phoneUi && playOnShown}<button class="ic" class:on={casting || airOn} class:airbusy={airState.busy} aria-haspopup="dialog" aria-expanded={playOnOpen} aria-busy={airState.busy} data-testid="playon" aria-label={playOnLabel} data-label={desk ? playOnLabel : undefined} title={playOnLabel} on:click={(e) => openPlayOn(e.currentTarget)}><Icon name="cast" size={ICON} /></button>{/if}
-        {#if !phoneUi}<button class="ic" class:on={showXray || peek} bind:this={castBtn} aria-label={$t('scenes.info.open')} data-label={desk ? $t('scenes.info.open') : undefined} title={$t(coarse ? 'scenes.info.open' : 'scenes.info.openKey')} aria-pressed={showXray} on:click={castButton}><Icon name="users" size={ICON} /></button>{/if}
+        {#if !phoneUi && caps.credits}<button class="ic" class:on={showXray || peek} bind:this={castBtn} aria-label={$t('scenes.info.open')} data-label={desk ? $t('scenes.info.open') : undefined} title={$t(coarse ? 'scenes.info.open' : 'scenes.info.openKey')} aria-pressed={showXray} on:click={castButton}><Icon name="users" size={ICON} /></button>{/if}
         {#if info || tvSession}
           <div class="mwrap">
             <button class="ic" aria-label={$t('player.controls.tracks')} data-label={desk ? $t('player.controls.tracks') : undefined} title={$t('player.controls.tracksKey')} aria-expanded={menu === 'tracks'} on:click={() => toggleMenu('tracks')}><Icon name="subtitles" size={ICON} /></button>
@@ -2070,7 +2118,7 @@
                 {/if}
                 <div><h3>{$t('player.subs.title')}</h3><div class="opts">
                   <button class="mi" class:on={subIndex === -1} on:click={() => { setSubtitle(-1); menu = ''; }}>{#if subIndex === -1}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('common.off')}</button>
-                  {#if $serverCaps.subtitleSearch && info}<button class="mi" on:click={() => { menu = ''; subDlg = true; subResults = null; subMsg = ''; }}><Icon name="search" size={16} />{$t('player.subs.searchMenu')}</button>{/if}
+                  {#if $serverCaps.subtitleSearch && info && caps.subtitleSearch}<button class="mi" on:click={() => { menu = ''; subDlg = true; subResults = null; subMsg = ''; }}><Icon name="search" size={16} />{$t('player.subs.searchMenu')}</button>{/if}
                   {#each subOpts as s}<button class="mi" class:on={subIndex === s.index} on:click={() => { setSubtitle(s.index); menu = ''; }}>{#if subIndex === s.index}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{s.title}</button>{/each}
                 </div></div>
                 <div class="fxcol"><h3>{$t('scenes.audio.title')}</h3><div class="opts">
@@ -2106,8 +2154,8 @@
               {#if coarse && !partyMode && (!phoneUi || extras.includes('speed'))}<button class="mi" on:click={() => (menu = 'speed')}><Icon name="gauge" size={20} />{$t('player.speed.title')}{#if rate !== 1}<span class="muted"> · {$t('player.speed.rate', { r: rate })}</span>{/if}<span class="chev" aria-hidden="true">›</span></button>{/if}
               {#if extras.includes('next')}<button class="mi" on:click={goNext}><Icon name="skip-next" size={20} />{$t('player.controls.next')}</button>{/if}
               {#if coarse && showScenes}<button class="mi" on:click={() => (menu = 'chapters')}><Icon name="film" size={20} />{$t('scenes.chapters.open')}<span class="chev" aria-hidden="true">›</span></button>{/if}
-              <button class="mi" on:click={() => (menu = 'scenes')}><Icon name="bookmark" size={20} />{$t('player.bookmark.menu')}<span class="chev" aria-hidden="true">›</span></button>
-              <button class="mi" class:on={showXray} aria-pressed={showXray} on:click={() => { if (showXray) { menu = ''; closeCastInfo(); } else openCastInfo(tvMode()); }}><Icon name="users" size={20} />{$t('scenes.info.open')}</button>
+              {#if caps.bookmarks}<button class="mi" on:click={() => (menu = 'scenes')}><Icon name="bookmark" size={20} />{$t('player.bookmark.menu')}<span class="chev" aria-hidden="true">›</span></button>{/if}
+              {#if caps.credits}<button class="mi" class:on={showXray} aria-pressed={showXray} on:click={() => { if (showXray) { menu = ''; closeCastInfo(); } else openCastInfo(tvMode()); }}><Icon name="users" size={20} />{$t('scenes.info.open')}</button>{/if}
               {#if phone && !phoneUi && !remote}<button class="mi" on:click={lockNow}><Icon name="lock" size={20} />{$t('player.lock.lockAria')}</button>{/if}
               {#if pipOk && !remote}<button class="mi" class:on={inPip} aria-pressed={inPip} aria-keyshortcuts="P" on:click={() => { menu = ''; void pip(); }}><Icon name="pip" size={20} />{$t('player.controls.pip')}</button>{/if}
               {#if phoneUi && volOk && tvSession?.kind !== 'airplay'}<button class="mi" on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : 'volume'} size={20} />{muted ? $t('player.unmute') : $t('player.mute')}</button>{/if}
@@ -2127,10 +2175,12 @@
             </div>
           {:else if menu === 'settings'}
             <div class="menu tracks{deskGlass}" style={deskScrim} data-nav data-scope role="dialog" aria-label={$t('player.controls.settings')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
+              {#if caps.abr}
               <div><h3><button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{$t('player.quality.title')}</h3><div class="opts">
                 <button class="mi" class:on={shownQ === 0} on:click={() => changeQuality(0)}>{#if shownQ === 0}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('player.quality.auto')}</button>
                 {#each qualityOptions as [label, bps]}<button class="mi" class:on={shownQ === bps} on:click={() => changeQuality(bps)}>{#if shownQ === bps}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{label}</button>{/each}
               </div></div>
+              {:else}<h3><button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{$t('player.controls.settings')}</h3>{/if}
               {#if !partyMode}
                 <div><h3>{$t('player.sleep.title')}</h3><div class="opts">
                   <button class="mi" class:on={!sleepAt && !sleepAfterEpisode} on:click={() => setSleep(0)}>{#if !sleepAt && !sleepAfterEpisode}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('common.off')}</button>

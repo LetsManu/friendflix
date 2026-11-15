@@ -171,5 +171,12 @@ const dict: Translation<typeof de> = {
     save: 'Kaydı planla',
     savedRule: 'Saate göre kayıt oluşturuldu',
   },
+  recPlayer: {
+    growing: 'Kayıt sürüyor',
+    toEdge: 'Şu anki sona git',
+    gone: 'Kayıt artık mevcut değil',
+    goneBody: 'Silindi ya da artık seninle paylaşılmıyor.',
+    notReady: 'Kayıt henüz başlamadı.',
+  },
 };
 export default dict;

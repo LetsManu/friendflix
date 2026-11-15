@@ -171,5 +171,12 @@ const dict: Translation<typeof de> = {
     save: 'Programmer l’enregistrement',
     savedRule: 'Enregistrement par horaire créé',
   },
+  recPlayer: {
+    growing: 'Enregistrement en cours',
+    toEdge: 'Aller à la fin actuelle',
+    gone: 'Enregistrement plus disponible',
+    goneBody: 'Il a été supprimé ou n’est plus partagé avec toi.',
+    notReady: 'L’enregistrement n’a pas encore commencé.',
+  },
 };
 export default dict;

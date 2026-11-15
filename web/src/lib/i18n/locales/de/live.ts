@@ -171,4 +171,12 @@ export default {
     save: 'Aufnahme planen',
     savedRule: 'Aufnahme nach Uhrzeit angelegt',
   },
+  /** eine Aufnahme im Player (Phase 3, spec §15.7, Review Focus 5) */
+  recPlayer: {
+    growing: 'Aufnahme läuft',
+    toEdge: 'Zum aktuellen Ende',
+    gone: 'Aufnahme nicht mehr verfügbar',
+    goneBody: 'Sie wurde gelöscht oder ist für dich nicht mehr freigegeben.',
+    notReady: 'Die Aufnahme hat noch nicht begonnen.',
+  },
 } as const;

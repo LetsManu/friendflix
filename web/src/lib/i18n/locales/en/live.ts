@@ -171,5 +171,12 @@ const dict: Translation<typeof de> = {
     save: 'Schedule recording',
     savedRule: 'Recording by time set up',
   },
+  recPlayer: {
+    growing: 'Recording in progress',
+    toEdge: 'To the current end',
+    gone: 'Recording no longer available',
+    goneBody: 'It was deleted or is no longer shared with you.',
+    notReady: 'The recording has not started yet.',
+  },
 };
 export default dict;
