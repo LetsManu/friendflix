@@ -186,5 +186,11 @@ export default {
     RECO_HALF_LIFE_DAYS: { label: 'Halbwertszeit des Geschmacks (Tage)', help: 'Nach so vielen Tagen zählt ein Geschmackssignal (z. B. ein Daumen hoch) nur noch halb. Nur Engine v2.' },
     POSTPLAY_ENABLED: { label: 'Bildschirm nach dem Ende', help: 'Nach einem Film oder der letzten Folge: „Du bist auf dem neuesten Stand“, was als Nächstes kommt, und Vorschläge. Aus schaltet ihn für alle ab.' },
   },
+  /** the tabs of Admin → Einstellungen (`?tab=`); `unsaved` is read after the name of a tab with unsaved edits */
+  tabs: { label: 'Bereiche der Einstellungen', general: 'Allgemein', signin: 'Anmeldung', media: 'Medien', playback: 'Wiedergabe', updates: 'Updates', notifications: 'Benachrichtigungen', unsaved: 'ungespeicherte Änderungen' },
+  /** the search above the tabs: results name their tab; choosing one opens the setting */
+  search: { label: 'Einstellungen durchsuchen', placeholder: 'Suchen nach Name, Schlüssel oder Stichwort', results: { one: '{n} Einstellung gefunden', other: '{n} Einstellungen gefunden' }, none: 'Keine Einstellung passt zu „{q}“.' },
+  /** leaving Admin → Einstellungen (not switching its tabs) with unsaved edits */
+  leave: { title: 'Änderungen verwerfen?', body: 'Es gibt ungespeicherte Einstellungen. Sie gehen verloren, wenn du die Seite verlässt.', confirm: 'Verwerfen' },
   livetvMoved: 'Live-TV-Einstellungen findest du jetzt unter Live-TV.',
 } as const;

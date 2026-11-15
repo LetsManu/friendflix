@@ -193,6 +193,9 @@ const settings: Translation<typeof de> = {
     RECO_HALF_LIFE_DAYS: { label: 'Okres półtrwania gustu (dni)', help: 'Po tylu dniach sygnał gustu (np. kciuk w górę) liczy się już tylko w połowie. Tylko silnik v2.' },
     POSTPLAY_ENABLED: { label: 'Ekran po zakończeniu', help: 'Po filmie lub ostatnim odcinku: „Wszystko obejrzane”, co dalej i propozycje. Wyłączenie ukrywa go dla wszystkich.' },
   },
+  tabs: { label: 'Sekcje ustawień', general: 'Ogólne', signin: 'Logowanie', media: 'Media', playback: 'Odtwarzanie', updates: 'Aktualizacje', notifications: 'Powiadomienia', unsaved: 'niezapisane zmiany' },
+  search: { label: 'Szukaj w ustawieniach', placeholder: 'Szukaj po nazwie, kluczu lub słowie', results: { one: 'Znaleziono {n} ustawienie', few: 'Znaleziono {n} ustawienia', many: 'Znaleziono {n} ustawień', other: 'Znaleziono {n} ustawienia' }, none: 'Żadne ustawienie nie pasuje do „{q}”.' },
+  leave: { title: 'Odrzucić zmiany?', body: 'Są niezapisane ustawienia. Zostaną utracone po opuszczeniu strony.', confirm: 'Odrzuć' },
   livetvMoved: 'Ustawienia telewizji na żywo znajdziesz teraz w sekcji Telewizja na żywo.',
 };
 export default settings;

@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   removeAll: vi.fn(async () => undefined),
   disablePush: vi.fn(async () => undefined),
   clearHint: vi.fn(),
+  forgetSystemcheck: vi.fn(),
   cast: null as unknown,
   calls: [] as string[],
   stop: vi.fn(async () => { h.calls.push('cast.stop'); }),
@@ -22,6 +23,7 @@ vi.mock('#lib/offline/manager', () => ({ removeAll: h.removeAll }));
 vi.mock('#lib/ui/confirm', () => ({ confirm: async (o: Record<string, unknown>) => { h.confirmCalls.push(o); return h.confirmAnswer; } }));
 vi.mock('#lib/push', () => ({ disablePush: h.disablePush }));
 vi.mock('#lib/gate', () => ({ clearHint: h.clearHint }));
+vi.mock('#lib/admin/syscheckStore', () => ({ forgetSystemcheck: h.forgetSystemcheck }));
 vi.mock('#lib/native/sessionSync', () => ({ tellAppSession: async (id: string | null) => { h.calls.push(`app ${id}`); await Promise.resolve(); await Promise.resolve(); h.calls.push('app answered'); } }));
 
 const { logout } = await import('./session');
@@ -35,6 +37,7 @@ beforeEach(() => {
   h.removeAll.mockClear();
   h.disablePush.mockReset().mockResolvedValue(undefined);
   h.clearHint.mockClear();
+  h.forgetSystemcheck.mockClear();
   h.cast = null;
   h.calls = [];
   h.stop.mockClear();
@@ -112,5 +115,14 @@ describe('logout', () => {
     logoutStatus = 500;
     await expect(logout(false)).rejects.toThrow();
     expect(h.clearHint).toHaveBeenCalled();
+  });
+
+  it('the Systemcheck list this tab remembered is forgotten, also when the logout request fails (the next account never sees it)', async () => {
+    await logout(false);
+    expect(h.forgetSystemcheck).toHaveBeenCalledTimes(1);
+    h.forgetSystemcheck.mockClear();
+    logoutStatus = 500;
+    await expect(logout(false)).rejects.toThrow();
+    expect(h.forgetSystemcheck).toHaveBeenCalledTimes(1);
   });
 });

@@ -5,6 +5,7 @@
    * One setting of Admin → Settings: label, help, source badge and an input by kind. Controlled: the page owns the draft (`draft`
    * undefined = untouched) and gets `edit` events. Secrets are write-only: Replace opens an empty field, Remove marks the key for
    * clearing (the page sends null); a value typed here is never shown again once saved. Env rows are locked and offer "Move".
+   * `#setting-<KEY>` is the deep-link target; highlight.ts sets `data-flash` on it (the overlay fades in and out, opacity only).
    */
   import { createEventDispatcher, tick } from 'svelte';
   import { fmtDate, t } from '#lib/i18n';
@@ -54,7 +55,7 @@
   const input = (e: Event) => dispatch('edit', (e.currentTarget as HTMLInputElement).value);
 </script>
 
-<div class="row" role="group" aria-labelledby="{id}-l">
+<div class="row" id="setting-{item.key}" role="group" aria-labelledby="{id}-l">
   <div class="head">
     <span class="lbl" id="{id}-l">{label}</span>
     <code class="key">{item.key}</code>
@@ -132,7 +133,16 @@
 </div>
 
 <style>
-  .row { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; padding: .9rem 0; border-top: 1px solid var(--line); min-width: 0; }
+  .row { position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; padding: .9rem 0; border-top: 1px solid var(--line); min-width: 0; }
+  /* the deep-link highlight: a tinted, outlined layer behind the row's content (never wider than the row), only its opacity animates */
+  .row:global([data-flash])::after {
+    content: ''; position: absolute; inset: 0; z-index: -1; border-radius: 8px; pointer-events: none;
+    background: var(--tone-info); box-shadow: inset 0 0 0 2px rgb(84, 185, 197);
+    opacity: 0; animation: flash 2.4s ease-in-out both;
+  }
+  .row:global([data-flash='static'])::after { animation: none; opacity: 1; }
+  @keyframes flash { 0% { opacity: 0; } 15% { opacity: 1; } 65% { opacity: 1; } 100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .row:global([data-flash])::after { animation: none; opacity: 1; } }
   .row:first-child { border-top: 0; padding-top: 0; }
   .head { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .6rem; min-width: 0; }
   .lbl { font-weight: 600; }

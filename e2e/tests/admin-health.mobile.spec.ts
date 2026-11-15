@@ -14,7 +14,7 @@ test.describe('admin health page (phone)', () => {
 
   test('no horizontal overflow; buttons ≥ 44 px', async ({ page }) => {
     await page.goto('/admin/status');
-    const check = page.getByRole('region', { name: 'Systemzustand' }).getByRole('button', { name: 'Jetzt prüfen' });
+    const check = page.getByRole('region', { name: 'Systemcheck' }).getByRole('button', { name: 'Jetzt prüfen', exact: true });
     await expect(check).toBeVisible();
     await expect(page.getByRole('region', { name: 'Wiedergaben' }).getByText('Untertitel')).toBeVisible();
     await page.waitForLoadState('networkidle');
@@ -23,7 +23,7 @@ test.describe('admin health page (phone)', () => {
       const box = await b.boundingBox();
       expect(box!.height).toBeGreaterThanOrEqual(44);
     }
-    const media = await page.getByRole('region', { name: 'Systemzustand' }).getByRole('link', { name: /Medienserver/ }).boundingBox();
+    const media = await page.getByRole('region', { name: 'Systemcheck' }).locator('li[data-id="media.server"]').boundingBox();
     expect(media!.height).toBeGreaterThanOrEqual(44);
   });
   test('suggestions card fits on a phone: columns stack, no overflow, button at least 44 px', async ({ page, api }) => {

@@ -67,7 +67,8 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   });
   const text = await res.text();
   let json: any = null;
-  try { json = text ? JSON.parse(text) : null; } catch (e) { if (res.status !== 401) throw e; } // a 401 from a proxy may not be JSON
+  // an error page of a proxy (a 401, a 413 "Request Entity Too Large") is not JSON: the status still reaches the caller as an ApiError
+  try { json = text ? JSON.parse(text) : null; } catch (e) { if (res.ok) throw e; }
   await sessionGone(res.status, json);
   if (res.status === 409 && json?.error === 'profile_required' && !/^\/(profiles|invite\/|tv$)/.test(location.pathname)) {
     location.href = '/profiles'; // no profile chosen (yet) for this session

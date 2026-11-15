@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { healthOk, loginCheckOk } from '../mocks/admin.js';
+import { syscheckWith } from '../mocks/syscheck.js';
 import { done, installLogin, loginState, password } from '../mocks/login.js';
 
 const GiB = 1024 ** 3;
@@ -45,17 +46,22 @@ test.describe('admin health page', () => {
     };
   });
 
-  test('services: media red "Nicht erreichbar", TMDB yellow "Schlüssel ungültig", OMDb off "Nicht eingerichtet"; every pill has icon + text', async ({ page }) => {
+  test('services (Systemcheck): media red, TMDB yellow "Schlüssel abgelehnt", OMDb neutral "Nicht eingerichtet"; every pill has icon + text', async ({ page, api }) => {
+    api.syscheck.result = syscheckWith([
+      { id: 'media.server', status: 'problem', cause: 'media_down', fix: 'media_down', settingKey: 'JELLYFIN_URL', settingGroup: 'media' },
+      { id: 'media.tmdb', status: 'warning', cause: 'source_key_invalid', fix: 'source_key_invalid', settingKey: 'TMDB_API_KEY', settingGroup: 'sources' },
+      { id: 'media.omdb', status: 'not_set_up', cause: 'source_not_set', fix: 'source_not_set', settingKey: 'OMDB_API_KEY', settingGroup: 'sources' },
+    ]);
     await page.goto('/admin/status');
-    const health = page.getByRole('region', { name: 'Systemzustand' });
-    const media = health.getByRole('link', { name: /Medienserver/ });
-    await expect(media).toContainText('Nicht erreichbar');
+    const sc = page.getByRole('region', { name: 'Systemcheck' });
+    const media = sc.locator('li[data-id="media.server"]');
+    await expect(media.locator('.pill.err')).toHaveText('Problem');
+    await expect(media).toContainText('Der Medienserver antwortet nicht');
     await expect(media.locator('.pill.err svg')).toHaveCount(1);
-    await expect(health.getByRole('link', { name: /TMDB/ }).locator('.pill.warn')).toHaveText('Schlüssel ungültig');
-    await expect(health.getByRole('link', { name: /OMDb/ }).locator('.pill.muted')).toHaveText('Nicht eingerichtet');
-    // worst first
-    await expect(health.locator('li').first()).toContainText('Medienserver');
-    for (const pill of await health.locator('.pill').all()) {
+    await expect(sc.locator('li[data-id="media.tmdb"] .pill.warn')).toHaveText('Warnung');
+    await expect(sc.locator('li[data-id="media.tmdb"]')).toContainText('Der API-Schlüssel wird abgelehnt.');
+    await expect(sc.locator('li[data-id="media.omdb"] .pill.muted')).toHaveText('Nicht eingerichtet');
+    for (const pill of await sc.locator('.pill').all()) {
       await expect(pill.locator('svg')).toHaveCount(1);
       expect((await pill.innerText()).trim().length).toBeGreaterThan(0);
     }
@@ -77,16 +83,19 @@ test.describe('admin health page', () => {
     await expect(tile).toContainText('Vom Medienserver nicht unterstützt');
   });
 
-  test('Jetzt prüfen calls ?refresh=1 once, shows the new state and reloads the banner', async ({ page, api }) => {
+  test('Jetzt prüfen (Systemcheck) runs a fresh check, reloads the banner and the disks read the new snapshot', async ({ page, api }) => {
     await page.goto('/admin/status');
-    const health = page.getByRole('region', { name: 'Systemzustand' });
-    await expect(health.getByRole('link', { name: /Medienserver/ })).toContainText('Nicht erreichbar');
-    api.admin.healthRefreshed = healthOk();
+    const disks = page.getByRole('region', { name: 'Speicher' });
+    await expect(disks.getByRole('listitem').filter({ hasText: 'Downloads und Vorschauen' }).locator('.pill.warn')).toHaveText('Fast voll');
+    // the fresh run on the server refreshed the snapshot too (backend getSnapshot({ refresh: true }))
+    api.admin.health = healthOk();
     const bannerCalls = api.admin.bannerCalls;
-    await health.getByRole('button', { name: 'Jetzt prüfen' }).click();
-    await expect(health.getByRole('link', { name: /Medienserver/ })).toContainText('Läuft');
+    await page.getByRole('region', { name: 'Systemcheck' }).getByRole('button', { name: 'Jetzt prüfen', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Neu geprüft.')).toBeVisible();
-    expect(api.admin.healthCalls.filter((q) => q === '?refresh=1')).toHaveLength(1);
+    await expect(disks.getByRole('listitem').filter({ hasText: 'Downloads' }).first().locator('.pill.warn')).toHaveCount(0);
+    expect(api.syscheck.calls.filter((q) => q === '?refresh=1')).toHaveLength(1);
+    // the snapshot itself is only read, never forced a second time
+    expect(api.admin.healthCalls.filter((q) => q === '?refresh=1')).toHaveLength(0);
     await expect.poll(() => api.admin.bannerCalls).toBeGreaterThan(bannerCalls);
   });
 
@@ -209,7 +218,7 @@ test.describe('admin health page', () => {
     await expect(media.locator('.pill.err')).toBeVisible();
   });
 
-  test('failing health: error with retry in the services section, numbers still shown', async ({ page }) => {
+  test('failing health: error with retry above the disks, numbers still shown', async ({ page }) => {
     let fail = true;
     await page.route('**/api/admin/health', (r) => (fail ? r.fulfill({ status: 500, json: { error: 'x' } }) : r.fallback()));
     await page.goto('/admin/status');
@@ -218,7 +227,8 @@ test.describe('admin health page', () => {
     await expect(page.getByRole('region', { name: 'Zahlen' }).getByRole('link', { name: /Geräte warten/ })).toBeVisible();
     fail = false;
     await alert.getByRole('button', { name: 'Erneut versuchen' }).click();
-    await expect(page.getByRole('region', { name: 'Systemzustand' }).getByRole('link', { name: /Medienserver/ })).toBeVisible();
+    await expect(alert).toBeHidden();
+    await expect(page.getByRole('region', { name: 'Speicher' }).getByRole('progressbar').first()).toBeVisible();
   });
   test('sign-in card: flows, warnings with texts, and the cover switch saves LOGIN_COVER_WALL through the settings', async ({ page, api }) => {
     api.admin.loginCheck = {

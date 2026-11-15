@@ -1,0 +1,63 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
+/**
+ * The Systemcheck answer this tab saw last (module + sessionStorage): Admin → Status renders it at once and revalidates. Kept apart from
+ * syscheck.ts so the logout path, which runs on every page, can forget it without pulling in the admin code.
+ */
+import type { CheckLine, SystemcheckResult } from './syscheck';
+
+const STORE_KEY = 'ff-syscheck';
+/** the browser lines of the last run on the Status page (they are not part of the server's answer) */
+const BROWSER_KEY = 'ff-syscheck-browser';
+const BROWSER = new Set(['proxy.websocket', 'proxy.buffering', 'proxy.upload', 'proxy.headers']);
+const browserLine = (l: unknown): l is CheckLine =>
+  !!l && typeof l === 'object' && BROWSER.has((l as CheckLine).id) && typeof (l as CheckLine).status === 'string'
+  && (l as CheckLine).runs === 'browser' && !(l as CheckLine).placeholder;
+let lastBrowser: CheckLine[] | null = null;
+let last: SystemcheckResult | null = null;
+const atOf = (r: SystemcheckResult | null): number => (r ? Date.parse(r.at) : NaN);
+/** a stored or received answer of the right shape, every line with an id and a status (codes only: nothing in it is secret) */
+const validResult = (r: unknown): r is SystemcheckResult =>
+  !!r && typeof r === 'object' && typeof (r as SystemcheckResult).at === 'string' && Array.isArray((r as SystemcheckResult).lines)
+  && (r as SystemcheckResult).lines.every((l) => !!l && typeof l === 'object' && typeof l.id === 'string' && typeof l.status === 'string')
+  && !!(r as SystemcheckResult).counts && typeof (r as SystemcheckResult).counts === 'object';
+
+/** true when `next` may replace `cur`: an answer never gives way to an older one (a slow cached read after a fresh run) */
+export const isNewer = (next: SystemcheckResult, cur: SystemcheckResult | null): boolean => !cur || !(atOf(next) < atOf(cur));
+
+/** Keeps the latest answer for this tab (module + sessionStorage): the next visit renders it at once and revalidates. */
+export function rememberSystemcheck(r: SystemcheckResult): void {
+  if (!validResult(r) || !isNewer(r, last)) return;
+  last = r;
+  try { sessionStorage.setItem(STORE_KEY, JSON.stringify(r)); } catch { /* private mode, quota, no storage */ }
+}
+/** the last answer this tab saw (null on a cold start) */
+export function cachedSystemcheck(): SystemcheckResult | null {
+  if (last) return last;
+  try {
+    const v: unknown = JSON.parse(sessionStorage.getItem(STORE_KEY) ?? 'null');
+    if (validResult(v)) last = v;
+  } catch { /* nothing stored, unreadable, or no storage */ }
+  return last;
+}
+/** Keeps the browser lines of a finished run for this tab: the next visit shows them at once, so their rows already have their height. */
+export function rememberBrowserLines(lines: readonly CheckLine[]): void {
+  lastBrowser = lines.filter(browserLine);
+  try { sessionStorage.setItem(BROWSER_KEY, JSON.stringify(lastBrowser)); } catch { /* private mode, quota, no storage */ }
+}
+/** the browser lines this tab saw last ([] on a cold start, or for a stored entry of the wrong shape) */
+export function cachedBrowserLines(): CheckLine[] {
+  if (lastBrowser) return lastBrowser;
+  try {
+    const v: unknown = JSON.parse(sessionStorage.getItem(BROWSER_KEY) ?? '[]');
+    if (Array.isArray(v) && v.every(browserLine)) lastBrowser = v;
+  } catch { /* nothing stored, unreadable, or no storage */ }
+  return lastBrowser ?? [];
+}
+
+/** Forgets the remembered answer and browser lines (logout, tests). */
+export function forgetSystemcheck(): void {
+  last = null;
+  lastBrowser = null;
+  try { sessionStorage.removeItem(STORE_KEY); sessionStorage.removeItem(BROWSER_KEY); } catch { /* no storage */ }
+}

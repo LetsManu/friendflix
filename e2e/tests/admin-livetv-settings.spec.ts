@@ -45,6 +45,16 @@ test.describe('admin: Live-TV, Einstellungen (desktop)', () => {
     expect(api.settings.puts).toEqual([{ values: { LIVETV_SRT_HOST: 'https://x.example.com:9000' } }]);
   });
 
+  test('?setting=LIVETV_ENCODER on /admin/livetv?tab=settings highlights it', async ({ page }) => {
+    await page.goto('/admin/livetv?tab=settings&setting=LIVETV_ENCODER');
+    const row = page.locator('#setting-LIVETV_ENCODER');
+    await expect(row).toHaveAttribute('data-flash', 'static');
+    await expect(row).toBeInViewport();
+    await expect(row.getByRole('combobox')).toBeFocused();
+    await expect(page).toHaveURL(/\/admin\/livetv\?tab=settings$/);
+    await expect(page.getByRole('tab', { name: 'Einstellungen' })).toHaveAttribute('aria-selected', 'true');
+  });
+
   test('Admin → Einstellungen lists no Live-TV group, only the link, while Live TV is installed', async ({ page }) => {
     await page.goto('/admin/settings');
     await expect(page.getByRole('group', { name: 'Öffentliche Adresse' })).toBeVisible();

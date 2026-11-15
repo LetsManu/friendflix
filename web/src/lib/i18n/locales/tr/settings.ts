@@ -191,6 +191,9 @@ const settings: Translation<typeof de> = {
     RECO_HALF_LIFE_DAYS: { label: 'Zevk yarı ömrü (gün)', help: 'Bu kadar gün sonra bir zevk sinyali (ör. beğeni) yalnızca yarı ağırlıkta sayılır. Yalnızca motor v2.' },
     POSTPLAY_ENABLED: { label: 'Bitiş sonrası ekran', help: 'Bir filmden veya son bölümden sonra: “Her şeyi izledin”, sıradaki ve öneriler. Kapalıysa herkes için gizlenir.' },
   },
+  tabs: { label: 'Ayar bölümleri', general: 'Genel', signin: 'Oturum açma', media: 'Medya', playback: 'Oynatma', updates: 'Güncellemeler', notifications: 'Bildirimler', unsaved: 'kaydedilmemiş değişiklikler' },
+  search: { label: 'Ayarlarda ara', placeholder: 'Ad, anahtar veya kelimeyle ara', results: { one: '{n} ayar bulundu', other: '{n} ayar bulundu' }, none: '“{q}” ile eşleşen ayar yok.' },
+  leave: { title: 'Değişiklikler silinsin mi?', body: 'Kaydedilmemiş ayarlar var. Sayfadan ayrılırsan kaybolur.', confirm: 'Sil' },
   livetvMoved: 'Canlı TV ayarlarını artık Canlı TV bölümünde bulursun.',
 };
 export default settings;

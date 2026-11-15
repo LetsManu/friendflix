@@ -155,7 +155,7 @@ test.describe('dense glass admin (desktop)', () => {
   });
 
   test('save draws the checkmark', async ({ page, api }) => {
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=playback');
     const card = page.locator('section', { has: page.getByRole('heading', { level: 2, name: 'Downloads', exact: true }) });
     await page.getByRole('group', { name: 'Downloads pro Stunde', exact: true }).getByRole('spinbutton').fill('7');
     await card.getByRole('button', { name: 'Speichern' }).click();

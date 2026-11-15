@@ -7,6 +7,7 @@ import { adminRoute, adminState, type AdminState } from './admin.js';
 import { settingsRoute, settingsState, type SettingsMock } from './settings.js';
 import { setupRoute, type SetupMock } from './setup.js';
 import { updaterRoute, type UpdaterMock } from './updater.js';
+import { syscheckDrip, syscheckRoute, syscheckSocket, syscheckState, syscheckUpload, type SyscheckMock } from './syscheck.js';
 import { livetvMedia, livetvRoute, livetvState, type LivetvMock } from './livetv.js';
 
 /** Item whose reactions are locked (viewer has not seen it) / unlocked and contain an XSS probe. */
@@ -33,6 +34,8 @@ export interface MockState {
   settings: SettingsMock;
   /** the opt-in updater (mocks/updater.ts); null = not installed */
   updater: UpdaterMock | null;
+  /** GET /api/admin/systemcheck (mocks/syscheck.ts) */
+  syscheck: SyscheckMock;
   /** GET /api/version: what the running build is (backend/src/channel.ts); the default is a release build */
   build: { sha: string; build: 'release' | 'nightly' | 'dev' | null; channel: 'stable' | 'nightly' | null; label: string };
   /** /api/me reports an admin owner profile (admin pages, admin menu) */
@@ -153,6 +156,7 @@ export function freshState(): MockState {
     admin: adminState(),
     settings: settingsState(),
     updater: null,
+    syscheck: syscheckState(),
     livetv: livetvState(),
     build: { sha: 'c0be6c5deadbeef', build: 'release', channel: 'stable', label: '1.0.0' },
     asAdmin: false,
@@ -188,7 +192,11 @@ const find = (id: string): MockItem | undefined => [...items, ...episodes].find(
 
 /** Fully mocks `/api/**` and `/media/**` for a browser context. The web app is a pure SPA (ssr = false), so nothing else is needed. */
 export async function installApi(ctx: BrowserContext, st: MockState): Promise<void> {
-  await ctx.route('**/media/**', (r) => livetvMedia(st.livetv, new URL(r.request().url()).pathname, r) ?? r.fulfill({ status: 200, contentType: 'image/png', body: pngFor(r.request().url()) }));
+  await ctx.route('**/media/**', (r) => {
+    const p = new URL(r.request().url()).pathname;
+    return syscheckDrip(st.syscheck, p, r) ?? livetvMedia(st.livetv, p, r) ?? r.fulfill({ status: 200, contentType: 'image/png', body: pngFor(r.request().url()) });
+  });
+  await syscheckSocket(ctx, st.syscheck);
   await ctx.route('**/api/**', async (route: Route) => {
     const req = route.request();
     const u = new URL(req.url());
@@ -548,6 +556,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     // Live TV channel logos by hash (Task 19): any hash is a small image
     if (p.startsWith('/api/livetv/logos/') && m === 'GET') return route.fulfill({ status: 200, contentType: 'image/png', body: pngFor(p) });
+    if (p === '/api/admin/systemcheck') { const r = syscheckRoute(st.syscheck, m, p, sp, J); if (r) return r; }
+    if (st.asAdmin) { const r = syscheckUpload(st.syscheck, m, p, route); if (r) return r; }
     if (p.startsWith('/api/admin/updater') && st.asAdmin) { const r = updaterRoute(st.updater, st.settings, m, p, J); if (r) return r; }
     if (p.startsWith('/api/admin/settings')) { st.settings.livetvInstalled = st.admin.livetv.installed; const r = settingsRoute(st.settings, m, p, body(), J); if (r) return r; }
     if (p.startsWith('/api/admin/')) {

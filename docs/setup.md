@@ -168,6 +168,8 @@ The advanced config routes `/api/`, `/auth/` and `/ws/` to the backend (`:3081`)
 
 The backend believes `X-Forwarded-For` only from a proxy on a loopback or private address (`trustProxy`: 127.0.0.0/8, 10/8, 172.16/12, 192.168/16, link-local, `fc00::/7`), which covers NPM on the host and in a bridge container. A connection from any other address is taken at its own address, so a spoofed header cannot change the client address (rate limits, audit log). The same rule applies to `X-Real-IP` and the home-network check: a direct client's own headers are never believed. A proxy that reaches the backend from a public address, over Tailscale or Headscale (100.64.0.0/10) or over a public IPv6 address is not supported (all users would share one client address, so one rate-limit bucket, and the request would count as plain HTTP); the backend logs one warning when it sees `X-Forwarded-For` from such a peer. Put the proxy on a private address; keep NPM the only way in: the ports stay on `BIND_ADDR`.
 
+*Admin → Status → Systemcheck* checks this proxy from your browser: websockets, buffering of `/media/`, the upload limit of the guide-file location and the security headers (plus, on the server, whether the protocol is passed on and the proxy's address is trusted).
+
 Until the setup wizard is finished, anybody who reaches the portal sees the wizard's first page (the code prompt). They cannot get past it without the code, but they can use up its attempts ([section 8](#the-setup-code)). Finish the wizard right after starting the stack, or keep the portal private until then, e.g. with an NPM *Access List* that only allows your own address, or by opening the wizard through an SSH tunnel to `127.0.0.1:3080`.
 
 ## 7. Start the stack
