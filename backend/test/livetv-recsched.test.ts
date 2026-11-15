@@ -439,6 +439,16 @@ describe('finalisation and orphans (fix round 1)', () => {
     expect([(await getRecording(env.ctx, none))!.state, (await getRecording(env.ctx, none))!.error]).toEqual(['failed', 'missed']);
   });
 
+  it('M3: a scheduled row whose kept recorder ran to the end is closed from its folder, not failed with 0 bytes', async () => {
+    const start = Date.now() - 2 * HOUR;
+    const id = await recording({ state: 'scheduled', mode: null, start_at: new Date(start), end_at: new Date(start + HOUR), pad_after_s: 60, created_at: new Date(start - 24 * HOUR) });
+    closeAnswer = { channelId: '', state: 'done', segments: 'ts', bytes: 9000, durationS: 3600, gaps: [], error: null, span: { from: start - 60_000, to: start + HOUR + 60_000 } };
+    await tick();
+    const r = await getRecording(env.ctx, id);
+    expect([r!.state, r!.bytes, r!.duration_s]).toEqual(['done', '9000', 3600]);
+    expect(await notices('livetv.rec.failed')).toEqual([]);
+  });
+
   it('M2: a folder that begins late or ends early is partial, with the missing edges as gaps (tolerance max(10 s, 1 %))', async () => {
     const start = Date.now() - 3 * HOUR;
     const end = start + HOUR;

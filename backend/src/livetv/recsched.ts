@@ -544,7 +544,8 @@ function factsView(r: RecRow, facts: RecorderCloseAnswer): RecorderView {
 export const EDGE_TOLERANCE_MIN_MS = 10_000;
 
 /**
- * N5: a `starting` row whose lease ran out after its end: the replica that held it may have posted a recorder before it went away. Its
+ * N5, M3: a row claimed past its end that never reached `recording`: an expired lease's launcher may have posted a recorder before it
+ * went away, and a due `scheduled` row keeps a recorder livetv runs while its start is retried (N4). Its
  * folder is closed and read like a lost recorder's (B-I2); one with recorded bytes ends done or partial, not `missed`. false = nothing was
  * recorded (or livetv did not answer): the caller fails it as before.
  */
@@ -698,7 +699,9 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
         if (!r.channel_id || !(await channelAllowed(ctx, w.user, w.profile, r.channel_id))) { await cancelRow(ctx, r, 'forbidden', c.token); continue; }
         if (!installed) { await failRow(ctx, r, 'livetv_off', fromStarting); continue; }
         if (now >= padEnd(r)) {
-          if (expired && (await closeExpired(ctx, r, c.token))) continue;
+          // a recorder may have run for this row though it never got to `recording`: a crashed launcher's (N5), or one the reconcile kept
+          // while its start was retried (N4, M3); its folder decides, and without one it fails as before
+          if (await closeExpired(ctx, r, c.token)) continue;
           await failRow(ctx, r, (await ctx.kv.get(whyKey(r.id)).catch(() => null)) ?? 'missed', fromStarting);
           continue;
         }
