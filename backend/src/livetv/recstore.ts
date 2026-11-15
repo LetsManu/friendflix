@@ -23,7 +23,8 @@ import type { ExportAnswer } from './wire.js';
  *
  * Nothing here logs a title or a path; admin notices carry sizes only.
  */
-const EXPORT_TIMEOUT_MS = 10 * 60_000;
+/** livetv remuxes and checks the file within 26 min (its own timeouts); the call waits a little longer */
+const EXPORT_TIMEOUT_MS = 30 * 60_000;
 const CALL_TIMEOUT_MS = 30_000;
 const DAY_MS = 86_400_000;
 const SPACE_KEY = 'ltv:recspace';
@@ -61,7 +62,7 @@ async function linkItem(ctx: Ctx, r: Pick<RecRow, 'id' | 'library_path'>): Promi
 
 export type ExportResult = 'exported' | 'not_available' | 'not_found' | 'failed' | 'busy';
 const exportKey = (id: string) => `ltv:recexport:${id}`;
-const EXPORT_LOCK_S = 15 * 60;
+const EXPORT_LOCK_S = 35 * 60;
 
 /**
  * Exports a finished recording into the Jellyfin library folder (mode `library` after its end; `both` on *Behalten → in Bibliothek*,
@@ -179,7 +180,9 @@ export async function spaceTick(ctx: Ctx, now: number = Date.now()): Promise<voi
 }
 
 const STORE_LOCK = 'ltv:recstore';
-const STORE_LOCK_S = 20 * 60;
+/** one export may take EXPORT_TIMEOUT_MS; the lock outlasts it, and no new export starts after EXPORT_BUDGET_MS (the rest: next run) */
+const STORE_LOCK_S = 40 * 60;
+const EXPORT_BUDGET_MS = 5 * 60_000;
 const SPACE_DUE = 'ltv:recspace:due';
 
 /**
@@ -191,7 +194,9 @@ export async function livetvStoreTick(ctx: Ctx): Promise<void> {
   const token = `${Date.now()}-${Math.random()}`;
   if (!(await ctx.kv.setnx(STORE_LOCK, token, STORE_LOCK_S).catch(() => false))) return;
   try {
+    const t0 = Date.now();
     for (const r of (await ctx.db.query<{ id: string }>("select id from livetv_recordings where export_state = 'pending' and state in ('done','partial') order by end_at limit 20")).rows) {
+      if (Date.now() - t0 > EXPORT_BUDGET_MS) break;
       await exportToLibrary(ctx, r.id).catch(() => 'failed');
     }
     const due = await ctx.kv.take(SPACE_DUE).catch(() => null);

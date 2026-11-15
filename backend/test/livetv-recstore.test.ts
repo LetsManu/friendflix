@@ -69,7 +69,7 @@ async function row(o: Record<string, unknown>): Promise<string> {
   await env.pool.query(`insert into livetv_recordings(${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')})`, Object.values(r));
   return r.id;
 }
-const state = async (id: string) => (await env.pool.query('select state, delete_after, keep, library_path, bytes, jellyfin_item_id from livetv_recordings where id = $1', [id])).rows[0] ?? null;
+const state = async (id: string) => (await env.pool.query('select state, delete_after, keep, library_path, bytes, jellyfin_item_id, export_state from livetv_recordings where id = $1', [id])).rows[0] ?? null;
 const notices = async (kind: string) => (await env.pool.query('select user_id, title from notifications where kind = $1 order by id', [kind])).rows;
 let addr = 0;
 const call = (s: Sess, method: 'GET' | 'POST', url: string, payload?: unknown) =>
@@ -222,6 +222,13 @@ describe('storage modes (spec §15.3)', () => {
     expect(await state(id)).toMatchObject({ state: 'done', library_path: null, bytes: '1000' });
     expect(calls.filter((c) => c.path.endsWith('/delete'))).toEqual([]);
     expect((await listEvents(env.ctx)).filter((e) => e.code === 'rec_export_failed').map((e) => [e.recordingId, e.reason])).toEqual([[id, 'library_not_dedicated']]);
+    // B-I8: a file that fails livetv's check is the same: the folder stays, the export is marked failed with livetv's code
+    exportAnswer = { status: 502, json: { error: 'verify_failed' } };
+    await env.pool.query("update livetv_recordings set export_state = 'pending' where id = $1", [id]);
+    expect(await exportToLibrary(env.ctx, id)).toBe('failed');
+    expect(await state(id)).toMatchObject({ state: 'done', library_path: null, export_state: 'failed' });
+    expect(calls.filter((c) => c.path.endsWith('/delete'))).toEqual([]);
+    expect((await listEvents(env.ctx)).filter((e) => e.code === 'rec_export_failed').map((e) => e.reason)).toContain('verify_failed');
     // still playable from the FriendFlix folder
     const p = await call(anna, 'POST', `/api/livetv/recordings/${id}/play`, {});
     expect(p.statusCode, p.body).toBe(200);

@@ -4,12 +4,14 @@
  * Phase 3 Task 6: the Jellyfin library folder (spec §15.3). Real files in temporary folders: a recording folder as the recorder leaves
  * it, and an empty "library" folder standing in for the overlay's `/library` mount.
  */
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Library, LibraryError, MARKER, sanitizeName } from '../src/library.js';
 import { recordingPlaylist } from '../src/recorder.js';
+import { createRun, type Run } from '../src/run.js';
 import { recordingRoutes } from '../src/routes/recordings.js';
 import type { Recorder } from '../src/recorder.js';
 
@@ -40,13 +42,37 @@ function recording(o: { fmp4?: boolean; n?: number; dir?: string } = {}): Buffer
   writeFileSync(join(dir, 'index.m3u8'), recordingPlaylist(entries, true));
   return parts;
 }
+/**
+ * ffmpeg as the tests need it without one: the concat list's runs, byte for byte, into the output; ffprobe answers `probed` seconds
+ * (default: what the playlist says); a decode check answers `decodes`. `calls` keeps what was asked.
+ */
+const fake = { probed: null as number | null, decodes: true, remux: 0, calls: [] as string[][] };
+const fakeRun: Run = async (cmd, args) => {
+  fake.calls.push([cmd, ...args]);
+  const ok = (stdout = '') => ({ code: 0, stdout: Buffer.from(stdout), stderr: '' });
+  if (cmd === 'ffprobe') {
+    const file = args.at(-1)!;
+    const list = readFileSync(file).length / 188; // the fixtures are 188-byte packets of 4 s each (an init counts as nothing)
+    return ok(`${fake.probed ?? Math.floor(list) * 4}\n`);
+  }
+  if (args.includes('concat')) {
+    if (fake.remux) return { code: fake.remux, stdout: Buffer.alloc(0), stderr: 'x' };
+    const list = args[args.indexOf('-i') + 1]!;
+    const dir = list.slice(0, list.lastIndexOf('/'));
+    const runs = [...readFileSync(list, 'utf8').matchAll(/^file '([^']+)'$/gm)].map((m) => readFileSync(join(dir, m[1]!)));
+    writeFileSync(args.at(-1)!, Buffer.concat(runs));
+    return ok();
+  }
+  return fake.decodes ? ok() : { code: 69, stdout: Buffer.alloc(0), stderr: 'x' };
+};
 const code = async (p: Promise<unknown>) => { try { await p; return 'ok'; } catch (e) { return e instanceof LibraryError ? e.code : String(e); } };
 
 beforeEach(() => {
   recRoot = mkdtempSync(join(tmpdir(), 'ltv-recroot-'));
   libRoot = mkdtempSync(join(tmpdir(), 'ltv-library-'));
   logs.length = 0;
-  lib = new Library({ root: libRoot, recordingsRoot: recRoot, log: (m) => logs.push(m) });
+  Object.assign(fake, { probed: null, decodes: true, remux: 0, calls: [] });
+  lib = new Library({ root: libRoot, recordingsRoot: recRoot, log: (m) => logs.push(m), run: fakeRun });
 });
 afterEach(() => {
   rmSync(recRoot, { recursive: true, force: true });
@@ -54,7 +80,7 @@ afterEach(() => {
 });
 
 describe('the library export', () => {
-  it('export concatenates ts / fmp4 without re-encoding', async () => {
+  it('export remuxes ts / fmp4 without re-encoding, one run per init', async () => {
     const ts = recording();
     const a = await lib.export(ID, { dir: DIR, folder: 'Sternstunde Physik', file: 'Sternstunde Physik – 2026-11-15 20.58' });
     expect(a).toEqual({ path: 'Sternstunde Physik/Sternstunde Physik – 2026-11-15 20.58.ts', bytes: 3 * 188 });
@@ -63,19 +89,70 @@ describe('the library export', () => {
     // the same name again: a numbered file, never an overwrite
     const b = await lib.export(ID, { dir: DIR, folder: 'Sternstunde Physik', file: 'Sternstunde Physik – 2026-11-15 20.58' });
     expect(b.path).toBe('Sternstunde Physik/Sternstunde Physik – 2026-11-15 20.58 (2).ts');
-    // fMP4: the init, then the fragments, as .mp4
+    // fMP4 (B-I8): each init with its own fragments as a run (init 1 starts at segment 2), the runs remuxed into one .ts
     const dir2 = '0f000000-0000-4000-a000-0000000000d2';
     const mp4 = recording({ fmp4: true, dir: dir2 });
     const c = await lib.export(ID, { dir: dir2, folder: 'Die Leuchtturmwärter', file: 'Folge 1' });
-    expect(c.path).toBe('Die Leuchtturmwärter/Folge 1.mp4');
-    expect(readFileSync(join(libRoot, c.path))).toEqual(Buffer.concat(mp4));
-    expect(readdirSync(join(libRoot, 'Die Leuchtturmwärter'))).toEqual(['Folge 1.mp4']); // no part file left
+    expect(c.path).toBe('Die Leuchtturmwärter/Folge 1.ts');
+    expect(readFileSync(join(libRoot, c.path))).toEqual(Buffer.concat([mp4[0]!, mp4[1]!, mp4[2]!, Buffer.from('INIT1'), mp4[3]!]));
+    expect(readdirSync(join(libRoot, 'Die Leuchtturmwärter'))).toEqual(['Folge 1.ts']); // no part file left
+    expect(readdirSync(join(recRoot, dir2)).filter((n) => n.startsWith('.'))).toEqual([]); // nor the runs
     // removing goes through the same names; the folder goes with its last file
     await lib.remove(ID, c.path);
     expect(existsSync(join(libRoot, 'Die Leuchtturmwärter'))).toBe(false);
     expect(await code(lib.remove(ID, c.path))).toBe('not_found');
     expect(logs.join('\n')).not.toMatch(/Sternstunde|Leuchtturm|ltv-/);
   });
+
+  it('B-I8: a file that fails the check is never kept, and the recording stays', async () => {
+    recording({ n: 3 });
+    const before = readdirSync(join(recRoot, DIR)).sort();
+    const at = { dir: DIR, folder: 'Hafenkanal', file: 'Nacht' };
+    fake.probed = 6; // 12 s recorded, 6 s in the file: something got lost
+    expect(await code(lib.export(ID, at))).toBe('verify_failed');
+    fake.probed = 12.5; // within the tolerance, but the end does not decode
+    fake.decodes = false;
+    expect(await code(lib.export(ID, at))).toBe('verify_failed');
+    fake.decodes = true;
+    fake.remux = 1;
+    expect(await code(lib.export(ID, at))).toBe('export_failed');
+    for (const [k, n] of [['library', readdirSync(join(libRoot, 'Hafenkanal'))], ['recording', readdirSync(join(recRoot, DIR)).sort()]] as const) {
+      expect(n, k).toEqual(k === 'library' ? [] : before);
+    }
+    fake.remux = 0;
+    expect((await lib.export(ID, at)).path).toBe('Hafenkanal/Nacht.ts');
+    // ffmpeg only ever reads the local runs, and checks start and end
+    const remux = fake.calls.find((c) => c.includes('concat'))!;
+    expect(remux.slice(remux.indexOf('-protocol_whitelist'), remux.indexOf('-protocol_whitelist') + 2)).toEqual(['-protocol_whitelist', 'file']);
+    expect(remux).toEqual(expect.arrayContaining(['-c', 'copy', '-map', '0']));
+    expect(fake.calls.filter((c) => c[0] === 'ffmpeg' && c.includes('null')).slice(-2).map((c) => c.includes('-sseof'))).toEqual([false, true]);
+  });
+
+  it.skipIf(!existsSync('/usr/bin/ffmpeg') || !existsSync('/usr/bin/ffprobe'))('B-I8: a recording whose init changes mid-way exports as one file that decodes, both pictures in it', async () => {
+    const dir = join(recRoot, DIR);
+    mkdirSync(dir, { recursive: true });
+    const gen = (src: string, size: string, init: number, start: number) => {
+      const r = spawnSync('/usr/bin/ffmpeg', ['-hide_banner', '-loglevel', 'error', '-nostdin', '-f', 'lavfi', '-i', `${src}=size=${size}:rate=25:duration=${start ? 4 : 6}`,
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '50', '-keyint_min', '50', '-sc_threshold', '0', '-f', 'hls', '-hls_time', '2', '-hls_segment_type', 'fmp4',
+        '-hls_fmp4_init_filename', `init-${init}.mp4`, '-start_number', String(start), '-hls_segment_filename', join(dir, '%d.m4s'), join(dir, `gen-${init}.m3u8`)]);
+      expect(r.status, r.stderr?.toString()).toBe(0);
+      rmSync(join(dir, `gen-${init}.m3u8`));
+    };
+    gen('testsrc', '320x240', 0, 0);
+    gen('testsrc2', '480x360', 1, 3);
+    const entries = [0, 1, 2, 3, 4].map((seq) => ({ seq, ext: 'm4s' as const, duration: 2, pdt: T0 + seq * 2000, disc: seq === 3, init: seq < 3 ? 0 : 1 }));
+    writeFileSync(join(dir, 'index.m3u8'), recordingPlaylist(entries, true));
+    const real = new Library({ root: libRoot, recordingsRoot: recRoot, run: createRun({ ffmpeg: '/usr/bin/ffmpeg', ffprobe: '/usr/bin/ffprobe' }) });
+    const a = await real.export(ID, { dir: DIR, folder: 'Sternwarte 24', file: 'Wechsel' });
+    expect(a.path).toBe('Sternwarte 24/Wechsel.ts');
+    const file = join(libRoot, a.path);
+    const dec = spawnSync('/usr/bin/ffmpeg', ['-hide_banner', '-v', 'error', '-nostdin', '-i', file, '-f', 'null', '-']);
+    expect([dec.status, dec.stderr.toString()]).toEqual([0, '']);
+    const probe = spawnSync('/usr/bin/ffprobe', ['-v', 'error', '-show_entries', 'frame=width', '-select_streams', 'v', '-of', 'csv=p=0', file]);
+    expect(new Set(probe.stdout.toString().trim().split('\n').map((w) => w.replace(/,$/, '')))).toEqual(new Set(['320', '480']));
+    const d = Number(spawnSync('/usr/bin/ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]).stdout.toString());
+    expect(Math.abs(d - 10)).toBeLessThan(1);
+  }, 60_000);
 
   it('refuses a non-empty unmarked folder', async () => {
     recording();

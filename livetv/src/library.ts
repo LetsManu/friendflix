@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { constants } from 'node:fs';
-import { access, lstat, mkdir, open, readdir, realpath, rename, rm, rmdir, statfs, unlink } from 'node:fs/promises';
+import { access, lstat, mkdir, open, readdir, realpath, rename, rm, rmdir, statfs, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Log } from './log.js';
 import { DIR_RE, parseRecordingPlaylist } from './recorder.js';
+import { TIMEOUT_CODE, type Run } from './run.js';
 
 /**
  * The Jellyfin library folder (spec §15.3, plan Phase 3 Task 6): the opt-in overlay `compose.livetv-library.yaml` mounts ONE dedicated
- * sub-folder of the media share at `/library`, read-write. livetv concatenates a finished recording's segments without re-encoding into
- * `/library/<folder>/<file>.ts` (TS segments) or `.mp4` (fMP4: the init, then the fragments), and removes such a file again when the
+ * sub-folder of the media share at `/library`, read-write. livetv remuxes a finished recording without re-encoding into one MPEG-TS file
+ * `/library/<folder>/<file>.ts` (ffmpeg, local files only), and removes such a file again when the
  * backend deletes the recording. It never follows or creates a link: every path is built below `/library` from sanitised names,
  * opened with O_NOFOLLOW and checked with realpath. A marker `.friendflix-recordings` proves the folder is dedicated: a folder that
  * is not empty and has no marker refuses every export (`library_not_dedicated`, a mount of the whole media share by mistake).
@@ -17,9 +18,14 @@ import { DIR_RE, parseRecordingPlaylist } from './recorder.js';
  */
 export const MARKER = '.friendflix-recordings';
 export const NAME_MAX = 120;
+/** together at most 26 min: the backend waits 30 for the answer (recstore.ts) */
+const REMUX_TIMEOUT_MS = 20 * 60_000;
+const PROBE_TIMEOUT_MS = 2 * 60_000;
+/** how far the exported file's duration may be from the playlist's (or 1 % of it, if more) */
+export const DURATION_TOLERANCE_S = 2;
 
 export class LibraryError extends Error {
-  constructor(readonly code: 'no_library' | 'library_not_writable' | 'library_not_dedicated' | 'not_found' | 'invalid' | 'storage_full' | 'write_failed') { super(code); }
+  constructor(readonly code: 'no_library' | 'library_not_writable' | 'library_not_dedicated' | 'not_found' | 'invalid' | 'storage_full' | 'write_failed' | 'export_failed' | 'verify_failed') { super(code); }
 }
 
 /** a file or folder name livetv may create: no `/`, `\`, `..`, control characters or leading dots, at most 120 characters; '' = unusable */
@@ -33,7 +39,7 @@ export interface LibraryFacts { mounted: boolean; writable: boolean; dedicated: 
 const code = (e: unknown) => (e as NodeJS.ErrnoException | null)?.code;
 
 export class Library {
-  constructor(private readonly o: { root: string; recordingsRoot: string; log?: Log }) {}
+  constructor(private readonly o: { root: string; recordingsRoot: string; log?: Log; run?: Run }) {}
 
   /** `/v1/system.library`: null while the overlay is not on (no `/library`) */
   async facts(): Promise<LibraryFacts | null> {
@@ -82,8 +88,11 @@ export class Library {
   }
 
   /**
-   * Concatenates the recording in `/recordings/<dir>/` (its playlist order) into `/library/<folder>/<file>.<ts|mp4>` without re-encoding;
-   * an existing file of that name gets " (2)" … " (9)". Answers the path relative to the library and the bytes written.
+   * Remuxes the recording in `/recordings/<dir>/` (its playlist order, every init version and discontinuity respected) into
+   * `/library/<folder>/<file>.ts` without re-encoding (B-I8), and answers only once the file is checked: its duration within
+   * DURATION_TOLERANCE_S (or 1 %) of the playlist's, its start and end decode. Any failure leaves no file behind (`export_failed`,
+   * `verify_failed`), and the recording folder untouched, so the backend keeps the recording. An existing file of that name gets
+   * " (2)" … " (9)". Answers the path relative to the library and the bytes written.
    */
   async export(id: string, b: { dir: string; folder: string; file: string }): Promise<{ path: string; bytes: number }> {
     if (!DIR_RE.test(b.dir)) throw new LibraryError('invalid');
@@ -97,46 +106,69 @@ export class Library {
     const text = await readNoFollow(join(src, 'index.m3u8'));
     const entries = text ? parseRecordingPlaylist(text) : [];
     if (!entries.length) throw new LibraryError('not_found');
-    const fmp4 = entries.some((e) => e.ext === 'm4s');
-    const ext = fmp4 ? 'mp4' : 'ts';
     const root = await this.guardedRoot();
     const dir = await this.folder(root, folderName);
     let name = '';
+    // room for " (9)" and the extension: a numbered name stays within NAME_MAX, so remove() takes it back (A-M6)
     for (let i = 1; i <= 9 && !name; i++) {
-      const candidate = `${[...fileName].slice(0, NAME_MAX - 5).join('')}${i > 1 ? ` (${i})` : ''}.${ext}`;
+      const candidate = `${[...fileName].slice(0, NAME_MAX - 9).join('')}${i > 1 ? ` (${i})` : ''}.ts`;
       if (!(await lstat(join(dir, candidate)).catch(() => null))) name = candidate;
     }
     if (!name) throw new LibraryError('invalid');
     const part = join(dir, `.${name}.part`);
-    let bytes = 0;
-    let out;
+    const work = join(src, '.export');
     try {
-      out = await open(part, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
-    } catch (e) {
-      if (code(e) === 'EACCES' || code(e) === 'EROFS' || code(e) === 'EPERM') throw new LibraryError('library_not_writable');
-      throw e;
-    }
-    try {
-      // fMP4: the first init, then every fragment (a recording's later init versions describe the same tracks)
-      const first = entries.find((e) => e.init !== null)?.init;
-      const files = [...(fmp4 && first !== undefined && first !== null ? [`init-${first}.mp4`] : []), ...entries.map((e) => `${e.seq}.${e.ext}`)];
-      for (const f of files) {
-        const data = await readFileNoFollow(join(src, f));
-        if (data === null) continue; // a segment the recorder never finished: left out
-        await out.write(data);
-        bytes += data.length;
-      }
-      await out.close();
-      out = null;
+      // the part file is created here (never through a link); ffmpeg then writes into it
+      const fh = await open(part, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644).catch((e: unknown) => {
+        throw new LibraryError(code(e) === 'EACCES' || code(e) === 'EROFS' || code(e) === 'EPERM' ? 'library_not_writable' : 'write_failed');
+      });
+      await fh.close();
+      await rm(work, { recursive: true, force: true });
+      await mkdir(work, { mode: 0o755 });
+      const runs = await writeRuns(src, work, entries);
+      if (!runs.length) throw new LibraryError('not_found');
+      await this.remux(work, runs, part);
+      await this.verify(part, entries.reduce((n, e) => n + e.duration, 0));
       await rename(part, join(dir, name));
     } catch (e) {
-      if (out) await out.close().catch(() => undefined);
       await rm(part, { force: true }).catch(() => undefined);
       if (e instanceof LibraryError) throw e;
       throw new LibraryError(code(e) === 'ENOSPC' || code(e) === 'EDQUOT' ? 'storage_full' : 'write_failed');
+    } finally {
+      await rm(work, { recursive: true, force: true }).catch(() => undefined);
     }
+    const bytes = (await lstat(join(dir, name))).size;
     this.o.log?.(`recording ${id} exported to the library`);
     return { path: `${folderName}/${name}`, bytes };
+  }
+
+  /**
+   * One file from the runs without re-encoding (B-I8): ffmpeg's concat demuxer reads every run with its own codec parameters (an init
+   * change, a stream restart) and writes one MPEG-TS, which carries parameter changes in-band. ffmpeg reads only the local run files.
+   */
+  private async remux(work: string, runs: string[], out: string): Promise<void> {
+    if (!this.o.run) throw new LibraryError('export_failed');
+    const list = join(work, 'list.txt');
+    await writeFile(list, runs.map((r) => `file '${r}'\n`).join(''), { flag: 'wx' });
+    const r = await this.o.run('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-protocol_whitelist', 'file', '-f', 'concat', '-safe', '1', '-i', list,
+      '-map', '0', '-c', 'copy', '-f', 'mpegts', '-y', out,
+    ], { timeoutMs: REMUX_TIMEOUT_MS });
+    if (r.code !== 0) throw new LibraryError(r.code === TIMEOUT_CODE ? 'export_failed' : (await enospc(out)) ? 'storage_full' : 'export_failed');
+  }
+
+  /** the file is complete before the recording's FriendFlix copy may go (B-I8): its duration fits and its start and end decode */
+  private async verify(file: string, expectedS: number): Promise<void> {
+    if (!this.o.run) throw new LibraryError('verify_failed');
+    const probe = await this.o.run('ffprobe', ['-v', 'error', '-protocol_whitelist', 'file', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], { timeoutMs: PROBE_TIMEOUT_MS });
+    const duration = Number(probe.stdout.toString('utf8').trim());
+    if (probe.code !== 0 || !Number.isFinite(duration) || Math.abs(duration - expectedS) > Math.max(DURATION_TOLERANCE_S, expectedS * 0.01)) throw new LibraryError('verify_failed');
+    for (const at of [['-t', '5'], ['-sseof', '-5']]) {
+      const pos = at[0] === '-sseof' ? at : [];
+      const len = at[0] === '-t' ? at : [];
+      const dec = await this.o.run('ffmpeg', ['-hide_banner', '-v', 'error', '-xerror', '-nostdin', '-protocol_whitelist', 'file', ...pos, '-i', file, ...len, '-f', 'null', '-'], { timeoutMs: PROBE_TIMEOUT_MS });
+      if (dec.code !== 0) throw new LibraryError('verify_failed');
+    }
   }
 
   /** removes an exported file (`<folder>/<file>`, as export answered it) and its folder when that is empty now; not_found when gone */
@@ -170,4 +202,49 @@ async function readFileNoFollow(path: string): Promise<Buffer | null> {
     throw e;
   }
   try { return await fh.readFile(); } finally { await fh.close(); }
+}
+
+/** whether the disk ran out under ffmpeg (its output is then shorter than it should be; statfs says) */
+async function enospc(path: string): Promise<boolean> {
+  return statfs(path).then((s) => Number(s.bavail) * Number(s.bsize) < 64 * 1024 * 1024, () => false);
+}
+
+/**
+ * The recording cut into runs (B-I8): consecutive segments that share an init version and have no discontinuity between them. Each run
+ * becomes one file in `work` (fMP4: its init, then its fragments, as `run-<n>.mp4`; TS: its segments as `run-<n>.ts`); a segment the
+ * recorder never finished is left out. Answers the run file names.
+ */
+async function writeRuns(src: string, work: string, entries: ReturnType<typeof parseRecordingPlaylist>): Promise<string[]> {
+  const runs: Array<typeof entries> = [];
+  for (const e of entries) {
+    const cur = runs.at(-1);
+    const prev = cur?.at(-1);
+    if (!cur || !prev || e.disc || e.init !== prev.init || e.ext !== prev.ext) runs.push([e]);
+    else cur.push(e);
+  }
+  const names: string[] = [];
+  for (const [i, run] of runs.entries()) {
+    const ext = run[0]!.ext === 'm4s' ? 'mp4' : 'ts';
+    const name = `run-${i}.${ext}`;
+    const out = await open(join(work, name), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
+    let wrote = 0;
+    try {
+      const init = run[0]!.init;
+      if (init !== null) {
+        const data = await readFileNoFollow(join(src, `init-${init}.mp4`));
+        if (data === null) continue; // without its init the run cannot be read: left out
+        await out.write(data);
+      }
+      for (const e of run) {
+        const data = await readFileNoFollow(join(src, `${e.seq}.${e.ext}`));
+        if (data === null) continue;
+        await out.write(data);
+        wrote++;
+      }
+    } finally {
+      await out.close();
+    }
+    if (wrote) names.push(name);
+  }
+  return names;
 }

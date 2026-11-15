@@ -235,7 +235,7 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   if (env.INTERNAL_SECRET || env.INTERNAL_SECRET_FILE) log('INTERNAL_SECRET is set in the environment of livetv but never used: remove it there');
   const verifier: Verifier = { key: cfg.key, cache: new ReplayCache(), notBefore: Date.now() };
   const run = createRun();
-  const library = new Library({ root: cfg.libraryDir, recordingsRoot: cfg.recordingsDir, log });
+  const library = new Library({ root: cfg.libraryDir, recordingsRoot: cfg.recordingsDir, log, run });
   const system = systemView({ fs, run, cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts, recordingsDir: cfg.recordingsDir, library: () => library.facts() });
   // the encoders /v1/system lists, asked once (a failed or empty answer is asked again next time)
   let encoderList: Encoder[] | null = null;
