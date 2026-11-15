@@ -71,6 +71,12 @@ describe('handoff helpers', () => {
     expect(handoffHref({ ...base, positionTicks: 0 })).toBe('/watch/e4?t=0');
   });
 
+  it('a recording (Live TV Phase 3): its own player page at the position, named with its channel', () => {
+    const rec: Handoff = { ...film, itemId: 'rec:0b000000-0000-4000-a000-0000000000f1', type: 'Recording', title: 'Die Leuchtturmwärter', channel: 'Nordlicht TV', year: undefined, imageId: '', positionTicks: 6_000_000_000 };
+    expect(handoffHref(rec)).toBe('/live/recordings/0b000000-0000-4000-a000-0000000000f1?t=600');
+    expect(handoffTitle(rec, tr)).toBe('Die Leuchtturmwärter · Nordlicht TV');
+  });
+
   it('TV: the card takes focus only when it arrives within 2 s of mount and before any key', () => {
     expect(shouldTakeFocus({ mountedAt: 1000, arrivedAt: 2900, keyPressed: false })).toBe(true);
     expect(shouldTakeFocus({ mountedAt: 1000, arrivedAt: 3000, keyPressed: false })).toBe(true); // 2 s exactly still counts

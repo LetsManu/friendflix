@@ -135,6 +135,20 @@ describe('remote control hub', () => {
     phone.ws.close();
   });
 
+  it('a recording travels as rec:<uuid> both ways (Weiter auf dem Fernseher, Live TV Phase 3); anything else after rec: is dropped', async () => {
+    const REC = 'rec:0b000000-0000-4000-a000-0000000000f1';
+    const tv = await open(await tvSid(), 'tv'); const phone = await open(me.cookies.ff_sid!, 'remote');
+    await vi.waitFor(() => expect(phone.msgs.find((m) => m.t === 'hello')).toMatchObject({ tvOnline: true }));
+    phone.ws.send(JSON.stringify({ t: 'cast', itemId: 'rec:../../etc' }));
+    phone.ws.send(JSON.stringify({ t: 'cast', itemId: REC, startSec: 600 }));
+    tv.ws.send(JSON.stringify({ t: 'status', itemId: REC, title: 'Die Leuchtturmwärter', position: 601, duration: 2700, paused: false }));
+    await vi.waitFor(() => { expect(tv.msgs.filter((m) => m.t === 'cast')).toHaveLength(1); expect(phone.msgs.find((m) => m.t === 'status')).toBeTruthy(); });
+    expect(tv.msgs.filter((m) => m.t === 'cast')).toEqual([{ t: 'cast', itemId: REC, startSec: 600 }]);
+    expect(phone.msgs.find((m) => m.t === 'status')).toMatchObject({ itemId: REC, position: 601 });
+    tv.ws.close(); await tv.closed;
+    phone.ws.close();
+  });
+
   it('track lists travel TV -> phone and audio/sub commands phone -> TV, oversize lists are dropped', async () => {
     const tv = await open(await tvSid(), 'tv'); const phone = await open(me.cookies.ff_sid!, 'remote');
     await vi.waitFor(() => expect(phone.msgs.find((m) => m.t === 'hello')).toBeTruthy());

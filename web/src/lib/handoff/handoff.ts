@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { api, fmtClock, type ClientKind } from '#lib/api';
 import { fmtRelative, type TFn } from '#lib/i18n';
+import { itemPath } from '#lib/remote';
 import { castLabel, deviceName } from './deviceName';
 
 /** GET /api/handoff's answer (backend/src/handoff.ts HandoffAnswer): what another device played last, how far and when */
@@ -9,8 +10,11 @@ export interface Handoff {
   /** opaque, stable while that device plays that title */
   id: string;
   itemId: string;
-  type: 'Movie' | 'Episode';
+  /** `Recording`: a FriendFlix recording (Live TV Phase 3; `itemId` = `rec:<uuid>`, no library image, the channel's `logo`) */
+  type: 'Movie' | 'Episode' | 'Recording';
   title: string;
+  channel?: string | undefined;
+  logo?: string | undefined;
   year?: number | undefined;
   seriesName?: string | undefined;
   season?: number | undefined;
@@ -87,11 +91,12 @@ export function handoffTitle(h: Handoff, tf: TFn): string {
     const code = h.season != null && h.episode != null ? ` ${tf('detail.view.episodeCode', { s: h.season, e: h.episode })}` : '';
     return `${h.seriesName}${code} · ${h.title}`;
   }
+  if (h.type === 'Recording') return h.channel ? `${h.title} · ${h.channel}` : h.title;
   return h.year ? `${h.title} · ${h.year}` : h.title;
 }
 
 /** the web player at the shown position */
-export const handoffHref = (h: Handoff): string => `/watch/${h.itemId}?t=${Math.floor(h.positionTicks / 1e7)}`;
+export const handoffHref = (h: Handoff): string => itemPath(h.itemId, Math.floor(h.positionTicks / 1e7));
 
 // ---- TV remote (spec 2.4) ----
 /** how long after the page's mount an arriving card may still take the focus */

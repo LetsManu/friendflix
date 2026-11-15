@@ -26,7 +26,7 @@
   import { kidsMode } from '#lib/kids';
   import type ItemModalType from '#lib/ItemModal.svelte';
   import { loadModal, prefetchModal } from '#lib/lazy';
-  import { startTvLink, type ToTv } from '#lib/remote';
+  import { itemPath, startTvLink, type ToTv } from '#lib/remote';
   import { perms, permsFrom } from '#lib/perms';
   import { areas, areasFrom, capsFrom, features, featuresOfMe, featuresFrom, featuresKnown, kindFrom, serverCaps, serverKind } from '#lib/capabilities';
   import { setMeta } from '#lib/offline/db';
@@ -360,7 +360,7 @@
 
   // ---- commands from the phone (only on a paired TV) ----
   function onTvCommand(m: ToTv) {
-    if (m.t === 'cast') goto(`/watch/${m.itemId}${m.startSec ? `?t=${m.startSec}` : ''}`);
+    if (m.t === 'cast') goto(itemPath(m.itemId, m.startSec || undefined)); // a recording (rec:<id>) opens its own player page
     else if (m.action === 'home' || m.action === 'stop') goto('/');
     else window.dispatchEvent(new CustomEvent('ff-remote', { detail: m })); // the player listens
   }

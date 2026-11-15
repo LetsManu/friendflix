@@ -57,7 +57,7 @@ import { airLog } from '#lib/player/airplayLog';
 import { motionAllowed } from '#lib/preview';
 import { formFactor } from './playOn';
 import { castLog, type CastLogEntry } from './castLog';
-import { liveFields, type LiveInfo } from './liveInfo';
+import { liveFields, recCastMedia, type LiveInfo, type RecInfo } from './liveInfo';
 import { airSubBody, forgetSubsRefused, rememberSubsRefused, subsRefusedRecently } from './airsubs';
 import { castIdOfContentUrl, clearHint, lookupToCastInfo, readHint, sha256Hex, tokenOfLiveUrl, writeHint, type CastHint, type CastLookup, type Store } from './resume';
 import { barTitles, firstInfoBody } from '#lib/player/bar';
@@ -107,8 +107,10 @@ export interface CastSession {
   live?: LiveInfo;
   /** the bar's flag for a live channel (no poster, no progress line): true exactly when `live` is set (`liveFields` sets both) */
   isLive?: boolean;
+  /** a FriendFlix recording (Phase 3, `loadRecording`): itemId = `rec:<id>`; it has a position and a progress line like a film */
+  rec?: RecInfo;
 }
-export { liveFields, type LiveInfo } from './liveInfo';
+export { liveFields, type LiveInfo, type RecInfo } from './liveInfo';
 /** a refused or failed `loadLive`: `code` = the watch refusal's error (`live_full`, `provider_limit`, `channel_unreachable`, `not_receiving`,
  *  `max_streams`, `forbidden`, `not_found`, `livetv_off`, `stopped_by_admin`), else `not_connected` / `load_failed` / `network` / `superseded` (a newer one won) */
 export class LiveCastError extends Error {
@@ -164,6 +166,13 @@ export interface CastEngine {
   loadLive(channelId: string, o?: { order?: string[] }): Promise<void>;
   /** channel ▲ (1) / ▼ (-1) of the live cast (bar, remote): the neighbour in its order loads (a refusal is a toast, the channel stays) */
   zapLive(dir: 1 | -1): Promise<void>;
+  /**
+   * A recording on the connected Chromecast (spec §15.7, plan Phase 3 Task 10): `POST /api/livetv/recordings/:id/play { via: 'chromecast' }`
+   * (the live tokens' pin rules), then `/media/r/<token>/index.m3u8` with its segment format at `startS` (absent: the saved position).
+   * The receiver's position goes to `…/progress` every PROGRESS_MS; Stop ends the token. Rejects with a `LiveCastError` (`not_found`,
+   * `not_ready`, `not_connected`, `load_failed`, `network`, `superseded`).
+   */
+  loadRecording(recordingId: string, o: { startS?: number; title: string; subtitle: string; logo: string | null }): Promise<void>;
   stop(): Promise<void>;
   /** from a tap on the bar in `reconnect`: Chromecast retries the last token request once */
   reconnect(): void;
@@ -303,6 +312,8 @@ interface LiveCast {
   /** a refused renewal is retried after this (ms, timers clock) with a growing back-off; `renewFails` counts the refusals in a row */
   renewAfter?: number;
   renewFails?: number;
+  /** a recording (`loadRecording`): its id; its token is never renewed (minted for the recording's length), its position reported */
+  rec?: { id: string };
 }
 /** "21:00 Wetter am Hafen" */
 const progLine = (p: Prog): string => `${progClock(p.start)} ${p.title}`;
@@ -1293,6 +1304,9 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   }
 
   function seek(sec: number) {
+    // a recording on the TV: the receiver seeks, its new position is reported with the next progress
+    const r = lc;
+    if (r?.rec) { if (r.busy) return; const t = Math.max(0, r.view.duration ? Math.min(r.view.duration, sec) : sec); cast.castSeek(t); liveSet(r, { position: t }); return; }
     const s = cur;
     if (!s?.ci || s.busy) return;
     const j = s.joined && s.view.joined ? s.joined.items[s.view.joined.index] : undefined;
@@ -1613,6 +1627,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     }
     if (st.loaded) l.foreignAt = undefined;
     const p: Partial<CastSession> = { device, buffering: !st.loaded || st.state === 'buffering' };
+    if (l.rec && st.loaded && st.state !== 'idle') { p.position = st.currentTime; if (st.duration > 0) p.duration = st.duration; }
     if (st.loaded && st.state !== 'idle') {
       p.paused = st.paused;
       if (l.view.state === 'connecting' && st.state !== 'buffering') { p.state = 'playing'; log('info', 'receiver', 'live channel playing'); }
@@ -1623,12 +1638,21 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   function liveEvent(l: LiveCast, e: CastEvent) {
     if (lc !== l || (e === 'media-end' && l.busy)) return;
     // the session ended, or the receiver stopped the channel (Stop on the TV, an error): the token goes, the stream frees its viewer
-    if (e === 'session-end' || e === 'media-end') endLive(l, e === 'session-end' ? 'session ended' : 'stopped on the TV');
+    if (e === 'session-end' || e === 'media-end') {
+      if (l.rec) recReport(l);
+      endLive(l, e === 'session-end' ? 'session ended' : 'stopped on the TV');
+    }
   }
+  /** a recording's position on the TV goes to its progress (the owner's ≥ 90 % marks it watched on the server) */
+  const recReport = (l: LiveCast, keepalive = false) => {
+    if (!l.rec || l.view.state !== 'playing') return;
+    void call(`/api/livetv/recordings/${encodeURIComponent(l.rec.id)}/progress`, { method: 'POST', body: { positionS: Math.max(0, Math.floor(l.view.position)) }, ...(keepalive ? { keepalive } : {}) }).catch(() => undefined);
+  };
   /** the page goes: the TV plays on (its fetches keep the token and the viewer alive); nothing is revoked, the hint stays */
   function livePageHide(l: LiveCast) {
     if (lc !== l) return;
     log('info', 'sender', 'pagehide · TV keeps playing');
+    recReport(l, true);
     leaving = true;
     endLive(l, 'sender left', { revoke: false, keepHint: true });
     deps.leave();
@@ -1638,6 +1662,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     l.loop = timers.set(() => {
       if (lc !== l) return;
       if (!l.busy && l.foreignAt !== undefined && timers.now() - l.foreignAt >= ADVANCE_WAIT_MS) { endLive(l, 'the TV plays other media'); return; }
+      if (l.rec) { if (!l.busy) recReport(l); liveArm(l); return; } // a recording: its progress, no renewal
       if (!l.busy && l.view.state === 'playing' && l.expiresAt - timers.now() < RENEW_BEFORE_MS && timers.now() >= (l.renewAfter ?? 0)) {
         // refused: the old token plays on, the next try comes after 60 s, then 120 s, ... (at most 10 min)
         void liveLoad(l.view.itemId, { renew: true }).catch(() => {
@@ -1744,6 +1769,60 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (o.renew) log('info', 'renew', `live token renewed · valid for ${Math.round((a.expiresAt - timers.now()) / 60_000)} min`);
   }
 
+  // ---- a recording on the Chromecast (Phase 3 Task 10): the live cast's bookkeeping with a position, progress and no renewal ----
+  interface RecPlayAnswer { token: string; url: string; growing: boolean; segments: 'ts' | 'fmp4'; durationS: number | null; positionS: number; expiresAt: number }
+  async function recLoad(id: string, o: { startS?: number; title: string; subtitle: string; logo: string | null }): Promise<void> {
+    if (!get(cast.castState).connected) throw new LiveCastError('not_connected');
+    const load = cast.loadLiveOnCast;
+    if (!load) throw new LiveCastError('load_failed');
+    const my = ++liveSeq;
+    const stops = stopCount;
+    loadSinceStop++;
+    const prev = lc;
+    if (!prev) void ownLock(true).then(() => { if (!cur && !lc) freeLock(); });
+    let a: RecPlayAnswer;
+    try {
+      a = await call<RecPlayAnswer>(`/api/livetv/recordings/${encodeURIComponent(id)}/play`, { method: 'POST', body: { via: 'chromecast' } });
+    } catch (e) {
+      if (my !== liveSeq) throw new LiveCastError('superseded');
+      log('error', 'load', `recording play refused · ${errText(e)}`);
+      const code = e instanceof ApiError ? (e.status === 404 || e.status === 410 ? 'not_found' : e.status === 409 ? 'not_ready' : e.status === 429 ? 'max_streams' : 'network') : 'network';
+      throw new LiveCastError(code);
+    }
+    if (my !== liveSeq) { liveRevoke(a.token); throw new LiveCastError('superseded'); }
+    gen++;
+    const s = cur;
+    if (s) {
+      const ci = s.ci, stopped = stopReport(s);
+      s.ci = null;
+      end(s, 'a recording replaces it');
+      if (s.air) dropAir(s.air); else void stopped.then(() => revoke(ci));
+    }
+    const d = detached;
+    if (d && d.hint.kind !== 'live') { void revokeId(d.hint.castId); if (d.hint.next) void revokeId(d.hint.next); }
+    dropDetached();
+    const origin = deps.origin?.() ?? (typeof location === 'undefined' ? '' : location.origin);
+    const url = origin + a.url;
+    const start = o.startS ?? a.positionS;
+    log('info', 'load', 'recording');
+    const ok = await load(recCastMedia({ url, segments: a.segments, growing: a.growing, startS: start, title: o.title, subtitle: o.subtitle, logo: o.logo }));
+    if (my !== liveSeq) { liveRevoke(a.token); if (stopCount !== stops && loadSinceStop === 0) cast.castStop(); throw new LiveCastError('superseded'); }
+    if (!ok) {
+      liveRevoke(a.token);
+      log('error', 'load', 'the receiver could not load the recording');
+      throw new LiveCastError('load_failed');
+    }
+    if (prev && lc === prev) endLive(prev, 'a recording replaces it');
+    const rec: RecInfo = { recordingId: id, channel: o.subtitle, growing: a.growing };
+    const view: CastSession = { kind: 'chromecast', device: get(cast.castState).deviceName || 'Chromecast', itemId: `rec:${id}`, title: o.title, subtitle: o.subtitle, posterId: '', isEpisode: false,
+      position: start, duration: a.durationS ?? 0, paused: false, buffering: true, state: 'connecting', audioTracks: [], subtitles: [], subIndex: -1, autoplay: false, rec };
+    const l: LiveCast = { view, token: a.token, url, expiresAt: a.expiresAt, order: null, offs: [], busy: false, rec: { id } };
+    lc = l;
+    leaving = false;
+    out.set(view);
+    liveSubscribe(l);
+  }
+
   /** the TV plays a live channel after a reload: ours when the hint names its token's hash; the token comes from the receiver's URL */
   async function resumeLive(st: CastState, stale: () => boolean): Promise<boolean> {
     const tok = tokenOfLiveUrl(st.contentId)!;
@@ -1846,6 +1925,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       const l = lc;
       if (l) {
         gen++;
+        recReport(l);
         endLive(l, 'stopped');
         cast.castStop();
         return;
@@ -1946,9 +2026,10 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     pick() { cur?.air?.ctl.pick(); },
     resume,
     loadLive: (channelId, o) => liveLoad(channelId, o),
+    loadRecording: (id, o) => recLoad(id, o),
     async zapLive(dir) {
       const l = lc;
-      if (!l || l.busy) return;
+      if (!l || l.busy || l.rec) return;
       let order = l.order;
       if (!order?.length) {
         order = await liveOrder();

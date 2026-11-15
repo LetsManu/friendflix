@@ -57,7 +57,7 @@
   import { fmtDuration, getLocale, t, tr, type TFn, type TKey } from '#lib/i18n';
   import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
   import { castBody, castCapsReady, castConfigEnabled, castFellBack, continuousFields, postAirPlayToken, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastEvent, type CastInfo } from '#lib/cast';
-  import { CAST_VIDEO_ATTR, castEngine, castSession, type CastSession } from '#lib/cast/engine';
+  import { CAST_VIDEO_ATTR, castEngine, castSession, liveErrText, type CastSession } from '#lib/cast/engine';
   import { episodeOf, joinedAsk, joinedAt, type JoinedItem } from '#lib/cast/joined';
   import type { Item } from '#lib/api';
   import { SEEK_COMMIT_MS, seekCancel, seekCommit, seekStep, type SeekPreview } from '#lib/player/tvSeek';
@@ -890,9 +890,33 @@
     castEngine.adopt({ kind: 'chromecast', ...handoff(pos, ci.runtimeTicks ? ticksToSec(ci.runtimeTicks) : duration, false), cast: ci, started: false });
     handedOver();
   }
+  /**
+   * A recording on the Chromecast (source seam, Phase 3 Task 10): the local token ends with its last position, the engine mints a
+   * `chromecast` rec token and loads it at that position; this page becomes the TV's remote. A refusal plays on here.
+   */
+  async function startRecCast() {
+    if (!srcRec || partyMode || remote || castBusy || !$castState.connected) return;
+    castBusy = true;
+    const pos = video?.currentTime ?? lastPos;
+    if (started && !stopped) { stopped = true; await send('stop'); }
+    video?.pause(); hls?.destroy(); hls = null; waiting = true;
+    try {
+      await castEngine.loadRecording(srcRec.id, { startS: pos, title: barTitle || title, subtitle: barSub, logo: null });
+    } catch (e) {
+      castBusy = false;
+      if (destroyed) return;
+      flash(liveErrText(e), 4000);
+      started = false; stopped = false; wantAutoplay = true;
+      await load(pos);
+      return;
+    }
+    castBusy = false;
+    handedOver();
+    followTv(get(castSession));
+  }
   /** the engine owns Chromecast session end / media end; a picked device starts a cast unless one is already handed over */
   function handleCast(e: CastEvent) {
-    if (e === 'session-start' && !remote) void startCast();
+    if (e === 'session-start' && !remote) void (srcRec ? startRecCast() : startCast());
   }
 
   /** the AirPlay route plays our token on the TV: element, controller and probe go to the engine */
@@ -919,6 +943,7 @@
     const s = get(castSession);
     // a detached cast (known only from the hint) has no remote: this page plays by itself, the bar offers Reconnect
     if (partyMode || !s || s.state === 'detached') return false;
+    if (srcRec && s.itemId !== itemId) return false; // another title on the TV: this recording plays here (never as a library item there)
     handedOver();
     if (s.itemId !== itemId) void castEngine.playOnTv(itemId, startAt);
     else if (startAt !== undefined) castEngine.seek(startAt);
@@ -946,7 +971,8 @@
   function airRow() { if (tvSession?.kind === 'airplay') changeAirPlay(); else air?.pick(); }
   $: airAvail = Boolean(air && (airState.available || airOn || airState.ready || airState.busy)) || tvSession?.kind === 'airplay';
   /** something to choose from: Cast devices in reach or an AirPlay target (the remote screen has its own chip) */
-  $: playOnShown = $perms.cast && !partyMode && !remote && !srcRec && (Boolean($castState.available || $castState.connected) || airAvail);
+  // a recording casts to a Chromecast through the engine (Phase 3 Task 10); AirPlay of a recording is not offered here
+  $: playOnShown = $perms.cast && !partyMode && !remote && (Boolean($castState.available || $castState.connected) || (!srcRec && airAvail));
   $: playOnLabel = $t('player.castPicker.open');
   $: playOnEp = item?.type === 'Episode' || item?.seriesId ? episodeCode({ subtitle: '' }, item, $t) : '';
 
@@ -1787,7 +1813,7 @@
     const attached = attachToCast();
     if (!attached) load(startAt);
     castOff = onCastEvent(handleCast);
-    if (!partyMode && !srcRec) void initCast();
+    if (!partyMode) void initCast();
     if (!attached && !srcRec) void initAirPlay();
     if (caps.bookmarks) loadBookmarks();
     if ($serverCaps.chapters && caps.scenes) api(`/api/items/${itemId}/chapters`).then((r) => (chapters = r?.supported ? normalizeChapters(r.chapters) : [])).catch(() => undefined);
@@ -1994,7 +2020,7 @@
     <CastPeek data={castData} hint={tvMode() ? 'tv' : coarse ? 'none' : 'key'} on:more={() => openCastInfo(false)} />
   {/if}
   <PlayOnSheet open={playOnOpen} trigger={playOnTrigger} at={tvSession ? tvSession.position : current} title={tvSession ? tvSession.title : barTitle || title} episode={tvSession ? (tvSession.isEpisode ? episodeCode(tvSession, item, $t) : '') : playOnEp}
-    airplay={airAvail} airplayActive={airOn && !tvSession} sheet={phone} onAirPlay={airRow} onConnected={() => void startCast()} on:close={() => (playOnOpen = false)} on:continued={onContinued} />
+    airplay={airAvail} airplayActive={airOn && !tvSession} sheet={phone} onAirPlay={airRow} onConnected={() => void (srcRec ? startRecCast() : startCast())} on:close={() => (playOnOpen = false)} on:continued={onContinued} />
   {#if subDlg}
     <div class="dlg ui" data-nav data-scope role="dialog" tabindex="-1" aria-modal="true" aria-label={$t('player.subs.search')} on:click|stopPropagation on:keydown|stopPropagation>
       <header><b>{$t('player.subs.search')}</b><button class="icx" aria-label={$t('common.close')} on:click={() => (subDlg = false)}><Icon name="x" size={20} /></button></header>

@@ -29,13 +29,15 @@ interface Peer { ws: Sock; role: 'tv' | 'remote'; sid: string; msgs: number[] }
 const busy = new Set<string>();
 const peers = new Map<string, Set<Peer>>(); // userId -> sockets
 
+/** a library item, or a FriendFlix recording as `rec:<uuid>` (Live TV Phase 3: "Weiter auf dem Fernseher"; the TV's /play checks it) */
+const castItem = z.string().regex(/^(?:[0-9a-f]{32}|rec:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/);
 const toTv = z.discriminatedUnion('t', [
-  z.object({ t: z.literal('cast'), itemId: z.string().regex(/^[0-9a-f]{32}$/), startSec: z.number().int().min(0).max(86_400).optional() }),
+  z.object({ t: z.literal('cast'), itemId: castItem, startSec: z.number().int().min(0).max(86_400).optional() }),
   z.object({ t: z.literal('ctl'), action: z.enum(['play', 'pause', 'toggle', 'seekBy', 'stop', 'home', 'next', 'audio', 'sub']), value: z.number().min(-3600).max(3600).optional() }),
 ]);
 const track = z.object({ i: z.number().int().min(0).max(200), t: z.string().max(40) });
 const fromTv = z.object({
-  t: z.literal('status'), itemId: z.string().regex(/^[0-9a-f]{32}$/).optional(), title: z.string().max(200).optional(),
+  t: z.literal('status'), itemId: castItem.optional(), title: z.string().max(200).optional(),
   position: z.number().min(0).max(1e6).optional(),
   // track lists let the phone pick audio/subtitles (bounded: the socket payload limit is 4 KB)
   audio: z.array(track).max(10).optional(), subs: z.array(track).max(16).optional(), audioSel: z.number().int().min(0).max(200).optional(), subSel: z.number().int().min(-1).max(200).optional(),

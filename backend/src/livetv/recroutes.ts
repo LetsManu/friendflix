@@ -16,6 +16,7 @@ import { invalidateRecordingUses } from './streams.js';
 import { playEntryGate, profileChangedSince, streamLimitRefusal } from './routes.js';
 import { liveSidHash, mintRecToken, revokeLiveToken } from './tokens.js';
 import { isHomeRequest } from '../netaddr.js';
+import { noteHandoff } from '../handoff.js';
 
 /**
  * The recording routes (spec §15.8, plan Phase 3 Task 4). User side (`requireUser`): the programme detail, scheduling with the conflict
@@ -281,6 +282,14 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     await ctx.db.query(
       `insert into livetv_recording_progress(profile_id, recording_id, position_s) values ($1, $2, $3)
        on conflict (profile_id, recording_id) do update set position_s = excluded.position_s, updated_at = now()`, [profile.id, id, b.data.positionS]);
+    // the device's hand-off row (Phase 3 Task 10): another device of the profile is offered "continue here" at this position
+    const deviceId = req.session?.deviceId;
+    if (deviceId) {
+      await noteHandoff(ctx, {
+        userId: u.id, profileId: profile.id, deviceId, itemId: `rec:${id}`, positionTicks: b.data.positionS * 10_000_000,
+        ...(r.duration_s ? { runtimeTicks: r.duration_s * 10_000_000 } : {}), via: null, start: false,
+      });
+    }
     const watched = b.data.played === true || (r.duration_s !== null && r.duration_s > 0 && b.data.positionS >= 0.9 * r.duration_s);
     if (watched && r.profile_id === profile.id && r.state !== 'recording') await ctx.db.query('update livetv_recordings set watched_at = coalesce(watched_at, now()) where id = $1', [id]);
     return { ok: true };

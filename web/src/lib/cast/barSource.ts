@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { derived, get, type Readable } from 'svelte/store';
 import { goto } from '$app/navigation';
+import { itemPath } from '#lib/remote';
 import { native, nativeCast, type NativeCastSnapshot } from '#lib/native/bridge';
 import { castEngine, castSession, type CastSession } from './engine';
 import { liveFields } from './liveInfo';
@@ -31,7 +32,7 @@ export function engineSource(): CastBarSource {
     next: () => void castEngine.next(),
     stop: () => castEngine.stop(),
     // a live channel's remote is the live player (it shows the remote screen while the channel plays on the TV)
-    open: () => { const c = get(castSession); if (c) void goto(c.live ? '/live/watch/' + encodeURIComponent(c.live.channelId) : '/watch/' + c.itemId); },
+    open: () => { const c = get(castSession); if (c) void goto(c.live ? '/live/watch/' + encodeURIComponent(c.live.channelId) : itemPath(c.itemId)); },
     zap: (dir) => void castEngine.zapLive(dir),
     canExpand: true,
     fromApp: false,
