@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it, vi } from 'vitest';
-import { LIVE_CATCHUP_RATE, LIVE_MAX_LATENCY_S, LIVE_SYNC_S, hlsConfig, liveHlsConfig, liveSyncSeconds, loadHls, resetHlsLoader } from './hls';
+import { LIVE_CATCHUP_RATE, LIVE_LATENCY, LIVE_MAX_LATENCY_S, LIVE_SYNC_S, hlsConfig, liveHlsConfig, loadHls, raiseLatency, resetHlsLoader } from './hls';
 
 describe('loadHls', () => {
   it('loads once and shares the promise', async () => {
@@ -59,11 +59,20 @@ describe('liveHlsConfig', () => {
     }
     expect([LIVE_SYNC_S, LIVE_MAX_LATENCY_S, LIVE_CATCHUP_RATE]).toEqual([12, 30, 1.1]);
   });
-  it('H3: a window of only the newest segments (no rewind buffer) plays 8 s behind, inside the window', () => {
-    expect(liveHlsConfig(0, false).liveSyncDuration).toBe(8);
-    expect(liveSyncSeconds(0)).toBe(8);
-    expect(liveSyncSeconds(15)).toBe(8);
-    expect(liveSyncSeconds(16)).toBe(12);
+  it('review M8: 12 s also without a rewind buffer (hls.js keeps the start inside the window itself)', () => {
+    expect(liveHlsConfig(0, false).liveSyncDuration).toBe(12);
+  });
+  it('review I3: long segments raise the sync to 3 target durations and keep the max latency above it; only ever raised', () => {
+    expect(raiseLatency(LIVE_LATENCY, 4)).toEqual({ syncS: 12, maxLatencyS: 30 });
+    expect(raiseLatency(LIVE_LATENCY, 6)).toEqual({ syncS: 18, maxLatencyS: 30 });
+    const ten = raiseLatency(LIVE_LATENCY, 10);
+    expect(ten).toEqual({ syncS: 30, maxLatencyS: 50 });
+    // a later playlist with a shorter target does not lower it within the session
+    expect(raiseLatency(ten, 4)).toEqual(ten);
+    expect(raiseLatency(raiseLatency(LIVE_LATENCY, 6), 10)).toEqual({ syncS: 30, maxLatencyS: 50 });
+    for (const t of [1, 4, 6, 8, 10, 15]) { const l = raiseLatency(LIVE_LATENCY, t); expect(l.maxLatencyS).toBeGreaterThan(l.syncS); }
+    // nothing known changes nothing
+    expect(raiseLatency(LIVE_LATENCY, Number.NaN)).toEqual(LIVE_LATENCY);
   });
   it('H3: hls.js accepts the live tuning (it refuses counts and seconds mixed, or a max latency at or under the sync point)', async () => {
     const { default: Hls } = await import('hls.js');

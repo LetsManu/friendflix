@@ -4,8 +4,8 @@
 /**
  * The live player's own catch-up (H3). hls.js speeds up a little while just behind the sync point and goes back to it beyond the
  * max latency, but only as it loads; after a stall, a resume or the tab coming back the player checks itself. Being behind is the
- * viewer's choice only after their own pause, a rewind or Von Anfang an (`deliberate`); a pause from outside (the OS media
- * session, a hidden tab, audio focus) is not one. Pure.
+ * viewer's choice only after their own pause (the OS media session's too: lock screen, headset, media keys), a rewind or Von
+ * Anfang an (`deliberate`); a pause from outside (a hidden tab, audio focus lost) is not one. Pure.
  */
 
 /** back to the sync point: further behind the newest end than `maxLatencyS`, playing, and not deliberately behind */

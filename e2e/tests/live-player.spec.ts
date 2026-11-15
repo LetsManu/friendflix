@@ -321,7 +321,7 @@ test.describe('live player: catching up with live (H3)', () => {
     await expect(pill(page)).toHaveText('LIVE');
   }
 
-  test('a pause from outside the player (the OS, a hidden tab, audio focus) is no choice to stay behind: on resume it goes back to live', async ({ page, api }) => {
+  test('a pause from outside the player (a hidden tab, audio focus) is no choice to stay behind: on resume it goes back to live', async ({ page, api }) => {
     await arm(page, api);
     await open(page);
     // paused and resumed by the element itself, not through the player's button
@@ -332,7 +332,7 @@ test.describe('live player: catching up with live (H3)', () => {
     await backAtLive(page, t0);
   });
 
-  test('a pause from the OS media session (lock screen, headset) is not the viewer\'s choice either', async ({ page, api }) => {
+  test('a pause from the OS media session (lock screen, headset, media keys) is the viewer\'s own: it keeps the timeshift', async ({ page, api }) => {
     await stubMediaSession(page);
     await arm(page, api);
     await open(page);
@@ -340,7 +340,11 @@ test.describe('live player: catching up with live (H3)', () => {
     await callMediaSession(page, 'pause');
     await aMinuteLater(page, api);
     await callMediaSession(page, 'play');
-    await backAtLive(page, t0);
+    await expect.poll(() => paused(page)).toBe(false);
+    await page.clock.runFor(3_000);
+    expect(await time(page)).toBeLessThan(t0 + 10);
+    await showControls(page);
+    await expect(pill(page)).toHaveText(/^−1:0\d$/);
   });
 
   test('the viewer\'s own pause keeps them behind after the resume (timeshift)', async ({ page, api }) => {
