@@ -27,7 +27,8 @@
   import { leaveGuard, leavesRoute } from '#lib/admin/leaveGuard';
   import CompareView from '#lib/admin/rights/CompareView.svelte';
   import DeleteRoleDialog from '#lib/admin/rights/DeleteRoleDialog.svelte';
-  import { partialText, policyLine, reviewLines, roleName as roleLabel, saveBarText, stageBodies, stageCounts, stageSet, type MatrixRole, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
+  import { policyLine, reviewLines, roleName as roleLabel, saveBarText, stageCounts, type MatrixRole, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
+  import { createSave } from '#lib/admin/rights/save';
   import NameDialog from '#lib/admin/rights/NameDialog.svelte';
   import ReviewSheet from '#lib/admin/rights/ReviewSheet.svelte';
   import RoleList from '#lib/admin/rights/RoleList.svelte';
@@ -71,11 +72,7 @@
     matrix = r.matrix;
     stage = Object.fromEntries(Object.entries(stage).filter(([k]) => keys.has(k)));
     // a failed write of a role that is gone can never be applied again: it leaves the retry, and the bar's error with it
-    if (failures.some((j) => !keys.has(j.role)) || pending.some((j) => !keys.has(j.role))) {
-      failures = failures.filter((j) => keys.has(j.role));
-      pending = pending.filter((j) => keys.has(j.role));
-      if (!saving) barError = failures.length ? partialText([...new Map(failures.map((f) => [f.role, f.failed])).values()].reduce((a, n) => a + n, 0)) : pending.length ? barError : null;
-    }
+    save.prune(keys);
   }
 
   // ---- the two views: the list, and *Vergleichen* (?view=compare); the control replaces the entry (Back leaves the page)
@@ -104,74 +101,15 @@
   $: counts = matrix ? stageCounts(stage, matrix) : null;
   /** staged roles, at any width (the guard and the save bar count the same edits) */
   $: dirtyCount = counts?.roles ?? 0;
-  type Body = Record<string, unknown>;
-  /** one role write: its body and, for staged values, what was staged when it was built (null: re-sending a stored body) */
-  interface Job { role: string; body: Body; fields: Record<string, unknown> | null }
-  /** roles whose values are stored but whose accounts did not all take the policy (502 policy_partial): the body to re-send */
-  let failures: Array<Job & { failed: number }> = [];
-  /** staged writes a hard error left unsent (that run's bodies; *Erneut anwenden* sends them, never newer edits) */
-  let pending: Job[] = [];
-  let saving = false, progress: string | null = null, barError: string | null = null;
+  /** the sequential save (save.ts): one PUT per staged role, the progress and a partial failure in the bar */
+  const save = createSave({ matrix: () => matrix, stage: () => stage, stored: (m, st) => { matrix = m; stage = st; } });
+  $: saving = $save.saving;
   let reviewing = false, reviewBtn: HTMLElement | null = null;
   let bar: SaveBar | undefined;
   let list: RoleList | undefined, grid: RoleMatrixView | undefined;
   /** the focus to a role in the view that is shown: its row link or column head (a new role), or its menu button (a moved one) */
   const focusRole = (key: string, what: 'name' | 'menu' = 'name') => (mode === 'roles' ? list?.focusHead(key, what) : grid?.focusHead(key, what));
-
-  /** a written role: the values it carried become the loaded ones (set in the role itself now); staged entries equal to them go */
-  function stored(j: Job) {
-    const r = matrix?.roles.find((x) => x.key === j.role);
-    if (!r || !matrix || !j.fields) return;
-    for (const [k, v] of Object.entries(j.fields)) {
-      if (k === 'label') { r.label = String(v); r.builtinLabel = false; } else if (k === 'invitable') r.invitable = Boolean(v);
-      else { r.values[k] = v; r.sources[k] = 'role'; }
-    }
-    for (const [k, v] of Object.entries(stage[j.role] ?? {})) stage = stageSet(stage, matrix, j.role, k, v);
-    matrix = matrix;
-  }
-  /** the staged roles as writes, in matrix order */
-  function stagedJobs(): Job[] {
-    const bodies = stageBodies(stage);
-    return (matrix?.roles ?? []).filter((r) => bodies[r.key]).map((r) => ({ role: r.key, body: bodies[r.key]!, fields: { ...stage[r.key] } }));
-  }
-  /** one PUT after the other, the progress in the bar; 502 policy_partial stores the values and keeps the body for a retry */
-  async function run(jobs: Job[]) {
-    if (!matrix || saving || !jobs.length) return;
-    saving = true; barError = null;
-    const failed: typeof failures = [];
-    let hard: string | null = null, i = 0;
-    for (; i < jobs.length; i++) {
-      const j = jobs[i]!;
-      progress = tr('adminPeople.roles.applying', { i: i + 1, n: jobs.length });
-      try {
-        await api(`/api/admin/roles/${encodeURIComponent(j.role)}`, { method: 'PUT', body: j.body });
-        stored(j);
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 502 && e.body?.error === 'policy_partial') {
-          stored(j); // stored either way
-          failed.push({ role: j.role, body: j.body, fields: null, failed: Number(e.body?.failed) || 0 });
-        } else { hard = errorText(e); break; }
-      }
-    }
-    // a hard error stops the run: what it did not send stays to be sent again (staged values also stay staged)
-    const rest = jobs.slice(i);
-    failures = [...failed, ...rest.filter((j) => !j.fields).map((j) => failures.find((f) => f.role === j.role && f.body === j.body)!).filter(Boolean)];
-    pending = rest.filter((j) => j.fields);
-    saving = false; progress = null;
-    // a role written twice (failed before, staged again) counts with its latest answer
-    const accounts = [...new Map(failures.map((f) => [f.role, f.failed])).values()].reduce((a, n) => a + n, 0);
-    barError = hard ?? (failures.length ? partialText(accounts) : null);
-    // all written: "Änderungen gespeichert." only when nothing is left staged (a retry leaves newer edits staged)
-    if (!barError) {
-      const roles = new Set(jobs.map((j) => j.role)).size;
-      toast.success(Object.keys(stage).length ? tr('adminPeople.roles.retryDone', { n: roles }) : tr('adminPeople.roles.savedAll'));
-    }
-  }
-  /** *Speichern* in the review sheet: the failed roles again, then everything staged */
-  const apply = () => run([...failures, ...stagedJobs()]);
-  /** *Erneut anwenden*: only what failed (each role's last body) and what a hard error left unsent, never newer edits */
-  const retry = () => run([...failures, ...pending]);
-  function discardAll() { stage = {}; failures = []; pending = []; barError = null; }
+  function discardAll() { stage = {}; save.discard(); }
   function openReview() {
     reviewBtn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     reviewing = true;
@@ -180,7 +118,7 @@
     reviewing = false;
     await tick();
     bar?.focus();
-    await apply();
+    await save.apply();
   }
 
   // ---- role menu: duplicate (and *+ Neue Rolle*, a copy of a chosen role), delete (with a move), order
@@ -203,14 +141,18 @@
     try { await refresh(); return true; } catch { toast.error(tr('adminPeople.loadFailed')); return false; }
   }
   function startDuplicate(a: Ask) { dup = a; dupErr = ''; dupBusy = false; }
-  /** POST a copy of `from` named `label`; the dialog closes, the list (or matrix) is read again and the focus goes to the new role */
-  async function duplicate(label: string, from: string | undefined) {
+  /**
+   * POST a copy of `from` named `label`; the dialog closes. *+ Neue Rolle* opens the new role's page (§5.2); *Duplizieren* in a
+   * menu stays: the list (or matrix) is read again and the focus goes to the new role.
+   */
+  async function duplicate(label: string, from: string | undefined, open = false) {
     if (!from || dupBusy) return;
     dupBusy = true; dupErr = '';
     let key: string;
     try { key = (await api<{ key: string }>('/api/admin/roles', { method: 'POST', body: { label, from } })).key; } catch (e) { dupErr = errorText(e); dupBusy = false; return; }
     dup = null; fresh = null; dupBusy = false;
     toast.success(tr('adminPeople.roles.duplicated', { name: label }));
+    if (open) { await goto(`/admin/roles/${encodeURIComponent(key)}`); return; }
     if (await reload()) await focusRole(key);
   }
 
@@ -320,8 +262,8 @@
 </div>
 
 {#if counts}
-  <SaveBar bind:this={bar} count={counts.changes} text={saveBarText(counts)} busy={saving} {progress} error={barError}
-    on:discard={discardAll} on:review={openReview} on:retry={retry} />
+  <SaveBar bind:this={bar} count={counts.changes} text={saveBarText(counts)} busy={saving} progress={$save.progress} error={$save.error}
+    on:discard={discardAll} on:review={openReview} on:retry={() => void save.retry()} />
 {/if}
 {#if reviewing && matrix && counts}
   <ReviewSheet lines={reviewLines(stage, matrix)} policy={counts.policy ? policyLine(counts) : null} trigger={reviewBtn}
@@ -333,7 +275,7 @@
 {:else if fresh}
   <NameDialog title={$t('adminPeople.roles.new.title')} hint={$t('adminPeople.roles.duplicateHint')} label={$t('adminPeople.roles.fLabel')} confirmLabel={$t('adminPeople.roles.create')}
     {sources} bind:source={freshFrom} sourceLabel={$t('adminPeople.roles.new.startFrom')}
-    busy={dupBusy} error={dupErr} trigger={fresh.trigger} on:submit={(e) => void duplicate(e.detail, freshFrom)} on:cancel={() => (fresh = null)} />
+    busy={dupBusy} error={dupErr} trigger={fresh.trigger} on:submit={(e) => void duplicate(e.detail, freshFrom, true)} on:cancel={() => (fresh = null)} />
 {/if}
 {#if del}
   <DeleteRoleDialog name={roleLabel(del.role)} targets={moveTargets} accounts={del.accounts} invites={del.invites} busy={delBusy} error={delErr} trigger={del.trigger}

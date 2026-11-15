@@ -161,7 +161,7 @@ test.describe('Rollen & Rechte: the role list', () => {
     expect(api.admin.matrix.roles.at(-1)!.key).toBe('nachbarn');
   });
 
-  test('+ Neue Rolle: a name and the role to start from', async ({ page, api }) => {
+  test('+ Neue Rolle: a name and the role to start from; the new role\'s page opens', async ({ page, api }) => {
     await page.goto('/admin/roles');
     await page.getByRole('button', { name: 'Neue Rolle' }).click();
     const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
@@ -169,6 +169,9 @@ test.describe('Rollen & Rechte: the role list', () => {
     await dlg.getByRole('textbox', { name: 'Name' }).fill('Oma & Opa');
     await dlg.getByRole('button', { name: 'Anlegen' }).click();
     await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Rolle „Oma & Opa“ angelegt.')).toBeVisible();
+    // the new role's page opens
+    await expect(page).toHaveURL(/\/admin\/roles\/oma-opa$/);
+    await expect(page.getByRole('heading', { level: 2, name: 'Oma & Opa' })).toBeVisible();
     expect(api.admin.audit.some((e) => e.action === 'role.create' && (e.meta as { from?: string } | null)?.from === 'family')).toBe(true);
   });
 });
