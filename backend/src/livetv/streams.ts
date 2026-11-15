@@ -649,6 +649,8 @@ async function startRecordStream(ctx: Ctx, ch: EffectiveChannel, userId: string,
 
 /** a recording's slot is reserved (and its channel kept) from its start − padding − this */
 export const RECORD_LEAD_MS = 5 * 60_000;
+/** a recording's longest padding before its start (the routes, the settings and the table allow 30 min): bounds the due queries (A-M4) */
+export const MAX_PAD_BEFORE_S = 1800;
 const USES_MEMO_MS = 5_000;
 let usesMemo = new WeakMap<object, { at: number; p: Promise<Set<string>> }>();
 /** drops the memo of recordedChannels (a recording started, ended or was deleted) */
@@ -667,8 +669,9 @@ export function recordedChannels(ctx: Pick<Ctx, 'db'>): Promise<Set<string>> {
     `select distinct channel_id from livetv_recordings
       where channel_id is not null
         and (state in ('starting','recording')
-          or (state = 'scheduled' and start_at - make_interval(secs => pad_before_s) <= now() + make_interval(secs => $1::int)
-              and end_at + make_interval(secs => pad_after_s) > now()))`, [RECORD_LEAD_MS / 1000])
+          or (state = 'scheduled' and start_at <= now() + make_interval(secs => $1::int + $2::int)
+              and start_at - make_interval(secs => pad_before_s) <= now() + make_interval(secs => $1::int)
+              and end_at + make_interval(secs => pad_after_s) > now()))`, [RECORD_LEAD_MS / 1000, MAX_PAD_BEFORE_S])
     .then((r) => new Set(r.rows.map((x) => x.channel_id)), () => new Set<string>());
   usesMemo.set(ctx, { at: Date.now(), p });
   return p;

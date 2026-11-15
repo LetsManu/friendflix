@@ -1242,7 +1242,7 @@ export const MIGRATIONS: string[] = [
     channel_id uuid references livetv_channels(id) on delete set null,
     channel_name text not null,
     title text not null, subtitle text, description text, episode text, series_key text,
-    start_at timestamptz not null, end_at timestamptz not null, pad_before_s int not null, pad_after_s int not null,
+    start_at timestamptz not null, end_at timestamptz not null, pad_before_s int not null check (pad_before_s between 0 and 1800), pad_after_s int not null,
     state text not null default 'scheduled' check (state in ('scheduled','starting','recording','done','partial','failed','cancelled','deleting')),
     claim_token uuid, claim_until timestamptz, -- the replica that starts (or resumes) it holds this lease; every later step checks it
     mode text check (mode in ('passthrough','remux','transcode')),
@@ -1270,6 +1270,9 @@ export const MIGRATIONS: string[] = [
   create index if not exists livetv_recordings_due on livetv_recordings(start_at) where state = 'scheduled';
   create index if not exists livetv_recordings_profile on livetv_recordings(profile_id, start_at desc);
   create index if not exists livetv_recordings_rule on livetv_recordings(rule_id) where rule_id is not null;
+  -- the tick's running rows, the space job's deletes and the store job's exports (A-M4)
+  create index if not exists livetv_recordings_active on livetv_recordings(state) where state in ('starting','recording','deleting');
+  create index if not exists livetv_recordings_export on livetv_recordings(end_at) where export_state = 'pending';
   create table if not exists livetv_recording_progress (
     profile_id uuid not null references profiles(id) on delete cascade,
     recording_id uuid not null references livetv_recordings(id) on delete cascade,

@@ -14,7 +14,7 @@ import { setAfterEpgImport } from './epg.js';
 import { pushEvent, type LiveEvent } from './events.js';
 import { deleteRecording, effectiveStorage, getRecording, mayRecord, progKey, recordSettings, seriesKeyOf, type Gap, type RecRow, type RecState } from './recordings.js';
 import { channelAllowed, channelSet, type LivetvProfile, type LivetvUser } from './rights.js';
-import { RECORD_LEAD_MS, expectedMode, invalidateRecordingUses, runningChannelIds, startForRecording, type RecordStartError } from './streams.js';
+import { MAX_PAD_BEFORE_S, RECORD_LEAD_MS, expectedMode, invalidateRecordingUses, runningChannelIds, startForRecording, type RecordStartError } from './streams.js';
 import type { RecorderView, RecordingStartAnswer } from './wire.js';
 
 /**
@@ -608,8 +608,9 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
     }
     const active = (await ctx.db.query<RecRow>(
       `select * from livetv_recordings where state in ('starting','recording')
-          or (state = 'scheduled' and start_at - make_interval(secs => pad_before_s) <= $1::timestamptz + make_interval(secs => $2::int))
-        order by start_at, id`, [new Date(now), RECORD_LEAD_MS / 1000])).rows;
+          or (state = 'scheduled' and start_at <= $1::timestamptz + make_interval(secs => $2::int + $3::int)
+            and start_at - make_interval(secs => pad_before_s) <= $1::timestamptz + make_interval(secs => $2::int))
+        order by start_at, id`, [new Date(now), RECORD_LEAD_MS / 1000, MAX_PAD_BEFORE_S])).rows;
     const who = await owners(ctx, active.flatMap((r) => (r.profile_id ? [r.profile_id] : [])));
 
     // (1) reservations: a recording that will transcode holds its channel's slot from start − padding − 5 min to its end
@@ -712,7 +713,8 @@ export async function releaseReservation(ctx: Ctx, channelId: string): Promise<v
   invalidateRecordingUses();
   const still = (await ctx.db.query<{ n: number }>(
     `select count(*)::int as n from livetv_recordings where channel_id = $1 and (state in ('starting','recording') or (state = 'scheduled'
-       and start_at - make_interval(secs => pad_before_s) <= now() + make_interval(secs => $2::int)))`, [channelId, RECORD_LEAD_MS / 1000])).rows[0]?.n ?? 0;
+       and start_at <= now() + make_interval(secs => $2::int + $3::int)
+       and start_at - make_interval(secs => pad_before_s) <= now() + make_interval(secs => $2::int)))`, [channelId, RECORD_LEAD_MS / 1000, MAX_PAD_BEFORE_S])).rows[0]?.n ?? 0;
   if (!still) await dropReservation(ctx, channelId);
 }
 

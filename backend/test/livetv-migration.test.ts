@@ -305,6 +305,10 @@ describe('recordings migration (Phase 3; the next free index at merge time, neve
     }
     expect((await q('select count(*)::int n from schema_migrations where version = $1', [idx() + 1])).rows[0].n).toBe(1);
     expect((await q('select count(*)::int n from livetv_recordings where profile_id = $1', [p])).rows[0].n).toBe(4);
+    // A-M4: the scheduler's and the store job's predicates have their indexes
+    const ix = (await q("select indexname, indexdef from pg_indexes where tablename = 'livetv_recordings'")).rows.reduce<Record<string, string>>((m, r) => ({ ...m, [r.indexname]: r.indexdef }), {});
+    expect(ix.livetv_recordings_active).toMatch(/\(state\) WHERE.*starting.*recording.*deleting/);
+    expect(ix.livetv_recordings_export).toMatch(/\(end_at\) WHERE \(export_state = 'pending'/);
   });
 });
 
