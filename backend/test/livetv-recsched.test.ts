@@ -465,8 +465,8 @@ describe('the tick', () => {
   });
 
   it('a slot that frees up later starts the recording late: the delay is a gap and it ends partial', async () => {
-    const start = Date.now() - 10 * MIN; // started ten minutes ago, but the backend was not there
-    const id = await recording({ start_at: new Date(start), end_at: new Date(start + HOUR) });
+    const start = Date.now() - 10 * MIN; // started ten minutes ago, but the backend was not there (planned yesterday)
+    const id = await recording({ start_at: new Date(start), end_at: new Date(start + HOUR), created_at: new Date(start - 24 * HOUR) });
     await tick();
     const r = await getRecording(env.ctx, id);
     expect(r!.state).toBe('recording');
@@ -476,6 +476,18 @@ describe('the tick', () => {
     recorders.get(id)!.bytes = 1000;
     await tick();
     expect((await getRecording(env.ctx, id))!.state).toBe('partial');
+  });
+
+  it('A-I5: "record now" on a running programme is not partial for the minutes before it was asked for', async () => {
+    const start = Date.now() - 10 * MIN; // the programme began ten minutes ago; the owner presses Aufnehmen now
+    const id = await recording({ start_at: new Date(start), end_at: new Date(start + HOUR) });
+    await tick();
+    expect((await getRecording(env.ctx, id))!.gaps).toEqual([]);
+    recorders.get(id)!.state = 'done';
+    recorders.get(id)!.bytes = 1000;
+    await tick();
+    expect((await getRecording(env.ctx, id))!.state).toBe('done');
+    expect(await notices('livetv.rec.failed')).toEqual([]);
   });
 
   it('livetv restart resumes recording rows into the same dir', async () => {

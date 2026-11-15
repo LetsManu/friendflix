@@ -35,7 +35,7 @@ export const PLAN_DAYS = 8;
 export const FOLLOW_WINDOW_MS = 3 * 3_600_000;
 export const RETRY_MS = 60_000;
 export const FREE_MIN_BYTES = 2 * 1024 ** 3;
-/** a start later than this after the programme's start is a late start: its delay is stored as a gap (the recording ends `partial`) */
+/** a start later than this after the programme's start (or the request, if later) is a late start: a gap (the recording ends `partial`) */
 export const LATE_START_MS = 60_000;
 const TICK_KEY = 'ltv:rectick';
 const TICK_TTL_S = 40;
@@ -547,8 +547,11 @@ async function launch(ctx: Ctx, r: RecRow, token: string, owner: Owner, now: num
   const posted = await postRecorder(ctx, r);
   if (posted === 'retry') { await unclaim(ctx, r.id, token); return false; }
   if ('fail' in posted) { await failRow(ctx, r, posted.fail, { from: [r.state], claim: token }); return false; }
-  // a late start (a refused slot, the backend was down) that misses part of the programme is a gap from its start to now
-  const late = now - r.start_at.getTime() > LATE_START_MS ? [{ from: r.start_at.getTime(), to: now }] : [];
+  // a late start (a refused slot, the backend was down) that misses part of the programme is a gap from when it should have begun to
+  // now: the programme's start, or the moment the recording was asked for when that was later ("record now" of a running programme
+  // never counts the minutes before it was asked for, A-I5)
+  const due = Math.max(r.start_at.getTime(), r.created_at.getTime());
+  const late = now - due > LATE_START_MS ? [{ from: due, to: now }] : [];
   const u = resume
     ? await ctx.db.query("update livetv_recordings set claim_token = null, claim_until = null where id = $1 and state = 'recording' and claim_token = $2", [r.id, token])
     : await ctx.db.query(
