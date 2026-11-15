@@ -57,6 +57,18 @@ describe('eventText', () => {
     expect(eventText(ev({ code: 'push_rejected' }))).toBe('Verbindung abgelehnt: falsche Kennung oder Passphrase');
     expect(eventText(ev({ code: 'released_on_switch' }))).toBe('Beim Umschalten sofort beendet (Platz oder Verbindung gebraucht)');
   });
+  it('rec_storage_full event text', () => {
+    expect(eventText(ev({ code: 'rec_storage_full' }))).toBe('Aufnahmespeicher voll: eine Aufnahme wurde beendet');
+  });
+  it('recording events name their gaps and their reason (Phase 3 Task 11); an unknown reason is never shown', () => {
+    expect(eventText(ev({ code: 'rec_partial', n: 3 }))).toBe('Aufnahme unvollständig (3 Lücken)');
+    expect(eventText(ev({ code: 'rec_partial', n: 1 }))).toBe('Aufnahme unvollständig (1 Lücke)');
+    expect(eventText(ev({ code: 'rec_partial' }))).toBe('Aufnahme unvollständig');
+    expect(eventText(ev({ code: 'rec_failed', reason: 'no_slot' }))).toBe('Aufnahme fehlgeschlagen (kein Platz frei)');
+    expect(eventText(ev({ code: 'rec_failed', reason: 'weird_code' }))).toBe('Aufnahme fehlgeschlagen');
+    expect(eventText(ev({ code: 'rec_failed' }))).toBe('Aufnahme fehlgeschlagen');
+    expect(eventText(ev({ code: 'rec_no_slot', reason: 'provider_limit' }))).toBe('Aufnahme wartet: kein Platz frei');
+  });
   it('source_refresh_failed names the source and the reason through adminLive.src.err', () => {
     expect(eventText(ev({ code: 'source_refresh_failed', reason: 'unreachable' }), { source: 'Anbieter A' })).toBe('Quelle Anbieter A: Aktualisierung fehlgeschlagen (Nicht erreichbar)');
     expect(eventText(ev({ code: 'source_refresh_failed', reason: 'timeout' }), { source: 'Anbieter A' })).toContain('(Zeitüberschreitung)');

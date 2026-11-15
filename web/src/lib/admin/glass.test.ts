@@ -750,7 +750,7 @@ describe('Live-TV tab surfaces', () => {
 /** Live-TV → Live-Status and Programmführer (Task 26): the stylesheet scan reaches the new files too (glass spec constraints) */
 describe('Live-TV status and guide tabs (Task 26)', () => {
   const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
-  const files = ['./livetv/StatusTab.svelte', './livetv/GuideTab.svelte'];
+  const files = ['./livetv/StatusTab.svelte', './livetv/GuideTab.svelte', './livetv/RecordingsTab.svelte'];
   const cssOf = (f: string) => [...read(f).matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
 
   it('they animate nothing but transform and opacity (no keyframes, no colour, background or layout transition)', () => {
