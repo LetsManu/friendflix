@@ -125,7 +125,13 @@ On phones the player has the same look: the title bottom left, the timeline with
 
 #### Live TV (optional)
 
-An admin can turn on **Live TV**: its own container that stays off, and invisible, until then. Channels come from an IPTV provider's M3U list (with XMLTV programme data) or from your own feeds, pulled or pushed over SRT (for example from OBS); the admin picks the groups, releases them and decides which profiles see which channels. The *Live TV* tab shows what runs now and next, your ordered favourites and *Recently watched*. The live player rewinds up to 30 minutes (the admin can allow up to 120), has *From the start*, an info banner and a channel list, and casts to Chromecast and AirPlay, also from the Android app. On TVs ▲/▼ switch channels; channel, number and Info keys work where the remote sends them. Everyone watching a channel shares one stream, and a server-wide limit on conversions keeps films playable. Setup: [docs/livetv.md](docs/livetv.md).
+An admin can turn on **Live TV** under *Admin → Live TV*: its own container that stays off, and invisible, until then. Setup and troubleshooting: [docs/livetv.md](docs/livetv.md).
+
+- **Channels from where you have them:** an IPTV provider's M3U list (with XMLTV programme data), or your own streams, pulled (HLS, MPEG-TS, SRT) or pushed to FriendFlix over SRT – say a channel *Nordlicht TV* from OBS. *Check* shows what a list holds before you save, and you tick which of the provider's groups to import. Provider addresses and SRT secrets are stored encrypted and never reach a browser.
+- **Groups and rights:** groups a provider adds later arrive unreleased and stay invisible until you release them to roles; a person can have their own exceptions, kids profiles only see groups marked kid-friendly, and *Check view* on a person says why a channel is missing.
+- **Programme guide and numbers:** channels are matched to the guide exactly (by id, then by name), never by guesswork. Extra guides – a link, or an XMLTV file you upload – fill the channels the provider's guide leaves empty, and a time shift fixes guides that are hours off. Numbers come from the list or are counted from a number you pick; numbers you set yourself and logos you upload are kept.
+- **Watching:** the *Live TV* tab shows what runs now and next, your ordered favourites and *Recently watched*. Everyone on a channel shares one stream with a rewind buffer (30 minutes by default, up to 120): pause, go back, *From the start*, an info banner and the channel list. H.264 channels are passed through or repackaged – sound a browser cannot play becomes AAC – and need no conversion; the rest counts against the server-wide conversion limit, which keeps films playable.
+- **TV and casting:** on TVs ▲/▼ switch channels, and channel, number and Info keys work where the remote sends them. Live channels cast to Chromecast and AirPlay, also from the Android app.
 
 ### Discovering
 
@@ -194,15 +200,15 @@ An app-like layout with a frosted top bar and a floating glass tab bar (Home, Ne
 
 ### Admin
 
-A tidy admin area in dense glass with a sidebar (People, Content, Operations) and an **overview** that shows system health as status tiles, what is waiting for you – approve or decline a wish or a new device right there –, recent activity in plain sentences, counts and storage. Everything gives feedback: no pop-up boxes, risky actions ask first, small ones offer **Undo**, numbers count up and a saved setting shows a short check. On the phone the same area is a simple grouped list with big touch targets.
+A tidy admin area in dense glass with a sidebar (People, Content, Operations) and an **overview** that opens with a one-line health summary and status tiles, what is waiting for you – approve or decline a wish or a new device right there –, recent activity in plain sentences, counts and storage. Everything gives feedback: no pop-up boxes, risky actions ask first, small ones offer **Undo**, numbers count up and a saved setting shows a short check. On the phone the same area is a simple grouped list with big touch targets.
 
-**Setup in the browser:** a new install starts with a setup wizard that is unlocked by a one-time code from the server log; it connects Jellyfin and sets up Authentik automatically, and every setting lives in *Admin → Settings* afterwards, tested before it is saved.
+**Setup in the browser:** a new install starts with a setup wizard that is unlocked by a one-time code from the server log; it connects Jellyfin (or Plex) and sets up Authentik automatically. Afterwards every setting lives in *Admin → Settings*, tested before it is saved: tabs (General, Sign-in, Media, Playback, Updates, Notifications), a search that finds any setting by name, key or help text, and links that open one exact setting and highlight it.
 
-Also in the admin area: invitations and roles, **brand hubs**, featured and themed lists, **leaving-soon** dates, hover-preview clips, the nightly playback check, the weekly digest, an audit log and one-click updates.
+Also in the admin area: invitations, **brand hubs**, featured and themed lists, **leaving-soon** dates, hover-preview clips, the nightly playback check with the shared conversion limit, the weekly digest, Live TV and an audit log. **Updates** in *Admin → Update*: the updater installs the channel you pick (Stable, Nightly or a fixed version), or FriendFlix redeploys a Portainer stack (Portainer API or webhook) and follows it step by step – pulling the images, recreating the containers, health check – and says why it did not run.
 
-**User management:** one list of every account with filters and bulk actions (role, lock, access until, sign out everywhere), a *Waiting for approval* tab for people who signed in without an invite, invites with several uses and access days, and a page per person with usage, profiles, devices, downloads, viewing history, own limits, two-factor state and the audit log. Access can end on a date: FriendFlix reminds three days ahead and locks the account on the day. Looking at someone's viewing history is itself written to the audit log.
+**People and rights:** one list of every account with filters (role, status, last activity, rights) and bulk actions (role, a right, lock, access until, sign out everywhere), a *Waiting for approval* tab for people who signed in without an invite, and invites with several uses and access days. *Roles & rights* is a table of every role and every right – libraries, age limit, streams, bitrate, downloads, wishes, Chromecast and AirPlay, watch party – where you duplicate, rename, order and delete roles and see who is affected before you save. A page per person shows usage, rights with their own exceptions (and which layer decides each one), profiles (switch one to kids, set its age limit, reset its PIN), devices, downloads, viewing history and the audit log; *Check view* tells you what one profile sees and why a title is hidden. Access can end on a date: FriendFlix reminds three days ahead and locks the account on the day. Looking at someone's viewing history is itself written to the audit log.
 
-**Admin care:** a status page with traffic lights for every service, disk space, running streams (direct or converted, and why) and recent errors, plus a slim warning banner when something needs you; a **library care** page that finds missing artwork, language gaps, duplicates and problem files; and a **usage** page with watch time, streams and devices per account (aggregates only, no titles).
+**Admin care:** *Admin → Status* opens with the **System check**: one checklist in six groups (basics, sign-in, media, Live TV, updates, reverse proxy), each line with its state, why, and how to fix it, with a link to the exact setting. It also tests your reverse proxy from the browser (websockets, buffering of `/media/`, upload size, security headers). Below it: disk space, running streams (direct or converted, and why) and recent errors, plus a slim warning banner when something needs you; a **library care** page that finds missing artwork, language gaps, duplicates and problem files; and a **usage** page with watch time, streams and devices per account (aggregates only, no titles).
 
 <table>
   <tr>
@@ -221,13 +227,13 @@ Also in the admin area: invitations and roles, **brand hubs**, featured and them
 - **Trailers without tracking.** Trailers for titles that are not in the library play in the privacy-friendly `youtube-nocookie.com` player and only load after a click.
 - **Error reports stay with you.** If the app crashes in someone's browser, a scrubbed error message (no query strings, tokens or e-mail addresses) is written to *your* server's log – and goes nowhere else.
 - **Honest about downloads.** Downloads are for trusted friends and family: there is no copy protection (no DRM); expiry and revocation are enforced by the app.
-- **Checked before it ships.** Every image is scanned, signed and published with a software bill of materials; the pipeline also runs a web security scan and the supply chain is scored publicly (see below).
+- **Checked before it ships.** Every image is scanned, signed and published with a software bill of materials; the pipeline also runs a web security scan and the supply chain is scored publicly (see below). Every page comes with a strict content security policy and security headers.
 
 ---
 
 ## For admins: setup and operation
 
-Everything below is technical. Installation is covered in [Get started](#get-started); the detailed operating docs are in German (see [Documentation](#documentation)).
+Everything below is technical. Installation is covered in [Get started](#get-started); some of the detailed operating docs are still in German (see [Documentation](#documentation)).
 
 **Setup guide:** from an empty server to the first invited friend – [docs/setup.md](docs/setup.md); Authentik (installation, provider, flows, invitations) – [docs/authentik.md](docs/authentik.md).
 
@@ -258,6 +264,7 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `SESSION_TTL_SECONDS`, `SESSION_IDLE_SECONDS` | `7776000`, `7776000` | Absolute session length and idle timeout (both 90 days) |
 | `TZ` | `Europe/Vienna` | Time zone for scheduled jobs (digest, playback check, backups) |
 | `AUTHENTIK_URL`, `AUTHENTIK_API_TOKEN`, `AUTHENTIK_ENROLL_FLOW` | empty | Invitations that also create the Authentik account (all three needed); URL and token also give the admin user page the two-factor state and *Send password link* |
+| `LOGIN_UI`, `LOGIN_COVER_WALL`, `PASSKEYS_IN_APP` | automatic, `true`, `auto` | FriendFlix's own sign-in screens (`app`) or Authentik's page (`authentik`; unset = `app` as soon as `AUTHENTIK_URL` and `AUTHENTIK_API_TOKEN` are set), the cover wall behind them, and passkeys inside FriendFlix (`off` = only on Authentik's page). The backend reaches Authentik at `AUTHENTIK_URL` under its public name; for passkeys in the app over a route of its own ([docs/authentik.md §10a](docs/authentik.md#10a-in-app-sign-in)) |
 | `AUTHENTIK_RECOVERY_FLOW`, `AUTHENTIK_TOTP_SETUP_FLOW` | `default-recovery-flow`, `default-authenticator-totp-setup` | Recovery flow whose e-mail stage sends the password link (Authentik 2024.4 or newer); the second is reserved. See [docs/authentik.md](docs/authentik.md#10-password-recovery-by-e-mail) |
 | `NTFY_URL`, `NTFY_BASE_URL`, `DISCORD_WEBHOOK_URL` | empty | Shared ntfy/Discord channel; ntfy server for personal topics |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | empty, empty, `PUBLIC_URL` | Web push; active only when both keys are set |
@@ -268,15 +275,15 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `POSTPLAY_ENABLED` | `true` | The post-play screen after a film or the last episode ("You're caught up", suggestions); `false` turns it off for everyone. See [docs/discovery.md](docs/discovery.md). Also editable in *Admin → Settings → Recommendations* (applies at once, no restart); a value set in `.env` wins and locks the field there |
 | `DOWNLOADS_ENABLED` | `true` | Offline downloads; `false` with Plan B |
 | `DOWNLOADS_PATH`, `PREVIEWS_PATH` | named volumes `downloads`, `previews` | Host folder (absolute path, writable by uid 1000) for prepared downloads and preview clips |
-| `RECORDINGS_PATH` | named volume `recordings` | Host folder (absolute path, writable by uid 10001) for Live-TV recordings (Phase 3); only used by the optional `livetv` service ([docs/livetv.md](docs/livetv.md)) |
 | `DOWNLOAD_CACHE_MAX_GB`, `DOWNLOAD_MIN_FREE_GB` | `50`, `2` | Size cap for prepared downloads; minimum free space to keep |
 | `DOWNLOAD_PREP_CONCURRENCY`, `DOWNLOAD_PAUSE_STREAMS` | `1`, `2` | Parallel preparations; pause preparation while this many streams run (`0` = never) |
 | `DOWNLOAD_FILE_TTL_HOURS`, `DOWNLOAD_OFFLINE_GRACE_DAYS`, `DOWNLOAD_CREATE_PER_HOUR` | `48`, `7`, `20` | Cleanup of unused files, offline grace period, licence rate limit |
 | `DIRECT_PLAY_REQUIRES_DOWNLOAD` | `false` | `true`: roles without download permission also lose direct play |
 | `PREVIEW_WARM` | `true` | Background job that pre-generates hover/billboard preview clips |
+| `HOME_NETWORKS` | private and loopback ranges | Comma-separated address ranges that count as home, e.g. `192.168.0.0/16`: viewers there get no away-from-home bitrate cap |
 | `UPLOAD_MBPS` | – | Server upload in Mbit/s; while it is busy, new remote streams start at a lower bitrate ([rule](docs/operations.md)). Empty = off |
 | `HEVC_STREAMS` | `2` | Most simultaneous HEVC conversions for viewers away from home (`0` = off, up to `4`). While the server's last timed test stayed below 3× real time, the limit is 1. Never at home, never for HDR or Dolby Vision, and only after a passing test; Jellyfin must allow HEVC encoding ([setup](docs/operations.md#hevc-umwandlung-und-surround-ton), [Health row](docs/monitoring.md#zustand-im-portal-admin--status)). Also editable in *Admin → Settings → Playback* |
-| `CONVERSION_SLOTS` | – | Most video conversions at the same time, for films & series, Live TV, recordings and downloads together (1–16). Empty = automatic: the recommendation of the server's measurement, 2 until it measured once. Running conversions are never stopped; direct play and copies do not count ([rules](docs/operations.md#umwandlungen-ein-gemeinsames-limit)). Also on *Admin → Operations → Playback check* |
+| `CONVERSION_SLOTS` | – | Most video conversions at the same time, for films & series, Live TV and downloads together (1–16). Empty = automatic: the recommendation of the server's measurement, 2 until it measured once. Running conversions are never stopped; direct play and copies do not count ([rules](docs/operations.md#umwandlungen-ein-gemeinsames-limit)). Also on *Admin → Operations → Playback check* |
 | `CONVERSION_PRIORITY` | `films` | Who goes first when slots are scarce: `films` (films & series), `live` (Live TV) or `equal`. With 2 or more slots one stays free for the preferred kind; downloads wait until nothing else converts |
 | `SURROUND_AUDIO` | `true` | Give devices that confirm 5.1 output surround sound in converted streams; `false` = stereo for everyone. Devices with headphones, Bluetooth or a sound mode on always get stereo. Also editable in *Admin → Settings → Playback* |
 | `RECO_W_GENRES`, `RECO_W_TAGS`, `RECO_W_STUDIOS`, `RECO_W_PEOPLE`, `RECO_W_TEXT`, `RECO_W_NUMERIC`, `RECO_W_COLLECTION` | `1`, `0.6`, `0.4`, `0.8`, `1`, `0.3`, `1.5` | Weight (0–10, `0` = off) of each feature group of the recommendation item index: genres, tags, studios, people, overview text, numbers (year, runtime, ratings), collection. The recommendation engine v2 reads it (see `RECO_ENGINE`). Expert tuning: `.env` only |
@@ -298,6 +305,8 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `UPDATE_CHANNEL`, `UPDATE_VERSION` | `stable`, empty | Set with the *Stable / Nightly / Fixed version* switch under *Admin → Update* (stored in the database, no `.env` needed): what the update check compares with and, with the updater, what it installs. Without the updater (`compose.no-updater.yaml`) it never switches images; `FF_TAG` does |
 | `UPDATER_URL`, `UPDATER_COMPOSE_FILES`, `UPDATER_PROJECT_DIR` | `http://updater:7070`, empty (automatic), the current directory | The updater (on by default since 2.0, [setup guide](docs/setup.md#updater)): its internal address (env only); the compose files it recreates the stack with (empty = the files the stack was last started with, so `compose.plex.yaml` and other overrides stay in; set it only to force a list, which must then name every file); the stack directory's absolute path, only when compose runs without `PWD` (e.g. `sudo`) |
 | `LIVETV_URL`, `LIVETV_SRT_PORTS`, `LIVETV_SRT_BIND`, `LIVETV_CACHE_MAX_GB`, `LIVETV_PIDS_LIMIT`, `LIVETV_MEM_LIMIT` | `http://livetv:8090`, `9000-9009`, `127.0.0.1`, `6`, `512`, `4g` | The optional Live TV service (compose profile `livetv`, off until you turn it on, [docs/livetv.md](docs/livetv.md)): its internal address (env only, for backend and gateway); the UDP port range published for pushed SRT feeds (`A-B`, 1–100 ports, compose only) and the host address it is published on (default `127.0.0.1` = no push from outside; `0.0.0.0` or the LAN address only when you push feeds, Docker-published ports bypass ufw); the disk limit of its disposable cache in GB; the container's process and memory limits (compose only; raise them for many parallel transcodes) |
+| `LIVETV_DVR_MINUTES`, `LIVETV_ENCODER`, `LIVETV_MAX_BITRATE`, `LIVETV_SRT_HOST` | `30`, `auto`, `10000000`, the host of `PUBLIC_URL` | Live TV settings, edited in *Admin → Live TV → Settings*: the rewind buffer in minutes (0–120), the encoder for live conversions (`auto`, `qsv`, `vaapi`, `nvenc`, `software`), the highest bitrate (bit/s) taken from a provider's HLS variants, and the host named in the SRT push hint |
+| `COMPOSE_PROFILES`, `RENDER_GID` | –, – | `COMPOSE_PROFILES=livetv` turns Live TV on without the updater (also as a Portainer stack variable); `RENDER_GID` is the host's `render` group for the Intel/AMD overlay `compose.livetv-gpu.yaml` ([docs/livetv.md](docs/livetv.md#gpu)) |
 | `AUTO_UPDATE`, `AUTO_UPDATE_TIME` | `off`, `04:00` | Automatic updates through the updater: `nightly-window` runs the update job once a night from this time (server time zone); set in *Admin → Update* |
 | `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`, `PROMETHEUS_RETENTION` | – (required for the monitoring stack), `3083`, `30d` | Optional Prometheus + Grafana (`compose.monitoring.yaml`); no default password |
 | `BACKUP_PATH`, `BACKUP_HOUR`, `BACKUP_KEEP_DAYS`, `BACKUP_RUN_ON_START` | `./backups`, `3`, `14`, `false` | Backup sidecar (profile `backup`) |
@@ -323,27 +332,40 @@ config:
 ---
 flowchart TB
   accTitle: How FriendFlix fits together
-  accDescr: Viewers reach one reverse proxy over HTTPS. It routes to the FriendFlix web, backend and gateway. The backend and gateway talk to Jellyfin; the backend also uses Authentik, a request service and notifications.
-  V("📺 <b>Viewers</b><br/><small>browser · phone · TV</small>"):::ext
+  accDescr: Viewers on the browser, phone apps and TV apps reach one reverse proxy over HTTPS. It routes to the FriendFlix web, backend and gateway. The gateway streams from Jellyfin or Plex and, with optional Live TV, from the livetv service, which alone fetches the channel sources. The backend keeps its data in Postgres and Redis, signs in through Authentik, and talks to the request service and the notification channels. Updates go from the backend to the updater, which reaches Docker only through the docker-proxy, or to Portainer.
+  V("📺 <b>Viewers</b><br/><small>browser · PWA · Android<br/>Fire TV · Samsung · LG · Windows</small>"):::ext
   P("🛡️ <b>Reverse proxy</b><br/><small>Nginx Proxy Manager · TLS</small>"):::edge
   subgraph FF["FriendFlix"]
     W("🖥️ <b>web</b><br/><small>the app you see</small>"):::app
-    B("⚙️ <b>backend</b><br/><small>login · API · rules</small>"):::app
     G("📡 <b>gateway</b><br/><small>video + image pipe</small>"):::app
+    B("⚙️ <b>backend</b><br/><small>login · API · rules</small>"):::app
+    LT("📺 <b>livetv</b><br/><small>optional · remux · transcode</small>"):::app
+    UP("🔄 <b>updater</b><br/><small>+ docker-proxy</small>"):::app
+    DB[("🗄️ <b>Postgres · Redis</b>")]:::store
   end
-  S("🎬 <b>Jellyfin</b><br/><small>media server</small>"):::media
-  RQ("🔔 <b>Requests</b><br/><small>request service · ntfy · Discord</small>"):::svc
-  AK("🔑 <b>Authentik</b><br/><small>login · invites</small>"):::svc
+  S("🎬 <b>Jellyfin or Plex</b><br/><small>media server</small>"):::media
+  PV("📡 <b>Channel sources</b><br/><small>M3U · XMLTV · HLS · SRT</small>"):::ext
+  RQ("🔔 <b>Request service</b><br/><small>+ ntfy · Discord · web push</small>"):::svc
+  AK("🔑 <b>Authentik</b><br/><small>sign-in · invites · passkeys</small>"):::svc
+  PT("🚢 <b>Portainer</b><br/><small>optional</small>"):::svc
   V -->|HTTPS| P
-  P -->|"/"| W
+  P -->|"/ · pages"| W
   P -->|"/media/*"| G
   P -->|"/api /auth /ws"| B
+  P -.->|"auth.example.com"| AK
   G -->|"may play?"| B
   G ==>|"video"| S
+  G ==>|"live · /media/l"| LT
+  B -->|"what to run"| LT
+  LT -.->|fetch| PV
   B -->|"library API"| S
-  B -->|REST| RQ
-  B -.->|OIDC| AK
-  P -.->|"auth.example.com"| AK
+  B -->|"SQL · RESP"| DB
+  B -->|"REST · push"| RQ
+  B -.->|"OIDC · flows"| AK
+  B -->|"signed request"| UP
+  B -.->|"API or webhook"| PT
+  RQ ~~~ AK
+  UP ~~~ PT
   classDef ext fill:#30363d,stroke:#8b949e,stroke-width:1px,color:#f0f6fc
   classDef edge fill:#2d2a4a,stroke:#9d8cf0,stroke-width:1px,color:#f0f6fc
   classDef app fill:#4a1a24,stroke:#ff4f6d,stroke-width:1px,color:#fff5f7
@@ -352,14 +374,17 @@ flowchart TB
   classDef svc fill:#163e4c,stroke:#56b6d6,stroke-width:1px,color:#eaf9ff
   classDef fork fill:#4a1d3c,stroke:#e070b0,stroke-width:1px,stroke-dasharray:4 3,color:#fff0f8
   linkStyle default stroke:#8b949e,stroke-width:1.4px
+  linkStyle 6,7 stroke:#3fb68b,stroke-width:3px
+  linkStyle 16,17 stroke:none
   style FF fill:none,stroke:#ff4f6d,stroke-width:1px,stroke-dasharray:4 4
 ```
 
-> 🟥 FriendFlix · 🟩 media server · 🟦 other service · 🟪 reverse proxy · 🟨 data store · ⬛ viewers / outside · dashed frame = network or boundary · thick line = video stream · dotted = optional / via public URL
+> 🟥 FriendFlix · 🟩 media server · 🟦 other service · 🟪 reverse proxy · 🟨 data store · ⬛ viewers / outside · dashed frame = network or boundary · thick green line = video stream · dotted = optional / via public URL
 
-- Only the proxy is public. `web`, `backend` and `gateway` are published on `127.0.0.1` only; Jellyfin and the request service have no ports at all and live on the internal `media` network, Postgres and Redis on the internal `db` network.
-- All video data (playlists, segments, direct play, images, subtitles, downloads, Chromecast) flows through the gateway: no buffering, HTTP range, Jellyfin tokens only server-side, path allowlist, fixed upstream, bitrate cap per role.
+- Only the proxy is public. `web`, `backend` and `gateway` are published on `127.0.0.1` only; Jellyfin and the request service have no ports at all and live on the internal `media` network, Postgres and Redis on the internal `db` network. The optional `livetv` service has its own internal network and publishes only the UDP range for pushed SRT feeds (on `127.0.0.1` unless you set `LIVETV_SRT_BIND`).
+- All video data (playlists, segments, direct play, images, subtitles, downloads, Chromecast, live channels) flows through the gateway: no buffering, HTTP range, Jellyfin tokens only server-side, path allowlist, fixed upstream, bitrate cap per role.
 - Containers run non-root with a read-only root filesystem, `cap_drop: ALL` and `no-new-privileges`. Strict CSP, CSRF tokens, rate limits, audit log.
+- No Docker socket in the app: the backend sends signed requests to the `updater`, and only the `docker-proxy` next to it mounts the socket (read-only, most of the Docker API refused); every image is checked with cosign before anything restarts. A Portainer stack is redeployed through the Portainer API or webhook instead. The one-shot `bootstrap` container writes the generated secrets into volumes before anything else starts.
 - The media server sits behind a neutral interface (`MediaServer` in the backend, an `Upstream` adapter in the gateway, chosen with `MEDIA_SERVER`). Jellyfin (`backend/src/jellyfin`, `gateway/src/upstream/jellyfin.ts`) and Plex (`backend/src/plex`, `gateway/src/upstream/plex.ts`) are the two implementations, picked at runtime from the same images; nothing outside their folders imports them except the seam index – containers, networks, the "press play" walk-through and the seam are in [docs/architecture.md](docs/architecture.md), the Plex specifics in [docs/plex.md](docs/plex.md).
 - Alternative "Plan B": nginx serves `/media/` itself via `auth_request` – [docs/operations.md](docs/operations.md).
 
@@ -368,7 +393,7 @@ flowchart TB
 - **Backups:** the opt-in `backup` sidecar runs `pg_dump` daily at `BACKUP_HOUR`, verifies each dump with `pg_restore --list`, keeps `BACKUP_KEEP_DAYS` days and turns `unhealthy` if a run fails. Restore steps and a monthly restore test (`scripts/restore-test.sh`) are in [docs/operations.md](docs/operations.md). Back up the `bootstrap` volume (`scripts/backup-bootstrap.sh`, holds `APP_ENC_KEY`) separately from the dumps.
 - **Updates:** *Admin → Update* shows the installed version and the newest release with its notes (plus the commits on main) and redeploys the stack through Portainer (API or webhook). Manually: `docker compose -f compose.prod.yaml pull && docker compose -f compose.prod.yaml up -d`. Database migrations run on start.
 - **Monitoring:** `/health` (liveness) and `/health/ready` (Redis, Postgres, Jellyfin) on `127.0.0.1:3081`; Prometheus metrics on `:3081/metrics` and `:3082/metrics` (Bearer `METRICS_TOKEN`). Icinga and Prometheus examples and an optional Prometheus + Grafana stack with a provisioned dashboard (`compose.monitoring.yaml`, internal network, no default password): [docs/monitoring.md](docs/monitoring.md).
-- **Supply chain:** images are scanned (Trivy), signed with cosign (keyless) and published with SBOM and provenance attestations; verify them before you deploy – [docs/operations.md](docs/operations.md). Builds are reproducible: rebuild any release from source and get the same image digest – [docs/reproducible-builds.md](docs/reproducible-builds.md).
+- **Supply chain:** images are scanned (Trivy), signed with cosign (keyless) and published with SBOM and provenance attestations; verify them before you deploy – [docs/operations.md](docs/operations.md). Builds are reproducible: rebuild any release from source and get the same image digest – [docs/reproducible-builds.md](docs/reproducible-builds.md) (the optional `livetv` image is exempt, [why](docs/livetv.md#image-and-reproducible-builds-exemption)).
 - **Performance:** every API response carries a `Server-Timing` header (`jf` = Jellyfin, `db` = Postgres, `kv` = Redis, `app` = total), the gateway adds `authz` and `upstream`; see them in the browser DevTools under *Network → Timing*. Requests ≥ 500 ms are logged as `slow request`. Browser errors are reported to the backend log and counted in `friendflix_client_errors_total`.
 
 ### Versions & releases
@@ -377,7 +402,7 @@ FriendFlix uses [SemVer](https://semver.org) (`version.json`, shown in the deskt
 
 ### Development
 
-Node.js ≥ 22, npm workspaces `backend`, `gateway`, `web`.
+Node.js ≥ 22, npm workspaces `backend`, `gateway`, `web`, `updater`, `livetv`.
 
 ```bash
 npm ci
@@ -385,12 +410,13 @@ npm run lint && npm run typecheck && npm test   # backend tests need Postgres: T
 npm run dev -w backend                          # API on :3000
 npm run dev -w web                              # UI on :5173 (proxies to backend/gateway)
 npm run e2e                                     # Playwright: builds the web app and runs it against a fully mocked API
+npm run spdx:check                              # licence headers, as in CI
 ```
 
 - `E2E_SKIP_BUILD=1` reuses an existing build; `PW_CHROMIUM=/path/to/chrome` uses a locally installed Chromium.
 - `./scripts/setup-hooks.sh` installs the gitleaks pre-commit hook.
 - Development against an http Authentik: `OIDC_ALLOW_INSECURE=true` (never in production).
-- CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)): lint, typecheck, tests, `npm audit`, e2e, OWASP ZAP baseline scan (DAST, rules in `.zap/rules.tsv`), gitleaks and Trivy (results also in code scanning); images are published by [publish.yml](.github/workflows/publish.yml) only after everything is green, with SBOM + provenance attestations and a keyless cosign signature – verification and recommended branch protection: [docs/operations.md](docs/operations.md).
+- CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)): lint, licence headers, typecheck, tests with coverage, `npm audit`, e2e, OWASP ZAP baseline scan (DAST, rules in `.zap/rules.tsv`), gitleaks, Trivy (results also in code scanning) and a from-scratch rebuild that must give the same image digests; images are published by [publish.yml](.github/workflows/publish.yml) only after everything is green, with SBOM + provenance attestations and a keyless cosign signature – verification and recommended branch protection: [docs/operations.md](docs/operations.md).
 - Supply-chain checks: OpenSSF Scorecard ([scorecard.yml](.github/workflows/scorecard.yml)), weekly and on every push to `main`. [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/LetsManu/friendflix/badge)](https://scorecard.dev/viewer/?uri=github.com/LetsManu/friendflix)
 - Translations: German is the source, all other languages live next to it – how to fix or add a language: [docs/i18n.md](docs/i18n.md).
 
@@ -408,15 +434,21 @@ npm run e2e                                     # Playwright: builds the web app
 | Offline downloads (platforms, storage, limits) | [docs/downloads.md](docs/downloads.md) |
 | TV mode and phone remote | [docs/tv-mode.md](docs/tv-mode.md) |
 | Chromecast and AirPlay | [docs/cast.md](docs/cast.md) |
+| FriendFlix's own Cast receiver: registration, HEVC and surround, checklist for a real TV | [docs/cast-receiver.md](docs/cast-receiver.md) |
+| Live TV: turning it on, GPU, ports, sources and guides, rights, SRT feeds, troubleshooting | [docs/livetv.md](docs/livetv.md) |
 | Android app: install, settings, offline, notifications, signing and Google Play | [docs/android.md](docs/android.md) |
 | Windows app: install, player keys, updates, troubleshooting, update signing | [docs/windows.md](docs/windows.md) |
 | Samsung TV app: developer mode, certificate, install script, probe | [docs/tizen.md](docs/tizen.md) |
 | LG TV app: Developer Mode, install script, remote keys, test app | [docs/webos.md](docs/webos.md) |
+| LG Content Store submission checklist (later phase) | [docs/webos-store.md](docs/webos-store.md) |
 | Fire TV app: install, remote keys, probe, Amazon Appstore steps | [docs/firetv.md](docs/firetv.md) |
 | Search and discovery API, labels, leaving soon, quality, kids rules | [docs/discovery.md](docs/discovery.md) |
 | Themed lists, calm mode, sound in the player, phone shortcuts and badge | [docs/personal.md](docs/personal.md) |
 | UI kit, glass look and admin shell | [docs/ui-kit.md](docs/ui-kit.md) |
 | Languages and translations | [docs/i18n.md](docs/i18n.md) |
+| Security model, trust boundaries, updater and livetv hardening | [docs/security.md](docs/security.md) |
+| Reproducible builds: rebuild an image and compare its digest | [docs/reproducible-builds.md](docs/reproducible-builds.md) |
+| Android app: privacy policy and account deletion | [docs/privacy.md](docs/privacy.md), [docs/account-deletion.md](docs/account-deletion.md) |
 | Changes | [CHANGELOG.md](CHANGELOG.md) |
 
 ### Known limitations
@@ -429,12 +461,14 @@ npm run e2e                                     # Playwright: builds the web app
 - Jellyfin and Plex are implemented (Plex: feature parity table in [docs/plex.md](docs/plex.md)). Cast & info, scenes and the picture-quality chips need the media server to report credits, chapters and stream details; where it cannot, the UI hides the feature (`capabilities` in `/api/me`).
 - "Leaving soon" is an announcement set by an admin; FriendFlix never deletes media. The "Season finale" label is a heuristic (last episode of the newest season is new, the series is no longer continuing). The picture-quality filter reads a background index (`BACKGROUND_JOBS=true`) that fills a little after the first start.
 - Clear voices and Night mode use the browser's audio processing: not available on every device and not while casting. PWA home-screen widgets exist only on Windows 11; shortcuts and the icon badge (not on every iOS version) are what the phone gets instead.
+- The conversion limit is measured on Jellyfin only: with Plex it stays at 2 (or your value), and Plex sessions are counted but never refused.
+- The reverse proxy must reach the backend from a loopback or private address: forwarding headers are believed only from such a peer, so a proxy on a public address, over Tailscale or over public IPv6 is not supported.
 - With Intel QSV/VAAPI, switch off "VPP Tone mapping" in Jellyfin if the driver has no HDR support; otherwise 4K HDR titles fail.
 - Kids profiles are a parental guard, not a lock against someone who knows the account login. The owner PIN is reset with "Forgot PIN?" (`/auth/login?resetPin=1`): it needs a fresh sign-in at Authentik (checked via the token's `auth_time`) and is refused on any device that is tied to a kids profile – the owner resets it from their own device. Keep the Authentik login (and its second factor) away from the kids. If no PIN is set at all, leaving a kids profile is allowed and the owner sees a hint to set one.
 
 ### Contributing
 
-Contributions are welcome – see [CONTRIBUTING.md](CONTRIBUTING.md) for the requirements (code standard, tests, all 7 languages) and [SECURITY.md](SECURITY.md) for reporting vulnerabilities. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md); plans for the next months are in the [ROADMAP](ROADMAP.md); how the security design works is described in [docs/security.md](docs/security.md).
+Contributions are welcome – see [CONTRIBUTING.md](CONTRIBUTING.md) for the requirements (code standard, tests, all 7 languages) and [SECURITY.md](SECURITY.md) for reporting vulnerabilities. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md); plans for the next months are in the [ROADMAP](ROADMAP.md), how decisions are made in [GOVERNANCE.md](GOVERNANCE.md); how the security design works is described in [docs/security.md](docs/security.md).
 
 Copyright © 2026 Manuel Weißböck.
 
