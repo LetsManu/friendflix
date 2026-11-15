@@ -23,7 +23,11 @@ import type { ExportAnswer } from './wire.js';
  *
  * Nothing here logs a title or a path; admin notices carry sizes only.
  */
-/** livetv remuxes and checks the file within 26 min (its own timeouts); the call waits a little longer */
+/**
+ * N3: livetv's whole export (staging copy, remux, probe, decode checks) runs within its 25-min budget (library.ts EXPORT_BUDGET_MS) and
+ * then stops; this wait is 30 min, so it never ends before livetv has answered. The export lock (35 min) and the store lock (40 min)
+ * outlast it.
+ */
 const EXPORT_TIMEOUT_MS = 30 * 60_000;
 const CALL_TIMEOUT_MS = 30_000;
 const DAY_MS = 86_400_000;

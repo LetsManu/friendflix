@@ -9,7 +9,7 @@ import { existsSync, fstatSync, mkdirSync, mkdtempSync, readFileSync, readSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Library, LibraryError, MARKER, sanitizeName } from '../src/library.js';
+import { EXPORT_BUDGET_MS, Library, LibraryError, MARKER, sanitizeName } from '../src/library.js';
 import { recordingPlaylist } from '../src/recorder.js';
 import { createRun, type Run, type RunOptions } from '../src/run.js';
 import { recordingRoutes } from '../src/routes/recordings.js';
@@ -178,6 +178,23 @@ describe('the library export', () => {
     // one volume for both: it needs room for both
     const one = new Library({ root: libRoot, recordingsRoot: recRoot, run: fakeRun, free: async () => 2 * size + 2 * GiB + 2 * GiB - 1, sameVolume: async () => true });
     expect(await code(one.export(ID, at))).toBe('storage_full');
+  });
+
+  it('N3: copy, remux and checks share one time budget; past it the export stops and leaves nothing', async () => {
+    recording({ n: 3 });
+    const at = { dir: DIR, folder: 'Hafenkanal', file: 'Nacht' };
+    const timed = new Library({ root: libRoot, recordingsRoot: recRoot, run: fakeRun, budgetMs: 60_000 });
+    await timed.export(ID, at);
+    expect(fake.opts.map((o) => o.timeoutMs).every((t) => t > 0 && t <= 60_000)).toBe(true);
+    // a budget spent in the copy: nothing is started, nothing stays
+    fake.calls.length = 0;
+    const spent = new Library({ root: libRoot, recordingsRoot: recRoot, run: fakeRun, budgetMs: 0 });
+    expect(await code(spent.export(ID, at))).toBe('export_failed');
+    expect(fake.calls).toEqual([]);
+    expect(readdirSync(join(libRoot, 'Hafenkanal'))).toEqual(['Nacht.ts']);
+    expect(readdirSync(join(recRoot, DIR)).filter((n) => n.startsWith('.'))).toEqual([]);
+    // the default budget stays below the backend's wait (recstore.ts EXPORT_TIMEOUT_MS, 30 min) with room to spare
+    expect(EXPORT_BUDGET_MS).toBeLessThanOrEqual(25 * 60_000);
   });
 
   it.skipIf(!existsSync('/usr/bin/ffmpeg') || !existsSync('/usr/bin/ffprobe'))('B-I8: a recording whose init changes mid-way exports as one file that decodes, both pictures in it', async () => {

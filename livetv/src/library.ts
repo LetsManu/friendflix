@@ -18,7 +18,13 @@ import { TIMEOUT_CODE, type Run } from './run.js';
  */
 export const MARKER = '.friendflix-recordings';
 export const NAME_MAX = 120;
-/** together at most 26 min: the backend waits 30 for the answer (recstore.ts) */
+/**
+ * N3: one export's whole time, copy included: the staging copy, the remux, the probe and both decode checks all draw on this one budget
+ * (each step gets what is left, the remux and the checks at most their own caps), and the export stops with `export_failed` once it is
+ * spent. 25 min < the backend's 30-min wait for the answer (recstore.ts EXPORT_TIMEOUT_MS), so the backend never gives up on an export
+ * that still finishes and renames a file no row tracks; the 5 min left cover the request and the rename.
+ */
+export const EXPORT_BUDGET_MS = 25 * 60_000;
 const REMUX_TIMEOUT_MS = 20 * 60_000;
 const PROBE_TIMEOUT_MS = 2 * 60_000;
 /** how far the exported file's duration may be from the playlist's (or 1 % of it, if more) */
@@ -50,7 +56,16 @@ export class Library {
   constructor(private readonly o: {
     root: string; recordingsRoot: string; log?: Log; run?: Run;
     free?: (path: string) => Promise<number | null>; sameVolume?: (a: string, b: string) => Promise<boolean>;
+    /** N3: the time budget of one export (default EXPORT_BUDGET_MS) */
+    budgetMs?: number;
   }) {}
+
+  /** what is left of the budget for the next step (at most `cap`); spent = `export_failed` */
+  private left(deadline: number, cap: number): number {
+    const ms = Math.min(cap, deadline - Date.now());
+    if (ms <= 0) throw new LibraryError('export_failed');
+    return ms;
+  }
 
   /** `/v1/system.library`: null while the overlay is not on (no `/library`) */
   async facts(): Promise<LibraryFacts | null> {
@@ -106,6 +121,7 @@ export class Library {
    * " (2)" … " (9)". Answers the path relative to the library and the bytes written.
    */
   async export(id: string, b: { dir: string; folder: string; file: string }): Promise<{ path: string; bytes: number }> {
+    const deadline = Date.now() + (this.o.budgetMs ?? EXPORT_BUDGET_MS);
     if (!DIR_RE.test(b.dir)) throw new LibraryError('invalid');
     const folderName = sanitizeName(b.folder);
     const fileName = sanitizeName(b.file);
@@ -138,10 +154,10 @@ export class Library {
     try {
       await rm(work, { recursive: true, force: true });
       await mkdir(work, { mode: 0o755 });
-      const runs = await writeRuns(src, work, entries);
+      const runs = await writeRuns(src, work, entries, () => this.left(deadline, 1));
       if (!runs.length) throw new LibraryError('not_found');
-      await this.remux(work, runs, fh.fd, dir);
-      await this.verify(fh.fd, entries.reduce((n, e) => n + e.duration, 0));
+      await this.remux(work, runs, fh.fd, dir, deadline);
+      await this.verify(fh.fd, entries.reduce((n, e) => n + e.duration, 0), deadline);
       // the name still holds the file written (a link or another file swapped in meanwhile is refused, never moved into place)
       const st = await fh.stat();
       const now = await lstat(part).catch(() => null);
@@ -186,14 +202,14 @@ export class Library {
    * change, a stream restart) and writes one MPEG-TS, which carries parameter changes in-band, to its stdout: the open part file `out`.
    * ffmpeg reads only the local run files.
    */
-  private async remux(work: string, runs: string[], out: number, dir: string): Promise<void> {
+  private async remux(work: string, runs: string[], out: number, dir: string, deadline: number): Promise<void> {
     if (!this.o.run) throw new LibraryError('export_failed');
     const list = join(work, 'list.txt');
     await writeFile(list, runs.map((r) => `file '${r}'\n`).join(''), { flag: 'wx' });
     const r = await this.o.run('ffmpeg', [
       '-hide_banner', '-loglevel', 'error', '-nostdin', '-protocol_whitelist', 'file', '-f', 'concat', '-safe', '1', '-i', list,
       '-map', '0', '-c', 'copy', '-f', 'mpegts', 'pipe:1',
-    ], { timeoutMs: REMUX_TIMEOUT_MS, stdoutFd: out });
+    ], { timeoutMs: this.left(deadline, REMUX_TIMEOUT_MS), stdoutFd: out });
     if (r.code !== 0) throw new LibraryError(r.code === TIMEOUT_CODE ? 'export_failed' : (await enospc(dir)) ? 'storage_full' : 'export_failed');
   }
 
@@ -201,16 +217,16 @@ export class Library {
    * The file is complete before the recording's FriendFlix copy may go (B-I8): its duration fits and its start and end decode. It is
    * read through the open descriptor `fd` (the child's stdin, opened as `/proc/self/fd/0`: the same file, seekable), never by path.
    */
-  private async verify(fd: number, expectedS: number): Promise<void> {
+  private async verify(fd: number, expectedS: number, deadline: number): Promise<void> {
     if (!this.o.run) throw new LibraryError('verify_failed');
     const file = '/proc/self/fd/0';
-    const probe = await this.o.run('ffprobe', ['-v', 'error', '-protocol_whitelist', 'file', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], { timeoutMs: PROBE_TIMEOUT_MS, stdinFd: fd });
+    const probe = await this.o.run('ffprobe', ['-v', 'error', '-protocol_whitelist', 'file', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], { timeoutMs: this.left(deadline, PROBE_TIMEOUT_MS), stdinFd: fd });
     const duration = Number(probe.stdout.toString('utf8').trim());
     if (probe.code !== 0 || !Number.isFinite(duration) || Math.abs(duration - expectedS) > Math.max(DURATION_TOLERANCE_S, expectedS * 0.01)) throw new LibraryError('verify_failed');
     for (const at of [['-t', '5'], ['-sseof', '-5']]) {
       const pos = at[0] === '-sseof' ? at : [];
       const len = at[0] === '-t' ? at : [];
-      const dec = await this.o.run('ffmpeg', ['-hide_banner', '-v', 'error', '-xerror', '-nostdin', '-protocol_whitelist', 'file', ...pos, '-i', file, ...len, '-f', 'null', '-'], { timeoutMs: PROBE_TIMEOUT_MS, stdinFd: fd });
+      const dec = await this.o.run('ffmpeg', ['-hide_banner', '-v', 'error', '-xerror', '-nostdin', '-protocol_whitelist', 'file', ...pos, '-i', file, ...len, '-f', 'null', '-'], { timeoutMs: this.left(deadline, PROBE_TIMEOUT_MS), stdinFd: fd });
       if (dec.code !== 0) throw new LibraryError('verify_failed');
     }
   }
@@ -258,7 +274,7 @@ async function enospc(path: string): Promise<boolean> {
  * becomes one file in `work` (fMP4: its init, then its fragments, as `run-<n>.mp4`; TS: its segments as `run-<n>.ts`); a segment the
  * recorder never finished is left out. Answers the run file names.
  */
-async function writeRuns(src: string, work: string, entries: ReturnType<typeof parseRecordingPlaylist>): Promise<string[]> {
+async function writeRuns(src: string, work: string, entries: ReturnType<typeof parseRecordingPlaylist>, inTime: () => void): Promise<string[]> {
   const runs: Array<typeof entries> = [];
   for (const e of entries) {
     const cur = runs.at(-1);
@@ -280,6 +296,7 @@ async function writeRuns(src: string, work: string, entries: ReturnType<typeof p
         await out.write(data);
       }
       for (const e of run) {
+        inTime(); // N3: the copy counts against the export's budget
         const data = await readFileNoFollow(join(src, `${e.seq}.${e.ext}`));
         if (data === null) continue;
         await out.write(data);
