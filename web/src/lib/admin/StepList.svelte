@@ -8,13 +8,15 @@
    * sweep and a spinning ring, a done step pops a green dot with a check and fills the wire to the next one, a failed one pops red
    * and shakes once, the badge cross-fades in a cell as wide as its widest word, the bar grows by scaleX (a glint while it runs,
    * green / red at the end), the result note slides into a box reserved from the start. Only transform and opacity move; rows
-   * keep their height; reduced motion and calm mode (html.m-still) show every state at once.
+   * keep their height; reduced motion and calm mode (html.m-still) show every state at once. The server is only sampled (a poll
+   * every few seconds, nothing while the backend restarts): steps it finished between two polls are played in order, each running
+   * for a moment and then done (steps.ts stepPlayer), and the outcome lands once every row got there.
    */
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onDestroy } from 'svelte';
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
   import Button from '#lib/ui/Button.svelte';
-  import { stateLabel, type RowState, type StepFlow, type StepRow } from './steps';
+  import { stateLabel, stepPlayer, type RowState, type StepFlow, type StepRow } from './steps';
 
   export let flow: Pick<StepFlow, 'rows'> & Partial<StepFlow>;
   /** a heading above the list (h3) */
@@ -28,10 +30,18 @@
   const dispatch = createEventDispatcher<{ retry: void }>();
   const STATES: readonly RowState[] = ['waiting', 'running', 'ok', 'failed', 'skipped'];
 
-  $: outcome = flow.outcome ?? 'running';
-  $: current = flow.rows.find((r) => r.state === 'running') ?? null;
+  /** reduced motion and calm mode: the server's state at once, nothing played */
+  const still = () => typeof window === 'undefined' || Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) || document.documentElement.classList.contains('m-still');
+  /** what the list shows: `flow`, with the steps finished between two polls played one after the other */
+  let shown: typeof flow = flow;
+  const player = stepPlayer<typeof flow>((f) => { shown = f; }, { instant: still });
+  $: player.push(flow);
+  onDestroy(player.stop);
+
+  $: outcome = shown.outcome ?? 'running';
+  $: current = shown.rows.find((r) => r.state === 'running') ?? null;
   // $t: re-read on a language switch
-  $: announced = (void $t, current ? `${flow.count ?? ''} ${current.label}: ${stateLabel('running')}` : '');
+  $: announced = (void $t, current ? `${shown.count ?? ''} ${current.label}: ${stateLabel('running')}` : '');
   /** a failure is an alert only when it was seen happening; an old outcome on page load is a status */
   let seenRunning = false;
   $: if (outcome === 'running') seenRunning = true;
@@ -45,23 +55,23 @@
   {#if title}<h3>{title}</h3>{/if}
   {#if bar}
     <div class="top">
-      <span class="lbl" class:recon={flow.reconnecting} data-reconnecting={flow.reconnecting ? '' : undefined}>
-        {#if flow.reconnecting}<Icon name="refresh" size={14} />{/if}<span title={flow.label ?? ''}>{flow.label ?? ''}</span>
+      <span class="lbl" class:recon={shown.reconnecting} data-reconnecting={shown.reconnecting ? '' : undefined}>
+        {#if shown.reconnecting}<Icon name="refresh" size={14} />{/if}<span title={shown.label ?? ''}>{shown.label ?? ''}</span>
       </span>
-      <span class="cnt">{flow.count ?? ''}</span>
+      <span class="cnt">{shown.count ?? ''}</span>
     </div>
-    <div class="bar bar-{outcome}" role="progressbar" aria-label={$t('admin.update.updater.flow.label')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((flow.progress ?? 0) * 100)}>
-      <i class="fill" style="transform: scaleX({flow.progress ?? 0})"></i><i class="glint"></i>
+    <div class="bar bar-{outcome}" role="progressbar" aria-label={$t('admin.update.updater.flow.label')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((shown.progress ?? 0) * 100)}>
+      <i class="fill" style="transform: scaleX({shown.progress ?? 0})"></i><i class="glint"></i>
     </div>
   {/if}
   <!-- the state for screen readers: the running step (polite); a failure is the note's alert -->
   {#if live}<p class="sr-only" aria-live="polite">{announced}</p>{/if}
   <ol class="steps">
-    {#each flow.rows as r, i (r.key)}
+    {#each shown.rows as r, i (r.key)}
       <li class="row st-{r.state}" style="--i: {i}" data-step={r.key} data-state={r.state} aria-current={r.state === 'running' ? 'step' : undefined}>
         <span class="hl" aria-hidden="true"></span>
         <span class="sheen" aria-hidden="true"></span>
-        {#if i < flow.rows.length - 1}<span class="wire" aria-hidden="true"><i></i></span>{/if}
+        {#if i < shown.rows.length - 1}<span class="wire" aria-hidden="true"><i></i></span>{/if}
         <span class="dot" aria-hidden="true">
           <span class="d-ring"></span><span class="spin"></span><span class="fillc"></span>
           <span class="ic ic-ok"><Icon name="check" size={16} /></span><span class="ic ic-bad"><Icon name="x" size={14} /></span>
@@ -73,11 +83,11 @@
       </li>
     {/each}
   </ol>
-  {#each Array(flow.reserve ?? 0) as _, k (k)}<div class="slot" aria-hidden="true"></div>{/each}
+  {#each Array(shown.reserve ?? 0) as _, k (k)}<div class="slot" aria-hidden="true"></div>{/each}
   {#if note}
     <div class="result">
-      {#if flow.note}
-        {@const n = flow.note}
+      {#if shown.note}
+        {@const n = shown.note}
         <!-- the headline alone is the live region (alert when the failure was seen happening); "What to do?" keeps its place
              next to the retry button and its text opens below, outside the alert: nothing above it moves -->
         <div class="note n-{n.tone}" data-result={n.result}>
