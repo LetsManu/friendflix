@@ -412,7 +412,7 @@ export const MATRIX_FIELDS_MOCK: Array<Record<string, unknown>> = [
   { key: 'comments', group: 'together', kind: 'bool', area: 'together' },
   { key: 'cast', group: 'cast', kind: 'bool', requires: 'cast', area: 'general' },
   { key: 'liveTv', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv' },
-  { key: 'liveRecord', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv', planned: 'recordings' },
+  { key: 'liveRecord', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv' },
 ];
 /** backend/src/areas.ts areasOf: the areas of a set of effective values (roles redesign §2.1) */
 export const areasOfMock = (v: Record<string, unknown>) => ({

@@ -86,6 +86,11 @@ describe('compareCell', () => {
     expect(c).toMatchObject({ bool: false, text: 'ab 12', src: 'role', locked: false, name: 'Freund, Altersfreigabe: ab 12, geändert' });
     expect(compareCell(m, r, row('maxStreams'))).toMatchObject({ src: 'env', name: 'Freund, Gleichzeitige Streams: 2' });
     expect(compareCell(m, r, row('liveRecord'))).toMatchObject({ bool: true, value: false, name: 'Freund, Darf aufnehmen: nicht erlaubt' });
+    // coupled as the role page shows it: Darf aufnehmen reads off while Live-TV is off, the comments without a library
+    const off = role('friend', { ...FULL, liveTv: false, liveRecord: true, libraries: [] });
+    expect(compareCell(m, off, row('liveRecord')).value).toBe(false);
+    expect(compareCell(m, off, row('comments')).value).toBe(false);
+    expect(compareCell(m, role('friend', { ...FULL, liveRecord: true }), row('liveRecord')).value).toBe(true);
   });
   it('the admin role: switches and areas locked (no link), numbers link', () => {
     const a = role('admin', FULL, { base: 'admin', label: 'Admin' });

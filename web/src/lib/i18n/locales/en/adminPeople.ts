@@ -457,6 +457,7 @@ const dict: Translation<typeof de> = {
       downloadsDesc: 'Save films and episodes offline',
       general: 'General',
       needsLibrary: 'Needs the library',
+      needsLivetv: 'Needs Live TV',
       adminLocked: 'Admins may always do everything',
     },
     summary: { only: 'Only {area}', none: 'Nothing shared', noGroups: 'Live TV without a channel group' },

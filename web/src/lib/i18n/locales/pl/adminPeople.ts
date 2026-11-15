@@ -457,6 +457,7 @@ const dict: Translation<typeof de> = {
       downloadsDesc: 'Zapisywanie filmów i odcinków offline',
       general: 'Ogólne',
       needsLibrary: 'Wymaga mediateki',
+      needsLivetv: 'Wymaga telewizji na żywo',
       adminLocked: 'Administratorzy zawsze mogą wszystko',
     },
     summary: { only: 'Tylko {area}', none: 'Nic nie udostępniono', noGroups: 'Telewizja na żywo bez grupy kanałów' },

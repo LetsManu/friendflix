@@ -457,6 +457,7 @@ const dict: Translation<typeof de> = {
       downloadsDesc: 'Filmleri ve bölümleri çevrimdışı kaydetmek',
       general: 'Genel',
       needsLibrary: 'Medya kitaplığı gerekir',
+      needsLivetv: 'Canlı TV gerekir',
       adminLocked: 'Yöneticiler her zaman her şeyi yapabilir',
     },
     summary: { only: 'Yalnızca {area}', none: 'Hiçbir şey paylaşılmadı', noGroups: 'Kanal grubu olmadan canlı TV' },

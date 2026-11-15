@@ -23,7 +23,7 @@ export interface MatrixField {
   requires?: Feature;
   /** the area the field belongs to (roles redesign §2.1); 'general' = *Allgemein*, shown with every area */
   area: AreaKey | 'general';
-  /** a right that exists but does nothing yet: hidden from every editor (`liveRecord` until recordings ship, §5.4) */
+  /** a right that exists but does nothing yet: hidden from every editor (none today; `liveRecord` was until recordings shipped, §5.4) */
   planned?: 'recordings';
 }
 
@@ -84,7 +84,7 @@ const NULL_IS_UNLIMITED: ReadonlySet<string> = new Set(['maxHeight', 'maxParenta
 
 /**
  * the fields to show: those whose optional feature is off are dropped (no request service: no Wünsche; Live TV not installed: no
- * Live-TV), and planned ones never show (`liveRecord`: stored and resolved, but nothing enforces it yet)
+ * Live-TV), and planned ones never show (a right stored and resolved that nothing enforces yet; none today)
  */
 export const visibleFields = (m: RoleMatrix): MatrixField[] => m.fields.filter((f) => !f.planned && (!f.requires || m.features[f.requires]));
 

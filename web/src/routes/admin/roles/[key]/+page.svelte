@@ -19,7 +19,7 @@
   import { leaveGuard, leavesRoute } from '#lib/admin/leaveGuard';
   import AreaGrid from '#lib/admin/rights/AreaGrid.svelte';
   import AreaSection from '#lib/admin/rights/AreaSection.svelte';
-  import { AREA_ICON, AREA_KEYS, areaLabel, fieldsOfArea, stageArea, stagedAreas, stageField, type AreaKey, type Areas } from '#lib/admin/rights/areas';
+  import { AREA_ICON, AREA_KEYS, areaLabel, fieldLocks, fieldsOfArea, stageArea, stagedAreas, stageField, type AreaKey, type Areas } from '#lib/admin/rights/areas';
   import DeleteRoleDialog from '#lib/admin/rights/DeleteRoleDialog.svelte';
   import GroupChips from '#lib/admin/rights/GroupChips.svelte';
   import { PERM_SET, peopleLine, policyLine, reviewLines, roleName, saveBarText, stageCounts, stageSet, type MatrixField, type MatrixRole, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
@@ -60,6 +60,8 @@
 
   // ---- staging: the area switches and the fields keep the coupling (areas.ts); the name and the groups are plain staged keys
   $: areas = role ? stagedAreas(stage, role) : null;
+  /** switches that wait for another area (Darf aufnehmen while Live-TV is off): locked, shown off */
+  $: locks = role ? fieldLocks(stage, role) : {};
   $: counts = matrix ? stageCounts(stage, matrix) : null;
   $: dirty = counts?.roles ?? 0;
   const toggleArea = (a: AreaKey, on: boolean) => { if (matrix && role) stage = stageArea(stage, matrix, role, a, on); };
@@ -242,7 +244,7 @@
   <div class="secs">
     {#each sections as a (a)}
       {#if a === 'livetv'}
-        <AreaSection area={a} title={areaLabel(a)} icon={AREA_ICON[a]} fields={fieldsOf(matrix, role, a)} {role} {stage} {matrix} disabled={saving} on:change={(e) => setField(e.detail.key, e.detail.value)}>
+        <AreaSection area={a} title={areaLabel(a)} icon={AREA_ICON[a]} fields={fieldsOf(matrix, role, a)} {role} {stage} {matrix} {locks} disabled={saving} on:change={(e) => setField(e.detail.key, e.detail.value)}>
           <GroupChips roleName={shownName} groups={matrix.livetv?.groups ?? []} chosen={chosenGroups} pending={matrix.livetv?.pending ?? 0}
             mode={role.key === 'admin' ? 'admin' : role.stored ? 'edit' : 'env'} dormant={!areas.livetv} disabled={saving} on:change={(e) => put('livetvGroups', e.detail)} />
         </AreaSection>

@@ -326,7 +326,13 @@ Unknown key → "Diese Rolle gibt es nicht (mehr)" with a link back. A role dele
 
 Under Live-TV, the registry already carries `liveRecord` (planned). When Phase 3 ships it becomes visible again as "Darf
 aufnehmen", and a new switch "Aufnahmen herunterladen" joins the Live-TV section — not the Downloads area, which stays "library
-items only". If the owner chooses the Jellyfin-library storage mode for recordings, Phase 3 must treat that library as part of
+items only".
+
+**Done (Stage 4, 2026-11-15):** the recordings backend enforces `liveRecord`, so the registry no longer marks it planned. It is
+visible as "Darf aufnehmen" in the role page's Live-TV section (read-only in the compare view, in the person's *Rechte* tab like
+any right) and coupled to Live-TV the way the Mediathek coupling works: Live-TV off stages it off, and it stays off and locked
+("Braucht Live-TV") until Live-TV is on again. The kids overlay still forces it off; the "Nur Live-TV" template keeps
+`liveRecord: false`. "Aufnahmen herunterladen" is not added yet: it ships with recordings downloads (Phase 3c). If the owner chooses the Jellyfin-library storage mode for recordings, Phase 3 must treat that library as part of
 Live-TV (excluded from `hasLibrary`), so a Live-TV-only role still has `library: false` (open question 2).
 
 ### 5.5 Compare view (`/admin/roles?view=compare`)

@@ -10,7 +10,7 @@
  */
 import { chipsText } from '#lib/admin/livetv/groups';
 import { tr } from '#lib/i18n';
-import { areaLabel, areasOf, fieldsOfArea, shownAreas, withCoupling, type AreaKey } from './areas';
+import { areaLabel, areasOf, coupledValue, fieldsOfArea, shownAreas, withCoupling, type AreaKey } from './areas';
 import { cellText, fieldLabel, PERM_SET, roleName, type MatrixField, type MatrixRole, type RoleMatrix } from './model';
 
 export type CompareRow = { kind: 'area'; area: AreaKey } | { kind: 'field'; field: MatrixField } | { kind: 'groups' };
@@ -62,7 +62,8 @@ export function compareCell(m: RoleMatrix, r: MatrixRole, row: CompareRow): Comp
     bool = true;
     locked = admin;
   } else if (row.kind === 'field') {
-    value = r.values[row.field.key];
+    // coupled as the role page shows it (a switch whose area is off reads off)
+    value = coupledValue(r.values, row.field.key);
     bool = row.field.kind === 'bool';
     locked = admin && PERM_SET.has(row.field.key);
     const s = r.sources[row.field.key];

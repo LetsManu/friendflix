@@ -7,7 +7,9 @@
  *
  * The coupling (§2.3): Wünsche, Gemeinsam and Downloads need the Mediathek. `areasOf` does not apply it (like the backend); the
  * role page does: `stageArea` and `stageField` never stage one of them on without a library, switching the Mediathek off (or
- * unticking the last library) stages them off with it, and `stagedAreas` shows them off while the Mediathek is off.
+ * unticking the last library) stages them off with it, and `stagedAreas` shows them off while the Mediathek is off. In the same
+ * way *Darf aufnehmen* (`liveRecord`, the Live-TV section's sub-switch since recordings shipped, §5.4) needs Live-TV: Live-TV off
+ * stages it off, and it does not go on while Live-TV is off (`fieldNeeds`, `fieldLocks`, `coupledValue`).
  */
 import type { AreaKey, Areas } from '#lib/capabilities';
 import { tr } from '#lib/i18n';
@@ -37,13 +39,15 @@ export const AREA_ICON: Readonly<Record<AreaKey, string>> = { library: 'film', l
 export const NEEDS_LIBRARY: ReadonlySet<AreaKey> = new Set<AreaKey>(['requests', 'together', 'downloads']);
 /** the switches those areas consist of: none of them goes on without a library */
 const COUPLED_FIELDS: ReadonlySet<string> = new Set(['requests', 'party', 'partySchedule', 'comments', 'download']);
+/** the switches that need Live-TV on (the recordings right) */
+const NEEDS_LIVETV: ReadonlySet<string> = new Set(['liveRecord']);
 /** the field that is an area's own switch (its card): not listed again in the area's section */
 const AREA_SWITCH: ReadonlySet<string> = new Set(['liveTv', 'requests', 'download']);
 
 /** what switching an area off stages (§2.3) */
 const OFF: Record<AreaKey, Record<string, unknown>> = {
   library: { libraries: [], requests: false, party: false, partySchedule: false, comments: false, download: false },
-  livetv: { liveTv: false },
+  livetv: { liveTv: false, liveRecord: false },
   requests: { requests: false },
   together: { party: false, partySchedule: false, comments: false },
   downloads: { download: false },
@@ -64,6 +68,24 @@ export const stagedValues = (s: Stage, r: MatrixRole): Record<string, unknown> =
 
 /** the areas as the role page shows them: the staged values, coupled */
 export const stagedAreas = (s: Stage, r: MatrixRole): Areas => withCoupling(areasOf(stagedValues(s, r)));
+
+/** what a switch waits for: the Mediathek (Wünsche, Gemeinsam, Downloads), Live-TV (Darf aufnehmen), or nothing */
+export function fieldNeeds(v: Record<string, unknown>, key: string): 'library' | 'livetv' | null {
+  if (COUPLED_FIELDS.has(key) && !hasLibrary(v.libraries)) return 'library';
+  if (NEEDS_LIVETV.has(key) && v.liveTv !== true) return 'livetv';
+  return null;
+}
+
+/** a field's value as the app offers it: a switch whose area is off reads off (the compare view, the role page's locked switch) */
+export const coupledValue = (v: Record<string, unknown>, key: string): unknown => (fieldNeeds(v, key) ? false : v[key]);
+
+/** the role page's locked switches (as staged): field key → what it waits for */
+export function fieldLocks(s: Stage, r: MatrixRole): Record<string, 'library' | 'livetv'> {
+  const v = stagedValues(s, r);
+  const out: Record<string, 'library' | 'livetv'> = {};
+  for (const k of [...COUPLED_FIELDS, ...NEEDS_LIVETV]) { const n = fieldNeeds(v, k); if (n) out[k] = n; }
+  return out;
+}
 
 /** the staged entries `keys` of a role dropped: back to the loaded values */
 function unstage(s: Stage, role: string, keys: readonly string[]): Stage {
@@ -91,11 +113,12 @@ export function stageArea(s: Stage, m: RoleMatrix, r: MatrixRole, area: AreaKey,
 }
 
 /**
- * One field edited on the role page, coupled: no library left is the Mediathek switched off (with what needs it), and a switch
- * of Wünsche, Gemeinsam or Downloads does not go on while the Mediathek is off. Everything else is a plain `stageSet`.
+ * One field edited on the role page, coupled: no library left is the Mediathek switched off (with what needs it), a switch of
+ * Wünsche, Gemeinsam or Downloads does not go on while the Mediathek is off, nor Darf aufnehmen while Live-TV is off. Everything
+ * else is a plain `stageSet`.
  */
 export function stageField(s: Stage, m: RoleMatrix, r: MatrixRole, key: string, v: unknown): Stage {
-  if (v === true && COUPLED_FIELDS.has(key) && !stagedAreas(s, r).library) return s;
+  if (v === true && fieldNeeds(stagedValues(s, r), key)) return s;
   // the admin role keeps a library (the server refuses none, admin_library_required); its areas are locked
   if (key === 'libraries' && !hasLibrary(v) && r.base !== 'admin') return stageArea(s, m, r, 'library', false);
   return stageSet(s, m, r.key, key, v);

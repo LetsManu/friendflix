@@ -457,6 +457,7 @@ const dict: Translation<typeof de> = {
       downloadsDesc: 'Enregistrer films et épisodes hors ligne',
       general: 'Général',
       needsLibrary: 'Nécessite la médiathèque',
+      needsLivetv: 'Nécessite la TV en direct',
       adminLocked: 'Les admins peuvent toujours tout faire',
     },
     summary: { only: 'Seulement {area}', none: 'Rien de partagé', noGroups: 'TV en direct sans groupe de chaînes' },

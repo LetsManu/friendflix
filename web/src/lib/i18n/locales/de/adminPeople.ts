@@ -459,6 +459,7 @@ export default {
       downloadsDesc: 'Filme und Folgen offline speichern',
       general: 'Allgemein',
       needsLibrary: 'Braucht die Mediathek',
+      needsLivetv: 'Braucht Live-TV',
       adminLocked: 'Admins dürfen immer alles',
     },
     summary: { only: 'Nur {area}', none: 'Nichts freigegeben', noGroups: 'Live-TV ohne Kanalgruppe' },

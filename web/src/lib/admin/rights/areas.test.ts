@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import type { Areas } from '#lib/capabilities';
-import { AREA_KEYS, areaDisabled, areaSummary, areasOf, fieldsOfArea, hasLibrary, stageArea, stagedAreas, stagedValues, stageField } from './areas';
+import { AREA_KEYS, areaDisabled, areaSummary, areasOf, coupledValue, fieldLocks, fieldNeeds, fieldsOfArea, hasLibrary, stageArea, stagedAreas, stagedValues, stageField } from './areas';
+import { visibleFields } from './model';
 import { stageSet, type MatrixField, type MatrixRole, type RoleMatrix, type Stage } from './model';
 
 // Roles redesign Task 9: the areas on the web (spec §2.1-§2.4). areasOf is the backend's twin: both follow test-vectors/areas.json.
@@ -22,7 +23,7 @@ const fields: MatrixField[] = [
   F('download', 'bool', 'downloads'), F('maxDownloads', 'int', 'downloads'), F('downloadMaxHeight', 'height', 'downloads'), F('downloadDays', 'int', 'downloads'),
   F('requests', 'bool', 'requests', { requires: 'requests' }), F('requestsPerMonth', 'int', 'requests', { requires: 'requests', options: [null] }),
   F('party', 'bool', 'together'), F('partySchedule', 'bool', 'together'), F('comments', 'bool', 'together'), F('cast', 'bool', 'general', { requires: 'cast' }),
-  F('liveTv', 'bool', 'livetv', { requires: 'livetv' }), F('liveRecord', 'bool', 'livetv', { requires: 'livetv', planned: 'recordings' }),
+  F('liveTv', 'bool', 'livetv', { requires: 'livetv' }), F('liveRecord', 'bool', 'livetv', { requires: 'livetv' }),
 ];
 const FULL = {
   libraries: 'all', maxParentalRating: null, maxStreams: 2, maxBitrate: 20_000_000, remoteMaxBitrate: 8_000_000, transcoding: true, maxHeight: null,
@@ -40,7 +41,7 @@ const matrix = (): RoleMatrix => ({
     role('admin', { ...FULL }, { base: 'admin' }),
     // saved without a library; its default (the base's) has two
     role('liveonly', { ...FULL, libraries: [], download: false, requests: false, party: false, partySchedule: false, comments: false }, { defaults: { ...FULL, libraries: ['Filme', 'Serien'] } }),
-    role('bare', { ...FULL, libraries: [], download: false, requests: false, party: false, partySchedule: false, comments: false, liveTv: false }, { defaults: { ...FULL, libraries: [] } }),
+    role('bare', { ...FULL, libraries: [], download: false, requests: false, party: false, partySchedule: false, comments: false, liveTv: false, liveRecord: false }, { defaults: { ...FULL, libraries: [] } }),
     role('quiet', { ...FULL, party: false, partySchedule: true, comments: false }),
   ],
   livetv: { groups: [], pending: 0 }, templates: [],
@@ -85,7 +86,7 @@ describe('stageArea (spec §2.3)', () => {
     expect(stageArea(off, m, R(m, 'friend'), 'together', true)).toEqual({});
   });
   it('the single-switch areas stage their switch', () => {
-    expect(stageArea({}, m, R(m, 'friend'), 'livetv', false)).toEqual({ friend: { liveTv: false } });
+    expect(stageArea({}, m, R(m, 'friend'), 'livetv', false)).toEqual({ friend: { liveTv: false, liveRecord: false } }); // Darf aufnehmen needs Live-TV
     expect(stageArea({}, m, R(m, 'friend'), 'requests', false)).toEqual({ friend: { requests: false } });
     expect(stageArea({}, m, R(m, 'friend'), 'downloads', false)).toEqual({ friend: { download: false } });
     expect(stageArea({}, m, R(m, 'bare'), 'livetv', true)).toEqual({ bare: { liveTv: true } });
@@ -113,15 +114,50 @@ describe('stageField keeps the coupling', () => {
   });
 });
 
+describe('Live-TV coupling: Darf aufnehmen needs Live-TV (roles redesign §5.4, Stage 4 ruling)', () => {
+  const m = matrix();
+  it('Live-TV off stages Darf aufnehmen off; on again in the same session restores both', () => {
+    const off = stageArea({}, m, R(m, 'friend'), 'livetv', false);
+    expect(off).toEqual({ friend: { liveTv: false, liveRecord: false } });
+    expect(stageArea(off, m, R(m, 'friend'), 'livetv', true)).toEqual({});
+    // a role whose recordings right is off already: only the Live-TV switch stages
+    const r = role('norec', { ...FULL, liveRecord: false });
+    expect(stageArea({}, { ...m, roles: [...m.roles, r] }, r, 'livetv', false)).toEqual({ norec: { liveTv: false } });
+  });
+  it('Darf aufnehmen cannot go on while Live-TV is off (staged or saved); off always can', () => {
+    const off = stageArea({}, m, R(m, 'friend'), 'livetv', false);
+    expect(stageField(off, m, R(m, 'friend'), 'liveRecord', true)).toBe(off);
+    expect(stageField({}, m, R(m, 'bare'), 'liveRecord', true)).toEqual({});
+    expect(stageField({}, m, R(m, 'friend'), 'liveRecord', false)).toEqual({ friend: { liveRecord: false } });
+  });
+  it('fieldNeeds / coupledValue / fieldLocks: what a field waits for, and the value the app offers', () => {
+    const v = { ...FULL, liveTv: false, libraries: [] };
+    expect(fieldNeeds(v, 'liveRecord')).toBe('livetv');
+    expect(fieldNeeds(v, 'party')).toBe('library');
+    expect(fieldNeeds(v, 'maxStreams')).toBeNull();
+    expect(fieldNeeds(FULL, 'liveRecord')).toBeNull();
+    expect(coupledValue(v, 'liveRecord')).toBe(false);
+    expect(coupledValue(v, 'comments')).toBe(false);
+    expect(coupledValue(v, 'maxStreams')).toBe(2);
+    expect(coupledValue(FULL, 'liveRecord')).toBe(true);
+    const f = R(m, 'friend');
+    expect(fieldLocks({}, f)).toEqual({});
+    expect(fieldLocks(stageArea({}, m, f, 'livetv', false), f)).toEqual({ liveRecord: 'livetv' });
+    expect(fieldLocks(stageArea({}, m, f, 'library', false), f)).toEqual({ requests: 'library', party: 'library', partySchedule: 'library', comments: 'library', download: 'library' });
+  });
+});
+
 describe('Review Focus 5: only coupled states can be staged', () => {
   type Op = { area: (typeof AREA_KEYS)[number]; on: boolean } | { key: string; v: unknown };
   const OPS: Op[] = [
     ...AREA_KEYS.flatMap((area) => [{ area, on: true }, { area, on: false }]),
     { key: 'libraries', v: [] }, { key: 'libraries', v: ['Filme'] }, { key: 'libraries', v: 'all' },
     { key: 'party', v: true }, { key: 'comments', v: true }, { key: 'download', v: true }, { key: 'requests', v: true }, { key: 'partySchedule', v: true },
+    { key: 'liveRecord', v: true },
   ];
-  /** Mediathek off ⇒ Wünsche, Gemeinsam, Downloads off (on the values as they would be saved) */
-  const coupled = (v: Record<string, unknown>) => hasLibrary(v.libraries) || [v.requests, v.party, v.partySchedule, v.comments, v.download].every((x) => x !== true);
+  /** Mediathek off ⇒ Wünsche, Gemeinsam, Downloads off; Live-TV off ⇒ Darf aufnehmen off (on the values as they would be saved) */
+  const coupled = (v: Record<string, unknown>) => (hasLibrary(v.libraries) || [v.requests, v.party, v.partySchedule, v.comments, v.download].every((x) => x !== true))
+    && (v.liveTv === true || v.liveRecord !== true);
   it('every sequence of up to three switches and field edits from a coupled role stays coupled', () => {
     const m = matrix();
     let checked = 0;
@@ -198,8 +234,13 @@ describe('fieldsOfArea', () => {
     expect(fieldsOfArea(m, 'downloads').map((f) => f.key)).toEqual(['maxDownloads', 'downloadMaxHeight', 'downloadDays']);
     expect(fieldsOfArea(m, 'requests').map((f) => f.key)).toEqual(['requestsPerMonth']);
     expect(fieldsOfArea(m, 'together').map((f) => f.key)).toEqual(['party', 'partySchedule', 'comments']);
-    expect(fieldsOfArea(m, 'livetv').map((f) => f.key)).toEqual([]); // liveRecord is planned: hidden
+    expect(fieldsOfArea(m, 'livetv').map((f) => f.key)).toEqual(['liveRecord']); // Darf aufnehmen: recordings shipped
     expect(fieldsOfArea(m, 'general').map((f) => f.key)).toEqual(['maxStreams', 'cast']);
+  });
+  it('a planned field (none today) is hidden everywhere', () => {
+    const planned = { ...m, fields: [...m.fields, F('later', 'bool', 'livetv', { planned: 'recordings' })] };
+    expect(visibleFields(planned).map((f) => f.key)).not.toContain('later');
+    expect(fieldsOfArea(planned, 'livetv').map((f) => f.key)).toEqual(['liveRecord']);
   });
   it('a field whose feature is off is not listed', () => {
     expect(fieldsOfArea({ ...m, features: { requests: false, cast: false, livetv: true } }, 'general').map((f) => f.key)).toEqual(['maxStreams']);

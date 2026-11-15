@@ -185,7 +185,10 @@ describe('GET /api/admin/roles', () => {
   it('matrix.livetv is null without Live TV; fields carry their area', async () => {
     const m = (await get()).matrix;
     expect(m.livetv).toBeNull();
-    expect(m.fields.find((f: { key: string }) => f.key === 'liveRecord')).toMatchObject({ area: 'livetv', planned: 'recordings' });
+    // recordings shipped (Phase 3): "Darf aufnehmen" is a Live-TV right like any other, no longer planned (roles redesign §5.4)
+    const rec = m.fields.find((f: { key: string }) => f.key === 'liveRecord');
+    expect(rec).toMatchObject({ area: 'livetv', kind: 'bool', requires: 'livetv' });
+    expect(rec).not.toHaveProperty('planned');
     expect(m.fields.find((f: { key: string }) => f.key === 'cast')).toMatchObject({ area: 'general' });
     expect(m.roles.every((r: { livetvGroupIds: unknown }) => Array.isArray(r.livetvGroupIds))).toBe(true);
   });
