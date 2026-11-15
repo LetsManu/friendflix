@@ -284,7 +284,7 @@ describe('rule changes (A-M15)', () => {
     const r = await call(anna, 'POST', '/api/livetv/rules', { kind: 'series', channelId: nordlicht, seriesKey: 'die leuchtturmwärter', title: 'Die Leuchtturmwärter', onlyNew: false, padBefore: 0 });
     expect(r.statusCode, r.body).toBe(201);
     await env.kv.set(`conv:resv:${nordlicht}`, '1', 600);
-    await env.kv.indexAdd('conv:resvs', nordlicht);
+    await env.kv.indexAdd('conv:resvs', nordlicht, 600);
     expect(await recordingUses(env.ctx, nordlicht)).toBe(true);
     expect((await call(anna, 'DELETE', `/api/livetv/rules/${r.json().rule.id}`)).statusCode).toBe(204);
     expect(await recordingUses(env.ctx, nordlicht)).toBe(false);
