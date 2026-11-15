@@ -5,10 +5,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
-import { requirePerm } from '../permGuard.js';
+import { permsOf, requirePerm } from '../permGuard.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { livetvInstalled, livetvSystem } from './detect.js';
-import { adminListRecordings, deleteRecording, effectiveStorage, getRecording, libraryModeAvailable, listRecordings, mayRecord, progKey, recordingView, recordSettings, seriesKeyOf, setKeep, setVisibility, visibleRecording, REC_STATES, type RecState } from './recordings.js';
+import { adminListRecordings, deleteRecording, effectiveStorage, getRecording, libraryModeAvailable, listRecordings, mayRecord, progKey, recordingView, recordSettings, seriesKeyOf, setKeep, setVisibility, visibleRecording, REC_STATES, VISIBILITIES, type RecState } from './recordings.js';
 import { expandRules, forecast, insertScheduled, programmeAt, releaseReservation, validTz, type RuleRow } from './recsched.js';
 import { exportToLibrary, usage } from './recstore.js';
 import { channelAllowed } from './rights.js';
@@ -158,7 +158,10 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   /** *Behalten*, *Teilen…* (owner or admin), padding (owner, while scheduled) */
-  app.patch('/api/livetv/recordings/:id', write, async (req, reply) => {
+  // an owner may always narrow a share and delete their own recordings, also after their role lost `liveRecord` (A-M13); widening a
+  // share, keep and padding still need it (checked inside)
+  const ownerWrite = { preHandler: requireUser(ctx), config: writeLimit };
+  app.patch('/api/livetv/recordings/:id', ownerWrite, async (req, reply) => {
     const id = idParam(req);
     if (!id) return notFound(reply);
     const b = patchBody.safeParse(req.body);
@@ -169,6 +172,9 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     // a recording this profile cannot see is unknown to it (an admin may share any)
     if (!r || r.state === 'cancelled' || r.state === 'deleting' || (!a.admin && !(await visibleRecording(ctx, u, profile, id)))) return notFound(reply);
     if (r.profile_id !== profile.id && !a.admin) return reply.code(403).send({ error: 'forbidden' });
+    const widens = b.data.visibility !== undefined && VISIBILITIES.indexOf(b.data.visibility) > VISIBILITIES.indexOf(r.visibility);
+    const needsRecord = widens || b.data.keep !== undefined || b.data.padBefore !== undefined || b.data.padAfter !== undefined;
+    if (needsRecord && !(await permsOf(ctx, req)).liveRecord) return reply.code(403).send({ error: 'record_forbidden' });
     if ((b.data.padBefore !== undefined || b.data.padAfter !== undefined)) {
       if (r.profile_id !== profile.id) return reply.code(403).send({ error: 'forbidden' });
       const u2 = await ctx.db.query(
@@ -176,7 +182,10 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
         [id, b.data.padBefore !== undefined ? b.data.padBefore * 60 : null, b.data.padAfter !== undefined ? b.data.padAfter * 60 : null]);
       if (!u2.rowCount) return reply.code(409).send({ error: 'not_scheduled' });
     }
-    if (b.data.keep !== undefined) await setKeep(ctx, a, id, b.data.keep);
+    if (b.data.keep !== undefined) {
+      await setKeep(ctx, a, id, b.data.keep);
+      if (r.profile_id !== profile.id) await audit(ctx, a.userId, 'livetv.rec.keep', id, { fields: ['keep'] }); // an admin's change (A-M9)
+    }
     if (b.data.visibility !== undefined) {
       await setVisibility(ctx, a, id, b.data.visibility);
       if (r.profile_id !== profile.id) await audit(ctx, a.userId, 'livetv.rec.share', id, { fields: ['visibility'] });
@@ -185,7 +194,7 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     return { recording: v ?? null };
   });
 
-  app.delete('/api/livetv/recordings/:id', write, async (req, reply) => {
+  app.delete('/api/livetv/recordings/:id', ownerWrite, async (req, reply) => {
     const id = idParam(req);
     if (!id) return notFound(reply);
     const { user: u, profile } = who(req);

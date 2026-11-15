@@ -290,6 +290,21 @@ describe('changing and deleting', () => {
     expect((await call(anna, 'PATCH', `/api/livetv/recordings/${id}`, { padAfter: 10 })).json()).toEqual({ error: 'not_scheduled' });
   });
 
+  it('A-M13: an owner without liveRecord may still narrow the share and delete; widening and keep need it', async () => {
+    const id = await row({ profile_id: gastId, user_id: gastId, state: 'done', visibility: 'everyone', bytes: 10 });
+    expect((await call(gast, 'PATCH', `/api/livetv/recordings/${id}`, { visibility: 'private' })).statusCode).toBe(200);
+    expect((await call(gast, 'PATCH', `/api/livetv/recordings/${id}`, { visibility: 'account' })).json()).toEqual({ error: 'record_forbidden' });
+    expect((await call(gast, 'PATCH', `/api/livetv/recordings/${id}`, { keep: true })).json()).toEqual({ error: 'record_forbidden' });
+    recorders.add(id);
+    expect((await call(gast, 'DELETE', `/api/livetv/recordings/${id}`)).statusCode).toBe(204);
+  });
+
+  it('A-M9: an admin\'s keep change on somebody else\'s recording is audited', async () => {
+    const id = await row({ state: 'done', bytes: 10, visibility: 'everyone' });
+    expect((await call(admin, 'PATCH', `/api/livetv/recordings/${id}`, { keep: true })).statusCode).toBe(200);
+    expect((await env.pool.query("select action, target, meta from audit_log where action like 'livetv.rec.%'")).rows).toEqual([{ action: 'livetv.rec.keep', target: id, meta: { fields: ['keep'] } }]);
+  });
+
   it('progress: the owner\'s 90 % marks it watched', async () => {
     const id = await row({ state: 'done', duration_s: 1000, bytes: 10 });
     await call(anna, 'POST', `/api/livetv/recordings/${id}/progress`, { positionS: 500 });
