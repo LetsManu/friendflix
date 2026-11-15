@@ -130,6 +130,18 @@ describe('/media/r/<token>/<file>', () => {
     expect((await raw(R(T_DONE, '0.ts'), { method: 'OPTIONS' })).status).toBe(204);
   });
 
+  it('B-I7: a suffix range, an out-of-range start and a range on an empty file', async () => {
+    const tail = await raw(R(T_DONE, '0.ts'), { headers: { range: 'bytes=-100' } });
+    expect([tail.status, tail.headers['content-range']]).toEqual([206, `bytes ${SEGMENT.length - 100}-${SEGMENT.length - 1}/${SEGMENT.length}`]);
+    expect(tail.body).toEqual(SEGMENT.subarray(SEGMENT.length - 100));
+    const past = await raw(R(T_DONE, '0.ts'), { headers: { range: `bytes=${SEGMENT.length}-` } });
+    expect([past.status, past.headers['content-range'], past.body.toString()]).toEqual([416, `bytes */${SEGMENT.length}`, 'range not satisfiable']);
+    writeFileSync(join(root, DIR, '9.ts'), '');
+    expect((await raw(R(T_DONE, '9.ts'), { headers: { range: 'bytes=0-' } })).status).toBe(416);
+    const empty = await raw(R(T_DONE, '9.ts'));
+    expect([empty.status, empty.headers['content-length'], empty.body.length]).toEqual([200, '0', 0]);
+  });
+
   it('a removed file is 404, never a partial body', async () => {
     writeFileSync(join(root, DIR, '5.ts'), SEGMENT);
     expect((await raw(R(T_DONE, '5.ts'))).status).toBe(200);

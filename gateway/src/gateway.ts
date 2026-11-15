@@ -759,45 +759,34 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     return serveFile(req, res, t);
   }
 
-  async function serveFile(req: IncomingMessage, res: ServerResponse, t: Extract<DownloadTarget, { kind: 'file' }>) {
-    const fail = (code: number, body: string, extra: Record<string, string> = {}) => {
-      count(String(code));
-      return end(res, code, body, 'text/plain', { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...extra });
-    };
-    if (!opts.downloadDir) return fail(503, 'unavailable');
-    if (!DL_FILE.test(t.file) || !DL_ETAG.test(t.etag) || !Number.isSafeInteger(t.size) || t.size < 0) return fail(500, 'error');
-    const root = await realpath(resolve(opts.downloadDir)).catch(() => null);
-    if (!root) return fail(503, 'unavailable');
-    const full = resolve(root, t.file);
-    if (!full.startsWith(root + sep)) return fail(500, 'error');
+  /**
+   * One file of a read-only mount, the way both file routes serve it (B-I6): its real path must be `full` below `root`, it is opened
+   * without following a link (a file that is gone answers 404 before any byte), one range at most (If-Range with `etag`), then streamed.
+   * `expectSize`: a download not prepared completely yet answers 503. A client that left meanwhile gets nothing and costs no slot (B-M5).
+   */
+  async function sendFile(req: IncomingMessage, res: ServerResponse, o: {
+    full: string; headers: Record<string, string>; etag?: string; expectSize?: number;
+    count: (code: string) => void; fail: (code: number, body: string, extra?: Record<string, string>) => void; onBytes: (n: number) => void;
+  }) {
     let fh;
     try {
-      fh = await open(full, fsc.O_RDONLY | fsc.O_NOFOLLOW);
+      fh = await open(o.full, fsc.O_RDONLY | fsc.O_NOFOLLOW);
     } catch {
-      return fail(404, 'not found');
+      return o.fail(404, 'not found');
     }
     let handedOver = false;
     try {
       const st = await fh.stat();
-      const real = await realpath(full).catch(() => null);
-      if (!st.isFile() || real !== full) return fail(404, 'not found');
-      if (st.size !== t.size) return fail(503, 'not ready', { 'retry-after': '30' });
+      const real = await realpath(o.full).catch(() => null);
+      if (!st.isFile() || real !== o.full) return o.fail(404, 'not found');
+      if (o.expectSize !== undefined && st.size !== o.expectSize) return o.fail(503, 'not ready', { 'retry-after': '30' });
       const size = st.size;
-      const etag = `"${t.etag}"`;
-      const base: Record<string, string> = {
-        'content-type': 'video/mp4',
-        'accept-ranges': 'bytes',
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-        etag,
-        vary: 'Cookie',
-      };
       let start = 0;
       let endB = size - 1;
       let partial = false;
       const rh = req.headers.range;
       const ifRange = req.headers['if-range'];
-      if (typeof rh === 'string' && (ifRange === undefined || ifRange === etag)) {
+      if (typeof rh === 'string' && (o.etag === undefined || ifRange === undefined || ifRange === o.etag)) {
         const r = /^bytes=(\d*)-(\d*)$/.exec(rh.trim()); // exactly one range; lists and other units are refused
         let ok = false;
         if (r && (r[1] || r[2])) {
@@ -810,18 +799,19 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
             ok = start < size && start <= endB;
           }
         }
-        if (!ok) return fail(416, 'range not satisfiable', { 'content-range': `bytes */${size}` });
+        if (!ok) return o.fail(416, 'range not satisfiable', { 'content-range': `bytes */${size}` });
         partial = true;
       }
+      if (res.destroyed) return; // the client left during the checks: nothing to send, not counted
       const len = size === 0 ? 0 : endB - start + 1;
-      const hdr = { ...base, 'content-length': String(len), ...(partial ? { 'content-range': `bytes ${start}-${endB}/${size}` } : {}) };
-      count(partial ? '206' : '200');
+      const hdr = { ...o.headers, 'accept-ranges': 'bytes', 'content-length': String(len), ...(partial ? { 'content-range': `bytes ${start}-${endB}/${size}` } : {}) };
+      o.count(partial ? '206' : '200');
       res.writeHead(partial ? 206 : 200, hdr);
       if (req.method === 'HEAD' || len === 0) return void res.end();
       handedOver = true;
       m.active++;
       const rs = fh.createReadStream({ start, end: endB, autoClose: true });
-      rs.on('data', (c) => (m.dlBytes += c.length));
+      rs.on('data', (c) => o.onBytes(c.length));
       rs.on('error', () => res.destroy());
       res.once('close', () => {
         m.active--;
@@ -831,6 +821,24 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     } finally {
       if (!handedOver) await fh.close().catch(() => {});
     }
+  }
+
+  async function serveFile(req: IncomingMessage, res: ServerResponse, t: Extract<DownloadTarget, { kind: 'file' }>) {
+    const fail = (code: number, body: string, extra: Record<string, string> = {}) => {
+      count(String(code));
+      return end(res, code, body, 'text/plain', { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...extra });
+    };
+    if (!opts.downloadDir) return fail(503, 'unavailable');
+    if (!DL_FILE.test(t.file) || !DL_ETAG.test(t.etag) || !Number.isSafeInteger(t.size) || t.size < 0) return fail(500, 'error');
+    const root = await realpath(resolve(opts.downloadDir)).catch(() => null);
+    if (!root) return fail(503, 'unavailable');
+    const full = resolve(root, t.file);
+    if (!full.startsWith(root + sep)) return fail(500, 'error');
+    const etag = `"${t.etag}"`;
+    return sendFile(req, res, {
+      full, etag, expectSize: t.size, count, fail, onBytes: (n) => { m.dlBytes += n; },
+      headers: { 'content-type': 'video/mp4', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', etag, vary: 'Cookie' },
+    });
   }
 
   const tooLong = (url: URL) => url.search.length > 2049 || [...url.searchParams].length > 40;
@@ -1537,60 +1545,14 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     if (!root) return fail(503, 'unavailable', { 'retry-after': '30' });
     const full = resolve(root, auth.dir, file);
     if (!full.startsWith(root + sep + auth.dir + sep)) return fail(403, 'forbidden');
-    let fh;
-    try {
-      fh = await open(full, fsc.O_RDONLY | fsc.O_NOFOLLOW);
-    } catch {
-      return fail(404, 'not found');
-    }
-    let handedOver = false;
-    try {
-      const st = await fh.stat();
-      const real = await realpath(full).catch(() => null);
-      if (!st.isFile() || real !== full) return fail(404, 'not found');
-      const ext = file.slice(file.lastIndexOf('.') + 1);
-      const size = st.size;
-      const base: Record<string, string> = {
-        'content-type': LIVE_TYPES[ext]!, 'accept-ranges': 'bytes', 'x-content-type-options': 'nosniff', ...CAST_CORS,
+    const ext = file.slice(file.lastIndexOf('.') + 1);
+    return sendFile(req, res, {
+      full, count: recCount, fail, onBytes: (n) => { m.bytes += n; },
+      headers: {
+        'content-type': LIVE_TYPES[ext]!, 'x-content-type-options': 'nosniff', ...CAST_CORS,
         'cache-control': ext === 'm3u8' ? (auth.growing ? 'no-store' : 'private, max-age=60') : 'private, max-age=3600',
-      };
-      let start = 0;
-      let endB = size - 1;
-      let partial = false;
-      const rh = req.headers.range;
-      if (typeof rh === 'string') {
-        const r = /^bytes=(\d*)-(\d*)$/.exec(rh.trim()); // exactly one range; lists and other units are refused
-        let ok = false;
-        if (r && (r[1] || r[2])) {
-          if (!r[1]) {
-            const n = Number(r[2]);
-            if (n > 0) { start = Math.max(0, size - n); endB = size - 1; ok = size > 0; }
-          } else {
-            start = Number(r[1]);
-            endB = r[2] ? Math.min(Number(r[2]), size - 1) : size - 1;
-            ok = start < size && start <= endB;
-          }
-        }
-        if (!ok) return fail(416, 'range not satisfiable', { 'content-range': `bytes */${size}` });
-        partial = true;
-      }
-      const len = size === 0 ? 0 : endB - start + 1;
-      recCount(partial ? '206' : '200');
-      res.writeHead(partial ? 206 : 200, { ...base, 'content-length': String(len), ...(partial ? { 'content-range': `bytes ${start}-${endB}/${size}` } : {}) });
-      if (req.method === 'HEAD' || len === 0) return void res.end();
-      handedOver = true;
-      m.active++;
-      const rs = fh.createReadStream({ start, end: endB, autoClose: true });
-      rs.on('data', (c) => (m.bytes += c.length));
-      rs.on('error', () => res.destroy());
-      res.once('close', () => {
-        m.active--;
-        rs.destroy();
-      });
-      rs.pipe(res);
-    } finally {
-      if (!handedOver) await fh.close().catch(() => {});
-    }
+      },
+    });
   }
   server.keepAliveTimeout = 65_000;
   return { server, metrics };
