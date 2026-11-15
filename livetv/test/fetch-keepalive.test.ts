@@ -107,7 +107,11 @@ describe('a connection pool for a run', () => {
       if (req.url === '/live/index.m3u8') {
         res.end(['#EXTM3U', '#EXT-X-TARGETDURATION:1', `#EXT-X-MEDIA-SEQUENCE:${seg}`, '#EXTINF:1.0,', `${seg}.ts`, ''].join('\n'));
         seg++;
-      } else res.end(`[${req.url}]`);
+      } else {
+        // echo only the segment number, as plain text (never the raw request path)
+        const n = /^\/live\/(\d+)\.ts$/.exec(req.url ?? '');
+        res.writeHead(200, { 'content-type': 'text/plain' }).end(n ? `[/live/${Number(n[1])}.ts]` : '[?]');
+      }
     });
     const d = edges();
     const o = await openInput({ url: `http://iptv.example.com:${s.port}/live/index.m3u8`, kind: 'hls', allowLan: false }, { guard: d });
