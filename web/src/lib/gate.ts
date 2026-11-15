@@ -6,6 +6,7 @@
  * Accounts with more than one profile see the gate once per browser session (new tab/window = new session),
  * like the big streaming apps. The pick is remembered in sessionStorage by /profiles.
  */
+import type { Areas } from './capabilities';
 import { deniedKeys, permsFrom, type PermKey, type Perms } from './perms';
 
 /** the switched-off rights of an /api/me `perms` object */
@@ -21,7 +22,7 @@ export const ACTIVE_KEY = 'ff-active-profile';
 /** sessionStorage flag lib/api.ts sets before reloading after a profile switch in another tab */
 const RELOAD_KEY = 'ff_profile_reload';
 
-export interface GateMe { profileRequired?: boolean; profileCount?: number; profileChosen?: boolean; tv?: boolean; kids?: boolean; onboarded?: boolean }
+export interface GateMe { profileRequired?: boolean; profileCount?: number; profileChosen?: boolean; tv?: boolean; kids?: boolean; onboarded?: boolean; areas?: Partial<Areas> }
 export interface BootHint {
   approved: boolean; multi: boolean; tv: boolean;
   /** single-profile accounts only: that profile never changes */ profile?: string;
@@ -29,6 +30,7 @@ export interface BootHint {
   /** the last answer was a kids profile: only kids routes may render early */ kids?: boolean;
   /** the last answer still owed the /welcome onboarding: nothing renders early */ welcome?: boolean;
   /** the last answer had no request service (features.requests false; a person's own requests right is in noPerms): request links stay hidden until /api/me answers */ noRequests?: boolean;
+  /** the last answer had no Mediathek (`areas.library` false): no library tab or page renders early */ library?: false;
   /** the rights switched off per profile id (`NO_PROFILE` = no active profile), from the last answers: their entries stay hidden until /api/me answers, so nothing jumps in later */ noPerms?: Record<string, PermKey[]>;
 }
 
@@ -36,8 +38,27 @@ export interface BootHint {
 /** routes a kids profile may open (the server also answers 403 kids_profile on every social API); /new shows what its endpoints return for a kids profile; /live shows the kid-friendly channels only (the server filters, spec 11.4) */
 const KIDS_ALLOWED = /^\/(kids|item|watch|live|profiles|offline|welcome)(\/|$)|^\/(search|settings|new)\/?$/;
 export const kidsAllowed = (path: string): boolean => KIDS_ALLOWED.test(path);
-/** where the layout sends a kids profile instead of `path`, or null when the route is fine */
-export const kidsRedirect = (me: Pick<GateMe, 'kids'> | null | undefined, path: string): string | null => (me?.kids && !kidsAllowed(path) ? '/kids' : null);
+/**
+ * where the layout sends a kids profile instead of `path`, or null when the route is fine. The kids home is library-based: a kids
+ * profile without the Mediathek follows `areaRedirect` only (else `/` and `/kids` would send to each other).
+ */
+export const kidsRedirect = (me: Pick<GateMe, 'kids' | 'areas'> | null | undefined, path: string): string | null =>
+  (me?.kids && me.areas?.library !== false && !kidsAllowed(path) ? '/kids' : null);
+
+// ---- people without libraries (roles redesign §6): only Live TV and the account pages ----
+/** the routes a person without the Mediathek may open: an allowlist, so a future library page is redirected by default */
+const LIBRARY_FREE = /^\/(live|profiles|settings|devices|me|remote|offline|welcome|admin|invite|login|reset|restore|confirm-email|pending|setup|diagnose|tv|cast-receiver)(\/|$)/;
+export const libraryFree = (path: string): boolean => LIBRARY_FREE.test(path);
+/**
+ * where the layout sends a person without the area of `path`, or null. Without the Mediathek everything off the allowlist goes to
+ * Live TV (`livetv`: features.livetv), else to `/`, which then shows the empty state (and is allowed only then). Runs before
+ * `kidsRedirect`; an older backend without `areas` means all on.
+ */
+export const areaRedirect = (me: Pick<GateMe, 'areas'> | null | undefined, path: string, livetv: boolean): string | null => {
+  if (me?.areas?.library !== false || libraryFree(path)) return null;
+  if (livetv) return '/live';
+  return path === '/' ? null : '/';
+};
 
 // ---- onboarding (/welcome): new profiles go through it once, after the profile and language gates ----
 /** pages that never send to /welcome (the onboarding itself, the picker, public and remote pages, the setup wizard's extras) */
@@ -83,9 +104,13 @@ export function hintOf(me: GateMe & { deviceApproved?: boolean; profile?: { id: 
   const multi = (me.profileCount ?? 0) > 1;
   return {
     approved: Boolean(me.deviceApproved), multi, tv: Boolean(me.tv), ...(!multi && me.profile?.id ? { profile: me.profile.id } : {}), ...(me.language ? { lang: me.language } : {}),
-    ...(me.kids ? { kids: true } : {}), ...(me.onboarded === false ? { welcome: true } : {}), ...(me.features?.requests === false ? { noRequests: true } : {}), ...((n) => (n ? { noPerms: n } : {}))(permsMap(prev?.noPerms, me.profile?.id, me.perms)),
+    ...(me.kids ? { kids: true } : {}), ...(me.onboarded === false ? { welcome: true } : {}), ...(me.features?.requests === false ? { noRequests: true } : {}), ...(me.areas?.library === false ? { library: false as const } : {}),
+    ...((n) => (n ? { noPerms: n } : {}))(permsMap(prev?.noPerms, me.profile?.id, me.perms)),
   };
 }
+
+/** the Mediathek as the hint expects it (an old hint or none: on) */
+export const hintLibrary = (h: BootHint | null): boolean => h?.library !== false;
 
 /** profile id early requests of this tab use: the one this tab ran with, else the only profile of a single-profile account */
 export const earlyProfile = (h: BootHint | null, tabProfile: string | null): string | null => tabProfile ?? (h && !h.multi ? h.profile ?? null : null);
@@ -104,7 +129,8 @@ export function parseHint(raw: string | null | undefined): BootHint | null {
     if (!(h && typeof h === 'object' && typeof h.approved === 'boolean' && typeof h.multi === 'boolean' && typeof h.tv === 'boolean')) return null;
     return {
       approved: h.approved, multi: h.multi, tv: h.tv, ...(typeof h.profile === 'string' && h.profile ? { profile: h.profile } : {}), ...(typeof h.lang === 'string' && /^[a-z]{2}$/.test(h.lang) ? { lang: h.lang } : {}),
-      ...(h.kids === true ? { kids: true } : {}), ...(h.welcome === true ? { welcome: true } : {}), ...(h.noRequests === true ? { noRequests: true } : {}), ...((n) => (n ? { noPerms: n } : {}))(parsePermsMap(h.noPerms)),
+      ...(h.kids === true ? { kids: true } : {}), ...(h.welcome === true ? { welcome: true } : {}), ...(h.noRequests === true ? { noRequests: true } : {}), ...(h.library === false ? { library: false as const } : {}),
+      ...((n) => (n ? { noPerms: n } : {}))(parsePermsMap(h.noPerms)),
     };
   } catch { return null; }
 }
@@ -114,7 +140,8 @@ export function parseHint(raw: string | null | undefined): BootHint | null {
  * approved device, no TV, and no gate due in this session. Wrong guesses are corrected as soon as /api/me arrives.
  */
 export const canRenderEarly = (h: BootHint | null, sessionPicked: boolean, path: string, activeProfile: string | null = 'x', reloading = false): boolean =>
-  Boolean(h && h.approved && !h.tv && !(h.multi && !sessionPicked) && path !== '/profiles' && activeProfile && !reloading && !h.welcome && !(h.kids && !kidsAllowed(path)));
+  Boolean(h && h.approved && !h.tv && !(h.multi && !sessionPicked) && path !== '/profiles' && activeProfile && !reloading && !h.welcome && !(h.kids && !kidsAllowed(path))
+    && !(h.library === false && !libraryFree(path)));
 
 const ss = () => { try { return sessionStorage; } catch { return null; } };
 const ls = () => { try { return localStorage; } catch { return null; } };

@@ -63,6 +63,12 @@ describe('phoneTabs', () => {
     expect(tabs[2]).toEqual({ href: '/live', key: 'live', icon: 'tv' });
     expect(phoneTabs(false, true).map((t) => t.key)).toEqual(['home', 'new', 'live', 'myList']);
   });
+  it('without a library: Live only (or nothing)', () => {
+    expect(phoneTabs(false, true, false)).toEqual([{ href: '/live', key: 'live', icon: 'tv' }]);
+    expect(phoneTabs(true, true, false).map((t) => t.key)).toEqual(['live']);
+    expect(phoneTabs(false, false, false)).toEqual([]);
+    expect(phoneTabs(false, true, true).map((t) => t.key)).toEqual(['home', 'new', 'live', 'myList']);
+  });
 });
 
 describe('the tab labels (ruling 54: Merkliste stays)', () => {
