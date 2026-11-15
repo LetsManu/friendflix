@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, ApiError } from '#lib/api';
 import { confirm } from '#lib/ui/confirm';
 import { toast } from '#lib/ui/toast';
-import { canDelete, copyRole, deleteMoving, deleteRole, inUse, moveTargetsOf } from './roleDelete';
+import { canDelete, deleteMoving, deleteRole, inUse, moveTargetsOf } from './roleDelete';
 
 vi.mock('#lib/api', async (orig) => ({ ...(await orig<typeof import('#lib/api')>()), api: vi.fn() }));
 vi.mock('#lib/ui/confirm', () => ({ confirm: vi.fn() }));
@@ -90,13 +90,4 @@ describe('the shared delete flow', () => {
     });
   });
 
-  it('copyRole: POSTs label and source, returns the new key', async () => {
-    vi.mocked(api).mockResolvedValue({ key: 'kino-2' });
-    expect(await copyRole('Kino 2', 'kino')).toBe('kino-2');
-    expect(api).toHaveBeenCalledWith('/api/admin/roles', { method: 'POST', body: { label: 'Kino 2', from: 'kino' } });
-  });
-  it('copyRole passes the API error on', async () => {
-    vi.mocked(api).mockRejectedValue(new ApiError(409, { error: 'name_taken' }));
-    await expect(copyRole('Kino', 'kino')).rejects.toBeInstanceOf(ApiError);
-  });
 });

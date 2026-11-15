@@ -140,8 +140,8 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     await page.keyboard.press('Space');
     await expect(page.getByRole('button', { name: 'Speichern' })).toBeEnabled();
     const moved = await names();
-    // Liste, Nach Rolle (click and arrow key) and an area tab: each asks, and Weiter ordnen keeps everything
-    for (const go of [() => view(page, 'Liste').click(), () => view(page, 'Nach Rolle').click(), () => page.getByRole('tab', { name: 'Quellen' }).click(), async () => { await view(page, 'Reihenfolge').focus(); await page.keyboard.press('ArrowRight'); }]) {
+    // Liste, Personen (click and arrow key) and an area tab: each asks, and Weiter ordnen keeps everything
+    for (const go of [() => view(page, 'Liste').click(), () => view(page, 'Personen').click(), () => page.getByRole('tab', { name: 'Quellen' }).click(), async () => { await view(page, 'Reihenfolge').focus(); await page.keyboard.press('ArrowRight'); }]) {
       await go();
       await expect(ask).toBeVisible();
       await ask.getByRole('button', { name: 'Weiter ordnen' }).click();
@@ -214,42 +214,21 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     expect(writes(api, 'PATCH', /groups\/g-regional$/).map((c) => c.body)).toEqual([{ name: 'sport' }, { name: 'Nordküste' }]);
   });
 
-  test('matrix switch saves the group\'s roles', async ({ page, api }) => {
+  test('Gruppen & Rechte: the Personen view lists exceptions and links to Rollen & Rechte; no role × group switches', async ({ page, api }) => {
+    api.admin.livetv.area.exceptions = { [CLARA]: { allow: ['g-sport'], deny: [] } };
     await page.goto('/admin/livetv?tab=groups');
-    await view(page, 'Nach Rolle').click();
-    const grid = page.getByRole('table', { name: 'Gruppen nach Rolle' });
-    await expect(grid.getByRole('columnheader')).toHaveText(['Gruppen & Rechte', 'Familie', 'Freund', 'Gast', 'Crew']);
-    const sw = grid.getByRole('switch', { name: 'Sport für Gast' });
-    await expect(sw).toHaveAttribute('aria-checked', 'false');
-    await expect(grid.getByRole('switch', { name: 'Sport für Familie' })).toHaveAttribute('aria-checked', 'true');
-    await sw.click();
-    await expect(sw).toHaveAttribute('aria-checked', 'true');
-    expect(writes(api, 'PATCH', /groups\/g-sport$/)[0]!.body).toEqual({ roles: ['family', 'friend', 'guest'] });
-    await grid.getByRole('switch', { name: 'Sport für Familie' }).click();
-    expect(writes(api, 'PATCH', /groups\/g-sport$/)[1]!.body).toEqual({ roles: ['friend', 'guest'] });
-    // an unreleased group has no working switches (it is released first)
-    const off = grid.getByRole('switch', { name: 'Kinofilme für Familie: nicht freigegeben' });
-    await expect(off).toBeDisabled();
-    await off.click({ force: true });
-    expect(writes(api, 'PATCH', /groups\/g-kino$/)).toHaveLength(0);
-    await expect(page.getByText('Admins sehen alle freigegebenen Gruppen.')).toBeVisible();
-  });
-
-  test('matrix: an unreleased group\'s kept roles are not shown as granted', async ({ page, api }) => {
-    // the roles of an unreleased group stay stored (Freigabe zurücknehmen keeps them), but nobody sees the group
-    api.admin.livetv.area.groups.find((g) => g.id === 'g-kino')!.roles = ['family', 'friend'];
-    await page.goto('/admin/livetv?tab=groups');
-    await view(page, 'Nach Rolle').click();
-    const grid = page.getByRole('table', { name: 'Gruppen nach Rolle' });
-    const kino = grid.getByRole('row', { name: /Kinofilme/ });
-    await expect(kino.getByRole('switch')).toHaveCount(4);
-    await expect(kino.locator('[aria-checked="true"]')).toHaveCount(0);
-    for (const sw of await kino.getByRole('switch').all()) {
-      await expect(sw).toBeDisabled();
-      await expect(sw).toHaveAccessibleName(/nicht freigegeben$/);
-    }
-    // a released row still shows its grants
-    await expect(grid.getByRole('row', { name: /Sport/ }).locator('[aria-checked="true"]')).toHaveCount(2);
+    await expect(view(page, 'Nach Rolle')).toHaveCount(0);
+    await view(page, 'Personen').click();
+    await expect(view(page, 'Personen')).toHaveAttribute('aria-checked', 'true');
+    // who sees which group is set per role on the role page now (roles redesign §5.6)
+    await expect(page.getByText('Welche Rolle welche Gruppen sieht, stellst du in Rollen & Rechte ein.')).toBeVisible();
+    await expect(page.getByRole('tabpanel', { name: 'Gruppen & Rechte' }).getByRole('link', { name: 'Rollen & Rechte', exact: true })).toHaveAttribute('href', '/admin/roles');
+    await expect(page.getByRole('table', { name: 'Gruppen nach Rolle' })).toHaveCount(0);
+    await expect(page.getByRole('switch', { name: /für (Familie|Freund|Gast|Crew)/ })).toHaveCount(0);
+    // the exceptions list is unchanged
+    const items = page.getByRole('region', { name: 'Personen mit Ausnahmen' }).getByRole('listitem');
+    await expect(items.filter({ hasText: 'Clara Fischer' })).toContainText('+ Sport');
+    await expect(items.filter({ hasText: 'Clara Fischer' }).getByRole('link', { name: 'Clara Fischer' })).toHaveAttribute('href', `/admin/users/${CLARA}?tab=rights`);
   });
 
   test('two quick role clicks on one group are written one after the other, the second on the first\'s result', async ({ page, api }) => {
@@ -268,13 +247,6 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     const patches = writes(api, 'PATCH', /groups\/g-sport$/);
     expect(patches.map((c) => c.body)).toEqual([{ roles: ['family', 'friend', 'guest'] }, { roles: ['friend', 'guest'] }]);
     expect(api.admin.livetv.area.groups.find((g) => g.id === 'g-sport')!.roles).toEqual(['friend', 'guest']);
-    // the matrix goes through the same path: its cells wait while the group is written
-    await view(page, 'Nach Rolle').click();
-    const grid = page.getByRole('table', { name: 'Gruppen nach Rolle' });
-    await grid.getByRole('switch', { name: 'Sport für Familie' }).click();
-    await expect(grid.getByRole('switch', { name: 'Sport für Freund' })).toBeDisabled();
-    await expect(grid.getByRole('switch', { name: 'Sport für Freund' })).toBeEnabled();
-    expect(writes(api, 'PATCH', /groups\/g-sport$/).map((c) => c.body).at(-1)).toEqual({ roles: ['friend', 'guest', 'family'] });
   });
 
   test('an exception on an unreleased group is marked as not effective, in the exceptions list too', async ({ page, api }) => {
@@ -283,7 +255,7 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     await menu(page, 'Regional', 'Freigabe zurücknehmen');
     await page.getByRole('alertdialog').getByRole('button', { name: 'Freigabe zurücknehmen' }).click();
     await expect(toasts(page).getByText('Freigabe zurückgenommen.')).toBeVisible();
-    await view(page, 'Nach Rolle').click();
+    await view(page, 'Personen').click();
     const items = page.getByRole('region', { name: 'Personen mit Ausnahmen' }).getByRole('listitem');
     await expect(items.filter({ hasText: 'Anna Beispiel' })).toContainText('Nicht freigegeben');
     await expect(items.filter({ hasText: 'Anna Beispiel' }).locator('.exc.plus')).toHaveCount(0);
@@ -352,10 +324,6 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     for (const n of ['Familie', 'Freund', 'Gast']) await expect(sport.getByRole('button', { name: n })).toBeDisabled();
     await sport.getByRole('button', { name: 'Familie' }).click({ force: true });
     expect(writes(api, 'PATCH', /groups\/g-sport$/).map((c) => c.body)).toEqual([{ roles: ['family', 'friend', 'guest'] }]);
-    // the matrix is locked the same way
-    await view(page, 'Nach Rolle').click();
-    await expect(page.getByRole('switch', { name: 'Sport für Familie' })).toBeDisabled();
-    await view(page, 'Liste').click();
     // a failed Neu laden stays stale
     await alert.getByRole('button', { name: 'Neu laden' }).click();
     await expect(alert).toBeVisible();
@@ -472,12 +440,7 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     await expect(bulk(page).getByRole('button', { name: 'Zusammenführen …' })).toBeDisabled();
     await expect(bulk(page).getByRole('button', { name: 'Freigeben …' })).toBeDisabled();
     await expect(row(page, 'g-kino').getByRole('button', { name: 'Freigeben …' })).toBeDisabled();
-    await view(page, 'Nach Rolle').click();
-    await expect(page.getByRole('switch', { name: 'Sport für Familie' })).toBeDisabled();
-    await expect(page.getByRole('switch', { name: 'Kinderinsel für Familie' })).toBeDisabled();
     // done: everything is back
-    await expect(page.getByRole('switch', { name: 'Kinderinsel für Familie' })).toBeEnabled();
-    await view(page, 'Liste').click();
     await expect(page.getByRole('button', { name: 'Gruppe anlegen' })).toBeEnabled();
     await expect(row(page, 'g-kinder').getByRole('switch', { name: 'Kinderfreundlich: Kinderinsel' })).toBeEnabled();
     await expect(bulk(page).getByRole('button', { name: 'Zusammenführen …' })).toBeEnabled();
@@ -512,7 +475,7 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     api.admin.livetv.area.exceptions = { [ANNA]: { allow: ['g-regional'], deny: [] } };
     await page.route(new RegExp(`/api/admin/users/${CLARA}/rights$`), (route) => route.fulfill({ status: 500, json: { error: 'boom' } }));
     await page.goto('/admin/livetv?tab=groups');
-    await view(page, 'Nach Rolle').click();
+    await view(page, 'Personen').click();
     const people = page.getByRole('region', { name: 'Personen mit Ausnahmen' });
     await expect(people).toContainText('1 Person konnte nicht gelesen werden');
     await expect(people.getByRole('listitem').filter({ hasText: 'Anna Beispiel' })).toBeVisible();
@@ -523,9 +486,9 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     let hits = 0;
     await page.route(new RegExp(`/api/admin/users/${ANNA}/rights$`), async (route) => { hits++; await new Promise((r) => setTimeout(r, 500)); await route.fallback(); });
     await page.goto('/admin/livetv?tab=groups');
-    await view(page, 'Nach Rolle').click();
+    await view(page, 'Personen').click();
     await view(page, 'Liste').click();
-    await view(page, 'Nach Rolle').click();
+    await view(page, 'Personen').click();
     await expect(page.getByRole('region', { name: 'Personen mit Ausnahmen' }).getByRole('listitem').filter({ hasText: 'Anna Beispiel' })).toBeVisible();
     expect(hits).toBe(1);
   });
@@ -535,13 +498,8 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     await page.goto('/admin/livetv?tab=groups');
     await expect(row(page, 'g-sport').getByRole('button', { name: 'Kombüse' })).toHaveAttribute('aria-disabled', 'true');
     await row(page, 'g-sport').getByRole('button', { name: 'Kombüse' }).click({ force: true });
-    await view(page, 'Nach Rolle').click();
-    const sw = page.getByRole('switch', { name: 'Sport für Kombüse' });
-    await expect(sw).toHaveAttribute('aria-disabled', 'true');
-    await sw.click({ force: true });
     expect(writes(api, 'PATCH', /groups\//)).toHaveLength(0);
     // the release sheet shows it, but it cannot be ticked
-    await view(page, 'Liste').click();
     await row(page, 'g-kino').getByRole('button', { name: 'Freigeben …' }).click();
     await expect(page.getByRole('dialog', { name: 'Gruppen freigeben' }).getByRole('checkbox', { name: 'Kombüse' })).toBeDisabled();
   });
@@ -610,7 +568,7 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
   test('exceptions list links to the person', async ({ page, api }) => {
     api.admin.livetv.area.exceptions = { [ANNA]: { allow: ['g-regional'], deny: [] }, [CLARA]: { allow: [], deny: ['g-nachrichten'] } };
     await page.goto('/admin/livetv?tab=groups');
-    await view(page, 'Nach Rolle').click();
+    await view(page, 'Personen').click();
     const people = page.getByRole('region', { name: 'Personen mit Ausnahmen' });
     const items = people.getByRole('listitem');
     await expect(items).toHaveCount(2);
@@ -623,7 +581,7 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
 
   test('without exceptions the list says so', async ({ page }) => {
     await page.goto('/admin/livetv?tab=groups');
-    await view(page, 'Nach Rolle').click();
+    await view(page, 'Personen').click();
     await expect(page.getByRole('region', { name: 'Personen mit Ausnahmen' })).toContainText('Noch keine Ausnahmen.');
   });
 });
@@ -632,37 +590,24 @@ test.describe('admin: Live TV in the people pages (desktop)', () => {
   test.use({ allowedConsole: /status of (400|409)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; install(api); api.admin.matrix.features.livetv = true; });
 
-  test('role matrix shows the Kanalgruppen row only with Live TV', async ({ page, api }) => {
+  test('the compare view shows the Kanalgruppen row only with Live TV; its cells link to the role page\'s groups', async ({ page, api }) => {
     api.admin.matrix.features.livetv = false;
     await page.goto('/admin/roles?view=compare');
     await expect(page.getByRole('grid', { name: 'Rechte der Rollen' })).toBeVisible();
     await expect(page.getByRole('rowheader', { name: 'Kanalgruppen' })).toHaveCount(0);
     await expect(page.getByRole('rowheader', { name: 'Live-TV', exact: true })).toHaveCount(0);
     api.admin.matrix.features.livetv = true;
+    api.admin.matrix.roles.find((r) => r.key === 'family')!.values.liveTv = true; // the chips are live (not dormant): one takes the focus
     await page.reload();
     await expect(page.getByRole('rowheader', { name: 'Kanalgruppen' })).toBeVisible();
-    const link = (name: string) => page.getByRole('link', { name });
-    await expect(link('Sport, Nachrichten +2')).toHaveAttribute('href', '/admin/livetv?tab=groups');
-    await expect(link('Sport, Nachrichten +3')).toBeVisible();
+    const link = (name: string) => page.getByRole('link', { name, exact: true });
+    await expect(link('Familie, Kanalgruppen: Sport, Nachrichten +2, bearbeiten')).toHaveAttribute('href', '/admin/roles/family?field=livetvGroups');
+    await expect(link('Admin, Kanalgruppen: Sport, Nachrichten +3, bearbeiten')).toBeVisible();
     await expect(page.getByRole('row', { name: /Kanalgruppen/ })).toContainText('Keine');
-    await link('Sport, Nachrichten +2').click();
-    await expect(page).toHaveURL(/\/admin\/livetv\?tab=groups$/);
-  });
-
-  test('role sheet lists the role\'s channel groups as chips', async ({ page, api }) => {
-    await page.goto('/admin/roles?view=compare');
-    await page.locator('button.rn', { hasText: 'Familie' }).click();
-    const sheet = page.getByRole('dialog', { name: 'Rolle „Familie“' });
-    const sec = sheet.getByRole('region', { name: 'Kanalgruppen' });
-    await expect(sec.getByRole('listitem')).toHaveText(['Sport', 'Nachrichten', 'Kinderinsel', 'Natur & Tiere']);
-    await expect(sec.getByRole('link', { name: 'Unter „Gruppen & Rechte“ ändern' })).toHaveAttribute('href', '/admin/livetv?tab=groups');
-    await page.keyboard.press('Escape');
-    // without Live TV the section is not there
-    api.admin.matrix.features.livetv = false;
-    await page.reload();
-    await page.locator('button.rn', { hasText: 'Familie' }).click();
-    await expect(page.getByRole('dialog', { name: 'Rolle „Familie“' })).toBeVisible();
-    await expect(page.getByRole('region', { name: 'Kanalgruppen' })).toHaveCount(0);
+    await link('Familie, Kanalgruppen: Sport, Nachrichten +2, bearbeiten').click();
+    await expect(page).toHaveURL(/\/admin\/roles\/family\?field=livetvGroups$/);
+    // the role page focuses the first channel group
+    await expect(page.getByRole('group', { name: 'Kanalgruppen von Familie' }).getByRole('button').first()).toBeFocused();
   });
 
   test('Rechte tab adds Sport for a guest', async ({ page, api }) => {

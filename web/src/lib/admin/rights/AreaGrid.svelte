@@ -81,6 +81,11 @@
   .locked .sw::after { cursor: not-allowed; }
   .locked .track { opacity: .55; }
   .locked .ti, .locked .ic { opacity: .7; }
+  /* a link from the compare view to a detail of an area that is off lands here: a brief accent ring (opacity only) */
+  .card::before { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 2px var(--acc); opacity: 0; pointer-events: none; transition: opacity 400ms var(--fr-out, ease-out); }
+  .card:global(.flash)::before { opacity: 1; }
+  :global(html.m-still) .ag .card::before { transition: none; }
+  @media (prefers-reduced-motion: reduce) { .card::before { transition: none; } }
   /* the ring goes around the card the switch covers */
   .card:has(.sw:focus-visible) { outline: 2px solid #fff; outline-offset: 2px; box-shadow: 0 0 0 5px var(--ring-dark); }
   :global(html.m-still) .ag .knob { transition: none; }

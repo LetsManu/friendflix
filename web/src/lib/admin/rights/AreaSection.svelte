@@ -6,6 +6,8 @@
    * `FieldControl` with its marker line under it ("aus .env", "geändert (Standard: …)", "nicht gespeichert"; the line is always
    * there, so nothing moves when a value is staged). The slot adds what is not a field (the channel groups, the invitable switch).
    * A section fades in (opacity) when its area is switched on; it goes at once, so what is below moves only as the press's result.
+   * `locks` names the switches that wait for another area (Darf aufnehmen while Live-TV is off): shown off, locked, the marker line
+   * says why ("Braucht Live-TV").
    *   <AreaSection title="Mediathek" icon="film" fields={fieldsOfArea(m, 'library')} {role} {stage} {matrix} on:change={(e) => …} />
    */
   import { createEventDispatcher } from 'svelte';
@@ -27,13 +29,17 @@
   export let matrix: RoleMatrix;
   /** a save runs: every control is locked */
   export let disabled = false;
+  /** switches locked by the coupling (areas.ts fieldLocks): field key → the area it waits for */
+  export let locks: Record<string, 'library' | 'livetv'> = {};
 
   const dispatch = createEventDispatcher<{ change: { key: string; value: unknown } }>();
   const id = uid('as');
   const isStaged = (s: Stage, f: MatrixField): boolean => Object.hasOwn(s[role.key] ?? {}, f.key);
-  const valueOf = (s: Stage, f: MatrixField): unknown => (isStaged(s, f) ? s[role.key]![f.key] : role.values[f.key]);
-  /** under a control: staged, "geändert (Standard: …)" for a role-set value, or that it comes from .env */
-  function mark(s: Stage, f: MatrixField, _l: unknown): string {
+  /** a locked switch reads off (as the app offers it) */
+  const valueOf = (s: Stage, f: MatrixField, lk: typeof locks): unknown => (lk[f.key] ? false : isStaged(s, f) ? s[role.key]![f.key] : role.values[f.key]);
+  /** under a control: why it is locked, staged, "geändert (Standard: …)" for a role-set value, or that it comes from .env */
+  function mark(s: Stage, f: MatrixField, lk: typeof locks, _l: unknown): string {
+    if (lk[f.key]) return tr(lk[f.key] === 'livetv' ? 'adminPeople.roles.areas.needsLivetv' : 'adminPeople.roles.areas.needsLibrary');
     if (isStaged(s, f)) return tr('adminPeople.roles.unsaved');
     const src = role.sources[f.key];
     if (src === 'role') return changedFromText(role, f) ?? tr('adminPeople.roles.changedHere');
@@ -48,9 +54,9 @@
   {#if fields.length}<div class="fields">
   {#each fields as f (f.key)}
     <div class="fr" class:staged={isStaged(stage, f)} data-field={f.key}>
-      <FieldControl field={f} value={valueOf(stage, f)} libraries={matrix.libraries} {disabled} keepOne={role.base === 'admin'} reserveNone={false}
+      <FieldControl field={f} value={valueOf(stage, f, locks)} libraries={matrix.libraries} disabled={disabled || !!locks[f.key]} keepOne={role.base === 'admin'} reserveNone={false}
         on:change={(e) => dispatch('change', { key: f.key, value: e.detail })} />
-      <p class="mark" class:on={mark(stage, f, $locale) !== ''}>{mark(stage, f, $locale)}</p>
+      <p class="mark">{mark(stage, f, locks, $locale)}</p>
     </div>
   {/each}
   </div>{/if}

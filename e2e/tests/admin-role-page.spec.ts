@@ -4,6 +4,7 @@
 import type { Locator, Page } from '@playwright/test';
 import type { MockState } from '../mocks/api.js';
 import { expect, test } from '../fixtures.js';
+import { armTransition, expectAlongCurve, seekTransition } from '../helpers.js';
 import { envOnlyRole, ENV_ONLY_KEY } from '../mocks/admin.js';
 
 const bar = (page: Page) => page.getByRole('region', { name: 'Ungespeicherte Änderungen' });
@@ -121,6 +122,19 @@ test.describe('Rollen & Rechte: the role page', () => {
     await expect(area(page, 'Gemeinsam')).toBeFocused();
   });
 
+  test('keepFocus never lands on a locked card: the nearest unlocked control takes the focus', async ({ page }) => {
+    await page.goto('/admin/roles/friend');
+    const together = page.getByRole('region', { name: 'Gemeinsam', exact: true });
+    await together.getByRole('switch', { name: 'Watch-Partys' }).click();
+    // the card the focus would go to is locked meanwhile (as a card that waits for the Mediathek is): a stand-in for that state
+    await page.locator('[data-area="together"] [role="switch"]').evaluate((el) => el.setAttribute('aria-disabled', 'true'));
+    await together.getByRole('switch', { name: 'Kommentare' }).focus();
+    await page.keyboard.press('Space');
+    await expect(together).toHaveCount(0);
+    await expect(area(page, 'Gemeinsam')).not.toBeFocused();
+    await expect(area(page, 'Downloads')).toBeFocused(); // the next card, unlocked
+  });
+
   test('Live-TV groups: tick Hafenkanal → review "Live-TV-Gruppen: Nordlicht TV → Nordlicht TV, Hafenkanal" → PUT body livetvGroups [ids]', async ({ page, api }) => {
     liveTv(api);
     await page.goto('/admin/roles/friend');
@@ -175,6 +189,41 @@ test.describe('Rollen & Rechte: the role page', () => {
     await expect(page.getByText('Gespeichert, wirkt wenn Live-TV an ist')).toBeVisible();
     expect(Number(await g.evaluate((el) => getComputedStyle(el).opacity))).toBeLessThan(1);
     await expect(page.getByRole('button', { name: 'Keine', exact: true })).toBeDisabled();
+  });
+
+  test('Live-TV: Darf aufnehmen is a sub-switch; Live-TV off switches it off and locks it ("Braucht Live-TV"), on again restores it', async ({ page, api }) => {
+    liveTv(api);
+    Object.assign(values(api, 'friend'), { liveRecord: true });
+    await page.goto('/admin/roles/friend');
+    const sec = page.getByRole('region', { name: 'Live-TV', exact: true });
+    const rec = sec.getByRole('switch', { name: 'Darf aufnehmen' });
+    await expect(rec).toBeChecked();
+    await expect(rec).toBeEnabled();
+    const line = sec.locator('[data-field="liveRecord"] .mark');
+    const box = await pageBox(line);
+    await area(page, 'Live-TV').click();
+    await expect(rec).not.toBeChecked();
+    await expect(rec).toBeDisabled();
+    await expect(line).toHaveText('Braucht Live-TV');
+    expect(await pageBox(line)).toEqual(box); // the line was there all along
+    await expect(bar(page)).toContainText('2 Änderungen');
+    const sheet = await review(page);
+    await expect(sheet.getByRole('listitem')).toHaveText(['Freund · Live-TV: ✓ → –', 'Freund · Darf aufnehmen: ✓ → –']);
+    await page.keyboard.press('Escape');
+    await area(page, 'Live-TV').click();
+    await expect(bar(page)).toHaveCount(0);
+    await expect(rec).toBeChecked();
+    // on its own it switches like any right
+    await rec.click();
+    await (await review(page)).getByRole('button', { name: 'Speichern' }).click();
+    await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
+    expect(api.admin.matrix.puts).toEqual([{ role: 'friend', body: { perms: { liveRecord: false } } }]);
+    // a role saved without Live-TV: the switch reads off and stays locked
+    Object.assign(values(api, 'guest'), { liveTv: false, liveRecord: true });
+    await page.goto('/admin/roles/guest');
+    const g = page.getByRole('region', { name: 'Live-TV', exact: true }).getByRole('switch', { name: 'Darf aufnehmen' });
+    await expect(g).not.toBeChecked();
+    await expect(g).toBeDisabled();
   });
 
   test('admin page: area switches locked with "Admins dürfen immer alles"; groups read "Alle freigegebenen Gruppen"', async ({ page, api }) => {
@@ -316,16 +365,46 @@ test.describe('Rollen & Rechte: the role page', () => {
       return page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' });
     };
     await (await ask()).getByRole('button', { name: 'Abbrechen' }).click();
-    await expect(page.getByRole('dialog', { name: 'Rolle „Crew“ duplizieren' })).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Neue Rolle' })).toHaveCount(0);
     await expect(bar(page)).toBeVisible();
     await (await ask()).getByRole('button', { name: 'Verwerfen' }).click();
-    const dlg = page.getByRole('dialog', { name: 'Rolle „Crew“ duplizieren' });
+    const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
+    await expect(dlg.getByRole('radio', { name: 'Kopie von …' })).toBeChecked();
+    await expect(dlg.getByRole('combobox', { name: 'Rolle zum Kopieren' })).toHaveValue('crew');
     await dlg.getByRole('textbox', { name: 'Name' }).fill('Hafencrew');
     await dlg.getByRole('button', { name: 'Anlegen' }).click();
     await expect(page).toHaveURL(/\/admin\/roles\/hafencrew$/);
     await expect(page.getByRole('alertdialog')).toHaveCount(0); // asked once, before the copy
     expect(api.admin.matrix.roles.length).toBe(before + 1);
     expect(api.admin.matrix.puts).toEqual([]);
+  });
+
+  test('Duplizieren with staged edits: cancelling the new-role dialog keeps them (they go only once the copy exists)', async ({ page, api }) => {
+    await page.goto('/admin/roles/crew');
+    await area(page, 'Gemeinsam').click();
+    await expect(bar(page)).toContainText('3 Änderungen');
+    const before = api.admin.matrix.roles.length;
+    await page.getByRole('button', { name: 'Aktionen für Crew' }).click();
+    await page.getByRole('dialog', { name: 'Crew' }).getByRole('button', { name: 'Duplizieren' }).click();
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
+    await expect(dlg).toBeVisible();
+    // the edits are still staged behind the dialog
+    await expect(bar(page)).toContainText('3 Änderungen');
+    await page.keyboard.press('Escape');
+    await expect(dlg).toHaveCount(0);
+    await expect(bar(page)).toContainText('3 Änderungen');
+    await expect(area(page, 'Gemeinsam')).not.toBeChecked();
+    expect(api.admin.matrix.roles.length).toBe(before);
+    // Abbrechen in the dialog keeps them too
+    await page.getByRole('button', { name: 'Aktionen für Crew' }).click();
+    await page.getByRole('dialog', { name: 'Crew' }).getByRole('button', { name: 'Duplizieren' }).click();
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await dlg.getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(bar(page)).toContainText('3 Änderungen');
+    await (await review(page)).getByRole('button', { name: 'Speichern' }).click();
+    await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
+    expect(api.admin.matrix.puts).toEqual([{ role: 'crew', body: { perms: { party: false, partySchedule: false, comments: false } } }]);
   });
 
   test('a channel group that changed meanwhile: the groups are read again, a specific message, nothing is resent', async ({ page, api }) => {
@@ -337,7 +416,8 @@ test.describe('Rollen & Rechte: the role page', () => {
     // another admin takes Hafenkanal back meanwhile: the write answers 400 invalid livetvGroups
     api.admin.livetv.area.groups.find((x) => x.id === 'g-hafen')!.released = false;
     await (await review(page)).getByRole('button', { name: 'Speichern' }).click();
-    await expect(toasts(page).getByText('Die Kanalgruppen haben sich geändert. Bitte prüfe die Auswahl und speichere noch einmal.')).toBeVisible();
+    // the toast names the group that is gone
+    await expect(toasts(page).getByText('Die Kanalgruppen haben sich geändert. Bitte prüfe die Auswahl und speichere noch einmal. Nicht mehr verfügbar: Hafenkanal.')).toBeVisible();
     // the list is read again: Hafenkanal is gone, the choice without it stays staged (Nordlicht TV off)
     await expect(g.getByRole('button', { name: /^Hafenkanal/ })).toHaveCount(0);
     await expect(g.getByRole('button', { name: /^Nordlicht TV/ })).toHaveAttribute('aria-pressed', 'false');
@@ -369,7 +449,7 @@ test.describe('Rollen & Rechte: the role page', () => {
     expect(api.admin.matrix.puts).toEqual([{ role: 'crew', body: { label: 'Bordcrew' } }]);
     await page.getByRole('button', { name: 'Aktionen für Bordcrew' }).click();
     await page.getByRole('dialog', { name: 'Bordcrew' }).getByRole('button', { name: 'Duplizieren' }).click();
-    const dlg = page.getByRole('dialog', { name: 'Rolle „Bordcrew“ duplizieren' });
+    const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
     await dlg.getByRole('textbox', { name: 'Name' }).fill('Hafencrew');
     await dlg.getByRole('button', { name: 'Anlegen' }).click();
     await expect(page).toHaveURL(/\/admin\/roles\/hafencrew$/);
@@ -379,5 +459,168 @@ test.describe('Rollen & Rechte: the role page', () => {
     await page.getByRole('alertdialog', { name: 'Rolle „Hafencrew“ löschen?' }).getByRole('button', { name: 'Löschen' }).click();
     await expect(toasts(page).getByText('Rolle „Hafencrew“ gelöscht.')).toBeVisible();
     await expect(page).toHaveURL(/\/admin\/roles$/);
+  });
+});
+
+/** the save bar, the leave guard, the menu and the toasts, as the compare view's tests had them (that view is read-only now, roles redesign §1.1) */
+test.describe('Rollen & Rechte: the role page saves, guards and tells', () => {
+  test.use({ allowedConsole: /status of 502/ });
+  test.beforeEach(({ api }) => { api.asAdmin = true; });
+  /** the points (fractions of the duration) a seeked transition is read at */
+  const AT = [0, 0.125, 0.25, 0.5, 0.75, 1];
+  const rating = (page: Page) => page.getByRole('combobox', { name: 'Altersfreigabe' });
+
+  test('retry sends only the failed role\'s last body, not newer edits', async ({ page, api }) => {
+    api.admin.matrix.policyPartial = true;
+    await page.goto('/admin/roles/guest');
+    await rating(page).selectOption('16');
+    await (await review(page)).getByRole('button', { name: 'Speichern' }).click();
+    await expect(bar(page)).toContainText('2 Konten konnten nicht aktualisiert werden.');
+    // a new edit while the failure stands
+    await area(page, 'Gemeinsam').click();
+    api.admin.matrix.policyPartial = false;
+    await bar(page).getByRole('button', { name: 'Erneut anwenden' }).click();
+    await expect(bar(page)).not.toContainText('Konten konnten nicht');
+    await expect(bar(page)).toContainText('2 Änderungen in 1 Rolle · betrifft 3 Personen');
+    // the newer edit is still staged: not "Änderungen gespeichert."
+    await expect(toasts(page).getByText('1 fehlgeschlagene Rolle gespeichert.')).toBeVisible();
+    await expect(toasts(page).getByText('Änderungen gespeichert.')).toHaveCount(0);
+    expect(api.admin.matrix.puts).toEqual([{ role: 'guest', body: { maxParentalRating: 16 } }, { role: 'guest', body: { maxParentalRating: 16 } }]);
+    await expect(area(page, 'Gemeinsam')).toBeChecked();
+  });
+
+  test('leaving by Back with staged changes: Verwerfen goes back once, the next Back goes back again', async ({ page }) => {
+    await page.goto('/admin');
+    const nav = page.getByRole('navigation', { name: 'Admin-Bereiche' });
+    await nav.getByRole('link', { name: 'Nutzer' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await nav.getByRole('link', { name: 'Rollen & Rechte' }).click();
+    await expect(page).toHaveURL(/\/admin\/roles$/);
+    await page.getByRole('list', { name: 'Rollen' }).getByRole('link', { name: 'Gast', exact: true }).click();
+    await expect(page).toHaveURL(/\/admin\/roles\/guest$/);
+    await rating(page).selectOption('16');
+    const n = await page.evaluate(() => history.length);
+    await page.evaluate(() => history.back());
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page).toHaveURL(/\/admin\/roles$/);
+    await expect.poll(() => page.evaluate(() => history.length)).toBe(n);
+    await page.evaluate(() => history.back());
+    await expect(page).toHaveURL(/\/admin\/users$/);
+  });
+
+  test('leaving by a link with staged changes: Verwerfen pushes one entry, as the link would', async ({ page }) => {
+    await page.goto('/admin/roles/guest');
+    await rating(page).selectOption('16');
+    const n = await page.evaluate(() => history.length);
+    await page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: 'Nutzer' }).click();
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect.poll(() => page.evaluate(() => history.length)).toBe(n + 1);
+    await page.evaluate(() => history.back());
+    await expect(page).toHaveURL(/\/admin\/roles\/guest$/);
+    await expect(bar(page)).toHaveCount(0);
+  });
+
+  test('history shows a rename and the invitable switch as from → to', async ({ page }) => {
+    await page.goto('/admin/roles/guest');
+    await page.getByRole('textbox', { name: 'Name' }).fill('Besucher');
+    await page.getByRole('switch', { name: 'Für Einladungen wählbar' }).click();
+    const sheet = await review(page);
+    await expect(sheet.getByText('Gast · Name: Gast → Besucher')).toBeVisible();
+    await expect(sheet.getByText('Gast · Für Einladungen wählbar: erlaubt → nicht erlaubt')).toBeVisible();
+    await sheet.getByRole('button', { name: 'Speichern' }).click();
+    await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
+    await page.getByRole('button', { name: 'Aktionen für Besucher' }).click();
+    await page.getByRole('dialog', { name: 'Besucher' }).getByRole('button', { name: 'Verlauf' }).click();
+    const h = page.getByRole('dialog', { name: 'Verlauf · Besucher' });
+    await expect(h.getByText('Name: Gast → Besucher')).toBeVisible();
+    await expect(h.getByText('Für Einladungen wählbar: erlaubt → nicht erlaubt')).toBeVisible();
+  });
+
+  test('clearing the name leaves no prefix staged', async ({ page }) => {
+    await page.goto('/admin/roles/friend');
+    const name = page.getByRole('textbox', { name: 'Name' });
+    await name.fill('F');
+    await expect(bar(page)).toContainText('1 Änderung in 1 Rolle');
+    await name.fill('');
+    await expect(page.getByText('Bitte einen Namen mit 1 bis 30 Zeichen eingeben.')).toBeVisible();
+    await expect(bar(page)).toHaveCount(0);
+    await name.fill('Freund'); // typed back: nothing left to save
+    await expect(bar(page)).toHaveCount(0);
+  });
+
+  test('while a save runs the menu cannot duplicate or delete', async ({ page, api }) => {
+    const family = api.admin.matrix.roles.find((r) => r.key === 'family')!;
+    api.admin.matrix.roles.splice(4, 0, { ...family, key: 'oma', label: 'Oma', builtinLabel: false, origin: 'admin', accounts: 0, profiles: 0, kidsProfiles: 0, invites: 0, values: { ...family.values } });
+    await page.goto('/admin/roles/oma');
+    await rating(page).selectOption('16');
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route('**/api/admin/roles/oma', async (r) => { if (r.request().method() === 'PUT') await held; await r.fallback(); });
+    await (await review(page)).getByRole('button', { name: 'Speichern' }).click();
+    await expect(bar(page)).toContainText('Aktualisiere 1 von 1 …');
+    await expect(rating(page)).toBeDisabled();
+    await page.getByRole('button', { name: 'Aktionen für Oma' }).click();
+    const m = page.getByRole('dialog', { name: 'Oma' });
+    for (const n of ['Duplizieren', 'Löschen']) await expect(m.getByRole('button', { name: n })).toBeDisabled();
+    await expect(m.getByRole('button', { name: 'Verlauf' })).toBeEnabled();
+    await page.keyboard.press('Escape');
+    release();
+    await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
+    await expect(rating(page)).toBeEnabled();
+  });
+
+  test('a long toast beside a sheet stays on screen and left of the sheet (1000 px)', async ({ page }) => {
+    await page.setViewportSize({ width: 1000, height: 900 });
+    await page.goto('/admin/roles/family');
+    await page.getByRole('button', { name: 'Aktionen für Familie' }).click();
+    await page.getByRole('dialog', { name: 'Familie' }).getByRole('button', { name: 'Duplizieren' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
+    await dlg.getByRole('textbox', { name: 'Name' }).fill('Oma & Opa aus dem Nachbardorf');
+    await dlg.getByRole('button', { name: 'Anlegen' }).click();
+    const toast = toasts(page).getByRole('listitem').filter({ hasText: 'Rolle „Oma & Opa aus dem Nachbardorf“ angelegt.' });
+    await expect(toast).toBeVisible();
+    await page.getByRole('button', { name: 'Aktionen für Oma & Opa aus dem Nachbardorf' }).click();
+    await page.getByRole('dialog', { name: 'Oma & Opa aus dem Nachbardorf' }).getByRole('button', { name: 'Verlauf' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Verlauf · Oma & Opa aus dem Nachbardorf' });
+    await expect(sheet).toBeVisible();
+    await expect(toast).toBeVisible();
+    // the sheet is narrower than the window: the toast is centred in the rest and never wider than it
+    await expect.poll(async () => {
+      const [a, b] = await Promise.all([toast.boundingBox(), sheet.boundingBox()]);
+      return a && b ? { left: a.x >= 0, beside: Math.round(a.x + a.width) <= Math.round(b.x) } : null;
+    }).toEqual({ left: true, beside: true });
+  });
+
+  test.describe('with motion', () => {
+    test.use({ reducedMotion: 'no-preference' });
+
+    test('the success toast glides down as the bar leaves (no snap)', async ({ page }) => {
+      await page.goto('/admin/roles/guest');
+      await rating(page).selectOption('16');
+      const sheet = await review(page);
+      const vh = await page.evaluate(() => window.innerHeight);
+      // the review sheet's room goes when it closes, the bar's room (96 px) once the bar has gone: catch that one
+      await armTransition(page, '.toasts', 'bottom', '--savebar-h');
+      await sheet.getByRole('button', { name: 'Speichern' }).click();
+      await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
+      // from above the bar down to its own place: a 240 ms transform transition on the glass curve, seeked (not sampled per frame)
+      const { duration, ys } = await seekTransition(page, '.toasts', AT);
+      expect(duration).toBe(240);
+      expectAlongCurve(ys, AT, vh - 36 - 96, vh - 36);
+      await expect.poll(() => toasts(page).evaluate((el) => el.getBoundingClientRect().bottom)).toBeCloseTo(vh - 36, 0);
+    });
+
+    test('the save bar glides up when the cast bar comes (no snap)', async ({ page }) => {
+      await page.goto('/admin/roles/guest');
+      await rating(page).selectOption('16');
+      await expect(bar(page)).toBeVisible();
+      const from = await armTransition(page, '.sb-wrap'); // after the bar's own rise
+      await page.evaluate(() => document.documentElement.style.setProperty('--castbar-h', '92px'));
+      // the same moment: no jump; then 240 ms on the glass curve up to 92 px higher, seeked (not sampled per frame)
+      const { duration, ys } = await seekTransition(page, '.sb-wrap', AT);
+      expect(duration).toBe(240);
+      expectAlongCurve(ys, AT, from, from - 92);
+    });
   });
 });

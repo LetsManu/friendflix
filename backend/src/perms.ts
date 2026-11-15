@@ -47,7 +47,7 @@ export interface MatrixField {
   key: string; group: FieldGroup; kind: FieldKind; min?: number; max?: number; options?: Array<number | null>; requires?: 'requests' | 'cast' | 'livetv';
   /** the area the field belongs to (roles redesign spec §2.1); 'general' = always shown, no area switch (maxStreams, cast) */
   area: AreaKey | 'general';
-  /** a field whose feature does not exist yet: stored and resolved, hidden from every editor and the compare view (§2.1) */
+  /** a field whose feature does not exist yet: stored and resolved, hidden from every editor and the compare view (§2.1); none today */
   planned?: 'recordings';
 }
 
@@ -72,6 +72,7 @@ export const MATRIX_FIELDS: readonly MatrixField[] = [
   { key: 'comments', group: 'together', kind: 'bool', area: 'together' },
   { key: 'cast', group: 'cast', kind: 'bool', requires: 'cast', area: 'general' },
   { key: 'liveTv', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv' },
-  { key: 'liveRecord', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv', planned: 'recordings' },
+  // "Darf aufnehmen": visible, no longer planned; the recordings backend (Phase 3a) enforces it, the recordings screens follow (roles redesign §5.4)
+  { key: 'liveRecord', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv' },
 ];
 

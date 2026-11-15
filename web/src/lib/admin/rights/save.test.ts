@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { createSave, groupsChanged, keepKnownGroups, stagedJobs, storeJob } from './save';
+import { createSave, goneGroups, groupsChanged, keepKnownGroups, stagedJobs, storeJob } from './save';
 import { api, ApiError } from '#lib/api';
 import { toast } from '#lib/ui/toast';
 import { stageSet, type MatrixRole, type RoleMatrix } from './model';
@@ -13,7 +13,7 @@ beforeEach(() => { vi.mocked(api).mockReset(); vi.mocked(toast.error).mockReset(
 
 const role = (key: string, values: Record<string, unknown>, extra: Partial<MatrixRole> = {}): MatrixRole => ({
   key, label: key, builtinLabel: false, base: 'friend', origin: 'admin', invitable: true, position: 0, accounts: 2, profiles: 3, kidsProfiles: 0,
-  values, sources: {}, defaults: values, envGone: false, stored: true, missingLibraries: [], livetvGroups: ['Nordlicht TV'], livetvGroupIds: ['g-nord'], ...extra,
+  values, sources: {}, defaults: values, envGone: false, stored: true, missingLibraries: [], livetvGroupIds: ['g-nord'], ...extra,
 });
 const matrix = (): RoleMatrix => ({
   fields: [{ key: 'maxStreams', group: 'playback', kind: 'int', area: 'general' }, { key: 'party', group: 'together', kind: 'bool', area: 'together' }],
@@ -31,7 +31,7 @@ describe('the shared save (role page and compare view)', () => {
       { role: 'guest', body: { perms: { party: true } }, fields: { party: true } },
     ]);
   });
-  it('storeJob: the written values become the loaded ones and unstage; the groups as ids and names in group order', () => {
+  it('storeJob: the written values become the loaded ones and unstage; the groups as ids in group order', () => {
     const m = matrix();
     const s = stageSet(stageSet({}, m, 'friend', 'livetvGroups', ['g-hafen', 'g-nord']), m, 'friend', 'maxStreams', 3);
     const [job] = stagedJobs(s, m);
@@ -41,7 +41,7 @@ describe('the shared save (role page and compare view)', () => {
     expect(r.values.maxStreams).toBe(3);
     expect(r.sources.maxStreams).toBe('role');
     expect(r.livetvGroupIds).toEqual(['g-nord', 'g-hafen']);
-    expect(r.livetvGroups).toEqual(['Nordlicht TV', 'Hafenkanal']);
+    expect(r).not.toHaveProperty('livetvGroups'); // the web reads ids only (the names the server still sends go unread)
     // the inputs stay as they were
     expect(m.roles[0]!.values.maxStreams).toBe(2);
     expect(m.roles[0]!.livetvGroupIds).toEqual(['g-nord']);
@@ -67,6 +67,19 @@ describe('the shared save (role page and compare view)', () => {
   });
 });
 
+describe('goneGroups (Stage 3 parked finding: the toast names them)', () => {
+  it('the names of staged groups the re-read list no longer has, in group order, each once', () => {
+    const m = matrix();
+    const s = stageSet(stageSet({}, m, 'friend', 'livetvGroups', ['g-hafen', 'g-nord']), m, 'guest', 'livetvGroups', ['g-hafen']);
+    expect(goneGroups(s, m, { ...m, livetv: { groups: [m.livetv!.groups[0]!], pending: 1 } })).toEqual(['Hafenkanal']);
+    expect(goneGroups(s, m, { ...m, livetv: null })).toEqual(['Nordlicht TV', 'Hafenkanal']);
+    expect(goneGroups(s, m, m)).toEqual([]);
+    expect(goneGroups({ friend: { maxStreams: 3 } }, m, { ...m, livetv: null })).toEqual([]);
+    // an id the old list did not name either is left out (no name to show)
+    expect(goneGroups(stageSet({}, m, 'friend', 'livetvGroups', ['g-x']), m, m)).toEqual([]);
+  });
+});
+
 describe('storeJob edge cases', () => {
   it('an unknown role or a re-sent body (no fields) changes nothing', () => {
     const m = matrix(), s = stageSet({}, m, 'friend', 'maxStreams', 3);
@@ -81,7 +94,7 @@ describe('storeJob edge cases', () => {
   });
   it('a non-array livetvGroups value empties the groups', () => {
     const out = storeJob(matrix(), {}, { role: 'friend', body: {}, fields: { livetvGroups: null } });
-    expect(out.matrix.roles[0]).toMatchObject({ livetvGroupIds: [], livetvGroups: [] });
+    expect(out.matrix.roles[0]).toMatchObject({ livetvGroupIds: [] });
   });
 });
 
@@ -93,7 +106,7 @@ describe('keepKnownGroups edge cases', () => {
 });
 
 describe('createSave', () => {
-  function setup(m: RoleMatrix | null = matrix(), initial = {}, groupsChanged?: () => Promise<void>) {
+  function setup(m: RoleMatrix | null = matrix(), initial = {}, groupsChanged?: () => Promise<string[] | void>) {
     const ctx = { matrix: m, stage: initial as ReturnType<typeof stageSet> };
     const stored = vi.fn((nm: RoleMatrix, ns: typeof ctx.stage) => { ctx.matrix = nm; ctx.stage = ns; });
     const save = createSave({ matrix: () => ctx.matrix, stage: () => ctx.stage, stored, groupsChanged });
@@ -163,8 +176,15 @@ describe('createSave', () => {
     await save.apply();
     expect(reread).toHaveBeenCalledOnce();
     expect(toast.error).toHaveBeenCalledOnce();
+    expect(toast.error).toHaveBeenCalledWith('Die Kanalgruppen haben sich geändert. Bitte prüfe die Auswahl und speichere noch einmal.');
     expect(ctx.stage).toEqual(s);
     expect(get(save)).toMatchObject({ saving: false, pending: [], failures: [] });
+  });
+  it('the toast names the groups that are gone ("Nicht mehr verfügbar: Hafenkanal")', async () => {
+    vi.mocked(api).mockRejectedValueOnce(new ApiError(400, { error: 'invalid', field: 'livetvGroups' }));
+    const { save } = setup(matrix(), stageSet({}, matrix(), 'friend', 'livetvGroups', ['g-hafen']), async () => ['Hafenkanal']);
+    await save.apply();
+    expect(toast.error).toHaveBeenCalledWith('Die Kanalgruppen haben sich geändert. Bitte prüfe die Auswahl und speichere noch einmal. Nicht mehr verfügbar: Hafenkanal.');
   });
   it('a groups 400 without a groupsChanged handler is a hard error', async () => {
     vi.mocked(api).mockRejectedValueOnce(new ApiError(400, { error: 'invalid', field: 'livetvGroups' }));

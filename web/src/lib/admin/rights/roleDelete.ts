@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * Deleting and copying a role (spec §2.1, roles redesign §5.1, §5.3), shared by the role list and the role page. A role nobody
+ * Deleting a role (spec §2.1, roles redesign §5.1, §5.3), shared by the role list and the role page (a new role or a copy:
+ * newRole.ts). A role nobody
  * holds is deleted after one confirm; while people or invites hold it the server answers 409 `role_in_use` with the counts, and the
  * page opens `DeleteRoleDialog` to pick the role they move to (never the role itself, never an admin-based one), then
  * `deleteMoving`. The pages keep only their dialog state and what follows a delete (the list reads again, the role page goes back).
@@ -54,7 +55,3 @@ export async function deleteMoving(key: string, to: string): Promise<{ ok: true 
   }
   return { ok: true };
 }
-
-/** *Duplizieren* / *+ Neue Rolle*: a copy of `from` named `label`; the new role's key (throws the API error) */
-export const copyRole = async (label: string, from: string): Promise<string> =>
-  (await api<{ key: string }>('/api/admin/roles', { method: 'POST', body: { label, from } })).key;

@@ -20,7 +20,7 @@ const fields: MatrixField[] = [
 const AREAS_ON = { library: true, livetv: true, requests: true, together: true, downloads: true };
 const role = (key: string, label: string | null, accounts: number, profiles: number, values: Record<string, unknown>): MatrixRole => ({
   key, label, builtinLabel: true, base: 'guest', origin: 'code', invitable: true, position: 0, accounts, profiles, kidsProfiles: 0, values,
-  sources: {}, defaults: values, envGone: false, stored: true, missingLibraries: [], areas: AREAS_ON, livetvGroups: [], livetvGroupIds: [],
+  sources: {}, defaults: values, envGone: false, stored: true, missingLibraries: [], areas: AREAS_ON, livetvGroupIds: [],
 });
 /** the released groups of matrix.livetv (Live TV installed) */
 const LIVETV = { groups: [{ id: 'g-nord', name: 'Nordlicht TV', kidFriendly: false, channels: 12 }, { id: 'g-hafen', name: 'Hafenkanal', kidFriendly: true, channels: 4 }], pending: 0 };
@@ -28,7 +28,7 @@ const matrix = (features = { requests: false, cast: false, livetv: false }): Rol
   fields, features, libraries: [{ id: 'l1', name: 'Filme' }, { id: 'l2', name: 'Serien' }, { id: 'l3', name: 'Musik' }],
   roles: [
     role('guest', 'Gast', 4, 5, { libraries: 'all', maxParentalRating: 12, maxStreams: 1, maxBitrate: 8_000_000, maxHeight: 1080, download: false, requests: true, party: false, liveTv: false }),
-    { ...role('friend', 'Freund', 7, 9, { libraries: ['Filme'], maxParentalRating: null, maxStreams: 2, maxBitrate: 20_000_000, maxHeight: null, download: true, requests: true, party: true, liveTv: true }), livetvGroups: ['Nordlicht TV'], livetvGroupIds: ['g-nord'] },
+    { ...role('friend', 'Freund', 7, 9, { libraries: ['Filme'], maxParentalRating: null, maxStreams: 2, maxBitrate: 20_000_000, maxHeight: null, download: true, requests: true, party: true, liveTv: true }), livetvGroupIds: ['g-nord'] },
   ],
   livetv: features.livetv ? LIVETV : null, templates: [],
 });

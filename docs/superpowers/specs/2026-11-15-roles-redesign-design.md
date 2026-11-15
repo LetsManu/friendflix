@@ -116,7 +116,8 @@ reading, not editing).
 | *Allgemein* (always shown, no switch) | — | — | `maxStreams` (counts library **and** live streams, `livetv/routes.ts:125-133`), `cast` |
 
 `liveRecord` is marked **planned** in the registry and hidden from every editor and from the compare view until recordings
-exist (data kept, still resolved, still in old audit entries).
+exist (data kept, still resolved, still in old audit entries). Superseded in Stage 4, see §5.4: visible as "Darf aufnehmen"
+since the recordings backend enforces it.
 
 "Gemeinsam" covers what exists: watch parties (`party`, with `partySchedule`), votes (`/vote`, `/api/polls` — gated by `party`
 today, `routes/polls.ts:47`) and comments (`comments`). "Freunde"-style signals (`/api/items/:id/friends`) are library data
@@ -329,10 +330,17 @@ aufnehmen", and a new switch "Aufnahmen herunterladen" joins the Live-TV section
 items only". If the owner chooses the Jellyfin-library storage mode for recordings, Phase 3 must treat that library as part of
 Live-TV (excluded from `hasLibrary`), so a Live-TV-only role still has `library: false` (open question 2).
 
+**Done for the switch (Stage 4, 2026-11-15):** the recordings backend (Phase 3a) enforces `liveRecord` on the recordings API,
+so the registry no longer marks it planned. The switch is visible as "Darf aufnehmen" in the role page's Live-TV section
+(read-only in the compare view, in the person's *Rechte* tab like any right) and coupled to Live-TV the way the Mediathek
+coupling works: Live-TV off stages it off, and it stays off and locked ("Braucht Live-TV") until Live-TV is on again. The kids
+overlay still forces it off; the "Nur Live-TV" template keeps `liveRecord: false`. The recordings screens follow on their own
+branch; "Aufnahmen herunterladen" is not added yet (it ships with recordings downloads, Phase 3c).
+
 ### 5.5 Compare view (`/admin/roles?view=compare`)
 
 Desktop (≥ 900 px): the existing matrix, read-only: an **Bereiche** group on top (one ✓/– row per area), then the detail rows
-grouped by area (planned rows hidden), and the Live-TV groups row with names. A cell is a link to
+grouped by area (planned rows hidden; none since Stage 4, §5.4), and the Live-TV groups row with names. A cell is a link to
 `/admin/roles/<key>?field=<fieldKey>` (the role page scrolls to and focuses that control). No popover, no grips, no column menus
 (the head is a link to the role page). Phone: the existing *Vergleich* (one right, all roles), read-only rows with
 "Bearbeiten" links.
@@ -346,7 +354,8 @@ grouped by area (planned rows hidden), and the Live-TV groups row with names. A 
 
 ### 5.7 Person → *Rechte*
 
-Unchanged except: libraries may go to none (same `FieldControl` change), `liveRecord` hidden (planned), and a line
+Unchanged except: libraries may go to none (same `FieldControl` change), `liveRecord` hidden (planned; superseded in Stage 4,
+see §5.4), and a line
 "Ohne Bibliothek sieht {name} nur Live-TV." when the effective list is empty.
 
 ## 6. App shell for people without libraries
@@ -443,7 +452,7 @@ No data migration. Areas are computed from today's values on every read; the fir
   fixture before and after the migration code path runs (it is a no-op), and that `/api/me.areas` is all-true for every
   existing fixture account with libraries.
 - Group grants are unchanged (same table). `livetvGroups` names stay in the answer for one release.
-- `liveRecord` values stay stored and resolved; only hidden.
+- `liveRecord` values stay stored and resolved; only hidden (until Stage 4, see §5.4).
 
 ## 10. Testing
 
@@ -466,7 +475,8 @@ No data migration. Areas are computed from today's values on every read; the fir
 2. **App shell** — `areas` parsing and hint, `areaRedirect`, menus/rail/tab bar/footer/me, TV start, welcome, empty home state,
    `/vote` gating; `FieldControl` allows 0 libraries (so the existing editors can already make a Live-only role).
 3. **Role list + role page** — list (with *Vergleichen* still showing today's editable matrix), role page with area switches
-   and inline Live-TV groups, *Duplizieren* via the page; `liveRecord` hidden (planned) in every editor.
+   and inline Live-TV groups, *Duplizieren* via the page; `liveRecord` hidden (planned) in every editor (superseded in Stage 4,
+   see §5.4).
 4. **Compare + templates + cleanup** — compare view read-only with links; new-role dialog with templates; remove
    `RoleSheet`, `CellPopover`, the matrix edit paths, `RoleCards`, `GroupMatrix` and the *Nach Rolle* view.
 
@@ -479,7 +489,8 @@ No data migration. Areas are computed from today's values on every read; the fir
 5. Channel groups are saved with the role (one PUT, one audit entry with group names); grants on unreleased groups are kept.
 6. Familie/Freund/Gast templates store nothing (inherit code defaults); copies stay frozen snapshots.
 7. A copy of Admin grants every released group; other copies copy the source's grants exactly.
-8. `liveRecord` is hidden (planned), not removed; recordings will get a Live-TV-area switch, not the Downloads area.
+8. `liveRecord` is hidden (planned), not removed; recordings will get a Live-TV-area switch, not the Downloads area (superseded
+   in Stage 4, see §5.4: the switch is visible in the Live-TV area).
 9. Library-free routing uses an allowlist; search is hidden without a library.
 10. `/admin/roles?view=compare` instead of a `/admin/roles/compare` route, so no role key can collide with a sub-route.
 
