@@ -45,7 +45,7 @@ test.describe('glass menus on the phone', () => {
     await more.click();
     const sheet = page.locator('.ma-pop.sheet');
     const a = await anim(sheet);
-    expect(a.duration).toBe(380);
+    expect(a.duration).toBe(320);
     expect(a.transform).toBe('translateY(100%)');
     await expect(sheet).toHaveClass(/\bfrost-sheet\b/);
     expect(await css(sheet, 'border-top-left-radius')).toBe('26px');
@@ -55,7 +55,7 @@ test.describe('glass menus on the phone', () => {
     await expect(sheet.locator('.mi').first()).toBeFocused();
     await page.keyboard.press('Escape');
     expect(await sheet.count()).toBe(1); // slides back down
-    expect((await anim(sheet)).duration).toBe(200);
+    expect((await anim(sheet)).duration).toBe(200); // SHEET_OUT_MS
     await expect(sheet).toHaveCount(0);
     await expect(page.locator('.ma-wrap')).toHaveCount(0); // the scrim faded with it
     await expect(more).toBeFocused();

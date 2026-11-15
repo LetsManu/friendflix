@@ -72,7 +72,8 @@
   import DeskPauseScreen from '#lib/player/desk/DeskPauseScreen.svelte';
   import { SCRIM_MENU } from '#lib/glass/tone';
   import PhonePauseScreen from '#lib/player/phone/PhonePauseScreen.svelte';
-  import { grow, springAt } from '#lib/player/desk/grow';
+  import { grow } from '#lib/player/desk/grow';
+  import { emphOut } from '#lib/glass/fx';
   import { motionAllowed } from '#lib/preview';
   import { motionLevel, motionTripped } from '#lib/tv/motion';
   import { kidsMode } from '#lib/kids';
@@ -1938,7 +1939,7 @@
   {/if}
   <slot />
 
-  {#if skip && !locked && credits !== 'corner' && !phoneUi}<button class="skipbtn light" class:tv-btn={tvUi} aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: desk && motionAllowed() ? 250 : 0, easing: springAt }}>{segText($t, skip.type, 'skip')}{tvMode() ? $t('player.skipOk') : ''}</button>{/if}
+  {#if skip && !locked && credits !== 'corner' && !phoneUi}<button class="skipbtn light" class:tv-btn={tvUi} aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: desk && motionAllowed() ? 250 : 0, easing: emphOut }}>{segText($t, skip.type, 'skip')}{tvMode() ? $t('player.skipOk') : ''}</button>{/if}
 
   {#if showXray}
     <div class="cihost" class:hide={!showUi && !xray} out:fade={{ duration: phoneUi && motionAllowed() ? 120 : 0 }}><CastInfoPanel data={castData} failed={castFailed} autofocus={infoFocus} on:close={closeCastInfo} /></div>
@@ -1988,7 +1989,7 @@
       <!-- phone: chapter, title and episode line; the skip button at the row's end (landscape) or below (portrait) -->
       <PhoneTitle chapter={nowChapter} title={barTitle || title} sub={phoneSub(item, $t)} {orient} hidden={menu !== '' || showXray || extPanel || chipCrowds}>
         <svelte:fragment slot="skip">
-          {#if skip && !locked && credits !== 'corner'}<button class="skipbtn light" aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: motionAllowed() ? 250 : 0, easing: springAt }} out:fade={{ duration: motionAllowed() ? 150 : 0 }}>{segText($t, skip.type, 'skip')}</button>{/if}
+          {#if skip && !locked && credits !== 'corner'}<button class="skipbtn light" aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: motionAllowed() ? 250 : 0, easing: emphOut }} out:fade={{ duration: motionAllowed() ? 150 : 0 }}>{segText($t, skip.type, 'skip')}</button>{/if}
         </svelte:fragment>
       </PhoneTitle>
     {/if}

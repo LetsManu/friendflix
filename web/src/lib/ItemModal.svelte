@@ -63,7 +63,7 @@
   .overlay { position: fixed; inset: 0; z-index: 80; overflow-y: auto; overscroll-behavior: contain; background: rgba(0, 0, 0, .75); animation: fade var(--t-med) var(--ease); padding: 2rem 0 3rem; }
   .modal { position: relative; width: min(850px, 96vw); margin: 0 auto; background: var(--surface); border-radius: 8px; box-shadow: 0 20px 60px #000; overflow: hidden; animation: pop var(--t-med) var(--ease); }
   .x { position: absolute; right: .8rem; top: .8rem; z-index: 5; width: 40px; min-height: 40px; height: 40px; padding: 0; border-radius: 50%; background: rgba(24, 24, 24, .85); }
-  @keyframes fade { from { opacity: 0; } } @keyframes pop { from { opacity: 0; transform: translateY(18px) scale(.97); } }
+  @keyframes fade { from { opacity: 0; } } @keyframes pop { from { opacity: 0; transform: translateY(18px); } }
   @media (hover: none), (pointer: coarse) { .x { width: 44px; min-height: 44px; height: 44px; } }
   /* phones: full screen below the status bar; a border (outside the scroll box) rather than padding, so sticky tabs stop under it */
   @media (max-width: 640px) { .overlay { padding: 0; border-top: var(--safe-top) solid var(--surface); } .modal { width: 100vw; min-height: calc(100vh - var(--safe-top)); border-radius: 0; } }

@@ -7,8 +7,8 @@ import { expect, test } from '../fixtures.js';
 import { row } from '../helpers.js';
 
 /**
- * Glass menus and toasts (glass spec §5, §8.3, §8.5): every menu is a glass card that grows out of its button (380 ms spring) and
- * folds back into it (200 ms), reversing mid-flight; the selected row is a light pill. Toasts are glass pills at the bottom centre
+ * Glass menus and toasts (glass spec §5, §8.3, §8.5): every menu is a glass card that grows out of its button (220 ms, a slide of at most 8 px and a fade, never a
+ * scale) and folds back into it (150 ms), reversing mid-flight; the selected row is a light pill. Toasts are glass pills at the bottom centre
  * with a status dot, the action and a 5 s countdown ring that pauses on hover. Calm mode: at once; TV and kids: solid.
  */
 
@@ -29,13 +29,14 @@ async function calmMode(page: Page) {
   await page.addInitScript(() => localStorage.setItem('ff_calm:p1', '1'));
 }
 
-type Anim = { duration: number; origin: string; play: string };
+type Anim = { duration: number; origin: string; play: string; frames: Array<{ transform: string; opacity: string }> };
 /** waits frame by frame (in the page) for the element's first animation that has a duration, and reports it */
 const anim = (loc: Locator): Promise<Anim> => loc.evaluate((e) => new Promise<Anim>((res, rej) => {
   const t0 = performance.now();
   const step = () => {
     const a = e.getAnimations().find((x) => Number(x.effect?.getTiming().duration) > 0);
-    if (a) { res({ duration: Number(a.effect!.getTiming().duration), origin: getComputedStyle(e).transformOrigin, play: a.playState }); return; }
+    if (a) { const frames = (a.effect as KeyframeEffect).getKeyframes().map((k) => ({ transform: String(k.transform ?? ''), opacity: String(k.opacity ?? '') }));
+      res({ duration: Number(a.effect!.getTiming().duration), origin: getComputedStyle(e).transformOrigin, play: a.playState, frames }); return; }
     if (performance.now() - t0 > 2000) { rej(new Error('no animation')); return; }
     requestAnimationFrame(step);
   };
@@ -101,8 +102,15 @@ async function textPasses(page: Page, root: Locator) {
     expect(ratio(ink, back), `"${info.text}" (${info.ink.join(',')}) on ${back.join(',')}`).toBeGreaterThanOrEqual(4.5);
   }
 }
-/** a popover's scale (matrix a) and opacity in one frame */
-type Sample = { s: number; o: number };
+/** a popover in one frame: opacity (s), its slide offset in px (o) and its scale (k, always 1: text never scales) */
+type Sample = { s: number; o: number; k: number };
+/** the animation moves transform + opacity and never scales */
+const noScale = (a: Anim) => {
+  expect(a.frames.length).toBeGreaterThan(1);
+  for (const f of a.frames) expect(f.transform, JSON.stringify(f)).not.toMatch(/scale|matrix/);
+  expect(a.frames.some((f) => /translate/.test(f.transform))).toBe(true);
+  expect(a.frames.some((f) => f.opacity !== '' && f.opacity !== '1')).toBe(true);
+};
 
 async function hoverCard(page: Page): Promise<Locator> {
   await page.goto('/');
@@ -115,19 +123,19 @@ async function hoverCard(page: Page): Promise<Locator> {
   return dpv;
 }
 
-/** the menu is a glass card that grows out of its trigger: the spring's 380 ms and a transform-origin inside the trigger's extent */
+/** the menu is a glass card that slides out of its trigger: 220 ms of translate + opacity, no scale */
 async function expectGrows(menu: Locator, trigger: Locator) {
   const a = await anim(menu);
-  expect(a.duration).toBe(380);
+  expect(a.duration).toBe(220);
+  noScale(a);
   await expect(menu).toHaveClass(/\bfrost-menu\b/);
   expect(await css(menu, 'border-top-left-radius')).toBe('20px');
   expect(await css(menu, 'backdrop-filter')).toContain('blur(38px)');
   await settled(menu);
-  const box = (await menu.evaluate((e) => { const r = e.getBoundingClientRect(); return { left: r.left }; }));
-  const t = (await trigger.boundingBox())!;
-  const ox = box.left + parseFloat(a.origin.split(' ')[0]!);
-  expect(ox).toBeGreaterThanOrEqual(t.x - 0.5);
-  expect(ox).toBeLessThanOrEqual(t.x + t.width + 0.5);
+  // it ends in its place, next to its trigger, and untransformed
+  expect(await css(menu, 'transform')).toBe('none');
+  const r = (await menu.boundingBox())!, t = (await trigger.boundingBox())!;
+  expect(r.x < t.x + t.width + 400 && r.x + r.width > t.x - 400).toBe(true);
 }
 
 test.describe('glass menus', () => {
@@ -170,7 +178,7 @@ test.describe('glass menus', () => {
     await expect(pop).toHaveClass(/\bfrost-safe\b/); // artwork can sit behind it
   });
 
-  test('closing reverses (200 ms) and leaves nothing behind', async ({ page }) => {
+  test('closing reverses (150 ms) and leaves nothing behind', async ({ page }) => {
     const dpv = await hoverCard(page);
     const more = dpv.locator('button.ma');
     await more.click();
@@ -193,7 +201,7 @@ test.describe('glass menus', () => {
       });
     });
     await page.keyboard.press('Escape');
-    expect(await page.evaluate(() => (window as unknown as { __fold: Promise<number> }).__fold)).toBe(200); // it folds back
+    expect(await page.evaluate(() => (window as unknown as { __fold: Promise<number> }).__fold)).toBe(150); // it folds back
     await expect(more).toBeFocused();
     await expect(pop).toHaveCount(0);
     expect(await page.evaluate(([x, y]) => !!document.elementFromPoint(x!, y!)?.closest('.ma-pop'), [r.x + r.width / 2, r.y + r.height / 2])).toBe(false);
@@ -219,15 +227,16 @@ test.describe('glass menus', () => {
     const run = (closeFirst: boolean) => page.evaluate(async (closeFirst) => {
       const btn = document.querySelector<HTMLButtonElement>('.dpv button.ma')!;
       const frame = () => new Promise((r) => requestAnimationFrame(r));
-      const at = (): { s: number; o: number } | null => {
+      const at = (): { s: number; o: number; k: number } | null => {
         const p = document.querySelector<HTMLElement>('.ma-pop');
         if (!p) return null;
         const cs = getComputedStyle(p);
-        return { s: cs.transform === 'none' ? 1 : new DOMMatrixReadOnly(cs.transform).a, o: Number(cs.opacity) };
+        const m = cs.transform === 'none' ? new DOMMatrixReadOnly() : new DOMMatrixReadOnly(cs.transform);
+        return { s: Number(cs.opacity), o: Math.abs(m.e) + Math.abs(m.f), k: m.a };
       };
       const esc = () => document.querySelector('.ma-pop')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-      const out: Array<{ s: number; o: number }> = [];
-      const until = async (ok: (v: { s: number; o: number } | null) => boolean, ms = 2000) => {
+      const out: Array<{ s: number; o: number; k: number }> = [];
+      const until = async (ok: (v: { s: number; o: number; k: number } | null) => boolean, ms = 2000) => {
         const t0 = performance.now();
         for (;;) { await frame(); const v = at(); if (v) out.push(v); if (ok(v) || performance.now() - t0 > ms) return v; }
       };
@@ -257,13 +266,13 @@ test.describe('glass menus', () => {
         if (!v || v.s > 0.9) { esc(); await until((x) => !x); continue; } // overshot: nearly open already, try again
         esc(); // close mid-open
         const first = await until(() => true);
-        if (first && first.s === 1 && first.o === 1) { await until((x) => !x); continue; } // stalled
+        if (first && first.s === 1 && first.o === 0) { await until((x) => !x); continue; } // stalled
         await until((x) => !x);
         return { out, mark };
       }
       return { out, mark: -1 };
     }, closeFirst);
-    const dump = (r: { out: Sample[]; mark: number }) => JSON.stringify(r.out.map((x) => [+x.s.toFixed(3), +x.o.toFixed(2)]));
+    const dump = (r: { out: Sample[]; mark: number }) => JSON.stringify(r.out.map((x) => [+x.s.toFixed(3), +x.o.toFixed(2), +x.k.toFixed(3)]));
     // close mid-open: caught mid-way, it turns back within a frame or two and only shrinks and fades from there (a restart
     // would first jump to full size)
     const a = await run(false);
@@ -271,18 +280,20 @@ test.describe('glass menus', () => {
     const after = a.out.slice(a.mark);
     expect(after.length, dump(a)).toBeGreaterThan(1);
     expect(a.out[a.mark - 1]!.s, dump(a)).toBeGreaterThan(0.4);
-    expect(after.some((x) => x.s === 1 && x.o === 1), dump(a)).toBe(false); // never the full-size start of a restarted close
+    expect(after.some((x) => x.s === 1 && x.o === 0), dump(a)).toBe(false); // never the settled start of a restarted close
+    expect(a.out.every((x) => x.k === 1), dump(a)).toBe(true); // nothing ever scales
     const peak = after.findIndex((x) => x.s === Math.max(...after.map((y) => y.s)));
     expect(peak, dump(a)).toBeLessThanOrEqual(3); // the turn comes within a frame or two
     for (let k = peak + 1; k < after.length; k++) expect(after[k]!.s, dump(a)).toBeLessThanOrEqual(after[k - 1]!.s + 0.001);
     await expect(page.locator('.ma-pop')).toHaveCount(0);
-    // reopen mid-close: it grows back from where the fold-back was (a restart would drop to .4 and opacity 0 first)
+    // reopen mid-close: it grows back from where the fold-back was (a restart would drop to opacity 0 and the full 8 px first)
     const b = await run(true);
     expect(b.mark, dump(b)).toBeGreaterThan(0);
     const again = b.out.slice(b.mark);
     expect(again.length, dump(b)).toBeGreaterThan(1);
     expect(b.out[b.mark - 1]!.s, dump(b)).toBeLessThan(0.999); // it was folding back
-    expect(again.some((x) => x.s === 0.4 && x.o === 0), dump(b)).toBe(false); // never the start of a restarted open
+    expect(again.some((x) => x.s === 0 && x.o === 8), dump(b)).toBe(false); // never the start of a restarted open
+    expect(b.out.every((x) => x.k === 1), dump(b)).toBe(true); // nothing ever scales
     expect(Math.min(...again.map((x) => x.s)), dump(b)).toBeGreaterThan(0.45);
     await expect(page.locator('.ma-pop')).toHaveCount(1);
     await settled(page.locator('.ma-pop'));
@@ -393,11 +404,13 @@ test.describe('glass menus', () => {
     };
     await ignore();
     const toast = page.locator('.toast.frost');
-    expect((await anim(toast)).duration).toBe(420);
+    const tin = await anim(toast);
+    expect(tin.duration).toBe(300);
+    noScale(tin);
     await settled(toast);
     await toast.getByRole('button', { name: 'Hinweis schließen' }).click();
     expect(await toast.count()).toBe(1); // it slides out
-    expect((await anim(toast)).duration).toBe(260);
+    expect((await anim(toast)).duration).toBe(200);
     await expect(toast).toHaveCount(0);
   });
 
