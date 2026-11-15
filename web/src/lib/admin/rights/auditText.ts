@@ -9,7 +9,7 @@
  */
 import { api } from '#lib/api';
 import { hasKey, tr, trDynamic } from '#lib/i18n';
-import { cellText, FIELD_KINDS, fieldLabel, roleName, type MatrixField, type RoleMatrix } from './model';
+import { cellText, FIELD_KINDS, fieldLabel, roleName, type RoleMatrix } from './model';
 
 export interface AuditChip { label: string; from: string; to: string }
 export interface AuditInput {
@@ -31,8 +31,7 @@ const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typ
 function valueText(key: string, v: unknown): string {
   const kind = FIELD_KINDS[key]!;
   if (kind === 'bool') return tr(v ? 'adminPeople.roles.allowed' : 'adminPeople.roles.denied');
-  const f: MatrixField = { key, group: 'access', kind };
-  return cellText(f, v);
+  return cellText({ kind }, v);
 }
 
 /** one chip per known field that has a before and an after, in matrix order, then the name and the invitable switch (a key of another version is dropped, never shown raw) */

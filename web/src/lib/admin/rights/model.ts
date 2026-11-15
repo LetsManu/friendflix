@@ -4,6 +4,7 @@
  * The role matrix of Rollen & Rechte (spec §4.1): the types of GET /api/admin/roles `matrix` as the server sends them (backend
  * roleWrite.ts rolesOverview), cell formatting, accessible names, and the staged (unsaved) changes behind the save bar.
  */
+import type { AreaKey, Areas } from '#lib/capabilities';
 import { fmtNumber, hasKey, tr, trDynamic } from '#lib/i18n';
 import { PERM_KEYS, type PermKey } from '#lib/perms';
 
@@ -20,6 +21,10 @@ export interface MatrixField {
   max?: number;
   options?: Array<number | null>;
   requires?: Feature;
+  /** the area the field belongs to (roles redesign §2.1); 'general' = *Allgemein*, shown with every area */
+  area: AreaKey | 'general';
+  /** a right that exists but does nothing yet: hidden from every editor (`liveRecord` until recordings ship, §5.4) */
+  planned?: 'recordings';
 }
 
 export interface MatrixRole {
@@ -48,13 +53,26 @@ export interface MatrixRole {
   missingLibraries: string[];
   /** names of the released Live TV groups the role sees (the admin role: all), in group order; read-only (Live TV spec §8); only sent by a server with Live TV */
   livetvGroups?: string[];
+  /** ids of the same groups (the role page's chips, staged as `livetvGroups`) */
+  livetvGroupIds?: string[];
+  /** the areas of the effective values (backend areasOf, without the coupling) */
+  areas?: Areas;
 }
+
+/** a released Live TV group as `matrix.livetv` lists it, in group order */
+export interface LivetvGroupInfo { id: string; name: string; kidFriendly: boolean; channels: number }
+
+/** a start point of a new role (`matrix.templates`, roles redesign §4.4) */
+export interface RoleTemplateInfo { key: 'family' | 'friend' | 'guest' | 'liveOnly' | 'empty'; base: 'family' | 'friend' | 'guest'; patch: Record<string, unknown>; areas: Areas }
 
 export interface RoleMatrix {
   fields: MatrixField[];
   features: Record<Feature, boolean>;
   roles: MatrixRole[];
   libraries: Array<{ id: string; name: string }>;
+  /** the released groups and how many wait for a release; null (or missing from an older server) while Live TV is not installed */
+  livetv?: { groups: LivetvGroupInfo[]; pending: number } | null;
+  templates?: RoleTemplateInfo[];
 }
 
 /** switches the role write takes under `perms` */
@@ -64,8 +82,11 @@ const MEDIA_FIELDS: ReadonlySet<string> = new Set(['libraries', 'maxParentalRati
 /** a null value means "no cap" here; the role write spells it 'unlimited' (null there = back to the inherited value) */
 const NULL_IS_UNLIMITED: ReadonlySet<string> = new Set(['maxHeight', 'maxParentalRating', 'requestsPerMonth']);
 
-/** the fields to show: those whose optional feature is off are dropped (no request service: no Wünsche; Live TV not installed: no Live-TV) */
-export const visibleFields = (m: RoleMatrix): MatrixField[] => m.fields.filter((f) => !f.requires || m.features[f.requires]);
+/**
+ * the fields to show: those whose optional feature is off are dropped (no request service: no Wünsche; Live TV not installed: no
+ * Live-TV), and planned ones never show (`liveRecord`: stored and resolved, but nothing enforces it yet)
+ */
+export const visibleFields = (m: RoleMatrix): MatrixField[] => m.fields.filter((f) => !f.planned && (!f.requires || m.features[f.requires]));
 
 const unlimited = (v: unknown): boolean => v === null || v === undefined || v === 'unlimited';
 
@@ -75,7 +96,7 @@ function mbit(bps: number): string {
 }
 
 /** the compact text of one cell value ("✓", "20 Mbit/s", "1080p", "ab 12", "3 Bibliotheken", "Keine Bibliothek") */
-export function cellText(f: MatrixField, v: unknown): string {
+export function cellText(f: Pick<MatrixField, 'kind'>, v: unknown): string {
   switch (f.kind) {
     case 'bool': return v ? '✓' : '–';
     case 'int': return unlimited(v) ? tr('adminPeople.roles.unlimited') : String(v);
@@ -110,11 +131,16 @@ export function cellName(roleLabel: string, f: MatrixField, v: unknown, changed:
 /** unsaved changes: role key → field key → new value */
 export type Stage = Record<string, Record<string, unknown>>;
 
-/** the loaded value of a staged key (besides the matrix fields the role sheet stages `label`, the name, and `invitable`): the displayed name, the invitable flag, or the matrix value */
-function loadedValue(r: MatrixRole | undefined, key: string): unknown {
+/**
+ * the loaded value of a staged key: besides the matrix fields the role editors stage `label` (the name), `invitable` and
+ * `livetvGroups` (the released Live TV groups the role sees, as ids): the displayed name, the invitable flag, the group ids, or the
+ * matrix value
+ */
+export function loadedValue(r: MatrixRole | undefined, key: string): unknown {
   if (!r) return undefined;
   if (key === 'label') return roleName(r);
   if (key === 'invitable') return r.invitable;
+  if (key === 'livetvGroups') return r.livetvGroupIds ?? [];
   return r.values[key];
 }
 
@@ -125,7 +151,8 @@ export function changedFromText(r: Pick<MatrixRole, 'values' | 'sources' | 'defa
   return tr('adminPeople.roles.changedFrom', { v: f.kind === 'bool' ? tr(d ? 'adminPeople.roles.allowed' : 'adminPeople.roles.denied') : cellText(f, d) });
 }
 
-function same(a: unknown, b: unknown): boolean {
+/** two values alike: library lists compare as sets, null and undefined alike */
+export function same(a: unknown, b: unknown): boolean {
   if (Array.isArray(a) && Array.isArray(b)) {
     if (a.length !== b.length) return false;
     const sa = [...a].sort(), sb = [...b].sort();
@@ -190,8 +217,18 @@ export function reviewLines(s: Stage, m: RoleMatrix): Array<{ role: string; fiel
       const word = (v: unknown) => tr(v ? 'adminPeople.roles.allowed' : 'adminPeople.roles.denied');
       lines.push({ role: roleName(r), field: tr('adminPeople.roles.fInvitable'), from: word(r.invitable), to: word(fields.invitable) });
     }
+    if (Object.hasOwn(fields, 'livetvGroups')) {
+      lines.push({ role: roleName(r), field: tr('adminPeople.roles.groups.review'), from: groupNames(m, r.livetvGroupIds ?? []), to: groupNames(m, fields.livetvGroups) });
+    }
   }
   return lines;
+}
+
+/** "Nordlicht TV, Hafenkanal": group ids as names in group order (ids the server no longer lists are left out), "Keine" for none */
+function groupNames(m: RoleMatrix, ids: unknown): string {
+  const set = new Set(Array.isArray(ids) ? ids : []);
+  const names = (m.livetv?.groups ?? []).filter((g) => set.has(g.id)).map((g) => g.name);
+  return names.length ? names.join(', ') : tr('adminPeople.roles.groups.none');
 }
 
 /** the roles an invite may grant in catalogue order (the invitable ones); `admin`: Admin as well (an approval) */
@@ -209,11 +246,10 @@ export function roleName(r: Pick<MatrixRole, 'key' | 'label' | 'base' | 'builtin
 /** the phone card's second line: "2 Streams · 20 Mbit/s · ab 12 · Downloads aus" */
 export function summaryLine(r: MatrixRole): string {
   const v = r.values;
-  const by = (k: string, kind: FieldKind) => ({ key: k, group: 'access' as const, kind });
   return [
     tr('adminPeople.roles.sumStreams', { n: Number(v.maxStreams ?? 0) }),
-    cellText(by('maxBitrate', 'bitrate'), v.maxBitrate),
-    cellText(by('maxParentalRating', 'rating'), v.maxParentalRating),
+    cellText({ kind: 'bitrate' }, v.maxBitrate),
+    cellText({ kind: 'rating' }, v.maxParentalRating),
     tr(v.download ? 'adminPeople.roles.sumDownloadsOn' : 'adminPeople.roles.sumDownloadsOff'),
   ].join(' · ');
 }
