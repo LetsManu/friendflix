@@ -8,10 +8,17 @@ import { z } from 'zod';
  * changing `publicBrand` in routes.ts.
  */
 
-/** C0/C1 controls and the bidi embedding/override/isolate marks (a name must not reorder the text around it) */
-const CONTROL = /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
+/**
+ * Characters a brand text must not contain: C0/C1 controls; every format character (\p{Cf}: the bidi embedding/override/isolate marks
+ * U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069, zero-width spaces, the BOM, the soft hyphen, tag characters), except U+200D, the
+ * joiner of emoji sequences; the line and paragraph separators; and the Hangul fillers, letters that render as nothing. A name must not
+ * reorder the text around it, look empty, or carry a line break into a title or the manifest.
+ */
+const CONTROL = /[\p{Cc}\p{Zl}\p{Zp}\u115f\u1160\u3164\uffa0]|(?!\u200d)\p{Cf}/u;
 /** the same, but line breaks are allowed (the about text) */
-const CONTROL_EXCEPT_NEWLINE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
+const CONTROL_EXCEPT_NEWLINE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\p{Zl}\p{Zp}\u115f\u1160\u3164\uffa0]|(?!\u200d)\p{Cf}/u;
+/** something a person can see: a letter, a digit or a symbol (an emoji is a symbol; the blank braille pattern is not) */
+const VISIBLE = /(?!\u2800)[\p{L}\p{N}\p{S}]/u;
 
 /** length in characters (code points), as a person counts them: an emoji is one, not two UTF-16 units */
 const chars = (s: string) => [...s].length;
@@ -19,7 +26,10 @@ const chars = (s: string) => [...s].length;
 const text = (max: number, min = 0, control = CONTROL) =>
   z.string().transform((s) => s.trim()).refine((s) => chars(s) >= min && chars(s) <= max && !control.test(s));
 
-/** http(s) only, no credentials in the URL, at most 200 characters; '' = none */
+/**
+ * http(s) only, no credentials in the URL, at most 200 characters; '' = none. Stored as the parsed URL's href, so every consumer gets
+ * one canonical absolute URL (`http:example.com` becomes `http://example.com/`, never a relative path).
+ */
 const website = z.string().transform((s) => s.trim()).refine((s) => {
   if (s === '') return true;
   if (s.length > 200 || CONTROL.test(s)) return false;
@@ -29,13 +39,13 @@ const website = z.string().transform((s) => s.trim()).refine((s) => {
   } catch {
     return false;
   }
-});
+}).transform((s) => (s === '' ? '' : new URL(s).href)).refine((s) => s.length <= 200);
 
 export const IMAGE_HASH_RE = /^[0-9a-f]{64}$/;
 const imageHash = z.string().regex(IMAGE_HASH_RE).nullable();
 
 export const brandSchema = z.object({
-  name: text(24, 1),
+  name: text(24, 1).refine((s) => VISIBLE.test(s)),
   byline: text(32),
   /** '' = the name */
   shortName: text(12),

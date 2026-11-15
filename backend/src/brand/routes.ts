@@ -17,7 +17,7 @@ import { brandPatchSchema, type Brand, type PublicBrand } from './schema.js';
  *   anyone is signed in. The public fields only (built field by field, never the stored row), the derived tokens and the image URLs;
  *   ETag = rev + tokens version, revalidated on every load (`no-cache`).
  * - GET /api/public/brand/img/<sha256>.<png|webp>: the sanitized bytes, immutable (the name is the content hash), own CSP, nosniff.
- * - the admin routes write: GET / PUT (rev-checked) / POST reset, and the raw-body image upload (the livetv logo pattern: the admin
+ * - the admin routes write: GET / PUT and POST reset (both rev-checked), and the raw-body image upload (the livetv logo pattern: the admin
  *   check runs before the body is read, the body is parsed in this context only, 413 / 415 with fixed codes).
  * Nothing here logs a value, an image byte or an account id; audit rows carry field names (and an upload's kind) only.
  * A save is not announced on the settings bus: that channel carries the settings rev, which every instance compares with its own, and
@@ -70,6 +70,7 @@ function notModified(header: string | string[] | undefined, etag: string): boole
 }
 
 const putBody = z.object({ rev: z.number().int().min(0), brand: z.unknown() }).strict();
+const resetBody = z.object({ rev: z.number().int().min(0) }).strict();
 
 /** the first field a brand patch fails on (an unknown key names itself; a non-object is `brand`) */
 function invalidField(brand: unknown): string | null {
@@ -121,8 +122,17 @@ export function brandRoutes(app: FastifyInstance, ctx: Ctx) {
     }
   });
 
-  app.post('/api/admin/brand/reset', { ...admin, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) =>
-    adminAnswer(await resetBrand(ctx.db, req.user!.id)));
+  // against the rev the page loaded, like PUT: a stale tab's reset never discards another admin's newer save
+  app.post('/api/admin/brand/reset', { ...admin, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const body = resetBody.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'bad_request' });
+    try {
+      return await adminAnswer(await resetBrand(ctx.db, req.user!.id, body.data.rev));
+    } catch (e) {
+      if (e instanceof BrandConflict) return reply.code(409).send({ error: 'brand_conflict', rev: e.rev });
+      throw e;
+    }
+  });
 
   // the upload is a raw image body, parsed only in this context; anything else is 415, more than 2 MB is 413 (fixed codes)
   void app.register(async (sub) => {

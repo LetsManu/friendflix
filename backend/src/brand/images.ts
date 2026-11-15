@@ -123,6 +123,7 @@ function sanitizePng(buf: Buffer, kind: BrandImageKind): Omit<SanitizedImage, 'h
   const idat: Buffer[] = [];
   const seen = new Set<string>();
   let prev = '';
+  let paletteEntries = 0;
   for (const c of chunks) {
     const critical = c.type.charCodeAt(0) < 0x61; // upper-case first letter
     if (!PNG_KEEP.has(c.type)) {
@@ -136,8 +137,14 @@ function sanitizePng(buf: Buffer, kind: BrandImageKind): Omit<SanitizedImage, 'h
     } else {
       if (seen.has(c.type)) throw corrupt(); // each other kept chunk at most once
       if (c.type !== 'IHDR' && c.type !== 'IEND' && seen.has('IDAT')) throw corrupt(); // palette, transparency and colour info precede the pixels
-      if (c.type === 'PLTE' && (color === 0 || color === 4 || c.data.length === 0 || c.data.length % 3 !== 0 || c.data.length > 768)) throw corrupt();
-      if (c.type === 'tRNS' && (color === 4 || color === 6 || (color === 3 && !seen.has('PLTE')))) throw corrupt();
+      if (c.type === 'PLTE') {
+        // 1–256 entries of 3 bytes; a palette image's PLTE has no more entries than its bit depth can index
+        if (color === 0 || color === 4 || c.data.length === 0 || c.data.length % 3 !== 0 || c.data.length > 768) throw corrupt();
+        paletteEntries = c.data.length / 3;
+        if (color === 3 && paletteEntries > 1 << depth) throw corrupt();
+      }
+      // transparency: one 2-byte grey sample, one 6-byte RGB sample, or 1 alpha byte per palette entry at most; none with an alpha channel
+      if (c.type === 'tRNS' && !trnsOk(color, c.data.length, seen.has('PLTE') ? paletteEntries : 0)) throw corrupt();
       if ((c.type === 'sRGB' && c.data.length !== 1) || (c.type === 'gAMA' && c.data.length !== 4) || (c.type === 'cHRM' && c.data.length !== 32)) throw corrupt();
     }
     seen.add(c.type);
@@ -150,7 +157,18 @@ function sanitizePng(buf: Buffer, kind: BrandImageKind): Omit<SanitizedImage, 'h
   return { bytes: Buffer.concat([PNG_SIG, ...kept]), mime: 'image/png', width, height };
 }
 
-/** the filtered scanlines inflate to exactly the size the header implies, and every row's filter type is 0–4 */
+/** whether a tRNS of `len` bytes suits the colour type (palette: after the PLTE, at most one byte per entry) */
+function trnsOk(color: number, len: number, paletteEntries: number): boolean {
+  if (color === 0) return len === 2;
+  if (color === 2) return len === 6;
+  if (color === 3) return len >= 1 && len <= paletteEntries;
+  return false;
+}
+
+/**
+ * The filtered scanlines inflate to exactly the size the header implies, the zlib stream ends exactly at the end of the IDAT data
+ * (nothing rides behind it: no second stream, no appended file), and every row's filter type is 0–4.
+ */
 function checkPixels(z: Buffer, w: number, h: number, bitsPerPixel: number, interlaced: boolean): void {
   const passes = interlaced
     ? ADAM7.map(([xs, ys, dx, dy]) => [w > xs ? Math.ceil((w - xs) / dx) : 0, h > ys ? Math.ceil((h - ys) / dy) : 0] as const)
@@ -164,12 +182,16 @@ function checkPixels(z: Buffer, w: number, h: number, bitsPerPixel: number, inte
     expected += rb * ph;
   }
   let raw: Buffer;
+  let consumed: number;
   try {
-    raw = inflateSync(z, { maxOutputLength: expected });
+    // info: the engine reports how many input bytes the stream used (inflate stops at the stream's end and ignores the rest)
+    const r = inflateSync(z, { maxOutputLength: expected, info: true }) as unknown as { buffer: Buffer; engine: { bytesWritten: number } };
+    raw = r.buffer;
+    consumed = r.engine.bytesWritten;
   } catch {
     throw corrupt();
   }
-  if (raw.length !== expected) throw corrupt();
+  if (raw.length !== expected || consumed !== z.length) throw corrupt();
   let at = 0;
   for (const rb of rows) {
     if (raw[at]! > 4) throw corrupt();

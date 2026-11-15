@@ -42,6 +42,16 @@ function png(w: number, h: number, seed = 0, comment?: string): Buffer {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', d), ...(comment ? [chunk('tEXt', Buffer.from(`Comment\0${comment}`))] : []),
     chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
+/** a lossy WebP of w × h: a VP8 key frame header (plus filler: only the header is parsed) */
+function webp(w: number, h: number): Buffer {
+  const d = Buffer.alloc(30);
+  d.writeUIntLE(0x10 | (20 << 5), 0, 3);
+  d[3] = 0x9d; d[4] = 0x01; d[5] = 0x2a;
+  d.writeUInt16LE(w, 6);
+  d.writeUInt16LE(h, 8);
+  const body = Buffer.concat([Buffer.from('WEBPVP8 ', 'latin1'), Buffer.from([d.length, 0, 0, 0]), d]);
+  return Buffer.concat([Buffer.from('RIFF', 'latin1'), Buffer.from([body.length, 0, 0, 0]), body]);
+}
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 const PUBLIC_KEYS = ['name', 'byline', 'shortName', 'website', 'about', 'header', 'accent', 'glow', 'signInBg', 'logo', 'symbol', 'signInImage'].sort();
 
@@ -76,7 +86,7 @@ describe('brand routes', () => {
 
   it('a non-admin PUT gives 403 (and so do the other admin routes); no session gives 401', async () => {
     const routes: Array<[string, string, unknown?]> = [
-      ['GET', '/api/admin/brand'], ['PUT', '/api/admin/brand', { rev: 0, brand: { name: 'Doraflix' } }], ['POST', '/api/admin/brand/reset', {}],
+      ['GET', '/api/admin/brand'], ['PUT', '/api/admin/brand', { rev: 0, brand: { name: 'Doraflix' } }], ['POST', '/api/admin/brand/reset', { rev: 0 }],
     ];
     for (const [m, url, body] of routes) {
       expect((await as(dora, m, url, body)).statusCode, `${m} ${url}`).toBe(403);
@@ -124,9 +134,14 @@ describe('brand routes', () => {
     const cases: Array<[Record<string, unknown>, string]> = [
       [{ name: '' }, 'name'], [{ name: '   ' }, 'name'], [{ name: 'x'.repeat(25) }, 'name'], [{ name: 'Kino\u0007' }, 'name'], [{ name: 'Kino\nabend' }, 'name'],
       [{ name: 'Kino\u202eabend' }, 'name'],
+      // invisible or format characters: a zero-width space, a Hangul filler, a BOM inside, line / paragraph separators, a tag
+      // character, a soft hyphen; and a name with nothing visible (a combining mark alone, the blank braille pattern)
+      [{ name: '\u200b' }, 'name'], [{ name: '\u3164' }, 'name'], [{ name: 'Ki\ufeffno' }, 'name'], [{ name: 'A\u2028B' }, 'name'], [{ name: 'A\u2029B' }, 'name'],
+      [{ name: 'A\u{e0041}' }, 'name'], [{ name: 'Ki\u00adno' }, 'name'], [{ name: '\u0301' }, 'name'], [{ name: '\u2800' }, 'name'],
+      [{ byline: 'by\u200bme' }, 'byline'], [{ shortName: '\u2066Kino' }, 'shortName'], [{ about: 'Zeile\u2028zwei' }, 'about'],
       [{ accent: '#ff4f6' }, 'accent'], [{ accent: 'red' }, 'accent'], [{ accent: '#ff4f6dzz' }, 'accent'],
       [{ byline: 'x'.repeat(33) }, 'byline'], [{ shortName: 'x'.repeat(13) }, 'shortName'], [{ about: 'x'.repeat(281) }, 'about'],
-      [{ website: 'javascript:alert(1)' }, 'website'], [{ website: 'https://user:pw@example.com/' }, 'website'],
+      [{ website: 'javascript:alert(1)' }, 'website'], [{ website: 'https://user:pw@example.com/' }, 'website'], [{ website: 'ftp://files.example.com/' }, 'website'],
       [{ header: 'banner' }, 'header'], [{ glow: 'rainbow' }, 'glow'], [{ signInBg: 'video' }, 'signInBg'],
       [{ logo: 'abc' }, 'logo'], [{ symbol: 'f'.repeat(64) }, 'symbol'], [{ updatedBy: 'x' }, 'updatedBy'],
     ];
@@ -139,6 +154,23 @@ describe('brand routes', () => {
     // 24 characters (counted as characters, not UTF-16 units) and a website are fine
     const ok = await as(admin, 'PUT', '/api/admin/brand', { rev, brand: { name: '🎬'.repeat(24), website: 'https://kino.example.com/about', about: 'Zeile 1\nZeile 2' } });
     expect(ok.statusCode).toBe(200);
+    // an emoji sequence keeps its joiner
+    const family = '\u{1f468}\u200d\u{1f469}\u200d\u{1f467}';
+    const zwj = await as(admin, 'PUT', '/api/admin/brand', { rev: rev + 1, brand: { name: `Kino ${family}` } });
+    expect([zwj.statusCode, zwj.json().brand.name]).toEqual([200, `Kino ${family}`]);
+  });
+
+  it('the website is stored as one canonical absolute URL', async () => {
+    const cases: Array<[string, string]> = [
+      ['http:example.com', 'http://example.com/'], ['HTTPS://Kino.Example.com', 'https://kino.example.com/'],
+      ['https://example.com/"><script>', 'https://example.com/%22%3E%3Cscript%3E'], ['', ''],
+    ];
+    for (const [typed, stored] of cases) {
+      const { rev } = await current();
+      const r = await as(admin, 'PUT', '/api/admin/brand', { rev, brand: { website: typed } });
+      expect([r.statusCode, r.json().brand.website], typed).toEqual([200, stored]);
+      expect((await env.app.inject('/api/public/brand')).json().brand.website, typed).toBe(stored);
+    }
   });
 
   it('an image upload stores the sanitized image, dedups by hash and does not set the brand', async () => {
@@ -181,6 +213,19 @@ describe('brand routes', () => {
     expect([poly.statusCode, poly.json()]).toEqual([400, { error: 'corrupt' }]);
     // the CSRF token is required
     expect((await env.app.inject({ method: 'PUT', url: '/api/admin/brand/image/logo', cookies: admin.cookies, headers: { 'content-type': 'image/png' }, payload: png(4, 2) })).statusCode).toBe(403);
+  });
+
+  it('a WebP upload is stored and served as WebP', async () => {
+    const r = await upload(admin, 'symbol', webp(640, 640), 'image/webp');
+    expect(r.statusCode).toBe(200);
+    const { hash, url, width, height } = r.json();
+    expect([width, height]).toEqual([640, 640]);
+    expect(url).toBe(`/api/public/brand/img/${hash}.webp`);
+    const img = await env.app.inject(url);
+    expect([img.statusCode, img.headers['content-type']]).toEqual([200, 'image/webp']);
+    expect(sha(img.rawPayload)).toBe(hash);
+    expect((await env.app.inject(`/api/public/brand/img/${hash}.png`)).statusCode).toBe(404);
+    expect((await upload(admin, 'symbol', webp(300, 300), 'image/webp')).json()).toEqual({ error: 'dimensions' });
   });
 
   it('a stored image of the wrong shape cannot be set as the symbol', async () => {
@@ -236,9 +281,30 @@ describe('brand routes', () => {
     expect(left).not.toContain(old);
   });
 
+  it('an upload also cleans up unreferenced images older than 1 hour; the referenced logo and fresh uploads stay', async () => {
+    const stale = (await upload(admin, 'logo', png(8, 2, 20))).json().hash as string;
+    const { brand: b } = await current();
+    expect(b.logo).toMatch(/^[0-9a-f]{64}$/);
+    await env.pool.query("update brand_images set created_at = now() - interval '2 hours'");
+    const fresh = (await upload(admin, 'logo', png(8, 2, 21))).json().hash as string;
+    const left = (await env.pool.query<{ hash: string }>('select hash from brand_images')).rows.map((r) => r.hash);
+    expect(left.sort()).toEqual([b.logo!, fresh].sort());
+    expect(left).not.toContain(stale);
+  });
+
+  it('a reset with a stale rev gives 409 brand_conflict and changes nothing; no rev is a bad request', async () => {
+    const before = await current();
+    expect(before.brand.name).not.toBe(DEFAULT_BRAND.name);
+    const r = await as(admin, 'POST', '/api/admin/brand/reset', { rev: before.rev - 1 });
+    expect([r.statusCode, r.json()]).toEqual([409, { error: 'brand_conflict', rev: before.rev }]);
+    expect((await as(admin, 'POST', '/api/admin/brand/reset', {})).json()).toEqual({ error: 'bad_request' });
+    expect(await current()).toEqual(before);
+    expect(await audits('brand.reset')).toHaveLength(0);
+  });
+
   it('reset gives the defaults, bumps the rev and audits brand.reset with the field names', async () => {
     const { rev } = await current();
-    const r = await as(admin, 'POST', '/api/admin/brand/reset', {});
+    const r = await as(admin, 'POST', '/api/admin/brand/reset', { rev });
     expect(r.statusCode).toBe(200);
     expect(r.json()).toMatchObject({ rev: rev + 1, brand: DEFAULT_BRAND });
     const pub = (await env.app.inject('/api/public/brand')).json();

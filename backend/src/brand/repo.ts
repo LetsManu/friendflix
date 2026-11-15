@@ -17,7 +17,7 @@ export interface BrandState { rev: number; brand: Brand; updatedAt: string | nul
 /** the brand fields that hold an image hash, with the kind whose size rules the image must meet */
 export const IMAGE_FIELDS: ReadonlyArray<readonly ['logo' | 'symbol' | 'signInImage', BrandImageKind]> = [['logo', 'logo'], ['symbol', 'symbol'], ['signInImage', 'signIn']];
 
-/** images no brand refers to are deleted after this long (an upload waits for the save that sets it) */
+/** images no brand refers to are deleted after this long (an upload waits for the save that sets it); checked on every save and upload */
 export const UNREFERENCED_IMAGE_TTL = '1 hour';
 
 /** a save against an older rev: someone else saved in between (409 brand_conflict, with the current rev) */
@@ -54,6 +54,12 @@ async function lockBrand(c: pg.PoolClient): Promise<{ rev: number; brand: Brand 
   return { rev: Number(r.rows[0]!.rev), brand: brandFromStored(r.rows[0]!.data) };
 }
 
+/** deletes the images `brand` does not refer to once they are older than the TTL (the caller holds the row lock) */
+async function dropUnreferenced(c: pg.PoolClient, brand: Brand): Promise<void> {
+  const keep = IMAGE_FIELDS.map(([f]) => brand[f]).filter((h): h is string => h !== null);
+  await c.query(`delete from brand_images where created_at < now() - interval '${UNREFERENCED_IMAGE_TTL}' and not (hash = any($1::text[]))`, [keep]);
+}
+
 const changedFields = (a: Brand, b: Brand) => BRAND_KEYS.filter((k) => a[k] !== b[k]).sort();
 
 /** stores `next` when it differs (rev + 1, audit `action` with the changed field names), then drops unreferenced images */
@@ -66,8 +72,7 @@ async function write(c: pg.PoolClient, actor: string, cur: { rev: number; brand:
   const r = await c.query<{ rev: string; updated_at: Date }>(
     'update brand set data = $1, rev = rev + 1, updated_at = now(), updated_by = $2 where id = 1 returning rev, updated_at', [JSON.stringify(next), actor]);
   await auditInTx({ db: c }, actor, action, undefined, { fields });
-  const keep = IMAGE_FIELDS.map(([f]) => next[f]).filter((h): h is string => h !== null);
-  await c.query(`delete from brand_images where created_at < now() - interval '${UNREFERENCED_IMAGE_TTL}' and not (hash = any($1::text[]))`, [keep]);
+  await dropUnreferenced(c, next);
   return { rev: Number(r.rows[0]!.rev), brand: next, updatedAt: r.rows[0]!.updated_at.toISOString() };
 }
 
@@ -91,21 +96,30 @@ export async function saveBrand(db: Db, actor: string, rev: number, patch: Parti
   });
 }
 
-/** back to the defaults (audited as brand.reset with the fields that changed) */
-export async function resetBrand(db: Db, actor: string): Promise<BrandState> {
-  return inTx(db, async (c) => write(c, actor, await lockBrand(c), { ...DEFAULT_BRAND }, 'brand.reset'));
+/** back to the defaults, against the rev the admin's page loaded (audited as brand.reset with the fields that changed); a stale rev throws BrandConflict */
+export async function resetBrand(db: Db, actor: string, rev: number): Promise<BrandState> {
+  return inTx(db, async (c) => {
+    const cur = await lockBrand(c);
+    if (cur.rev !== rev) throw new BrandConflict(cur.rev);
+    return write(c, actor, cur, { ...DEFAULT_BRAND }, 'brand.reset');
+  });
 }
 
 /**
  * Stores a sanitized image once per hash. The same bytes again only renew its age, so an old unreferenced copy is not cleaned up
- * before the save that sets it. true = it was new.
+ * before the save that sets it. Then the uploads nothing refers to are cleaned up (older than the TTL), so abandoned uploads do not
+ * pile up between saves; the row lock orders this with a save that is about to set one of them. true = it was new.
  */
 export async function storeImage(db: Db, img: SanitizedImage): Promise<boolean> {
-  const r = await db.query<{ inserted: boolean }>(
-    `insert into brand_images(hash, mime, width, height, bytes) values ($1, $2, $3, $4, $5)
-     on conflict (hash) do update set created_at = now() returning (xmax = 0) as inserted`,
-    [img.hash, img.mime, img.width, img.height, img.bytes]);
-  return r.rows[0]?.inserted === true;
+  return inTx(db, async (c) => {
+    const cur = await lockBrand(c);
+    const r = await c.query<{ inserted: boolean }>(
+      `insert into brand_images(hash, mime, width, height, bytes) values ($1, $2, $3, $4, $5)
+       on conflict (hash) do update set created_at = now() returning (xmax = 0) as inserted`,
+      [img.hash, img.mime, img.width, img.height, img.bytes]);
+    await dropUnreferenced(c, cur.brand);
+    return r.rows[0]?.inserted === true;
+  });
 }
 
 export async function readImage(db: Db, hash: string): Promise<{ mime: BrandImageMime; bytes: Buffer } | null> {

@@ -171,6 +171,51 @@ describe('PNG', () => {
     expect(refused(Buffer.concat([SIG, chunk('IHDR', f), chunk('IDAT', deflateSync(Buffer.alloc(26))), chunk('IEND', Buffer.alloc(0))]))).toBe('corrupt');
   });
 
+  it('bytes after the zlib stream in IDAT are corrupt: appended HTML, a second stream', () => {
+    const raw = Buffer.alloc(2 * (1 + 4 * 3));
+    expect(refused(png(4, 2, { idat: Buffer.concat([deflateSync(raw), Buffer.from('<html><script>alert(1)</script>')]) }))).toBe('corrupt');
+    expect(refused(png(4, 2, { idat: Buffer.concat([deflateSync(raw), deflateSync(raw)]) }))).toBe('corrupt');
+    // the same tail split over a second IDAT chunk is the same stream
+    const z = Buffer.concat([deflateSync(raw), Buffer.from('<svg/>')]);
+    const split = Buffer.concat([SIG, chunk('IHDR', ihdr(4, 2)), chunk('IDAT', z.subarray(0, 10)), chunk('IDAT', z.subarray(10)), chunk('IEND', Buffer.alloc(0))]);
+    expect(refused(split)).toBe('corrupt');
+    expect(sanitizeImage(png(4, 2, { idat: deflateSync(raw) }), 'logo').width).toBe(4);
+  });
+
+  it('tRNS and PLTE sizes must suit the colour type and bit depth', () => {
+    const rgb = (trns: Buffer) => png(4, 2, { before: [chunk('tRNS', trns)] });
+    expect(pngChunks(sanitizeImage(rgb(Buffer.alloc(6)), 'logo').bytes)).toEqual(['IHDR', 'tRNS', 'IDAT', 'IEND']);
+    expect(refused(rgb(Buffer.alloc(100)))).toBe('corrupt'); // RGB: exactly one 6-byte sample
+    expect(refused(rgb(Buffer.alloc(2)))).toBe('corrupt');
+    const grey = (trns: Buffer) => Buffer.concat([SIG, chunk('IHDR', ihdr(4, 2, 0)), chunk('tRNS', trns), chunk('IDAT', deflateSync(Buffer.alloc(2 * 5))), chunk('IEND', Buffer.alloc(0))]);
+    expect(sanitizeImage(grey(Buffer.alloc(2)), 'logo').width).toBe(4);
+    expect(refused(grey(Buffer.alloc(6)))).toBe('corrupt'); // grey: exactly one 2-byte sample
+    // palette: at most one alpha byte per entry, none when empty; a 1-bit image indexes 2 entries at most
+    const pal = (entries: number, trns: Buffer | null, depth = 8) => Buffer.concat([SIG, chunk('IHDR', ihdr(2, 2, 3, depth)), chunk('PLTE', Buffer.alloc(entries * 3)),
+      ...(trns ? [chunk('tRNS', trns)] : []), chunk('IDAT', deflateSync(Buffer.alloc(2 * (1 + Math.ceil((2 * depth) / 8))))), chunk('IEND', Buffer.alloc(0))]);
+    expect(pngChunks(sanitizeImage(pal(2, Buffer.alloc(2)), 'logo').bytes)).toEqual(['IHDR', 'PLTE', 'tRNS', 'IDAT', 'IEND']);
+    expect(refused(pal(2, Buffer.alloc(3)))).toBe('corrupt');
+    expect(refused(pal(2, Buffer.alloc(0)))).toBe('corrupt');
+    expect(sanitizeImage(pal(2, null, 1), 'logo').width).toBe(2);
+    expect(refused(pal(3, null, 1))).toBe('corrupt');
+    expect(refused(pal(17, null, 4))).toBe('corrupt');
+    // an RGBA image has its own alpha: a tRNS is corrupt
+    const rgba = Buffer.concat([SIG, chunk('IHDR', ihdr(2, 2, 6)), chunk('tRNS', Buffer.alloc(6)), chunk('IDAT', deflateSync(Buffer.alloc(2 * 9))), chunk('IEND', Buffer.alloc(0))]);
+    expect(refused(rgba)).toBe('corrupt');
+  });
+
+  it('APNG animation chunks (acTL, fcTL, fdAT) are dropped: the result is the still default image', () => {
+    const raw = Buffer.alloc(2 * (1 + 4 * 3));
+    const fctl = (seq: number) => { const d = Buffer.alloc(26); d.writeUInt32BE(seq, 0); d.writeUInt32BE(4, 4); d.writeUInt32BE(2, 8); return chunk('fcTL', d); };
+    const fdat = (seq: number) => { const d = Buffer.alloc(4); d.writeUInt32BE(seq, 0); return chunk('fdAT', Buffer.concat([d, deflateSync(raw)])); };
+    const actl = Buffer.alloc(8);
+    actl.writeUInt32BE(2, 0);
+    const src = png(4, 2, { before: [chunk('acTL', actl), fctl(0)], after: [fctl(1), fdat(2)] });
+    const out = sanitizeImage(src, 'logo');
+    expect(pngChunks(out.bytes)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(sanitizeImage(out.bytes, 'logo').bytes).toEqual(out.bytes);
+  });
+
   it('header dimensions far beyond the limits are refused before any pixel is inflated', () => {
     expect(refused(Buffer.concat([SIG, chunk('IHDR', ihdr(60000, 60000)), chunk('IDAT', deflateSync(Buffer.alloc(10))), chunk('IEND', Buffer.alloc(0))]), 'signIn')).toBe('dimensions');
   });
@@ -228,6 +273,42 @@ describe('WebP', () => {
     expect(sanitizeImage(riff([vp8(640, 640)]), 'symbol')).toMatchObject({ width: 640, height: 640, mime: 'image/webp' });
     expect(refused(riff([vp8(300, 300)]), 'symbol')).toBe('dimensions');
     expect(refused(riff([vp8x(0, 2, 2), VP8L_1X1]))).toBe('corrupt');
+  });
+
+  it('a still VP8 with an ALPH chunk keeps both (alpha first); ALPH after the image or with a lossless image is corrupt', () => {
+    const alph = riffChunk('ALPH', Buffer.from([0, 1, 2, 3, 4]));
+    const out = sanitizeImage(riff([vp8x(0x10, 640, 640), alph, vp8(640, 640), riffChunk('EXIF', Buffer.from('GPS-SECRET'))]), 'symbol');
+    expect(webpChunks(out.bytes)).toEqual(['VP8X', 'ALPH', 'VP8 ']);
+    expect(out.bytes.includes(Buffer.from('GPS-SECRET'))).toBe(false);
+    expect([out.width, out.height]).toEqual([640, 640]);
+    expect(refused(riff([vp8x(0x10, 640, 640), vp8(640, 640), alph]), 'symbol')).toBe('corrupt');
+    expect(refused(riff([vp8x(0x10, 1, 1), alph, VP8L_1X1]))).toBe('corrupt');
+    expect(refused(riff([vp8x(0x10, 640, 640), alph, alph, vp8(640, 640)]), 'symbol')).toBe('corrupt');
+  });
+
+  it('an animated WebP keeps ANIM and its frames, rebuilt from their image sub-chunks only; frames must lie inside the canvas', () => {
+    const anim = riffChunk('ANIM', Buffer.alloc(6));
+    /** an ANMF frame at (x, y) of the 1×1 lossless image, plus `extra` sub-chunks */
+    const anmf = (x: number, y: number, extra: Buffer[] = []) => {
+      const h = Buffer.alloc(16);
+      h.writeUIntLE(x / 2, 0, 3);
+      h.writeUIntLE(y / 2, 3, 3);
+      h.writeUIntLE(0, 6, 3); // width - 1
+      h.writeUIntLE(0, 9, 3); // height - 1
+      h.writeUIntLE(100, 12, 3); // duration
+      return riffChunk('ANMF', Buffer.concat([h, VP8L_1X1, ...extra]));
+    };
+    const exif = riffChunk('EXIF', Buffer.from('GPS-SECRET'));
+    const out = sanitizeImage(riff([vp8x(0x02 | 0x08, 4, 4), anim, anmf(0, 0, [exif]), anmf(2, 2), exif]), 'logo');
+    expect(webpChunks(out.bytes)).toEqual(['VP8X', 'ANIM', 'ANMF', 'ANMF']);
+    expect(out.bytes[20]).toBe(0x02); // animation stays, EXIF goes
+    expect(out.bytes.includes(Buffer.from('GPS-SECRET'))).toBe(false);
+    expect([out.width, out.height]).toEqual([4, 4]);
+    expect(sanitizeImage(out.bytes, 'logo').bytes).toEqual(out.bytes);
+    expect(refused(riff([vp8x(0x02, 4, 4), anim, anmf(4, 0)]))).toBe('corrupt'); // outside the canvas
+    expect(refused(riff([vp8x(0x02, 4, 4), anmf(0, 0), anim]))).toBe('corrupt'); // ANIM after the frames
+    expect(refused(riff([vp8x(0x02, 4, 4), anim]))).toBe('corrupt'); // no frame
+    expect(refused(riff([vp8x(0x02, 4, 4), anim, anmf(0, 0), VP8L_1X1]))).toBe('corrupt'); // a still image beside the frames
   });
 
   it('structural lies are corrupt: RIFF size, chunk length past the end, no image, trailing bytes, a broken VP8L header', () => {
