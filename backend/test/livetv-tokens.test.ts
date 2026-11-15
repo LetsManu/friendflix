@@ -568,6 +568,33 @@ describe('recording tokens (Phase 3)', () => {
     expect((await resolveRecToken(env.ctx, sameAccount, IP2)).status).toBe(200);
   });
 
+  it('B-I5: play applies the watch gates: Live TV installed, the stream limit, the per-address cap, the profile re-check', async () => {
+    const r = await rec({ profile_id: adminProfile, user_id: adminId });
+    const { livetvInstalled } = await import('../src/livetv/detect.js');
+    vi.mocked(livetvInstalled).mockReturnValueOnce(false);
+    expect((await play(r.id)).json()).toEqual({ error: 'livetv_off' });
+    // the account's stream limit, as for a watch: another device plays something already
+    await env.pool.query('insert into user_limits(user_id, max_streams) values ($1, 1) on conflict (user_id) do update set max_streams = 1', [adminId]);
+    invalidateRights();
+    await env.kv.set(`play:${adminId}:ps-other-device`, JSON.stringify({ userId: adminId }), 60);
+    try {
+      expect((await play(r.id)).json()).toEqual({ error: 'max_streams', max: 1 });
+    } finally {
+      await env.pool.query('delete from user_limits where user_id = $1', [adminId]);
+      await env.kv.del(`play:${adminId}:ps-other-device`);
+      invalidateRights();
+    }
+    expect((await play(r.id)).statusCode).toBe(200);
+  });
+
+  it('B-M6: an admin stop of a recording playback in Wiedergabe-Check sets no stop marker for the channel', async () => {
+    const r = await rec();
+    const { hash } = await annaRec(r.id);
+    const { adminStopViewKey, livePlaySessionId, stopLiveSession } = await import('../src/livetv/tokens.js');
+    expect(await stopLiveSession(env.ctx, ANNA, livePlaySessionId(hash))).toEqual({ channelId: nord });
+    expect(await env.kv.get(adminStopViewKey(ANNA, 'dev-anna-1'))).toBeNull();
+  });
+
   it('a recording that now lives only in the library is gone for its tokens', async () => {
     const r = await rec();
     const { token } = await annaRec(r.id);

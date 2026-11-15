@@ -12,7 +12,8 @@ import { adminListRecordings, deleteRecording, effectiveStorage, getRecording, l
 import { expandRules, forecast, insertScheduled, programmeAt, releaseReservation, validTz, type RuleRow } from './recsched.js';
 import { exportToLibrary, usage } from './recstore.js';
 import { channelAllowed } from './rights.js';
-import { LIVE_CAP_S, liveSidHash, mintRecToken } from './tokens.js';
+import { playEntryGate, profileChangedSince, streamLimitRefusal } from './routes.js';
+import { LIVE_CAP_S, liveSidHash, mintRecToken, revokeLiveToken } from './tokens.js';
 import { isHomeRequest } from '../netaddr.js';
 
 /**
@@ -215,6 +216,7 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
    * credential). 404 not visible; 409 `not_ready` while nothing is recorded; 409 `in_library` once it lives only in the Jellyfin library.
    */
   app.post('/api/livetv/recordings/:id/play', { ...user, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    if (!(await playEntryGate(ctx, req, reply))) return reply; // the watch route's gates (B-I5)
     const id = idParam(req);
     if (!id) return notFound(reply);
     const b = playBody.safeParse(req.body ?? {});
@@ -226,13 +228,20 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     if (r.state === 'scheduled' || r.state === 'starting' || Number(r.bytes) === 0) return reply.code(409).send({ error: 'not_ready' });
     const deviceId = req.session!.deviceId;
     if (!deviceId) return reply.code(403).send({ error: 'device_pending' });
+    const via = b.data.via ?? 'local';
+    const over = await streamLimitRefusal(ctx, u, deviceId, via, 'rec');
+    if (over) return reply.code(429).send(over);
     const growing = r.state === 'recording';
     const HOUR_MS = 3_600_000;
     const capMs = growing ? r.end_at.getTime() + r.pad_after_s * 1000 + HOUR_MS - Date.now() : (r.duration_s ?? 0) * 1000 + HOUR_MS;
     const minted = await mintRecToken(ctx, {
       userId: u.id, profileId: profile.id, deviceId, sidHash: liveSidHash(req.sid!), recordingId: r.id, channelId: r.channel_id ?? '', channelName: r.channel_name,
-      via: b.data.via ?? 'local', remote: !isHomeRequest(req, ctx.cfg.HOME_NETWORKS),
+      via, remote: !isHomeRequest(req, ctx.cfg.HOME_NETWORKS),
     }, Math.min(LIVE_CAP_S, Math.ceil(capMs / 1000)));
+    if (await profileChangedSince(ctx, req, profile.id)) {
+      await revokeLiveToken(ctx, minted.hash);
+      return reply.code(409).send({ error: 'profile_changed' });
+    }
     const pos = (await ctx.db.query<{ position_s: number }>('select position_s from livetv_recording_progress where profile_id = $1 and recording_id = $2', [profile.id, id])).rows[0];
     reply.header('cache-control', 'no-store');
     return {

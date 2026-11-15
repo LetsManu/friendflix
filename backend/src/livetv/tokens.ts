@@ -166,8 +166,8 @@ export async function endLiveToken(ctx: Ctx, token: string, userId: string): Pro
  * watch route leaves them out of the `maxStreams` count (spec §7.2). Admin test previews and the other slot (cast or local, R14) are
  * not replaced by that watch, so they are not among them.
  */
-export async function deviceLiveSessions(ctx: Ctx, userId: string, deviceId: string, via: LiveTokenRec['via'] = 'local'): Promise<string[]> {
-  return (await listTokens(ctx, userId)).filter((t) => t.rec.deviceId === deviceId && !t.rec.test && kindOf(t.rec) === 'live' && viaClass(t.rec.via) === viaClass(via)).map((t) => livePlaySessionId(t.hash));
+export async function deviceLiveSessions(ctx: Ctx, userId: string, deviceId: string, via: LiveTokenRec['via'] = 'local', kind: 'live' | 'rec' = 'live'): Promise<string[]> {
+  return (await listTokens(ctx, userId)).filter((t) => t.rec.deviceId === deviceId && !t.rec.test && kindOf(t.rec) === kind && viaClass(t.rec.via) === viaClass(via)).map((t) => livePlaySessionId(t.hash));
 }
 
 /**
@@ -221,7 +221,8 @@ export const adminStopViewKey = (userId: string, deviceId: string) => `ltv:admin
 export async function stopLiveSession(ctx: Ctx, userId: string, playSessionId: string): Promise<{ channelId: string } | null> {
   const t = (await listTokens(ctx, userId)).find((x) => livePlaySessionId(x.hash) === playSessionId);
   if (!t) return null;
-  await ctx.kv.set(adminStopViewKey(userId, t.rec.deviceId), t.rec.channelId, ADMIN_STOP_TTL_S);
+  // a recording's playback names its channel too, but stopping it must not keep that device from watching the channel live (B-M6)
+  if (kindOf(t.rec) === 'live') await ctx.kv.set(adminStopViewKey(userId, t.rec.deviceId), t.rec.channelId, ADMIN_STOP_TTL_S);
   await revokeLiveToken(ctx, t.hash);
   return { channelId: t.rec.channelId };
 }

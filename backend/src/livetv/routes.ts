@@ -74,6 +74,37 @@ const WATCH_LIMIT = {
 export const WATCH_IP_MAX = 120;
 
 /**
+ * The gates a live watch and a recording's playback share (B-I5): the per-address cap (bughunt L5) and Live TV installed. false = the
+ * answer is sent.
+ */
+export async function playEntryGate(ctx: Ctx, req: FastifyRequest, reply: FastifyReply): Promise<boolean> {
+  // the secondary cap per client address (bughunt L5): a household behind one NAT shares it, so it is far above one viewer's need
+  if ((await ctx.kv.incr(`ltv:watchip:${clientAddress(req)}`, 60).catch(() => 0)) > WATCH_IP_MAX) { reply.code(429).send({ error: 'rate_limited' }); return false; }
+  if (!livetvInstalled(ctx)) { reply.code(404).send({ error: 'livetv_off' }); return false; }
+  return true;
+}
+
+/**
+ * The account's `maxStreams` for a new live or recording playback (spec §7.2, B-I5): running streams (play records) plus tokens minted
+ * but not fetched yet (review L1), without the device's own token this one replaces (same kind and slot). null = within the limit.
+ */
+export async function streamLimitRefusal(ctx: Ctx, u: { id: string; role: string }, deviceId: string, via: 'local' | 'chromecast' | 'airplay', kind: 'live' | 'rec'): Promise<{ error: 'max_streams'; max: number } | null> {
+  const limits = (await effectiveLimits(ctx, u))!;
+  const prefix = `play:${u.id}:`;
+  const own = new Set(await deviceLiveSessions(ctx, u.id, deviceId, via, kind));
+  const running = new Set((await ctx.kv.keys(prefix)).map((k) => k.slice(prefix.length)));
+  for (const ps of await unfetchedLiveSessions(ctx, u.id)) running.add(ps);
+  const counted = [...running].filter((ps) => !own.has(ps)).length;
+  return counted >= limits.maxStreams ? { error: 'max_streams', max: limits.maxStreams } : null;
+}
+
+/** after a mint: a profile switch or sign-out that raced the request revoked the device's tokens before this one existed (true = take it back) */
+export async function profileChangedSince(ctx: Ctx, req: FastifyRequest, profileId: string): Promise<boolean> {
+  const after = await loadSession(ctx, req.sid);
+  return !after || (after.profileId !== undefined && after.profileId !== null && after.profileId !== profileId);
+}
+
+/**
  * The user side of Live TV (spec §10, `requireUser`; kids profiles allowed unless a route says otherwise): logos (Task 19, plus the signed
  * cast variant), watching, the heartbeat and stopping (Task 31), the channel list with its preview image, ordered favourites, *Zuletzt
  * gesehen* and the last channel (Task 33). Every route answers from the asking profile's own `channelSet`: a channel outside it is never
@@ -106,9 +137,7 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
    * channel itself (`PUT /api/livetv/last`).
    */
   app.post('/api/livetv/channels/:id/watch', { ...user, config: { rateLimit: WATCH_LIMIT } }, async (req, reply) => {
-    // the secondary cap per client address (bughunt L5): a household behind one NAT shares it, so it is far above one viewer's need
-    if ((await ctx.kv.incr(`ltv:watchip:${clientAddress(req)}`, 60).catch(() => 0)) > WATCH_IP_MAX) return reply.code(429).send({ error: 'rate_limited' });
-    if (!livetvInstalled(ctx)) return reply.code(404).send({ error: 'livetv_off' });
+    if (!(await playEntryGate(ctx, req, reply))) return reply;
     const b = watchBody.safeParse(req.body ?? {});
     if (!b.success) return invalid(reply, b.error);
     const id = String((req.params as { id?: string }).id ?? '');
@@ -124,15 +153,9 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
     // an admin stopped this device's stream of this channel in Wiedergabe-Check a few minutes ago (bughunt L2)
     if ((await ctx.kv.get(adminStopViewKey(u.id, deviceId)).catch(() => null)) === ch.id) return reply.code(409).send({ error: 'stopped_by_admin' });
 
-    const limits = (await effectiveLimits(ctx, u))!;
-    const prefix = `play:${u.id}:`;
     const v = b.data.via ?? 'local';
-    const own = new Set(await deviceLiveSessions(ctx, u.id, deviceId, v));
-    // running streams (live records) plus live tokens minted but not fetched yet (review L1), without the view this watch replaces
-    const running = new Set((await ctx.kv.keys(prefix)).map((k) => k.slice(prefix.length)));
-    for (const ps of await unfetchedLiveSessions(ctx, u.id)) running.add(ps);
-    const counted = [...running].filter((ps) => !own.has(ps)).length;
-    if (counted >= limits.maxStreams) return reply.code(429).send({ error: 'max_streams', max: limits.maxStreams });
+    const over = await streamLimitRefusal(ctx, u, deviceId, v, 'live');
+    if (over) return reply.code(429).send(over);
 
     const r = await startOrJoin(ctx, { userId: u.id, deviceId, role: u.role }, ch, profile);
     if ('status' in r) {
@@ -146,8 +169,7 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
     // the token's viewer key now keeps the stream (F9); the join marker would only hold off a later release of this channel
     await clearJoinMark(ctx, ch.id, { userId: u.id, deviceId });
     // a profile switch or sign-out that raced this request revoked the device's tokens before this one existed: take it back
-    const after = await loadSession(ctx, req.sid);
-    if (!after || (after.profileId && after.profileId !== profile.id)) {
+    if (await profileChangedSince(ctx, req, profile.id)) {
       await revokeLiveToken(ctx, minted.hash);
       return reply.code(409).send({ error: 'profile_changed' });
     }
