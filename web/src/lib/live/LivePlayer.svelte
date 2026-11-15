@@ -37,6 +37,7 @@
   import FullSheet from './FullSheet.svelte';
   import InfoBanner from './InfoBanner.svelte';
   import InfoPanel from './InfoPanel.svelte';
+  import RecordSheet from './RecordSheet.svelte';
   import { hintKeys, noteKey, seenKeys, type SeenKey } from './keyhints';
   import { resolveLiveKey, type LiveKeyAction } from './livekeys';
   import { liveRemote, type LiveRemote } from './remotekeys';
@@ -721,6 +722,22 @@
   }
   function onMouse(): void { if (!coarse) wake(); }
   function openPanel(): void { panelOpen = true; controls = true; clearTimeout(hideT); }
+  // ---- the programme's detail sheet over the info panel (Phase 3 Task 7): *Aufnehmen* on Jetzt / Danach ----
+  let recordFor: Prog | null = null;
+  let recordFrom: HTMLElement | null = null;
+  let recKey = 0;
+  $: canRecord = $perms.liveRecord && !$kidsMode;
+  function openRecord(p: Prog): void { recordFrom = document.activeElement as HTMLElement | null; recordFor = p; }
+  function closeRecord(): void {
+    recordFor = null;
+    const back = recordFrom;
+    recordFrom = null;
+    void tick().then(() => { if (back?.isConnected) back.focus(); });
+  }
+  function recordWatch(id: string): void {
+    recordFor = null; recordFrom = null; panelOpen = false;
+    if (id !== curId) pickChannel(id); else wake();
+  }
   function closePanel(): void { panelOpen = false; wake(); void tick().then(() => infoBtn?.focus()); }
 
   // ---- the Senderliste panel (spec §12.2, ruling 51, 59) ----
@@ -838,6 +855,8 @@
     const s = noteKey(key);
     if (s.size !== seen.size) seen = s;
     const back = e.key === 'Escape' || (tv && isBackKey(e));
+    // the programme's detail sheet: Back closes it (focus back to its button on the info panel); its own keys stay with it
+    if (recordFor) { if (back) { e.preventDefault(); e.stopImmediatePropagation(); closeRecord(); } return; }
     // the Play on sheet: Back closes it (focus back to its button); its own keys stay with it
     if (playOnOpen) { if (back) { e.preventDefault(); e.stopImmediatePropagation(); closePlayOn(); } return; }
     // the remote screen of a live cast: Back leaves the player, every other key belongs to its buttons
@@ -1259,8 +1278,12 @@
   {#if tv}<p class="ctlhint" class:hide={!controls}>{hint}</p>{/if}
 
   {#if panelOpen}
-    <InfoPanel channel={cur} now={$minute} canRestart={restartAt !== null} last={prev} phone={phoneUi} {still} listButton={phoneUi}
-      on:close={closePanel} on:restart={() => { closePanel(); restart(); }} on:last={() => { panelOpen = false; jumpLast(); wake(); }} on:list={openList} />
+    <InfoPanel channel={cur} now={$minute} canRestart={restartAt !== null} last={prev} phone={phoneUi} {still} listButton={phoneUi} {canRecord} {recKey}
+      on:close={closePanel} on:restart={() => { closePanel(); restart(); }} on:last={() => { panelOpen = false; jumpLast(); wake(); }} on:list={openList} on:record={(e) => openRecord(e.detail)} />
+  {/if}
+  {#if recordFor && cur && canRecord}
+    <RecordSheet channel={cur} programme={recordFor} now={$minute} phone={phoneUi} {still}
+      on:close={closeRecord} on:changed={() => recKey++} on:watch={(e) => recordWatch(e.detail.channelId)} />
   {/if}
   {#if listOpen && pstate}
     <ChannelPanel state={pstate} groups={list?.groups ?? []} playingId={curId} now={$minute} phone={phoneUi} {still} {tv} trigger={listBtn ?? null}

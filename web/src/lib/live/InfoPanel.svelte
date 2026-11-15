@@ -5,8 +5,9 @@
   import { scrimFade, sheetSlide, type FxMode } from '#lib/glass/fx';
   import { t } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
-  import { clock, nowLines, type LiveChannel } from './api';
+  import { clock, nowLines, type LiveChannel, type Prog } from './api';
   import { channelHead, progressAt, timeLeft, timeLeftText } from './progress';
+  import { listRecordings, recordingFor, type Recording } from './recordings';
 
   /**
    * The info panel (spec §12.1): a glass sheet on phones, a side panel on desktop and TV. *Jetzt* (title, time, progress, time left,
@@ -15,6 +16,10 @@
    * A modal dialog (role="dialog" on a plain container) whose buttons are a D-pad scope (`data-nav data-scope`); the first button
    * takes the focus. Back / Escape (the player's keys), the close button or a tap outside close it. The *Von Anfang an* slot is
    * reserved, so the panel never shifts when it appears.
+   * Recordings (Phase 3 Task 7): with `canRecord` (the opener's `perms.liveRecord`, never kids) *Jetzt* and *Danach* carry
+   * *Aufnehmen*, which asks the player to open the programme's detail sheet (`record`); a programme this profile records or planned
+   * shows "● Wird aufgenommen" / "Aufnahme geplant" on that same button (same size, nothing moves). `recKey` changes after the sheet
+   * changed something: the panel asks again.
    */
   export let channel: LiveChannel | null = null;
   export let now: Date;
@@ -24,8 +29,22 @@
   export let still = false;
   /** phones: the *Senderliste* button lives here instead of the control bar (spec §12.1) */
   export let listButton = false;
+  /** the person may record (perms.liveRecord, not a kids profile) */
+  export let canRecord = false;
+  /** bumped by the player after the record sheet changed something */
+  export let recKey = 0;
 
-  const dispatch = createEventDispatcher<{ close: void; restart: void; last: void; list: void }>();
+  const dispatch = createEventDispatcher<{ close: void; restart: void; last: void; list: void; record: Prog }>();
+  let recs: Recording[] = [];
+  let recSeq = 0;
+  async function loadRecs(_k: number): Promise<void> {
+    if (!canRecord) return;
+    const my = ++recSeq;
+    try { const r = await listRecordings('scheduled'); if (my === recSeq) recs = r.recordings; } catch { /* the buttons stay plain */ }
+  }
+  $: void loadRecs(recKey);
+  $: nowRec = channel && prog ? recordingFor(recs, channel.id, prog.start) : null;
+  $: nextRec = channel && prog && channel.next ? recordingFor(recs, channel.id, channel.next.start) : null;
   let panel: HTMLElement | undefined;
   $: mode = (still ? 'still' : undefined) as FxMode | undefined;
   $: side = (phone ? 'bottom' : 'right') as 'bottom' | 'right';
@@ -56,14 +75,26 @@
         <p class="ti">{lines.now}</p>
         <p class="sub">{lines.next ?? ''}</p>
       {/if}
-      <div class="rslot">
-        {#if canRestart}<button type="button" class="frost-btn act" on:click={() => dispatch('restart')}>{$t('live.player.restart')}</button>{/if}
+      <div class="rslot" class:two={canRecord && prog}>
+        {#if canRestart}<button type="button" class="frost-btn act" on:click={() => dispatch('restart')}>{$t('live.player.restart')}</button>{:else if canRecord && prog}<span></span>{/if}
+        {#if canRecord && prog}{@const p0 = prog}
+          <button type="button" class="frost-btn act rbtn" on:click={() => dispatch('record', p0)}>
+            <span class="dot" class:on={nowRec !== null} aria-hidden="true"></span>{nowRec ? $t(nowRec.state === 'recording' ? 'live.rec.recordingNow' : 'live.rec.planned') : $t('live.guide.record')}
+          </button>
+        {/if}
       </div>
     </div>
-    {#if prog && channel.next}
+    {#if prog && channel.next}{@const nx = channel.next}
       <div class="blk">
         <h3>{$t('live.next')}</h3>
-        <p class="ti">{clock(channel.next.start)} {channel.next.title}</p>
+        <p class="ti">{clock(nx.start)} {nx.title}</p>
+        {#if canRecord}
+          <div class="rslot">
+            <button type="button" class="frost-btn act rbtn" on:click={() => dispatch('record', nx)}>
+              <span class="dot" class:on={nextRec !== null} aria-hidden="true"></span>{nextRec ? $t(nextRec.state === 'recording' ? 'live.rec.recordingNow' : 'live.rec.planned') : $t('live.guide.record')}
+            </button>
+          </div>
+        {/if}
       </div>
     {/if}
   {/if}
@@ -95,6 +126,11 @@
   .pg { height: 3px; margin-top: 6px; border-radius: 2px; background: rgba(255, 255, 255, .2); overflow: hidden; }
   .pg i { display: block; height: 100%; background: #fff; transform-origin: left center; }
   .rslot { min-height: 44px; margin-top: 12px; }
+  .rslot.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .rbtn { gap: 8px; }
+  /* the red dot: an outline while nothing is recorded, filled when it is (paired with the text, never colour alone) */
+  .dot { flex: none; width: 10px; height: 10px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--err-mark); }
+  .dot.on { background: var(--err-mark); }
   .act { width: 100%; }
   .ipanel > .act { margin-top: 4px; }
   .ipanel > .act + .act { margin-top: 10px; }
