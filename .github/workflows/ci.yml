@@ -460,6 +460,21 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
           skip-setup-trivy: true
+      # backend only: every production dependency resolves inside the image (a package npm kept in backend/node_modules once shipped
+      # missing: the backend crashed at start with ERR_MODULE_NOT_FOUND)
+      - name: Smoke test (backend image resolves its dependencies)
+        if: matrix.service == 'backend'
+        env:
+          IMAGE: ${{ env.PUBLISHABLE == 'true' && format('{0}@{1}', steps.img.outputs.name, steps.build.outputs.digest) || 'friendflix-backend:ci' }}
+        run: |
+          set -euo pipefail
+          docker run --rm -w /app/backend --entrypoint node "$IMAGE" --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+            const missing = Object.keys(pkg.dependencies ?? {}).filter((n) => { try { import.meta.resolve(n); return false; } catch { return true; } });
+            if (missing.length) { console.error('::error::backend image cannot resolve: ' + missing.join(', ')); process.exit(1); }
+            console.log('all ' + Object.keys(pkg.dependencies ?? {}).length + ' backend dependencies resolve');
+          "
       # web only: the image starts without any backend and serves its static files with the security headers (web/server/index.js)
       - name: Smoke test (web image serves static files with security headers)
         if: matrix.service == 'web'
