@@ -288,8 +288,8 @@
   .acts.solo { margin-top: 32px; }
   .slide.skeleton { box-shadow: none; }
   :global(html.m-still) .mc .skeleton::after, :global(html.tv-motion-reduced) .mc .skeleton::after { animation: none; display: none; }
-  .btn { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 0 1rem; border-radius: 999px; font-weight: 700; font-size: 15px; white-space: nowrap; transition: transform .15s var(--m-emph-out); }
-  .btn:active { transform: scale(.97); }
+  .btn { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 0 1rem; border-radius: 999px; font-weight: 700; font-size: 15px; white-space: nowrap; transition: opacity .2s linear; }
+  .btn:active { opacity: .82; }
   .btn.w { background: #fff; color: #0b0b0d; }
   .btn.w:hover { background: rgba(255, 255, 255, .86); }
   /* .btn.g is the glass pill (.frost .frost-safe: the glow and artwork sit behind it; solid without full motion); its hover

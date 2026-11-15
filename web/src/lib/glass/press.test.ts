@@ -7,7 +7,7 @@ vi.mock('#lib/preview', () => ({ motionAllowed: () => m.allowed }));
 vi.mock('#lib/tv/motion', () => ({ motionLevel: () => m.level, GLASS_OUT: 'cubic-bezier(.22,1,.36,1)' }));
 
 import { rippleBox } from './fx';
-import { press, PRESS_SCALE, RIPPLE_MS } from './press';
+import { press, PRESS_OPACITY, RIPPLE_MS } from './press';
 
 class Classes {
   set = new Set<string>();
@@ -28,6 +28,10 @@ class Span {
 }
 class Node {
   classList = new Classes();
+  style: Record<string, string> = {};
+  textContent: string | null = 'Play';
+  hasIcon = false;
+  querySelector() { return this.hasIcon ? {} : null; }
   children: Span[] = [];
   listeners = new Map<string, (e: unknown) => void>();
   ownerDocument = { createElement: () => new Span() };
@@ -45,7 +49,7 @@ describe('press', () => {
   beforeEach(() => { m.allowed = true; m.level = 'full'; });
 
   it('constants', () => {
-    expect(PRESS_SCALE).toBe(0.92);
+    expect(PRESS_OPACITY).toBe(0.72);
     expect(RIPPLE_MS).toBe(550);
   });
 
@@ -68,6 +72,30 @@ describe('press', () => {
     expect(r.style).toEqual({ width: `${b.size}px`, height: `${b.size}px`, left: `${b.left}px`, top: `${b.top}px` });
     expect(r.anim!.frames).toEqual([{ transform: 'scale(0)', opacity: 0.9 }, { transform: 'scale(1)', opacity: 0 }]);
     expect(r.anim!.opts).toMatchObject({ duration: 550, easing: 'cubic-bezier(.22,1,.36,1)' });
+  });
+
+  it('a text button pressed dims, it does not scale', () => {
+    const { n } = setup();
+    n.fire('pointerdown', touch);
+    expect(n.classList.contains('pressed')).toBe(true);
+    expect(n.style.transform ?? '').toBe('');
+    expect(n.style.opacity).toBe('0.72');
+    n.fire('pointerup');
+    expect(n.style.opacity ?? '').toBe('');
+  });
+
+  it('an icon-only control keeps the squeeze', () => {
+    const { n } = setup();
+    n.textContent = '  '; n.hasIcon = true;
+    n.fire('pointerdown', touch);
+    expect(n.style.transform).toBe('scale(.92)');
+    expect(n.style.opacity ?? '').toBe('');
+    n.fire('pointerup');
+    expect(n.style.transform ?? '').toBe('');
+    const b = setup().n;
+    b.classList.add('icon');
+    b.fire('pointerdown', touch);
+    expect(b.style.transform).toBe('scale(.92)');
   });
 
   it('up, cancel and leave release it', () => {

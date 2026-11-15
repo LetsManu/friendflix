@@ -97,7 +97,7 @@ html.m-still .lib-in { animation: none; }
    a glass control that wants a fading fill or edge uses .fill-hover / .edge-hover (below) ---- */
 button, .btn { font: inherit; font-weight: 600; background: var(--acc-fill); color: #fff; border: 0; border-radius: 4px; padding: .6rem 1.2rem; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: .5rem; transition: transform var(--t-fast), opacity var(--t-fast); }
 button:hover:not(:disabled), .btn:hover { background: var(--acc-fill-hover); }
-button:active:not(:disabled), .btn:active { transform: scale(.97); }
+button:active:not(:disabled), .btn:active { opacity: .82; }
 button.sec, .btn.sec { background: rgba(112, 124, 138, .55); }
 button.sec:hover:not(:disabled), .btn.sec:hover { background: rgba(112, 124, 138, .35); }
 /* hero / detail pair: filled coral pill + glass outline pill */
@@ -256,10 +256,11 @@ html:root :is(.frost, .frost-flat, .panel) .panel::before { display: none; }
 .edge-hover::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; border: 1px solid rgba(255, 255, 255, .42); opacity: 0; pointer-events: none; transition: opacity var(--t-fast); }
 .edge-hover:hover::after { opacity: 1; }
 html.m-still :is(.fill-hover, .edge-hover)::after { transition: none; } /* calm mode / reduced motion: at once */
-/* §8.9 phone press feedback (lib/glass/press.ts): squeeze in 80 ms, spring back in 350 ms; a ripple from the touch point
+/* §8.9 phone press feedback (lib/glass/press.ts): a text control dims (opacity, set inline) in 80 ms and returns in 200 ms,
+   never scaled; an icon-only one squeezes (inline transform); a ripple from the touch point
    (twice the larger side, clipped by the node). .pressed is set with full motion only. */
-html:root .ff-press { position: relative; overflow: hidden; -webkit-tap-highlight-color: transparent; transition: transform 350ms var(--fr-spring), opacity 150ms; }
-html:root .ff-press.pressed { transform: scale(.92); transition: transform 80ms var(--fr-spring), opacity 150ms; }
+html:root .ff-press { position: relative; overflow: hidden; -webkit-tap-highlight-color: transparent; transition: transform 200ms linear, opacity 200ms linear; }
+html:root .ff-press.pressed { transition: transform 80ms linear, opacity 80ms linear; }
 .ripple { position: absolute; border-radius: 50%; background: rgba(255, 255, 255, .35); transform: scale(0); opacity: 0; pointer-events: none; }
 
 video { width: 100%; background: #000; }
