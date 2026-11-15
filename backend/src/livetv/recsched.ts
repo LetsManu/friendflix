@@ -624,23 +624,31 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
 
     // (2) due starts: each under its own lease (a scheduled row, or one whose earlier start lease ran out)
     for (const r0 of active) {
-      const expired = r0.state === 'starting' && (!r0.claim_until || r0.claim_until.getTime() < now);
-      if (!(r0.state === 'scheduled' || expired) || padStart(r0) > now) continue;
-      if (!(await renew())) return;
-      if (now < padEnd(r0) && (await ctx.kv.get(retryKey(r0.id)).catch(() => null))) continue; // a refused start waits its minute
-      const c = await claim(ctx, r0.id, 'start');
-      if (!c) continue; // another replica starts it
-      const r = c.row;
-      const fromStarting = { from: ['starting'] as RecState[], claim: c.token };
-      const w = r.profile_id ? who.get(r.profile_id) : undefined;
-      if (!w || w.disabled || !(await mayRecord(ctx, w.user, w.profile))) { await cancelRow(ctx, r, 'forbidden', c.token); continue; }
-      if (!r.channel_id || !(await channelAllowed(ctx, w.user, w.profile, r.channel_id))) { await cancelRow(ctx, r, 'forbidden', c.token); continue; }
-      if (!installed) { await failRow(ctx, r, 'livetv_off', fromStarting); continue; }
-      if (now >= padEnd(r)) { await failRow(ctx, r, (await ctx.kv.get(whyKey(r.id)).catch(() => null)) ?? 'missed', fromStarting); continue; }
-      const free = (await readLivetvSystem(ctx).catch(() => null))?.recordings?.freeBytes;
-      const st = await storageState(ctx);
-      if ((typeof free === 'number' && free < FREE_MIN_BYTES) || (st.used >= recordSettings(ctx).limitBytes && !st.deletable)) { await failRow(ctx, r, 'storage_full', fromStarting); continue; }
-      await launch(ctx, r, c.token, w, now, false);
+      let held: string | null = null;
+      try {
+        const expired = r0.state === 'starting' && (!r0.claim_until || r0.claim_until.getTime() < now);
+        if (!(r0.state === 'scheduled' || expired) || padStart(r0) > now) continue;
+        if (!(await renew())) return;
+        if (now < padEnd(r0) && (await ctx.kv.get(retryKey(r0.id)).catch(() => null))) continue; // a refused start waits its minute
+        const c = await claim(ctx, r0.id, 'start');
+        if (!c) continue; // another replica starts it
+        held = c.token;
+        const r = c.row;
+        const fromStarting = { from: ['starting'] as RecState[], claim: c.token };
+        const w = r.profile_id ? who.get(r.profile_id) : undefined;
+        if (!w || w.disabled || !(await mayRecord(ctx, w.user, w.profile))) { await cancelRow(ctx, r, 'forbidden', c.token); continue; }
+        if (!r.channel_id || !(await channelAllowed(ctx, w.user, w.profile, r.channel_id))) { await cancelRow(ctx, r, 'forbidden', c.token); continue; }
+        if (!installed) { await failRow(ctx, r, 'livetv_off', fromStarting); continue; }
+        if (now >= padEnd(r)) { await failRow(ctx, r, (await ctx.kv.get(whyKey(r.id)).catch(() => null)) ?? 'missed', fromStarting); continue; }
+        const free = (await readLivetvSystem(ctx).catch(() => null))?.recordings?.freeBytes;
+        const st = await storageState(ctx);
+        if ((typeof free === 'number' && free < FREE_MIN_BYTES) || (st.used >= recordSettings(ctx).limitBytes && !st.deletable)) { await failRow(ctx, r, 'storage_full', fromStarting); continue; }
+        await launch(ctx, r, c.token, w, now, false);
+      } catch {
+        // one row's failure (a database error, a bug) never stops the others (A-M11); its lease is given back, it is tried again
+        logCode(ctx, 'tick-start');
+        if (held) await unclaim(ctx, r0.id, held).catch(() => undefined);
+      }
     }
     if (!installed) {
       // livetv went away under a running recording: after its end it is ended with what it had
@@ -656,27 +664,31 @@ export async function livetvRecordTick(ctx: Ctx, now: number = Date.now()): Prom
       const recording = (await ctx.db.query<RecRow>("select * from livetv_recordings where state = 'recording' order by start_at, id")).rows;
       const running = await runningChannelIds(ctx);
       for (const r of recording) {
-        if (!(await renew())) return;
-        const e = byId.get(r.id);
-        const w = r.profile_id ? who.get(r.profile_id) ?? (await owners(ctx, [r.profile_id])).get(r.profile_id) : undefined;
-        if (e && e.state !== 'recording') { await collect(ctx, r, e); continue; }
-        if (now >= padEnd(r)) {
-          // its recorder is gone (livetv restarted after the end): livetv finalises the folder and reads its facts (B-I2); a recording whose
-          // folder is complete ends done, not failed
-          if (!e) await closeLost(ctx, r);
-          continue; // a recorder still running past its end is stopped below
-        }
-        if (e) {
-          // progress, and gaps seen so far (kept across a livetv restart, which starts the recorder's own list anew)
-          await ctx.db.query("update livetv_recordings set bytes = $2, duration_s = $3, gaps = $4::jsonb where id = $1 and state = 'recording'",
-            [r.id, e.bytes, e.durationS, JSON.stringify(mergeGaps(r.gaps, e.gaps))]);
-          await grow(ctx, r);
-          await sendPendingEnd(ctx, r.id);
-        }
-        // livetv lost the recorder (a restart: new bootId), or its stream stopped: start the stream again and resume into the same folder
-        if (w && r.channel_id && (!e || (running !== null && !running.has(r.channel_id))) && !(await ctx.kv.get(retryKey(r.id)).catch(() => null))) {
-          const c = await claim(ctx, r.id, 'resume');
-          if (c) await launch(ctx, c.row, c.token, w, now, true);
+        try {
+          if (!(await renew())) return;
+          const e = byId.get(r.id);
+          const w = r.profile_id ? who.get(r.profile_id) ?? (await owners(ctx, [r.profile_id])).get(r.profile_id) : undefined;
+          if (e && e.state !== 'recording') { await collect(ctx, r, e); continue; }
+          if (now >= padEnd(r)) {
+            // its recorder is gone (livetv restarted after the end): livetv finalises the folder and reads its facts (B-I2); a recording whose
+            // folder is complete ends done, not failed
+            if (!e) await closeLost(ctx, r);
+            continue; // a recorder still running past its end is stopped below
+          }
+          if (e) {
+            // progress, and gaps seen so far (kept across a livetv restart, which starts the recorder's own list anew)
+            await ctx.db.query("update livetv_recordings set bytes = $2, duration_s = $3, gaps = $4::jsonb where id = $1 and state = 'recording'",
+              [r.id, e.bytes, e.durationS, JSON.stringify(mergeGaps(r.gaps, e.gaps))]);
+            await grow(ctx, r);
+            await sendPendingEnd(ctx, r.id);
+          }
+          // livetv lost the recorder (a restart: new bootId), or its stream stopped: start the stream again and resume into the same folder
+          if (w && r.channel_id && (!e || (running !== null && !running.has(r.channel_id))) && !(await ctx.kv.get(retryKey(r.id)).catch(() => null))) {
+            const c = await claim(ctx, r.id, 'resume');
+            if (c) await launch(ctx, c.row, c.token, w, now, true);
+          }
+        } catch {
+          logCode(ctx, 'tick-reconcile'); // A-M11: the next row still runs
         }
       }
     }

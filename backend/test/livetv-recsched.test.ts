@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetConvMemo, admitConversion, countConversions, dropConvGrant } from '../src/convbudget.js';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
+import { listErrors } from '../src/errorlog.js';
 import { detectLivetv } from '../src/livetv/detect.js';
 import { listEvents } from '../src/livetv/events.js';
 import { afterEpgImport, expandRules, followEpg, livetvRecordTick, timeOccurrences } from '../src/livetv/recsched.js';
@@ -427,6 +428,31 @@ describe('the tick', () => {
     await recording({ channel_id: sternwarte, channel_name: 'Sternwarte 24', start_at: new Date(Date.now() + 10 * MIN), end_at: new Date(Date.now() + HOUR) });
     await tick();
     expect(of('POST', '/v1/streams')).toEqual([]);
+  });
+
+  it('A-M11: one row that throws neither stops the tick nor the other rows; the throw is logged by code', async () => {
+    const start = Date.now() + MIN;
+    const bad = await recording({ start_at: new Date(start), end_at: new Date(start + HOUR) });
+    const good = await recording({ channel_id: sternwarte, channel_name: 'Sternwarte 24', start_at: new Date(start + 1000), end_at: new Date(start + HOUR) });
+    const db = env.ctx.db as { query: (...a: unknown[]) => Promise<unknown> };
+    // the pool's own query (ctx.db is a timing proxy that reads `query` at call time)
+    const inner = (Object.getPrototypeOf(db) as typeof db).query;
+    db.query = function (this: unknown, ...a: unknown[]) {
+      const [sql, params] = a as [unknown, unknown[] | undefined];
+      if (typeof sql === 'string' && params?.[0] === bad && /^\s*update livetv_recordings set (state = 'recording', mode|bytes = )/.test(sql)) return Promise.reject(new Error('connection reset'));
+      return inner.apply(this, a);
+    } as typeof db.query;
+    try {
+      await tick();
+      expect((await getRecording(env.ctx, good))!.state).toBe('recording');
+      expect((await getRecording(env.ctx, bad))!.state).not.toBe('recording');
+      // the reconcile too: the progress of one row fails, the other's is written
+      await env.pool.query("update livetv_recordings set state = 'recording', claim_token = null, claim_until = null, mode = 'passthrough' where id = $1", [bad]);
+      for (const id of [bad, good]) recorders.set(id, rec(id, nordlicht, { bytes: 777 }));
+      await tick();
+      expect((await getRecording(env.ctx, good))!.bytes).toBe('777');
+    } finally { delete (db as Partial<typeof db>).query; }
+    expect((await listErrors(env.ctx, { source: 'job' })).entries.map((e) => e.code)).toEqual(expect.arrayContaining(['livetv-rec-tick-start', 'livetv-rec-tick-reconcile']));
   });
 
   it('two recordings of one channel share one stream and one record slot', async () => {
