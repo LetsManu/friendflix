@@ -142,6 +142,11 @@ test.describe('glass menus', () => {
   test.beforeEach(({ page }) => fullMotion(page));
 
   test('profile, bell, categories and ⋯ menus are glass cards that grow from their button', async ({ page }) => {
+    // a 220 ms open can finish before the first poll after click() returns: run the page's animations at a tenth of the speed
+    // (durations and keyframes read the same, only the timeline is slower), so `anim()` always catches the menu mid-flight
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Animation.enable');
+    await cdp.send('Animation.setPlaybackRate', { playbackRate: 0.1 });
     await page.goto('/');
     await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
     const bar = page.locator('[data-desk-bar]');
