@@ -179,6 +179,10 @@ const login: Translation<typeof de> = {
       addClassic: 'Dodaj na stronie logowania',
       note: 'Klucze dostępu utworzone tutaj obowiązują w FriendFlix.',
       renew: 'Klucze dostępu utworzone wcześniej na stronie logowania nie działają w FriendFlix. Dodaj tutaj jednorazowo nowy klucz dostępu.',
+      exists: 'To urządzenie ma już klucz dostępu do Twojego konta. Użyj go do logowania albo usuń go w aplikacji z hasłami.',
+      unsupportedOptions: 'To urządzenie nie spełnia wymagań dla klucza dostępu.',
+      failed: 'Nie udało się utworzyć klucza dostępu.',
+      errorCode: 'Kod błędu: {code}',
     },
     password: {
       title: 'Hasło',

@@ -369,6 +369,46 @@ function ceremonyError(e: unknown): Error {
   return e instanceof Error ? e : new Error('passkey_failed');
 }
 
+/** a DOMException / Error name that is safe to show as a technical code (letters and digits only, short); anything else is `Error` */
+function safeName(e: unknown): string {
+  const n = (e as { name?: unknown } | null)?.name;
+  return typeof n === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(n) ? n : 'Error';
+}
+
+/** what `creationError` carries for `passkey_failed`: the error's NAME only, never its message (could echo options) or the challenge */
+export class PasskeyFailed extends Error {
+  constructor(readonly errorName: string) {
+    super('passkey_failed');
+  }
+}
+
+/**
+ * Why creating a passkey failed, as an Error whose message is the code: NotAllowedError/AbortError → `passkey_cancelled` (cancelled or
+ * timed out; the browser does not say which), InvalidStateError → `passkey_exists` (excludeCredentials matched: this device already has
+ * one), NotSupportedError/ConstraintError → `passkey_unsupported_options` (the device cannot meet the server's requirements),
+ * SecurityError → `passkey_unsupported`, anything else (TypeError of a conversion, …) → `passkey_failed` with the name only.
+ */
+export function creationError(e: unknown): Error {
+  switch ((e as { name?: unknown } | null)?.name) {
+    case 'NotAllowedError': case 'AbortError': return new Error('passkey_cancelled');
+    case 'InvalidStateError': return new Error('passkey_exists');
+    case 'NotSupportedError': case 'ConstraintError': return new Error('passkey_unsupported_options');
+    case 'SecurityError': return new Error('passkey_unsupported');
+    default: return new PasskeyFailed(safeName(e));
+  }
+}
+
+export type PasskeyCreateHint = 'cancelled' | 'exists' | 'unsupportedOptions' | 'unsupported' | 'failed';
+/** the hint of PasskeySetup for a failed creation, with the technical code (the error name) for `failed` */
+export function passkeyCreateHint(e: unknown): { hint: PasskeyCreateHint; code: string } {
+  const m = (e as Error | null)?.message;
+  if (m === 'passkey_exists') return { hint: 'exists', code: '' };
+  if (m === 'passkey_unsupported_options') return { hint: 'unsupportedOptions', code: '' };
+  if (m === 'passkey_unsupported') return { hint: 'unsupported', code: '' };
+  if (m === 'passkey_cancelled' || m === 'passkey_aborted') return { hint: 'cancelled', code: '' };
+  return { hint: 'failed', code: e instanceof PasskeyFailed ? e.errorName : safeName(e) };
+}
+
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 const bin = (v: unknown): string | undefined => (v instanceof ArrayBuffer || ArrayBuffer.isView(v) ? toB64url(v as ArrayBuffer) : str(v));
 /**
@@ -470,20 +510,29 @@ export function passkeyCeremonies() {
 /** creates a passkey (attestation) on this page; throws `passkey_cancelled` / `passkey_unsupported` */
 export async function passkeyCreate(options: PasskeyCreate): Promise<Credential> {
   const P = pkc();
-  const publicKey = typeof P.parseCreationOptionsFromJSON === 'function'
-    ? P.parseCreationOptionsFromJSON(options)
-    : ({
-      ...options,
-      challenge: fromB64url(options.challenge),
-      user: { ...options.user, id: fromB64url(options.user.id) },
-      excludeCredentials: descriptors(options.excludeCredentials),
-    } as unknown as PublicKeyCredentialCreationOptions);
+  let publicKey: PublicKeyCredentialCreationOptions;
+  try {
+    publicKey = typeof P.parseCreationOptionsFromJSON === 'function'
+      ? P.parseCreationOptionsFromJSON(options)
+      : ({
+        ...options,
+        challenge: fromB64url(options.challenge),
+        user: { ...options.user, id: fromB64url(options.user.id) },
+        excludeCredentials: descriptors(options.excludeCredentials),
+      } as unknown as PublicKeyCredentialCreationOptions);
+  } catch (e) {
+    throw creationError(e);
+  }
   let cred: unknown;
   try {
     cred = await navigator.credentials.create({ publicKey });
   } catch (e) {
-    throw ceremonyError(e);
+    throw creationError(e);
   }
   if (!cred) throw new Error('passkey_cancelled');
-  return credentialJSON(cred);
+  try {
+    return credentialJSON(cred);
+  } catch (e) {
+    throw creationError(e);
+  }
 }

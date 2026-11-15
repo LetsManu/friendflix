@@ -27,6 +27,8 @@ a.af-link { text-decoration: none; }
 .af-errs p { margin: 0; }
 .af-errs .af-link { min-height: 32px; justify-self: start; }
 .af-hint { margin: 0; color: var(--mut); font-size: .88rem; text-align: center; overflow-wrap: anywhere; }
+.af-hint-area { min-height: 5.5em; display: grid; align-content: start; gap: 4px; }
+.af-hint-code { font-family: ui-monospace, monospace; font-size: .8rem; }
 .af-pill { display: flex; align-items: center; gap: 10px; background: var(--surface-2); border-radius: 999px; padding: 5px 6px 5px 5px; font-size: .88rem; min-width: 0; max-width: 100%; justify-self: start; }
 .af-pill .av { flex: none; width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg, #ff6b81, #e23c5b); color: #fff; display: grid; place-items: center; font-weight: 800; font-size: .8rem; }
 .af-pill .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

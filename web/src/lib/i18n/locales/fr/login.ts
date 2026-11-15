@@ -179,6 +179,10 @@ const login: Translation<typeof de> = {
       addClassic: 'Ajouter sur la page de connexion',
       note: 'Les passkeys créées ici valent pour FriendFlix.',
       renew: 'Tu as créé tes clés d’accès sur la page de connexion ? Elles ne fonctionnent pas dans FriendFlix. Ajoute ici une nouvelle clé une fois.',
+      exists: 'Cet appareil a déjà une passkey pour ton compte. Utilise-la pour te connecter ou supprime-la dans l’app Mots de passe.',
+      unsupportedOptions: 'Cet appareil ne remplit pas les conditions requises pour la passkey.',
+      failed: 'La passkey n’a pas pu être créée.',
+      errorCode: 'Code d’erreur : {code}',
     },
     password: {
       title: 'Mot de passe',

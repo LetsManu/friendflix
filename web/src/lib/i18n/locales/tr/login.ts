@@ -179,6 +179,10 @@ const login: Translation<typeof de> = {
       addClassic: 'Giriş sayfasında ekle',
       note: 'Burada oluşturduğun geçiş anahtarları FriendFlix için geçerlidir.',
       renew: 'Geçiş anahtarlarını daha önce giriş sayfasında mı oluşturdun? Onlar FriendFlix’te geçmez. Burada bir kez yeni bir geçiş anahtarı ekle.',
+      exists: 'Bu cihazda hesabın için zaten bir geçiş anahtarı var. Giriş yapmak için onu kullan ya da parola uygulamasından kaldır.',
+      unsupportedOptions: 'Bu cihaz geçiş anahtarının gereksinimlerini karşılayamıyor.',
+      failed: 'Geçiş anahtarı oluşturulamadı.',
+      errorCode: 'Hata kodu: {code}',
     },
     password: {
       title: 'Şifre',
