@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FetchError } from '../src/fetch.js';
-import { PlaylistRefused, parseMedia, passthroughDriver } from '../src/passthrough.js';
+import { FetchError, type FetchOptions } from '../src/fetch.js';
+import { POOL_MAX_AGE_MS, PlaylistRefused, parseMedia, passthroughDriver } from '../src/passthrough.js';
 import { PLAYLIST_MAX_BYTES, SEGMENT_MAX_BYTES } from '../src/probe.js';
 import { Streams, type StartBody } from '../src/streams.js';
 import { fakeFetch, flush, memoryStore, type Served } from './streams-helpers.js';
@@ -140,6 +140,35 @@ describe('passthrough', () => {
     text = playlist(streamKey);
     expect(uris(text)).toHaveLength(9);
     expect(text.split('\n').filter((l) => l === '#EXT-X-DISCONTINUITY')).toHaveLength(1);
+  });
+
+  it('review M5: the connection pool (and its pinned addresses) is renewed at least every POOL_MAX_AGE_MS while the stream runs', async () => {
+    let seq = 100;
+    routes.set(MASTER, () => media(seq++, 3));
+    segments(`${HOST}/live/anna/geheim`, 100, 2000);
+    const pools: unknown[] = [];
+    const destroyed: unknown[] = [];
+    const fetch = (url: string, o: FetchOptions) => {
+      if (o.pool && !pools.includes(o.pool)) {
+        pools.push(o.pool);
+        const p = o.pool;
+        const d = p.destroy.bind(p);
+        (p as { destroy: () => void }).destroy = () => { destroyed.push(p); d(); };
+      }
+      return ff.fetch(url, o);
+    };
+    await streams.close();
+    streams = new Streams({ root: ROOT, maxBytes: 1024 ** 3, drivers: { passthrough: passthroughDriver({ fetch }) }, store: mem.store, log: (m) => logs.push(m) });
+    const { streamKey } = streams.start(body());
+    await flush();
+    // a viewer keeps fetching (else the idle safety net stops the stream after 3 min)
+    const watch = async (ms: number) => { for (let t = 0; t < ms; t += 60_000) { streams.touch(streamKey); await vi.advanceTimersByTimeAsync(Math.min(60_000, ms - t)); } };
+    await watch(POOL_MAX_AGE_MS - 5_000);
+    expect(pools).toHaveLength(1);
+    await watch(10_000);
+    expect(pools).toHaveLength(2);
+    expect(destroyed).toEqual([pools[0]]);
+    expect(POOL_MAX_AGE_MS).toBe(10 * 60_000);
   });
 
   it('a media sequence that skips ahead marks a discontinuity; a contiguous one does not', async () => {

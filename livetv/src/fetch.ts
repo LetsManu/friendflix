@@ -44,8 +44,11 @@ export type FetchOptions = { allowLan: boolean; userAgent?: string; timeoutMs: n
 export interface Pool {
   readonly http: http.Agent;
   readonly https: https.Agent;
-  /** `<allowLan>|<host>` → the checked address */
-  readonly ips: Map<string, string>;
+  /**
+   * `<allowLan>|<host>` → the check of its address, kept as the promise: the first concurrent requests (the video and audio
+   * playlists of a pair) wait for one lookup, so a host never gets two pinned addresses (review M4). A refused one is not kept.
+   */
+  readonly ips: Map<string, Promise<string>>;
   destroy(): void;
 }
 export function createPool(): Pool {
@@ -91,8 +94,16 @@ async function requestOnce(url: URL, o: FetchOptions, deps: GuardDeps, signal: A
   const host = url.hostname.replace(/^\[(.*)\]$/, '$1');
   // a run's pool checks each host once and keeps that address for the run (one edge); without one, every request resolves anew
   const key = `${o.allowLan}|${host}`;
-  const ip = o.pool?.ips.get(key) ?? await withinBudget(resolveChecked(host, o.allowLan, deps), signal);
-  o.pool?.ips.set(key, ip);
+  let check = o.pool?.ips.get(key);
+  if (!check) {
+    check = resolveChecked(host, o.allowLan, deps);
+    if (o.pool) {
+      const pool = o.pool;
+      pool.ips.set(key, check);
+      check.catch(() => { if (pool.ips.get(key) === check) pool.ips.delete(key); });
+    }
+  }
+  const ip = await withinBudget(check, signal);
   const secure = url.protocol === 'https:';
   const port = url.port ? Number(url.port) : secure ? 443 : 80;
   const target = deps.dial ? deps.dial(ip, port) : ip;

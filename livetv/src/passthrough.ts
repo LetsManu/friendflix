@@ -55,6 +55,11 @@ export function follow<T extends { seq: number }>(segs: T[], last: number | null
   return { take: after, jump: 'none' };
 }
 const FATAL = new Set(['address_refused', 'scheme']);
+/**
+ * the most a passthrough session keeps one connection pool, and with it the addresses it checked once (review M5): then the hosts
+ * are resolved and checked again, so a moved or failed CDN edge is left within this long even while every poll still answers
+ */
+export const POOL_MAX_AGE_MS = 10 * 60_000;
 
 export interface MediaSegment { uri: string; duration: number; pdt?: number; discontinuity: boolean; map: string | null }
 export interface MediaPlaylist { targetDuration: number; mediaSequence: number; segments: MediaSegment[] }
@@ -145,6 +150,8 @@ export function passthroughDriver(d: { guard: GuardDeps } | { fetch: FetchFn }):
     if ('push' in input || input.kind !== 'hls') { ctx.fail('invalid'); return; }
     // one kept-alive connection per host (H1 item 4: polls stay on one CDN edge); a new pool, new addresses, after an outage
     let pool = createPool();
+    let poolBorn = Date.now();
+    const renewPool = () => { pool.destroy(); pool = createPool(); poolBorn = Date.now(); };
     const get = async (url: string, maxBytes: number, timeoutMs: number) =>
       fetchFn(url, { allowLan: input.allowLan, userAgent: input.userAgent, timeoutMs, maxBytes, signal: ctx.signal, pool });
     const playlist = async (url: string) => {
@@ -218,6 +225,7 @@ export function passthroughDriver(d: { guard: GuardDeps } | { fetch: FetchFn }):
 
     while (!ctx.signal.aborted) {
       let wait: number;
+      if (Date.now() - poolBorn >= POOL_MAX_AGE_MS) renewPool();
       try {
         let pl: { text: string; base: string };
         if (media === null) {
@@ -248,8 +256,7 @@ export function passthroughDriver(d: { guard: GuardDeps } | { fetch: FetchFn }):
         if (e instanceof FetchError && FATAL.has(e.code)) { ctx.fail(e.code); break; }
         if (e instanceof PlaylistRefused) { ctx.fail(e.code); break; }
         media = null;
-        pool.destroy();
-        pool = createPool();
+        renewPool();
         wait = ctx.lost();
       }
       if (!(await ctx.sleep(wait))) break;
