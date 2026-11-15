@@ -25,6 +25,7 @@ const ALLOW: Record<string, string> = {
   'lib/live/FavTiles.svelte:.tv .': 'TV focus tile; the TV focus design',
   'lib/live/GroupChips.svelte:.tv .chip': 'TV focus chip; the TV focus design',
   'lib/live/PanelRow.svelte::global(html.tv)': 'TV focus row; the TV focus design',
+  'lib/live/RecordingsRow.svelte:.tv .rtile:focus-visible': 'TV focus tile; the TV focus design',
   'lib/live/TvLiveList.svelte:.trow': 'TV focus row; the TV focus design',
   'lib/player/CreditsSequence.svelte:.tv :is': 'TV focus button; the TV focus design',
   'lib/player/TvControls.svelte::global(html.tv) .back': 'TV focus on an icon button; the TV focus design',

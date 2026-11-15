@@ -35,7 +35,7 @@
   const dispatch = createEventDispatcher<{ close: void; watch: { channelId: string }; changed: void }>();
   let box: HTMLElement | undefined;
   $: mode = (still ? 'still' : undefined) as FxMode | undefined;
-  const fx = (node: Element, p: { dir: 'in' | 'out'; mode?: FxMode }) => (phone ? sheetSlide(node, p) : grow(node, { ...p, origin: '50% 50%' }));
+  const fx = (node: Element, p: { dir: 'in' | 'out'; mode?: FxMode }) => (phone ? sheetSlide(node, p) : grow(node, p));
 
   const PAD_DEFAULT = { before: 2, after: 5 };
   let detail: ProgrammeDetail | null = null;

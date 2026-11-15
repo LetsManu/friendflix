@@ -164,6 +164,22 @@ Text over glass must reach AA (4.5:1) against the ambient's brightest point. `to
 
 `sheen`, `tilt` and `press` run only with full motion (`fxLive()`): `sheen` and `tilt` need a fine pointer off TV and kids, `press` needs touch or pen. `grow`, `sheetSlide`, `toastRise` and `tilt` pulse the frame guard when they start with full motion, so slow glass motion can trip it.
 
+### Motion of pop-ups
+
+**Rule: text never scales.** A menu, sheet, dialog, toast or any text control animates `transform` (translate) and `opacity` only, never `scale()`: scaled text blurs and jumps between pixel grids. No overshooting spring curve either. Pressing a button dims it (opacity), it does not shrink it. `lib/glass/fx.ts` holds the tokens:
+
+| Token | Value | Use |
+|---|---|---|
+| `GROW_IN_MS` / `GROW_OUT_MS` | 220 / 150 ms | `grow`, `growFrom`, `growBoth`: a menu slides at most `SHIFT_PX` (8 px) out of its button and fades; `emphOut` in, `inEase` out |
+| `SHEET_IN_MS` / `SHEET_OUT_MS` | 320 / 200 ms | `sheetSlide`: a bottom sheet |
+| `TOAST_IN_MS` / `TOAST_OUT_MS` | 300 / 200 ms | `toastRise` |
+| `DIALOG_IN_MS` / `DIALOG_OUT_MS` | 220 / 150 ms | `dialogRise` / `dialogBoth` (`ModalShell`): a dialog rises 10 px and fades |
+| `REDUCED_MS` | 160 ms | the reduced set (frame guard tripped): a crossfade; calm mode and reduced motion: instant |
+
+Dialogs share one layout: `.dlg-title`, `.dlg-body`, `.dlg-err` (a reserved status line) and `.dlg-acts` (primary on the right, on phones stacked with the primary on top). The page scroll lock (`scrollLock`) keeps `scrollbar-gutter` so nothing behind a dialog shifts sideways.
+
+Guards: `web/src/lib/ui/motionRule.test.ts` scans the source for `scale()` in animations (an `ALLOW` map names each exception with its reason: TV focus design, text-free artwork) and `e2e/tests/motion-frames*.spec.ts` samples text scale on every frame (`e2e/frames.ts`: `watchTextScale`, `textScaleDuring`, `stableBox`) while the menus, toasts, dialogs and the Update result open and close. Known temporary exceptions, to go in stages 2 and 3: `HoverPreview.svelte`, `desk/DeskPreview.svelte` and `phone/Carousel.svelte` still scale their text; each is listed in `ALLOW` and is removed from it when fixed.
+
 ### Named animation exceptions
 
 Everything else moves `transform` and `opacity` only. Two paint-only exceptions are allowed: the `stroke-dashoffset` of the toast countdown ring and of the drawn save checkmark, and the text colour of a selected tab or segment label (250 ms). The sliding pill's width is never animated.
