@@ -135,9 +135,27 @@ test.describe('a person without libraries (desktop)', () => {
     page.on('framenavigated', (f) => { if (f === page.mainFrame()) paths.push(new URL(f.url()).pathname); });
     await page.goto('/kids');
     await expect(page).toHaveURL((u) => u.pathname === '/');
+    await expect(page.getByRole('heading', { name: 'Für dich ist noch nichts freigegeben' })).toBeVisible();
     await page.waitForLoadState('networkidle');
     expect(paths.slice(paths.indexOf('/'))).not.toContain('/kids'); // / never sends back to /kids
     expect(new URL(page.url()).pathname).toBe('/');
+  });
+
+  test('no library and no channel: the start page says so and calls no library endpoint', async ({ page, api }) => {
+    api.features = { livetv: false };
+    api.areas = { ...LIVE_ONLY, livetv: false };
+    const lib = libraryCalls(page);
+    await page.goto('/browse/movies');
+    await expect(page).toHaveURL((u) => u.pathname === '/');
+    await expect(page.getByRole('heading', { level: 1, name: 'Für dich ist noch nichts freigegeben' })).toBeVisible();
+    await expect(page.getByText('Frag die Person, die FriendFlix betreibt.')).toBeVisible();
+    await expect(page.locator('section.row')).toHaveCount(0);
+    await expect(nav(page).getByRole('link')).toHaveCount(0);
+    // a reload renders from the boot hint: still nothing from the library
+    await page.reload();
+    await expect(page.getByRole('heading', { level: 1, name: 'Für dich ist noch nichts freigegeben' })).toBeVisible();
+    await page.waitForLoadState('networkidle');
+    expect(lib).toEqual([]);
   });
 
   test('welcome without library has 2 steps', async ({ page }) => {

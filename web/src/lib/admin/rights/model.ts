@@ -74,7 +74,7 @@ function mbit(bps: number): string {
   return tr('adminPeople.roles.mbit', { n: fmtNumber(n, { maximumFractionDigits: n < 10 ? 1 : 0 }) });
 }
 
-/** the compact text of one cell value ("✓", "20 Mbit/s", "1080p", "ab 12", "3 Bibliotheken") */
+/** the compact text of one cell value ("✓", "20 Mbit/s", "1080p", "ab 12", "3 Bibliotheken", "Keine Bibliothek") */
 export function cellText(f: MatrixField, v: unknown): string {
   switch (f.kind) {
     case 'bool': return v ? '✓' : '–';
@@ -82,7 +82,7 @@ export function cellText(f: MatrixField, v: unknown): string {
     case 'bitrate': return typeof v === 'number' ? mbit(v) : tr('adminPeople.roles.unlimited');
     case 'height': return typeof v === 'number' ? (v > 0 ? `${v}p` : '–') : tr('adminPeople.roles.heightAll');
     case 'rating': return typeof v === 'number' ? tr('adminPeople.roles.ratingFrom', { n: v }) : tr('adminPeople.roles.ratingAll');
-    case 'libraries': return Array.isArray(v) ? tr('adminPeople.roles.libs', { n: v.length }) : tr('adminPeople.roles.ratingAll');
+    case 'libraries': return !Array.isArray(v) ? tr('adminPeople.roles.ratingAll') : v.length ? tr('adminPeople.roles.libs', { n: v.length }) : tr('adminPeople.roles.libsNone');
   }
 }
 

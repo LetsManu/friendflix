@@ -293,6 +293,7 @@ const dict: Translation<typeof de> = {
     livetvNone: 'Ninguno',
     livetvRemove: 'Cancelar la excepción de {name}',
     livetvSaved: 'Excepciones de {name} guardadas.',
+    libsNoneLine: 'Sin biblioteca, {name} solo ve TV en directo.',
   },
   roles: {
     intro: 'Lo que puede hacer cada rol. Los cambios solo se aplican tras «Guardar» y también afectan a las cuentas existentes.',
@@ -412,7 +413,8 @@ const dict: Translation<typeof de> = {
     errRange: 'Introduce un número de {min} a {max}.',
     cellTitle: '{role} · {field}',
     cellNameUnsaved: '{role}, {field}: {value}, sin guardar',
-    libsMin: 'Al menos una biblioteca sigue compartida.',
+    libsNone: 'Ninguna biblioteca',
+    libsNoneHint: 'Ninguna biblioteca: la persona solo ve TV en directo.',
     retryDone: { one: '{n} rol fallido guardado.', many: '{n} roles fallidos guardados.', other: '{n} roles fallidos guardados.' },
     fLabel: 'Nombre',
     fInvitable: 'Ofrecido en invitaciones',

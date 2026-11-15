@@ -87,22 +87,28 @@ test.describe('Rollen & Rechte: role matrix (desktop)', () => {
     await expect(cell(page, 'Freund, Watch-Partys: nicht erlaubt, nicht gespeichert')).toHaveClass(/staged/);
   });
 
-  test('libraries: the last ticked one cannot be unticked (a role keeps at least one)', async ({ page }) => {
+  test('libraries: none may be ticked; the hint says Live-TV only', async ({ page, api }) => {
+    api.admin.matrix.roles.find((r) => r.key === 'family')!.values.libraries = ['Musik'];
     await page.goto('/admin/roles');
-    await cell(page, 'Familie, Bibliotheken: alle').click();
+    await cell(page, /^Familie, Bibliotheken: 1 Bibliothek/).click();
     const pop = page.getByRole('dialog', { name: 'Familie · Bibliotheken' });
-    await pop.getByRole('checkbox', { name: 'Alle Bibliotheken' }).uncheck();
-    const before = await pop.boundingBox();
-    await pop.getByRole('checkbox', { name: 'Filme' }).uncheck();
-    await pop.getByRole('checkbox', { name: 'Serien' }).uncheck();
+    const hint = pop.locator('p.min');
     const last = pop.getByRole('checkbox', { name: 'Musik' });
     await expect(last).toBeChecked();
-    await expect(last).toBeDisabled();
-    await expect(pop.getByText('Mindestens eine Bibliothek bleibt freigegeben.')).toBeVisible();
-    expect(await pop.boundingBox()).toEqual(before); // the hint's room was there: the popover does not grow
+    await expect(last).toBeEnabled(); // the last ticked box may go too (a Live-TV-only role, roles redesign §3.1)
+    const before = await pop.boundingBox(), line = await hint.boundingBox();
+    await last.uncheck();
+    await expect(pop.getByText('Keine Bibliothek – die Person sieht nur Live-TV.')).toBeVisible();
+    expect(await hint.boundingBox()).toEqual(line); // the hint's line was there all along: nothing moves
+    expect(await pop.boundingBox()).toEqual(before);
     await page.keyboard.press('Escape');
-    await expect(cell(page, 'Familie, Bibliotheken: 1 Bibliothek, nicht gespeichert')).toBeVisible();
-    await expect(bar(page)).toContainText('1 Änderung in 1 Rolle');
+    await expect(cell(page, 'Familie, Bibliotheken: Keine Bibliothek, nicht gespeichert')).toBeVisible();
+    await bar(page).getByRole('button', { name: 'Änderungen prüfen' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Änderungen prüfen' });
+    await expect(sheet.getByText('Familie · Bibliotheken: 1 Bibliothek → Keine Bibliothek')).toBeVisible();
+    await sheet.getByRole('button', { name: 'Speichern' }).click();
+    await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
+    expect(api.admin.matrix.puts).toEqual([{ role: 'family', body: { libraries: [] } }]);
   });
 
   test('grid keyboard', async ({ page }) => {

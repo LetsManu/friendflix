@@ -233,7 +233,7 @@
                     {/each}
                   </div>
                 {:else}
-                  <FieldControl field={f} value={stagedValue(row, staged)} placeholder={row.roleValue} libraries={matrix.libraries} disabled={saving} on:change={(e) => fromControl(f.key, e.detail)} />
+                  <FieldControl field={f} value={stagedValue(row, staged)} placeholder={row.roleValue} libraries={matrix.libraries} disabled={saving} noneHint={$t('adminPeople.rights.libsNoneLine', { name })} on:change={(e) => fromControl(f.key, e.detail)} />
                   <Button variant="ghost" disabled={saving || !hasException(row, staged)} on:click={() => stage(f.key, null)}>{$t('adminPeople.rights.asRole')}</Button>
                 {/if}
               </div>
