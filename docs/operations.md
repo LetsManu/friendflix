@@ -21,6 +21,8 @@ docker compose logs -f backup                 # eine Zeile pro Lauf: "backup: OK
 ```
 Die Datei getrennt von den Dumps aufbewahren (Passwort-Manager als Anhang, anderes Gerät). Andere Projektnamen: `COMPOSE_PROJECT_NAME=<name> ./scripts/backup-bootstrap.sh`; Zielordner `BACKUP_DIR`. Mit `compose.secrets.yaml` kommen `APP_ENC_KEY` und `INTERNAL_SECRET` aus `secrets/`; dann zusätzlich diesen Ordner sichern. Die Volumes `bootstrap-gateway` und `bootstrap-livetv` brauchen kein Backup (der Dienst `bootstrap` füllt sie bei jedem Start neu).
 
+**Redis (`redis-data`).** Redis schreibt seine Daten in eine Append-only-Datei im Volume `redis-data` (einmal pro Sekunde): Anmeldungen (auch die gekoppelter Fernseher und der Apps), laufende Kopplungen und der Stand eines Updates über Portainer überstehen einen Neustart von Redis und des Hosts. Ein Backup braucht das Volume nicht; fehlt es, muss sich nur jede Person neu anmelden. Es enthält gültige Sitzungs-IDs: nicht kopieren oder weitergeben. Alle Sitzungen auf einmal beenden: `docker compose rm -sf redis`, `docker volume rm <projekt>_redis-data`, `docker compose up -d`. Jeder Schlüssel hat seine eigene Ablaufzeit, auch nach einem Neustart läuft nichts für immer weiter.
+
 **Wiederherstellung** (App gestoppt, damit keine Verbindungen offen sind):
 ```bash
 docker compose stop backend gateway
