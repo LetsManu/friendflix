@@ -11,6 +11,7 @@ import {
   REDUCED_MS, rippleBox, scrimFade, twoWay, SHEET_IN_MS, SHEET_OUT_MS, sheetSlide, springEase, TOAST_IN_MS, TOAST_OUT_MS, toastRise, barRise, BAR_IN_MS, BAR_OUT_MS,
 } from './fx';
 
+type Cfg = ReturnType<typeof grow>;
 const node = {} as Element;
 const box = (left: number, top: number, width: number, height: number) => ({ getBoundingClientRect: () => ({ left, top, width, height }) }) as unknown as Element;
 const ts = Array.from({ length: 101 }, (_, i) => i / 100);
@@ -59,9 +60,20 @@ describe('grow', () => {
     const pop = { left: 100, top: 100, width: 300, height: 200 };
     expect(growShift({ left: 180, top: 60, width: 40, height: 40 }, pop)).toEqual({ x: 0, y: -8 });
     expect(growShift({ left: 180, top: 400, width: 40, height: 40 }, pop)).toEqual({ x: 0, y: 8 });
-    const side = growShift({ left: 20, top: 150, width: 40, height: 40 }, pop);
-    expect(Math.abs(side.x)).toBeLessThanOrEqual(8);
-    expect(side.y).toBe(0);
+  });
+
+  it('growShift: a side-opening popover slides 8 px sideways from its trigger, never vertically', () => {
+    const pop = { left: 100, top: 100, width: 300, height: 200 };
+    // the trigger sits level with the popover, left of it: the popover opens to the right and slides in from the left
+    expect(growShift({ left: 20, top: 150, width: 40, height: 40 }, pop)).toEqual({ x: -8, y: 0 });
+    // right of it: it opens to the left and slides in from the right
+    expect(growShift({ left: 420, top: 150, width: 40, height: 40 }, pop)).toEqual({ x: 8, y: 0 });
+    // level with the popover's top or bottom third (still overlapping the trigger's centre line): the same rule
+    expect(growShift({ left: 20, top: 90, width: 40, height: 40 }, pop)).toEqual({ x: -8, y: 0 });
+    expect(growShift({ left: 420, top: 270, width: 40, height: 40 }, pop)).toEqual({ x: 8, y: 0 });
+    // and the css starts 8 px to that side, on x only
+    expect(grow(node, { shift: { x: -8, y: 0 }, mode: 'full' }).css(0, 1)).toBe('transform:translate(-8px,0px);opacity:0');
+    expect(grow(node, { shift: { x: 8, y: 0 }, mode: 'full' }).css(0, 1)).toBe('transform:translate(8px,0px);opacity:0');
   });
 
   it('grow css never scales', () => {
@@ -98,7 +110,26 @@ describe('grow', () => {
   it('reverses mid-flight without a jump', () => {
     const el = { getBoundingClientRect: () => ({ left: 0, top: 50, width: 200, height: 100 }) } as unknown as Element;
     const g = growBoth(el, { trigger: box(80, 0, 40, 40), mode: 'full' });
-    expect(g({ direction: 'out' }).css(0.5, 0.5)).toBe(g({ direction: 'in' }).css(0.5, 0.5));
+    const fin = g({ direction: 'in' }), fout = g({ direction: 'out' });
+    // the frame Svelte 5 draws `p` into a run from t1 to t2 (transitions.js animate(): t = t1 + (t2 - t1) * easing(p))
+    const at = (c: Cfg, t1: number, t2: number, p: number) => { const t = t1 + (t2 - t1) * c.easing(p); return c.css(t, 1 - t); };
+    const ty = (css: string) => Number(/translate\(-?[\d.]+px,\s*(-?[\d.]+)px\)/.exec(css)![1]);
+    for (const p of [0.05, 0.2, 0.35, 0.5, 0.65, 0.8, 0.95]) {
+      // a close p into the opening: the closing run starts where the opening stood, same position and opacity
+      const now = fin.easing(p);
+      expect(at(fout, now, 0, 0), `close at ${p}`).toBe(at(fin, 0, 1, p));
+      // and moves on from there toward its start, by less than a pixel in its first 1/60 of the way
+      expect(Math.abs(ty(at(fout, now, 0, 1 / 60)) - ty(at(fout, now, 0, 0)))).toBeLessThan(1);
+      // a reopen p into the closing: the same, the other way round
+      const back = 1 - fout.easing(p);
+      expect(at(fin, back, 1, 0), `reopen at ${p}`).toBe(at(fout, 1, 0, p));
+      // the css is one function of t whichever way it runs ('both' included)
+      expect(fout.css(now, 1 - now)).toBe(fin.css(now, 1 - now));
+      expect(g({ direction: 'both' }).css(now, 1 - now)).toBe(fin.css(now, 1 - now));
+    }
+    // the shift is the one measured at the open, kept for the close
+    expect(fout.css(0, 1)).toBe(fin.css(0, 1));
+    expect(fin.css(0, 1)).toBe('transform:translate(0px,-8px);opacity:0');
   });
 
   it('grow per mode', () => {
@@ -297,7 +328,6 @@ describe('the frame guard watches glass motion', () => {
 
 describe('barRise (the cast bar)', () => {
   const node = {} as Element;
-const box = (left: number, top: number, width: number, height: number) => ({ getBoundingClientRect: () => ({ left, top, width, height }) }) as unknown as Element;
   it('rises 16 px with opacity, 240 ms in (outEase) and 180 ms out', () => {
     const fin = barRise(node, { mode: 'full' });
     expect([fin.duration, BAR_IN_MS]).toEqual([240, 240]);
