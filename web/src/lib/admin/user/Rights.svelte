@@ -317,7 +317,7 @@
   .lab { display: flex; flex-direction: column; min-width: 0; }
   .nm { overflow-wrap: anywhere; }
   /* the Live-TV hint's line is always there on its row, so staging Live-TV moves nothing */
-  .need { min-height: 1.3em; }
+  .need { display: block; min-height: 1.5em; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .role { font-size: .82rem; color: var(--mut); overflow-wrap: anywhere; }
   .ctl { display: flex; align-items: center; gap: .6rem; min-width: 0; }
   .ctl > :global(.fc) { flex: 1; }
