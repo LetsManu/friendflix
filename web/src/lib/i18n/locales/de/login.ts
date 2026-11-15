@@ -178,6 +178,10 @@ const login = {
       addClassic: 'Auf der Anmeldeseite hinzufügen',
       note: 'Passkeys, die du hier anlegst, gelten für FriendFlix.',
       renew: 'Hast du deine Passkeys früher auf der Anmeldeseite angelegt? Die gelten in FriendFlix nicht. Lege hier einmal einen neuen Passkey an.',
+      exists: 'Auf diesem Gerät gibt es schon einen Passkey für dein Konto. Nutze ihn zum Anmelden oder entferne ihn in der Passwörter-App.',
+      unsupportedOptions: 'Dieses Gerät kann die Anforderungen für den Passkey nicht erfüllen.',
+      failed: 'Der Passkey konnte nicht erstellt werden.',
+      errorCode: 'Fehlercode: {code}',
     },
     password: {
       title: 'Passwort',
