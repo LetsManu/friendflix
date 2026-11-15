@@ -18,6 +18,7 @@ import { fileRoutes } from './routes/files.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { parseRoutes } from './routes/parse.js';
 import { streamRoutes } from './routes/streams.js';
+import { Library } from './library.js';
 import { Recorder } from './recorder.js';
 import { recordingRoutes } from './routes/recordings.js';
 import { createRun } from './run.js';
@@ -234,7 +235,8 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   if (env.INTERNAL_SECRET || env.INTERNAL_SECRET_FILE) log('INTERNAL_SECRET is set in the environment of livetv but never used: remove it there');
   const verifier: Verifier = { key: cfg.key, cache: new ReplayCache(), notBefore: Date.now() };
   const run = createRun();
-  const system = systemView({ fs, run, cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts, recordingsDir: cfg.recordingsDir });
+  const library = new Library({ root: cfg.libraryDir, recordingsRoot: cfg.recordingsDir, log });
+  const system = systemView({ fs, run, cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts, recordingsDir: cfg.recordingsDir, library: () => library.facts() });
   // the encoders /v1/system lists, asked once (a failed or empty answer is asked again next time)
   let encoderList: Encoder[] | null = null;
   const listEncoders = async (): Promise<Encoder[]> => {
@@ -264,7 +266,7 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   const routes = [
     ...fetchRoutes({ guard, run, ingest }), ...parseRoutes(), ...streamRoutes(streams, { encoders: listEncoders, previews }),
     ...benchmarkRoutes({ run, encoders: listEncoders, log }), ...fileRoutes(streams), ...ingestRoutes(ingest, { ports: cfg.srtPorts }),
-    ...recordingRoutes(recorder),
+    ...recordingRoutes(recorder, { library }),
   ];
   const app = createApp({ verifier, version: cfg.version, bootId: randomBytes(8).toString('hex'), system, routes, warn: log });
   const server = createServer((req, res) => { void app(req, res); });

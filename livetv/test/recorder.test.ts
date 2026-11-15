@@ -196,9 +196,11 @@ describe('the recorder', () => {
     await startStream();
     await recorder.start({ id: ID, channelId: CH, dir: DIR, endAt: T0 + 3_600_000 });
     await emit({ pdt: T0 });
+    await vi.waitFor(() => expect(segs(playlist())).toHaveLength(1));
     full = true;
     await emit({ pdt: T0 + 4000 });
     await vi.waitFor(() => expect(recorder.list()[0]!.error).toBe('storage_full'));
+    await vi.waitFor(() => expect(playlist()).toContain('#EXT-X-ENDLIST'));
     const p = playlist();
     expect(segs(p)).toEqual(['0.ts']);
     expect(p.trimEnd().endsWith('#EXT-X-ENDLIST')).toBe(true);

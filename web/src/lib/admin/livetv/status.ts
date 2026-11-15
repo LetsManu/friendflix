@@ -29,6 +29,7 @@ export const EVENT_CODES = [
   'rec_moved',
   'rec_no_slot',
   'rec_storage_full',
+  'rec_export_failed',
 ] as const;
 export type LiveEventCode = (typeof EVENT_CODES)[number];
 export type EventLevel = 'info' | 'warn' | 'error';

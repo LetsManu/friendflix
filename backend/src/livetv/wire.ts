@@ -18,6 +18,7 @@ export interface LivetvSystem {
   cache: { usedBytes: number; maxBytes: number };
   recordings: { usedBytes: number; freeBytes: number } | null;
   srt: { ports: number[] };
+  library: { mounted: boolean; writable: boolean; dedicated: boolean; freeBytes: number | null } | null;
 }
 
 /** one live entry of a provider list (livetv/src/m3u.ts `M3uEntry`) */
@@ -145,3 +146,6 @@ export interface RecorderView {
   error: RecorderError | null;
   since: number;
 }
+
+/** `POST /v1/recordings/:id/export` (plan Phase 3 Task 6; livetv/src/library.ts): the file relative to the library folder and its size */
+export interface ExportAnswer { path: string; bytes: number }

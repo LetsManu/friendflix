@@ -617,6 +617,7 @@ const dict: Translation<typeof de> = {
     rec_moved: 'L’enregistrement suit le nouvel horaire',
     rec_no_slot: 'Enregistrement en attente : aucune place libre',
     rec_storage_full: 'Stockage des enregistrements plein',
+    rec_export_failed: 'L’enregistrement reste dans le dossier FriendFlix : l’export vers la bibliothèque a échoué',
   },
   evBare: {
     input_lost: 'Entrée perdue',

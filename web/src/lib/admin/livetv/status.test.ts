@@ -15,7 +15,7 @@ describe('EVENT_CODES (F20)', () => {
   it('EVENT_CODES mirrors the backend list', () => {
     expect([...EVENT_CODES]).toEqual([
       'source_refresh_failed', 'ingest_sync_pending', 'stopped_by_admin', 'start_refused_full', 'start_failed', 'input_lost', 'input_back', 'push_rejected', 'released_on_switch',
-      'rec_started', 'rec_done', 'rec_partial', 'rec_failed', 'rec_moved', 'rec_no_slot', 'rec_storage_full',
+      'rec_started', 'rec_done', 'rec_partial', 'rec_failed', 'rec_moved', 'rec_no_slot', 'rec_storage_full', 'rec_export_failed',
     ]);
     // and the file it mirrors says the same, in the same order
     const src = readFileSync(fileURLToPath(new URL('../../../../../backend/src/livetv/events.ts', import.meta.url)), 'utf8');

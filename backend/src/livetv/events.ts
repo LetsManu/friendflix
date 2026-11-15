@@ -30,6 +30,7 @@ export const LIVE_EVENT_CODES = [
   'rec_moved',
   'rec_no_slot',
   'rec_storage_full',
+  'rec_export_failed',
 ] as const;
 export type LiveEventCode = (typeof LIVE_EVENT_CODES)[number];
 

@@ -11,7 +11,7 @@ import { LivetvError, livetvCall } from './client.js';
 import { livetvInstalled, readLivetvSystem } from './detect.js';
 import { setAfterEpgImport } from './epg.js';
 import { pushEvent, type LiveEvent } from './events.js';
-import { deleteRecording, mayRecord, progKey, purgeRecording, recordSettings, seriesKeyOf, type Gap, type RecRow, type RecState } from './recordings.js';
+import { deleteRecording, effectiveStorage, mayRecord, progKey, purgeRecording, recordSettings, seriesKeyOf, type Gap, type RecRow, type RecState } from './recordings.js';
 import { channelAllowed, channelSet, type LivetvProfile, type LivetvUser } from './rights.js';
 import { RECORD_LEAD_MS, expectedMode, invalidateRecordingUses, runningChannelIds, startForRecording, type RecordStartError } from './streams.js';
 import type { RecorderView, RecordingStartAnswer } from './wire.js';
@@ -133,7 +133,7 @@ interface PlanRow {
 
 /** a scheduled row (`on conflict do nothing`: the profile's slot or the rule's airing exists already); answers its id when it was new */
 export async function insertScheduled(ctx: Ctx, p: PlanRow): Promise<string | null> {
-  const storage = recordSettings(ctx).storage === 'library' ? 'library' : 'ff';
+  const storage = effectiveStorage(ctx) === 'library' ? 'library' : 'ff';
   const r = await ctx.db.query<{ id: string }>(
     `insert into livetv_recordings(id, profile_id, user_id, rule_id, channel_id, channel_name, title, subtitle, description, episode, series_key, start_at, end_at,
        pad_before_s, pad_after_s, state, follow_epg, prog_key, storage, dir)

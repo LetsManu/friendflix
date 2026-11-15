@@ -188,8 +188,9 @@ describe('cacheUsage and systemView', () => {
       cache: { usedBytes: 1024, maxBytes: 6 * 1024 ** 3 },
       recordings: null,
       srt: { ports: [9000, 9001] },
+      library: null,
     });
-    expect(Object.keys(a).sort()).toEqual(['cache', 'cpu', 'encoders', 'gpu', 'recordings', 'srt']);
+    expect(Object.keys(a).sort()).toEqual(['cache', 'cpu', 'encoders', 'gpu', 'library', 'recordings', 'srt']);
     expect(Object.keys(a.cpu).sort()).toEqual(['cores', 'loadPct', 'model']);
     await view();
     expect(run.calls).toHaveLength(1);

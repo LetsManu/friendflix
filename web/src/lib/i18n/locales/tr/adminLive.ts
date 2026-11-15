@@ -617,6 +617,7 @@ const dict: Translation<typeof de> = {
     rec_moved: 'Kayıt yeni yayın saatini izliyor',
     rec_no_slot: 'Kayıt bekliyor: boş yer yok',
     rec_storage_full: 'Kayıt alanı dolu',
+    rec_export_failed: 'Kayıt FriendFlix klasöründe kaldı: kitaplığa aktarma başarısız',
   },
   evBare: {
     input_lost: 'Giriş kayboldu',

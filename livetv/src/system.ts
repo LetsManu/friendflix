@@ -20,6 +20,7 @@ export interface SystemView {
   cache: { usedBytes: number; maxBytes: number };
   recordings: { usedBytes: number; freeBytes: number } | null;
   srt: { ports: number[] };
+  library: { mounted: boolean; writable: boolean; dedicated: boolean; freeBytes: number | null } | null;
 }
 
 export const DEFAULT_SRT_PORTS = '9000-9009';
@@ -120,6 +121,8 @@ export interface SystemDeps {
   /** the recordings volume (Phase 3); without it `recordings` is null */
   recordingsDir?: string;
   statfs?: StatFs;
+  /** the Jellyfin library folder of the opt-in overlay (Phase 3); without it `library` is null */
+  library?: () => Promise<SystemView['library']>;
 }
 
 /**
@@ -158,6 +161,7 @@ export function systemView(d: SystemDeps): () => Promise<SystemView> {
       cache: { usedBytes: used.bytes, maxBytes: d.cacheMaxBytes },
       recordings: await recordings(),
       srt: { ports: d.srtPorts },
+      library: d.library ? await d.library().catch(() => null) : null,
     };
   };
 }

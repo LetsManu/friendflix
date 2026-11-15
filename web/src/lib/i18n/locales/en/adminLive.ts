@@ -617,6 +617,7 @@ const dict: Translation<typeof de> = {
     rec_moved: 'Recording follows the new airtime',
     rec_no_slot: 'Recording waiting: no slot free',
     rec_storage_full: 'Recordings storage full',
+    rec_export_failed: 'Recording stayed in the FriendFlix folder: export to the library failed',
   },
   evBare: {
     input_lost: 'Input lost',

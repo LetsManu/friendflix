@@ -8,8 +8,9 @@ import type { Ctx } from '../ctx.js';
 import { requirePerm } from '../permGuard.js';
 import { requireAdmin, requireUser } from '../session.js';
 import { livetvInstalled, livetvSystem } from './detect.js';
-import { adminListRecordings, deleteRecording, getRecording, listRecordings, mayRecord, progKey, recordingView, recordSettings, seriesKeyOf, setKeep, setVisibility, visibleRecording, REC_STATES, type RecState } from './recordings.js';
+import { adminListRecordings, deleteRecording, effectiveStorage, getRecording, libraryModeAvailable, listRecordings, mayRecord, progKey, recordingView, recordSettings, seriesKeyOf, setKeep, setVisibility, visibleRecording, REC_STATES, type RecState } from './recordings.js';
 import { expandRules, forecast, insertScheduled, programmeAt, releaseReservation, validTz, type RuleRow } from './recsched.js';
+import { exportToLibrary, usage } from './recstore.js';
 import { channelAllowed } from './rights.js';
 import { LIVE_CAP_S, liveSidHash, mintRecToken } from './tokens.js';
 import { isHomeRequest } from '../netaddr.js';
@@ -47,6 +48,7 @@ const rulePatch = z.object({
 }).strict();
 const deleteAllBody = z.object({ confirm: z.literal('LÖSCHEN') }).strict();
 const playBody = z.object({ via: z.enum(['local', 'chromecast', 'airplay']).optional() }).strict();
+const createLibraryBody = z.object({ name: z.string().trim().min(1).max(60).optional(), kind: z.enum(['homevideos', 'mixed']).optional() }).strict();
 const MAX_SPAN_MS = 24 * 3_600_000;
 /** an HD recording (about 6 Mbit/s) fills this many bytes an hour: the storage card's "noch ca. … h in HD" */
 export const HD_BYTES_PER_HOUR = 2_700_000_000;
@@ -192,6 +194,20 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     await deleteRecording(ctx, id, 'owner');
     if (r.channel_id) await releaseReservation(ctx, r.channel_id).catch(() => undefined);
     return reply.code(204).send();
+  });
+
+  /** *Behalten → in Bibliothek* (mode `both`, spec §15.3): the owner's finished recording is copied into the Jellyfin library and kept */
+  app.post('/api/livetv/recordings/:id/library', write, async (req, reply) => {
+    const id = idParam(req);
+    if (!id) return notFound(reply);
+    const { user: u, profile } = who(req);
+    const r = await visibleRecording(ctx, u, profile, id);
+    if (!r || r.profile_id !== profile.id) return notFound(reply);
+    if (effectiveStorage(ctx) !== 'both' || !recordSettings(ctx).libraryId) return reply.code(409).send({ error: 'not_available' });
+    if (r.state !== 'done' && r.state !== 'partial') return reply.code(409).send({ error: 'not_ready' });
+    const res = await exportToLibrary(ctx, id, { keep: true });
+    if (res !== 'exported') return reply.code(res === 'failed' ? 502 : 409).send({ error: res === 'failed' ? 'export_failed' : 'not_available' });
+    return { recording: await recordingView(ctx, u, profile, id) };
   });
 
   /**
@@ -347,11 +363,40 @@ export function recordingAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/api/admin/livetv/recordings/storage', admin, async () => {
-    const used = Number((await ctx.db.query<{ n: string | null }>("select sum(bytes) as n from livetv_recordings where state <> 'scheduled'")).rows[0]?.n ?? 0);
+    const used = await usage(ctx);
     const limitBytes = recordSettings(ctx).limitBytes;
     const sys = await livetvSystem(ctx);
     const freeBytes = sys?.recordings?.freeBytes ?? null;
     const room = Math.max(0, Math.min(limitBytes - used, freeBytes ?? Number.MAX_SAFE_INTEGER));
-    return { usedBytes: used, limitBytes, freeBytes, hoursLeftHd: Math.floor(room / HD_BYTES_PER_HOUR), library: null };
+    return { usedBytes: used, limitBytes, freeBytes, hoursLeftHd: Math.floor(room / HD_BYTES_PER_HOUR), library: sys?.library ?? null };
+  });
+
+  /**
+   * The Jellyfin libraries with their folders (spec §15.3 *Choosing the library*): the one whose folders hold
+   * LIVETV_RECORD_LIBRARY_JF_PATH `fits`. Without the media server's library seam (Plex) the library modes are not offered.
+   */
+  app.get('/api/admin/livetv/recordings/libraries', admin, async (_req, reply) => {
+    const s = recordSettings(ctx);
+    if (!libraryModeAvailable(ctx)) return { supported: false, jfPath: s.libraryJfPath, selected: s.libraryId, libraries: [] };
+    const want = s.libraryJfPath.replace(/\/+$/, '');
+    let list: Array<{ id: string; name: string; paths: string[] }>;
+    try { list = await ctx.jf.admin.libraryFolders!(); } catch { return reply.code(502).send({ error: 'media_unreachable' }); }
+    return {
+      supported: true, jfPath: s.libraryJfPath, selected: s.libraryId,
+      libraries: list.map((l) => ({ ...l, fits: l.paths.some((p) => p.replace(/\/+$/, '') === want) })),
+    };
+  });
+
+  /** *Bibliothek „Aufnahmen“ anlegen*: a home-videos library on the recordings folder (as Jellyfin sees it) */
+  app.post('/api/admin/livetv/recordings/libraries', { ...admin, config: writeLimit }, async (req, reply) => {
+    const b = createLibraryBody.safeParse(req.body ?? {});
+    if (!b.success) return reply.code(400).send({ error: 'invalid', field: String(b.error.issues[0]?.path[0] ?? 'body') });
+    if (!libraryModeAvailable(ctx) || !ctx.jf.admin.createLibrary) return reply.code(409).send({ error: 'not_available' });
+    let created: { id: string | null };
+    try { created = await ctx.jf.admin.createLibrary(b.data.name ?? 'Aufnahmen', recordSettings(ctx).libraryJfPath, b.data.kind ?? 'homevideos'); } catch {
+      return reply.code(502).send({ error: 'media_unreachable' });
+    }
+    await audit(ctx, req.user!.id, 'livetv.rec.library_create', created.id ?? undefined, { fields: ['name', 'kind'] });
+    return reply.code(201).send(created);
   });
 }

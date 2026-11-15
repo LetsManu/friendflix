@@ -617,6 +617,7 @@ const dict: Translation<typeof de> = {
     rec_moved: 'Nagranie przesunięte na nową godzinę emisji',
     rec_no_slot: 'Nagranie czeka: brak wolnego miejsca',
     rec_storage_full: 'Pamięć na nagrania pełna',
+    rec_export_failed: 'Nagranie zostało w folderze FriendFlix: eksport do biblioteki nie powiódł się',
   },
   evBare: {
     input_lost: 'Utracono wejście',

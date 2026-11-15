@@ -126,6 +126,17 @@ export function recordSettings(ctx: Pick<Ctx, 'cfg'>): RecordSettings {
   };
 }
 
+/** the library modes need the media server's library seam (Jellyfin); Plex has none, so only the FriendFlix folder is offered there */
+export function libraryModeAvailable(ctx: Pick<Ctx, 'jf'>): boolean {
+  const a = ctx.jf.admin;
+  return typeof a.refreshLibrary === 'function' && typeof a.libraryFolders === 'function';
+}
+/** the storage mode in force: the setting, or `ff` when the media server offers no library seam */
+export function effectiveStorage(ctx: Pick<Ctx, 'cfg' | 'jf'>): RecordSettings['storage'] {
+  const s = recordSettings(ctx).storage;
+  return s !== 'ff' && !libraryModeAvailable(ctx) ? 'ff' : s;
+}
+
 type RightsCtx = Pick<Ctx, 'db' | 'roles'>;
 const overlay = (profile: LivetvProfile) => (profile.kids ? { kids: true, kids_max_rating: 0 as const } : null);
 /** the account (with the profile's kids overlay) may use Live TV */

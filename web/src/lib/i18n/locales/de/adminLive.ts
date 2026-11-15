@@ -616,6 +616,7 @@ export default {
     rec_moved: 'Aufnahme folgt der neuen Sendezeit',
     rec_no_slot: 'Aufnahme wartet: kein Platz frei',
     rec_storage_full: 'Aufnahmespeicher voll',
+    rec_export_failed: 'Aufnahme blieb im FriendFlix-Ordner: Export in die Bibliothek fehlgeschlagen',
   },
   evBare: {
     input_lost: 'Eingang verloren',

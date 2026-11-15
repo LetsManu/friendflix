@@ -110,6 +110,9 @@ function parseSystem(raw: Partial<LivetvSystem> | null | undefined): LivetvSyste
     cache: { usedBytes: Number(raw.cache?.usedBytes) || 0, maxBytes: Number(raw.cache?.maxBytes) || 0 },
     recordings: raw.recordings ? { usedBytes: Number(raw.recordings.usedBytes) || 0, freeBytes: Number(raw.recordings.freeBytes) || 0 } : null,
     srt: { ports: Array.isArray(raw.srt?.ports) ? raw.srt.ports.filter((p): p is number => Number.isInteger(p)).slice(0, 100) : [] },
+    library: raw.library && typeof raw.library === 'object' && raw.library.mounted === true
+      ? { mounted: true, writable: raw.library.writable === true, dedicated: raw.library.dedicated === true, freeBytes: typeof raw.library.freeBytes === 'number' ? raw.library.freeBytes : null }
+      : null,
   } : null;
 }
 
