@@ -275,7 +275,9 @@ function recordingRoute(st: LivetvMock, m: string, p: string, body: any, J: Repl
     const r = st.recordings.find((x) => x.id === id);
     if (!r) return J({ error: 'not_found' }, 404);
     const via = typeof body?.via === 'string' ? body.via : '';
-    const tok = `rtok-${r.id.slice(-4)}${via === 'chromecast' ? '-cc' : via === 'airplay' ? '-ap' : ''}`;
+    // every mint is a new token (a later play after a stop gets `-2`, `-3` …)
+    const n = st.recPlays.filter((x) => x.id === id && x.via === via).length;
+    const tok = `rtok-${r.id.slice(-4)}${via === 'chromecast' ? '-cc' : via === 'airplay' ? '-ap' : ''}${n > 1 ? `-${n}` : ''}`;
     return J({ token: tok, url: `/media/r/${tok}/index.m3u8`, growing: r.state === 'recording', segments: 'fmp4', durationS: r.durationS, positionS: r.positionS, expiresAt: Date.now() + 3_600_000 });
   }
   if ((mm = p.match(/^\/api\/livetv\/recordings\/([^/]+)\/progress$/)) && m === 'POST') {
@@ -443,6 +445,8 @@ export function livetvRoute(st: LivetvMock, m: string, p: string, body: any, hea
 /** `/media/r/<token>/…`: a recording's playlist (VOD when finished, a growing EVENT playlist while it records) and its segments */
 function recordingMedia(st: LivetvMock, tok: string, f: string, route: Route): Promise<void> {
   if (st.recMediaStatus !== 200) return route.fulfill({ status: st.recMediaStatus, body: '' });
+  // a stopped token is revoked (backend endLiveToken): the gateway answers 410
+  if (st.stops.includes(tok)) return route.fulfill({ status: 410, body: '' });
   if (f === 'index.m3u8') {
     const r = st.recordings.find((x) => tok.startsWith(`rtok-${x.id.slice(-4)}`));
     const body = r?.state === 'recording' ? eventPlaylist(st, Date.now()) : HLS_PLAYLIST;

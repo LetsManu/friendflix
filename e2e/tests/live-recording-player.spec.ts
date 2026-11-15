@@ -67,6 +67,41 @@ test.describe('recording playback', () => {
     expect(after.width).toBeCloseTo(slot.width, 0);
   });
 
+  test('a recording never asks for cast & info: no pause card, no I key, no peek (the e2e mock refuses rec: items)', async ({ page, api }) => {
+    const r = mockRecording({ positionS: 4, durationS: 30 });
+    await open(page, api, r);
+    await expect.poll(async () => (await video(page)).t, { timeout: 15_000 }).toBeGreaterThan(4);
+    await page.evaluate(() => document.querySelector('video')!.pause());
+    await page.waitForTimeout(1_800); // past the 1.2 s pause that loads cast & info for a film
+    await expect(page.getByRole('button', { name: 'Besetzung & Infos' })).toHaveCount(0);
+    await page.keyboard.press('i');
+    await page.waitForTimeout(300);
+    expect(api.unmocked.size).toBe(0);
+  });
+
+  test('replay after the end: the token stays 30 s; after that a fresh /play', async ({ page, api }) => {
+    await page.clock.install();
+    const r = mockRecording({ positionS: 24, durationS: 30 });
+    await open(page, api, r);
+    const ended = () => page.evaluate(() => document.querySelector('video')?.ended ?? false);
+    await expect.poll(ended, { timeout: 20_000 }).toBe(true);
+    expect(api.livetv.stops).toEqual([]);
+    // played again at once: the same token still plays
+    await page.evaluate(() => { const v = document.querySelector('video')!; v.currentTime = 1; v.play().catch(() => undefined); });
+    await expect.poll(async () => (await video(page)).t, { timeout: 15_000 }).toBeGreaterThan(2);
+    expect(api.livetv.recPlays).toHaveLength(1);
+    // to the end again, then 30 s: the token ends
+    await page.evaluate(() => { const v = document.querySelector('video')!; v.currentTime = 28; v.play().catch(() => undefined); });
+    await expect.poll(ended, { timeout: 20_000 }).toBe(true);
+    await page.clock.runFor(31_000);
+    await expect.poll(() => api.livetv.stops).toHaveLength(1);
+    // replay now asks for a fresh token (the old one is revoked: its media answers 410)
+    await page.evaluate(() => { const v = document.querySelector('video')!; v.currentTime = 1; v.play().catch(() => undefined); });
+    await expect.poll(() => api.livetv.recPlays.length, { timeout: 15_000 }).toBe(2);
+    await expect.poll(async () => (await video(page)).t, { timeout: 15_000 }).toBeGreaterThan(2);
+    await expect(page.getByText('Aufnahme nicht mehr verfügbar')).toHaveCount(0);
+  });
+
   test.describe('gone', () => {
     test.use({ allowedConsole: /status of 410/ });
     test('410 shows the gone state', async ({ page, api }) => {

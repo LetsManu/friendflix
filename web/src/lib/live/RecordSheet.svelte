@@ -1,7 +1,8 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { createEventDispatcher, onMount } from 'svelte';
+  import { createEventDispatcher, onMount, tick } from 'svelte';
+  import { dialogKeys } from '#lib/actions';
   import { grow, scrimFade, sheetSlide, type FxMode } from '#lib/glass/fx';
   import { fmtDate, t } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
@@ -150,8 +151,12 @@
     ruleOption({ keepMax });
   }
 
+  // the focus is the sheet's from the start (W-I2): the sheet itself while the detail loads (its main action is disabled until then),
+  // then the main action; Tab stays inside (dialogKeys); the opener gives it back on close
+  let focusMain = true;
+  $: if (ready && focusMain && box) { focusMain = false; void tick().then(() => { if (box && (document.activeElement === box || !box.contains(document.activeElement))) box.querySelector<HTMLElement>('.main')?.focus(); }); }
   onMount(() => {
-    box?.querySelector<HTMLElement>('.main')?.focus();
+    box?.focus();
     void load();
   });
 </script>
@@ -159,7 +164,7 @@
 <div class="rsdim" role="presentation" on:click={() => dispatch('close')} in:scrimFade={{ mode }} out:scrimFade={{ mode }}></div>
 <div class="rswrap" class:phone>
   <div bind:this={box} class="rsheet" class:frost={!still} class:frost-safe={!still} class:solid={still} role="dialog" aria-modal="true" aria-labelledby="lrs-title"
-    tabindex="-1" data-nav data-scope in:fx={{ dir: 'in', mode }} out:fx={{ dir: 'out', mode }}>
+    tabindex="-1" data-nav data-scope use:dialogKeys={{ close: () => dispatch('close') }} in:fx={{ dir: 'in', mode }} out:fx={{ dir: 'out', mode }}>
     <header>
       <h2 id="lrs-title">{title}</h2>
       <button type="button" class="x" aria-label={$t('common.close')} on:click={() => dispatch('close')}><Icon name="x" size={22} /></button>

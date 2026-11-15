@@ -131,6 +131,24 @@ test.describe('recording from the live player', () => {
     expect(JSON.parse(api.livetv.recCalls[0]!.replace(/^POST \/api\/livetv\/recordings /, ''))).toEqual({ channelId: 'ch-nord', start: new Date(2026, 10, 12, 21, 0).toISOString(), padBefore: 3, padAfter: 4 });
   });
 
+  test('the sheet takes the focus and keeps it (keyboard and TV D-pad); closing gives it back', async ({ page, api }) => {
+    await arm(page, api);
+    await openPanel(page);
+    const trigger = panel(page).getByRole('button', { name: 'Aufnehmen' }).nth(1);
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    const s = sheet(page, 'Wetter am Hafen');
+    // the main action once the programme detail is there
+    await expect(s.getByRole('button', { name: 'Aufnehmen', exact: true })).toBeFocused();
+    for (let i = 0; i < 14; i++) {
+      await page.keyboard.press('Tab');
+      expect(await s.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+    }
+    await page.keyboard.press('Escape');
+    await expect(s).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  });
+
   test('the padding starts at the admin\'s defaults', async ({ page, api }) => {
     api.livetv.recPadDefaults = { before: 4, after: 10 };
     await arm(page, api);

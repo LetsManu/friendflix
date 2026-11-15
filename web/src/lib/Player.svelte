@@ -438,6 +438,28 @@
     await Promise.all([s.progress(pos, 'stopped', { keepalive }), s.stop({ keepalive })]); // both leave at once (a page unload)
   }
 
+  /**
+   * A recording reached its end (W-I4): its position is reported, but the token stays 30 s for a replay (seek back, play); after that it
+   * ends. A play after the token ended asks `/play` for a fresh one at the position.
+   */
+  const REC_END_KEEP_MS = 30_000;
+  let recEndT: ReturnType<typeof setTimeout> | undefined;
+  function recEnded(s: PlaybackSource) {
+    void s.progress(video?.currentTime ?? lastPos, 'stopped');
+    clearTimeout(recEndT);
+    recEndT = setTimeout(() => { if (stopped && !destroyed) void s.stop(); }, REC_END_KEEP_MS);
+  }
+  /** a play after the end: within 30 s the same token plays on; later a fresh one is minted (the old one was revoked) */
+  function recReplay(s: PlaybackSource): boolean {
+    clearTimeout(recEndT);
+    if (s.active?.() !== false) return false;
+    const pos = video?.currentTime ?? 0;
+    hls?.destroy(); hls = null; // the old stream's token is revoked: its fetches would only answer 410
+    wantAutoplay = true; started = false; stopped = false;
+    void load(pos);
+    return true;
+  }
+
   // ---- start-time measurement per playback session (lib/player/timing.ts): sent once on stop / pagehide / end; never in a
   //      watch party, while casting / AirPlay or for a stream handed to the cast engine (offline playback has its own player) ----
   const timing = createTiming();
@@ -1280,7 +1302,7 @@
   // ---- "Besetzung & Infos": side panel while paused (as before) or opened explicitly; quick peek while playing ----
   let castData: CastInfoData | null = null, castFailed = false, infoDismissed = false, infoFocus = false, peek = false, peekT: ReturnType<typeof setTimeout>;
   function ensureInfo() {
-    if (castData) return;
+    if (castData || !caps.credits) return; // a recording has no cast & info (W-I3)
     castFailed = false;
     loadCastInfo(itemId).then((d) => (castData = d)).catch(() => (castFailed = true));
   }
@@ -1290,12 +1312,12 @@
   $: if (showXray) peek = false;
   /** quick peek: does not pause, hides by itself after a few seconds */
   function openPeek() {
-    if (showXray || locked) return;
+    if (showXray || locked || !caps.credits) return;
     ensureInfo(); wake(); peek = true;
     clearTimeout(peekT); peekT = setTimeout(() => (peek = false), 6000);
     announce(tr('scenes.peek.label'));
   }
-  function openCastInfo(focus: boolean) { clearTimeout(peekT); peek = false; menu = ''; ensureInfo(); infoFocus = focus; xray = true; wake(); }
+  function openCastInfo(focus: boolean) { if (!caps.credits) return; clearTimeout(peekT); peek = false; menu = ''; ensureInfo(); infoFocus = focus; xray = true; wake(); }
   function closeCastInfo() {
     const had = stage?.querySelector('.ci')?.contains(document.activeElement);
     xray = false; infoDismissed = true; infoFocus = false; wake(); // the pause-screen timer starts over (Esc's capture handler skips onKey's wake)
@@ -1782,6 +1804,7 @@
   const reportTick = () => { if (!handedOff && started && !stopped && Date.now() - lastSent >= 10_000) send('progress'); };
   const onPlay = () => {
     if (handedOff) return; // the engine's element (also after this Player unmounted)
+    if (stopped && srcRec && recReplay(srcRec)) return;
     fxEngine?.resume(); if (fxActive(fx) && !fxEngine?.routed) void applyFx(true); paused = false; if (stopped) { stopped = false; started = false; } if (!started) { started = true; send('start'); } else send('progress'); };
 
   /**
@@ -1838,7 +1861,7 @@
       }
     }, 500);
     // after the hand-off the engine has its own pagehide (keepalive stop + revoke): nothing of that session is touched here
-    const bye = () => { persistEstimate(); reportTiming(); if (handedOff) return; if (!stopped) { stopped = true; send('stop', true); } if (airInfo) castRevoke(airInfo); };
+    const bye = () => { persistEstimate(); reportTiming(); if (handedOff) return; if (!stopped) { stopped = true; send('stop', true); } else if (srcRec) void srcRec.stop({ keepalive: true }); if (airInfo) castRevoke(airInfo); };
     // keep the resume position safe when the tab is hidden / the phone locks (Picture-in-Picture keeps playing: only a progress report, no stop)
     const vis = () => { if (document.visibilityState === 'hidden' && started && !stopped && !handedOff) send('progress', true); };
     const online = () => { if (reconnecting) retryNow(resumePos()); };
@@ -1883,6 +1906,8 @@
     persistEstimate(); clearInterval(abrTimer); clearInterval(bwTimer); clearTimeout(stallT);
     clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); clearTimeout(retryT); clearTimeout(spinT); clearTimeout(pendingTap); clearTimeout(hudT); clearTimeout(rippleT); clearTimeout(lockT); clearTimeout(unlockT); nowPlaying.set(null);
     if (!handedOff && started && !stopped) { stopped = true; send('stop'); }
+    else if (srcRec && !handedOff) void srcRec.stop(); // ended earlier: the token kept for a replay goes now
+    clearTimeout(recEndT);
     reportTiming(); // also a start the viewer gave up on (no first frame yet)
     holdPrefetch(Promise.resolve(lastStop)); // no cached info survives the player; the next prefetch waits for this stop (resume position)
     if (preparedFor) releaseNext(); // the next episode's warm-up: taken by its player within the grace, else stopped
@@ -1907,7 +1932,7 @@
   <video bind:this={video} playsinline crossorigin="use-credentials" poster={swapShot || undefined} style:filter={brightness < 1 ? `brightness(${brightness})` : null}
     on:error={onVideoError}
     on:play={onPlay} on:pause={() => { postFireTv('keepAwake:0'); if (handedOff || swapping) return; paused = true; resetStall(); restorePlainSoon(); const quiet = hiddenPause; hiddenPause = false; if (!castBusy && !stopped && !quiet) send('progress'); }} on:seeked={() => { if (swapping) return; timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
-    on:ended={() => { postFireTv('keepAwake:0'); if (handedOff) return; stopped = true; paused = true; send('stop'); }}
+    on:ended={() => { postFireTv('keepAwake:0'); if (handedOff) return; stopped = true; paused = true; if (srcRec) recEnded(srcRec); else send('stop'); }}
     on:timeupdate={() => { syncTime(); reportTick(); }} on:progress={syncTime} on:loadedmetadata={() => { reapplyRate(video, rate, partyMode); syncTime(); }}
     on:waiting={onWaiting} on:seeking={() => { if (swapping) return; resetStall(); timing.seeking(); }} on:playing={onPlaying} on:loadeddata={firstFrame} on:canplay={() => { if (handedOff) return; waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
     on:volumechange={() => { if (video) { muted = video.muted; } }}
@@ -2034,7 +2059,7 @@
     <TvPauseScreen title={barTitle || title} sub={tvSub} overview={item?.overview ?? ''} logoId={item ? (item.seriesId ? item.seriesId : item.logo ? item.id : '') : ''} />
   {/if}
   {#if deskPause}
-    <DeskPauseScreen title={barTitle || title} sub={tvSub} overview={item?.overview ?? ''} on:castinfo={() => openCastInfo(true)} />
+    <DeskPauseScreen title={barTitle || title} sub={tvSub} overview={item?.overview ?? ''} castInfo={caps.credits} on:castinfo={() => openCastInfo(true)} />
   {/if}
   {#if phonePause}
     <PhonePauseScreen title={barTitle || title} sub={phoneSub(item, $t)} overview={item?.overview ?? ''} {orient} />

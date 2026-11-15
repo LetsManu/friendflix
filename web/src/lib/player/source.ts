@@ -24,6 +24,8 @@ export interface PlaybackSource {
   progress(posS: number, state: SourceState, o?: { keepalive?: boolean }): Promise<void>;
   beat?(): Promise<void>;
   stop(o?: { keepalive?: boolean }): Promise<void>;
+  /** a recording: its token is still alive (false after `stop`, until the next `info`) */
+  active?(): boolean;
   /** set by the player: the source learned that what it plays is gone (a 410 heartbeat, a deleted recording) */
   onGone?: () => void;
 }
@@ -102,6 +104,7 @@ export function recordingSource(id: string, deps: SourceDeps = realDeps): Playba
       if (!token) return;
       try { await api('/api/livetv/beat', { method: 'POST', body: { token } }); } catch (e) { if (gone(e)) { stopBeat(); s.onGone?.(); } }
     },
+    active: () => token !== null,
     async stop(o) {
       stopBeat();
       const tok = token;
