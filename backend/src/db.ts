@@ -1,8 +1,116 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import pg from 'pg';
+import type { Config } from './config.js';
 
 export type Db = Pick<pg.Pool, 'query'>;
+
+type PoolLimits = Pick<Config, 'DATABASE_URL' | 'DB_CONNECT_TIMEOUT_MS' | 'DB_STATEMENT_TIMEOUT_MS' | 'DB_IDLE_TX_TIMEOUT_MS'>;
+
+/**
+ * The pool's options (server.ts). connectionTimeoutMillis bounds the wait for a free connection (a full pool answers an error, not a hang);
+ * statement_timeout and idle_in_transaction_session_timeout go to Postgres as startup parameters of every connection, so the server
+ * itself cancels a stuck statement or ends a forgotten transaction and the connection comes back. 0 = no limit (pg's and Postgres' own).
+ */
+export function poolOptions(c: PoolLimits, max = 10): pg.PoolConfig {
+  return {
+    connectionString: c.DATABASE_URL,
+    max,
+    connectionTimeoutMillis: c.DB_CONNECT_TIMEOUT_MS,
+    ...(c.DB_STATEMENT_TIMEOUT_MS > 0 ? { statement_timeout: c.DB_STATEMENT_TIMEOUT_MS } : {}),
+    ...(c.DB_IDLE_TX_TIMEOUT_MS > 0 ? { idle_in_transaction_session_timeout: c.DB_IDLE_TX_TIMEOUT_MS } : {}),
+  };
+}
+
+type Queryable = Pick<pg.PoolClient, 'query'>;
+const canConnect = (db: Db): db is Db & Pick<pg.Pool, 'connect'> => typeof (db as Partial<pg.Pool>).connect === 'function';
+
+/** SET LOCAL statement_timeout for the rest of the transaction on `c` (0 = no limit); set_config takes the value as a parameter. */
+export async function setLocalStatementTimeout(c: Queryable, ms: number): Promise<void> {
+  await c.query("select set_config('statement_timeout', $1, true)", [String(Math.max(0, Math.round(ms)))]);
+}
+
+/**
+ * Runs `fn` in one transaction on a connection of its own (rolled back on a throw). With `statementTimeoutMs` its statements may run that
+ * long instead of the pool's DB_STATEMENT_TIMEOUT_MS (SET LOCAL: the connection goes back to the pool with the pool's limit).
+ */
+export async function inTransaction<T>(db: Db, fn: (c: pg.PoolClient) => Promise<T>, o: { statementTimeoutMs?: number } = {}): Promise<T> {
+  if (!canConnect(db)) throw new Error('inTransaction needs a pool');
+  const c = await db.connect();
+  try {
+    await c.query('begin');
+    if (o.statementTimeoutMs !== undefined) await setLocalStatementTimeout(c, o.statementTimeoutMs);
+    const out = await fn(c);
+    await c.query('commit');
+    return out;
+  } catch (e) {
+    await c.query('rollback').catch(() => undefined);
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+/**
+ * One statement of a background job that may legitimately run longer than DB_STATEMENT_TIMEOUT_MS (a library-wide sweep, the daily EPG
+ * prune): its own short transaction with DB_LONG_STATEMENT_TIMEOUT_MS. A Db without connect() (a test double) runs it as is.
+ */
+export async function longQuery<R extends pg.QueryResultRow = pg.QueryResultRow>(
+  ctx: { db: Db; cfg: Pick<Config, 'DB_LONG_STATEMENT_TIMEOUT_MS'> }, sql: string, params?: unknown[],
+): Promise<pg.QueryResult<R>> {
+  if (!canConnect(ctx.db)) return ctx.db.query<R>(sql, params);
+  return inTransaction(ctx.db, (c) => c.query<R>(sql, params), { statementTimeoutMs: ctx.cfg.DB_LONG_STATEMENT_TIMEOUT_MS });
+}
+
+/** extra time past a probe's bound before an unanswered connection is closed (Postgres itself cancels the statement at the bound) */
+export const PROBE_GRACE_MS = 1000;
+
+/**
+ * A health / Systemcheck probe query that gives up AND frees its connection within `timeoutMs` (plus PROBE_GRACE_MS when Postgres does not
+ * answer at all). A bounded wait alone (Promise.race) leaves the query running on its pooled connection, so every refresh against a
+ * stalled database would strand one more; here the probe runs in its own transaction with SET LOCAL statement_timeout = what is left of
+ * the bound, so Postgres cancels it and the connection returns to the pool (rolled back, healthy). A server that does not even answer
+ * the cancel (hung, network gone) gets its connection closed instead (released with an error: the pool drops it). The wait for a free
+ * connection counts against the bound too: a connection that arrives after it is handed back unused. A Db without connect() (a test
+ * double) runs the query as is.
+ */
+export async function probeQuery<R extends pg.QueryResultRow = pg.QueryResultRow>(db: Db, sql: string, params: unknown[] = [], timeoutMs: number): Promise<pg.QueryResult<R>> {
+  if (!canConnect(db)) return db.query<R>(sql, params);
+  const deadline = Date.now() + timeoutMs;
+  const c = await db.connect();
+  const left = deadline - Date.now();
+  if (left <= 0) {
+    c.release();
+    throw new Error('probe timeout');
+  }
+  let abandoned = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const work = (async () => {
+    await c.query('begin');
+    await setLocalStatementTimeout(c, left);
+    const r = await c.query<R>(sql, params);
+    await c.query('commit');
+    return r;
+  })();
+  work.catch(() => undefined); // settles after an abandon too (the closed connection rejects it)
+  const backstop = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { abandoned = true; reject(new Error('probe timeout')); }, left + PROBE_GRACE_MS);
+  });
+  let broken = false;
+  try {
+    return await Promise.race([work, backstop]);
+  } catch (e) {
+    if (abandoned) broken = true;
+    else {
+      // the server answered (a cancel at the bound, or any other error): end the transaction; a connection that cannot is dropped
+      await c.query('rollback').catch(() => { broken = true; });
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    c.release(broken ? new Error('probe connection abandoned') : undefined);
+  }
+}
 
 export const MIGRATIONS: string[] = [
   // 1: core
@@ -1106,6 +1214,9 @@ export const MIGRATIONS: string[] = [
 export async function migrate(pool: pg.Pool): Promise<void> {
   const c = await pool.connect();
   try {
+    // a migration (an index on a big table) and the wait for another instance's migration lock may take longer than the pool's
+    // statement_timeout: no limit on this connection (reset before it goes back to the pool)
+    await c.query('set statement_timeout = 0');
     await c.query('select pg_advisory_lock(727274)');
     await c.query('create table if not exists schema_migrations (version int primary key, at timestamptz not null default now())');
     for (let i = 0; i < MIGRATIONS.length; i++) {
@@ -1123,6 +1234,8 @@ export async function migrate(pool: pg.Pool): Promise<void> {
     }
   } finally {
     await c.query('select pg_advisory_unlock(727274)').catch(() => undefined);
-    c.release();
+    // back to the pool's limit; a connection that cannot reset is dropped
+    const reset = await c.query('reset statement_timeout').then(() => true, () => false);
+    c.release(reset ? undefined : new Error('statement_timeout reset failed'));
   }
 }

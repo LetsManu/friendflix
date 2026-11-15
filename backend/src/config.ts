@@ -281,6 +281,17 @@ export const configSchema = z.object({
     ctx.addIssue({ code: 'custom', message: 'expected a JSON object', params: { code: 'invalid_json' } });
   })),
   BACKGROUND_JOBS: z.enum(['true', 'false']).default('true'),
+  /**
+   * Database pool limits (db.ts poolOptions), env only: they apply before the settings store can be read. A request waits at most
+   * DB_CONNECT_TIMEOUT_MS for a free connection; Postgres cancels a statement after DB_STATEMENT_TIMEOUT_MS and ends a session left idle
+   * inside a transaction after DB_IDLE_TX_TIMEOUT_MS, so a stalled database cannot strand the pool. The few library-wide statements of
+   * background jobs (EPG swap and prune, Live TV list import, hygiene and recommendation sweeps) get DB_LONG_STATEMENT_TIMEOUT_MS
+   * instead (db.ts longQuery / inTransaction); migrations run without a limit. 0 = no limit.
+   */
+  DB_CONNECT_TIMEOUT_MS: z.preprocess(emptyAsUnset, z.coerce.number().int().min(0).max(600_000).default(5_000)),
+  DB_STATEMENT_TIMEOUT_MS: z.preprocess(emptyAsUnset, z.coerce.number().int().min(0).max(86_400_000).default(30_000)),
+  DB_IDLE_TX_TIMEOUT_MS: z.preprocess(emptyAsUnset, z.coerce.number().int().min(0).max(86_400_000).default(300_000)),
+  DB_LONG_STATEMENT_TIMEOUT_MS: z.preprocess(emptyAsUnset, z.coerce.number().int().min(0).max(86_400_000).default(600_000)),
   /** gzip/brotli for JSON API responses >= 1 KB (off when a reverse proxy already compresses) */
   API_COMPRESSION: z.enum(['true', 'false']).default('true'),
   /** Block 22 admin health: the gateway's internal address (only GET /health is called, no token) */

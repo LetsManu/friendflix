@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { bus } from '../bus.js';
 import type { Ctx } from '../ctx.js';
+import { longQuery } from '../db.js';
 import { recordError } from '../errorlog.js';
 import { recoIndexRuns } from '../metrics.js';
 import type { ItemFeatures, MediaEvent } from '../media/types.js';
@@ -124,8 +125,9 @@ async function writeTerms(ctx: Pick<Ctx, 'db'>, terms: Array<[string, Record<str
 }
 
 /** IDF of genres, tags, studios and people from the whole index (one statement), and the numeric statistics. Rows no longer used are removed. */
-async function refreshIdf(ctx: Pick<Ctx, 'db'>, now: Date): Promise<void> {
-  await ctx.db.query(
+async function refreshIdf(ctx: Pick<Ctx, 'db' | 'cfg'>, now: Date): Promise<void> {
+  // aggregates over the whole index: the long statement limit, not the pool's
+  await longQuery(ctx, 
     `with n as (select count(*)::int n from item_features),
      d as (
        select 'genre' kind, v value, count(*)::int df from item_features, unnest(genres) v group by v
@@ -138,7 +140,7 @@ async function refreshIdf(ctx: Pick<Ctx, 'db'>, now: Date): Promise<void> {
     [now],
   );
   await ctx.db.query("delete from item_feature_idf where kind <> 'term' and seen_at < $1", [now]);
-  await ctx.db.query(
+  await longQuery(ctx,
     `insert into item_feature_stats(name, mean, std, n)
        select 'year', coalesce(avg(year), 0), coalesce(stddev_samp(year), 0), count(year)::int from item_features
        union all select 'runtime_min', coalesce(avg(runtime_min), 0), coalesce(stddev_samp(runtime_min), 0), count(runtime_min)::int from item_features

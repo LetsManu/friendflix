@@ -178,9 +178,10 @@ describe('media lines', () => {
 
 describe('one hung dependency', () => {
   // ctx.db is a proxy over the pool: the pool's own query is replaced (and the prototype's restored by deleting it)
-  const pool = () => env.pool as unknown as { query?: unknown };
-  const stallDb = () => { pool().query = () => new Promise(() => undefined); }; // never answers
-  const unstallDb = () => { delete pool().query; };
+  const pool = () => env.pool as unknown as { query?: unknown; connect?: unknown };
+  // never answers: plain queries and the probes' own connections (probeQuery checks a connection out of the pool)
+  const stallDb = () => { pool().query = () => new Promise(() => undefined); pool().connect = () => new Promise(() => undefined); };
+  const unstallDb = () => { delete pool().query; delete pool().connect; };
   const noTimeouts = (r: SystemcheckResult) => r.lines.filter((l) => l.cause === 'check_timeout').map((l) => l.id);
 
   it('Postgres stalled (Jetzt prüfen): core.database problem db_down, every other line filled, answer < 8.5 s', async () => {

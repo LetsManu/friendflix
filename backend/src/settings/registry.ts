@@ -193,6 +193,8 @@ export const SETTINGS: readonly SettingDef[] = [
 /** Per container or per deployment, or shared with a container that reads env only: env > default, read-only in Admin -> Settings. */
 export const ENV_ONLY_KEYS: readonly string[] = ['PORT', 'DIGEST_DAY', 'DIGEST_HOUR', 'MEDIA_SERVER', 'METRICS_TOKEN', 'ROLE_TEMPLATES',
   'OIDC_ALLOW_INSECURE', 'PREVIEW_DIR', 'UPDATE_REPO', 'DOWNLOAD_DIR', 'BACKGROUND_JOBS', 'GATEWAY_URL', 'UPDATER_URL', 'LIVETV_URL',
+  // database pool limits: read once when the pool opens, before the settings store exists (db.ts poolOptions)
+  'DB_CONNECT_TIMEOUT_MS', 'DB_STATEMENT_TIMEOUT_MS', 'DB_IDLE_TX_TIMEOUT_MS', 'DB_LONG_STATEMENT_TIMEOUT_MS',
   // expert tuning of the recommendation engine v2 (Admin -> Settings, group recommendations, says they are set in .env)
   'RECO_W_GENRES', 'RECO_W_TAGS', 'RECO_W_STUDIOS', 'RECO_W_PEOPLE', 'RECO_W_TEXT', 'RECO_W_NUMERIC', 'RECO_W_COLLECTION', 'RECO_COEFFS'];
 /** Needed before the database can be read: env (incl. _FILE) > bootstrap volume file > default; never stored in the database. */

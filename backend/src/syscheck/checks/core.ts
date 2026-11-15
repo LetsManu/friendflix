@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { probeQuery } from '../../db.js';
 import { bounded, removedEnvCount, type DiskHealth, type HealthSnapshot, type ServiceHealth } from '../../health.js';
 import { runProbe } from '../../settings/probes.js';
 import type { CheckEnv, GroupCheck } from '../engine.js';
@@ -77,7 +78,7 @@ export const coreCheck: GroupCheck = {
   async run(env) {
     // the direct probes start with the snapshot wait, not after it: when the snapshot misses its limit they have long answered, so the
     // group keeps its margin to the limit (two cheap reads per run; unused when the snapshot comes)
-    const fallback = Promise.all([ownProbe('postgres', async () => (await env.ctx.db.query('select 1'), true)), ownProbe('redis', () => env.ctx.kv.ping())]);
+    const fallback = Promise.all([ownProbe('postgres', async () => (await probeQuery(env.ctx.db, 'select 1', [], FALLBACK_MS), true)), ownProbe('redis', () => env.ctx.kv.ping())]);
     const [pub, s] = await Promise.all([publicUrlLine(env), env.snapshot()]);
     if (!s) {
       // no snapshot within its limit: the database and Redis answer from their direct probes, the rest is not known this time

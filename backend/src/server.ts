@@ -6,7 +6,7 @@ import { buildApp } from './app.js';
 import { watchUntrustedHost } from './netaddr.js';
 import { loadConfig, removedEnvNames } from './config.js';
 import { keyFromBase64 } from './crypto.js';
-import { migrate } from './db.js';
+import { migrate, poolOptions } from './db.js';
 import { createMediaServer, mediaConfigProblems } from './media/index.js';
 import { dispatchMediaEvent } from './media/events.js';
 import { RedisKV } from './kv.js';
@@ -57,7 +57,9 @@ import { joinedStopsSettled } from './cast.js';
 const bootstrap = bootstrapEnv(process.env, lazyBootstrap()); // reads only the files whose key env does not provide
 const env = nonEmptyEnv(process.env); // empty = unset, as compose passes every optional key as `${KEY:-}`
 const boot = loadConfig(bootConfigEnv(process.env, bootstrap));
-const pool = new pg.Pool({ connectionString: boot.DATABASE_URL, max: 10 });
+// bounded waits for a connection, server-side statement and idle-transaction limits (DB_*_TIMEOUT_MS, db.ts poolOptions): a stalled
+// database fails requests instead of stranding the pool
+const pool = new pg.Pool(poolOptions(boot));
 await migrate(pool);
 const redis = new Redis(boot.REDIS_URL);
 const kv = new RedisKV(redis);
