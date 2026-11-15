@@ -58,3 +58,12 @@ export function stepChannel(cur: SelectedChannel, key: string): SelectedChannel 
   const i = CHANNELS.indexOf(cur), d = key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 1;
   return CHANNELS[(i + d + CHANNELS.length) % CHANNELS.length]!;
 }
+
+/** what "Update now" installs on the selected channel (the FF_TAG Portainer gets), for the confirm text: never main's newest commit on stable */
+export interface TargetInfo { current: { sha: string }; latest?: { sha: string } | null; release?: { version: string; codename: string | null } | null; channel?: Pick<ChannelInfo, 'selected' | 'version'> | null }
+export function updateTarget(u: TargetInfo): string {
+  const sel = u.channel?.selected ?? 'stable';
+  if (sel === 'pinned' && u.channel?.version) return u.channel.version;
+  if (sel === 'stable' && u.release) return u.release.codename ? `${u.release.version} · ${u.release.codename}` : u.release.version;
+  return (u.latest?.sha ?? u.current.sha).slice(0, 7);
+}

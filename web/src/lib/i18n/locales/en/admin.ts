@@ -193,8 +193,6 @@ const en: Translation<typeof de> = {
     updateNow: 'Update now',
     force: 'reload anyway',
     setup: 'Not set up. Set in <kbd>.env</kbd>: <kbd>PORTAINER_WEBHOOK_URL</kbd> or <kbd>PORTAINER_URL</kbd>, <kbd>PORTAINER_API_KEY</kbd>, <kbd>PORTAINER_STACK_ID</kbd> (optional <kbd>PORTAINER_ENDPOINT_ID</kbd>).',
-    done: 'Update finished',
-    timeout: 'Timeout – please check in Portainer',
     changes: 'Changes',
     channel: {
       title: 'Update channel',
@@ -262,6 +260,15 @@ const en: Translation<typeof de> = {
       reconnecting: 'FriendFlix is restarting – reconnecting …',
       watchTimeout: 'No answer from the updater any more. Please check again later.',
       lastJob: 'Last job:',
+      flow: {
+        stepOf: 'Step {n} of {total}',
+        done: 'Finished',
+        stopped: 'Stopped at step {n} of {total}',
+        duration: 'Took {d}',
+        code: 'Error code: {code}',
+        retry: 'Try again',
+        label: 'Update progress',
+      },
       result: {
         succeeded: 'Update to {to} finished.',
         rolled_back: 'The new version did not start properly: rolled back to {from}.',
@@ -271,6 +278,7 @@ const en: Translation<typeof de> = {
         title: 'Update through Portainer',
         running: 'Portainer is redeploying ({s} s)',
         step: {
+          request: 'Request to Portainer',
           pulling: 'Portainer pulls the images',
           recreating: 'Recreate containers',
           health: 'Health check',
@@ -287,6 +295,8 @@ const en: Translation<typeof de> = {
           noTarget: 'Nothing was started: choose a version for the “Fixed version” channel first.',
         },
         detail: ' (HTTP {status}, step {step})',
+        detailStep: ' (step {step})',
+        stepName: { webhook: 'webhook call', stack: 'stack lookup', stack_file: 'reading the stack file', redeploy: 'redeploy', deploy: 'stack start' },
       },
       error: {
         busy: 'A job is already running.',

@@ -102,7 +102,9 @@ describe('updater panel logic', () => {
       'failReason.unhealthy', 'failReason.restart_failed', 'failReason.rollback_failed', 'failReason.interrupted', 'failReason.self_update_timeout', 'failReason.unexpected_image', 'failReason.media_server_mismatch',
       'failReason.compose_config', 'failReason.unknown', 'unauthorized', 'invalid', 'log', 'auto.title', 'auto.label', 'auto.off', 'auto.window', 'auto.time',
       'auto.save', 'auto.saved', 'auto.locked', 'auto.hint', 'auto.timeInvalid', 'foreign.portainer', 'foreign.manual', 'foreign.started', 'foreign.workdir', 'confirm.updatePortainer', 'error.foreign_stack', 'error.portainer',
-      'error.portainer_unreachable', 'failReason.foreign_stack', 'failReason.config_mismatch'];
+      'error.portainer_unreachable', 'failReason.foreign_stack', 'failReason.config_mismatch',
+      'flow.stepOf', 'flow.done', 'flow.stopped', 'flow.duration', 'flow.code', 'flow.retry', 'flow.label', 'redeploy.step.request', 'redeploy.detailStep',
+      'redeploy.stepName.webhook', 'redeploy.stepName.stack', 'redeploy.stepName.stack_file', 'redeploy.stepName.redeploy', 'redeploy.stepName.deploy'];
     for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
       await setLocale(l);
       for (const k of keys) expect(hasKey(`admin.update.updater.${k}`), `${l} ${k}`).toBe(true);
@@ -112,19 +114,27 @@ describe('updater panel logic', () => {
   it('a Portainer redeploy: its phase as steps, the outcome line (status and step of a refusal only), polling while it runs', async () => {
     const rd = (over: Partial<Redeploy> = {}): Redeploy => ({ id: 'abcdef0123456789', mode: 'api', tag: 'latest', phase: 'pulling', running: true, startedAt: '2026-11-14T10:00:00.000Z', finishedAt: null,
       services: null, error: null, status: null, step: null, code: null, at: null, ...over });
-    expect(redeploySteps(rd())).toEqual({ pulling: 'running', recreating: 'pending', health: 'pending' });
-    expect(redeploySteps(rd({ phase: 'recreating' }))).toEqual({ pulling: 'ok', recreating: 'running', health: 'pending' });
-    expect(redeploySteps(rd({ phase: 'health' }))).toEqual({ pulling: 'ok', recreating: 'ok', health: 'running' });
-    expect(redeploySteps(rd({ phase: 'done' }))).toEqual({ pulling: 'ok', recreating: 'ok', health: 'ok' });
-    expect(redeploySteps(rd({ phase: 'unchanged' }))).toEqual({ pulling: 'ok', recreating: 'skipped', health: 'skipped' });
-    expect(redeploySteps(rd({ phase: 'failed' }))).toEqual({ pulling: 'failed', recreating: 'skipped', health: 'skipped' });
-    expect(redeploySteps(rd({ phase: 'timeout', at: 'health' }))).toEqual({ pulling: 'ok', recreating: 'ok', health: 'failed' });
+    expect(redeploySteps(rd())).toEqual({ request: 'ok', pulling: 'running', recreating: 'pending', health: 'pending' });
+    expect(redeploySteps(rd({ phase: 'recreating' }))).toEqual({ request: 'ok', pulling: 'ok', recreating: 'running', health: 'pending' });
+    expect(redeploySteps(rd({ phase: 'health' }))).toEqual({ request: 'ok', pulling: 'ok', recreating: 'ok', health: 'running' });
+    expect(redeploySteps(rd({ phase: 'done' }))).toEqual({ request: 'ok', pulling: 'ok', recreating: 'ok', health: 'ok' });
+    expect(redeploySteps(rd({ phase: 'unchanged' }))).toEqual({ request: 'ok', pulling: 'ok', recreating: 'skipped', health: 'skipped' });
+    // refused before anything ran (at null, also every older backend): the request failed, Portainer never pulled
+    expect(redeploySteps(rd({ phase: 'failed' }))).toEqual({ request: 'failed', pulling: 'skipped', recreating: 'skipped', health: 'skipped' });
+    // a refusal after "started", or a stack in error after recreating: the step it happened in
+    expect(redeploySteps(rd({ phase: 'failed', at: 'pulling' }))).toEqual({ request: 'ok', pulling: 'failed', recreating: 'skipped', health: 'skipped' });
+    expect(redeploySteps(rd({ phase: 'failed', at: 'recreating' }))).toEqual({ request: 'ok', pulling: 'ok', recreating: 'failed', health: 'skipped' });
+    expect(redeploySteps(rd({ phase: 'timeout', at: 'health' }))).toEqual({ request: 'ok', pulling: 'ok', recreating: 'ok', health: 'failed' });
+    expect(redeploySteps(rd({ phase: 'timeout', at: null }))).toEqual({ request: 'ok', pulling: 'failed', recreating: 'skipped', health: 'skipped' });
     expect(redeployRunning({ present: false, redeploy: rd() })).toBe(true);
     expect(redeployRunning({ present: false, redeploy: rd({ phase: 'done', running: false }) })).toBe(false);
     expect(redeployRunning({ present: false })).toBe(false);
     await setLocale('en');
     expect(redeployResult(rd())).toBe('');
     expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer', status: 500, step: 'redeploy' }))).toBe('Portainer refused the redeploy (HTTP 500, step redeploy). Check the stack in Portainer and the Portainer settings in Admin → Settings → Updates.');
+    // the step by name, never its code; a stack in error has no HTTP status but still says where
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer', status: 401, step: 'stack' }))).toContain('(HTTP 401, step stack lookup)');
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer', status: null, step: 'deploy', at: 'recreating' }))).toContain('refused the redeploy (step stack start).');
     expect(redeployResult(rd({ phase: 'unchanged', running: false, tag: 'nightly' }))).toContain('the images for nightly have nothing newer');
     expect(redeployResult(rd({ phase: 'timeout', running: false, at: 'recreating' }))).toBe('Nothing changed within 15 minutes (Recreate containers). Check the stack and its logs in Portainer.');
     // not reachable: its own text with the errno code and the hint; a fixed version without a number: its own text

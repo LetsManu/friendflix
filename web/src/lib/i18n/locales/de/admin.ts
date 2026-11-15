@@ -192,8 +192,6 @@ export default {
     updateNow: 'Jetzt aktualisieren',
     force: 'trotzdem neu laden',
     setup: 'Nicht eingerichtet. In der <kbd>.env</kbd> setzen: <kbd>PORTAINER_WEBHOOK_URL</kbd> oder <kbd>PORTAINER_URL</kbd>, <kbd>PORTAINER_API_KEY</kbd>, <kbd>PORTAINER_STACK_ID</kbd> (optional <kbd>PORTAINER_ENDPOINT_ID</kbd>).',
-    done: 'Update fertig',
-    timeout: 'Zeitüberschreitung – bitte in Portainer prüfen',
     changes: 'Änderungen',
     channel: {
       title: 'Update-Kanal',
@@ -261,6 +259,15 @@ export default {
       reconnecting: 'FriendFlix startet neu – Verbindung wird wiederhergestellt …',
       watchTimeout: 'Keine Antwort mehr vom Updater. Bitte später erneut prüfen.',
       lastJob: 'Letzter Auftrag:',
+      flow: {
+        stepOf: 'Schritt {n} von {total}',
+        done: 'Abgeschlossen',
+        stopped: 'Abgebrochen bei Schritt {n} von {total}',
+        duration: 'Dauer: {d}',
+        code: 'Fehlercode: {code}',
+        retry: 'Erneut versuchen',
+        label: 'Fortschritt des Updates',
+      },
       result: {
         succeeded: 'Update auf {to} abgeschlossen.',
         rolled_back: 'Die neue Version startete nicht sauber: zurückgerollt auf {from}.',
@@ -270,6 +277,7 @@ export default {
         title: 'Update über Portainer',
         running: 'Portainer deployt neu ({s} s)',
         step: {
+          request: 'Auftrag an Portainer',
           pulling: 'Portainer lädt die Images',
           recreating: 'Container neu erstellen',
           health: 'Zustandsprüfung',
@@ -286,6 +294,8 @@ export default {
           noTarget: 'Nichts gestartet: Wähle zuerst eine Version für den Kanal „Feste Version“.',
         },
         detail: ' (HTTP {status}, Schritt {step})',
+        detailStep: ' (Schritt {step})',
+        stepName: { webhook: 'Webhook-Aufruf', stack: 'Stack-Abfrage', stack_file: 'Stack-Datei lesen', redeploy: 'Neu-Deployen', deploy: 'Start des Stacks' },
       },
       error: {
         busy: 'Es läuft bereits ein Auftrag.',

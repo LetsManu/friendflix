@@ -213,8 +213,6 @@ const pl: Translation<typeof de> = {
     updateNow: 'Aktualizuj teraz',
     force: 'mimo to przeładuj',
     setup: 'Nie skonfigurowano. Ustaw w pliku <kbd>.env</kbd>: <kbd>PORTAINER_WEBHOOK_URL</kbd> lub <kbd>PORTAINER_URL</kbd>, <kbd>PORTAINER_API_KEY</kbd>, <kbd>PORTAINER_STACK_ID</kbd> (opcjonalnie <kbd>PORTAINER_ENDPOINT_ID</kbd>).',
-    done: 'Aktualizacja zakończona',
-    timeout: 'Przekroczono limit czasu – sprawdź w Portainerze',
     changes: 'Zmiany',
     channel: {
       title: 'Kanał aktualizacji',
@@ -282,6 +280,15 @@ const pl: Translation<typeof de> = {
       reconnecting: 'FriendFlix się restartuje – ponowne łączenie …',
       watchTimeout: 'Aktualizator przestał odpowiadać. Sprawdź ponownie później.',
       lastJob: 'Ostatnie zadanie:',
+      flow: {
+        stepOf: 'Krok {n} z {total}',
+        done: 'Zakończono',
+        stopped: 'Przerwano na kroku {n} z {total}',
+        duration: 'Czas trwania: {d}',
+        code: 'Kod błędu: {code}',
+        retry: 'Spróbuj ponownie',
+        label: 'Postęp aktualizacji',
+      },
       result: {
         succeeded: 'Aktualizacja do {to} zakończona.',
         rolled_back: 'Nowa wersja nie uruchomiła się poprawnie: przywrócono {from}.',
@@ -291,6 +298,7 @@ const pl: Translation<typeof de> = {
         title: 'Aktualizacja przez Portainer',
         running: 'Portainer ponownie wdraża ({s} s)',
         step: {
+          request: 'Zlecenie dla Portainera',
           pulling: 'Portainer pobiera obrazy',
           recreating: 'Odtworzenie kontenerów',
           health: 'Kontrola stanu',
@@ -307,6 +315,8 @@ const pl: Translation<typeof de> = {
           noTarget: 'Nic nie uruchomiono: najpierw wybierz wersję dla kanału „Stała wersja”.',
         },
         detail: ' (HTTP {status}, krok {step})',
+        detailStep: ' (krok {step})',
+        stepName: { webhook: 'wywołanie webhooka', stack: 'odczyt stosu', stack_file: 'odczyt pliku stosu', redeploy: 'ponowne wdrożenie', deploy: 'uruchomienie stosu' },
       },
       error: {
         busy: 'Zadanie już trwa.',

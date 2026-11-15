@@ -193,8 +193,6 @@ const tr: Translation<typeof de> = {
     updateNow: 'Şimdi güncelle',
     force: 'yine de yeniden yükle',
     setup: 'Kurulmamış. <kbd>.env</kbd> dosyasında şunları ayarla: <kbd>PORTAINER_WEBHOOK_URL</kbd> veya <kbd>PORTAINER_URL</kbd>, <kbd>PORTAINER_API_KEY</kbd>, <kbd>PORTAINER_STACK_ID</kbd> (isteğe bağlı <kbd>PORTAINER_ENDPOINT_ID</kbd>).',
-    done: 'Güncelleme tamamlandı',
-    timeout: 'Zaman aşımı – lütfen Portainer’da kontrol et',
     changes: 'Değişiklikler',
     channel: {
       title: 'Güncelleme kanalı',
@@ -262,6 +260,15 @@ const tr: Translation<typeof de> = {
       reconnecting: 'FriendFlix yeniden başlıyor – yeniden bağlanılıyor …',
       watchTimeout: 'Güncelleyici artık yanıt vermiyor. Lütfen daha sonra tekrar kontrol edin.',
       lastJob: 'Son iş:',
+      flow: {
+        stepOf: 'Adım {n}/{total}',
+        done: 'Tamamlandı',
+        stopped: '{n}/{total}. adımda durdu',
+        duration: 'Süre: {d}',
+        code: 'Hata kodu: {code}',
+        retry: 'Tekrar dene',
+        label: 'Güncelleme ilerlemesi',
+      },
       result: {
         succeeded: '{to} sürümüne güncelleme tamamlandı.',
         rolled_back: 'Yeni sürüm düzgün başlamadı: {from} sürümüne geri alındı.',
@@ -271,6 +278,7 @@ const tr: Translation<typeof de> = {
         title: 'Portainer üzerinden güncelleme',
         running: 'Portainer yeniden dağıtıyor ({s} sn)',
         step: {
+          request: 'Portainer’a istek',
           pulling: 'Portainer imajları indiriyor',
           recreating: 'Konteynerleri yeniden oluştur',
           health: 'Sağlık kontrolü',
@@ -287,6 +295,8 @@ const tr: Translation<typeof de> = {
           noTarget: 'Hiçbir şey başlatılmadı: önce “Sabit sürüm” kanalı için bir sürüm seç.',
         },
         detail: ' (HTTP {status}, adım {step})',
+        detailStep: ' (adım {step})',
+        stepName: { webhook: 'webhook çağrısı', stack: 'stack sorgusu', stack_file: 'stack dosyasını okuma', redeploy: 'yeniden dağıtım', deploy: 'stack’in başlatılması' },
       },
       error: {
         busy: 'Zaten bir iş çalışıyor.',

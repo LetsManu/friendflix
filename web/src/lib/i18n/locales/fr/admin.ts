@@ -193,8 +193,6 @@ const fr: Translation<typeof de> = {
     updateNow: 'Mettre à jour maintenant',
     force: 'recharger quand même',
     setup: 'Non configuré. Définissez dans le fichier <kbd>.env</kbd> : <kbd>PORTAINER_WEBHOOK_URL</kbd> ou <kbd>PORTAINER_URL</kbd>, <kbd>PORTAINER_API_KEY</kbd>, <kbd>PORTAINER_STACK_ID</kbd> (en option <kbd>PORTAINER_ENDPOINT_ID</kbd>).',
-    done: 'Mise à jour terminée',
-    timeout: 'Délai dépassé – veuillez vérifier dans Portainer',
     changes: 'Modifications',
     channel: {
       title: 'Canal de mise à jour',
@@ -262,6 +260,15 @@ const fr: Translation<typeof de> = {
       reconnecting: 'FriendFlix redémarre – reconnexion …',
       watchTimeout: 'Le programme de mise à jour ne répond plus. Vérifie plus tard.',
       lastJob: 'Dernière tâche :',
+      flow: {
+        stepOf: 'Étape {n} sur {total}',
+        done: 'Terminé',
+        stopped: 'Interrompu à l’étape {n} sur {total}',
+        duration: 'Durée : {d}',
+        code: 'Code d’erreur : {code}',
+        retry: 'Réessayer',
+        label: 'Progression de la mise à jour',
+      },
       result: {
         succeeded: 'Mise à jour vers {to} terminée.',
         rolled_back: 'La nouvelle version n’a pas démarré correctement : retour à {from}.',
@@ -271,6 +278,7 @@ const fr: Translation<typeof de> = {
         title: 'Mise à jour via Portainer',
         running: 'Portainer redéploie ({s} s)',
         step: {
+          request: 'Demande à Portainer',
           pulling: 'Portainer télécharge les images',
           recreating: 'Recréer les conteneurs',
           health: 'Contrôle de santé',
@@ -287,6 +295,8 @@ const fr: Translation<typeof de> = {
           noTarget: 'Rien n’a été lancé : choisis d’abord une version pour le canal « Version fixe ».',
         },
         detail: ' (HTTP {status}, étape {step})',
+        detailStep: ' (étape {step})',
+        stepName: { webhook: 'appel du webhook', stack: 'lecture du stack', stack_file: 'lecture du fichier du stack', redeploy: 'redéploiement', deploy: 'démarrage du stack' },
       },
       error: {
         busy: 'Une tâche est déjà en cours.',

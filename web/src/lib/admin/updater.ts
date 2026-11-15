@@ -10,8 +10,10 @@ import { hasKey, trDynamic } from '#lib/i18n';
 export type StepName = 'pull' | 'verify' | 'restart' | 'health' | 'rollback';
 export type StepState = 'pending' | 'running' | 'ok' | 'failed' | 'skipped';
 export type UpdaterAction = 'update' | 'rollback' | 'self-update';
+/** the updater's last job can be one of Live TV's too (backend updater.ts UpdaterJobAction) */
+export type UpdaterJobAction = UpdaterAction | 'livetv-enable' | 'livetv-disable' | 'livetv-remove';
 export interface UpdaterJob {
-  id: string; action: UpdaterAction; state: 'running' | 'succeeded' | 'failed' | 'rolled_back'; step: StepName | null;
+  id: string; action: UpdaterJobAction; state: 'running' | 'succeeded' | 'failed' | 'rolled_back'; step: StepName | null;
   steps: Record<StepName, StepState>; from: string | null; to: string; startedAt: string; finishedAt: string | null; error: string | null;
 }
 export interface UpdaterStatus {
@@ -40,7 +42,9 @@ export type RedeployPhase = 'pulling' | 'recreating' | 'health' | 'done' | 'unch
 export interface Redeploy {
   id: string; mode: 'webhook' | 'api'; tag: string; phase: RedeployPhase; running: boolean; startedAt: string; finishedAt: string | null;
   services: { updated: number; total: number } | null;
-  error: string | null; status: number | null; step: string | null; code: string | null; at: RedeployPhase | null;
+  error: string | null; status: number | null; step: string | null; code: string | null;
+  /** timeout: the phase it hung in; failed: the phase it failed in (null: refused before anything ran; older backends: always null) */
+  at: RedeployPhase | null;
 }
 export type UpdaterView = { autoUpdate?: AutoUpdate; portainer?: PortainerSetup; redeploy?: Redeploy | null } & ({ present: false } | { present: true; error: 'unauthorized' | 'invalid_answer' } | { present: true; status: UpdaterStatus });
 
@@ -53,23 +57,25 @@ export const isRunning = (j: UpdaterJob | null | undefined): boolean => j?.state
 /** a Portainer redeploy that is still going (the page keeps polling) */
 export const redeployRunning = (v: UpdaterView | null): boolean => Boolean(v?.redeploy?.running);
 
-export type RedeployStep = 'pulling' | 'recreating' | 'health';
-export const REDEPLOY_STEPS: readonly RedeployStep[] = ['pulling', 'recreating', 'health'];
+/** request: the redeploy handed to Portainer (it answered, or is at work); then what can be seen of it */
+export type RedeployStep = 'request' | 'pulling' | 'recreating' | 'health';
+export const REDEPLOY_STEPS: readonly RedeployStep[] = ['request', 'pulling', 'recreating', 'health'];
 /**
- * each step's state for a phase (JobSteps' states): the running one, the ones before it done. unchanged: Portainer pulled but
- * recreated nothing; failed: refused before anything changed; timeout: the step it hung in failed.
+ * each step's state for a phase (job step states): the running one, the ones before it done. unchanged: Portainer pulled but
+ * recreated nothing; failed: the step it failed in (`at`; none = refused before anything ran: the request); timeout: the step it hung in.
  */
 export function redeploySteps(r: Pick<Redeploy, 'phase' | 'at'>): Record<RedeployStep, StepState> {
   const upTo = (i: number, cur: StepState): Record<RedeployStep, StepState> =>
     Object.fromEntries(REDEPLOY_STEPS.map((s, k) => [s, k < i ? 'ok' : k === i ? cur : cur === 'running' ? 'pending' : 'skipped'])) as Record<RedeployStep, StepState>;
+  const at = (fallback: number) => { const i = REDEPLOY_STEPS.indexOf(r.at as RedeployStep); return i > 0 ? i : fallback; };
   switch (r.phase) {
-    case 'pulling': return upTo(0, 'running');
-    case 'recreating': return upTo(1, 'running');
-    case 'health': return upTo(2, 'running');
-    case 'done': return upTo(3, 'ok');
-    case 'unchanged': return { pulling: 'ok', recreating: 'skipped', health: 'skipped' };
-    case 'failed': return upTo(0, 'failed');
-    case 'timeout': return upTo(Math.max(0, REDEPLOY_STEPS.indexOf((r.at ?? 'pulling') as RedeployStep)), 'failed');
+    case 'pulling': return upTo(1, 'running');
+    case 'recreating': return upTo(2, 'running');
+    case 'health': return upTo(3, 'running');
+    case 'done': return upTo(4, 'ok');
+    case 'unchanged': return { request: 'ok', pulling: 'ok', recreating: 'skipped', health: 'skipped' };
+    case 'failed': return upTo(at(0), 'failed');
+    case 'timeout': return upTo(at(1), 'failed');
   }
 }
 
@@ -85,7 +91,9 @@ export function redeployResult(r: Redeploy): string {
       const hint = c && hasKey(`admin.update.hint.${c}`) ? `: ${trDynamic(`admin.update.hint.${c}`)}` : '';
       return trDynamic(`${k}.result.unreachable`, { code: c ? ` (${c}${hint})` : '' });
     }
-    const detail = r.status !== null ? trDynamic(`${k}.detail`, { status: String(r.status), step: r.step ?? '?' }) : '';
+    // the step by its name (an unknown code as it is); without an HTTP status (a stack in error) only the step
+    const step = r.step && /^[a-z_]{1,20}$/.test(r.step) && hasKey(`${k}.stepName.${r.step}`) ? trDynamic(`${k}.stepName.${r.step}`) : r.step;
+    const detail = r.status !== null ? trDynamic(`${k}.detail`, { status: String(r.status), step: step ?? '?' }) : step ? trDynamic(`${k}.detailStep`, { step }) : '';
     return trDynamic(`${k}.result.failed`, { detail });
   }
   if (r.phase === 'timeout') return trDynamic(`${k}.result.timeout`, { at: trDynamic(`${k}.step.${(r.at && REDEPLOY_STEPS.includes(r.at as RedeployStep) ? r.at : 'pulling')}`) });
@@ -154,3 +162,48 @@ export function foreignText(mode: ForeignMode, s: UpdaterStatus | null): string 
 
 /** rollback is offered once the updater recorded a previous build and no job runs (never on a foreign stack: Portainer has no rollback) */
 export const canRollback = (s: UpdaterStatus | null): boolean => Boolean(s?.previous && !s.busy && !isRunning(s.job) && s.stack !== 'foreign');
+
+/** the jobs Admin -> Update starts (a Live TV job is the Live TV page's) */
+const UPDATE_JOBS: readonly string[] = ['update', 'rollback', 'self-update'];
+const at = (start: string, end: string | null) => { const t = Date.parse(end ?? start); return Number.isFinite(t) ? t : 0; };
+/**
+ * What the updater card shows of the last activity: whatever runs; else the newer of the last update job and the last Portainer
+ * redeploy. On a Portainer stack (`foreign`) a finished updater job is from before Portainer ran it (the updater cannot run update
+ * jobs there): not shown. A Live TV job is never shown as an update.
+ */
+export function shownActivity(s: UpdaterStatus | null, redeploy: Redeploy | null | undefined, foreign: boolean): 'job' | 'redeploy' | null {
+  const job = s?.job && UPDATE_JOBS.includes(s.job.action) ? s.job : null;
+  if (isRunning(job)) return 'job';
+  if (redeploy?.running) return 'redeploy';
+  const j = job && !foreign ? at(job.startedAt, job.finishedAt) : null;
+  const r = redeploy ? at(redeploy.startedAt, redeploy.finishedAt) : null;
+  if (j !== null && (r === null || j >= r)) return 'job';
+  return r !== null ? 'redeploy' : null;
+}
+
+/**
+ * A new answer of GET /api/admin/updater while something runs. Portainer recreates the updater too: for a while it does not answer
+ * (`present: false`, the redeploy record still comes). The last status then stays (`away`: shown as reconnecting) instead of the
+ * card losing its steps and buttons; nothing running: the answer as it is.
+ */
+export function mergeView(prev: UpdaterView, next: UpdaterView): { view: UpdaterView; away: boolean } {
+  const ps = statusOf(prev);
+  if (next.present || !ps) return { view: next, away: false };
+  const busy = isRunning(ps.job) || Boolean(prev.redeploy?.running) || Boolean(next.redeploy?.running);
+  return busy ? { view: { ...next, present: true, status: ps } as UpdaterView, away: true } : { view: next, away: false };
+}
+
+/** what is installed: the build the backend service runs (its version and sha tag); without a listing the updater's record */
+export function installedOf(s: UpdaterStatus | null): { version: string | null; tag: string } | null {
+  const b = s?.services.find((x) => x.service === 'backend' && x.sha);
+  if (b?.sha) return { version: b.version, tag: b.sha };
+  return s?.current ? { version: null, tag: s.current } : null;
+}
+
+/** the channel a tag stands for (latest = stable, nightly, a version = fixed); a build tag (sha-…) names no channel */
+export function tagText(tag: string | null | undefined): string | null {
+  if (tag === 'latest') return trDynamic('admin.update.channel.stable');
+  if (tag === 'nightly') return trDynamic('admin.update.channel.nightly');
+  if (tag && /^\d+\.\d+\.\d+$/.test(tag)) return trDynamic('admin.update.channel.pinned');
+  return null;
+}

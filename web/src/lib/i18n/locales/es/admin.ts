@@ -193,8 +193,6 @@ const es: Translation<typeof de> = {
     updateNow: 'Actualizar ahora',
     force: 'recargar de todos modos',
     setup: 'No configurado. Define en el <kbd>.env</kbd>: <kbd>PORTAINER_WEBHOOK_URL</kbd> o <kbd>PORTAINER_URL</kbd>, <kbd>PORTAINER_API_KEY</kbd>, <kbd>PORTAINER_STACK_ID</kbd> (opcionalmente <kbd>PORTAINER_ENDPOINT_ID</kbd>).',
-    done: 'Actualización completada',
-    timeout: 'Tiempo de espera agotado: revisa Portainer',
     changes: 'Cambios',
     channel: {
       title: 'Canal de actualizaciones',
@@ -262,6 +260,15 @@ const es: Translation<typeof de> = {
       reconnecting: 'FriendFlix se está reiniciando – reconectando …',
       watchTimeout: 'El actualizador ya no responde. Vuelve a comprobarlo más tarde.',
       lastJob: 'Última tarea:',
+      flow: {
+        stepOf: 'Paso {n} de {total}',
+        done: 'Completado',
+        stopped: 'Interrumpido en el paso {n} de {total}',
+        duration: 'Duración: {d}',
+        code: 'Código de error: {code}',
+        retry: 'Reintentar',
+        label: 'Progreso de la actualización',
+      },
       result: {
         succeeded: 'Actualización a {to} completada.',
         rolled_back: 'La nueva versión no arrancó bien: revertido a {from}.',
@@ -271,6 +278,7 @@ const es: Translation<typeof de> = {
         title: 'Actualización a través de Portainer',
         running: 'Portainer está volviendo a desplegar ({s} s)',
         step: {
+          request: 'Solicitud a Portainer',
           pulling: 'Portainer descarga las imágenes',
           recreating: 'Recrear contenedores',
           health: 'Comprobación de estado',
@@ -287,6 +295,8 @@ const es: Translation<typeof de> = {
           noTarget: 'No se inició nada: elige primero una versión para el canal «Versión fija».',
         },
         detail: ' (HTTP {status}, paso {step})',
+        detailStep: ' (paso {step})',
+        stepName: { webhook: 'llamada al webhook', stack: 'consulta del stack', stack_file: 'lectura del archivo del stack', redeploy: 'redespliegue', deploy: 'arranque del stack' },
       },
       error: {
         busy: 'Ya hay una tarea en curso.',

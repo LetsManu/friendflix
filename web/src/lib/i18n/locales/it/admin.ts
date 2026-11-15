@@ -193,8 +193,6 @@ const it: Translation<typeof de> = {
     updateNow: 'Aggiorna ora',
     force: 'ricarica comunque',
     setup: 'Non configurato. Imposta nel file <kbd>.env</kbd>: <kbd>PORTAINER_WEBHOOK_URL</kbd> oppure <kbd>PORTAINER_URL</kbd>, <kbd>PORTAINER_API_KEY</kbd>, <kbd>PORTAINER_STACK_ID</kbd> (facoltativo <kbd>PORTAINER_ENDPOINT_ID</kbd>).',
-    done: 'Aggiornamento completato',
-    timeout: 'Timeout – controlla in Portainer',
     changes: 'Modifiche',
     channel: {
       title: 'Canale di aggiornamento',
@@ -262,6 +260,15 @@ const it: Translation<typeof de> = {
       reconnecting: 'FriendFlix si sta riavviando – riconnessione …',
       watchTimeout: 'L’updater non risponde più. Ricontrolla più tardi.',
       lastJob: 'Ultima operazione:',
+      flow: {
+        stepOf: 'Passo {n} di {total}',
+        done: 'Completato',
+        stopped: 'Interrotto al passo {n} di {total}',
+        duration: 'Durata: {d}',
+        code: 'Codice di errore: {code}',
+        retry: 'Riprova',
+        label: 'Avanzamento dell’aggiornamento',
+      },
       result: {
         succeeded: 'Aggiornamento a {to} completato.',
         rolled_back: 'La nuova versione non è partita correttamente: ripristinata {from}.',
@@ -271,6 +278,7 @@ const it: Translation<typeof de> = {
         title: 'Aggiornamento tramite Portainer',
         running: 'Portainer sta ridistribuendo ({s} s)',
         step: {
+          request: 'Richiesta a Portainer',
           pulling: 'Portainer scarica le immagini',
           recreating: 'Ricrea i container',
           health: 'Controllo di salute',
@@ -287,6 +295,8 @@ const it: Translation<typeof de> = {
           noTarget: 'Non è stato avviato nulla: scegli prima una versione per il canale «Versione fissa».',
         },
         detail: ' (HTTP {status}, passo {step})',
+        detailStep: ' (passo {step})',
+        stepName: { webhook: 'chiamata al webhook', stack: 'lettura dello stack', stack_file: 'lettura del file dello stack', redeploy: 'nuovo deploy', deploy: 'avvio dello stack' },
       },
       error: {
         busy: 'Un’operazione è già in corso.',

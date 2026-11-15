@@ -37,10 +37,15 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     await expect(page.getByRole('dialog')).toHaveCount(0); // inline, no pop-up
     await confirm.getByRole('button', { name: 'Ja, starten' }).click();
     await expect(steps(page)).toHaveCount(4);
+    // the running row is the current step; the primary button is busy while it runs
+    await expect(c.locator('li[aria-current="step"]')).toHaveCount(1);
+    await expect(c.getByRole('button', { name: 'Jetzt aktualisieren' })).toBeDisabled();
     await expect(c.locator('[data-reconnecting]')).toContainText('FriendFlix startet neu');
     await expect(c.locator('[data-result="succeeded"]')).toContainText('Update auf latest abgeschlossen.', { timeout: 20_000 });
     for (const s of ['pull', 'verify', 'restart', 'health']) await expect(c.locator(`li[data-step="${s}"]`)).toHaveAttribute('data-state', 'ok');
     await expect(c.locator('[data-reconnecting]')).toHaveCount(0);
+    await expect(c.locator('li[aria-current="step"]')).toHaveCount(0);
+    await expect(c.getByRole('progressbar', { name: 'Fortschritt des Updates' })).toHaveAttribute('aria-valuenow', '100');
     expect(api.updater.posts).toEqual(['update']);
   });
 
@@ -61,6 +66,8 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     await card(page).getByRole('button', { name: 'Jetzt aktualisieren' }).click();
     await card(page).getByRole('button', { name: 'Ja, starten' }).click();
     await expect(card(page).locator('[data-result="rolled_back"]')).toContainText('zurückgerollt auf sha-c0be6c5', { timeout: 20_000 });
+    await expect(card(page).locator('[data-result="rolled_back"]')).toContainText('Fehlercode: unhealthy');
+    await expect(card(page).locator('[data-result="rolled_back"]').getByRole('button', { name: 'Erneut versuchen' })).toBeVisible();
     await expect(card(page).locator('li[data-step="health"]')).toHaveAttribute('data-state', 'failed');
     await expect(card(page).locator('li[data-step="rollback"]')).toHaveAttribute('data-state', 'ok');
   });
@@ -180,9 +187,19 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     api.updater.redeploy = { id: 'abcdef0123456789', mode: 'api', tag: 'latest', phase: 'pulling', running: true, startedAt: new Date(Date.now() - 30_000).toISOString(), finishedAt: null,
       services: null, error: null, status: null, step: null, code: null, at: null };
     await page.goto('/admin/update'); // found running: the page follows it without a click
-    await expect(card(page).locator('[data-result="failed"]')).toContainText('Portainer hat das Neu-Deployen abgelehnt (HTTP 500, Schritt redeploy)', { timeout: 15_000 });
+    const result = card(page).locator('[data-result="failed"]');
+    await expect(result).toContainText('Portainer hat das Neu-Deployen abgelehnt (HTTP 500, Schritt Neu-Deployen)', { timeout: 15_000 });
+    await expect(result).toHaveAttribute('role', 'alert');
+    // refused while Portainer pulled (after "started"): the request went through, the pull failed, the rest never ran
+    const progress = card(page).locator('[data-redeploy="failed"]');
+    await expect(progress.locator('[data-step="request"]')).toHaveAttribute('data-state', 'ok');
+    await expect(progress.locator('[data-step="pulling"]')).toHaveAttribute('data-state', 'failed');
+    for (const st of ['recreating', 'health']) await expect(progress.locator(`[data-step="${st}"]`)).toHaveAttribute('data-state', 'skipped');
     await expect(card(page).getByRole('button', { name: 'Jetzt aktualisieren' })).toBeEnabled();
     expect(api.updater.posts).toEqual([]);
+    // try again: the same inline confirmation as the button
+    await result.getByRole('button', { name: 'Erneut versuchen' }).click();
+    await expect(card(page).getByRole('group', { name: /über Portainer neu deployen/ })).toBeVisible();
   });
 
   test('the Portainer API set up only in part: the page names the missing setting and where the stack ID is', async ({ page, api }) => {
