@@ -22,12 +22,13 @@
   import { toast } from '#lib/ui/toast';
   import { watchFirstFrame } from '#lib/player/firstframe';
   import { BRIGHTNESS_MIN, levelFromDrag, registerTap, TAP_WINDOW, zoneOf, type TapState, type Zone } from '#lib/player/gestures';
-  import { liveHlsConfig, loadHls } from '#lib/player/hls';
+  import { LIVE_CATCHUP_RATE, LIVE_MAX_LATENCY_S, liveHlsConfig, liveSyncSeconds, loadHls } from '#lib/player/hls';
   import { bindPlayerMediaSession } from '#lib/player/mediasession';
   import { CONTROLS_HIDE_MS, CONTROLS_HIDE_TV_MS, createTiming, deviceClass, sendTiming } from '#lib/player/timing';
   import { parseVolume } from '#lib/player/volume';
   import { beat, channels as fetchChannels, clock, nowLines, setLast, stopWatching, watch, type LiveChannel, type LiveList, type Prog, type RunningChannel, type WatchAnswer } from './api';
   import { BANNER_HOLD_MS, bannerVisible } from './banner';
+  import { createPauseIntent, latencyOf, shouldCatchUp } from './catchup';
   import { startsLocally } from './castGate';
   import { atEdge, behind, oldestPoint, restartTarget, RESUME_MARGIN_S, resumePoint } from './dvr';
   import { minute } from './fade';
@@ -57,7 +58,10 @@
    * ignored) and stopped (keepalive) on pagehide and close.
    *
    * While the viewer is deliberately behind the edge (paused, rewound, Von Anfang an) hls.js must not pull them back to live: its
-   * latency limit (liveMaxLatencyDurationCount 10) applies only at the edge and is lifted while they are behind.
+   * latency rules (liveHlsConfig: the 1.1× catch-up, back to the sync point beyond 30 s) apply only at the edge and are lifted while
+   * they are behind. Only the viewer's own pause (the button, a key) counts as deliberate (`pauseIntent`); a pause from outside (the
+   * OS media session, a hidden tab, audio focus) does not, and its resume goes on at live. After a stall, any resume and the tab
+   * coming back the player catches up itself when further behind than the max latency (catchup.ts, H3).
    *
    * A pause is timed from the viewer's press, not from the media `pause` event (the browser fires that a task later); resuming
    * checks the pause against the buffer before it plays.
@@ -102,7 +106,6 @@
   const START_WATCHDOG_MS = 30_000;
   const NOTE_MS = 2000;
   const SWITCH_DELAY_MS = 400;
-  const EDGE_LATENCY_COUNT = 10;
   const SWIPE_PX = 40;
   const LIST_REFRESH_MS = 60_000;
   const AIR_OFF_GRACE_MS = 3000;
@@ -122,6 +125,9 @@
   let sheet: Refusal | null = null;
   let hls: Hls | null = null, HlsCtor: typeof Hls | null = null;
   let paused = false, pausedWall: number | null = null, ignorePause = false, deliberate = false;
+  /** whether the next media `pause` is the viewer's own press (H3); `ownPause`: the current pause is */
+  const pauseIntent = createPauseIntent();
+  let ownPause = false;
   let nowMs = Date.now(), switchingAt: number | null = nowMs, firstFrameAt: number | null = null, cardHoldUntil = 0;
   let controls = true, panelOpen = false, tv = false, coarse = false, motion = true, fullscreen = false;
   /** the Senderliste panel (listOpen) and its state; `okHeld`: the OK that opened it by a long press is still down (its repeats switch nothing) */
@@ -509,13 +515,25 @@
       return v.play().catch(() => undefined);
     });
   }
-  /** the viewer pauses: the pause is timed from this press (the media `pause` event comes a task later) */
-  function pauseV(): void {
+  /**
+   * A pause: `own` = the viewer's press (the button, a key), timed from it (the media `pause` event comes a task later) and the start
+   * of being deliberately behind; without it (the OS media session) it is a pause from outside, like the element's own.
+   */
+  function pauseV(own = false): void {
     const v = video;
     if (!v || v.paused) return;
     ignorePause = false;
     pausedWall = Date.now();
+    if (own) pauseIntent.own();
     v.pause();
+  }
+  /**
+   * playing again after a pause: the viewer's own (or any while they are deliberately behind) is checked against the buffer
+   * (resumeCheck); one from outside goes on at live (catchUp, once it plays)
+   */
+  function resumeFromPause(): void {
+    if (ownPause || deliberate) resumeCheck();
+    else pausedWall = null;
   }
   /**
    * A pause ends: checked against the buffer before playback goes on. Longer than the buffer: on from the oldest point with the
@@ -535,7 +553,7 @@
   function togglePlay(): void {
     const v = video;
     if (!v) return;
-    if (v.paused) { resumeCheck(); void playV(); } else pauseV();
+    if (v.paused) { resumeFromPause(); void playV(); } else pauseV(true);
   }
   function edge(): number {
     const s = hls ? hls.liveSyncPosition : null;
@@ -553,9 +571,30 @@
     if (o) return o.time;
     return src.video.seekable.length ? src.video.seekable.start(0) : 0;
   }
+  /** hls.js' latency rules hold at the edge only: deliberately behind, neither the speed-up nor the jump back to the sync point */
   function applyLatency(): void {
-    if (hls) (hls.config as unknown as { liveMaxLatencyDurationCount: number }).liveMaxLatencyDurationCount = deliberate ? Number.POSITIVE_INFINITY : EDGE_LATENCY_COUNT;
+    if (!hls) return;
+    const c = hls.config as unknown as { liveMaxLatencyDuration: number; maxLiveSyncPlaybackRate: number };
+    c.liveMaxLatencyDuration = deliberate ? Number.POSITIVE_INFINITY : LIVE_MAX_LATENCY_S;
+    c.maxLiveSyncPlaybackRate = deliberate ? 1 : LIVE_CATCHUP_RATE;
+    // hls.js leaves a sped-up rate as it is once the speed-up is off
+    const v = video;
+    if (deliberate && v && v.playbackRate > 1) v.playbackRate = 1;
   }
+  /**
+   * After a stall, a resume or the tab coming back (H3): further behind the newest end than the max latency, and not deliberately
+   * behind, the player goes back to the sync point. Nothing while a switch's watch is out, a cast or AirPlay plays, or before the
+   * first frame.
+   */
+  function catchUp(): void {
+    const v = video;
+    if (!v || !playingId || firstFrameAt === null || startPending || remoteOn || airMode) return;
+    const target = hls ? hls.targetLatency : null;
+    const latencyS = latencyOf(behind(v, edge()), target, hls ? liveSyncSeconds(dvrSeconds) : 0);
+    if (!shouldCatchUp({ latencyS, maxLatencyS: LIVE_MAX_LATENCY_S, deliberate, paused: v.paused })) return;
+    v.currentTime = edge();
+  }
+  function onVisibility(): void { if (!document.hidden) catchUp(); }
   function markDeliberate(): void { deliberate = true; applyLatency(); }
   function seekTo(sec: number): void {
     const v = video;
@@ -610,6 +649,8 @@
     }
     clearTimeout(stallT);
     if (ui.k === 'starting' || ui.k === 'buffering') ui = { k: 'playing' };
+    // after a stall or any resume: back to live when it fell too far behind (not when the viewer chose to be behind)
+    catchUp();
   }
   function onWaiting(): void {
     const v = video;
@@ -619,16 +660,19 @@
     stallT = setTimeout(() => { if (ui.k === 'buffering') { dropStream(); onFail({ k: 'lost', attempt: 0 }); } }, STALL_LOST_MS);
   }
   function onPause(): void {
-    if (ignorePause) { ignorePause = false; return; }
+    if (ignorePause) { ignorePause = false; pauseIntent.drop(); return; }
     paused = true;
     if (pausedWall === null) pausedWall = Date.now(); // a pause from outside the player (system, headset): timed from its event
-    markDeliberate();
+    // only the viewer's own pause is a choice to be behind; one from outside (OS media session, hidden tab, audio focus) is not
+    ownPause = pauseIntent.take();
+    if (ownPause) markDeliberate();
     wake();
   }
   function onPlay(): void {
     ignorePause = false;
     paused = false;
-    resumeCheck(); // a resume from outside the player (system, headset); the player's own resume has checked already
+    resumeFromPause(); // a resume from outside the player (system, headset); the player's own resume has checked already
+    ownPause = false;
     // a TV keeps hidden controls hidden: a switch's new stream starting must not bring them up (▲/▼ would move the focus instead of
     // zapping, spec §12.3); visible ones get their full time again
     if (!tv || controls) wake();
@@ -1021,7 +1065,8 @@
     return { title: c?.now?.title ?? c?.name ?? '', artist: c ? channelHead(c) : '', artworkIds: [] as string[] };
   }
   const msActions = {
-    play: () => { resumeCheck(); void playV(); }, pause: () => pauseV(), seekTo: (s: number) => seekTo(s), seekBy: (d: number) => seekBy(d),
+    // the OS media session (lock screen, headset, media keys) is a pause from outside: never deliberately behind (H3)
+    play: () => { resumeFromPause(); void playV(); }, pause: () => pauseV(), seekTo: (s: number) => seekTo(s), seekBy: (d: number) => seekBy(d),
     next: () => switcher.press(1), prev: () => switcher.press(-1),
   };
   function replaceUrl(id: string): void {
@@ -1082,6 +1127,7 @@
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('pageshow', onPageShow);
     document.addEventListener('fullscreenchange', onFs);
+    document.addEventListener('visibilitychange', onVisibility);
     tickT = setInterval(onTick, 250);
     listT = setInterval(() => { if (!document.hidden) void loadList(); }, LIST_REFRESH_MS);
     if (video) session = bindPlayerMediaSession(video, msItem(cur), msActions);
@@ -1100,6 +1146,7 @@
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('pageshow', onPageShow);
       document.removeEventListener('fullscreenchange', onFs);
+      document.removeEventListener('visibilitychange', onVisibility);
       offCast();
       if (v0) { v0.removeEventListener('webkitplaybacktargetavailabilitychanged', onAirAvail); v0.removeEventListener('webkitcurrentplaybacktargetiswirelesschanged', onWireless); }
       airProbe?.remove();

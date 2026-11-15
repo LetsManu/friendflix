@@ -31,14 +31,31 @@ export function hlsConfig(startSec: number): Partial<HlsConfig> {
 }
 
 /**
- * Live tuning (spec §12, ruling 47): play 3 segments behind the edge, catch up beyond 10 (the live player lifts that limit while the
+ * Live latency (H3). livetv cuts 4-s segments and keeps at least the newest 3 plus the rewind buffer. The player sits LIVE_SYNC_S
+ * behind the newest end (8 s when the window is only those newest segments, so the play position stays inside it), speeds up to
+ * LIVE_CATCHUP_RATE while a little further behind (hls.js only does that in low-latency mode, within one target duration of the
+ * sync point), and goes back to the sync point beyond LIVE_MAX_LATENCY_S. In seconds, not as a count of target durations: livetv's
+ * target duration only ever grows (a long GOP makes a 6–8-s segment), and with it a count of 10 would let the viewer drift 60–80 s
+ * behind before anything happened.
+ */
+export const LIVE_SYNC_S = 12;
+export const LIVE_MAX_LATENCY_S = 30;
+export const LIVE_CATCHUP_RATE = 1.1;
+/** the sync distance for a rewind buffer of `dvrSeconds`: 12 s, or 8 s when the window holds little more than the newest 3 segments */
+export function liveSyncSeconds(dvrSeconds: number): number {
+  return Number.isFinite(dvrSeconds) && dvrSeconds >= 16 ? LIVE_SYNC_S : 8;
+}
+
+/**
+ * Live tuning (spec §12, ruling 47): the latency rules above (the live player lifts the max latency and the speed-up while the
  * viewer is deliberately behind), and keep at most the rewind buffer behind the play position: up to 30 min, on TVs 5 min, so a
  * 120-min buffer never sits in an old WebView's memory (seeking further back loads the segments again from livetv's buffer).
  */
 export function liveHlsConfig(dvrSeconds: number, tv: boolean): Partial<HlsConfig> {
   const dvr = Number.isFinite(dvrSeconds) && dvrSeconds > 0 ? Math.floor(dvrSeconds) : 0;
   return {
-    liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 10, backBufferLength: Math.min(dvr, tv ? 300 : 1800), maxBufferLength: 30, startFragPrefetch: true,
+    liveSyncDuration: liveSyncSeconds(dvr), liveMaxLatencyDuration: LIVE_MAX_LATENCY_S, maxLiveSyncPlaybackRate: LIVE_CATCHUP_RATE, lowLatencyMode: true,
+    backBufferLength: Math.min(dvr, tv ? 300 : 1800), maxBufferLength: 30, startFragPrefetch: true,
     manifestLoadPolicy: policy(10_000, 60_000, 4), playlistLoadPolicy: policy(10_000, 60_000, 4), fragLoadPolicy: policy(20_000, 120_000, 5),
   };
 }

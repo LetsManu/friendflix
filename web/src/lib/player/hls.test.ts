@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it, vi } from 'vitest';
-import { hlsConfig, liveHlsConfig, loadHls, resetHlsLoader } from './hls';
+import { LIVE_CATCHUP_RATE, LIVE_MAX_LATENCY_S, LIVE_SYNC_S, hlsConfig, liveHlsConfig, liveSyncSeconds, loadHls, resetHlsLoader } from './hls';
 
 describe('loadHls', () => {
   it('loads once and shares the promise', async () => {
@@ -50,9 +50,29 @@ describe('liveHlsConfig', () => {
     expect(liveHlsConfig(600, false).backBufferLength).toBe(600);
     expect(liveHlsConfig(0, false).backBufferLength).toBe(0);
   });
-  it('plays 3 segments behind the edge and catches up beyond 10', () => {
-    expect(liveHlsConfig(1800, false)).toMatchObject({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 10 });
-    expect(liveHlsConfig(1800, true)).toMatchObject({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 10 });
+  it('H3: plays 12 s behind the edge, catches up gently (1.1×) and goes back to it beyond 30 s, in seconds (not a count of a target that only grows)', () => {
+    for (const tv of [false, true]) {
+      const c = liveHlsConfig(1800, tv);
+      expect(c).toMatchObject({ liveSyncDuration: 12, liveMaxLatencyDuration: 30, maxLiveSyncPlaybackRate: 1.1, lowLatencyMode: true });
+      expect(c.liveSyncDurationCount).toBeUndefined();
+      expect(c.liveMaxLatencyDurationCount).toBeUndefined();
+    }
+    expect([LIVE_SYNC_S, LIVE_MAX_LATENCY_S, LIVE_CATCHUP_RATE]).toEqual([12, 30, 1.1]);
+  });
+  it('H3: a window of only the newest segments (no rewind buffer) plays 8 s behind, inside the window', () => {
+    expect(liveHlsConfig(0, false).liveSyncDuration).toBe(8);
+    expect(liveSyncSeconds(0)).toBe(8);
+    expect(liveSyncSeconds(15)).toBe(8);
+    expect(liveSyncSeconds(16)).toBe(12);
+  });
+  it('H3: hls.js accepts the live tuning (it refuses counts and seconds mixed, or a max latency at or under the sync point)', async () => {
+    const { default: Hls } = await import('hls.js');
+    for (const dvr of [0, 1800]) {
+      const h = new Hls(liveHlsConfig(dvr, false));
+      expect(h.config.liveMaxLatencyDuration).toBe(30);
+      expect(h.config.maxLiveSyncPlaybackRate).toBe(1.1);
+      h.destroy();
+    }
   });
   it('keeps the existing patient load policies', () => {
     const live = liveHlsConfig(1800, false) as Record<string, unknown>, film = hlsConfig(0) as Record<string, unknown>;

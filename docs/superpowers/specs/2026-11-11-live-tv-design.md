@@ -1209,7 +1209,9 @@ row (Phase 3) only with recordings shared with them from kid-friendly groups (§
 `web/src/lib/live/LivePlayer.svelte`, opened at `/live/watch/[channelId]` (desktop/phone/TV). It is built from the existing
 player parts so it looks and behaves like `Player.svelte`: the same stage, the same control bar classes and auto-hide, the
 same TV control layer style (`TvControls`), `lib/player/hls.ts` (`loadHls`, `hlsConfig` with live settings:
-`liveSyncDurationCount 3`, `liveMaxLatencyDurationCount 10`, `backBufferLength = min(dvrSeconds, 1800)`, on TVs
+`liveSyncDuration 12` s (8 s without a rewind buffer), `liveMaxLatencyDuration 30` s and `maxLiveSyncPlaybackRate 1.1` (in
+seconds, not counts of a target duration that only grows; lifted while the viewer is deliberately behind, which only their own
+pause, a rewind or Von Anfang an makes them), `backBufferLength = min(dvrSeconds, 1800)`, on TVs
 `min(dvrSeconds, 300)`: with a buffer of up to 120 min, old TV WebViews must not hold it in memory; seeking further back
 loads the segments again from `livetv`'s DVR), `volume.ts`, `gestures.ts`
 (zones), `mediasession.ts`, the cast engine and `PlayOnSheet`, `firstframe.ts`, the TV Back handling (`playerBack`). It does
