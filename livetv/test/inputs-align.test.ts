@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { alignStart, openInput, type Resume } from '../src/inputs.js';
+import { InputEnd, alignStart, openInput, type Resume } from '../src/inputs.js';
 import { parseMedia } from '../src/passthrough.js';
 import { AAC, H264, tsSegment } from './ts-builder.js';
 import { GUARD, INPUT, provider, reader, win } from './hls-provider.js';
@@ -81,6 +81,19 @@ describe('separate audio aligned by the first timestamps', () => {
     const r = await open(900_000, 4_000_000_000);
     expect(r.shift).toBeUndefined();
     expect(r.logs).toEqual(['separate audio: timestamps do not fit the playlists (clock_mismatch), aligned by sequence']);
+  });
+});
+
+describe('a rendition that ends while its first timestamps are read (review M10)', () => {
+  it('an audio restart (the provider went back) is no fault of the audio: InputEnd with its side, not AudioUnavailable', async () => {
+    // the resume points wait for 110; the audio playlist goes back meanwhile (3 stale reads, 1-s polls), the video stays
+    const one = (prefix: string, first: number, last: number) => win(first, last, { prefix, dur: 1 });
+    const p = provider({ video: () => one('v', 100, 109), audio: (read) => (read === 0 ? one('a', 100, 109) : one('a', 98, 107)), segment: tsSegments(900_000, 900_000) });
+    const pending = openInput(INPUT, { guard: GUARD, fetch: p.fetch, resume: { video: 109, audio: 109 } }).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(4_000);
+    const e = await pending;
+    expect(e).toBeInstanceOf(InputEnd);
+    expect([(e as InputEnd).code, (e as InputEnd).side]).toEqual(['restart', 'audio']);
   });
 });
 

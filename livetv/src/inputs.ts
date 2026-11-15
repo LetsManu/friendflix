@@ -76,7 +76,8 @@ export type InputEndCode = 'restart' | 'gap' | 'discontinuity' | 'segments_faile
 /** ends of a run that are the provider's doing, not a broken rendition: the separate audio is not blamed for them (audioFault) */
 const NOT_A_FAULT: ReadonlySet<InputEndCode> = new Set(['restart', 'discontinuity']);
 export class InputEnd extends Error {
-  constructor(readonly code: InputEndCode) { super(code); }
+  /** `side`: the rendition of a pair it came from, when it ended openInput itself (while the first timestamps were read) */
+  constructor(readonly code: InputEndCode, readonly side?: 'video' | 'audio') { super(code); }
 }
 
 /** an MPEG-TS stream that delivers nothing for this long ends (ffmpeg sees EOF, the driver reconnects) */
@@ -408,14 +409,22 @@ function clockShift(v: { start: number | null; seg?: Numbered }, a: { start: num
   return fits ? shift : 'mismatch';
 }
 
+/** a resume point at most this many segments ahead of the provider's newest is a stale read away from it (review I1) */
+export const RESUME_STALE_SEGMENTS = 2;
+/** a resume point further behind the newest than this many seconds starts at the edge: no burst of a long window (review M6) */
+export const RESUME_MAX_BEHIND_S = 60;
+
 /**
  * `r` (the provider number of the last segment a rendition delivered in the run before) when the playlist `p` still holds the
- * one after it, or a stale read is a little behind it (follow); null when it left the window or the provider started over.
+ * one after it, at most RESUME_MAX_BEHIND_S behind its newest, or at most RESUME_STALE_SEGMENTS ahead of it (a stale read);
+ * null otherwise: the run starts at the edge. A provider that really went back further than that never holds a run at a point it
+ * has not reached (a run that ends with `restart` clears the points too).
  */
 function resumable(p: MediaPlaylist, r: number | null | undefined): number | null {
   if (r === null || r === undefined || p.segments.length === 0) return null;
   const newest = p.mediaSequence + p.segments.length - 1;
-  return r >= p.mediaSequence - 1 && r <= newest + p.segments.length ? r : null;
+  if (r < p.mediaSequence - 1 || r > newest + RESUME_STALE_SEGMENTS) return null;
+  return (newest - r) * p.targetDuration > RESUME_MAX_BEHIND_S ? null : r;
 }
 
 /** a push feed's ring as ffmpeg's stdin: no address, no URL; closed by the stop, by `close()` or by 20 s without data */
@@ -516,12 +525,14 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     const first = media.segments[0];
     const format: PipeFormat = first ? segmentFormat(first.uri, first.map) : 'mpegts';
     const resume = deps.resume;
+    // the provider's sequence went back: the old points mean nothing in its new numbering, the next run starts at the edge
+    const forget = (e: unknown) => { if (resume && e instanceof InputEnd && e.code === 'restart') { resume.video = null; resume.audio = null; } };
     const rv = resumable(media, resume?.video);
     const onVideo = (seq: number) => { if (resume) resume.video = seq; };
     let reason: string | null = null;
     if (audioUri === null || audioList === null) {
       const one = hlsBytes({ text, base, url }, get, ac.signal, { from: rv === null ? null : rv + 1, log, onTaken: onVideo });
-      return { ffInput: { kind: 'pipe', format, stdin: recorded(one, ac.signal, (e) => { reason ??= endCode(e); }) }, close, endReason: () => reason };
+      return { ffInput: { kind: 'pipe', format, stdin: recorded(one, ac.signal, (e) => { reason ??= endCode(e); forget(e); }) }, close, endReason: () => reason };
     }
     // audio in a playlist of its own: fetched and followed like the video one (same guard, same limits), as a second pipe. Either
     // one ending its run ends both (ffmpeg sees EOF, the driver backs off, restarts and aligns them again), so a stream never
@@ -567,6 +578,19 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
       from, strict: true, side, log, peerDisc: peerDisc(side), onPlaylist: (l: Numbered[]) => { seen[side] = l; },
       onTaken: (seq: number) => { firstDone[side] = true; if (resume) resume[side] = seq; },
     });
+    /**
+     * a rendition that ends while its first timestamps are read (review M10): the same rules as in the run (`linked`). Its side goes
+     * with the code; a provider event (restart, discontinuity) is no fault of the audio; any other audio failure is AudioUnavailable.
+     */
+    const measureFailed = (e: unknown, side: 'video' | 'audio'): unknown => {
+      if (ac.signal.aborted) return e;
+      forget(e);
+      if (e instanceof InputEnd) {
+        if (side === 'audio' && !NOT_A_FAULT.has(e.code)) return new AudioUnavailable(false);
+        return new InputEnd(e.code, side);
+      }
+      return side === 'audio' ? new AudioUnavailable(isFatal(e)) : e;
+    };
     if (al?.note) log(`separate audio: aligned by sequence, date-time on one side only (${al.note})`);
     // without an alignment each starts at its own resume point, else at its own live edge
     const vFrom = al?.video ?? (rv === null ? null : rv + 1);
@@ -583,8 +607,8 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
       let timer: NodeJS.Timeout | undefined;
       const deadline = new Promise<'late'>((r) => { timer = setTimeout(() => r('late'), MEASURE_MS); });
       const [vm, am] = await Promise.all([
-        measured(video, vc, () => firstDone.video, ac.signal, deadline),
-        measured(audio, acl, () => firstDone.audio, ac.signal, deadline).catch((e: unknown) => { throw ac.signal.aborted ? e : new AudioUnavailable(isFatal(e)); }),
+        measured(video, vc, () => firstDone.video, ac.signal, deadline).catch((e: unknown) => { throw measureFailed(e, 'video'); }),
+        measured(audio, acl, () => firstDone.audio, ac.signal, deadline).catch((e: unknown) => { throw measureFailed(e, 'audio'); }),
       ]).finally(() => clearTimeout(timer));
       video = vm.stream;
       audio = am.stream;
@@ -604,12 +628,12 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     let videoFailed = false;
     return {
       ffInput: {
-        kind: 'pipe', format, stdin: linked(video, close, ac.signal, { onOwnFail: (e) => { videoFailed = true; reason ??= `video ${endCode(e)}`; }, onBytes: (n) => { videoBytes += n; } }),
+        kind: 'pipe', format, stdin: linked(video, close, ac.signal, { onOwnFail: (e) => { videoFailed = true; reason ??= `video ${endCode(e)}`; forget(e); }, onBytes: (n) => { videoBytes += n; } }),
         audio: {
           format: aformat,
           // a provider event (its sequence went back, a discontinuity in this rendition only) is no fault of the rendition
           stdin: linked(audio, close, ac.signal, {
-            onOwnFail: (e) => { reason ??= `audio ${endCode(e)}`; if (!(e instanceof InputEnd && NOT_A_FAULT.has(e.code))) audioFailed = true; },
+            onOwnFail: (e) => { reason ??= `audio ${endCode(e)}`; forget(e); if (!(e instanceof InputEnd && NOT_A_FAULT.has(e.code))) audioFailed = true; },
             onBytes: (n) => { audioBytes += n; },
           }),
           ...(shift ? { shift } : {}),

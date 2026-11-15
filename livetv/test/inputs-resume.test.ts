@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { alignStart, openInput, type InputDeps, type Resume } from '../src/inputs.js';
+import { InputEnd, alignStart, openInput, type InputDeps, type OpenedInput, type Resume } from '../src/inputs.js';
 import { parseMedia } from '../src/passthrough.js';
 import type { ProbeResult } from '../src/probe.js';
 import { remuxDriver } from '../src/remux.js';
@@ -77,6 +77,48 @@ describe('a restart resumes', () => {
     expect(alignStart(P(100, 109, 'v', T), P(500, 509, 'a', T), { video: 103, audio: 503 })).toEqual({ video: 103, audio: 503, shift: 0, by: 'pdt' });
     // nothing new yet: both wait for the next segment
     expect(alignStart(P(100, 109, 'v'), P(100, 109, 'a'), { video: 110, audio: 110 })).toEqual({ video: 110, audio: 110, shift: 0, by: 'sequence' });
+  });
+});
+
+describe('resume after the provider went back (review I1, M6)', () => {
+  it('a resume point more than the stale tolerance ahead of the provider\'s newest starts at the edge', async () => {
+    // the provider restarted at lower numbers (103..112) after the run before had delivered up to 120
+    const r = await run({ video: () => win(103, 112, { prefix: 'v' }), audio: () => win(103, 112, { prefix: 'a' }) }, 500, { resume: { video: 120, audio: 120 } });
+    expect([r.v, r.a]).toEqual([[110, 111, 112], [110, 111, 112]]);
+  });
+
+  it('two runs in a row after a small sequence drop: the first ends with restart and clears the resume points, the second starts at the edge', async () => {
+    // the run before delivered up to 114; the provider now lists 103..112 (2 behind, within the stale tolerance) and stays there
+    const resume: Resume = { video: 114, audio: 114 };
+    const script = { video: () => win(103, 112, { prefix: 'v' }), audio: () => win(103, 112, { prefix: 'a' }) };
+    const ends: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const p = provider(script);
+      // the first segment is read before openInput returns (both are MPEG-TS by name): it may end in there already
+      const pending: Promise<OpenedInput | unknown> = openInput(INPUT, { guard: GUARD, fetch: p.fetch, resume }).catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(8_000);
+      const o = await pending;
+      if (o instanceof InputEnd) { ends.push(o.code); continue; }
+      const opened = o as OpenedInput;
+      if (opened.ffInput.kind !== 'pipe' || !opened.ffInput.audio) throw new Error('pair expected');
+      const v = reader(opened.ffInput.stdin);
+      const a = reader(opened.ffInput.audio.stdin);
+      await vi.advanceTimersByTimeAsync(8_000);
+      ends.push(opened.endReason?.() ?? 'running');
+      opened.close();
+      await Promise.all([v.done, a.done]);
+      expect(seqs(v.got)).toEqual([110, 111, 112]);
+    }
+    expect(ends).toEqual(['restart', 'running']);
+    expect(resume).toEqual({ video: 112, audio: 112 });
+  });
+
+  it('a resume point more than 60 s behind the edge (a long provider window after a long outage) starts at the edge', async () => {
+    // 4-s segments: 20 behind is 80 s of burst; the edge instead
+    const long = (prefix: string) => () => win(50, 129, { prefix });
+    expect((await run({ master: ONE_MASTER, video: long('v') }, 500, { resume: { video: 109, audio: null } })).v).toEqual([127, 128, 129]);
+    // 10 behind (40 s) still resumes
+    expect((await run({ master: ONE_MASTER, video: long('v') }, 500, { resume: { video: 119, audio: null } })).v.slice(0, 2)).toEqual([120, 121]);
   });
 });
 

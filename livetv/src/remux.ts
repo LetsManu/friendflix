@@ -200,7 +200,7 @@ export function remuxDriver(d: RemuxDeps): MediaDriver {
         } else {
           if (e instanceof FetchError && FATAL.has(e.code)) { ctx.fail(e.code); return; }
           if (e instanceof PlaylistRefused) { ctx.fail(e.code); return; }
-          restarted(e instanceof FetchError || e instanceof InputEnd ? e.code : 'error');
+          restarted(e instanceof InputEnd ? `${e.side ? `${e.side} ` : ''}${e.code}` : e instanceof FetchError ? e.code : 'error');
         }
         disc = true;
         if (!(await ctx.sleep(ctx.lost()))) break;
