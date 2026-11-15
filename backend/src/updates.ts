@@ -43,10 +43,15 @@ export interface UpdateInfo {
   error?: string;
 }
 
+/**
+ * The API way wins when it is complete: it sets FF_TAG and reports real success or failure, and its key does not go stale. A
+ * webhook address does (Portainer issues a new token when the stack is recreated or its webhook toggled), so with both set a
+ * dead webhook must not shadow a working API. The webhook is used only when the API settings are not all there.
+ */
 export function portainerMode(ctx: Ctx): 'webhook' | 'api' | null {
   const c = ctx.cfg;
-  if (c.PORTAINER_WEBHOOK_URL) return 'webhook';
   if (c.PORTAINER_URL && c.PORTAINER_API_KEY && c.PORTAINER_STACK_ID) return 'api';
+  if (c.PORTAINER_WEBHOOK_URL) return 'webhook';
   return null;
 }
 
@@ -192,7 +197,8 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api', onLate?: 
   };
   const started = async (r: Response | 'pending'): Promise<TriggerResult> => {
     if (r === 'pending') return { ok: true, mode, pending: true };
-    if (!r.ok) { void r.body?.cancel().catch(() => undefined); return fail(r.status, 'portainer', step); }
+    // a webhook that Portainer does not know (404): its token is stale (a recreated stack or a toggled webhook gets a new one)
+    if (!r.ok) { void r.body?.cancel().catch(() => undefined); return fail(r.status, mode === 'webhook' && r.status === 404 ? 'webhook_gone' : 'portainer', step); }
     const a = await answerOf(r, mode);
     return a === 'failed' ? fail(null, 'portainer', 'deploy') : { ok: true, mode, sync: a === 'done' };
   };
@@ -282,8 +288,9 @@ export async function redeployViaPortainer(ctx: Ctx, actor: string | null, mode:
     // a 2xx whose stack is in error (Status 4) is Portainer's verdict too
     if (!a.ok && !a.deploy && (a.status === null || a.status >= 502)) return;
     const step = !a.ok && a.deploy ? 'deploy' : 'redeploy';
-    void settleRedeploy(ctx, id, a.ok ? { ok: true, sync: a.sync } : { ok: false, error: 'portainer', step, status: a.status })
-      .then(() => (a.ok ? undefined : audit(ctx, actor, 'system.update_result', undefined, { mode, ...auto, result: 'failed', late: true, error: 'portainer', step, status: a.status })))
+    const error = !a.ok && mode === 'webhook' && a.status === 404 ? 'webhook_gone' : 'portainer';
+    void settleRedeploy(ctx, id, a.ok ? { ok: true, sync: a.sync } : { ok: false, error, step, status: a.status })
+      .then(() => (a.ok ? undefined : audit(ctx, actor, 'system.update_result', undefined, { mode, ...auto, result: 'failed', late: true, error, step, status: a.status })))
       .catch(() => undefined);
   };
   const r = await triggerUpdate(ctx, mode, late);

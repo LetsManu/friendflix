@@ -184,6 +184,7 @@ const pl: Translation<typeof de> = {
     notConfigured: 'Portainer nie jest skonfigurowany.',
     unreachable: 'Portainer jest nieosiągalny{detail}. Szczegóły w logu backendu.',
     portainerError: 'Błąd Portainera{detail}. Szczegóły w logu backendu.',
+    webhookGone: 'Adres webhooka Portainera jest już nieważny (Portainer nadaje nowy, gdy stos zostanie utworzony ponownie albo jego webhook zostanie wyłączony i włączony). Utwórz nowy webhook w Portainerze albo usuń go w Admin → Ustawienia → Aktualizacje i użyj zamiast tego ustawień API.',
     httpDetail: ' (HTTP {status})',
     atStep: ' w kroku: {step}',
     intro: 'Portainer aktualizuje automatycznie co 12 godzin. Przyciskiem możesz zrobić to od razu.',
@@ -302,6 +303,7 @@ const pl: Translation<typeof de> = {
           failed: 'Portainer odrzucił ponowne wdrożenie{detail}. Sprawdź stos w Portainerze i ustawienia Portainera w Admin → Ustawienia → Aktualizacje.',
           timeout: 'Przez 15 minut nic się nie zmieniło ({at}). Sprawdź stos i jego logi w Portainerze.',
           unreachable: 'Portainer był nieosiągalny{code}. Sprawdź PORTAINER_URL w Admin → Ustawienia → Aktualizacje: backend musi móc połączyć się z tym adresem.',
+          webhookGone: 'Adres webhooka Portainera jest już nieważny (Portainer nadaje nowy, gdy stos zostanie utworzony ponownie albo jego webhook zostanie wyłączony i włączony). Utwórz nowy webhook w Portainerze albo usuń go w Admin → Ustawienia → Aktualizacje i użyj zamiast tego ustawień API.',
           noTarget: 'Nic nie uruchomiono: najpierw wybierz wersję dla kanału „Stała wersja”.',
         },
         detail: ' (HTTP {status}, krok {step})',
@@ -317,6 +319,7 @@ const pl: Translation<typeof de> = {
         foreign_stack: 'Tym stosem zarządza Portainer (lub inne narzędzie), dlatego aktualizator go nie odtwarza. Ustaw webhook Portainera w Admin → Ustawienia → Aktualizacje albo zaktualizuj stos w Portainerze.',
         portainer: 'Portainer odrzucił ponowne wdrożenie. Sprawdź webhook lub API w Admin → Ustawienia → Aktualizacje.',
         portainer_unreachable: 'Portainer jest nieosiągalny.',
+        webhook_gone: 'Adres webhooka Portainera jest już nieważny (Portainer nadaje nowy, gdy stos zostanie utworzony ponownie albo jego webhook zostanie wyłączony i włączony). Utwórz nowy webhook w Portainerze albo usuń go w Admin → Ustawienia → Aktualizacje i użyj zamiast tego ustawień API.',
       },
       failReason: {
         verify_failed: 'sprawdzanie podpisów nie powiodło się, nic nie zrestartowano',
@@ -334,7 +337,7 @@ const pl: Translation<typeof de> = {
         unknown: 'nieznany błąd',
       },
       foreign: {
-        portainer: 'Tym stosem zarządza Portainer. „Aktualizuj teraz” wdraża go ponownie przez Portainer (webhook lub API z Admin → Ustawienia → Aktualizacje). Aktualizator nigdy sam nie odtwarza stosu Portainera, dlatego powrót do poprzedniej wersji nie jest tu dostępny.',
+        portainer: 'Tym stosem zarządza Portainer. „Aktualizuj teraz” wdraża go ponownie przez Portainer (API lub webhook z Admin → Ustawienia → Aktualizacje). Aktualizator nigdy sam nie odtwarza stosu Portainera, dlatego powrót do poprzedniej wersji nie jest tu dostępny.',
         manual: 'Tym stosem zarządza Portainer (lub inne narzędzie), dlatego aktualizator go nie aktualizuje: odtworzenie go stąd usunęłoby własne zmienne stosu (np. BIND_ADDR). Ustaw webhook Portainera w Admin → Ustawienia → Aktualizacje albo zaktualizuj stos w Portainerze. Dla API: PORTAINER_URL, PORTAINER_API_KEY i PORTAINER_STACK_ID (liczba po „id=” w adresie stosu w Portainerze).',
         started: 'Portainer ponownie wdraża stos. FriendFlix za chwilę uruchomi się ponownie.',
         workdir: 'Ten stos uruchomiono z {dir}, ale aktualizator widzi {projectDir}, dlatego go nie odtwarza (brakowałoby mu pliku .env z tego katalogu). Wpisz UPDATER_PROJECT_DIR={dir} do .env w {dir} i uruchom tam raz docker compose up -d.',

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { get } from 'svelte/store';
-import { permsFrom } from './perms';
-import { ALL_CAPS, ALL_FEATURES, capsFrom, features, featuresFrom, featuresOfMe, linkShown, segmentShown, serverCaps } from './capabilities';
+import { ALL_PERMS, permsFrom } from './perms';
+import { ALL_AREAS, ALL_CAPS, ALL_FEATURES, areas, areasFrom, capsFrom, features, featuresFrom, featuresOfMe, linkShown, segmentShown, serverCaps } from './capabilities';
 
 describe('server capabilities', () => {
   it('default: everything supported (before /api/me, older backends)', () => {
@@ -80,6 +80,30 @@ describe('rights and links', () => {
   it('the party link needs the party right; without perms it shows', () => {
     expect(linkShown(ALL_CAPS, '/party')).toBe(true);
     expect(linkShown(ALL_CAPS, '/party', ALL_FEATURES, permsFrom({ party: false }))).toBe(false);
-    expect(linkShown(ALL_CAPS, '/vote', ALL_FEATURES, permsFrom({ party: false }))).toBe(true);
+    expect(linkShown(ALL_CAPS, '/vote', ALL_FEATURES, permsFrom({ party: false }))).toBe(false); // votes are part of Gemeinsam (roles redesign §4.7)
+  });
+});
+
+describe('areas (roles redesign §4.6, §6)', () => {
+  it('areasFrom: missing or not a boolean = on (an older backend sends nothing)', () => {
+    expect(areasFrom(undefined)).toEqual({ library: true, livetv: true, requests: true, together: true, downloads: true });
+    expect(areasFrom(undefined)).toEqual(ALL_AREAS);
+    expect(areasFrom('x')).toEqual(ALL_AREAS);
+    expect(areasFrom({ library: false })).toEqual({ ...ALL_AREAS, library: false });
+    expect(areasFrom({ library: 0, livetv: 'no', downloads: false })).toEqual({ ...ALL_AREAS, downloads: false });
+    expect(get(areas)).toEqual(ALL_AREAS);
+  });
+  it('library pages need the Mediathek, upcoming needs Wünsche, parties and votes need Gemeinsam', () => {
+    const noLib = { ...ALL_AREAS, library: false };
+    for (const href of ['/tonight', '/favorites', '/lists', '/history', '/match', '/collections', '/now', '/calendar', '/stats', '/downloads', '/watchlist', '/requests']) {
+      expect(linkShown(ALL_CAPS, href, ALL_FEATURES, ALL_PERMS), href).toBe(true);
+      expect(linkShown(ALL_CAPS, href, ALL_FEATURES, ALL_PERMS, noLib), href).toBe(false);
+    }
+    expect(linkShown(ALL_CAPS, '/upcoming', ALL_FEATURES, ALL_PERMS, { ...ALL_AREAS, requests: false })).toBe(false);
+    // /requests keeps today's reminders without Wünsche (no request service, or no right): only the Mediathek decides (spec §6)
+    expect(linkShown(ALL_CAPS, '/requests', ALL_FEATURES, ALL_PERMS, { ...ALL_AREAS, requests: false })).toBe(true);
+    expect(linkShown(ALL_CAPS, '/party', ALL_FEATURES, ALL_PERMS, { ...ALL_AREAS, together: false })).toBe(false);
+    expect(linkShown(ALL_CAPS, '/vote', ALL_FEATURES, ALL_PERMS, { ...ALL_AREAS, together: false })).toBe(false);
+    for (const href of ['/settings', '/devices', '/remote', '/me']) expect(linkShown(ALL_CAPS, href, ALL_FEATURES, ALL_PERMS, { library: false, livetv: false, requests: false, together: false, downloads: false }), href).toBe(true);
   });
 });

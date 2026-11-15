@@ -293,6 +293,7 @@ const dict: Translation<typeof de> = {
     livetvNone: 'None',
     livetvRemove: 'Cancel the exception for {name}',
     livetvSaved: 'Exceptions of {name} saved.',
+    libsNoneLine: 'Without a library {name} sees only live TV.',
   },
   roles: {
     intro: 'What each role may do. Changes only apply after “Save” and are also applied to existing accounts.',
@@ -412,7 +413,8 @@ const dict: Translation<typeof de> = {
     errRange: 'Please enter a number from {min} to {max}.',
     cellTitle: '{role} · {field}',
     cellNameUnsaved: '{role}, {field}: {value}, not saved',
-    libsMin: 'At least one library stays shared.',
+    libsNone: 'No library',
+    libsNoneHint: 'No library – the person sees only live TV.',
     retryDone: { one: '{n} failed role saved.', other: '{n} failed roles saved.' },
     fLabel: 'Name',
     fInvitable: 'Offered for invites',

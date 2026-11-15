@@ -43,11 +43,12 @@ for (const denied of [true, false]) {
       else await expect(page.getByRole('button', { name: 'Kommentare' }).first()).toBeVisible();
     });
 
-    test('/me: the Watch-Party link', async ({ page, api }) => {
+    test('/me: the Watch-Party and Filmabend links (votes need the party right too)', async ({ page, api }) => {
       if (denied) api.perms = { ...DENIED };
       await page.goto('/me');
-      await expect(page.getByRole('link', { name: 'Filmabend' }).first()).toBeVisible();
+      await expect(page.getByRole('link', { name: 'Heute Abend' }).first()).toBeVisible();
       await expect(page.getByRole('link', { name: 'Watch-Party' })).toHaveCount(denied ? 0 : 1);
+      await expect(page.getByRole('link', { name: 'Filmabend' })).toHaveCount(denied ? 0 : 1);
     });
 
     test('/party', async ({ page, api }) => {

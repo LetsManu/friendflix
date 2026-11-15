@@ -30,6 +30,14 @@
   import { rowScrollTarget } from '#lib/tv/rowScroll';
   import TvCategoryRow from '#lib/tv/TvCategoryRow.svelte';
   import TvFocusTile from '#lib/tv/TvFocusTile.svelte';
+  import { areas, features } from '#lib/capabilities';
+  import NoAccess from '#lib/home/NoAccess.svelte';
+
+  /**
+   * A person without libraries (roles redesign §3.2): the layout sends them to Live TV; with no channel either, this page says
+   * nothing is shared yet and asks the library for nothing (the layout renders it only once /api/me is known, gate.ts canRenderEarly).
+   */
+  const withLibrary = () => get(areas).library;
 
   let hero: Item | null = null, heroPlay = '';
   /** the billboard title has been answered (it may be null): with recs and latest, what the phone carousel waits for */
@@ -107,6 +115,7 @@
 
   let homeAnswered: Promise<unknown> = Promise.resolve();
   onMount(() => {
+    if (!withLibrary()) return;
     // 1. the whole first screen (billboard, rows, hubs, themed lists) in ONE request; stale data from the last visit shows at once.
     //    Parts the server could not build are loaded the old way, one request each.
     const firstScreen = swrLoad(homeCache, HOME_KEY(), () => retry(() => api('/api/home') as Promise<HomeResponse<Item>>, 2, 800, (e) => e instanceof ApiError && e.status >= 400 && e.status < 500), applyHome, ALWAYS, () => { for (const n of Object.keys(loaders) as HomePart[]) loaders[n](); })
@@ -148,7 +157,7 @@
   }
   let gone = false;
   // asked only after /api/home has answered (the first screen keeps its 5-call budget); the card waits for the billboard anyway
-  onMount(() => { void homeAnswered.then(() => { if (!gone) void refreshHandoff(); }); });
+  onMount(() => { if (withLibrary()) void homeAnswered.then(() => { if (!gone) void refreshHandoff(); }); });
   onDestroy(() => { gone = true; handoffSeq++; }); // an answer after leaving is dropped
   /** the offer unless this device dismissed it */
   $: offer = handoff && handoff.id !== dismissedId && !isDismissed(handoff.id) ? handoff : null;
@@ -187,6 +196,7 @@
     if (!keyPressed && free && get(tvFocus) === null) document.querySelector<HTMLElement>('section.tile [data-handoff] a[href]')?.focus({ preventScroll: true });
   }
   onMount(() => {
+    if (!withLibrary()) return;
     rowsAt = Date.now(); // the first screen just loaded them
     document.addEventListener('visibilitychange', refreshProgress);
     window.addEventListener('pageshow', onPageShow);
@@ -304,6 +314,9 @@
 </script>
 
 <svelte:head><title>{$t('common.appName')}</title></svelte:head>
+{#if !$areas.library}
+  {#if !$features.livetv}<NoAccess />{/if}<!-- (with Live TV the layout is on its way to /live) -->
+{:else}
 {#if tv}
   <TvFocusTile {hero} {heroRank}>
     <HandoffCard slot="handoff" handoff={tvOffer} layout="tv" tvVisible={$tvFocus === null} {focusTile} on:dismiss={onHandoffDismiss} />
@@ -363,6 +376,7 @@
     {#if i === 0 && !homeOrder && more[2]}<Row title={$t('together.because', { name: more[2].because.name })} items={more[2].items} reco={{ row: 'because_more', engine: more[2].engine ?? becauseEngine }} />{/if}
   {/each}
 </div>
+{/if}
 
 <style>.hoffhost { position: relative; height: 0; }
   .rows { position: relative; z-index: 2; padding-bottom: 5rem; }

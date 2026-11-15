@@ -203,6 +203,23 @@ test.describe('admin user detail (desktop)', () => {
     await expect(libs.getByText('nicht mehr vorhanden')).toHaveCount(0);
   });
 
+  test('override libraries none shows the Live-TV-only line', async ({ page, api }) => {
+    api.admin.users.find((u) => u.id === BEN)!.ov = { libraries: ['Filme'] };
+    await page.goto(`/admin/users/${BEN}?tab=rights`);
+    const libs = rightsPanel(page).getByRole('listitem').filter({ has: page.getByRole('group', { name: 'Bibliotheken' }) });
+    const line = libs.locator('p.min');
+    const at = await line.boundingBox();
+    await expect(libs.getByText('Ohne Bibliothek sieht Ben Test nur Live-TV.')).toHaveCount(0);
+    await libs.getByRole('checkbox', { name: 'Filme' }).uncheck();
+    await expect(libs.getByText('Ohne Bibliothek sieht Ben Test nur Live-TV.')).toBeVisible();
+    expect(await line.boundingBox()).toEqual(at); // the reserved line: nothing moves
+    await saveViaReview(page);
+    await expect(toasts(page).getByText('Rechte von Ben Test gespeichert.')).toBeVisible();
+    expect(rightsPuts(api, BEN)).toEqual([{ overrides: { libraries: [] } }]);
+    // stored: the line stays for the stored empty list
+    await expect(libs.getByText('Ohne Bibliothek sieht Ben Test nur Live-TV.')).toBeVisible();
+  });
+
   test('policy_partial: the rights are stored, the bar offers Erneut anwenden (repair)', async ({ page, api }) => {
     api.admin.matrix.policyPartial = true;
     await page.goto(`/admin/users/${ANNA}?tab=rights`);

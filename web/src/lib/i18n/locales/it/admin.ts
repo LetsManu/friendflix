@@ -169,6 +169,7 @@ const it: Translation<typeof de> = {
     notConfigured: 'Portainer non è configurato.',
     unreachable: 'Portainer non raggiungibile{detail}. Dettagli nel log del backend.',
     portainerError: 'Errore di Portainer{detail}. Dettagli nel log del backend.',
+    webhookGone: 'L’indirizzo del webhook di Portainer non è più valido (Portainer ne assegna uno nuovo quando lo stack viene ricreato o il suo webhook viene disattivato e riattivato). Crea un nuovo webhook in Portainer, oppure rimuovilo in Admin → Impostazioni → Aggiornamenti e usa invece le impostazioni dell’API.',
     httpDetail: ' (HTTP {status})',
     atStep: ' durante {step}',
     intro: 'Portainer si aggiorna automaticamente ogni 12 ore. Con il pulsante si può farlo subito.',
@@ -282,6 +283,7 @@ const it: Translation<typeof de> = {
           failed: 'Portainer ha rifiutato il nuovo deploy{detail}. Controlla lo stack in Portainer e le impostazioni di Portainer in Admin → Impostazioni → Aggiornamenti.',
           timeout: 'Nessun cambiamento in 15 minuti ({at}). Controlla lo stack e i suoi log in Portainer.',
           unreachable: 'Portainer non era raggiungibile{code}. Controlla PORTAINER_URL in Admin → Impostazioni → Aggiornamenti: il backend deve poter raggiungere quell’indirizzo.',
+          webhookGone: 'L’indirizzo del webhook di Portainer non è più valido (Portainer ne assegna uno nuovo quando lo stack viene ricreato o il suo webhook viene disattivato e riattivato). Crea un nuovo webhook in Portainer, oppure rimuovilo in Admin → Impostazioni → Aggiornamenti e usa invece le impostazioni dell’API.',
           noTarget: 'Non è stato avviato nulla: scegli prima una versione per il canale «Versione fissa».',
         },
         detail: ' (HTTP {status}, passo {step})',
@@ -297,6 +299,7 @@ const it: Translation<typeof de> = {
         foreign_stack: 'Questo stack è gestito da Portainer (o da un altro strumento), quindi l’updater non lo ricrea. Imposta il webhook di Portainer in Admin → Impostazioni → Aggiornamenti oppure aggiorna lo stack in Portainer.',
         portainer: 'Portainer ha rifiutato il nuovo deploy. Controlla webhook o API in Admin → Impostazioni → Aggiornamenti.',
         portainer_unreachable: 'Portainer non è raggiungibile.',
+        webhook_gone: 'L’indirizzo del webhook di Portainer non è più valido (Portainer ne assegna uno nuovo quando lo stack viene ricreato o il suo webhook viene disattivato e riattivato). Crea un nuovo webhook in Portainer, oppure rimuovilo in Admin → Impostazioni → Aggiornamenti e usa invece le impostazioni dell’API.',
       },
       failReason: {
         verify_failed: 'verifica delle firme non riuscita, nulla è stato riavviato',
@@ -314,7 +317,7 @@ const it: Translation<typeof de> = {
         unknown: 'errore sconosciuto',
       },
       foreign: {
-        portainer: 'Questo stack è gestito da Portainer. «Aggiorna ora» lo ridistribuisce tramite Portainer (webhook o API da Admin → Impostazioni → Aggiornamenti). L’updater non ricrea mai da solo uno stack di Portainer, quindi tornare alla versione precedente non è disponibile qui.',
+        portainer: 'Questo stack è gestito da Portainer. «Aggiorna ora» lo ridistribuisce tramite Portainer (API o webhook da Admin → Impostazioni → Aggiornamenti). L’updater non ricrea mai da solo uno stack di Portainer, quindi tornare alla versione precedente non è disponibile qui.',
         manual: 'Questo stack è gestito da Portainer (o da un altro strumento), quindi l’updater non lo aggiorna: ricrearlo da qui farebbe perdere le variabili proprie dello stack (ad es. BIND_ADDR). Imposta il webhook di Portainer in Admin → Impostazioni → Aggiornamenti oppure aggiorna lo stack in Portainer. Per l’API: PORTAINER_URL, PORTAINER_API_KEY e PORTAINER_STACK_ID (il numero dopo «id=» nell’indirizzo dello stack in Portainer).',
         started: 'Portainer sta ridistribuendo lo stack. FriendFlix si riavvia tra un attimo.',
         workdir: 'Questo stack è stato avviato da {dir}, ma l’updater vede {projectDir}, quindi non lo ricrea (gli mancherebbe il .env di quella cartella). Scrivi UPDATER_PROJECT_DIR={dir} nel .env in {dir} ed esegui lì una volta docker compose up -d.',

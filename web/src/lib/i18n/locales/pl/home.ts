@@ -319,5 +319,9 @@ const pl: Translation<typeof de> = {
     already: 'Już zgłoszono',
     wishFailed: 'Nie udało się zgłosić życzenia.',
   },
+  noAccess: {
+    title: 'Nic nie zostało ci jeszcze udostępnione',
+    body: 'Zapytaj osobę, która prowadzi FriendFlix.',
+  },
 };
 export default pl;

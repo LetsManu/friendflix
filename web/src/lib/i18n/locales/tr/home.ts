@@ -299,5 +299,9 @@ const tr: Translation<typeof de> = {
     already: 'Zaten istendi',
     wishFailed: 'İstek gönderilemedi.',
   },
+  noAccess: {
+    title: 'Henüz seninle hiçbir şey paylaşılmadı',
+    body: 'FriendFlix’i yöneten kişiye sor.',
+  },
 };
 export default tr;

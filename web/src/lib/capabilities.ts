@@ -86,12 +86,36 @@ export const features = writable<Features>(featuresFrom(undefined));
  */
 export const featuresKnown = writable(false);
 
+/**
+ * The parts of the app the active profile may use (`/api/me` -> `areas`, roles redesign §4.6): Mediathek, Live-TV, Wünsche,
+ * Gemeinsam, Downloads. Wünsche, Gemeinsam and Downloads already come ANDed with the Mediathek. Until /api/me answers - and for
+ * older backends that send nothing - every area counts as on (the boot hint keeps a missing Mediathek, see gate.ts).
+ */
+export type AreaKey = 'library' | 'livetv' | 'requests' | 'together' | 'downloads';
+export type Areas = Record<AreaKey, boolean>;
+export const ALL_AREAS: Areas = { library: true, livetv: true, requests: true, together: true, downloads: true };
+/** Lenient parse: only an explicit false turns an area off. */
+export function areasFrom(raw: unknown): Areas {
+  const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  return { library: r.library !== false, livetv: r.livetv !== false, requests: r.requests !== false, together: r.together !== false, downloads: r.downloads !== false };
+}
+export const areas = writable<Areas>(areasFrom(undefined));
+
 /** pages that only make sense with a capability or a feature (menus, footer, admin nav): href -> required flag */
 const NEEDS: Record<string, Exclude<keyof ServerCaps, 'segments'>> = { '/calendar': 'upcoming' };
 const FEATURE_NEEDS: Record<string, keyof Features> = { '/upcoming': 'requests', '/admin/requests': 'requests' };
-/** ... or a right of the acting profile (lib/perms.ts) */
-const PERM_NEEDS: Record<string, PermKey> = { '/party': 'party' };
-export const linkShown = (c: ServerCaps, href: string, f: Features = ALL_FEATURES, p: Perms = ALL_PERMS) => {
-  const k = NEEDS[href], fk = FEATURE_NEEDS[href], pk = PERM_NEEDS[href];
-  return (!k || c[k]) && (!fk || f[fk]) && (!pk || p[pk]);
+/** ... or a right of the acting profile (lib/perms.ts); votes are part of the watch parties (`/api/polls` needs `party`) */
+const PERM_NEEDS: Record<string, PermKey> = { '/party': 'party', '/vote': 'party' };
+/**
+ * ... or an area (roles redesign §6): the library pages need the Mediathek. `/requests` keeps its reminders without a request
+ * service (FEATURE_NEEDS leaves it out), so it needs the Mediathek, not Wünsche.
+ */
+const AREA_NEEDS: Record<string, AreaKey> = {
+  '/tonight': 'library', '/favorites': 'library', '/lists': 'library', '/history': 'library', '/match': 'library', '/collections': 'library', '/now': 'library',
+  '/calendar': 'library', '/stats': 'library', '/downloads': 'library', '/watchlist': 'library', '/requests': 'library',
+  '/upcoming': 'requests', '/party': 'together', '/vote': 'together',
+};
+export const linkShown = (c: ServerCaps, href: string, f: Features = ALL_FEATURES, p: Perms = ALL_PERMS, a: Areas = ALL_AREAS) => {
+  const k = NEEDS[href], fk = FEATURE_NEEDS[href], pk = PERM_NEEDS[href], ak = AREA_NEEDS[href];
+  return (!k || c[k]) && (!fk || f[fk]) && (!pk || p[pk]) && (!ak || a[ak]);
 };

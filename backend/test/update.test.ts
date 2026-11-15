@@ -5,6 +5,7 @@ import type { Ctx } from '../src/ctx.js';
 import { readFileSync } from 'node:fs';
 import { makeEnv, type TestEnv } from './helpers.js';
 import { REDEPLOY_KEY, REDEPLOY_LOCK } from '../src/redeploy.js';
+import { portainerMode, portainerSetup } from '../src/updates.js';
 
 const VERSION_JSON = JSON.parse(readFileSync(new URL('../../version.json', import.meta.url), 'utf8')) as { version: string; codename: string };
 
@@ -187,11 +188,49 @@ describe('admin update', () => {
 
   it('portainer error -> 502 with status only', async () => {
     const { post } = await setup({ PORTAINER_WEBHOOK_URL: HOOK });
+    (env.ctx.fetchImpl as any) = vi.fn(async () => new Response(null, { status: 500 }));
+    const r = await post();
+    expect(r.statusCode).toBe(502);
+    expect(r.json()).toEqual({ error: 'portainer', status: 500, step: 'webhook' });
+    expect(r.body).not.toContain('secret-token');
+  });
+
+  it('a webhook answering 404 (the token is stale: Portainer issues a new one when the stack is recreated) -> its own code, no URL', async () => {
+    const { post } = await setup({ PORTAINER_WEBHOOK_URL: HOOK });
     (env.ctx.fetchImpl as any) = vi.fn(async () => new Response(null, { status: 404 }));
     const r = await post();
     expect(r.statusCode).toBe(502);
-    expect(r.json()).toEqual({ error: 'portainer', status: 404, step: 'webhook' });
+    expect(r.json()).toEqual({ error: 'webhook_gone', status: 404, step: 'webhook' });
     expect(r.body).not.toContain('secret-token');
+    const rec = JSON.parse((await env.ctx.kv.get(REDEPLOY_KEY))!);
+    expect(rec).toMatchObject({ final: 'failed', error: 'webhook_gone', step: 'webhook', status: 404 });
+  });
+
+  it('an API 404 (unknown stack) stays a plain portainer refusal', async () => {
+    const { post } = await setup({ PORTAINER_URL: 'https://portainer.example.com', PORTAINER_API_KEY: KEY, PORTAINER_STACK_ID: '7' });
+    (env.ctx.fetchImpl as any) = vi.fn(async () => new Response(null, { status: 404 }));
+    const r = await post();
+    expect(r.json()).toEqual({ error: 'portainer', status: 404, step: 'stack' });
+  });
+
+  it('portainerMode: the API way wins when it is complete, the webhook only stands alone', async () => {
+    await setup();
+    const api = { PORTAINER_URL: 'https://portainer.example.com', PORTAINER_API_KEY: KEY, PORTAINER_STACK_ID: '7' };
+    const at = (c: Record<string, unknown>) => ({ ...env.ctx, cfg: { ...env.ctx.cfg, PORTAINER_WEBHOOK_URL: '', PORTAINER_URL: '', PORTAINER_API_KEY: '', PORTAINER_STACK_ID: '', ...c } }) as Ctx;
+    expect(portainerMode(at({ ...api, PORTAINER_WEBHOOK_URL: HOOK }))).toBe('api');
+    expect(portainerSetup(at({ ...api, PORTAINER_WEBHOOK_URL: HOOK }))).toEqual({ configured: true, mode: 'api', missing: [] });
+    expect(portainerMode(at({ PORTAINER_WEBHOOK_URL: HOOK }))).toBe('webhook');
+    expect(portainerMode(at({ PORTAINER_WEBHOOK_URL: HOOK, PORTAINER_URL: api.PORTAINER_URL }))).toBe('webhook'); // API only in part
+    expect(portainerMode(at(api))).toBe('api');
+    expect(portainerMode(at({}))).toBeNull();
+  });
+
+  it('both ways set: Update now goes through the API, the (stale) webhook is never called', async () => {
+    const { post } = await setup({ PORTAINER_WEBHOOK_URL: HOOK, PORTAINER_URL: 'https://portainer.example.com', PORTAINER_API_KEY: KEY, PORTAINER_STACK_ID: '7' });
+    const r = await post();
+    expect(r.statusCode).toBe(202);
+    expect(r.json()).toMatchObject({ ok: true, mode: 'api' });
+    expect(seen.some((s) => s.url.includes('/webhooks/'))).toBe(false);
   });
 
   it('unreachable portainer -> 502 with the errno code only, never the URL', async () => {
