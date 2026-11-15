@@ -44,7 +44,7 @@
   import { railKey } from '#lib/tv/rail';
   import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
   import { dialogKeys } from '#lib/actions';
-  import { areaRedirect, canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintLibrary, hintOf, hintPerms, kidsRedirect, needsProfileGate, needsWelcome, readActive, readHint, readPicked, readReloading, welcomeHref, writeActive, writeHint } from '#lib/gate';
+  import { areaRedirect, canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintLibrary, hintOf, hintPerms, homePath, kidsHomeOf, kidsRedirect, needsProfileGate, needsWelcome, readActive, readHint, readPicked, readReloading, welcomeHref, writeActive, writeHint } from '#lib/gate';
   import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
   import TabBar from '#lib/phone/TabBar.svelte';
   import { dragClose } from '#lib/phone/dragClose';
@@ -104,6 +104,17 @@
     perms.set(hp);
     if (!hp.requests) features.set(featuresFrom({ requests: false }));
   }
+  // a live-only first paint has its Live tab and its home (/live) at once (roles redesign §6)
+  if (bootHint?.livetv) features.update((f) => ({ ...f, livetv: true }));
+  /** boot() has the /api/me answer (or gave up): until then the hint's areas are a guess */
+  let meDone = false;
+  /**
+   * The hint guesses a library: the library tabs and controls are laid out but unseen until /api/me confirms it, then fade in
+   * (opacity only). A stale guess (the libraries were taken away since) removes them without them ever showing (roles redesign §6).
+   */
+  $: libHeld = !meDone && $areas.library;
+  const libFade = early && hintLibrary(bootHint);
+  $: libIn = libFade && !libHeld;
   let earlyLang = !(early && bootHint?.lang);
   if (early && bootHint?.lang) void setLocale(bootHint.lang).finally(() => (earlyLang = true));
   let pageReady = false; // sticky: a later language load (ready = false for a moment) must not unmount the page
@@ -124,7 +135,7 @@
   }
   $: canDownload = Boolean(me?.downloads?.allowed) && $areas.downloads; // downloads are library items (roles redesign §4.6)
   /** where "home" is: the start page, or Live TV for a person without libraries (the start page would only send there) */
-  $: home = $areas.library || !$features.livetv ? '/' : '/live';
+  $: home = homePath($areas.library, $features.livetv);
   $: multi = (me?.profileCount ?? 0) > 1;
   $: who = me ? (me.profile?.name ?? me.name) : '';
   $: faceStyle = me?.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined;
@@ -242,7 +253,7 @@
   // a person without libraries stays on Live TV and the account pages, kids profiles stay on kids routes, new profiles go through
   // /welcome once (all also checked in boot() before the page mounts)
   $: if (me && !pending && !publicPage) {
-    const to = areaRedirect(me, path, $features.livetv) ?? kidsRedirect(me, path) ?? (needsWelcome(me, path) ? welcomeHref(path + $page.url.search, kidsHome(me)) : null);
+    const to = areaRedirect(me, path, $features.livetv) ?? kidsRedirect(me, path) ?? (needsWelcome(me, path) ? welcomeHref(path + $page.url.search, kidsHomeOf(me)) : null);
     if (to) void goto(to, { replaceState: true });
   }
   $: if (typeof document !== 'undefined') {
@@ -328,13 +339,13 @@
       e.preventDefault();
       // top-level pages: Back opens the side bar first; with the bar open it closes it (on home: leaves the LG app)
       if (showRail && !$page.state.modalId && (railOpen || topLevel)) {
-        const r = railKey({ open: railOpen }, { key: 'back', atLeftEdge: false, inRail: railOpen, onHome: path === '/' });
+        const r = railKey({ open: railOpen }, { key: 'back', atLeftEdge: false, inRail: railOpen, onHome: path === home });
         railOpen = r.state.open;
-        if (r.action === 'exitPrompt' && isTvApp() && shouldExitOnBack({ path, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitTvApp();
+        if (r.action === 'exitPrompt' && isTvApp() && shouldExitOnBack({ path, home, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitTvApp();
         return;
       }
-      if (isTvApp() && shouldExitOnBack({ path, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitTvApp(); // Back on home leaves the TV app
-      else if (path !== '/' || $page.state.modalId) history.back();
+      if (isTvApp() && shouldExitOnBack({ path, home, modalId: $page.state.modalId, dropdownOpen: false, editable: false })) exitTvApp(); // Back on home leaves the TV app
+      else if (path !== home || $page.state.modalId) history.back();
     }
   }
 
@@ -345,10 +356,11 @@
     else window.dispatchEvent(new CustomEvent('ff-remote', { detail: m })); // the player listens
   }
 
-  /** a kids profile whose home is the (library-based) kids home */
-  const kidsHome = (m: Me) => Boolean(m.kids) && m.areas?.library !== false;
   // a person without libraries: an in-app navigation to a library page (a link, the phone remote's "home", a notification) goes to
-  // Live TV instead, before that page mounts and asks for library data (roles redesign §6; deep links are boot()'s job)
+  // Live TV instead, before that page mounts and asks for library data (roles redesign §6; deep links are boot()'s job). Not for
+  // Back / Forward: cancelling a history move puts the browser back on the entry it left, so Back would stop working on a stale
+  // library entry; the reactive guard above replaces such an entry instead. SvelteKit does not tell whether a `goto` asked to
+  // replace: the redirect is a new entry (the page that was left stays one Back away).
   beforeNavigate((nav) => {
     if (!me || pending || nav.willUnload || !nav.to || (nav.type !== 'link' && nav.type !== 'goto')) return;
     const to = areaRedirect(me, nav.to.url.pathname, get(features).livetv);
@@ -778,6 +790,8 @@
         perms.set(permsFrom(m.perms));
         features.set(featuresOfMe(m));
         areas.set(areasFrom(m.areas));
+        meDone = true;
+        const areaTo = areaRedirect(m, location.pathname, get(features).livetv);
         featuresKnown.set(true);
         writeHint(hintOf(m, readHint())); writeActive(m.profile?.id); clearReloadFlag(); // the profile-switch reload is done: a later reload may render early again
         if (m.profile?.id) void setMeta('lastProfileId', m.profile.id).catch(() => undefined); // the offline hub shows the last active profile's downloads
@@ -789,9 +803,10 @@
         // a kids profile never mounts a grown-up page; a new profile starts with /welcome (after the language question, which
         // is an overlay above it)
         // a person without libraries only gets Live TV and the account pages (roles redesign §6; before the kids rule)
-        else if (!pending && areaRedirect(m, location.pathname, get(features).livetv)) await goto(areaRedirect(m, location.pathname, get(features).livetv)!, { replaceState: true });
+        // (a new profile goes straight on to /welcome, with the redirect target as its next page)
+        else if (!pending && areaTo) await goto(needsWelcome(m, areaTo) ? welcomeHref(areaTo, kidsHomeOf(m)) : areaTo, { replaceState: true });
         else if (!pending && kidsRedirect(m, location.pathname)) await goto(kidsRedirect(m, location.pathname)!, { replaceState: true });
-        else if (!pending && needsWelcome(m, location.pathname)) await goto(welcomeHref(location.pathname + location.search, kidsHome(m)), { replaceState: true });
+        else if (!pending && needsWelcome(m, location.pathname)) await goto(welcomeHref(location.pathname + location.search, kidsHomeOf(m)), { replaceState: true });
         // the server language is active before the page mounts (an early-rendered page only gets the $t texts updated;
         // older servers send no language: keep the remembered one)
         if (m.language) await setLocale(m.language);
@@ -815,6 +830,7 @@
         }
         if (m.tv && !pending) stops.push(startTvLink(onTvCommand, (code) => { if (code === 4401) location.href = '/tv'; else if (code === 4000) replaced = true; }));
       } catch (e) {
+        meDone = true; // no answer: what the hint guessed shows (nothing would confirm it)
         // a new install: the backend answers 503 setup_required until the wizard is done (spec Part E1); api() redirects to login on 401
         if (e instanceof ApiError && e.status === 503 && e.body?.error === 'setup_required') await goto('/setup', { replaceState: true });
       }
@@ -836,25 +852,25 @@
       <a class="klogo" href={$areas.library ? '/kids' : home} aria-label={$t('kids.nav.homeLink')}><Logo wordmark={!$mobile} size={$mobile ? 30 : 32} label="" /> <span class="kbadge">{$t('kids.badge')}</span></a>
       <span class="sp"></span>
       <nav class="knav" aria-label={$t('kids.nav.label')}>
-        {#if $areas.library}<a class="kbtn" href="/kids/search" aria-label={$t('kids.nav.search')} aria-current={path.startsWith('/kids/search') ? 'page' : undefined}><Icon name="search" size={26} /></a>{/if}
+        {#if $areas.library}<a class="kbtn" class:lib-held={libHeld} class:lib-in={libIn} href="/kids/search" aria-label={$t('kids.nav.search')} aria-current={path.startsWith('/kids/search') ? 'page' : undefined}><Icon name="search" size={26} /></a>{/if}
         {#if $features.livetv}<a class="kbtn" href="/live" aria-label={$t('kids.nav.live')} aria-current={path.startsWith('/live') ? 'page' : undefined}><Icon name="tv" size={26} /></a>{/if}
         <a class="kav" href="/profiles" aria-label={$t('kids.nav.switchProfile', { name: who })}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span></a>
       </nav>
     </header>
   {:else if !watchPage && !profilesPage}
     {#if tv}
-      <TvRail {path} {who} {faceStyle} bind:open={railOpen} />
+      <TvRail {path} {home} {who} {faceStyle} bind:open={railOpen} />
     {:else if $mobile}
       <header class="nav m" class:solid={mSolid || !heroPage} class:chips class:tuck={chips && mTucked}>
         <span class="mbg" aria-hidden="true"></span>
         <div class="mrow">
           <a class="mlogo" href={home} aria-label={$t('shell.nav.homeLink')} aria-current={path === home ? 'page' : undefined}><Logo size={28} label="" /><span class="wm" aria-hidden="true">FriendFlix</span></a>
           <span class="sp">{#if castHeader && $barSess}<button type="button" class="icon-btn castind" aria-label={$t('player.castBar.castingTo', { device: $barSess.device })} on:click={openCastRemote}><Icon name="cast" size={24} /></button>{/if}</span>
-          {#if $areas.library}<a class="icon-btn" href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>{/if}
+          {#if $areas.library}<a class="icon-btn" class:lib-held={libHeld} class:lib-in={libIn} href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>{/if}
           <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
         </div>
         {#if chips}
-          <nav class="chipbar" class:tucked={mTucked} aria-label={$t('shell.cats.title')} inert={mTucked || undefined}>
+          <nav class="chipbar" class:tucked={mTucked} class:lib-held={libHeld} class:lib-in={libIn} aria-label={$t('shell.cats.title')} inert={mTucked || undefined}>
             <a class="chip" href="/browse/series" class:on={path.startsWith('/browse/series')} aria-current={path.startsWith('/browse/series') ? 'page' : undefined}>{$t('shell.nav.series')}</a>
             <a class="chip" href="/browse/movies" class:on={path.startsWith('/browse/movies')} aria-current={path.startsWith('/browse/movies') ? 'page' : undefined}>{$t('shell.nav.movies')}</a>
             {#if $features.livetv}<a class="chip" href="/live" class:on={path.startsWith('/live')} aria-current={path.startsWith('/live') ? 'page' : undefined}>{$t('shell.nav.live')}</a>{/if}
@@ -863,9 +879,9 @@
         {/if}
       </header>
     {:else if desk}
-      <DeskBar bind:this={deskBar} {path} {home} {heroPage} {me} {who} {faceStyle} {multi} {admin} {canDownload} {lgApp} {here} {notes} onHelp={() => (help = true)} />
+      <DeskBar bind:this={deskBar} {path} {home} {heroPage} {me} {who} {faceStyle} {multi} {admin} {canDownload} {lgApp} {here} {notes} held={libHeld} fadeIn={libIn} onHelp={() => (help = true)} />
     {/if}
-    <TabBar {path} {canDownload} />
+    <TabBar {path} {canDownload} held={libHeld} fadeIn={libIn} />
     {#if (catOpen || catLeaving) && $mobile}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div class="catdim" class:out={catLeaving} on:click={() => closeCats()}></div>
@@ -913,7 +929,7 @@
       {#key $pageEpoch}<slot />{/key}
     {/if}
   </main>
-  {#if !watchPage && !profilesPage && !tv && !pending && !$mobile}<Footer onHelp={() => (help = true)} kids={kidsUi} />{/if}
+  {#if !watchPage && !profilesPage && !tv && !pending && !$mobile}<Footer onHelp={() => (help = true)} kids={kidsUi} held={libHeld} fadeIn={libIn} />{/if}
   {#if langAsk && path !== '/profiles'}<!-- also above /welcome: the language comes first -->
     <LanguageGate mode={langAsk} preselect={langPre} onChoose={langAsk === 'instance' ? chooseInstance : chooseProfile}
       onSkip={langAsk === 'profile' ? skipLanguage : null} />

@@ -26,8 +26,7 @@
     tvApp = isTvApp();
     api<Me>('/api/me').then((m) => (me = m)).catch(() => undefined);
     // Weiterschauen is library data (a person without libraries gets none: roles redesign §6)
-    if (get(areas).library) api('/api/library/resume').then((r) => (resume = r.items)).catch(() => (resume = []));
-    else resume = [];
+    if (get(areas).library) api('/api/library/resume').then((r) => (resume = get(areas).library ? r.items : [])).catch(() => (resume = []));
     api('/api/notifications').then(async (r) => {
       notes = r.notifications;
       // seeing them here counts as reading (same as opening the bell)
@@ -48,6 +47,7 @@
   async function surprise() {
     try { await goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { await goto('/browse/movies'); }
   }
+  $: if (!$areas.library) resume = []; // (also when /api/me takes back what the boot hint guessed)
   $: canDownload = Boolean(me?.downloads?.allowed) && $areas.downloads;
   $: groups = groupLinks(linksFor(canDownload).filter(([href]) => linkShown($serverCaps, href, $features, $perms, $areas)));
   $: admin = Boolean(me?.isAdmin && me?.profile?.isOwner);

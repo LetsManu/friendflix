@@ -12,6 +12,8 @@
   import { railKey, type RailAction, type RailInput } from './rail';
 
   export let path: string;
+  /** the person's home (Live TV without libraries): Back there offers to leave the app */
+  export let home = '/';
   /** the open state; the layout sets it for the Back key */
   export let open = false;
   export let who = '';
@@ -28,7 +30,7 @@
   let lastOutside: HTMLElement | null = null; // the last focused element outside the rail
 
   function apply(key: RailInput['key'], extra: Partial<RailInput> = {}): RailAction {
-    const r = railKey({ open }, { key, atLeftEdge: false, inRail: nav?.contains(document.activeElement) ?? false, onHome: path === '/', ...extra });
+    const r = railKey({ open }, { key, atLeftEdge: false, inRail: nav?.contains(document.activeElement) ?? false, onHome: path === home, ...extra });
     open = r.state.open;
     return r.action;
   }

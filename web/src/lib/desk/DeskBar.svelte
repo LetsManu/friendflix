@@ -40,6 +40,9 @@
   export let path: string;
   /** where the logo goes (Live TV for a person without libraries) */
   export let home = '/';
+  /** the boot hint guesses a library: the tabs wait unseen until /api/me confirms it (app.css .lib-held), then fade in */
+  export let held = false;
+  export let fadeIn = false;
   /** a page that starts with a billboard: the pill stays see-through at the very top */
   export let heroPage = false;
   export let me: Me | null = null;
@@ -400,7 +403,7 @@
 <header class="nav desk" class:solid class:still data-desk-bar bind:this={root}>
   <span class="scrim" aria-hidden="true"></span>
   <a class="logo" href={home} aria-label={$t('shell.nav.homeLink')}><Logo wordmark size={30} /></a>
-  <nav class="pill" class:on={fillOn} class:open class:compact class:collapse class:empty={!library && !tabs.length} aria-label={$t('shell.nav.main')} bind:this={pill} style:--fw="{fw}px" style:--fwc="{open ? fw : lastFw}px" style:--sel-a={selA ?? undefined} use:clipSheen>
+  <nav class="pill" class:on={fillOn} class:open class:compact class:collapse class:empty={!library && !tabs.length} class:lib-held={held} class:lib-in={fadeIn} aria-label={$t('shell.nav.main')} bind:this={pill} style:--fw="{fw}px" style:--fwc="{open ? fw : lastFw}px" style:--sel-a={selA ?? undefined} use:clipSheen>
     <!-- the background: at rest ONE glass surface the size of the pill (.whole, no edge inside it); while the pill changes size
          two glass halves instead, each with one of its round ends, that slide (never scale) and cross-fade into each other in
          the middle (see morph). Over the billboard (not yet scrolled) with the safe scrim. Under the glass ONE blur, painted

@@ -4,6 +4,7 @@
   import Logo from '#lib/Logo.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
+  import { areasFrom } from '#lib/capabilities';
   import { qrPath } from '#lib/qr';
   import { publicLocale, setLocale, t, tr } from '#lib/i18n';
   import Rich from '#lib/i18n/Rich.svelte';
@@ -36,9 +37,10 @@
     document.documentElement.classList.add('tv');
     try { // already a paired TV: straight to the portal (or, when the admin set "TV startet mit Live-TV", to the last live channel)
       const r = await fetch('/api/me', { credentials: 'same-origin' });
-      const me: { tv?: boolean; startLive?: boolean; areas?: { library?: boolean; livetv?: boolean } } | null = r.ok ? await r.json() : null;
+      const me: { tv?: boolean; startLive?: boolean; areas?: unknown } | null = r.ok ? await r.json() : null;
       // a TV of a person without libraries starts like "TV startet mit Live-TV" (the start page would only send to /live; roles redesign §6)
-      const live = me?.startLive === true || (me?.areas?.library === false && me.areas.livetv === true);
+      const a = areasFrom(me?.areas);
+      const live = me?.startLive === true || (!a.library && a.livetv);
       if (me?.tv) { location.replace(live ? '/live?play=last' : '/'); return; }
     } catch { /* offline: show the code screen anyway */ }
     const pre = publicLocale();

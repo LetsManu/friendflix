@@ -363,7 +363,13 @@ export const areaRedirect = (me: { areas?: Partial<Areas> } | null | undefined, 
   (which then renders the empty state; `/` is allowed only in that case).
 - Runs before `kidsRedirect` in both places that call it (`+layout.svelte` boot and the reactive guard); a kids profile
   without library therefore lands on `/live` (kid-friendly groups) instead of the library-based `/kids`, and `kidsRedirect` applies only while `areas.library` is true (otherwise `/` and `/kids` would send to each other).
-- The boot hint (`BootHint`) stores `library: false` so an early render never flashes library tabs.
+  A kids profile without library may open only the paths both rules allow (`KIDS_ALLOWED` ∩ `LIBRARY_FREE`: `/live`,
+  `/profiles`, `/offline`, `/welcome`, `/settings`), plus `/` when there is no Live TV; everything else goes to `/live` (or `/`),
+  so the kids boundary (no account, device or admin pages) stays.
+- The boot hint (`BootHint`) stores `library: false` and `livetv: true` (when on), so a live-only first paint has its Live tab
+  and its home at once. While the hint says library, the library tabs and controls (bar, phone tab bar, chips, search, footer
+  links) are laid out at their size but unseen (opacity 0, `visibility: hidden`) until `/api/me` confirms, then fade in (opacity,
+  150 ms). A stale hint (the libraries were taken away since) removes them without them ever showing, and nothing moves.
 
 Menus (all from `lib/menu.ts` + `linkShown`):
 
@@ -371,8 +377,12 @@ Menus (all from `lib/menu.ts` + `linkShown`):
   Live is added by `liveTabs` as today. Desktop bar (`DeskBar`), phone `TabBar`, TV rail (`TvRail`), the phone category chips
   (`showsChips`) all use these.
 - `linkShown` gets an `areas` argument: library-only links (`/tonight /favorites /lists /history /match /collections /now
-  /calendar /stats /downloads`) need `library`; `/upcoming` and `/requests` need `requests`; `/party` and `/vote` need
+  /calendar /stats /downloads`, and `/watchlist`) need `library`; `/upcoming` needs `requests`; `/party` and `/vote` need
   `together`. Used by the account menu, `/me`, and the footer.
+  `/requests` needs `library`, not `requests` (amended in Stage 2): the page keeps today's reminders without a request service
+  or the requests right, and the backend already folds those into `areas.requests` (`features.requests ∧ perms.requests ∧
+  library`), so gating on it would take the page away from people who see it today. Without a library the reminders mean
+  nothing, so the Mediathek alone decides.
 - `/tv` (TV start): `areas.library === false` → `/live?play=last` (like `startLive`).
 - `/welcome`: skips step 2 ("three titles you like") when `!areas.library` (2 steps instead of 3).
 - Search: hidden in the bar and rail for `!library` (it searches the library).

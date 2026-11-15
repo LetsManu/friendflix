@@ -83,6 +83,13 @@ img { max-width: 100%; }
 :root { --ring-dark: rgba(8, 8, 12, .85); }
 :focus-visible { outline: 2px solid #fff; outline-offset: var(--ring-o, 3px); border-radius: 4px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* library tabs and controls while the boot hint guesses a library (roles redesign §6): laid out at their size but unseen until
+   /api/me confirms it, then they fade in (opacity only); a stale guess removes them without them ever showing */
+.lib-held { opacity: 0 !important; visibility: hidden !important; }
+.lib-in { animation: lib-in 150ms ease-out; }
+@keyframes lib-in { from { opacity: 0; } to { opacity: 1; } }
+html.m-still .lib-in { animation: none; }
+@media (prefers-reduced-motion: reduce) { .lib-in { animation: none; } }
 .skip { position: fixed; left: 1rem; top: -4rem; background: #fff; color: #000; padding: .6rem 1rem; border-radius: 4px; z-index: 100; transition: top var(--t-fast); }
 .skip:focus { top: calc(1rem + var(--safe-top)); }
 

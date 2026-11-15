@@ -100,6 +100,8 @@ describe('areas (roles redesign §4.6, §6)', () => {
       expect(linkShown(ALL_CAPS, href, ALL_FEATURES, ALL_PERMS, noLib), href).toBe(false);
     }
     expect(linkShown(ALL_CAPS, '/upcoming', ALL_FEATURES, ALL_PERMS, { ...ALL_AREAS, requests: false })).toBe(false);
+    // /requests keeps today's reminders without Wünsche (no request service, or no right): only the Mediathek decides (spec §6)
+    expect(linkShown(ALL_CAPS, '/requests', ALL_FEATURES, ALL_PERMS, { ...ALL_AREAS, requests: false })).toBe(true);
     expect(linkShown(ALL_CAPS, '/party', ALL_FEATURES, ALL_PERMS, { ...ALL_AREAS, together: false })).toBe(false);
     expect(linkShown(ALL_CAPS, '/vote', ALL_FEATURES, ALL_PERMS, { ...ALL_AREAS, together: false })).toBe(false);
     for (const href of ['/settings', '/devices', '/remote', '/me']) expect(linkShown(ALL_CAPS, href, ALL_FEATURES, ALL_PERMS, { library: false, livetv: false, requests: false, together: false, downloads: false }), href).toBe(true);

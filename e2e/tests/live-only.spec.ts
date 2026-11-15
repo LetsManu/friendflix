@@ -4,6 +4,7 @@ import type { Page } from '@playwright/test';
 import { expect, test, type MockState } from '../fixtures.js';
 import { mockLivePlayer } from '../helpers.js';
 import { ME, items } from '../mocks/fixtures.js';
+import { asLgApp } from '../mocks/webos.js';
 
 // A person without libraries (roles redesign §3.2, §6): /api/me.areas.library is false. Only Live TV and the account pages are left:
 // the bar, the account menu, the footer, the TV rail and the start page offer no library page, a deep link to one lands on /live
@@ -24,7 +25,29 @@ function libraryCalls(page: Page): string[] {
 function liveOnly(api: MockState) {
   api.features = { livetv: true };
   api.areas = { ...LIVE_ONLY };
+  api.canDownload = true; // the role may download, but downloads are library items: the account menu still has no Downloads
   api.accountSaved = { name: 'Anna Beispiel', avatar: 'a1' };
+}
+/** a remote key as a TV sends it: only keyCode is meaningful */
+const press = (page: Page, keyCode: number) =>
+  page.evaluate((keyCode) => { document.body.dispatchEvent(new KeyboardEvent('keydown', { keyCode, key: 'Unidentified', bubbles: true, cancelable: true } as KeyboardEventInit)); }, keyCode);
+/**
+ * Records every frame in which a library tab, the categories, the search or a footer link off the allowlist is visible (opacity and
+ * visibility counted): `window.__libSeen`.
+ */
+function watchLibraryControls() {
+  const w = window as unknown as { __libSeen: string[] };
+  w.__libSeen = [];
+  const free = /^\/(live|profiles|settings|devices|me|remote|offline|welcome|admin|invite|login|reset|restore|confirm-email|pending|setup|diagnose|tv|cast-receiver)(\/|$)/;
+  const look = () => {
+    for (const el of document.querySelectorAll<HTMLElement>('nav[aria-label="Hauptnavigation"] a, nav[aria-label="Hauptnavigation"] button, footer a, header a[href="/search"]')) {
+      const href = el.getAttribute('href');
+      if (href && free.test(href)) continue;
+      if (el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) w.__libSeen.push(href ?? el.textContent ?? '?');
+    }
+    requestAnimationFrame(look);
+  };
+  requestAnimationFrame(look);
 }
 
 test.describe('a person without libraries (desktop)', () => {
@@ -82,22 +105,95 @@ test.describe('a person without libraries (desktop)', () => {
   });
 
   test('boot with a hint library:false never renders the Start tab', async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem('ff-boot-hint', JSON.stringify({ approved: true, multi: false, tv: false, profile: 'p1', lang: 'de', library: false })));
+    await page.addInitScript(() => localStorage.setItem('ff-boot-hint', JSON.stringify({ approved: true, multi: false, tv: false, profile: 'p1', lang: 'de', library: false, livetv: true })));
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
     let asked = false;
     await page.route('**/api/me', async (r) => { asked = true; await held; await r.fallback(); });
     await page.goto('/live');
-    // the page renders early from the hint: the bar is there while /api/me still waits, without a single library tab
-    await expect(page.getByRole('link', { name: 'FriendFlix Startseite' })).toBeVisible();
+    // the page renders early from the hint: the bar is there while /api/me still waits, with Live TV and without a library tab;
+    // the logo already goes to Live TV
+    await expect(nav(page).getByRole('link')).toHaveText(['Live-TV']);
     expect(asked).toBe(true);
+    await expect(page.getByRole('link', { name: 'FriendFlix Startseite' })).toHaveAttribute('href', '/live');
     await expect(page.getByRole('link', { name: 'Start', exact: true })).toHaveCount(0);
-    await expect(nav(page).getByRole('link')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Kategorien' })).toHaveCount(0);
     await expect(page.getByRole('search')).toHaveCount(0);
     release();
     await expect(nav(page).getByRole('link')).toHaveText(['Live-TV']);
     await expect(nav(page).getByRole('link', { name: 'Start' })).toHaveCount(0);
+  });
+
+  test('a stale hint (library) never shows a library tab when /api/me says there is none', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('ff-boot-hint', JSON.stringify({ approved: true, multi: false, tv: false, profile: 'p1', lang: 'de' })));
+    await page.addInitScript(watchLibraryControls);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route('**/api/me', async (r) => { await held; await r.fallback(); });
+    await page.goto('/');
+    // the start page renders early from the hint; the library tabs are laid out but unseen
+    await expect(page.getByRole('link', { name: 'FriendFlix Startseite' })).toBeVisible();
+    // (unseen: out of the accessibility tree too, so found by its place in the bar)
+    await expect(page.locator('nav.pill a[href="/browse/movies"]')).toBeAttached();
+    await expect(page.locator('nav.pill a[href="/browse/movies"]')).toBeHidden();
+    release();
+    await expect(page).toHaveURL((u) => u.pathname === '/live');
+    await expect(nav(page).getByRole('link')).toHaveText(['Live-TV']);
+    await page.waitForLoadState('networkidle');
+    expect(await page.evaluate(() => (window as unknown as { __libSeen: string[] }).__libSeen)).toEqual([]);
+  });
+
+  test('a correct hint (library): the tabs wait unseen for /api/me, then fade in', async ({ page, api }) => {
+    api.areas = undefined; // an account with libraries
+    await page.addInitScript(() => localStorage.setItem('ff-boot-hint', JSON.stringify({ approved: true, multi: false, tv: false, profile: 'p1', lang: 'de', livetv: true })));
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route('**/api/me', async (r) => { await held; await r.fallback(); });
+    await page.goto('/settings');
+    await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
+    const movies = page.locator('nav.pill a[href="/browse/movies"]'); // (unseen: out of the accessibility tree, so found by its place)
+    await expect(movies).toBeAttached();
+    await expect(movies).toBeHidden();
+    const before = await movies.boundingBox();
+    release();
+    await expect(movies).toBeVisible();
+    expect(await movies.boundingBox()).toEqual(before); // laid out in place all along: it only fades in
+  });
+
+  test('TV app: Back on Live TV (the home of a person without libraries) opens the rail, then leaves the app', async ({ page }) => {
+    const lg = await asLgApp(page);
+    await page.routeWebSocket(/\/ws\/remote/, () => {});
+    await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, tv: true, features: { livetv: true }, areas: { ...LIVE_ONLY } } }));
+    await page.goto('/live?ff_app=webos');
+    await expect(page.locator('html.tv')).toHaveCount(1);
+    const rail = page.locator('nav.rail');
+    await expect(rail.locator('a.who')).toBeVisible();
+    // the list puts the focus on the last watched channel once it has loaded; a Back before that races the focus move
+    await expect(page.locator(':focus')).toHaveAccessibleName(/^12 Kinderinsel/);
+    // ... and the layout's boot focus check (every 150 ms until the content holds the focus) has seen it and stopped
+    await page.waitForTimeout(400);
+    await press(page, 461);
+    await expect(rail).toHaveClass(/open/);
+    await expect(rail.locator(':focus')).toHaveCount(1);
+    expect(await lg.backCalls()).toBe(0);
+    await press(page, 461);
+    await expect.poll(lg.backCalls).toBe(1);
+  });
+
+  test('/remote: pairing and the keys stay; no Weiterschauen, no search, no library call', async ({ page, api }) => {
+    await page.routeWebSocket(/\/ws\/remote/, (ws) => { ws.send(JSON.stringify({ t: 'hello', tvOnline: true })); });
+    // any library call fails the test through the fixture's unmocked-call check
+    await page.route(/\/api\/library\//, (r) => { api.unmocked.add(`library call on /remote: ${new URL(r.request().url()).pathname}`); return r.fulfill({ json: { items: [] } }); });
+    const lib = libraryCalls(page);
+    await page.goto('/remote');
+    await expect(page.getByText('Fernseher verbunden')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Steuerung' })).toBeVisible();
+    await expect(page.getByText('Fernseher koppeln').or(page.getByText('Weiteren Fernseher koppeln')).first()).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Weiter schauen' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Titel suchen' })).toHaveCount(0);
+    await expect(page.getByRole('search')).toHaveCount(0);
+    await page.waitForLoadState('networkidle');
+    expect(lib).toEqual([]);
   });
 
   test('TV: /tv goes to /live?play=last; the rail shows Live only', async ({ page }) => {
@@ -125,6 +221,13 @@ test.describe('a person without libraries (desktop)', () => {
     await expect(page).toHaveURL((u) => u.pathname === '/live');
     await expect(page.getByRole('heading', { level: 1, name: 'Live-TV' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Suchen' })).toHaveCount(0); // the kids search looks through the library
+    // the kids rule still holds: no account, device or admin pages; the settings stay
+    for (const p of ['/me', '/devices', '/admin']) {
+      await page.goto(p);
+      await expect(page, p).toHaveURL((u) => u.pathname === '/live');
+    }
+    await page.goto('/settings');
+    await expect(page).toHaveURL((u) => u.pathname === '/settings');
   });
 
   test('kids profile with neither library nor channel stays on / (no redirect loop)', async ({ page, api }) => {
@@ -163,12 +266,16 @@ test.describe('a person without libraries (desktop)', () => {
     await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, name: 'Anna Beispiel', profile: { ...ME.profile, name: 'Anna' }, onboarded, features: { livetv: true }, areas: { ...LIVE_ONLY } } }));
     await page.route('**/api/prefs/onboarded', (r) => { onboarded = true; return r.fulfill({ json: { onboarded: true } }); });
     const lib = libraryCalls(page);
-    await page.goto('/live');
+    const channelGets: string[] = [];
+    page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/livetv/channels') channelGets.push(r.url()); });
+    // the start page: straight on to /welcome with Live TV as the next page (Live TV does not mount first)
+    await page.goto('/');
     await expect(page).toHaveURL(/\/welcome\?next=%2Flive$/);
     await expect(page.getByText('Schritt 1 von 2')).toBeVisible();
     await page.getByRole('button', { name: 'Weiter' }).click();
     await expect(page.getByRole('heading', { level: 1, name: 'Alles bereit!' })).toBeVisible();
     await expect(page.getByText('Schritt 2 von 2')).toBeVisible();
+    expect(channelGets).toEqual([]);
     await page.getByRole('button', { name: "Los geht's" }).click();
     await expect(page).toHaveURL((u) => u.pathname === '/live');
     expect(onboarded).toBe(true);

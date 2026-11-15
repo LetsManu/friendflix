@@ -6,6 +6,8 @@
   import Icon from '#lib/Icon.svelte';
   import { t, type TKey } from '#lib/i18n';
   import { isBackKey } from '#lib/spatial';
+  import { areas, features } from '#lib/capabilities';
+  import { homePath } from '#lib/gate';
   import { nowLines, type LiveChannel, type LiveGroup } from './api';
   import { fadeIn } from './fade';
   import FavTiles from './FavTiles.svelte';
@@ -242,7 +244,9 @@
     }
     if (back) {
       if (number || noMatch) { stop(e); closeNumber(); clearTimeout(msgT); noMatch = ''; return; }
-      if (!overShell()) { stop(e); void goto('/', { replaceState: true }); } // Back from the list goes Home (no history entry piles up)
+      // Back from the list goes Home (no history entry piles up). Live TV is home for a person without libraries: the layout
+      // takes the key then (the rail, and from there leaving the TV app; roles redesign §6)
+      if (!overShell() && homePath($areas.library, $features.livetv) !== '/live') { stop(e); void goto('/', { replaceState: true }); }
       return;
     }
     if (e.key === 'Enter') {

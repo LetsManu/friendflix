@@ -9,6 +9,7 @@
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import { safeNext } from '#lib/gate';
+  import { areasFrom } from '#lib/capabilities';
   import { t, tr, type TKey } from '#lib/i18n';
   const colorKey = (key: string) => `account.profiles.colors.${key}` as TKey;
 
@@ -24,7 +25,7 @@
   let main: HTMLElement;
   $: kids = Boolean(me?.kids || me?.profile?.kids);
   /** step 2 picks titles from the library: a person without libraries skips it (2 steps, roles redesign §6) */
-  $: library = me?.areas?.library !== false;
+  $: library = areasFrom(me?.areas).library;
   $: steps = library ? [1, 2, 3] : [1, 3];
   $: total = steps.length;
 

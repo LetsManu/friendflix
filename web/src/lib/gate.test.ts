@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { areaRedirect, canRenderEarly, clearHint, hintLibrary, clearReloadFlag, earlyProfile, gateHref, hintOf, hintPerms, NO_PROFILE, kidsAllowed, kidsRedirect, markPicked, needsProfileGate, needsWelcome, parseHint, readActive, readHint, readPicked, readReloading, safeNext, welcomeHref, writeHint } from './gate';
+import { areaRedirect, canRenderEarly, clearHint, hintLibrary, homePath, kidsHomeOf, clearReloadFlag, earlyProfile, gateHref, hintOf, hintPerms, NO_PROFILE, kidsAllowed, kidsRedirect, markPicked, needsProfileGate, needsWelcome, parseHint, readActive, readHint, readPicked, readReloading, safeNext, welcomeHref, writeHint } from './gate';
 import { ALL_PERMS, permsFrom } from './perms';
 
 describe('needsProfileGate', () => {
@@ -220,6 +220,38 @@ describe('people without libraries (roles redesign §6)', () => {
     const me = { kids: true, areas: { library: false } };
     expect(areaRedirect(me, '/kids', false) ?? kidsRedirect(me, '/')).toBe('/');
     expect(areaRedirect(me, '/', false) ?? kidsRedirect(me, '/')).toBeNull();
+  });
+  it('a kids profile without library keeps to what both rules allow (kids routes ∩ library-free), plus / without Live TV', () => {
+    const kid = { kids: true, areas: { library: false } };
+    for (const p of ['/me', '/devices', '/remote', '/diagnose', '/admin', '/admin/users', '/settings/devices', '/kids', '/search', '/new', '/item/x'])
+      expect(areaRedirect(kid, p, true), p).toBe('/live');
+    for (const p of ['/live', '/live/watch/ch-1', '/settings', '/profiles', '/offline', '/welcome']) expect(areaRedirect(kid, p, true), p).toBeNull();
+    expect(areaRedirect(kid, '/', true)).toBe('/live');
+    expect(areaRedirect(kid, '/', false)).toBeNull();
+    expect(areaRedirect(kid, '/me', false)).toBe('/');
+    expect(areaRedirect(kid, '/settings', false)).toBeNull();
+    // a grown-up without library keeps the account pages
+    expect(areaRedirect({ areas: { library: false } }, '/me', true)).toBeNull();
+  });
+  it('kidsHomeOf: the library-based kids home applies only with a library', () => {
+    expect(kidsHomeOf({ kids: true })).toBe(true);
+    expect(kidsHomeOf({ kids: true, areas: { library: true } })).toBe(true);
+    expect(kidsHomeOf({ kids: true, areas: { library: false } })).toBe(false);
+    expect(kidsHomeOf({ kids: false })).toBe(false);
+    expect(kidsHomeOf(null)).toBe(false);
+  });
+  it('homePath: Live TV is home only without a library and with Live TV', () => {
+    expect(homePath(true, true)).toBe('/');
+    expect(homePath(true, false)).toBe('/');
+    expect(homePath(false, true)).toBe('/live');
+    expect(homePath(false, false)).toBe('/');
+  });
+  it('the hint keeps Live TV on (only an explicit true), so a live-only first paint has its Live tab and home', () => {
+    const h = hintOf({ deviceApproved: true, profileCount: 1, features: { livetv: true }, areas: { library: false } });
+    expect(h.livetv).toBe(true);
+    expect(parseHint(JSON.stringify(h))).toEqual(h);
+    expect(hintOf({ deviceApproved: true, profileCount: 1, features: { livetv: false } }).livetv).toBeUndefined();
+    expect(parseHint(JSON.stringify({ ...h, livetv: 'yes' }))?.livetv).toBeUndefined();
   });
   it('the hint keeps library false; an old hint reads as library on', () => {
     const h = hintOf({ deviceApproved: true, profileCount: 1, areas: { library: false } });

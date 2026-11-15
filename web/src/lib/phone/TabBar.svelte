@@ -17,6 +17,9 @@
    */
   export let path: string;
   export let canDownload: boolean;
+  /** the boot hint guesses a library: the bar waits unseen until /api/me confirms it (app.css .lib-held), then fades in */
+  export let held = false;
+  export let fadeIn = false;
 
   /** full name (accessible name) and the short visible label that fits a quarter of a 320 px pill */
   const LABEL: Record<PhoneTab['key'], [TKey, TKey]> = {
@@ -32,7 +35,7 @@
   $: active = tabs.findIndex((tab) => isOn(tab.href, path));
 </script>
 
-{#if tabs.length}<nav class="tabbar frost frost-pill frost-safe" class:five={tabs.length > 4} aria-label={$t('shell.mobile.tabbar')} style="--n:{tabs.length};--i:{Math.max(0, active)};--fr-scrim-safe:{SCRIM_TAB}">
+{#if tabs.length}<nav class="tabbar frost frost-pill frost-safe" class:lib-held={held} class:lib-in={fadeIn} class:five={tabs.length > 4} aria-label={$t('shell.mobile.tabbar')} style="--n:{tabs.length};--i:{Math.max(0, active)};--fr-scrim-safe:{SCRIM_TAB}">
   <span class="hl" class:off={active < 0} aria-hidden="true"></span>
   {#each tabs as tab, k (tab.key)}
     {@const only = tab.key === 'new' && !$features.requests}
