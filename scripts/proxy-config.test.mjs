@@ -17,8 +17,8 @@ function block(prefix) {
   return m[1].split('\n').map((l) => l.replace(/#.*$/, '').trim()).filter(Boolean);
 }
 
-test('the token locations /media/c/ (cast) and /media/l/ (Live TV) write neither access nor error log', () => {
-  for (const prefix of ['/media/c/', '/media/l/']) {
+test('the token locations /media/c/ (cast), /media/l/ (Live TV) and /media/r/ (recordings) write neither access nor error log', () => {
+  for (const prefix of ['/media/c/', '/media/l/', '/media/r/']) {
     const b = block(prefix);
     assert.ok(b, `location ${prefix} is missing`);
     assert.ok(b.includes('access_log off;'), `${prefix}: access_log off`);
@@ -26,6 +26,12 @@ test('the token locations /media/c/ (cast) and /media/l/ (Live TV) write neither
   }
 });
 
-test('/media/l/ proxies exactly like /media/c/ (the gateway, unbuffered, with Range and the forwarding headers)', () => {
+test('/media/l/ and /media/r/ proxy exactly like /media/c/ (the gateway, unbuffered, with Range and the forwarding headers)', () => {
   assert.deepEqual(block('/media/l/'), block('/media/c/'));
+  assert.deepEqual(block('/media/r/'), block('/media/c/'));
+});
+
+test('Plan B keeps the token locations: its setup notes name /media/l/ and /media/r/ (it has no token location of its own)', () => {
+  const planB = readFileSync(fileURLToPath(import.meta.resolve('../deploy/npm/plan-b-auth-request.conf')), 'utf8');
+  for (const prefix of ['/media/l/', '/media/r/']) assert.match(planB, new RegExp(`keep[^\\n]*\\n?[^\\n]*${prefix.replaceAll('/', '\\/')}`, 'i'), prefix);
 });

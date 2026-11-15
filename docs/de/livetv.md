@@ -36,7 +36,8 @@ Der Updater behält die Overlay-Dateien, mit denen du den Stack gestartet hast; 
 
 **Reverse Proxy:** Das Token steht in jeder Stream-Adresse (`/media/l/<token>/…`). Den Block `location /media/l/` aus
 `deploy/npm/portal.advanced.conf` im Proxy Host des Portals ergänzen (er schaltet Access- und Error-Log für diese Pfade ab, wie bei
-`/media/c/`), und nie eine `/media/l/…`-Adresse in ein Issue oder einen Chat kopieren.
+`/media/c/`), und nie eine `/media/l/…`-Adresse in ein Issue oder einen Chat kopieren. Aufnahmen laufen über `/media/r/<token>/…`:
+den Block `location /media/r/` aus derselben Datei ebenfalls ergänzen (auch mit Plan B, das `/media/r/` sonst an den Medienserver schickt).
 
 ## GPU
 

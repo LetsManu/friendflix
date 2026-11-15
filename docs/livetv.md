@@ -36,7 +36,8 @@ The updater keeps the overlay files you started the stack with, so an overlay in
 
 **Reverse proxy:** the watch token is part of every stream address (`/media/l/<token>/…`). Add the `location /media/l/` block from
 `deploy/npm/portal.advanced.conf` to the portal proxy host (it turns off the access and error log for these paths, like `/media/c/`),
-and never paste a `/media/l/…` address into an issue or a chat.
+and never paste a `/media/l/…` address into an issue or a chat. Recordings play from `/media/r/<token>/…`: add the
+`location /media/r/` block from the same file too (also with Plan B, which otherwise sends `/media/r/` to the media server).
 
 ## GPU
 
