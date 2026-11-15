@@ -207,7 +207,7 @@ describe('remuxDriver: a separate audio rendition that fails (I3, M3)', () => {
     expect(s.seen).toHaveLength(1);
     expect(videoOnly(s.seen[0]!.args)).toBe(true);
     expect(s.seen[0]!.audio).toBe(false);
-    expect(s.logs.filter((l) => !l.startsWith('run ended'))).toEqual([NO_AUDIO]);
+    expect(s.logs.filter((l) => !l.startsWith('run ended') && !l.includes('timestamps_missing'))).toEqual([NO_AUDIO]);
     // no backoff before the video-only run (the one sleep is after it, where the test stops the stream)
     expect(s.sleeps).toHaveLength(1);
   });
@@ -272,7 +272,7 @@ describe('remuxDriver: a separate audio rendition that fails (I3, M3)', () => {
     expect(s.seen.map((r) => r.audio)).toEqual([true, true, false]);
     expect(videoOnly(s.seen[2]!.args)).toBe(true);
     // item 6: every restart with its number and reason, none folded into the one before
-    expect(s.logs.filter((l) => !l.includes('segment skipped'))).toEqual([
+    expect(s.logs.filter((l) => !l.includes('segment skipped') && !l.includes('timestamps_missing'))).toEqual([
       'run ended (audio segments_failed), restart #1', 'run ended (audio segments_failed), restart #2', NO_AUDIO, 'run ended (ffmpeg_exit), restart #3',
     ]);
   }));
@@ -326,7 +326,7 @@ describe('remuxDriver: a separate audio rendition that fails (I3, M3)', () => {
       await vi.advanceTimersByTimeAsync(66_000);
       expect(seen).toEqual([false, false, true]);
       expect(run.mock.calls[2]![1].join(' ')).toContain('-map 0:v:0 -map 1:a:0?');
-      expect(logs.filter((l) => !l.startsWith('run ended'))).toEqual([
+      expect(logs.filter((l) => !l.startsWith('run ended') && !l.includes('timestamps_missing'))).toEqual([
         NO_AUDIO, 'separate audio: trying the rendition again',
         'separate audio rendition unavailable, playing the video without it; trying it again in 6 min', 'separate audio: trying the rendition again',
       ]);

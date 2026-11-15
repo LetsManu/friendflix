@@ -17,8 +17,8 @@ function pat(): Buffer {
   const section = [0x00, 0xb0, 13, 0x00, 0x01, 0xc1, 0x00, 0x00, 0x00, 0x01, 0xe0 | (PMT_PID >> 8), PMT_PID & 0xff, ...crc];
   return packet(0, [0x00, ...section], true);
 }
-function pmt(streams: Array<{ pid: number; type: number }>): Buffer {
-  const es = streams.flatMap((s) => [s.type, 0xe0 | (s.pid >> 8), s.pid & 0xff, 0xf0, 0x00]);
+function pmt(streams: Array<{ pid: number; type: number; desc?: number[] }>): Buffer {
+  const es = streams.flatMap((s) => [s.type, 0xe0 | (s.pid >> 8), s.pid & 0xff, 0xf0, (s.desc ?? []).length, ...(s.desc ?? [])]);
   const len = 9 + es.length + 4;
   const section = [0x02, 0xb0 | (len >> 8), len & 0xff, 0x00, 0x01, 0xc1, 0x00, 0x00, 0xe1, 0x00, 0xf0, 0x00, ...es, ...crc];
   return packet(PMT_PID, [0x00, ...section], true);
@@ -35,7 +35,7 @@ function pes(pid: number, streamId: number, pts: number, dts?: number): Buffer {
   return packet(pid, [0x00, 0x00, 0x01, streamId, 0x00, 0x00, ...header, 0x00, 0x00, 0x00, 0x01], true);
 }
 
-export interface Es { pid: number; type: number; streamId: number; pts: number[]; dts?: number }
+export interface Es { pid: number; type: number; streamId: number; pts: number[]; dts?: number; desc?: number[] }
 /** a segment: PAT, PMT, then the PES starts of each stream in the order given (interleaved by index) */
 export function tsSegment(streams: Es[]): Buffer {
   const parts = [pat(), pmt(streams)];
@@ -46,3 +46,11 @@ export function tsSegment(streams: Es[]): Buffer {
 export const H264 = (pid: number, ...pts: number[]): Es => ({ pid, type: 0x1b, streamId: 0xe0, pts });
 export const AAC = (pid: number, ...pts: number[]): Es => ({ pid, type: 0x0f, streamId: 0xc0, pts });
 export const ID3 = (pid: number, ...pts: number[]): Es => ({ pid, type: 0x15, streamId: 0xbd, pts });
+/** DVB AC-3: private PES (stream type 0x06) with an AC-3 descriptor (tag 0x6A) */
+export const DVB_AC3 = (pid: number, ...pts: number[]): Es => ({ pid, type: 0x06, streamId: 0xbd, pts, desc: [0x6a, 0x01, 0x00] });
+/** a PAT whose section claims a length below its fixed fields */
+export function brokenPat(): Buffer {
+  const b = Buffer.alloc(188, 0xff);
+  Buffer.from([0x47, 0x40, 0x00, 0x10, 0x00, 0x00, 0xb0, 0x02, 0x00, 0x01, 0xc1, 0x00, 0x00]).copy(b);
+  return b;
+}

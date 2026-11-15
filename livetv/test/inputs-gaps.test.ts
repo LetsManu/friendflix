@@ -50,7 +50,7 @@ describe('a segment that fails', () => {
     expect(seqs(a.got)).toEqual([107, 108, 109, 110, 111, 112, 114, 115]);
     expect(seqs(v.got)).toEqual([107, 108, 109, 110, 111, 112, 113, 114, 115]);
     expect(p.asked.get('a113.ts')).toBe(2);
-    expect(logs).toEqual(['audio segment skipped after a retry (not_found)']);
+    expect(logs.filter((l) => !l.includes('timestamps_missing'))).toEqual(['audio segment skipped after a retry (not_found)']);
   });
 
   it(`${SEGMENT_FAILS} segments in a row that fail end the run (segments_failed), blamed on their rendition`, async () => {

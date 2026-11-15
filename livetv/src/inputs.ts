@@ -176,7 +176,7 @@ interface Follow {
 const codeOf = (e: unknown): string => (e instanceof FetchError ? e.code : 'unreachable');
 /** the fixed code of what ended an input (never its message: that may hold provider text) */
 const endCode = (e: unknown): string => (e instanceof InputEnd || e instanceof FetchError ? e.code : e instanceof PlaylistRefused ? e.code : 'error');
-/** retrying cannot help: the stream fails (a refused address or scheme, a playlist that can never be served) */
+/** a playlist's segments with their provider numbers */
 const number = (p: MediaPlaylist): Numbered[] => p.segments.map((s, i) => ({ ...s, seq: p.mediaSequence + i }));
 const isFatal = (e: unknown): boolean => e instanceof PlaylistRefused || (e instanceof FetchError && (e.code === 'address_refused' || e.code === 'scheme'));
 /** retrying cannot help: the stream fails (a refused address or scheme, a playlist that can never be served) */
@@ -216,7 +216,7 @@ async function* hlsBytes(first: { text: string; base: string; url: string }, get
   while (!signal.aborted) {
     const p = parseMedia(pl.text);
     if (!p) throw new FetchError('unreachable');
-    const segs = p.segments.map((s, i) => ({ ...s, seq: p.mediaSequence + i }));
+    const segs = number(p);
     o.onPlaylist?.(segs);
     // a stale read (a CDN node a little behind) takes nothing, in a pair too
     const f = follow(segs, last, stale);
@@ -627,6 +627,7 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
       const by = al?.by ?? 'live edge';
       if (vm.late || am.late) log(`separate audio: first timestamps not read in time (timestamps_late), aligned by ${by}`);
       else if (c === 'mismatch') log(`separate audio: timestamps do not fit the playlists (clock_mismatch), aligned by ${by}`);
+      else if (c === null) log(`separate audio: no timestamps in the first segments (timestamps_missing), aligned by ${by}`);
       else if (c !== null) {
         shift = c;
         log(`separate audio: aligned by timestamps, offset ${Math.round(c * 1000)} ms`);

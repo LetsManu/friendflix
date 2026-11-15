@@ -138,7 +138,8 @@ describe('openInput with a separate audio rendition (I1)', () => {
     const ff = opened.ffInput;
     if (ff.kind !== 'pipe' || !ff.audio) throw new Error('an audio pipe is expected');
     expect([await first(ff.stdin), await first(ff.audio.stdin)]).toEqual(['v13;', 'a1003;']);
-    expect(logs).toEqual(['separate audio: no common media sequence or program date-time, each rendition starts at its live edge']);
+    // the text bodies carry no timestamps (timestamps_missing, inputs-align.test.ts)
+    expect(logs.filter((l) => !l.includes('timestamps_missing'))).toEqual(['separate audio: no common media sequence or program date-time, each rendition starts at its live edge']);
     expect(logs.join(' ')).not.toMatch(/example\.com|\.m3u8/);
     opened.close();
   });
@@ -169,7 +170,7 @@ describe('openInput with a separate audio rendition (I1)', () => {
     // the sibling ends too (at once, not after its next poll)
     const video = await drain(ff.stdin);
     expect(video.text).toBe('');
-    expect(logs).toEqual(['audio segment skipped after a retry (not_found)', 'audio segment skipped after a retry (not_found)']);
+    expect(logs.filter((l) => !l.includes('timestamps_missing'))).toEqual(['audio segment skipped after a retry (not_found)', 'audio segment skipped after a retry (not_found)']);
   });
 
   it('missed segments or a discontinuity on a later poll end both pipes too', async () => {

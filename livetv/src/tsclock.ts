@@ -16,6 +16,9 @@ const AV_TYPES = new Set([
   0x01, 0x02, 0x10, 0x1b, 0x24, 0x42, 0xd1, 0xea, // MPEG-1/2, MPEG-4 part 2, H.264, HEVC, CAVS, Dirac, VC-1
   0x03, 0x04, 0x0f, 0x11, 0x1c, 0x81, 0x82, 0x83, 0x84, 0x85, 0x87, // MPEG audio, AAC (ADTS, LATM), AC-3, DTS, TrueHD, E-AC-3
 ]);
+/** private PES (0x06) is audio only with one of these DVB descriptors: AC-3, E-AC-3, DTS, AAC (teletext, subtitles are not) */
+const PRIVATE = 0x06;
+const AUDIO_DESCRIPTORS = new Set([0x6a, 0x7a, 0x7b, 0x7c]);
 
 /** `a − b` on the 33-bit PTS clock, the short way round (−2^32 … 2^32) */
 export function ptsDelta(a: number, b: number): number {
@@ -79,6 +82,8 @@ export class TsClock {
     const t = payload.subarray(at);
     if (t.length < 12 || t[0] !== tableId) return null;
     const len = ((t[1]! & 0x0f) << 8) | t[2]!;
+    // shorter than its own fixed fields and CRC: broken, never read backwards (review M3)
+    if (len < 9) return null;
     return t.subarray(0, Math.min(t.length, 3 + len - 4));
   }
 
@@ -96,9 +101,15 @@ export class TsClock {
     if (!t) return;
     const av = this.av ?? new Set<number>();
     for (let i = 12 + (((t[10]! & 0x0f) << 8) | t[11]!); i + 5 <= t.length; i += 5 + (((t[i + 3]! & 0x0f) << 8) | t[i + 4]!)) {
-      if (AV_TYPES.has(t[i]!)) av.add(((t[i + 1]! & 0x1f) << 8) | t[i + 2]!);
+      const end = Math.min(t.length, i + 5 + (((t[i + 3]! & 0x0f) << 8) | t[i + 4]!));
+      if (AV_TYPES.has(t[i]!) || (t[i] === PRIVATE && TsClock.hasAudioDescriptor(t.subarray(i + 5, end)))) av.add(((t[i + 1]! & 0x1f) << 8) | t[i + 2]!);
     }
     this.av = av;
+  }
+
+  private static hasAudioDescriptor(d: Buffer): boolean {
+    for (let i = 0; i + 2 <= d.length; i += 2 + d[i + 1]!) if (AUDIO_DESCRIPTORS.has(d[i]!)) return true;
+    return false;
   }
 
   private pes(pid: number, p: Buffer): void {

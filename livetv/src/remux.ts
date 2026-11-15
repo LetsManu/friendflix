@@ -169,7 +169,6 @@ export function remuxDriver(d: RemuxDeps): MediaDriver {
       faults = [];
       ctx.log(`separate audio rendition unavailable, playing the video without it; trying it again in ${wait / 60_000} min`);
     };
-    // fixed texts from openInput; the same one again in a row (each restart of a source that cannot be aligned) is said once
     /** where each rendition's next run starts: after the last segment it delivered (inputs.ts `resume`, no replay on a restart) */
     const resume: Resume = { video: null, audio: null };
     /** runs ended while the stream lives: each restart is logged with its number and reason, never folded into the one before */

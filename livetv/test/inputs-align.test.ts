@@ -136,6 +136,16 @@ describe('a rendition that ends while its first timestamps are read (review M10)
   });
 });
 
+describe('review M3: no timestamps found', () => {
+  it('two .ts renditions whose first segments carry no PES timestamps: the playlist alignment, said with a code', async () => {
+    const logs: string[] = [];
+    const p = provider({ video: at('v'), audio: at('a') });
+    const o = await openInput(INPUT, { guard: GUARD, fetch: p.fetch, log: (m) => logs.push(m) });
+    expect(logs).toEqual(['separate audio: no timestamps in the first segments (timestamps_missing), aligned by sequence']);
+    o.close();
+  });
+});
+
 describe('a sequence alignment where only one side has a date-time', () => {
   it('alignStart says so; openInput logs the code even when the timestamps take over', async () => {
     const P = (prefix: string, pdt?: number) => parseMedia(win(100, 109, { prefix, ...(pdt !== undefined ? { pdt } : {}) }))!;
