@@ -115,13 +115,10 @@ export function portainerMissing(p: Pick<PortainerSetup, 'missing'> | null | und
   return m.length ? trDynamic('admin.update.updater.portainerMissing', { fields: m.join(', ') }) : null;
 }
 
-/**
- * the four steps (self-update: no health step); an update lists its rollback from the start (skipped unless it runs), so the list
- * never grows mid-run; other jobs show it once it ran
- */
+/** the four steps, plus the rollback once it started (self-update: no health step); StepList keeps an update's slot for it */
 export function visibleSteps(j: UpdaterJob): StepName[] {
   const base = MAIN_STEPS.filter((s) => !(j.action === 'self-update' && s === 'health'));
-  return j.action === 'update' || (j.steps.rollback !== 'skipped' && j.steps.rollback !== 'pending') ? [...base, 'rollback'] : base;
+  return j.steps.rollback !== 'skipped' && j.steps.rollback !== 'pending' ? [...base, 'rollback'] : base;
 }
 
 /** a readable reason for a job's error code (unknown codes: "unknown error"; the code itself is never shown raw) */

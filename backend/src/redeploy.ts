@@ -44,8 +44,13 @@ interface Rec {
   id: string; mode: 'webhook' | 'api'; startedAt: number; from: string; tag: string;
   /** an updater listed the services when the redeploy began (else this backend's build decides alone) */
   updater: boolean;
-  /** "reload anyway" of the same build: a restart of this backend is then the change (optional: older records lack it) */
+  /**
+   * "reload anyway" of the same build: without a listing a restart of this backend is then the change; with one, every service
+   * must be on the new build or seen restarted (optional: older records lack it)
+   */
   forced?: boolean;
+  /** the listed services seen not running since the start (optional: only once one was) */
+  restarted?: string[];
   /** Portainer's answer to the final call: none yet, 2xx (`answeredAt`), or a refusal */
   answer: 'pending' | 'ok' | 'failed'; answeredAt: number | null;
   /** the 2xx came once Portainer was done (its API before 2.36 redeploys, then answers; not "deploying" in the answer) */
@@ -86,6 +91,7 @@ function parse(raw: string | null): Rec | null {
   if (!o || typeof o !== 'object' || o.v !== 1) return null;
   const ok = str(o.id, /^[0-9a-f]{16}$/) && (o.mode === 'webhook' || o.mode === 'api') && typeof o.startedAt === 'number' && Number.isFinite(o.startedAt)
     && str(o.from, /^[A-Za-z0-9._-]{1,64}$/) && str(o.tag, /^[A-Za-z0-9._-]{1,64}$/) && typeof o.updater === 'boolean' && (o.forced === undefined || typeof o.forced === 'boolean')
+    && (o.restarted === undefined || (Array.isArray(o.restarted) && o.restarted.length <= SERVICES.length && o.restarted.every((x) => (SERVICES as readonly unknown[]).includes(x))))
     && (o.answer === 'pending' || o.answer === 'ok' || o.answer === 'failed') && numOrNull(o.answeredAt) && typeof o.sync === 'boolean' && typeof o.changed === 'boolean'
     && (o.error === null || str(o.error, /^[a-z_]{1,40}$/)) && (o.step === null || str(o.step, /^[a-z_]{1,20}$/)) && numOrNull(o.status)
     && (o.code === null || str(o.code, /^[A-Z_]{2,40}$/)) && phaseOrNull(o.final) && numOrNull(o.finishedAt) && phaseOrNull(o.at);
@@ -209,16 +215,22 @@ async function judge(ctx: Ctx, services: readonly ServiceSeen[] | null | undefin
     // none: judge by this backend alone; down: an updater that listed the services at the start does not answer now
     const listing = services === undefined || !r.updater ? 'none' : seen.length ? 'list' : 'down';
     const changedNow = listing === 'list' && seen.some((s) => s.state !== 'running' || onNew(s));
+    const known = r.restarted ?? [];
+    const down = listing === 'list' ? seen.filter((s) => s.state !== 'running' && !known.includes(s.service)).map((s) => s.service) : [];
+    const restartedSet = [...known, ...down];
     const newBuild = ctx.cfg.GIT_SHA !== r.from;
     const restarted = bootedAt > r.startedAt;
-    // a forced reload of the same build: this backend recreated is the change (without a listing nothing else could show it)
+    // a forced reload of the same build: this backend recreated is the change (without a listing nothing else could show it); with
+    // a listing it ends only once every service is on the new build or was seen restarted (this backend: its own restart)
     const changed = r.changed || changedNow || (r.forced === true && restarted);
+    const allRecreated = seen.every((s) => onNew(s) || restartedSet.includes(s.service) || (s.service === 'backend' && restarted));
     const finished = r.answer === 'ok' && r.sync;
     // a restart of the same build alone proves nothing (a crash, a reboot): only with a change seen, or Portainer saying done
     if (newBuild || (changed && (restarted || finished))) {
       if (listing === 'list') {
         const pending = seen.filter((s) => !healthy(s) || (newBuild && fromTag !== null && s.sha === fromTag));
-        phase = !pending.length ? 'done' : pending.some((s) => s.state !== 'running' || (newBuild && s.sha === fromTag)) ? 'recreating' : 'health';
+        phase = !pending.length ? (r.forced === true && !newBuild && !allRecreated ? 'recreating' : 'done')
+          : pending.some((s) => s.state !== 'running' || (newBuild && s.sha === fromTag)) ? 'recreating' : 'health';
       } else {
         phase = listing === 'none' ? 'done' : 'health';
       }
@@ -234,12 +246,13 @@ async function judge(ctx: Ctx, services: readonly ServiceSeen[] | null | undefin
       if (r.answer === 'ok' && phase === 'pulling') phase = 'unchanged';
       else { at = phase; phase = 'timeout'; }
     }
-    if (FINAL.includes(phase) || (changedNow && !r.changed)) {
+    if (FINAL.includes(phase) || (changedNow && !r.changed) || down.length) {
       const stored = await locked(ctx, async () => {
         const cur = await read(ctx);
         // a late answer got in between (failed): that one stands
         if (!cur || cur.id !== r.id || cur.final || cur.answer !== r.answer) return cur;
         cur.changed = changed;
+        if (restartedSet.length) cur.restarted = [...new Set([...(cur.restarted ?? []), ...restartedSet])];
         if (FINAL.includes(phase)) Object.assign(cur, { final: phase, finishedAt: now, at });
         await write(ctx, cur);
         if (cur.final) await release(ctx, cur.id);

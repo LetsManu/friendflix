@@ -33,7 +33,7 @@ test.describe('admin update progress (desktop)', () => {
     expect((await state(list, 'request').boundingBox())!.y).toBe(y);
     await expect(list.locator('[data-state="failed"]')).toHaveCount(0);
     await expect(list.locator('[data-result="done"]')).toContainText('Portainer hat den Stack neu deployt', { timeout: 20_000 });
-    await expect(list.locator('[data-result="done"]')).toHaveAttribute('role', 'status');
+    await expect(list.locator('[data-result="done"] [data-headline]')).toHaveAttribute('role', 'status');
     await expect(list.locator('[data-reconnecting]')).toHaveCount(0);
     for (const st of ['request', 'pulling', 'recreating', 'health']) await expect(state(list, st)).toHaveAttribute('data-state', 'ok');
     // the end reads the version again (the new build shows in the version card)
@@ -67,7 +67,7 @@ test.describe('admin update progress (desktop)', () => {
     for (const st of ['pulling', 'recreating', 'health']) await expect(state(list, st)).toHaveAttribute('data-state', 'skipped');
     const note = list.locator('[data-result="failed"]');
     // an old outcome found on load is a status, not an alert (it is shown for two days)
-    await expect(note).toHaveAttribute('role', 'status');
+    await expect(note.locator('[data-headline]')).toHaveAttribute('role', 'status');
     await expect(note).toContainText('Portainer hat das Update abgelehnt (HTTP 401, Schritt Stack-Abfrage).');
     await note.getByRole('button', { name: 'Erneut versuchen' }).click();
     await expect(page.getByRole('alertdialog', { name: /Portal jetzt aktualisieren/ })).toBeVisible();
@@ -146,7 +146,7 @@ test.describe('admin update progress (desktop)', () => {
     await page.getByRole('alertdialog').getByRole('button', { name: 'Jetzt aktualisieren' }).click();
     const note = apply(page).locator('[data-result="unchanged"]');
     await expect(note).toContainText('Portainer ist fertig, hat aber nichts neu erstellt.', { timeout: 15_000 });
-    await expect(note).toHaveAttribute('role', 'status');
+    await expect(note.locator('[data-headline]')).toHaveAttribute('role', 'status');
     await expect(note.getByRole('button', { name: 'Erneut versuchen' })).toHaveCount(0);
     const list = apply(page).locator('[data-redeploy]');
     for (const st of ['request', 'pulling']) await expect(state(list, st)).toHaveAttribute('data-state', 'ok');

@@ -36,7 +36,7 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     await expect(confirm).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0); // inline, no pop-up
     await confirm.getByRole('button', { name: 'Ja, starten' }).click();
-    await expect(steps(page)).toHaveCount(5); // the rollback row is listed from the start (skipped unless it runs)
+    await expect(steps(page)).toHaveCount(4); // the rollback row only once a rollback starts (its room is kept)
     // the running row is the current step; the primary button is busy while it runs
     await expect(c.locator('li[aria-current="step"]')).toHaveCount(1);
     await expect(c.getByRole('button', { name: 'Jetzt aktualisieren' })).toBeDisabled();
@@ -192,11 +192,23 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     await expect(result).toContainText('Portainer hat das Update begonnen, es brach aber bei „Portainer lädt die Images“ ab (HTTP 500).', { timeout: 15_000 });
     await expect(result).not.toContainText('abgelehnt');
     await expect(result).not.toContainText('Neu-Deployen');
-    await expect(result).toHaveAttribute('role', 'alert'); // seen happening
-    // the advice is folded away
-    await expect(result.getByText('Die Logs des Stacks in Portainer nennen den Grund', { exact: false })).toBeHidden();
-    await result.getByText('Was tun?').click();
-    await expect(result.getByText('Die Logs des Stacks in Portainer nennen den Grund', { exact: false })).toBeVisible();
+    // only the one-sentence headline is the alert (seen happening); the advice is folded away, outside it
+    await expect(result.locator('[data-headline]')).toHaveAttribute('role', 'alert');
+    await expect(result.getByRole('alert').locator('[data-advice]')).toHaveCount(0);
+    const advice = result.locator('[data-advice]');
+    await expect(advice).toBeHidden();
+    // opening "Was tun?" moves neither the toggle nor anything above it: its text appears below
+    const toggle = result.getByRole('button', { name: 'Was tun?' });
+    // positions on the page (a click may scroll the viewport)
+    const top = (l: import('@playwright/test').Locator) => l.evaluate((e) => e.getBoundingClientRect().top + window.scrollY);
+    const pos = async () => ({ toggle: await top(toggle), head: await top(result.locator('[data-headline]')), retry: await top(result.getByRole('button', { name: 'Erneut versuchen' })) });
+    const before = await pos();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(advice).toContainText('Die Logs des Stacks in Portainer nennen den Grund');
+    expect(await pos()).toEqual(before);
+    expect(await top(advice)).toBeGreaterThan(before.toggle);
     // refused while Portainer pulled (after "started"): the request went through, the pull failed, the rest never ran
     const progress = card(page).locator('[data-redeploy="failed"]');
     await expect(progress.locator('[data-step="request"]')).toHaveAttribute('data-state', 'ok');
@@ -252,5 +264,34 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     api.updater = updaterState('unauthorized');
     await page.goto('/admin/update');
     await expect(card(page).getByRole('alert')).toContainText('INTERNAL_SECRET');
+  });
+
+  test('the rollback row: an update without one never shows it and the card keeps its height; a rollback appears in the kept slot, nothing below moves', async ({ page, api }) => {
+    api.updater = { ...updaterState(true), downPolls: 0 };
+    await page.goto('/admin/update');
+    const c = card(page);
+    const below = c.getByRole('heading', { name: 'Automatische Updates' });
+    await c.getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await c.getByRole('button', { name: 'Ja, starten' }).click();
+    await expect(c.locator('li[aria-current="step"]')).toHaveCount(1);
+    await expect(c.locator('[data-step="verify"]')).toHaveAttribute('data-state', 'running');
+    const h0 = (await c.boundingBox())!.height, y0 = (await below.boundingBox())!.y;
+    await expect(c.locator('[data-result="succeeded"]')).toBeVisible({ timeout: 20_000 });
+    await expect(c.locator('li[data-step="rollback"]')).toHaveCount(0);
+    expect((await c.boundingBox())!.height).toBe(h0);
+    expect((await below.boundingBox())!.y).toBe(y0);
+
+    api.updater = { ...updaterState(true), outcome: 'rolled_back', downPolls: 0 };
+    await page.reload();
+    await c.getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await c.getByRole('button', { name: 'Ja, starten' }).click();
+    await expect(c.locator('[data-step="verify"]')).toHaveAttribute('data-state', 'running');
+    await expect(c.locator('li[data-step="rollback"]')).toHaveCount(0);
+    const y1 = (await below.boundingBox())!.y;
+    await expect(c.locator('li[data-step="rollback"]')).toBeVisible({ timeout: 20_000 });
+    await expect(c).toContainText('Schritt 4 von 4');
+    expect((await below.boundingBox())!.y).toBe(y1);
+    await expect(c.locator('[data-result="rolled_back"]')).toBeVisible({ timeout: 20_000 });
+    expect((await below.boundingBox())!.y).toBe(y1);
   });
 });

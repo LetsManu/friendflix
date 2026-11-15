@@ -26,8 +26,8 @@ describe('updater panel logic', () => {
   });
 
   it('steps: the four, rollback once it ran, no health step for a self-update', () => {
-    // an update lists its rollback from the start (skipped until it runs): the list never grows mid-run
-    expect(visibleSteps(job())).toEqual(['pull', 'verify', 'restart', 'health', 'rollback']);
+    // the rollback row only once it started (StepList reserves its slot, so nothing moves when it appears)
+    expect(visibleSteps(job())).toEqual(['pull', 'verify', 'restart', 'health']);
     expect(visibleSteps(job({ steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'failed', rollback: 'running' } }))).toEqual(['pull', 'verify', 'restart', 'health', 'rollback']);
     expect(visibleSteps(job({ action: 'rollback' }))).toEqual(['pull', 'verify', 'restart', 'health']);
     expect(visibleSteps(job({ action: 'self-update' }))).toEqual(['pull', 'verify', 'restart']);

@@ -35,6 +35,9 @@
   /** a failure is an alert only when it was seen happening; an old outcome on page load is a status */
   let seenRunning = false;
   $: if (outcome === 'running') seenRunning = true;
+  /** "What to do?": a disclosure next to the retry button (it stays where it is), its text below, outside the alert */
+  let adviceOpen = false;
+  const adviceId = `step-advice-${Math.random().toString(36).slice(2, 10)}`;
   const sub = (r: StepRow) => r.sub ?? '';
 </script>
 
@@ -70,20 +73,23 @@
       </li>
     {/each}
   </ol>
+  {#each Array(flow.reserve ?? 0) as _, k (k)}<div class="slot" aria-hidden="true"></div>{/each}
   {#if note}
     <div class="result">
       {#if flow.note}
         {@const n = flow.note}
-        <!-- a one-sentence headline; the advice folds away under "What to do?" (it opens below, nothing above moves) -->
-        <div class="note n-{n.tone}" role={n.tone === 'bad' && seenRunning ? 'alert' : 'status'} data-result={n.result}>
+        <!-- the headline alone is the live region (alert when the failure was seen happening); "What to do?" keeps its place
+             next to the retry button and its text opens below, outside the alert: nothing above it moves -->
+        <div class="note n-{n.tone}" data-result={n.result}>
           <Icon name={n.tone === 'ok' ? 'check' : n.tone === 'neutral' ? 'info' : 'alert'} size={22} />
           <div class="body">
-            <p><b>{n.text}</b>{#if n.detail}{' '}<span class="muted">{n.detail}</span>{/if}</p>
+            <p class="head" role={n.tone === 'bad' && seenRunning ? 'alert' : 'status'} data-headline><b>{n.text}</b>{#if n.detail}{' '}<span class="muted">{n.detail}</span>{/if}</p>
             {#if n.retry || n.advice}
               <div class="acts">
                 {#if n.retry}<Button variant="secondary" icon="refresh" on:click={() => dispatch('retry')}>{$t('admin.update.updater.flow.retry')}</Button>{/if}
-                {#if n.advice}<details class="adv"><summary>{$t('admin.update.updater.flow.advice')}</summary><p>{n.advice}</p></details>{/if}
+                {#if n.advice}<button type="button" class="adv-t" aria-expanded={adviceOpen} aria-controls={adviceId} on:click={() => (adviceOpen = !adviceOpen)}>{$t('admin.update.updater.flow.advice')}</button>{/if}
               </div>
+              {#if n.advice}<p class="adv" id={adviceId} hidden={!adviceOpen} data-advice>{n.advice}</p>{/if}
             {/if}
           </div>
         </div>
@@ -159,8 +165,8 @@
   .b.b-failed { background: var(--wash-err); color: var(--err-mark); }
 
   /* the note's box is there from the start: the outcome slides into it, nothing below moves */
-  /* reserved for a closed note: up to two headline lines, the detail, the retry / "What to do?" row (phones: more lines, the two stacked) */
-  .result { min-height: 9rem; display: grid; align-content: start; }
+  /* reserved for a closed note: the longest of the 7 locales measured at 1280 px (132 px) plus ~10 % (phones below) */
+  .result { min-height: 9.25rem; display: grid; align-content: start; }
   .note { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px 14px; padding: 14px 18px; border-radius: var(--fr-r-tile); opacity: 0; transform: translateY(10px) scale(.98);
     animation: ff-note 420ms var(--fr-spring) forwards; min-width: 0; }
   @keyframes ff-note { to { opacity: 1; transform: none; } }
@@ -168,9 +174,11 @@
   .note p { margin: 0; min-width: 0; overflow-wrap: break-word; }
   /* the retry button under the text at every width; "What to do?" beside it, its text opens below the row */
   .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
-  .adv summary { display: inline-flex; align-items: center; min-height: 44px; cursor: pointer; color: var(--fg); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
-  .adv[open] { flex-basis: 100%; }
-  .adv p { color: var(--mut); padding-bottom: 4px; }
+  .adv-t { min-height: 44px; padding: 0 4px; background: transparent; color: var(--fg); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+  .adv-t:hover:not(:disabled) { background: var(--tone-muted); }
+  .adv { color: var(--mut); }
+  /* the room of an update's rollback row (row height + list gap, minus the flow gap this slot adds): nothing moves when it shows */
+  .slot { height: 62px; margin-top: -12px; }
   .note b { font-weight: 600; }
   .note > :global(svg) { flex: none; }
   .note.n-ok { background: var(--wash-ok); border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent); } .note.n-ok > :global(svg) { color: var(--ok); }
@@ -182,10 +190,12 @@
     .row { grid-template-columns: 40px minmax(0, 1fr); grid-template-areas: 'dot name' 'dot state'; row-gap: 4px; min-height: 84px; }
     .state { justify-items: start; }
     /* phones: the label on up to two lines, the count on its own: room for three lines from the start */
-    .top { flex-direction: column; justify-content: flex-start; gap: 0; min-height: 4.5em; }
+    .top { flex-direction: column; justify-content: flex-start; gap: 0; min-height: 5em; }
     .lbl > span { white-space: normal; overflow-wrap: anywhere; }
     /* phones: the text takes the whole width (the tone stays in the colour and the words), the box fits a closed note */
-    .result { min-height: 15rem; }
+    /* the longest closed note of the 7 locales at 320 px (pl, a rolled-back job: 280 px) plus ~10 % */
+    .result { min-height: 19.5rem; }
+    .slot { height: 90px; }
     .note { grid-template-columns: minmax(0, 1fr); padding: 14px 16px; }
     .note > :global(svg) { display: none; }
   }

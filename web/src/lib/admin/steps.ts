@@ -38,6 +38,8 @@ export interface StepFlow {
   count: string;
   reconnecting: boolean;
   note: FlowNote | null;
+  /** invisible row slots kept under the list (an update's rollback, shown only once it starts): nothing moves when it appears */
+  reserve?: number;
 }
 
 const U = 'admin.update.updater';
@@ -58,8 +60,10 @@ function took(start: string, end: string | null): string {
 }
 const elapsed = (start: string, now: number) => { const a = ms(start); return a === null ? 0 : Math.max(0, Math.round((now - a) / 1000)); };
 
+/** count and bar over the real steps (`rows` without a rollback: it only undoes them) */
 function frame(rows: StepRow[], outcome: FlowOutcome, partial?: number): Pick<StepFlow, 'progress' | 'count'> {
-  const at = rows.findIndex((r) => r.state === 'running' || r.state === 'failed');
+  const found = rows.findIndex((r) => r.state === 'running' || r.state === 'failed');
+  const at = found < 0 && outcome !== 'ok' && outcome !== 'neutral' ? rows.length - 1 : found;
   const n = rows.length;
   if (outcome === 'running') return { progress: progressOf(rows, partial), count: trDynamic(`${U}.flow.stepOf`, { n: Math.max(1, at + 1), total: n }) };
   if (outcome === 'failed') return { progress: progressOf(rows), count: trDynamic(`${U}.flow.stopped`, { n: Math.max(1, at + 1), total: n }) };
@@ -88,7 +92,10 @@ export function jobFlow(job: UpdaterJob, o: FlowOpts & { steps?: readonly StepNa
     const advice = outcome === 'failed' && (job.state === 'rolled_back' || failedRow) ? failReason(job.error) : '';
     note = { tone: outcome === 'ok' ? 'ok' : 'bad', result: job.state, text, advice, detail: [took(job.startedAt, job.finishedAt), code].filter(Boolean).join(' · '), retry: outcome === 'failed' };
   }
-  return { rows, outcome, label, reconnecting: running && Boolean(o.reconnecting), note, ...frame(rows, outcome) };
+  const main = rows.filter((r) => r.key !== 'rollback');
+  // an update may roll back: its row's room is kept from the start, the row itself shows only once the rollback started
+  const reserve = job.action === 'update' && main.length === rows.length ? 1 : 0;
+  return { rows, outcome, label, reconnecting: running && Boolean(o.reconnecting), note, reserve, ...frame(main, outcome) };
 }
 
 /** a Portainer redeploy record (with an updater: how many services already run the new build, as the recreate row's sub line) */

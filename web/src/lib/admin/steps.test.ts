@@ -28,12 +28,14 @@ afterEach(async () => { await setLocale('de'); });
 describe('updater job -> rows', () => {
   it('running: pending is "waiting", the running row is marked, the label counts the seconds from the job\'s own start (it survives a reload)', () => {
     const f = jobFlow(job({ step: 'verify', steps: { pull: 'ok', verify: 'running', restart: 'pending', health: 'pending', rollback: 'skipped' } }), { now: T + 12_000 });
-    expect(f.rows.map((r) => r.key)).toEqual(['pull', 'verify', 'restart', 'health', 'rollback']);
-    expect(states(f.rows)).toEqual({ pull: 'ok', verify: 'running', restart: 'waiting', health: 'waiting', rollback: 'skipped' });
+    expect(f.rows.map((r) => r.key)).toEqual(['pull', 'verify', 'restart', 'health']);
+    expect(states(f.rows)).toEqual({ pull: 'ok', verify: 'running', restart: 'waiting', health: 'waiting' });
+    // an update keeps one row's room for a rollback that may come (no row shown, no "skipped")
+    expect(f.reserve).toBe(1);
     expect(f.rows[0]!.label).toBe('Download images');
-    expect(f).toMatchObject({ outcome: 'running', reconnecting: false, note: null, count: 'Step 2 of 5' });
+    expect(f).toMatchObject({ outcome: 'running', reconnecting: false, note: null, count: 'Step 2 of 4' });
     expect(f.label).toContain('12');
-    expect(f.progress).toBeCloseTo(1.5 / 5);
+    expect(f.progress).toBeCloseTo(1.5 / 4);
     // no per-step times from the updater: nothing invented
     expect(f.rows.every((r) => r.took === undefined)).toBe(true);
   });
@@ -57,7 +59,9 @@ describe('updater job -> rows', () => {
   it('rolled back: the health row failed, the rollback row shows, the note has the error code and a retry', () => {
     const f = jobFlow(job({ state: 'rolled_back', step: 'rollback', error: 'unhealthy', finishedAt: iso(80_000), steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'failed', rollback: 'ok' } }));
     expect(states(f.rows)).toEqual({ pull: 'ok', verify: 'ok', restart: 'ok', health: 'failed', rollback: 'ok' });
-    expect(f).toMatchObject({ outcome: 'failed', count: 'Stopped at step 4 of 5' });
+    // the count and the bar over the four real steps; the rollback row sits in the reserved slot
+    expect(f).toMatchObject({ outcome: 'failed', count: 'Stopped at step 4 of 4', reserve: 0 });
+    expect(f.progress).toBeCloseTo(3 / 4);
     expect(f.note).toMatchObject({ tone: 'bad', result: 'rolled_back', retry: true });
     expect(f.note!.detail).toContain('Error code: unhealthy');
     expect(f.note!.advice).toBe('not healthy in time');
@@ -65,12 +69,21 @@ describe('updater job -> rows', () => {
 
   it('failed early: later steps are "skipped", the bar stops where it failed', () => {
     const f = jobFlow(job({ state: 'failed', error: 'verify_failed', finishedAt: iso(5_000), steps: { pull: 'ok', verify: 'failed', restart: 'skipped', health: 'skipped', rollback: 'skipped' } }));
-    expect(states(f.rows)).toMatchObject({ pull: 'ok', verify: 'failed', restart: 'skipped', health: 'skipped' });
-    expect(f.progress).toBeCloseTo(1 / 5);
+    expect(states(f.rows)).toEqual({ pull: 'ok', verify: 'failed', restart: 'skipped', health: 'skipped' });
+    expect(f.progress).toBeCloseTo(1 / 4);
     expect(f.note).toMatchObject({ tone: 'bad', result: 'failed', retry: true });
     // one sentence naming the row; the long reason is the advice
     expect(f.note!.text).toBe('Job failed at “Check signatures”.');
     expect(f.note!.advice).toContain('signature check failed');
+  });
+
+  it('a rollback running: "step 4 of 4" (the failed health check), the bar over the four; a self-update and Live TV reserve nothing', () => {
+    const rb = jobFlow(job({ step: 'rollback', steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'failed', rollback: 'running' } }));
+    expect(rb.rows.map((r) => r.key)).toEqual(['pull', 'verify', 'restart', 'health', 'rollback']);
+    expect(rb).toMatchObject({ outcome: 'running', count: 'Step 4 of 4', reserve: 0 });
+    expect(rb.progress).toBeCloseTo(3 / 4);
+    expect(jobFlow(job({ action: 'self-update' })).reserve).toBe(0);
+    expect(jobFlow(job({ state: 'succeeded', steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'ok', rollback: 'skipped' } }))).toMatchObject({ reserve: 1, progress: 1 });
   });
 
   it('Live TV passes its own steps (a disable has only the restart)', () => {
