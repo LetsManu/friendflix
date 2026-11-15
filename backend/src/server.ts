@@ -6,7 +6,7 @@ import { buildApp } from './app.js';
 import { watchUntrustedHost } from './netaddr.js';
 import { loadConfig, removedEnvNames } from './config.js';
 import { keyFromBase64 } from './crypto.js';
-import { migrate } from './db.js';
+import { migrate, poolOptions } from './db.js';
 import { createMediaServer, mediaConfigProblems } from './media/index.js';
 import { dispatchMediaEvent } from './media/events.js';
 import { RedisKV } from './kv.js';
@@ -22,6 +22,8 @@ import { livetvEpgPruneTick } from './livetv/epg.js';
 import { livetvIngestTick } from './livetv/ownfeeds.js';
 import { sweepPendingGuideFiles } from './livetv/guidefiles.js';
 import { livetvRefreshTick, refreshRunning } from './livetv/refresh.js';
+import { livetvRecordTick } from './livetv/recsched.js';
+import { livetvStoreTick } from './livetv/recstore.js';
 import { livetvTick } from './livetv/streams.js';
 import { hevcTick } from './hevcenc.js';
 import { digestTick } from './digest.js';
@@ -57,7 +59,9 @@ import { joinedStopsSettled } from './cast.js';
 const bootstrap = bootstrapEnv(process.env, lazyBootstrap()); // reads only the files whose key env does not provide
 const env = nonEmptyEnv(process.env); // empty = unset, as compose passes every optional key as `${KEY:-}`
 const boot = loadConfig(bootConfigEnv(process.env, bootstrap));
-const pool = new pg.Pool({ connectionString: boot.DATABASE_URL, max: 10 });
+// bounded waits for a connection, server-side statement and idle-transaction limits (DB_*_TIMEOUT_MS, db.ts poolOptions): a stalled
+// database fails requests instead of stranding the pool
+const pool = new pg.Pool(poolOptions(boot));
 await migrate(pool);
 const redis = new Redis(boot.REDIS_URL);
 const kv = new RedisKV(redis);
@@ -170,6 +174,21 @@ timers.push(setInterval(() => {
   void deletionTick(ctx).catch(jobFailed(ctx, app.log, 'account-deletion', 'account deletion tick failed')).finally(() => { deletionBusy = false; });
 }, 60_000)); // final account deletion after the grace period
 if (cfg.BACKGROUND_JOBS === 'true') {
+  // Live TV recordings (Phase 3): reservations, due starts and stops, the reconcile with livetv's recorders (one runner: KV ltv:rectick).
+  // Also while livetv is not installed: due recordings then fail `livetv_off` and their owners are told.
+  let livetvRecordBusy = false;
+  timers.push(setInterval(() => {
+    if (livetvRecordBusy || !op()) return;
+    livetvRecordBusy = true;
+    void livetvRecordTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-record', 'livetv recording tick failed')).finally(() => { livetvRecordBusy = false; });
+  }, 15_000));
+  // the recordings store job (A-I2): library exports, space and retention (spec §15.5); one runner (KV ltv:recstore), apart from the tick
+  let livetvStoreBusy = false;
+  timers.push(setInterval(() => {
+    if (livetvStoreBusy || !op()) return;
+    livetvStoreBusy = true;
+    void livetvStoreTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-store', 'livetv recordings store job failed')).finally(() => { livetvStoreBusy = false; });
+  }, 30_000));
   // always scheduled: DOWNLOADS_ENABLED applies live, each tick checks it
   const downloadsOn = () => op() && ctx.cfg.DOWNLOADS_ENABLED === 'true';
   timers.push(setInterval(() => {

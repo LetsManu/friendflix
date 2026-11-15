@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import webpush from 'web-push';
+import * as webpush from 'web-push';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Config } from '../config.js';

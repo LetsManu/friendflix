@@ -13,7 +13,7 @@ const rows = (page: Page) => page.locator('ul.list > li');
 test.describe('admin: Live-TV, Gruppen & Rechte (phone)', () => {
   test.beforeEach(({ api }) => { api.asAdmin = true; install(api); });
 
-  test('the list, the release sheet and the matrix fit the screen', async ({ page, api }) => {
+  test('the list, the release sheet and the Personen view fit the screen', async ({ page, api }) => {
     await page.goto('/admin/livetv?tab=groups');
     await expect(rows(page)).toHaveCount(7);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
@@ -25,8 +25,10 @@ test.describe('admin: Live-TV, Gruppen & Rechte (phone)', () => {
     await dlg.getByRole('button', { name: 'Freigeben', exact: true }).click();
     await expect(dlg).toHaveCount(0);
     expect(api.admin.livetv.area.calls.find((c) => /groups\/release$/.test(c.p))!.body).toEqual({ ids: ['g-kino'], roles: ['guest'], kidFriendly: false });
-    await page.getByRole('radio', { name: 'Nach Rolle', exact: true }).click();
-    await expect(page.getByRole('table', { name: 'Gruppen nach Rolle' })).toBeVisible();
+    await page.getByRole('radio', { name: 'Personen', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'Personen mit Ausnahmen' })).toBeVisible();
+    // the link to Rollen & Rechte is a 44 px target
+    expect((await page.getByRole('tabpanel', { name: 'Gruppen & Rechte' }).getByRole('link', { name: 'Rollen & Rechte', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 

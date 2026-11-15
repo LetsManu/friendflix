@@ -23,8 +23,10 @@ const PAGE_KEYS = ['PUBLIC_URL', 'WEBHOOK_SECRET', 'API_COMPRESSION', 'OIDC_ISSU
   'LOGIN_UI', 'AUTHENTIK_LOGIN_FLOW', 'AUTHENTIK_INVALIDATION_FLOW', 'PASSKEYS_IN_APP', 'LOGIN_COVER_WALL', 'LIVETV_OFFER_HIDDEN',
   'AUTHENTIK_STATIC_SETUP_FLOW', 'AUTHENTIK_WEBAUTHN_SETUP_FLOW', 'AUTHENTIK_PASSWORD_CHANGE_FLOW', 'AUTHENTIK_EMAIL_CHANGE_FLOW',
   'RECO_ENGINE', 'RECO_EXPLORE', 'RECO_HALF_LIFE_DAYS', 'POSTPLAY_ENABLED'];
-/** the four settings of group livetv: edited in Admin → Live-TV → Einstellungen, not on the settings page */
-const LIVETV_KEYS = ['LIVETV_ENCODER', 'LIVETV_SRT_HOST', 'LIVETV_DVR_MINUTES', 'LIVETV_MAX_BITRATE'];
+/** the settings of group livetv (four of Phase 1, eight recording settings of Phase 3): edited in Admin → Live-TV, not on the settings page */
+const LIVETV_KEYS = ['LIVETV_ENCODER', 'LIVETV_SRT_HOST', 'LIVETV_DVR_MINUTES', 'LIVETV_MAX_BITRATE', 'LIVETV_RECORD_STORAGE', 'LIVETV_RECORD_LIBRARY_ID',
+  'LIVETV_RECORD_LIBRARY_JF_PATH', 'LIVETV_RECORD_LIMIT_GB', 'LIVETV_RECORD_RETENTION_DAYS', 'LIVETV_RECORD_PAD_BEFORE_MIN', 'LIVETV_RECORD_PAD_AFTER_MIN',
+  'LIVETV_RECORD_MAX_PARALLEL'];
 const KEYS = [...PAGE_KEYS, ...LIVETV_KEYS];
 
 const view = (over: Partial<SettingView> & Pick<SettingView, 'key' | 'kind'>): SettingView => ({
@@ -61,7 +63,7 @@ describe('placement of the livetv group', () => {
 describe('settings texts', () => {
   it('every visible setting has a label and a help text; the request service is never named after a product', async () => {
     expect(PAGE_KEYS).toHaveLength(72);
-    expect(KEYS).toHaveLength(76);
+    expect(KEYS).toHaveLength(84);
     for (const k of KEYS) {
       expect(hasKey(`settings.keys.${k}.label`), k).toBe(true);
       expect(hasKey(`settings.keys.${k}.help`), k).toBe(true);

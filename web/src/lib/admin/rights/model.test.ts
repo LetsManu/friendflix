@@ -10,23 +10,27 @@ import {
 
 afterEach(async () => { await setLocale('de'); });
 
-const F = (key: string, kind: MatrixField['kind'], extra: Partial<MatrixField> = {}): MatrixField => ({ key, group: 'access', kind, ...extra });
+const F = (key: string, kind: MatrixField['kind'], extra: Partial<MatrixField> = {}): MatrixField => ({ key, group: 'access', kind, area: 'general', ...extra });
 const fields: MatrixField[] = [
-  F('libraries', 'libraries'), F('maxParentalRating', 'rating', { options: [null, 0, 6, 12, 16, 18] }), F('maxStreams', 'int', { group: 'playback' }),
-  F('maxBitrate', 'bitrate', { group: 'playback' }), F('maxHeight', 'height', { group: 'playback' }), F('download', 'bool', { group: 'downloads' }),
-  F('requests', 'bool', { group: 'requests', requires: 'requests' }), F('party', 'bool', { group: 'together' }),
-  F('liveTv', 'bool', { group: 'livetv', requires: 'livetv' }),
+  F('libraries', 'libraries', { area: 'library' }), F('maxParentalRating', 'rating', { options: [null, 0, 6, 12, 16, 18], area: 'library' }), F('maxStreams', 'int', { group: 'playback' }),
+  F('maxBitrate', 'bitrate', { group: 'playback', area: 'library' }), F('maxHeight', 'height', { group: 'playback', area: 'library' }), F('download', 'bool', { group: 'downloads', area: 'downloads' }),
+  F('requests', 'bool', { group: 'requests', requires: 'requests', area: 'requests' }), F('party', 'bool', { group: 'together', area: 'together' }),
+  F('liveTv', 'bool', { group: 'livetv', requires: 'livetv', area: 'livetv' }), F('liveRecord', 'bool', { group: 'livetv', requires: 'livetv', area: 'livetv', planned: 'recordings' }),
 ];
+const AREAS_ON = { library: true, livetv: true, requests: true, together: true, downloads: true };
 const role = (key: string, label: string | null, accounts: number, profiles: number, values: Record<string, unknown>): MatrixRole => ({
   key, label, builtinLabel: true, base: 'guest', origin: 'code', invitable: true, position: 0, accounts, profiles, kidsProfiles: 0, values,
-  sources: {}, defaults: values, envGone: false, stored: true, missingLibraries: [],
+  sources: {}, defaults: values, envGone: false, stored: true, missingLibraries: [], areas: AREAS_ON, livetvGroupIds: [],
 });
+/** the released groups of matrix.livetv (Live TV installed) */
+const LIVETV = { groups: [{ id: 'g-nord', name: 'Nordlicht TV', kidFriendly: false, channels: 12 }, { id: 'g-hafen', name: 'Hafenkanal', kidFriendly: true, channels: 4 }], pending: 0 };
 const matrix = (features = { requests: false, cast: false, livetv: false }): RoleMatrix => ({
   fields, features, libraries: [{ id: 'l1', name: 'Filme' }, { id: 'l2', name: 'Serien' }, { id: 'l3', name: 'Musik' }],
   roles: [
     role('guest', 'Gast', 4, 5, { libraries: 'all', maxParentalRating: 12, maxStreams: 1, maxBitrate: 8_000_000, maxHeight: 1080, download: false, requests: true, party: false, liveTv: false }),
-    role('friend', 'Freund', 7, 9, { libraries: ['Filme'], maxParentalRating: null, maxStreams: 2, maxBitrate: 20_000_000, maxHeight: null, download: true, requests: true, party: true, liveTv: false }),
+    { ...role('friend', 'Freund', 7, 9, { libraries: ['Filme'], maxParentalRating: null, maxStreams: 2, maxBitrate: 20_000_000, maxHeight: null, download: true, requests: true, party: true, liveTv: true }), livetvGroupIds: ['g-nord'] },
   ],
+  livetv: features.livetv ? LIVETV : null, templates: [],
 });
 
 describe('cellText', () => {
@@ -36,12 +40,14 @@ describe('cellText', () => {
     ['maxBitrate', 8_000_000, '8 Mbit/s'], ['maxBitrate', 1_500_000, '1,5 Mbit/s'], ['maxBitrate', 20_000_000, '20 Mbit/s'],
     ['maxHeight', 1080, '1080p'], ['maxHeight', null, 'alle'], ['maxParentalRating', 12, 'ab 12'], ['maxParentalRating', null, 'alle'],
     ['libraries', 'all', 'alle'], ['libraries', ['a', 'b', 'c'], '3 Bibliotheken'], ['libraries', ['a'], '1 Bibliothek'],
+    ['libraries', [], 'Keine Bibliothek'],
   ])('%s %j -> %s', (k, v, out) => { expect(cellText(f(k), v)).toBe(out); });
   it('english', async () => {
     await setLocale('en');
     expect(cellText(f('maxBitrate'), 1_500_000)).toBe('1.5 Mbit/s');
     expect(cellText(f('maxParentalRating'), 16)).toBe('from 16');
     expect(cellText(f('maxHeight'), null)).toBe('all');
+    expect(cellText(f('libraries'), [])).toBe('No library');
   });
 });
 
@@ -99,6 +105,27 @@ describe('staging', () => {
   });
 });
 
+describe('Live-TV groups staged with the role (Task 9)', () => {
+  const m = matrix({ requests: true, cast: true, livetv: true });
+  it('the loaded value of livetvGroups is livetvGroupIds: the same set unstages', () => {
+    const s = stageSet({}, m, 'friend', 'livetvGroups', ['g-nord', 'g-hafen']);
+    expect(s).toEqual({ friend: { livetvGroups: ['g-nord', 'g-hafen'] } });
+    expect(stageSet(s, m, 'friend', 'livetvGroups', ['g-nord'])).toEqual({});
+  });
+  it('stageBodies carries livetvGroups; reviewLines shows "Live-TV-Gruppen: Nordlicht TV → Nordlicht TV, Hafenkanal"', () => {
+    const s = stageSet(stageSet({}, m, 'friend', 'livetvGroups', ['g-hafen', 'g-nord']), m, 'friend', 'maxStreams', 3);
+    expect(stageBodies(s)).toEqual({ friend: { livetvGroups: ['g-hafen', 'g-nord'], maxStreams: 3 } });
+    expect(reviewLines(s, m)).toEqual([
+      { role: 'Freund', field: 'Gleichzeitige Streams', from: '2', to: '3' },
+      { role: 'Freund', field: 'Live-TV-Gruppen', from: 'Nordlicht TV', to: 'Nordlicht TV, Hafenkanal' },
+    ]);
+    expect(reviewLines(stageSet({}, m, 'friend', 'livetvGroups', []), m)).toEqual([{ role: 'Freund', field: 'Live-TV-Gruppen', from: 'Nordlicht TV', to: 'Keine' }]);
+  });
+  it('a group change is not a media server change', () => {
+    expect(stageCounts(stageSet({}, m, 'friend', 'livetvGroups', []), m).policy).toBe(false);
+  });
+});
+
 describe('counted texts (plural forms)', () => {
   const c = (changes: number, roles: number, people: number, profiles = 0) => ({ changes, roles, people, profiles, policy: true });
   it('save bar, de', () => {
@@ -127,6 +154,11 @@ describe('counted texts (plural forms)', () => {
 });
 
 describe('visibleFields', () => {
+  it('visibleFields never lists liveRecord (planned: recordings)', () => {
+    const keys = visibleFields(matrix({ requests: true, cast: true, livetv: true })).map((f) => f.key);
+    expect(keys).toContain('liveTv');
+    expect(keys).not.toContain('liveRecord');
+  });
   it('hides requests without the service and Live TV always', () => {
     expect(visibleFields(matrix()).map((f) => f.key)).toEqual(['libraries', 'maxParentalRating', 'maxStreams', 'maxBitrate', 'maxHeight', 'download', 'party']);
     expect(visibleFields(matrix({ requests: true, cast: true, livetv: false })).map((f) => f.key)).toContain('requests');

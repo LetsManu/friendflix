@@ -249,7 +249,7 @@ test.describe('admin: Umwandlungen card on the Wiedergabe-Check page', () => {
   });
 
   test('Admin → Einstellungen shows proper labels for the two keys', async ({ page }) => {
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=playback');
     await expect(page.getByText('CONVERSION_SLOTS', { exact: true })).toHaveCount(1); // only as the env name under the label
     await expect(page.locator('span.lbl').filter({ hasText: /^Umwandlungen gleichzeitig$/ })).toBeVisible();
     await expect(page.locator('span.lbl').filter({ hasText: /^Vorrang bei Umwandlungen$/ })).toBeVisible();

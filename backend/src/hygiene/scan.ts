@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Ctx } from '../ctx.js';
+import { longQuery } from '../db.js';
 import { recordError } from '../errorlog.js';
 import { FALLBACK_LANGUAGE, instanceLanguage } from '../i18n.js';
 import { normLang } from '../langindex.js';
@@ -94,8 +95,9 @@ async function upsert(ctx: Pick<Ctx, 'db'>, items: HygieneFacts[], langs: Readon
 }
 
 /** Duplicate codes from the keys (one statement; only rows whose duplicate state changes are written). */
-async function recomputeDuplicates(ctx: Pick<Ctx, 'db'>): Promise<void> {
-  await ctx.db.query(`
+async function recomputeDuplicates(ctx: Pick<Ctx, 'db' | 'cfg'>): Promise<void> {
+  // library-wide window over every row: the long statement limit, not the pool's
+  await longQuery(ctx, `
     with c as (
       select item_id,
         ids_key is not null and count(*) over (partition by ids_key) > 1 as di,
@@ -174,8 +176,9 @@ async function run(ctx: Ctx, scanFn: ScanFn, opts: { full?: boolean; now?: Date;
     if (!full && fp !== (await kvGet(ctx, K.langs))) await recomputeLanguages(ctx, langs);
     await recomputeDuplicates(ctx);
     if (full) {
-      await ctx.db.query('delete from hygiene_items where scanned_at < $1', [runStart]);
-      await ctx.db.query('delete from hygiene_ignored i where not exists (select 1 from hygiene_items h where h.item_id = i.item_id)');
+      // the sweep: library-wide statements, the long statement limit
+      await longQuery(ctx, 'delete from hygiene_items where scanned_at < $1', [runStart]);
+      await longQuery(ctx, 'delete from hygiene_ignored i where not exists (select 1 from hygiene_items h where h.item_id = i.item_id)');
       // a deleted row may have been the other half of a duplicate
       await recomputeDuplicates(ctx);
     }

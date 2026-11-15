@@ -38,7 +38,9 @@ WORKDIR /app
 RUN apk add --no-cache 'zlib>=1.3.2-r1' 'musl>=1.2.6-r3' 'musl-utils>=1.2.6-r3' && rm -rf /var/log/apk.log /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 COPY --from=build --chown=node:node /app/web/build build
 COPY --chown=node:node web/package.json package.json
+# the server entry: adapter-node's server (build/index.js) plus the security headers on every response, static files included
+COPY --chown=node:node web/server/index.js web/server/headers.js server/
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 CMD wget -qO- http://127.0.0.1:3000/ >/dev/null || exit 1
-CMD ["node", "build"]
+CMD ["node", "server"]

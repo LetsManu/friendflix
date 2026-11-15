@@ -7,7 +7,7 @@
  */
 import { api } from '#lib/api';
 import { stopWatching } from '#lib/live/api';
-import { fmtNumber, tr, type TKey } from '#lib/i18n';
+import { fmtNumber, hasKey, tr, type TKey } from '#lib/i18n';
 import type { ConversionsView } from '../conversions';
 import { sourceError } from './sources';
 
@@ -22,6 +22,14 @@ export const EVENT_CODES = [
   'input_back',
   'push_rejected',
   'released_on_switch',
+  'rec_started',
+  'rec_done',
+  'rec_partial',
+  'rec_failed',
+  'rec_moved',
+  'rec_no_slot',
+  'rec_storage_full',
+  'rec_export_failed',
 ] as const;
 export type LiveEventCode = (typeof EVENT_CODES)[number];
 export type EventLevel = 'info' | 'warn' | 'error';
@@ -33,6 +41,7 @@ export interface LiveEvent {
   code: LiveEventCode;
   channelId?: string;
   sourceId?: string;
+  recordingId?: string;
   n?: number;
   /** a fixed error code */
   reason?: string;
@@ -128,11 +137,17 @@ export function eventText(e: LiveEvent, names: { source?: string } = {}): string
       return tr('adminLive.ev.source_refresh_failed', { source: names.source ?? tr('adminLive.status.unknownSource'), reason: sourceError(e.reason ?? '') });
     case 'input_lost':
     case 'input_back':
+    case 'rec_partial': // the gaps of an incomplete recording (Phase 3)
       return typeof e.n === 'number' ? tr(`adminLive.ev.${code}` as TKey, { n: e.n }) : tr(`adminLive.evBare.${code}` as TKey);
+    case 'rec_failed': // its fixed error code in words; an unknown one is never shown
+      return e.reason && hasKey(`adminLive.recReason.${e.reason}`) ? tr('adminLive.ev.rec_failed', { reason: recReason(e.reason) }) : tr('adminLive.evBare.rec_failed');
     default:
       return tr(`adminLive.ev.${code}` as TKey);
   }
 }
+
+/** a recording's fixed error code in words (`adminLive.recReason.*`); an unknown code is an empty string, never the code */
+export const recReason = (code: string | null | undefined): string => (code && hasKey(`adminLive.recReason.${code}`) ? tr(`adminLive.recReason.${code}` as TKey) : '');
 
 /** "398 von 412 Sendern mit Programm · 14 ohne" */
 export function matchLine(c: EpgCounts): string {

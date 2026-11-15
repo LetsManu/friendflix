@@ -9,7 +9,7 @@ test.describe('admin: settings (Plex, phone)', () => {
   test.beforeEach(({ api }) => { api.asAdmin = true; api.serverKind = 'plex'; api.settings = settingsState('plex'); api.settings.testResult = { ok: true, code: 'warning', detail: 'not_admin' }; });
 
   test('the Plex rows and the note fit without horizontal overflow', async ({ page }) => {
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     const media = page.locator('section', { has: page.getByRole('heading', { level: 2, name: 'Mediaserver', exact: true }) });
     await media.getByRole('button', { name: 'Testen' }).click();
     await expect(media.getByRole('status')).toContainText('nicht dem Besitzer des Plex-Servers');

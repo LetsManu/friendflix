@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { ME } from '../mocks/fixtures.js';
 import { expect, test } from '../fixtures.js';
-import { pixelCols, redPixels, seamColumns, worstStep } from '../helpers.js';
+import { addCss, pixelCols, redPixels, seamColumns, worstStep } from '../helpers.js';
 
 /** Desktop top bar (spec desktop browse §1): logo, a floating pill with the tabs, search that stretches open, bell, avatar. */
 test.describe('desktop pill bar', () => {
@@ -100,7 +100,7 @@ test.describe('desktop pill bar', () => {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.goto('/');
       await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
-      await page.addStyleTag({ content: '#busy { position: fixed; inset: 0; z-index: 49; pointer-events: none; background: repeating-linear-gradient(90deg, #f2e600 0 22px, #2fae3a 22px 44px, #fffbe0 44px 52px, #0b3d12 52px 60px); } [data-desk-bar] > .scrim { display: none; }' });
+      await addCss(page, '#busy { position: fixed; inset: 0; z-index: 49; pointer-events: none; background: repeating-linear-gradient(90deg, #f2e600 0 22px, #2fae3a 22px 44px, #fffbe0 44px 52px, #0b3d12 52px 60px); } [data-desk-bar] > .scrim { display: none; }');
       await page.evaluate(() => { const d = document.createElement('div'); d.id = 'busy'; document.body.append(d); });
       const bar = page.locator('[data-desk-bar]');
       const pill = bar.locator('.pill');
@@ -136,7 +136,7 @@ test.describe('desktop pill bar', () => {
       // mid-morph: the field opens (both ends spring out) and closes; every animation held at a few moments of the spring
       // (the pointer is on the magnifier, so the sheen is out of the way: its soft light is a slope, not a seam; the sheen's
       // effect on the blur was checked above, at rest)
-      await page.addStyleTag({ content: '[data-desk-bar] .pill > .sclip { display: none; }' });
+      await addCss(page, '[data-desk-bar] .pill > .sclip { display: none; }');
       /** once the pill's glass has started to slide: every animation held `t` ms in */
       const holdAt = (t: number) => page.evaluate(async (t) => {
         const half = document.querySelector('[data-desk-bar] .pbg .l > i.frost')!;
@@ -193,7 +193,7 @@ test.describe('desktop pill bar', () => {
             expect(await seamColumns(page, await straight()), `at rest, ${name} active`).toEqual([]);
           }
           // mid-slide (the sheen out of the way): the halves draw the glass; every animation held at a few moments
-          await page.addStyleTag({ content: '[data-desk-bar] .pill > .sclip { display: none; }' });
+          await addCss(page, '[data-desk-bar] .pill > .sclip { display: none; }');
           const holdAt = (t: number) => page.evaluate(async (t) => {
             const half = document.querySelector('[data-desk-bar] .pbg .l > i.frost')!;
             await new Promise<void>((res) => { const f = () => (half.getAnimations().length ? res() : requestAnimationFrame(f)); f(); });

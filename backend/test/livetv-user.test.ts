@@ -391,6 +391,69 @@ describe('preview image', () => {
   });
 });
 
+// roles redesign Task 5: /api/me.areas (spec §4.6) from the values /api/me already resolves
+describe('/api/me areas', () => {
+  const me = async (s: Sess) => (await call(s, 'GET', '/api/me')).json();
+  const none = { library: false, livetv: false, requests: false, together: false, downloads: false };
+
+  it('a family account → all true', async () => {
+    await addChannel('Nordlicht TV', { number: 1 });
+    expect((await me(anna)).areas).toEqual({ library: true, livetv: true, requests: true, together: true, downloads: true });
+  });
+
+  it('existing fixture accounts all have library true', async () => {
+    await addChannel('Nordlicht TV', { number: 1 });
+    await addChannel('Kinderinsel', { number: 2, group: kids });
+    const kid = await annaKids();
+    for (const s of [admin, anna, ben, carla, kid]) expect((await me(s)).areas.library).toBe(true);
+    // the friend default has no downloads, the kids profile no wishes and nothing together
+    expect((await me(ben)).areas).toEqual({ ...{ library: true, livetv: true, requests: true, together: true, downloads: true }, downloads: false });
+    expect((await me(kid)).areas).toMatchObject({ library: true, livetv: true, requests: false, together: false });
+  });
+
+  it('a liveOnly account with one granted group → { library:false, livetv:true, requests:false, together:false, downloads:false }', async () => {
+    await addChannel('Nordlicht TV', { number: 1 });
+    const key = (await call(admin, 'POST', '/api/admin/roles', { label: 'Nur Fernsehen', template: 'liveOnly' })).json().key as string;
+    expect((await call(admin, 'PUT', `/api/admin/roles/${key}`, { livetvGroups: [news] })).statusCode).toBe(200);
+    await env.pool.query('update users set role = $2 where id = $1', [benId, key]);
+    invalidateRoles(env.ctx);
+    invalidateRights();
+    try {
+      const m = await me(ben);
+      expect(m.areas).toEqual({ ...none, livetv: true });
+      expect(m.features.livetv).toBe(true);
+      // without the group: nothing at all
+      expect((await call(admin, 'PUT', `/api/admin/roles/${key}`, { livetvGroups: [] })).statusCode).toBe(200);
+      expect((await me(ben)).areas).toEqual(none);
+    } finally {
+      await env.pool.query("update users set role = 'friend' where id = $1", [benId]);
+      await env.pool.query('delete from role_settings where role = $1', [key]);
+      await env.pool.query('delete from roles where key = $1', [key]);
+      invalidateRoles(env.ctx);
+      invalidateRights();
+    }
+  });
+
+  it("library [] with the role's requests on → requests false (ANDed)", async () => {
+    await addChannel('Nordlicht TV', { number: 1 });
+    expect((await call(admin, 'PUT', `/api/admin/users/${annaId}/rights`, { overrides: { libraries: [] } })).statusCode).toBe(200);
+    try {
+      const m = await me(anna);
+      expect(m.perms).toMatchObject({ requests: true, party: true, comments: true });
+      expect(m.downloads.allowed).toBe(true);
+      expect(m.areas).toEqual({ ...none, livetv: true });
+    } finally {
+      await env.pool.query('delete from user_limits where user_id = $1', [annaId]);
+      invalidateRights(annaId);
+    }
+  });
+
+  it('kids profile → requests false, together false', async () => {
+    await addChannel('Kinderinsel', { number: 1, group: kids });
+    expect((await me(await annaKids())).areas).toEqual({ library: true, livetv: true, requests: false, together: false, downloads: true });
+  });
+});
+
 describe('TV start', () => {
   const deviceOf = async (userId: string) => (await env.pool.query<{ device_id: string }>('select device_id from devices where user_id = $1', [userId])).rows[0]!.device_id;
   const me = async (s: Sess) => (await call(s, 'GET', '/api/me')).json();

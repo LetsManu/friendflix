@@ -14,7 +14,7 @@ import { compressJson } from './compress.js';
 import { newTimingStore, serverTimingHeader, timedDb, timedKv, timingStorage, timingSummary, type TimingStore } from './timing.js';
 import { metricsPlugin } from './metrics.js';
 import { recordError } from './errorlog.js';
-import { HttpError } from './users.js';
+import { HttpError, InvalidField } from './users.js';
 import { accountRoutes } from './routes/account.js';
 import { accountSecurityRoutes } from './routes/accountSecurity.js';
 import { authentikRepairRoutes } from './routes/authentikRepair.js';
@@ -61,6 +61,7 @@ import { animeRoutes } from './routes/anime.js';
 import { sourceRoutes } from './routes/sources.js';
 import { aboutRoutes } from './routes/about.js';
 import { healthRoutes } from './routes/health.js';
+import { systemcheckRoutes } from './routes/systemcheck.js';
 import { hygieneRoutes } from './routes/hygiene.js';
 import { usageRoutes } from './routes/usage.js';
 import { SettingsError } from './settings/store.js';
@@ -153,6 +154,8 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
     if (err instanceof ZodError) return reply.code(400).send({ error: 'bad_request', issues: err.issues.map((i) => i.path.join('.')) });
     // a refused settings save: each key with its code (never a value)
     if (err instanceof SettingsError) return reply.code(400).send({ error: err.message, errors: err.errors });
+    // a refused value with the field it belongs to (a code, never the value)
+    if (err instanceof InvalidField) return reply.code(400).send({ error: 'invalid', field: err.field });
     const status = (err as { statusCode?: number }).statusCode;
     if (status && status < 500) return reply.code(status).send({ error: (err as Error).message });
     // a business error with a 5xx status (e.g. 503 authentik_unavailable): answered only when its message is a code,
@@ -302,6 +305,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   sourceRoutes(app, ctx, testSourceKey);
   aboutRoutes(app, ctx);
   healthRoutes(app, ctx);
+  systemcheckRoutes(app, ctx);
   authentikRepairRoutes(app, ctx);
   hygieneRoutes(app, ctx);
   usageRoutes(app, ctx);

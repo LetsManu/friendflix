@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
+import { updaterState } from '../mocks/updater.js';
 import type { AdminRequest } from '../mocks/admin.js';
 
 const toasts = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Hinweise' });
@@ -374,7 +375,7 @@ test.describe('admin content pages (desktop)', () => {
 
   test.describe('update', () => {
     test('version card, check, confirm and the progress steps', async ({ page, api }) => {
-      await page.route('**/api/version', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"sha":"ff00aa1deadbeef"}' }));
+      api.updater = { ...updaterState(false), downPolls: 0 }; // no updater: the page follows the backend's redeploy record
       await page.goto('/admin/update');
       await expect(page.getByRole('heading', { level: 1, name: 'Update' })).toBeVisible();
       const ver = page.getByRole('region', { name: 'Version' });
@@ -388,14 +389,17 @@ test.describe('admin content pages (desktop)', () => {
       const go = page.getByRole('button', { name: 'Jetzt aktualisieren' });
       await go.click();
       const dlg = page.getByRole('alertdialog', { name: /Portal jetzt aktualisieren/ });
-      await expect(dlg).toContainText('Version ff00aa1');
+      // stable: Portainer installs the newest release, not main's newest commit
+      await expect(dlg).toContainText('Version 1.1.0 · Arancini');
       await dlg.getByRole('button', { name: 'Abbrechen' }).click();
       expect(api.log.some((l) => l.startsWith('POST /api/admin/update'))).toBe(false);
       await go.click();
       await dlg.getByRole('button', { name: 'Jetzt aktualisieren' }).click();
       await expect.poll(() => api.log.some((l) => l.startsWith('POST /api/admin/update'))).toBe(true);
-      await expect(page.getByRole('list').filter({ hasText: 'Update angestoßen' })).toBeVisible();
-      await expect(page.getByText('Fertig – die Seite lädt neu')).toBeVisible({ timeout: 10_000 });
+      const apply = page.getByRole('region', { name: 'Aktualisieren', exact: true });
+      await expect(apply.locator('[data-step="request"]')).toHaveAttribute('data-state', 'ok');
+      await expect(apply.locator('[data-result="done"]')).toContainText('Portainer hat den Stack neu deployt', { timeout: 15_000 });
+      for (const st of ['request', 'pulling', 'recreating', 'health']) await expect(apply.locator(`[data-step="${st}"]`)).toHaveAttribute('data-state', 'ok');
     });
 
     test('before the first release: commits ahead decide the state', async ({ page }) => {
@@ -425,8 +429,8 @@ test.describe('admin content pages (desktop)', () => {
     test('health and counters link to where they are handled', async ({ page }) => {
       await page.goto('/admin/status');
       await expect(page.getByRole('heading', { level: 1, name: 'Status' })).toBeVisible();
-      const health = page.getByRole('region', { name: 'Systemzustand' });
-      await expect(health.getByRole('link', { name: /Medienserver.*Läuft/ })).toBeVisible();
+      const sc = page.getByRole('region', { name: 'Systemcheck' });
+      await expect(sc.locator('li[data-id="media.server"] .pill.ok')).toHaveText('In Ordnung');
       const nums = page.getByRole('region', { name: 'Zahlen' });
       await expect(nums.getByRole('link', { name: /Vorschauen.*10 fehlgeschlagen/ })).toHaveAttribute('href', '/admin/previews');
       await expect(nums.getByRole('link', { name: /Geräte warten/ })).toHaveAttribute('href', '/admin/devices');

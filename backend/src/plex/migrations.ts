@@ -163,6 +163,8 @@ const PLEX_MIGRATION_LOCK = 727275;
 export async function migratePlex(pool: Pick<pg.Pool, 'connect'>): Promise<void> {
   const c = await pool.connect();
   try {
+    // no statement limit for the migrations and the lock wait (as ../db.ts migrate); reset before the connection goes back
+    await c.query('set statement_timeout = 0');
     await c.query('select pg_advisory_lock($1)', [PLEX_MIGRATION_LOCK]);
     await c.query('create table if not exists plex_schema_migrations (version int primary key, at timestamptz not null default now())');
     for (let i = 0; i < PLEX_MIGRATIONS.length; i++) {
@@ -180,6 +182,7 @@ export async function migratePlex(pool: Pick<pg.Pool, 'connect'>): Promise<void>
     }
   } finally {
     await c.query('select pg_advisory_unlock($1)', [PLEX_MIGRATION_LOCK]).catch(() => undefined);
-    c.release();
+    const reset = await c.query('reset statement_timeout').then(() => true, () => false);
+    c.release(reset ? undefined : new Error('statement_timeout reset failed'));
   }
 }

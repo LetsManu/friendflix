@@ -1,0 +1,320 @@
+{
+ "_comment": "areasOf(values) -> areas (roles redesign spec 2.1); read by backend/test/areas.test.ts and the web areas test. 'defaults' rows are the code defaults of the built-in role named in 'role'.",
+ "rows": [
+  {
+   "name": "family defaults",
+   "role": "family",
+   "values": {
+    "libraries": "all",
+    "maxParentalRating": null,
+    "maxStreams": 4,
+    "maxBitrate": 40000000,
+    "remoteMaxBitrate": 8000000,
+    "transcoding": true,
+    "maxHeight": null,
+    "download": true,
+    "maxDownloads": 25,
+    "downloadMaxHeight": 1080,
+    "downloadDays": 30,
+    "requests": true,
+    "requestsPerMonth": 2,
+    "party": true,
+    "partySchedule": false,
+    "comments": true,
+    "cast": true,
+    "liveTv": true,
+    "liveRecord": false
+   },
+   "areas": {
+    "library": true,
+    "livetv": true,
+    "requests": true,
+    "together": true,
+    "downloads": true
+   }
+  },
+  {
+   "name": "friend defaults",
+   "role": "friend",
+   "values": {
+    "libraries": "all",
+    "maxParentalRating": null,
+    "maxStreams": 2,
+    "maxBitrate": 20000000,
+    "remoteMaxBitrate": 8000000,
+    "transcoding": true,
+    "maxHeight": null,
+    "download": false,
+    "maxDownloads": 15,
+    "downloadMaxHeight": 720,
+    "downloadDays": 30,
+    "requests": true,
+    "requestsPerMonth": 2,
+    "party": true,
+    "partySchedule": false,
+    "comments": true,
+    "cast": true,
+    "liveTv": true,
+    "liveRecord": false
+   },
+   "areas": {
+    "library": true,
+    "livetv": true,
+    "requests": true,
+    "together": true,
+    "downloads": false
+   }
+  },
+  {
+   "name": "guest defaults",
+   "role": "guest",
+   "values": {
+    "libraries": "all",
+    "maxParentalRating": 12,
+    "maxStreams": 1,
+    "maxBitrate": 8000000,
+    "remoteMaxBitrate": 4000000,
+    "transcoding": true,
+    "maxHeight": 1080,
+    "download": false,
+    "maxDownloads": 0,
+    "downloadMaxHeight": 0,
+    "downloadDays": 30,
+    "requests": true,
+    "requestsPerMonth": 2,
+    "party": true,
+    "partySchedule": false,
+    "comments": false,
+    "cast": true,
+    "liveTv": true,
+    "liveRecord": false
+   },
+   "areas": {
+    "library": true,
+    "livetv": true,
+    "requests": true,
+    "together": true,
+    "downloads": false
+   }
+  },
+  {
+   "name": "no library",
+   "values": {
+    "libraries": [],
+    "maxParentalRating": null,
+    "maxStreams": 4,
+    "maxBitrate": 40000000,
+    "remoteMaxBitrate": 8000000,
+    "transcoding": true,
+    "maxHeight": null,
+    "download": true,
+    "maxDownloads": 25,
+    "downloadMaxHeight": 1080,
+    "downloadDays": 30,
+    "requests": true,
+    "requestsPerMonth": 2,
+    "party": true,
+    "partySchedule": false,
+    "comments": true,
+    "cast": true,
+    "liveTv": true,
+    "liveRecord": true
+   },
+   "areas": {
+    "library": false,
+    "livetv": true,
+    "requests": true,
+    "together": true,
+    "downloads": true
+   }
+  },
+  {
+   "name": "one library",
+   "values": {
+    "libraries": [
+     "Filme"
+    ],
+    "maxParentalRating": null,
+    "maxStreams": 4,
+    "maxBitrate": 40000000,
+    "remoteMaxBitrate": 8000000,
+    "transcoding": true,
+    "maxHeight": null,
+    "download": true,
+    "maxDownloads": 25,
+    "downloadMaxHeight": 1080,
+    "downloadDays": 30,
+    "requests": true,
+    "requestsPerMonth": 2,
+    "party": true,
+    "partySchedule": false,
+    "comments": true,
+    "cast": true,
+    "liveTv": true,
+    "liveRecord": true
+   },
+   "areas": {
+    "library": true,
+    "livetv": true,
+    "requests": true,
+    "together": true,
+    "downloads": true
+   }
+  },
+  {
+   "name": "comments without parties",
+   "values": {
+    "libraries": "all",
+    "maxParentalRating": null,
+    "maxStreams": 4,
+    "maxBitrate": 40000000,
+    "remoteMaxBitrate": 8000000,
+    "transcoding": true,
+    "maxHeight": null,
+    "download": true,
+    "maxDownloads": 25,
+    "downloadMaxHeight": 1080,
+    "downloadDays": 30,
+    "requests": true,
+    "requestsPerMonth": 2,
+    "party": false,
+    "partySchedule": false,
+    "comments": true,
+    "cast": true,
+    "liveTv": true,
+    "liveRecord": true
+   },
+   "areas": {
+    "library": true,
+    "livetv": true,
+    "requests": true,
+    "together": true,
+    "downloads": true
+   }
+  },
+  {
+   "name": "only scheduling left",
+   "values": {
+    "libraries": "all",
+    "maxParentalRating": null,
+    "maxStreams": 4,
+    "maxBitrate": 40000000,
+    "remoteMaxBitrate": 8000000,
+    "transcoding": true,
+    "maxHeight": null,
+    "download": true,
+    "maxDownloads": 25,
+    "downloadMaxHeight": 1080,
+    "downloadDays": 30,
+    "requests": true,
+    "requestsPerMonth": 2,
+    "party": false,
+    "partySchedule": true,
+    "comments": false,
+    "cast": true,
+    "liveTv": true,
+    "liveRecord": true
+   },
+   "areas": {
+    "library": true,
+    "livetv": true,
+    "requests": true,
+    "together": false,
+    "downloads": true
+   }
+  },
+  {
+   "name": "live tv off",
+   "values": {
+    "libraries": "all",
+    "maxParentalRating": null,
+    "maxStreams": 2,
+    "maxBitrate": 20000000,
+    "remoteMaxBitrate": 8000000,
+    "transcoding": true,
+    "maxHeight": null,
+    "download": false,
+    "maxDownloads": 15,
+    "downloadMaxHeight": 720,
+    "downloadDays": 30,
+    "requests": true,
+    "requestsPerMonth": 2,
+    "party": true,
+    "partySchedule": false,
+    "comments": true,
+    "cast": true,
+    "liveTv": false,
+    "liveRecord": true
+   },
+   "areas": {
+    "library": true,
+    "livetv": false,
+    "requests": true,
+    "together": true,
+    "downloads": false
+   }
+  },
+  {
+   "name": "wishes off",
+   "values": {
+    "libraries": "all",
+    "maxParentalRating": null,
+    "maxStreams": 2,
+    "maxBitrate": 20000000,
+    "remoteMaxBitrate": 8000000,
+    "transcoding": true,
+    "maxHeight": null,
+    "download": false,
+    "maxDownloads": 15,
+    "downloadMaxHeight": 720,
+    "downloadDays": 30,
+    "requests": false,
+    "requestsPerMonth": 2,
+    "party": true,
+    "partySchedule": false,
+    "comments": true,
+    "cast": true,
+    "liveTv": true,
+    "liveRecord": true
+   },
+   "areas": {
+    "library": true,
+    "livetv": true,
+    "requests": false,
+    "together": true,
+    "downloads": false
+   }
+  },
+  {
+   "name": "live tv only",
+   "values": {
+    "libraries": [],
+    "maxParentalRating": null,
+    "maxStreams": 2,
+    "maxBitrate": 20000000,
+    "remoteMaxBitrate": 8000000,
+    "transcoding": true,
+    "maxHeight": null,
+    "download": false,
+    "maxDownloads": 15,
+    "downloadMaxHeight": 720,
+    "downloadDays": 30,
+    "requests": false,
+    "requestsPerMonth": 2,
+    "party": false,
+    "partySchedule": false,
+    "comments": false,
+    "cast": true,
+    "liveTv": true,
+    "liveRecord": false
+   },
+   "areas": {
+    "library": false,
+    "livetv": true,
+    "requests": false,
+    "together": false,
+    "downloads": false
+   }
+  }
+ ]
+}

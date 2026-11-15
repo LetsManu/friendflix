@@ -188,11 +188,22 @@ export const SETTINGS: readonly SettingDef[] = [
   setting('LIVETV_SRT_HOST', { kind: 'string', group: 'livetv' }), // read per request (srtHost)
   setting('LIVETV_DVR_MINUTES', { kind: 'int', group: 'livetv' }), // read per stream start and watch answer (livetv/streams.ts)
   setting('LIVETV_MAX_BITRATE', { kind: 'int', group: 'livetv' }), // read per stream start (livetv/streams.ts)
+  // recordings (Phase 3, spec §6.4): read per tick and per request (livetv/recordings.ts recordSettings)
+  setting('LIVETV_RECORD_STORAGE', { kind: 'enum', group: 'livetv' }),
+  setting('LIVETV_RECORD_LIBRARY_ID', { kind: 'string', group: 'livetv' }),
+  setting('LIVETV_RECORD_LIBRARY_JF_PATH', { kind: 'string', group: 'livetv' }),
+  setting('LIVETV_RECORD_LIMIT_GB', { kind: 'number', group: 'livetv' }),
+  setting('LIVETV_RECORD_RETENTION_DAYS', { kind: 'int', group: 'livetv' }),
+  setting('LIVETV_RECORD_PAD_BEFORE_MIN', { kind: 'int', group: 'livetv' }),
+  setting('LIVETV_RECORD_PAD_AFTER_MIN', { kind: 'int', group: 'livetv' }),
+  setting('LIVETV_RECORD_MAX_PARALLEL', { kind: 'int', group: 'livetv' }),
 ];
 
 /** Per container or per deployment, or shared with a container that reads env only: env > default, read-only in Admin -> Settings. */
 export const ENV_ONLY_KEYS: readonly string[] = ['PORT', 'DIGEST_DAY', 'DIGEST_HOUR', 'MEDIA_SERVER', 'METRICS_TOKEN', 'ROLE_TEMPLATES',
   'OIDC_ALLOW_INSECURE', 'PREVIEW_DIR', 'UPDATE_REPO', 'DOWNLOAD_DIR', 'BACKGROUND_JOBS', 'GATEWAY_URL', 'UPDATER_URL', 'LIVETV_URL',
+  // database pool limits: read once when the pool opens, before the settings store exists (db.ts poolOptions)
+  'DB_CONNECT_TIMEOUT_MS', 'DB_STATEMENT_TIMEOUT_MS', 'DB_IDLE_TX_TIMEOUT_MS', 'DB_LONG_STATEMENT_TIMEOUT_MS',
   // expert tuning of the recommendation engine v2 (Admin -> Settings, group recommendations, says they are set in .env)
   'RECO_W_GENRES', 'RECO_W_TAGS', 'RECO_W_STUDIOS', 'RECO_W_PEOPLE', 'RECO_W_TEXT', 'RECO_W_NUMERIC', 'RECO_W_COLLECTION', 'RECO_COEFFS'];
 /** Needed before the database can be read: env (incl. _FILE) > bootstrap volume file > default; never stored in the database. */

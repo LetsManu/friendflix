@@ -53,8 +53,12 @@ export function chipsTucked(o: { y: number; lastY: number; tucked: boolean }): b
 
 export type PhoneTab = { href: string; key: 'home' | 'new' | 'live' | 'myList' | 'downloads'; icon: string };
 
-/** bottom tab bar entries: Live-TV between Neu and Merkliste only while the feature is on; Downloads only when the account may download */
-export function phoneTabs(canDownload: boolean, live: boolean): PhoneTab[] {
+/**
+ * bottom tab bar entries: Live-TV between Neu and Merkliste only while the feature is on; Downloads only when the account may
+ * download. Without the Mediathek (`library` false, roles redesign §6) only Live-TV stays.
+ */
+export function phoneTabs(canDownload: boolean, live: boolean, library = true): PhoneTab[] {
+  if (!library) return live ? [{ href: '/live', key: 'live', icon: 'tv' }] : [];
   const tabs: PhoneTab[] = [
     { href: '/', key: 'home', icon: 'home' },
     { href: '/new', key: 'new', icon: 'star' },

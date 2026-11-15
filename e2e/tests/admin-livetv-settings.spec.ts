@@ -16,7 +16,7 @@ test.describe('admin: Live-TV, Einstellungen (desktop)', () => {
   test('the tab follows Live-Status and shows the four settings and the ports read-only', async ({ page }) => {
     await page.goto('/admin/livetv?tab=settings');
     const tabs = page.getByRole('tablist', { name: 'Live-TV-Bereiche' }).getByRole('tab');
-    await expect(tabs).toHaveText(['Quellen', 'Kanäle', 'Gruppen & Rechte', 'Programmführer', 'Live-Status', 'Einstellungen']);
+    await expect(tabs).toHaveText(['Quellen', 'Kanäle', 'Gruppen & Rechte', 'Programmführer', 'Live-Status', 'Aufnahmen', 'Einstellungen']);
     await expect(page.getByRole('tab', { name: 'Einstellungen' })).toHaveAttribute('aria-selected', 'true');
     for (const n of ['Encoder für Live-TV', 'Adresse für gesendete Streams', 'Rückspulpuffer für Live-TV (Minuten)']) await expect(setting(page, n)).toBeVisible();
     await expect(page.getByRole('group', { name: /Bitrate/ })).toBeVisible();
@@ -43,6 +43,16 @@ test.describe('admin: Live-TV, Einstellungen (desktop)', () => {
     await page.getByRole('button', { name: 'Speichern' }).click();
     await expect(host.getByText('Nur ein Hostname oder eine IP-Adresse, ohne Schema und Port.')).toBeVisible();
     expect(api.settings.puts).toEqual([{ values: { LIVETV_SRT_HOST: 'https://x.example.com:9000' } }]);
+  });
+
+  test('?setting=LIVETV_ENCODER on /admin/livetv?tab=settings highlights it', async ({ page }) => {
+    await page.goto('/admin/livetv?tab=settings&setting=LIVETV_ENCODER');
+    const row = page.locator('#setting-LIVETV_ENCODER');
+    await expect(row).toHaveAttribute('data-flash', 'static');
+    await expect(row).toBeInViewport();
+    await expect(row.getByRole('combobox')).toBeFocused();
+    await expect(page).toHaveURL(/\/admin\/livetv\?tab=settings$/);
+    await expect(page.getByRole('tab', { name: 'Einstellungen' })).toHaveAttribute('aria-selected', 'true');
   });
 
   test('Admin → Einstellungen lists no Live-TV group, only the link, while Live TV is installed', async ({ page }) => {

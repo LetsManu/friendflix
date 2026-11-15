@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { clearHint } from '#lib/gate';
 import type { PermKey } from '#lib/perms';
+import type { AreaKey } from '#lib/capabilities';
 import { tellAppSession } from '#lib/native/sessionSync';
 
 export class ApiError extends Error {
@@ -67,7 +68,8 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   });
   const text = await res.text();
   let json: any = null;
-  try { json = text ? JSON.parse(text) : null; } catch (e) { if (res.status !== 401) throw e; } // a 401 from a proxy may not be JSON
+  // an error page of a proxy (a 401, a 413 "Request Entity Too Large") is not JSON: the status still reaches the caller as an ApiError
+  try { json = text ? JSON.parse(text) : null; } catch (e) { if (res.ok) throw e; }
   await sessionGone(res.status, json);
   if (res.status === 409 && json?.error === 'profile_required' && !/^\/(profiles|invite\/|tv$)/.test(location.pathname)) {
     location.href = '/profiles'; // no profile chosen (yet) for this session
@@ -133,7 +135,8 @@ export interface Me { id: string; name: string; role: string; roleLabel: string;
   /** the active profile is a kids profile (kids home, no social features); absent on older servers */ kids?: boolean;
   /** false = the active profile never finished /welcome (absent = onboarded) */ onboarded?: boolean;
   /** media server kind + capabilities (see lib/capabilities.ts); absent on older servers = everything supported */ server?: { kind: string; capabilities?: unknown };
-  /** optional services of this instance (lib/capabilities.ts featuresFrom); absent on older servers = everything on */ features?: { requests?: boolean; postplay?: boolean; livetv?: boolean }, /** TV app only: this paired TV opens Live TV at start (devices.start_live, admin sets it) */ startLive?: boolean, /** the acting profile's effective rights (lib/perms.ts permsFrom); absent = everything allowed */ perms?: Partial<Record<PermKey, boolean>> }
+  /** optional services of this instance (lib/capabilities.ts featuresFrom); absent on older servers = everything on */ features?: { requests?: boolean; postplay?: boolean; livetv?: boolean }, /** TV app only: this paired TV opens Live TV at start (devices.start_live, admin sets it) */ startLive?: boolean, /** the acting profile's effective rights (lib/perms.ts permsFrom); absent = everything allowed */ perms?: Partial<Record<PermKey, boolean>>,
+  /** the parts of the app the profile may use (lib/capabilities.ts areasFrom, roles redesign §4.6); absent = all on */ areas?: Partial<Record<AreaKey, boolean>> }
 /** GET /api/account (owner profile only): the person's own account for /me/account */
 export interface Account {
   name: string;

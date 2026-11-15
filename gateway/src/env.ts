@@ -36,3 +36,6 @@ export function internalSecret(env: NodeJS.ProcessEnv): string {
   if (!fromFile) throw new Error(`missing env INTERNAL_SECRET and bootstrap file ${file}: start the stack with docker compose up (the bootstrap service creates it)`);
   return fromFile;
 }
+
+/** RECORDINGS_DIR (Live TV Phase 3): the recordings volume, mounted read-only; unset = `/media/r/` answers 503 */
+export const recordingsDir = (env: NodeJS.ProcessEnv): string | undefined => env.RECORDINGS_DIR?.trim() || undefined;

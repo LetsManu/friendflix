@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { decrypt, encrypt } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
+import { setLocalStatementTimeout } from '../db.js';
 import { invalidateLivetvRights } from './rights.js';
 import type { SourceRow } from './sources.js';
 import type { M3uEntry } from './wire.js';
@@ -100,10 +101,12 @@ interface Existing {
 
 const CHUNK = 2000;
 
-async function inTx<T>(ctx: Pick<Ctx, 'db'>, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
+/** a whole provider list (thousands of channels, CHUNK rows per statement) in one transaction: the long statement limit, not the pool's */
+async function inTx<T>(ctx: Pick<Ctx, 'db' | 'cfg'>, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
   const c = await (ctx.db as pg.Pool).connect();
   try {
     await c.query('begin');
+    await setLocalStatementTimeout(c, ctx.cfg.DB_LONG_STATEMENT_TIMEOUT_MS);
     const out = await fn(c);
     await c.query('commit');
     return out;

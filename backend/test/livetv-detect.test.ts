@@ -648,4 +648,19 @@ describe('wire.ts', () => {
     expect(block(ours, 'export type Mode', ';')).toBe(block(theirs, 'export type Mode', ';'));
     expect(block(ours, 'export interface StreamView', '\n}')).toBe(block(theirs, 'export interface StreamView', '\n}'));
   });
+
+  it('the recorder answers are the declarations of livetv/src/recorder.ts, field for field (Phase 3)', () => {
+    const norm = (x: string) => x.replace(/\s+/g, ' ').replace(/ ?; ?}/g, ' }').trim();
+    const theirs = readFileSync(new URL('../../livetv/src/recorder.ts', import.meta.url), 'utf8');
+    const ours = readFileSync(new URL('../src/livetv/wire.ts', import.meta.url), 'utf8');
+    const body = (src: string, from: string) => { const i = src.indexOf(from); return norm(src.slice(src.indexOf('{', i), src.indexOf('\n}', i) + 2)); };
+    const line = (src: string, from: string) => { const i = src.indexOf(from); return norm(src.slice(src.indexOf('=', i) + 1, src.indexOf(';', i))); };
+    // the backend's names for the same types
+    const flat = (x: string) => x.replace(/Segments \| null/g, "'ts' | 'fmp4' | null").replace(/RecorderGap/g, 'Gap').replace(/RecorderError/g, 'RecError');
+    expect(flat(body(ours, 'export interface RecorderView'))).toBe(body(theirs, 'export interface RecordingView'));
+    expect(line(ours, 'export type RecorderError')).toBe(line(theirs, 'export type RecError'));
+    expect(norm(ours.slice(ours.indexOf('export interface RecorderGap')).split('\n')[0]!.replace('RecorderGap', 'Gap'))).toBe(norm(theirs.slice(theirs.indexOf('export interface Gap')).split('\n')[0]!));
+    expect(norm(ours.slice(ours.indexOf('export interface RecordingStartBody')).split('\n')[0]!).replace(/ \/\*[^*]*\*\//g, '').replace('RecordingStartBody', 'StartRecording'))
+      .toBe(norm(theirs.slice(theirs.indexOf('export interface StartRecording')).split('\n')[0]!));
+  });
 });

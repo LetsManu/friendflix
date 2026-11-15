@@ -33,7 +33,7 @@ export function permsOf(ctx: Ctx, req: FastifyRequest): Promise<Perms> {
  * preHandler after the existing sign-in pre-handlers: 403 `{ error: code }` without the switch. It answers before the route looks
  * anything up, so a refusal says nothing about the object behind the URL.
  */
-export function requirePerm(ctx: Ctx, perm: PermKey, code: 'party_forbidden' | 'cast_forbidden' | 'requests_forbidden'): preHandlerAsyncHookHandler {
+export function requirePerm(ctx: Ctx, perm: PermKey, code: 'party_forbidden' | 'cast_forbidden' | 'requests_forbidden' | 'record_forbidden'): preHandlerAsyncHookHandler {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     if (reply.sent) return reply;
     if (!req.user) return reply.code(401).send({ error: 'unauthenticated' }); // never reached behind requireUser; fail closed anyway

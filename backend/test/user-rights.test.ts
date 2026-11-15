@@ -224,6 +224,18 @@ describe('PUT /api/admin/users/:id/rights', () => {
     expect((await put({ overrides: { libraries: ['Archiv'] } })).json()).toEqual({ error: 'unknown_library' });
   });
 
+  it('a person override may be no library; effectiveRights.template.libraries is []', async () => {
+    folders = null as never; // no lookup needed for an empty list
+    forgetLibraries(env.ctx);
+    const r = await put({ overrides: { libraries: [] } });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ ok: true, reapplied: { identities: 3, failed: 0 } });
+    expect(await stored()).toMatchObject({ libraries: [] });
+    expect((await effectiveRights(env.ctx, anna))!.template.libraries).toEqual([]);
+    expect(rowOf(await get(), 'libraries')).toMatchObject({ value: [], roleValue: 'all', override: [], source: 'user' });
+    expect((await audits()).at(-1)!.meta).toMatchObject({ from: { libraries: 'all' }, to: { libraries: [] } });
+  });
+
   it('downloadDays is overridable per person', async () => {
     const n = policies().length;
     expect((await put({ overrides: { downloadDays: 14 } })).json()).toEqual({ ok: true, reapplied: { identities: 0, failed: 0 } });

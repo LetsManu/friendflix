@@ -10,21 +10,35 @@
    * nothing had to be left out, that action runs once more. A repeated action that still needs a sign-in shows an error instead of
    * another round. An edited URL that still carries the backend's redaction
    * marker is refused before anything is sent (it would replace the real token).
+   * Tabs (`?tab=`, tabs.ts; *Allgemein* has no parameter): only the active tab's cards render, the drafts are page-level, so a tab
+   * switch keeps every unsaved edit and a tab holding one shows a dot. A deep link `?setting=<KEY>` opens the key's tab and highlights
+   * its row (highlight.ts), a Live-TV key goes to Admin → Live-TV → Einstellungen, an unknown one opens *Allgemein*; the old
+   * `#settings-<group>` links open the group's tab at its card. Either way the address then reads the plain tab.
+   * The search above the tabs (search.ts) covers every setting, Live TV's too: while a query is typed its results take the tab panel's
+   * place; choosing one clears the query and opens `?setting=<KEY>`; Esc clears. Nothing is edited in the result list.
+   * Leaving the page (a Live-TV result or link, the menu) with unsaved drafts asks first; a tab switch or a deep link on this page does not.
    */
   import { onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
+  import { pageStore } from '#lib/page';
+  import { leaveGuard, leavesRoute } from '#lib/admin/leaveGuard';
   import Icon from '#lib/Icon.svelte';
   import { isReauthError, reauthenticate } from '#lib/account/reauth';
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
   import { fmtList, t, tr } from '#lib/i18n';
   import { busyKeys, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
+  import Field from '#lib/ui/Field.svelte';
   import { confirm } from '#lib/ui/confirm';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import StatusPill from '#lib/ui/StatusPill.svelte';
   import { toast } from '#lib/ui/toast';
   import { refreshSummary } from '#lib/admin/summary';
   import SettingRow from '#lib/admin/settings/SettingRow.svelte';
+  import { highlightSetting } from '#lib/admin/settings/highlight';
+  import { SEARCH_MIN, searchSettings, type SettingHit } from '#lib/admin/settings/search';
+  import { SETTINGS_TABS, TAB_GROUPS, dirtyTabs, tabHref, tabOf, tabOfGroup, tabOfKey, type SettingsTab } from '#lib/admin/settings/tabs';
+  import { settingHref } from '#lib/admin/syscheck';
   import {
     fieldErrors, generate, importEnv, loadSettings, PROBE_GROUPS, probeFailure, saveSettings, SOFT_PROBE_CODES, testGroup,
     type ProbeResult, type SettingGroup, type SettingsGroupView, type SettingsView, type SettingView,
@@ -33,7 +47,12 @@
     changedValues, clearPending, errorText, groupHelp, keyLabel, livetvLinkShown, moveHint, pageGroups, probeText, redactedKeys, stashPending, takePending, type Draft, type PendingAction,
   } from '#lib/admin/settings/form';
 
-  const RESUME = '/admin/settings?resume=1';
+  /** where the classic sign-in comes back to: the group's tab, with the stashed action to repeat */
+  const resumeHref = (group: SettingGroup): string => {
+    const t = tabOfGroup(group);
+    const base = tabHref(t === 'livetv' ? 'general' : t);
+    return `${base}${base.includes('?') ? '&' : '?'}resume=1`;
+  };
 
   let view: SettingsView | null = null, loadFailed = false;
   let edits: Record<string, Draft> = {};
@@ -57,6 +76,81 @@
   $: changes = Object.fromEntries(groups.map((g) => [g.id, changedValues(g.items, edits)])) as Record<SettingGroup, Record<string, unknown>>;
   $: restartKeys = view?.pendingRestart ?? [];
 
+  const page$ = pageStore();
+  $: url = $page$.url;
+  /** a deep link still to follow: `?setting=<KEY>`, or an old `#settings-<group>` */
+  $: linkKey = url.searchParams.get('setting');
+  $: linkGroup = url.hash.startsWith('#settings-') ? url.hash.slice('#settings-'.length) : '';
+  /** the tab a deep link opens (shown at once, before the address is tidied up) */
+  const linkTab = (v: SettingsView, key: string | null, group: string): SettingsTab => {
+    const where = key ? tabOfKey(key, v.groups) : v.groups.some((g) => g.id === group && g.id !== 'server') ? tabOfGroup(group as SettingGroup) : null;
+    return where && where !== 'livetv' ? where : 'general';
+  };
+  $: tab = view && (linkKey || linkGroup) ? linkTab(view, linkKey, linkGroup) : tabOf(url.searchParams.get('tab'));
+  $: tabGroups = TAB_GROUPS[tab].flatMap((id) => groups.filter((g) => g.id === id));
+  $: dirty = dirtyTabs(changes);
+  leaveGuard((nav) => leavesRoute(nav) && dirty.size > 0, () => ({
+    title: tr('settings.leave.title'), body: tr('settings.leave.body'), danger: true, confirmLabel: tr('settings.leave.confirm'),
+  }));
+
+  const select = (to: SettingsTab) => { q = ''; return goto(tabHref(to), { replace: true, reset: false }); };
+
+  /** the search: its results replace the tab panel while a query is typed ($t as an argument: the texts follow a language switch) */
+  let q: string | number | null = '';
+  $: query = String(q ?? '');
+  $: searching = !!view && query.trim().length >= SEARCH_MIN;
+  const find = (text: string, v: SettingsView, _tr: unknown) => searchSettings(text, v.groups);
+  $: hits = searching && view ? find(query, view, $t) : [];
+  const hitHref = (h: SettingHit) => settingHref(h.key, h.tab === 'livetv' ? 'livetv' : undefined);
+  const hitTab = (h: SettingHit) => (h.tab === 'livetv' ? $t('settings.groups.livetv') : $t(`settings.tabs.${h.tab}`));
+  /** choosing a result: the query goes, the link opens the setting */
+  const chosen = () => { q = ''; };
+  const resultLinks = () => Array.from(document.querySelectorAll<HTMLElement>('#set-results a'));
+  /** in the field: Esc clears, Enter opens the first result, ↓ goes to the results */
+  function searchKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && query) { e.preventDefault(); q = ''; }
+    else if (e.key === 'Enter' && hits[0]) { e.preventDefault(); const to = hitHref(hits[0]); q = ''; void goto(to); }
+    else if (e.key === 'ArrowDown' && hits.length) { e.preventDefault(); resultLinks()[0]?.focus(); }
+  }
+  /** in the results: ↑/↓ move, Esc clears and goes back to the field */
+  function resultKey(e: KeyboardEvent) {
+    const links = resultLinks(), i = links.indexOf(e.currentTarget as HTMLElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const n = i + (e.key === 'ArrowDown' ? 1 : -1);
+      if (n < 0) document.getElementById('set-search')?.focus(); else links[Math.min(n, links.length - 1)]?.focus();
+    } else if (e.key === 'Escape') { e.preventDefault(); q = ''; document.getElementById('set-search')?.focus(); }
+  }
+  /** the tablist's keys, as in Live-TV: arrows, Home/End; the focus follows the selected tab (roving tabindex) */
+  function tabKey(e: KeyboardEvent) {
+    const i = SETTINGS_TABS.indexOf(tab), last = SETTINGS_TABS.length - 1;
+    const n = e.key === 'ArrowRight' ? (i + 1) % SETTINGS_TABS.length : e.key === 'ArrowLeft' ? (i + last) % SETTINGS_TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? last : -1;
+    if (n < 0) return;
+    e.preventDefault(); void select(SETTINGS_TABS[n]!);
+    queueMicrotask(() => { const el = document.getElementById(`set-tab-${SETTINGS_TABS[n]!}`); el?.focus(); el?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); });
+  }
+
+  /** follows a deep link once the settings are there: the address becomes the plain tab, then the row (or card) is shown */
+  let following = false;
+  $: if (view && (linkKey || linkGroup)) void follow(view, linkKey, linkGroup);
+  async function follow(v: SettingsView, key: string | null, group: string) {
+    if (following) return;
+    following = true;
+    try {
+      if (key) {
+        const where = tabOfKey(key, v.groups);
+        if (where === 'livetv') { await goto(settingHref(key, 'livetv'), { replace: true }); return; }
+        await goto(tabHref(where ?? 'general'), { replace: true, reset: false });
+        if (where) await highlightSetting(key);
+        return;
+      }
+      if (group === 'livetv') { await goto('/admin/livetv?tab=settings', { replace: true }); return; }
+      await goto(tabHref(linkTab(v, null, group)), { replace: true, reset: false });
+      await tick();
+      document.getElementById(`settings-${group}`)?.scrollIntoView({ block: 'start' });
+    } finally { following = false; }
+  }
+
   async function load(): Promise<boolean> {
     loadFailed = false;
     try { view = await loadSettings(); return true; } catch { if (!view) loadFailed = true; return false; }
@@ -73,8 +167,6 @@
       void goto(u.pathname + u.search + u.hash, { shallow: true, replace: true });
     }
     const loaded = await load();
-    // a deep link to a group (e.g. /admin/settings#settings-recommendations from the recommendation card): the cards render after the load
-    if (loaded && u.hash.startsWith('#settings-')) { await tick(); document.getElementById(u.hash.slice(1))?.scrollIntoView({ block: 'start' }); }
     if (!loaded || !resume) return;
     // back from the sign-in: restore what could be kept; repeat exactly the interrupted action, once, when nothing had to be left out
     const p = takePending();
@@ -107,7 +199,7 @@
       return;
     }
     if (target) stashPending(target.action, target.group, itemsOf(target.group), edits, { force: target.force });
-    const ok = await reauthenticate(target ? RESUME : '/admin/settings');
+    const ok = await reauthenticate(target ? resumeHref(target.group) : tabHref(tab));
     if (target) clearPending();
     if (!ok) return;
     resuming = true;
@@ -208,6 +300,34 @@
 
 <div class="wrap">
   <p class="intro muted">{$t('settings.intro')}</p>
+  <div class="search" role="search">
+    <Field id="set-search" label={$t('settings.search.label')} hideLabel type="search" placeholder={$t('settings.search.placeholder')} maxlength={100} autocomplete="off"
+      bind:value={q} on:keydown={searchKey} />
+  </div>
+  <div class="tabbar">
+    <div class="tabs" role="tablist" aria-label={$t('settings.tabs.label')}>
+      {#each SETTINGS_TABS as k (k)}
+        <!-- the dot's place is always kept: a tab never changes width when it gets unsaved edits -->
+        <button type="button" role="tab" id="set-tab-{k}" class="tab" class:on={tab === k} aria-selected={tab === k} aria-controls="set-panel" tabindex={tab === k ? 0 : -1}
+          on:click={() => select(k)} on:keydown={tabKey}>{$t(`settings.tabs.${k}`)}<span class="dot" class:on={dirty.has(k)} aria-hidden="true"></span>{#if dirty.has(k)}<span class="sr-only"> ({$t('settings.tabs.unsaved')})</span>{/if}</button>
+      {/each}
+    </div>
+    {#if livetvInstalled}<a class="ltv" href="/admin/livetv?tab=settings">{$t('settings.livetvMoved')}</a>{/if}
+  </div>
+  {#if searching}
+    <div id="set-results" class="results">
+      <p class="count" role="status">{hits.length ? $t('settings.search.results', { n: hits.length }) : $t('settings.search.none', { q: query.trim() })}</p>
+      {#if hits.length}
+        <ul>
+          {#each hits as h (h.key)}
+            <li><a href={hitHref(h)} on:click={chosen} on:keydown={resultKey}><span class="rl">{h.label}</span><code class="rk">{h.key}</code><span class="rt">{hitTab(h)}</span></a></li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  {/if}
+  <!-- the panel stays while searching (hidden): what was typed into a card is kept as it is -->
+  <div id="set-panel" role="tabpanel" aria-labelledby="set-tab-{tab}" tabindex="-1" hidden={searching}>
   {#if loadFailed}
     <div class="state" role="alert"><Icon name="alert" size={22} /><p>{$t('settings.loadFailed')}</p><Button variant="secondary" icon="refresh" on:click={load}>{$t('ui.retry')}</Button></div>
   {:else if !view}
@@ -233,11 +353,7 @@
       </div>
     {/if}
 
-    {#if livetvInstalled}
-      <p class="moved"><a href="/admin/livetv?tab=settings">{$t('settings.livetvMoved')}</a></p>
-    {/if}
-
-    {#each groups as g (g.id)}
+    {#each tabGroups as g (g.id)}
       {@const dirty = Object.keys(changes[g.id] ?? {}).length > 0}
       {@const probe = probes[g.id]}
       <AdminCard id="settings-{g.id}" title={$t(`settings.groups.${g.id}`)} description={groupHelp(g.id)}>
@@ -275,7 +391,7 @@
       </AdminCard>
     {/each}
 
-    {#if server}
+    {#if server && tab === 'general'}
       <AdminCard title={$t('settings.groups.server')} description={$t('settings.serverHelp')}>
         <dl class="server">
           {#each server.items as s (s.key)}
@@ -293,13 +409,42 @@
       </AdminCard>
     {/if}
   {/if}
+  </div>
 </div>
 
 <style>
   .wrap { max-width: 760px; }
   .intro { margin: 0 0 1rem; }
-  .moved { margin: 0 0 1rem; }
-  .moved a { display: inline-flex; align-items: center; min-height: 44px; text-decoration: underline; }
+  /* the tabs as in Live-TV: underlined labels; on a phone a scrolling row of chips. The Live-TV link sits beside them (below on a phone). */
+  .tabbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0 1rem; margin-bottom: 1rem; border-bottom: 1px solid var(--line); }
+  .tabs { display: flex; gap: .4rem; overflow-x: auto; scrollbar-width: none; min-width: 0; max-width: 100%; }
+  .tabs::-webkit-scrollbar { display: none; }
+  /* positioned: the screen-reader text of the dot stays inside the scrolling row (it would widen the page) */
+  .tab { position: relative; flex: none; display: inline-flex; align-items: center; gap: .35rem; min-height: 44px; padding: 0 .9rem; background: transparent; color: var(--mut); border: 0; border-bottom: 2px solid transparent; border-radius: 0; font-weight: 600; white-space: nowrap; }
+  .tab:hover:not(:disabled) { color: var(--fg); background: rgba(255,255,255,.04); }
+  .tab.on { color: var(--fg); border-bottom-color: var(--accent, #fff); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); opacity: 0; transition: opacity .2s ease; }
+  .dot.on { opacity: 1; }
+  .ltv { display: inline-flex; align-items: center; min-height: 44px; margin-left: auto; text-decoration: underline; }
+  #set-panel { outline: none; min-width: 0; }
+  .search { margin-bottom: .8rem; max-width: 28rem; }
+  .results { min-width: 0; }
+  .count { margin: 0 0 .5rem; color: var(--mut); font-size: .9rem; }
+  .results ul { list-style: none; margin: 0; padding: 0; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); overflow: hidden; }
+  .results li + li { border-top: 1px solid var(--line); }
+  .results a { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'l t' 'k t'; align-items: center; column-gap: .8rem; min-height: 44px; padding: .55rem .9rem; color: inherit; text-decoration: none; }
+  .results a:hover, .results a:focus-visible { background: rgba(255,255,255,.06); }
+  .rl { grid-area: l; font-weight: 600; overflow-wrap: anywhere; }
+  .rk { grid-area: k; font-size: .78rem; color: var(--mut); overflow-wrap: anywhere; }
+  .rt { grid-area: t; font-size: .82rem; color: var(--mut); white-space: nowrap; }
+  @media (max-width: 720px) {
+    .tabbar { border-bottom: 0; }
+    .tabs { gap: .5rem; padding-bottom: 2px; }
+    .tab { border: 1px solid var(--fr-line, rgba(255,255,255,.2)); border-radius: 999px; padding: 0 1rem; background: rgba(255,255,255,.06); color: rgba(255,255,255,.85); }
+    .tab.on { background: #fff; color: #101418; border-color: #fff; }
+    .ltv { margin-left: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { .dot { transition: none; } }
   /* a deep-linked group (#settings-<group>) does not end up under the sticky admin header */
   .wrap :global(h2[id^='settings-']) { scroll-margin-top: 5rem; }
   form { display: grid; gap: .25rem; }

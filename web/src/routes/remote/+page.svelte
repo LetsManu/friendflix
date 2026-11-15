@@ -9,6 +9,8 @@
   import { t, tr } from '#lib/i18n';
   import Rich from '#lib/i18n/Rich.svelte';
   import { castToTv, holdRemote, sendToTv, tvOnline, tvStatus } from '#lib/remote';
+  import { get } from 'svelte/store';
+  import { areas } from '#lib/capabilities';
 
   let release: (() => void) | undefined;
   let codeIn = '', fromLink = false, msg = '', msgOk = false, busy = false, pairOpen = true;
@@ -45,6 +47,7 @@
 
   function search() {
     clearTimeout(searchT);
+    if (!library) return;
     const term = q.trim();
     if (term.length < 2) { results = null; return; }
     const my = ++seq;
@@ -57,9 +60,12 @@
     release = holdRemote();
     const c = $page.url.searchParams.get('code');
     if (c) { codeIn = fmtCode(c); fromLink = true; }
+    // Weiterschauen and the search are library data: a person without libraries keeps pairing and the keys (roles redesign §6)
+    if (!get(areas).library) return;
     api('/api/library/resume').then((r) => (resume = r.items)).catch(() => undefined);
     api('/api/library/nextup').then((r) => (nextUp = new Map((r.items as Item[]).filter((e) => e.seriesId).map((e) => [e.seriesId!, e])))).catch(() => undefined);
   });
+  $: library = $areas.library;
   onDestroy(() => { release?.(); clearTimeout(sentT); clearTimeout(searchT); });
 </script>
 
@@ -103,6 +109,7 @@
       {/if}
     </section>
 
+    {#if library}
     {#if resume.length}
       <h2>{$t('player.remote.continueWatching')}</h2>
       <ul class="list">
@@ -133,6 +140,7 @@
           </li>
         {:else}<li class="muted">{$t('player.remote.noResults')}</li>{/each}
       </ul>
+    {/if}
     {/if}
   {/if}
 

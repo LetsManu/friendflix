@@ -143,6 +143,11 @@ export class HttpError extends Error {
   }
 }
 
+/** 400 `{ error: 'invalid', field }`: a value the body's shape allowed but the data refuses (the global error handler adds the field) */
+export class InvalidField extends HttpError {
+  constructor(readonly field: string) { super(400, 'invalid'); }
+}
+
 export type LockReason = 'manual' | 'expired' | 'deletion';
 
 /** Runs `fn` after every earlier call has settled (a promise queue). */

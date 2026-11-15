@@ -24,9 +24,9 @@ test.describe('admin: recommendation settings (phone)', () => {
       }
 
       await link.tap();
-      await expect(page).toHaveURL(/\/admin\/settings#settings-recommendations$/);
+      await expect(page).toHaveURL(/\/admin\/settings\?tab=media$/);
       const heading = page.getByRole('heading', { level: 2, name: 'Empfehlungen', exact: true });
-      await expect(heading).toBeInViewport();
+      await expect(page.locator('#setting-RECO_ENGINE')).toBeInViewport();
       const group = page.locator('section', { has: heading });
       const sel = page.getByRole('group', { name: 'Empfehlungs-Engine', exact: true }).getByRole('combobox');
       await sel.selectOption('v2');

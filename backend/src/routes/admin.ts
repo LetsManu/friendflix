@@ -17,7 +17,8 @@ import { claimHevcProbe, hevcBusyReason, hevcProbeRunning, hevcProbeWanted, hevc
 import { activeStreams } from '../playstats.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
-import { RoleInUse, createRole, deleteRole, orderRoles, roleExists, roleLabelArgs } from '../rolecat.js';
+import { RoleInUse, createRole, createRoleFromTemplate, deleteRole, orderRoles, roleExists, roleLabelArgs } from '../rolecat.js';
+import { ROLE_PRESET_KEYS } from '../roleTemplates.js';
 import { invalidateRoles } from '../roles.js';
 import { rolePatch, roleLabelInput, rolesOverview, writeRole } from '../roleWrite.js';
 import { cleanDeviceName } from '../deviceName.js';
@@ -26,6 +27,7 @@ import { recoIndexState } from '../reco/indexJob.js';
 import { recoStats } from '../reco/engine.js';
 import { requireAdmin, requireOwner } from '../session.js';
 import { portainerMode, redeployViaPortainer, updateInfo } from '../updates.js';
+import { updaterView } from '../updater.js';
 import { MAX_FEATURED } from '../lists.js';
 import { livetvInstalled } from '../livetv/detect.js';
 import { stopLiveSession } from '../livetv/tokens.js';
@@ -239,7 +241,13 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/admin/update', { ...admin, config: { rateLimit: { max: 1, timeWindow: '2 minutes', keyGenerator: () => 'update' } } }, async (req, reply) => {
     const mode = portainerMode(ctx);
     if (!mode) return reply.code(409).send({ error: 'not_configured' });
-    const r = await redeployViaPortainer(ctx, req.user!.id, mode);
+    // whether an updater lists the services (it then judges the redeploy's progress; else this backend's build alone)
+    const v = await updaterView(ctx).catch(() => null);
+    // force: "reload anyway" of the same build (older pages send no body): a restart of the backend then counts as the change
+    const forced = (req.body as { force?: unknown } | null | undefined)?.force === true;
+    const r = await redeployViaPortainer(ctx, req.user!.id, mode, undefined, { updater: Boolean(v && 'status' in v && v.status.services.length), forced });
+    if (!r.ok && r.error === 'busy') return reply.code(409).send({ error: 'busy' });
+    if (!r.ok && r.error === 'unavailable') return reply.code(503).send({ error: 'busy' }); // not recorded: nothing sent
     if (!r.ok) {
       req.log.error({ mode, step: r.step, status: r.status, error: r.error, code: r.code }, 'portainer update failed');
       return reply.code(502).send({ error: r.error, status: r.status, step: r.step, ...(r.code ? { code: r.code } : {}) });
@@ -281,16 +289,24 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.put('/api/admin/roles/:role', admin, async (req, reply) => {
     const role = (req.params as { role: string }).role;
     if (!(await roleExists(ctx, role))) return reply.code(404).send({ error: 'not_found' });
+    // an unknown or unreleased group: 400 { error: 'invalid', field: 'livetvGroups' } (InvalidField, answered by the error handler)
     const { changed, reapplied } = await writeRole(ctx, req.user!.id, role, rolePatch.parse(req.body));
     if (changed.includes('party')) await dropPartyDenied(ctx); // the role's accounts that lost `party` lose their open party sockets
     if (reapplied.failed) return reply.code(502).send({ error: 'policy_partial', failed: reapplied.failed, identities: reapplied.identities });
     return { ok: true, reapplied };
   });
 
-  // duplicates a role: the new row holds a full snapshot of `from` (the key is derived from the label)
+  // a new role (the key is derived from the label): `from` duplicates a role (a full snapshot of it, with its channel groups),
+  // `template` starts from a preset (roleTemplates.ts); 400 template_unavailable for liveOnly without Live TV
   app.post('/api/admin/roles', admin, async (req, reply) => {
-    const body = z.object({ label: roleLabelInput, from: z.string().min(1).max(64) }).strict().parse(req.body);
-    return reply.code(201).send({ key: await createRole(ctx, req.user!.id, body.label, body.from) });
+    const body = z.union([
+      z.object({ label: roleLabelInput, from: z.string().min(1).max(64) }).strict(),
+      z.object({ label: roleLabelInput, template: z.enum(ROLE_PRESET_KEYS) }).strict(),
+    ]).parse(req.body);
+    const key = 'from' in body
+      ? await createRole(ctx, req.user!.id, body.label, body.from)
+      : await createRoleFromTemplate(ctx, req.user!.id, body.label, body.template, livetvInstalled(ctx));
+    return reply.code(201).send({ key });
   });
 
   // `order` is a reserved role key (a static route wins over `:role`)

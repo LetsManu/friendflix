@@ -10,7 +10,9 @@ import { fetchLibraries, knownLibraries, missingLibraries, type Library } from '
 import { defaultLimit } from './requestlimit.js';
 import { diffRights, invalidateRights, roleRights, same, valueOf, type RightKey, type RightSource } from './rights.js';
 import { invitableRoles, listRoles, roleLabelArgs, type RoleRow } from './rolecat.js';
-import { roleGroupNames } from './livetv/groups.js';
+import { rolePresets, type RoleTemplatePreset } from './roleTemplates.js';
+import { areasOf, type Areas } from './areas.js';
+import { releasedGroupsSummary, roleGroups, setRoleGroupsIn } from './livetv/groups.js';
 import { wellFormed } from './wellFormed.js';
 import { DEFAULT_ROLES, LEGACY_COLUMNS, TEMPLATE_KEYS, legacyColumns, invalidateRoles, own, readTemplate, type RoleTemplate } from './roles.js';
 import { HttpError, accountSerial, reapplyRole } from './users.js';
@@ -39,12 +41,15 @@ export const rolePatch = z.object({
   transcoding: nullable(z.boolean()),
   maxHeight: nullable(z.union([z.number().int().min(144).max(4320), z.literal('unlimited')])),
   maxParentalRating: nullable(z.union([z.number().int().min(0).max(21), z.literal('unlimited')])),
-  libraries: nullable(z.union([z.literal('all'), z.array(z.string().trim().min(1).max(100).refine(wellFormed)).min(1).max(50)])),
+  // [] = no library: the role sees only Live TV (roles redesign §3.1)
+  libraries: nullable(z.union([z.literal('all'), z.array(z.string().trim().min(1).max(100).refine(wellFormed)).max(50)])),
   download: nullable(z.boolean()),
   maxDownloads: nullable(z.number().int().min(0).max(200)),
   downloadMaxHeight: nullable(z.number().int().min(0).max(2160)), // 0 = no downloads
   downloadDays: nullable(z.number().int().min(1).max(90)),
   perms: permsPatch.optional(),
+  /** the released Live TV groups the role sees (a full set; grants on unreleased groups are kept), roles redesign §4.2 */
+  livetvGroups: z.array(z.string().uuid()).max(500).optional(),
 }).strict();
 export type RolePatch = z.infer<typeof rolePatch>;
 
@@ -77,8 +82,11 @@ export async function writeRole(ctx: Ctx, actor: string | null, key: string, pat
   if (!cat) throw new HttpError(404, 'not_found');
   if (key === 'admin' && patch.perms !== undefined) throw new HttpError(400, 'admin_perms_locked');
   if (key === 'admin' && patch.invitable === true) throw new HttpError(400, 'admin_not_invitable');
+  if (key === 'admin' && patch.livetvGroups !== undefined) throw new HttpError(400, 'admin_groups_locked'); // admin sees every released group
+  // admin keeps the Mediathek (its areas are all on and locked, roles redesign §2.4, §4.3); its library list stays editable otherwise
+  if (key === 'admin' && Array.isArray(patch.libraries) && patch.libraries.length === 0) throw new HttpError(400, 'admin_library_required');
   const libraries = Array.isArray(patch.libraries) ? await knownLibraries(ctx, patch.libraries) : patch.libraries;
-  const touchesSettings = Object.keys(patch).some((k) => k !== 'label' && k !== 'invitable');
+  const touchesSettings = Object.keys(patch).some((k) => k !== 'label' && k !== 'invitable' && k !== 'livetvGroups');
   const touchesCatalogue = patch.label !== undefined || patch.invitable !== undefined;
 
   const from: Record<string, unknown> = {};
@@ -91,9 +99,13 @@ export async function writeRole(ctx: Ctx, actor: string | null, key: string, pat
     await c.query('select pg_advisory_xact_lock(hashtext($1))', [`role:${key}`]);
     // the resolver reads the catalogue through this connection: a fresh ctx object, so nothing cached from before the lock is used
     const tx = { db: c, roles: ctx.roles };
-    const catRow = (await c.query<{ label: string | null; invitable: boolean; base: string }>('select label, invitable, base from roles where key=$1 for update', [key])).rows[0];
+    // FOR NO KEY UPDATE, not FOR UPDATE: this write changes only non-key columns (label, invitable), and a group write's grant insert
+    // takes FOR KEY SHARE on this row through the FK livetv_group_roles.role while it holds its group row; FOR UPDATE would wait for
+    // that and deadlock against setRoleGroupsIn below (which locks the group rows after this one)
+    const catRow = (await c.query<{ label: string | null; invitable: boolean; base: string }>('select label, invitable, base from roles where key=$1 for no key update', [key])).rows[0];
     if (!catRow && !Object.hasOwn(ctx.roles, key)) throw new HttpError(404, 'not_found'); // deleted while this write waited
-    if (touchesCatalogue && !catRow) throw new HttpError(400, 'not_in_catalogue'); // a ROLE_TEMPLATES key the catalogue cannot hold
+    // a ROLE_TEMPLATES key the catalogue cannot hold (group grants need a catalogue row too: FK livetv_group_roles.role)
+    if ((touchesCatalogue || patch.livetvGroups !== undefined) && !catRow) throw new HttpError(400, 'not_in_catalogue');
     const base = catRow?.base ?? cat.base;
 
     if (touchesCatalogue && catRow) {
@@ -138,6 +150,12 @@ export async function writeRole(ctx: Ctx, actor: string | null, key: string, pat
           [key, requestsPerMonth, JSON.stringify(template), JSON.stringify(perms), ...legacyColumns(readTemplate(template))]);
       }
     }
+    if (patch.livetvGroups !== undefined) {
+      // role lock and catalogue row (FOR NO KEY UPDATE), then the released group rows. A group write locks a group row and then takes
+      // FOR KEY SHARE on the catalogue row (FK of its grant insert), which does not wait for NO KEY UPDATE: no cycle
+      const g = await setRoleGroupsIn(c, key, patch.livetvGroups);
+      if (g) { from.livetvGroups = g.from; to.livetvGroups = g.to; }
+    }
     // in the transaction: an entry for every stored change, in commit order (the role lock is still held)
     if (Object.keys(to).length) await auditInTx({ db: c }, actor, 'role.update', key, { from, to, ...(Object.keys(layer).length ? { layer } : {}) });
     await c.query('commit');
@@ -148,7 +166,7 @@ export async function writeRole(ctx: Ctx, actor: string | null, key: string, pat
     c.release();
   }
   invalidateRoles(ctx);
-  invalidateRights(); // accountsWithout answers follow the role's switches
+  invalidateRights(); // accountsWithout answers and the Live TV channel sets follow the role's switches and groups
   const reapplied = media
     ? await accountSerial(() => reapplyRole(ctx, key)) // after a role change of one of its accounts, never interleaved with it
     : { identities: 0, failed: 0 };
@@ -172,6 +190,10 @@ export interface MatrixRole {
   accounts: number; profiles: number; kidsProfiles: number;
   /** names of the released Live TV groups the role sees (the admin role: all), in group order (Live TV spec §8: *Kanalgruppen* chips) */
   livetvGroups: string[];
+  /** ids of the same groups (the role page's chips; `livetvGroups` names stay for one release) */
+  livetvGroupIds: string[];
+  /** the areas of the effective values (roles redesign §2.1) */
+  areas: Areas;
   /** effective template + switches + requestsPerMonth, keyed by MatrixField.key */
   values: Record<string, unknown>;
   sources: Record<string, RoleSourceName>;
@@ -186,19 +208,28 @@ export interface RolesOverview {
   invitable: string[];
   /** legacy (one release): the old roles page's rows */
   limits: Array<Record<string, unknown>>;
-  matrix: { fields: MatrixField[]; features: ReturnType<typeof featureFlags>; roles: MatrixRole[]; libraries: Library[] };
+  matrix: {
+    fields: MatrixField[]; features: ReturnType<typeof featureFlags>; roles: MatrixRole[]; libraries: Library[];
+    /** the released Live TV groups (group order, channel counts) and how many wait for a release; null while Live TV is not installed */
+    livetv: Awaited<ReturnType<typeof releasedGroupsSummary>> | null;
+    /** the start points of a new role (Nur Live-TV only while Live TV is installed) */
+    templates: RoleTemplatePreset[];
+  };
 }
 
 /** the role editor's data: legacy `roles` / `invitable` / `limits` (unchanged fields) and the role matrix (spec §4.1, ruling 3) */
 export async function rolesOverview(ctx: Ctx): Promise<RolesOverview> {
-  const [catalogue, invitable, libs, counts, groups] = await Promise.all([
+  // read once: matrix.features, matrix.livetv and matrix.templates must agree within one answer
+  const features = featureFlags(ctx);
+  const [catalogue, invitable, libs, counts, groups, livetv] = await Promise.all([
     listRoles(ctx),
     invitableRoles(ctx),
     fetchLibraries(ctx),
     ctx.db.query<{ role: string; accounts: number; profiles: number; kids: number }>(
       `select u.role, count(distinct u.id)::int accounts, count(p.id)::int profiles, (count(p.id) filter (where p.kids))::int kids
          from users u left join profiles p on p.user_id = u.id group by u.role`),
-    roleGroupNames(ctx),
+    roleGroups(ctx),
+    features.livetv ? releasedGroupsSummary(ctx) : null,
   ]);
   const count = new Map(counts.rows.map((r) => [r.role, r]));
   const roles: RolesOverview['roles'] = {};
@@ -221,12 +252,15 @@ export async function rolesOverview(ctx: Ctx): Promise<RolesOverview> {
     const without = (await roleRights(ctx, row.key, null)) ?? r;
     const [, configured, builtinGerman] = await roleLabelArgs(ctx, row.key);
     const n = count.get(row.key);
+    const values = Object.fromEntries(MATRIX_FIELDS.map((f) => [f.key, valueOf(r, f.key)]));
     matrixRoles.push({
       key: row.key, label: configured ?? null, builtinLabel: configured !== undefined && configured === builtinGerman, base: row.base,
       origin: row.origin, invitable: row.invitable && row.key !== 'admin', position: row.position, envGone: row.origin === 'env' && !Object.hasOwn(ctx.roles, row.key), stored: row.stored,
       accounts: n?.accounts ?? 0, profiles: n?.profiles ?? 0, kidsProfiles: n?.kids ?? 0,
-      livetvGroups: groups.get(row.key) ?? [],
-      values: Object.fromEntries(MATRIX_FIELDS.map((f) => [f.key, valueOf(r, f.key)])),
+      livetvGroups: (groups.get(row.key) ?? []).map((g) => g.name),
+      livetvGroupIds: (groups.get(row.key) ?? []).map((g) => g.id),
+      areas: areasOf(values),
+      values,
       sources: Object.fromEntries(MATRIX_FIELDS.map((f) => [f.key, r.sources[f.key as RightKey]])),
       defaults: Object.fromEntries(MATRIX_FIELDS.map((f) => [f.key, valueOf(without, f.key)])),
       missingLibraries: missingLibraries(template.libraries, libs),
@@ -234,6 +268,6 @@ export async function rolesOverview(ctx: Ctx): Promise<RolesOverview> {
   }
   return {
     roles, invitable, limits,
-    matrix: { fields: MATRIX_FIELDS.map((f) => ({ ...f, ...(f.options ? { options: [...f.options] } : {}) })), features: featureFlags(ctx), roles: matrixRoles, libraries: libs ?? [] },
+    matrix: { fields: MATRIX_FIELDS.map((f) => ({ ...f, ...(f.options ? { options: [...f.options] } : {}) })), features, roles: matrixRoles, libraries: libs ?? [], livetv, templates: rolePresets(features.livetv) },
   };
 }

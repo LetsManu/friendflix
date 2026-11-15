@@ -6,6 +6,8 @@
   import Icon from '#lib/Icon.svelte';
   import { t, type TKey } from '#lib/i18n';
   import { isBackKey } from '#lib/spatial';
+  import { areas, features } from '#lib/capabilities';
+  import { homePath } from '#lib/gate';
   import { nowLines, type LiveChannel, type LiveGroup } from './api';
   import { fadeIn } from './fade';
   import FavTiles from './FavTiles.svelte';
@@ -19,6 +21,8 @@
   import type { LiveFilter } from './order';
   import { channelHead, progressAt, timeLeft, timeLeftText, rowName } from './progress';
   import TvHintLine from './TvHintLine.svelte';
+  import RecordingsRow from './RecordingsRow.svelte';
+  import type { Recording } from './recordings';
 
   /**
    * The Live-TV list on a TV (spec §11.3): the favourites row (360 px tiles), the group chips as a focusable row, then 96 px rows
@@ -45,6 +49,9 @@
   export let loading = false;
   /** the person has no channel at all */
   export let none = false;
+  /** the *Aufnahmen* row below the list (Phase 3 Task 8; null while loading) */
+  export let recordings: Recording[] | null = null;
+  export let canRecord = false;
 
   const dispatch = createEventDispatcher<{ open: LiveChannel; star: LiveChannel; select: LiveFilter; order: HTMLElement }>();
 
@@ -106,7 +113,12 @@
     if (li) {
       const star = el.classList.contains('star');
       const rows = rowEls(), i = rows.indexOf(li);
-      if (dir === 'down') { e.preventDefault(); put(partOf(rows[i + 1], star)); return; } // the last row stays
+      if (dir === 'down') {
+        e.preventDefault();
+        // the last row: down into the Aufnahmen row when there is one, else it stays
+        put(i + 1 < rows.length ? partOf(rows[i + 1], star) : root.querySelector<HTMLElement>('.rtile'));
+        return;
+      }
       if (dir === 'up') {
         e.preventDefault();
         if (i > 0) put(partOf(rows[i - 1], star));
@@ -242,7 +254,9 @@
     }
     if (back) {
       if (number || noMatch) { stop(e); closeNumber(); clearTimeout(msgT); noMatch = ''; return; }
-      if (!overShell()) { stop(e); void goto('/', { replaceState: true }); } // Back from the list goes Home (no history entry piles up)
+      // Back from the list goes Home (no history entry piles up). Live TV is home for a person without libraries: the layout
+      // takes the key then (the rail, and from there leaving the TV app; roles redesign §6)
+      if (!overShell() && homePath($areas.library, $features.livetv) !== '/live') { stop(e); void goto('/', { replaceState: true }); }
       return;
     }
     if (e.key === 'Enter') {
@@ -308,6 +322,7 @@
       {/each}
     </ul>
   {/if}
+  <RecordingsRow {recordings} {canRecord} tv />
 </div>
 
 {#if number || noMatch}

@@ -18,6 +18,7 @@ export interface LivetvSystem {
   cache: { usedBytes: number; maxBytes: number };
   recordings: { usedBytes: number; freeBytes: number } | null;
   srt: { ports: number[] };
+  library: { mounted: boolean; writable: boolean; dedicated: boolean; freeBytes: number | null } | null;
 }
 
 /** one live entry of a provider list (livetv/src/m3u.ts `M3uEntry`) */
@@ -124,3 +125,30 @@ export interface StartBody { channelId: string; input: StreamInput; mode: Mode; 
 
 /** the `POST /v1/benchmark` answer (spec §3.2; livetv/src/routes/benchmark.ts): 20 s of 1080p25 through `encoder`, speed = 20 / wall seconds */
 export interface BenchAnswer { speed: number; encoder: Encoder; seconds: number }
+
+/** the `POST /v1/recordings` body (plan Phase 3 Task 2; livetv/src/recorder.ts `StartRecording`): the stream must run already */
+export interface RecordingStartBody { id: string; channelId: string; dir: string /* uuid folder under /recordings */; endAt: number /* epoch ms */ }
+/** its answer (200); refusals are 409 `stream_not_running` / `invalid_dir`, 410 `removed` (deleted meanwhile) and 507 `storage_full` */
+export interface RecordingStartAnswer { state: 'recording'; segments: Segments | null }
+/** `POST /v1/recordings/:id/close` (livetv/src/recorder.ts `CloseResult`): the folder's facts; `span` what its segments cover (M2) */
+export type RecorderCloseAnswer = Omit<RecorderView, 'since'> & { since?: number; span?: { from: number; to: number } | null };
+/** livetv/src/recorder.ts `RecError` */
+export type RecorderError = 'storage_full' | 'write_failed' | 'stream_gone';
+/** an outage inside a recording, epoch ms (livetv/src/recorder.ts `Gap`) */
+export interface RecorderGap { from: number; to: number }
+/** an item of `GET /v1/recordings` (livetv/src/recorder.ts `RecordingView`); finished entries stay listed for an hour */
+export interface RecorderView {
+  id: string;
+  channelId: string;
+  dir: string;
+  state: 'recording' | 'done' | 'failed';
+  segments: Segments | null;
+  bytes: number;
+  durationS: number;
+  gaps: RecorderGap[];
+  error: RecorderError | null;
+  since: number;
+}
+
+/** `POST /v1/recordings/:id/export` (plan Phase 3 Task 6; livetv/src/library.ts): the file relative to the library folder and its size */
+export interface ExportAnswer { path: string; bytes: number }

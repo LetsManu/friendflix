@@ -6,7 +6,8 @@ import { pngFor } from './png.js';
 import { adminRoute, adminState, type AdminState } from './admin.js';
 import { settingsRoute, settingsState, type SettingsMock } from './settings.js';
 import { setupRoute, type SetupMock } from './setup.js';
-import { updaterRoute, type UpdaterMock } from './updater.js';
+import { startRedeploy, updaterRoute, updaterState, type UpdaterMock } from './updater.js';
+import { syscheckDrip, syscheckRoute, syscheckSocket, syscheckState, syscheckUpload, type SyscheckMock } from './syscheck.js';
 import { livetvMedia, livetvRoute, livetvState, type LivetvMock } from './livetv.js';
 
 /** Item whose reactions are locked (viewer has not seen it) / unlocked and contain an XSS probe. */
@@ -33,6 +34,8 @@ export interface MockState {
   settings: SettingsMock;
   /** the opt-in updater (mocks/updater.ts); null = not installed */
   updater: UpdaterMock | null;
+  /** GET /api/admin/systemcheck (mocks/syscheck.ts) */
+  syscheck: SyscheckMock;
   /** GET /api/version: what the running build is (backend/src/channel.ts); the default is a release build */
   build: { sha: string; build: 'release' | 'nightly' | 'dev' | null; channel: 'stable' | 'nightly' | null; label: string };
   /** /api/me reports an admin owner profile (admin pages, admin menu) */
@@ -61,6 +64,8 @@ export interface MockState {
   canDownload?: boolean;
   /** /api/me `perms` (the acting profile's effective rights); absent = the field is left out, like an older backend (everything allowed) */
   perms?: Partial<Record<'requests' | 'cast' | 'party' | 'partySchedule' | 'comments' | 'liveTv' | 'liveRecord', boolean>>;
+  /** /api/me `areas` (roles redesign §4.6: the parts of the app the profile may use); absent = the field is left out, like an older backend (all on) */
+  areas?: Partial<Record<'library' | 'livetv' | 'requests' | 'together' | 'downloads', boolean>>;
   /** /api/me `server.kind` (absent = the field is left out, like an older backend: the app treats it as Jellyfin) */
   serverKind?: 'jellyfin' | 'plex';
   /** /api/me `server.capabilities` (absent = left out: every capability counts as supported); e.g. `{ castHlsSubtitles: false }` */
@@ -153,6 +158,7 @@ export function freshState(): MockState {
     admin: adminState(),
     settings: settingsState(),
     updater: null,
+    syscheck: syscheckState(),
     livetv: livetvState(),
     build: { sha: 'c0be6c5deadbeef', build: 'release', channel: 'stable', label: '1.0.0' },
     asAdmin: false,
@@ -188,7 +194,11 @@ const find = (id: string): MockItem | undefined => [...items, ...episodes].find(
 
 /** Fully mocks `/api/**` and `/media/**` for a browser context. The web app is a pure SPA (ssr = false), so nothing else is needed. */
 export async function installApi(ctx: BrowserContext, st: MockState): Promise<void> {
-  await ctx.route('**/media/**', (r) => livetvMedia(st.livetv, new URL(r.request().url()).pathname, r) ?? r.fulfill({ status: 200, contentType: 'image/png', body: pngFor(r.request().url()) }));
+  await ctx.route('**/media/**', (r) => {
+    const p = new URL(r.request().url()).pathname;
+    return syscheckDrip(st.syscheck, p, r) ?? livetvMedia(st.livetv, p, r) ?? r.fulfill({ status: 200, contentType: 'image/png', body: pngFor(r.request().url()) });
+  });
+  await syscheckSocket(ctx, st.syscheck);
   await ctx.route('**/api/**', async (route: Route) => {
     const req = route.request();
     const u = new URL(req.url());
@@ -253,7 +263,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       const withFeatures = st.features ? { ...withServer, features: st.features } : withServer;
       const base = st.perms ? { ...withFeatures, perms: st.perms } : withFeatures;
       const withDl = st.canDownload ? { ...base, downloads: { allowed: true, max: 3 } } : base;
-      const me = st.asAdmin ? { ...withDl, role: 'admin', roleLabel: 'Admin', isAdmin: true } : withDl;
+      const withAreas = st.areas ? { ...withDl, areas: { library: true, livetv: false, requests: true, together: true, downloads: false, ...st.areas } } : withDl;
+      const me = st.asAdmin ? { ...withAreas, role: 'admin', roleLabel: 'Admin', isAdmin: true } : withAreas;
       const s = st.accountSaved;
       return J(s ? { ...me, name: s.name, profile: { ...me.profile, name: s.name.slice(0, 20), avatar: s.avatar } } : me);
     }
@@ -369,6 +380,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       return np.wish === 'fail' ? J({ error: 'boom' }, 500) : J({ ok: true });
     }
     if (p === '/api/seerr/upcoming') {
+      if (st.perms?.requests === false) return J({ error: 'requests_forbidden' }, 403); // the backend's requirePerm (roles redesign §4.7)
       if (st.newPage.hang.has('upcoming')) return new Promise<void>(() => undefined);
       return J({ results: sp.get('type') === 'tv' ? st.newPage.upcoming.tv : st.newPage.upcoming.movie });
     }
@@ -479,6 +491,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (/^\/api\/items\/[^/]+\/extras\/all$/.test(p)) return J({ items: [] }); // Extras tab (block 15): specs with extras mock it themselves
     // Block 17 P1 (player): no chapters / no cast by default; player-scenes specs mock both themselves
     if (/^\/api\/items\/[^/]+\/chapters$/.test(p)) return J({ supported: true, chapters: [] });
+    // a recording (`rec:<uuid>`) is no library item: asking for its cast & info is a bug (review W-I3), so it counts as unmocked
+    if (p.startsWith('/api/items/rec:')) { st.unmocked.add(`${m} ${p}`); return J({ error: 'not_found' }, 404); }
     if (/^\/api\/items\/[^/]+\/castinfo$/.test(p)) return J({ item: { id: p.split('/')[3], name: '', type: 'Movie' }, cast: [], guests: [], directors: [], writers: [], creators: [], studios: [], genres: [], tags: [] });
     if (p === '/api/hubs') return J({ hubs: [] }); // brand hub tiles (block 15): specs with hubs mock it themselves
     if ((mm = p.match(/^\/api\/items\/([^/]+)\/reactions$/))) {
@@ -548,7 +562,17 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     // Live TV channel logos by hash (Task 19): any hash is a small image
     if (p.startsWith('/api/livetv/logos/') && m === 'GET') return route.fulfill({ status: 200, contentType: 'image/png', body: pngFor(p) });
+    if (p === '/api/admin/systemcheck') { const r = syscheckRoute(st.syscheck, m, p, sp, J); if (r) return r; }
+    if (st.asAdmin) { const r = syscheckUpload(st.syscheck, m, p, route); if (r) return r; }
     if (p.startsWith('/api/admin/updater') && st.asAdmin) { const r = updaterRoute(st.updater, st.settings, m, p, J); if (r) return r; }
+    // Admin → Update without an updater: the backend records the Portainer redeploy it started (redeploy.ts); the page follows that
+    // record through GET /api/admin/updater (present: false), judged from this backend's build alone (no services listing)
+    if (p === '/api/admin/update' && m === 'POST' && st.asAdmin && !st.updater?.present) {
+      const ch = st.settings.groups.flatMap((g) => g.items).find((i) => i.key === 'UPDATE_CHANNEL')?.value;
+      st.updater ??= updaterState(false);
+      startRedeploy(st.updater, ch === 'nightly' ? 'nightly' : 'latest', false);
+      return J({ ok: true, mode: 'webhook' }, 202);
+    }
     if (p.startsWith('/api/admin/settings')) { st.settings.livetvInstalled = st.admin.livetv.installed; const r = settingsRoute(st.settings, m, p, body(), J); if (r) return r; }
     if (p.startsWith('/api/admin/')) {
       // Live TV: the offer is hidden by the LIVETV_OFFER_HIDDEN setting (the "Nicht mehr anzeigen" save and the Settings switch)

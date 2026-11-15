@@ -221,6 +221,40 @@ describe('the safety net', () => {
     expect(streams.file(streamKey, 'index.m3u8')).toBeNull();
   });
 
+  it('keepAlive (a recording, Phase 3) counts like a fetch; view answers the stream or null', async () => {
+    const { streamKey } = streams.start(startBody());
+    await flush();
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(170_000);
+      streams.keepAlive('ch-nordlicht');
+    }
+    expect(streams.list()).toHaveLength(1);
+    expect(streams.view('ch-nordlicht')).toMatchObject({ streamKey, state: 'running', segments: 'ts' });
+    streams.keepAlive('ch-unbekannt'); // a channel that is not running: nothing happens
+    expect(streams.view('ch-unbekannt')).toBeNull();
+    await vi.advanceTimersByTimeAsync(180_000);
+    await flush();
+    expect(streams.list()).toEqual([]);
+  });
+
+  it('onSegment gets the segment info: path, file, length, discontinuity, init and date-time', async () => {
+    const seen: unknown[] = [];
+    const fmp4: Driver = async (ctx) => {
+      ctx.window({ ext: 'm4s', init: true });
+      await ctx.store.write(join(ctx.dir, 'init-0.mp4'), 'init');
+      await ctx.segment({ file: '0.m4s', duration: 4, bytes: 10, init: 0, pdt: NOW });
+      await ctx.segment({ file: '1.m4s', duration: 3.5, bytes: 10, init: 0, discontinuity: true });
+      await ctx.sleep(Number.MAX_SAFE_INTEGER);
+    };
+    streams = new Streams({ root: '/cache', maxBytes: 1024 ** 3, drivers: { passthrough: fmp4 }, store: mem.store, log: () => {}, onSegment: (id, s) => seen.push([id, s]) });
+    const { streamKey } = streams.start(startBody());
+    await flush();
+    expect(seen).toEqual([
+      ['ch-nordlicht', { path: `/cache/${streamKey}/0.m4s`, file: '0.m4s', duration: 4, discontinuity: false, init: 0, initPath: `/cache/${streamKey}/init-0.mp4`, pdt: NOW }],
+      ['ch-nordlicht', { path: `/cache/${streamKey}/1.m4s`, file: '1.m4s', duration: 3.5, discontinuity: true, init: 0, initPath: `/cache/${streamKey}/init-0.mp4`, pdt: NOW - 3500 }],
+    ]);
+  });
+
   it('the cache cap drops the oldest segments of the longest window and keeps the newest 3', async () => {
     let n = 0;
     const many: Driver = async (ctx) => {

@@ -37,7 +37,7 @@ export default defineConfig({
   ],
   webServer: {
     // CI builds in a separate step and sets E2E_SKIP_BUILD=1; locally the build is part of the run so tests never hit a stale bundle.
-    command: `${process.env.E2E_SKIP_BUILD ? '' : 'npm run build -w web && '}node web/build`,
+    command: `${process.env.E2E_SKIP_BUILD ? '' : 'npm run build -w web && '}node web/server`,
     cwd: ROOT,
     env: { PORT: String(PORT), HOST: '127.0.0.1' },
     url: `http://127.0.0.1:${PORT}/offline`,

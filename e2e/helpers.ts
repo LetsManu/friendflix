@@ -5,6 +5,17 @@ import { expect, type Locator, type Page } from '@playwright/test';
 /** Row section by its accessible name (e.g. "Weiterschauen"). */
 export const row = (page: Page, title: string | RegExp): Locator => page.locator('section.row').filter({ has: page.getByRole('heading', { level: 2, name: title }) });
 
+/**
+ * Adds a test-only stylesheet (screenshot clean-up, pointer tweaks) through the CSSOM. page.addStyleTag would add an inline <style>
+ * element, which the app's CSP refuses (style-src-elem 'self'); a constructed stylesheet is not subject to it.
+ */
+export const addCss = (page: Page, css: string): Promise<void> =>
+  page.evaluate((c) => {
+    const s = new CSSStyleSheet();
+    s.replaceSync(c);
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, s];
+  }, css);
+
 /** True when the page has no horizontal scrollbar. */
 export const noHorizontalOverflow = (page: Page): Promise<boolean> =>
   page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1);

@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createECDH, randomBytes } from 'node:crypto';
-import webpush from 'web-push';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import * as webpush from 'web-push';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { digestPushText, digestText, type DigestData } from '../src/digest.js';
 import { deviceLabel } from '../src/devices.js';
 import { LANGUAGES, LANGUAGE_TAGS, knownText, m, msg, render, renderKnown, roleLabel } from '../src/i18n.js';
@@ -10,6 +10,11 @@ import { CATALOGS, type Message } from '../src/messages.js';
 import { localizeStored, notify } from '../src/notify.js';
 import { buildPayload, sendWebPush } from '../src/push.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
+// web-push 4 is ESM: its namespace is read-only, so wrap generateRequestDetails in a pass-through mock the tests can observe
+vi.mock('web-push', async (orig) => {
+  const real = await orig<typeof import('web-push')>();
+  return { ...real, generateRequestDetails: vi.fn(real.generateRequestDetails) };
+});
 
 const placeholders = (v: Message) => new Set((typeof v === 'string' ? [v] : Object.values(v)).flatMap((s) => [...(s as string).matchAll(/\{(\w+)\}/g)].map((x) => x[1])));
 
@@ -150,9 +155,10 @@ describe('notifications in the recipient language', () => {
 
   it('web push: each subscription in its profile language, neutral text for other profiles', async () => {
     expect(buildPayload({ kind: 'k', title: m('push.generic') }, true, 'tr').title).toBe('Yeni bildirim');
-    const orig = webpush.generateRequestDetails;
+    const spy = vi.mocked(webpush.generateRequestDetails);
+    const orig = spy.getMockImplementation()!;
     const payloads: Array<Record<string, string>> = [];
-    (webpush as { generateRequestDetails: unknown }).generateRequestDetails = (s: unknown, p: string, o: unknown) => { payloads.push(JSON.parse(p)); return orig.call(webpush, s as never, p, o as never); };
+    spy.mockImplementation(((s: unknown, p: string, o: unknown) => { payloads.push(JSON.parse(p)); return (orig as (...a: unknown[]) => unknown)(s, p, o); }) as typeof webpush.generateRequestDetails);
     try {
       await call(admin, 'PUT', '/api/prefs/language', { language: 'it' });
       const kid = (await call(admin, 'POST', '/api/profiles', { name: 'Kind' })).json().profile.id as string;
@@ -167,7 +173,7 @@ describe('notifications in the recipient language', () => {
       expect(payloads).toContainEqual(expect.objectContaining({ title: 'Una TV è stata collegata al tuo account', body: 'Non sei stato tu? Blocca il dispositivo in «Dispositivi».' }));
       expect(payloads).toContainEqual(expect.objectContaining({ title: 'FriendFlix', body: 'Nowe powiadomienie' }));
     } finally {
-      (webpush as { generateRequestDetails: unknown }).generateRequestDetails = orig;
+      spy.mockImplementation(orig);
     }
   });
 

@@ -17,6 +17,8 @@
   export let title = '';
   export let sub = '';
   export let overview = '';
+  /** the item has cast & info (a recording has none: the button is not offered) */
+  export let castInfo = true;
 
   const dispatch = createEventDispatcher<{ castinfo: void }>();
   let col: HTMLDivElement | undefined;
@@ -31,7 +33,7 @@
     <h2 class="ttl">{title}</h2>
     {#if sub}<span class="se">{sub}</span>{/if}
     {#if overview}<p class="ov">{overview}</p>{/if}
-    <div class="act"><button type="button" class="btn glass" on:click|stopPropagation={() => dispatch('castinfo')}>{$t('player.pause.castInfo')}</button></div>
+    {#if castInfo}<div class="act"><button type="button" class="btn glass" on:click|stopPropagation={() => dispatch('castinfo')}>{$t('player.pause.castInfo')}</button></div>{/if}
   </div>
   <div class="ff"><Logo size={28} label="" /><span>{$t('player.pause.paused')}</span></div>
 </div>

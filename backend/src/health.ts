@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { stat as fsStat, statfs as fsStatfs } from 'node:fs/promises';
 import { REMOVED_ENV } from './config.js';
 import type { Ctx } from './ctx.js';
+import { probeQuery } from './db.js';
 import { hevcStatus, HEVC_SAFE_SPEED, type HevcStatus } from './hevcenc.js';
 import type { EncoderSettings } from './media/types.js';
 import { recentCount } from './errorlog.js';
@@ -46,8 +47,18 @@ const SLOW_MS: Partial<Record<ServiceId, number>> = { media: 2000, postgres: 500
 const SNAP_KEY = 'health:snap';
 const SNAP_TTL = 300;
 const STALE_MS = 90_000;
-const OIDC_KEY = 'health:oidc';
+/** the discovery answer per issuer (a new OIDC_ISSUER is probed at once); a refresh skips it, a saved OIDC setting drops it */
+const OIDC_PREFIX = 'health:oidc:';
+const oidcKey = (issuer: string): string => OIDC_PREFIX + createHash('sha1').update(issuer).digest('hex').slice(0, 12);
 const OIDC_TTL = 300;
+/** the settings that change what the OIDC probe sees (ctx.ts resets the client on the same keys) */
+export const OIDC_PROBE_KEYS = ['OIDC_ISSUER', 'OIDC_ALLOW_INSECURE', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET', 'PUBLIC_URL'] as const;
+
+/** Drops every cached OIDC probe answer (an OIDC setting was saved): the next snapshot asks the issuer again. */
+export async function forgetOidcProbe(ctx: Ctx): Promise<void> {
+  const keys = await ctx.kv.keys(OIDC_PREFIX).catch(() => [] as string[]);
+  await Promise.all(keys.map((k) => ctx.kv.del(k).catch(() => undefined)));
+}
 const GiB = 1024 ** 3;
 /** a playback check where every one of at least this many titles failed is red (the media server, not a file, is broken) */
 const ALL_FAILED_MIN = 3;
@@ -58,17 +69,23 @@ export function issueFp(id: string, level: string, reason: string): string {
   return createHash('sha1').update(`${id}|${level}|${reason}`).digest('hex').slice(0, 12);
 }
 
-type Outcome<T> = { ok: true; v: T; ms: number } | { ok: false; ms: number };
+/** `timeout`: the limit was hit (else fn threw) */
+export type Outcome<T> = { ok: true; v: T; ms: number } | { ok: false; ms: number; timeout?: true };
+const TIMEOUT = Symbol('timeout');
 
-/** Runs a probe with a hard time limit; a throw or a timeout is a failed probe (its message is dropped). */
-async function bounded<T>(fn: () => Promise<T>, timeoutMs: number): Promise<Outcome<T>> {
+/**
+ * Runs a probe with a hard time limit; a throw or a timeout is a failed probe (its message is dropped). Also the Systemcheck's group
+ * limit. This only stops the wait: a database probe also runs its query through probeQuery (db.ts), which cancels it at the same bound
+ * and gives the connection back.
+ */
+export async function bounded<T>(fn: () => Promise<T>, timeoutMs: number): Promise<Outcome<T>> {
   const t0 = performance.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<'timeout'>((res) => { timer = setTimeout(() => res('timeout'), timeoutMs); });
+  const timeout = new Promise<typeof TIMEOUT>((res) => { timer = setTimeout(() => res(TIMEOUT), timeoutMs); });
   try {
     const r = await Promise.race([fn(), timeout]);
     const ms = Math.round(performance.now() - t0);
-    return r === 'timeout' ? { ok: false, ms } : { ok: true, v: r as T, ms };
+    return r === TIMEOUT ? { ok: false, ms, timeout: true } : { ok: true, v: r as T, ms };
   } catch {
     return { ok: false, ms: Math.round(performance.now() - t0) };
   } finally {
@@ -84,12 +101,14 @@ function timedService(id: ServiceId, o: Outcome<boolean>): ServiceHealth {
 
 const trimSlash = (s: string) => s.replace(/\/+$/, '');
 
-async function oidcProbe(ctx: Ctx, fetchImpl: typeof fetch, timeoutMs: number): Promise<ServiceHealth> {
-  const hit = await ctx.kv.get(OIDC_KEY).catch(() => null);
+/** `fresh` (Jetzt prüfen, ?refresh=1): asks the issuer even when an answer of the last 5 minutes is cached */
+async function oidcProbe(ctx: Ctx, fetchImpl: typeof fetch, timeoutMs: number, fresh: boolean): Promise<ServiceHealth> {
+  const issuer = trimSlash(ctx.cfg.OIDC_ISSUER);
+  const key = oidcKey(issuer);
+  const hit = fresh ? null : await ctx.kv.get(key).catch(() => null);
   if (hit) {
     try { return JSON.parse(hit) as ServiceHealth; } catch { /* probe again */ }
   }
-  const issuer = trimSlash(ctx.cfg.OIDC_ISSUER);
   const o = await bounded(async () => {
     const res = await fetchImpl(`${issuer}/.well-known/openid-configuration`, { signal: AbortSignal.timeout(timeoutMs) });
     if (res.status !== 200) return 'down' as const;
@@ -100,7 +119,7 @@ async function oidcProbe(ctx: Ctx, fetchImpl: typeof fetch, timeoutMs: number): 
   if (!o.ok || o.v === 'down') h = { id: 'oidc', level: 'err', reason: 'down', ms: o.ms };
   else if (o.v === 'issuer_mismatch') h = { id: 'oidc', level: 'err', reason: 'issuer_mismatch', ms: o.ms };
   else h = timedService('oidc', { ok: true, v: true, ms: o.ms });
-  await ctx.kv.set(OIDC_KEY, JSON.stringify(h), OIDC_TTL).catch(() => undefined);
+  await ctx.kv.set(key, JSON.stringify(h), OIDC_TTL).catch(() => undefined);
   return h;
 }
 
@@ -119,9 +138,9 @@ async function sourceProbe(ctx: Ctx, name: SourceName): Promise<ServiceHealth> {
   }
 }
 
-async function playbackCheckProbe(ctx: Ctx): Promise<ServiceHealth> {
+async function playbackCheckProbe(ctx: Ctx, timeoutMs: number): Promise<ServiceHealth> {
   try {
-    const r = await ctx.db.query<{ results: Array<{ ok: boolean; itemId?: string }> }>('select results from playback_checks order by id desc limit 1');
+    const r = await probeQuery<{ results: Array<{ ok: boolean; itemId?: string }> }>(ctx.db, 'select results from playback_checks order by id desc limit 1', [], timeoutMs);
     const row = r.rows[0];
     if (!row) return { id: 'playbackCheck', level: 'off' };
     // the "aborted" row (no itemId) is not a checked title
@@ -171,22 +190,22 @@ async function encoderProbe(ctx: Ctx, timeoutMs: number): Promise<ServiceHealth 
   return advice.length ? { id: 'encoder', level: 'warn', reason: advice[0], advice, ...line } : { id: 'encoder', level: 'ok', ...line };
 }
 
-async function services(ctx: Ctx, fetchImpl: typeof fetch, timeoutMs: number): Promise<ServiceHealth[]> {
+async function services(ctx: Ctx, fetchImpl: typeof fetch, timeoutMs: number, fresh: boolean): Promise<ServiceHealth[]> {
   const gatewayUrl = `${trimSlash(ctx.cfg.GATEWAY_URL)}/health`;
   const seerr = ctx.seerr;
   const [media, postgres, redis, gateway, oidc, requests, tmdb, omdb, check, encoder] = await Promise.all([
     bounded(() => ctx.jf.admin.ping(), timeoutMs).then((o) => timedService('media', o)),
-    bounded(async () => { await ctx.db.query('select 1'); return true; }, timeoutMs).then((o) => timedService('postgres', o)),
+    bounded(async () => { await probeQuery(ctx.db, 'select 1', [], timeoutMs); return true; }, timeoutMs).then((o) => timedService('postgres', o)),
     bounded(() => ctx.kv.ping(), timeoutMs).then((o) => timedService('redis', o)),
     bounded(async () => (await fetchImpl(gatewayUrl, { signal: AbortSignal.timeout(timeoutMs) })).status === 200, timeoutMs).then((o) => timedService('gateway', o)),
-    oidcProbe(ctx, fetchImpl, timeoutMs),
+    oidcProbe(ctx, fetchImpl, timeoutMs, fresh),
     // the request service only affects wishes: down is a warning, never red; not set up (it is optional) is off
     seerr
       ? bounded(() => seerr.requestCount(), timeoutMs).then((o): ServiceHealth => (o.ok ? { id: 'requests', level: 'ok', ms: o.ms } : { id: 'requests', level: 'warn', reason: 'down', ms: o.ms }))
       : Promise.resolve<ServiceHealth>({ id: 'requests', level: 'off', reason: 'not_set' }),
     bounded(() => sourceProbe(ctx, SOURCES[0]!), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'tmdb', level: 'off', reason: 'unavailable' })),
     bounded(() => sourceProbe(ctx, SOURCES[1]!), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'omdb', level: 'off', reason: 'unavailable' })),
-    bounded(() => playbackCheckProbe(ctx), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'playbackCheck', level: 'off', reason: 'unavailable' })),
+    bounded(() => playbackCheckProbe(ctx, timeoutMs), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'playbackCheck', level: 'off', reason: 'unavailable' })),
     encoderProbe(ctx, timeoutMs).catch(() => null),
   ]);
   return [media, postgres, redis, gateway, oidc, requests, tmdb, omdb, check, ...(encoder ? [encoder] : [])];
@@ -235,12 +254,15 @@ function diskEntry(ctx: Ctx, id: 'downloads' | 'previews', v: Vol | null, ownByt
 
 async function disks(ctx: Ctx, d: DiskDeps, timeoutMs: number): Promise<DiskHealth[]> {
   const downloadsOn = ctx.cfg.DOWNLOADS_ENABLED === 'true';
-  const num = async (sql: string) => Number((await ctx.db.query<{ n: string }>(sql).catch(() => ({ rows: [] as Array<{ n: string }> }))).rows[0]?.n ?? 0);
+  // each count is cancelled at the probe bound (probeQuery): a stalled database costs no pool connection; a failed count reads 0
+  const num = async (sql: string) => Number((await probeQuery<{ n: string }>(ctx.db, sql, [], timeoutMs).catch(() => ({ rows: [] as Array<{ n: string }> }))).rows[0]?.n ?? 0);
+  // a stalled database must not hold the snapshot: an unanswered byte count reads as 0 (the disk's own usage still comes from statfs)
+  const ownBytes = (sql: string) => bounded(() => num(sql), timeoutMs).then((o) => (o.ok ? o.v : 0));
   const [dlVol, pvVol, dlBytes, pvBytes, dbBytes] = await Promise.all([
     downloadsOn ? volume(ctx.cfg.DOWNLOAD_DIR, d, timeoutMs) : Promise.resolve(null),
     volume(ctx.cfg.PREVIEW_DIR, d, timeoutMs),
-    downloadsOn ? num("select coalesce(sum(bytes),0)::text n from download_jobs where status='ready'") : Promise.resolve(0),
-    num("select coalesce(sum(bytes),0)::text n from preview_clips where status='ok'"),
+    downloadsOn ? ownBytes("select coalesce(sum(bytes),0)::text n from download_jobs where status='ready'") : Promise.resolve(0),
+    ownBytes("select coalesce(sum(bytes),0)::text n from preview_clips where status='ok'"),
     bounded(() => num('select pg_database_size(current_database())::text n'), timeoutMs).then((o) => (o.ok ? o.v : null)),
   ]);
   const out: DiskHealth[] = [];
@@ -267,7 +289,7 @@ async function errorHealth(ctx: Ctx): Promise<ErrorHealth> {
 
 /** Block 23: open sign-in requests (not rejected) in the approval queue; null when the count cannot be read. */
 async function pendingApprovals(ctx: Ctx, timeoutMs: number): Promise<number | null> {
-  const o = await bounded(async () => (await ctx.db.query<{ n: number }>('select count(*)::int as n from approval_requests where rejected_at is null')).rows[0]?.n ?? 0, timeoutMs);
+  const o = await bounded(async () => (await probeQuery<{ n: number }>(ctx.db, 'select count(*)::int as n from approval_requests where rejected_at is null', [], timeoutMs)).rows[0]?.n ?? 0, timeoutMs);
   return o.ok ? o.v : null;
 }
 
@@ -304,35 +326,43 @@ export function worstOf(levels: Level[]): Level {
 const realStatfs: DiskDeps['statfs'] = async (p) => fsStatfs(p);
 const realStat: DiskDeps['stat'] = async (p) => fsStat(p);
 
-/** All probes in parallel, each bounded by the 3 s probe timeout; a failing probe is that row's state, never a failed snapshot. */
-export async function buildSnapshot(ctx: Ctx, deps: HealthDeps = {}): Promise<HealthSnapshot> {
+/**
+ * All probes in parallel, each bounded by the 3 s probe timeout; a failing probe is that row's state, never a failed snapshot.
+ * `fresh`: no probe answers from their own caches (the OIDC discovery), for ?refresh=1.
+ */
+export async function buildSnapshot(ctx: Ctx, deps: HealthDeps = {}, fresh = false): Promise<HealthSnapshot> {
   const timeoutMs = deps.timeoutMs ?? PROBE_TIMEOUT_MS;
   const fetchImpl = deps.fetchImpl ?? ctx.fetchImpl;
   const d: DiskDeps = { statfs: deps.statfs ?? realStatfs, stat: deps.stat ?? realStat };
-  const [svcs, dsks, errs, pending] = await Promise.all([services(ctx, fetchImpl, timeoutMs), disks(ctx, d, timeoutMs), errorHealth(ctx), pendingApprovals(ctx, timeoutMs)]);
+  const [svcs, dsks, errs, pending] = await Promise.all([services(ctx, fetchImpl, timeoutMs, fresh), disks(ctx, d, timeoutMs), errorHealth(ctx), pendingApprovals(ctx, timeoutMs)]);
   const issues = issuesOf(svcs, dsks, errs, pending, removedEnvCount(deps.env ?? process.env));
   return { at: new Date().toISOString(), services: svcs, disks: dsks, errors: errs, issues, worst: worstOf([...svcs.filter((s) => s.id !== 'encoder').map((s) => s.level), ...dsks.map((x) => x.level), errs.level]) };
 }
 
 // single flight per process (keyed by ctx: tests run several apps in one process)
-const inflight = new WeakMap<object, Promise<HealthSnapshot>>();
+const inflight = new WeakMap<object, { p: Promise<HealthSnapshot>; fresh: boolean }>();
 
-function rebuild(ctx: Ctx, deps?: HealthDeps): Promise<HealthSnapshot> {
-  let p = inflight.get(ctx);
-  if (!p) {
-    p = (async () => {
-      const s = await buildSnapshot(ctx, deps);
-      await ctx.kv.set(SNAP_KEY, JSON.stringify(s), SNAP_TTL).catch(() => undefined);
-      return s;
-    })().finally(() => inflight.delete(ctx));
-    inflight.set(ctx, p);
-  }
+/**
+ * A build joins the one running, except that a fresh build (?refresh=1) never takes a plain one's cached inputs: it waits for that one
+ * to end and then builds its own, so it is also the last to store.
+ */
+function rebuild(ctx: Ctx, deps?: HealthDeps, fresh = false): Promise<HealthSnapshot> {
+  const cur = inflight.get(ctx);
+  if (cur && (cur.fresh || !fresh)) return cur.p;
+  const before = cur?.p.catch(() => undefined);
+  const p = (async () => {
+    await before;
+    const s = await buildSnapshot(ctx, deps, fresh);
+    await ctx.kv.set(SNAP_KEY, JSON.stringify(s), SNAP_TTL).catch(() => undefined);
+    return s;
+  })().finally(() => { if (inflight.get(ctx)?.p === p) inflight.delete(ctx); });
+  inflight.set(ctx, { p, fresh });
   return p;
 }
 
 /** Tests: resolves once a background rebuild (if any) has finished. */
 export async function healthSettled(ctx: Ctx): Promise<void> {
-  await inflight.get(ctx)?.catch(() => undefined);
+  await inflight.get(ctx)?.p.catch(() => undefined);
 }
 
 async function storedSnapshot(ctx: Ctx): Promise<HealthSnapshot | null> {
@@ -352,7 +382,7 @@ export async function freshSnapshot(ctx: Ctx): Promise<HealthSnapshot | null> {
  * (single flight); missing → built (bounded by the probe timeout); refresh → built and awaited.
  */
 export async function getSnapshot(ctx: Ctx, opts: { refresh?: boolean } = {}, deps?: HealthDeps): Promise<HealthSnapshot> {
-  if (opts.refresh) return rebuild(ctx, deps);
+  if (opts.refresh) return rebuild(ctx, deps, true);
   const s = await storedSnapshot(ctx);
   if (!s) return rebuild(ctx, deps);
   if (Date.now() - Date.parse(s.at) > STALE_MS) void rebuild(ctx, deps).catch(() => undefined);

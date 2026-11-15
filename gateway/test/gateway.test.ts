@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { isTrustedPeer, setUntrustedPeers, watchUntrustedHost } from '../src/peers.js';
-import { authClientIp, blocksDirectStream, castHlsSubAllowed, compatPlaylist, createGateway, hlsAttrs, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
+import { authClientIp, baseHeaders, blocksDirectStream, castHlsSubAllowed, compatPlaylist, createGateway, hlsAttrs, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
 import { UPSTREAMS } from '../src/upstream/index.js';
 
 const ID = 'a'.repeat(32);
@@ -292,7 +292,24 @@ describe('normalizePath', () => {
   });
 });
 
+describe('baseHeaders', () => {
+  it('nosniff everywhere; CORP same-origin, cross-origin only on the cast and live paths', () => {
+    expect(baseHeaders(`/media/Items/${ID}/Images/Primary`)).toEqual({ 'x-content-type-options': 'nosniff', 'cross-origin-resource-policy': 'same-origin' });
+    for (const u of ['/health', '/media/d/x', '/media/joined/master.m3u8', '/x/media/c/t/a', `/media/c/x/../../Items/${ID}/Images/Primary`]) expect(baseHeaders(u)['cross-origin-resource-policy'], u).toBe('same-origin');
+    for (const u of [`/media/c/${CT}/x.m3u8`, '/media/l/tok/index.m3u8', '/media/./c/t/a']) expect(baseHeaders(u)['cross-origin-resource-policy'], u).toBe('cross-origin');
+  });
+});
+
 describe('gateway', () => {
+  it('sends nosniff and CORP on every answer (an image for the app: same-origin; an error and the health check too)', async () => {
+    const img = await get(`/media/Items/${ID}/Images/Primary?maxWidth=600`);
+    expect(img.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(img.headers.get('cross-origin-resource-policy')).toBe('same-origin');
+    for (const r of [await get('/media/System/Info'), await fetch(`http://127.0.0.1:${gwPort}/health`)]) {
+      expect(r.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(r.headers.get('cross-origin-resource-policy')).toBe('same-origin');
+    }
+  });
   it('requires a valid session', async () => {
     const r = await fetch(`http://127.0.0.1:${gwPort}/media/Videos/${ID}/master.m3u8`);
     expect(r.status).toBe(401);
@@ -1013,5 +1030,53 @@ describe('hlsAttrs', () => {
     expect(hlsAttrs(hostile)).toEqual([]);
     expect(hlsAttrs(`${hostile}=x,${hostile}`)).toHaveLength(1);
     expect(performance.now() - t0).toBeLessThan(200);
+  });
+});
+
+describe('buffering probe /media/probe/drip (Systemcheck)', () => {
+  /** one drip: when its first bytes and its end arrive (ms after the request), and what came */
+  async function drip(): Promise<{ status: number; first: number; total: number; bytes: number; headers: Headers }> {
+    const t0 = performance.now();
+    const r = await fetch(`http://127.0.0.1:${gwPort}/media/probe/drip`);
+    let first = -1, bytes = 0;
+    const reader = r.body!.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (first < 0) first = performance.now() - t0;
+      bytes += value.length;
+    }
+    return { status: r.status, first, total: performance.now() - t0, bytes, headers: r.headers };
+  }
+
+  it('drip sends the first 1024 bytes before the pause, then the rest: no auth, no upstream call, never cached', async () => {
+    const before = seen.length;
+    const d = await drip();
+    expect(d.status).toBe(200);
+    expect(d.first).toBeLessThan(300);
+    expect(d.total).toBeGreaterThanOrEqual(1490);
+    expect(d.bytes).toBe(2048);
+    expect(d.headers.get('content-type')).toBe('application/octet-stream');
+    expect(d.headers.get('cache-control')).toBe('no-store');
+    expect(d.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(seen.length).toBe(before); // nothing reached the media server
+  });
+
+  it('a fifth concurrent drip → 429; a slot is free again once one ended', async () => {
+    const four = Array.from({ length: 4 }, () => drip());
+    await new Promise((r) => setTimeout(r, 150));
+    const fifth = await fetch(`http://127.0.0.1:${gwPort}/media/probe/drip`);
+    expect(fifth.status).toBe(429);
+    await fifth.body?.cancel();
+    expect((await Promise.all(four)).map((d) => d.status)).toEqual([200, 200, 200, 200]);
+    expect((await drip()).status).toBe(200);
+  });
+
+  it('only GET; the query is ignored, nothing of the request is echoed', async () => {
+    expect((await fetch(`http://127.0.0.1:${gwPort}/media/probe/drip`, { method: 'POST', body: 'x' })).status).toBe(405);
+    const d = await fetch(`http://127.0.0.1:${gwPort}/media/probe/drip?x=%3Cscript%3E`);
+    const body = Buffer.from(await d.arrayBuffer());
+    expect(body.length).toBe(2048);
+    expect(body.includes(Buffer.from('script'))).toBe(false);
   });
 });

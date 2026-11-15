@@ -88,6 +88,11 @@ describe('shouldExitOnBack', () => {
   it('does not exit away from home', () => expect(shouldExitOnBack({ ...base, path: '/title/x' })).toBe(false));
   it('does not exit with a modal open', () => expect(shouldExitOnBack({ ...base, modalId: 'abc' })).toBe(false));
   it('does not exit while typing', () => expect(shouldExitOnBack({ ...base, editable: true })).toBe(false));
+  it('home is Live TV for a person without libraries: Back there exits, Back on / (never reached) does not', () => {
+    expect(shouldExitOnBack({ ...base, path: '/live', home: '/live' })).toBe(true);
+    expect(shouldExitOnBack({ ...base, path: '/', home: '/live' })).toBe(false);
+    expect(shouldExitOnBack({ ...base, path: '/live' })).toBe(false); // the default home stays /
+  });
 });
 
 describe('without a window (server render, prerender)', () => {

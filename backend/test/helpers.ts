@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import pg from 'pg';
+import { vi } from 'vitest';
 import { buildApp, type Extra } from '../src/app.js';
 import type { Config } from '../src/config.js';
 import { createLiveCtx, type Ctx } from '../src/ctx.js';
@@ -41,11 +42,13 @@ export const cfg: Config = {
   CAST_AIRPLAY_CONTINUOUS: 'false',
   CAST_ENABLED: 'true', GIT_SHA: 'dev', BUILD_TIME: undefined, APP_VERSION: undefined, APP_CODENAME: undefined, UPDATE_REPO: 'LetsManu/friendflix', UPDATE_CHANNEL: 'stable', UPDATE_VERSION: undefined, UPDATER_URL: undefined, LIVETV_URL: 'http://livetv:8090', LIVETV_OFFER_HIDDEN: 'false', LIVETV_WANTED: 'false', AUTO_UPDATE: 'off', AUTO_UPDATE_TIME: '04:00', GITHUB_TOKEN: undefined, PORTAINER_WEBHOOK_URL: undefined, PORTAINER_URL: undefined,
   PORTAINER_API_KEY: undefined, PORTAINER_STACK_ID: undefined, PORTAINER_ENDPOINT_ID: 1, API_COMPRESSION: 'true', HOME_NETWORKS: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '::1/128', 'fc00::/7', 'fe80::/10'],
-  GATEWAY_URL: 'http://gateway:4000', HEALTH_DISK_WARN_PCT: 85, HEALTH_DISK_CRIT_PCT: 95, HEALTH_DB_WARN_GB: 10,
+  GATEWAY_URL: 'http://gateway:4000', DB_CONNECT_TIMEOUT_MS: 5_000, DB_STATEMENT_TIMEOUT_MS: 30_000, DB_IDLE_TX_TIMEOUT_MS: 300_000, DB_LONG_STATEMENT_TIMEOUT_MS: 600_000, HEALTH_DISK_WARN_PCT: 85, HEALTH_DISK_CRIT_PCT: 95, HEALTH_DB_WARN_GB: 10,
   LOGIN_UI: undefined, AUTHENTIK_LOGIN_FLOW: 'default-authentication-flow', AUTHENTIK_STATIC_SETUP_FLOW: 'default-authenticator-static-setup',
   AUTHENTIK_WEBAUTHN_SETUP_FLOW: 'default-authenticator-webauthn-setup', AUTHENTIK_PASSWORD_CHANGE_FLOW: 'default-password-change',
   AUTHENTIK_INVALIDATION_FLOW: 'default-invalidation-flow', AUTHENTIK_EMAIL_CHANGE_FLOW: 'friendflix-email-change', PASSKEYS_IN_APP: 'auto', LOGIN_COVER_WALL: 'true', POSTPLAY_ENABLED: 'true', HEVC_STREAMS: 2, SURROUND_AUDIO: 'true',
   CONVERSION_PRIORITY: 'films', LIVETV_ENCODER: 'auto', LIVETV_SRT_HOST: undefined, LIVETV_DVR_MINUTES: 30, LIVETV_MAX_BITRATE: 10_000_000,
+  LIVETV_RECORD_STORAGE: 'ff', LIVETV_RECORD_LIBRARY_ID: undefined, LIVETV_RECORD_LIBRARY_JF_PATH: '/media/Aufnahmen', LIVETV_RECORD_LIMIT_GB: 200,
+  LIVETV_RECORD_RETENTION_DAYS: 30, LIVETV_RECORD_PAD_BEFORE_MIN: 2, LIVETV_RECORD_PAD_AFTER_MIN: 5, LIVETV_RECORD_MAX_PARALLEL: 4,
 };
 
 export type Handler = (url: URL, init: RequestInit, body: any) => { status?: number; json?: unknown; raw?: string | Uint8Array; type?: string } | undefined;
@@ -167,12 +170,51 @@ export async function testSettings(pool: pg.Pool, c: Config = cfg, extraEnv: Nod
   return store;
 }
 
+/** queries of a pool that are on their way to Postgres (real I/O a fake clock cannot see) */
+const dbInflight = new WeakMap<pg.Pool, { n: number }>();
+function trackDb(pool: pg.Pool): void {
+  const st = { n: 0 };
+  dbInflight.set(pool, st);
+  const query = pool.query.bind(pool) as (...a: unknown[]) => unknown;
+  (pool as unknown as { query: (...a: unknown[]) => unknown }).query = (...a: unknown[]) => {
+    const r = query(...a);
+    if (!(r instanceof Promise)) return r;
+    st.n++;
+    return r.finally(() => { st.n--; });
+  };
+}
+
+/**
+ * Lets the real I/O of the code under test finish before the next turn of a fake clock: `turns` setImmediate turns in a row with no
+ * database query in flight (or `stop()` true). A fake clock that advances while a query is still on its way makes every timeout, TTL
+ * and deadline of the code under test lapse in a few real milliseconds of a slow runner, though it would take seconds in real life.
+ */
+export async function settleIo(pool: pg.Pool, turns = 25, stop: () => boolean = () => false): Promise<void> {
+  const st = dbInflight.get(pool);
+  for (let quiet = 0; quiet < turns && !stop();) {
+    await new Promise((r) => setImmediate(r));
+    quiet = st && st.n > 0 ? 0 : quiet + 1;
+  }
+}
+
+/** drives a promise that waits on faked timers: `stepMs` steps of the fake clock, the real I/O settled after each (settleIo) */
+export async function driveClock<T>(pool: pg.Pool, p: Promise<T>, stepMs: number, max: number, turns = 25): Promise<T> {
+  let done = false;
+  void p.then(() => { done = true; }, () => { done = true; });
+  for (let i = 0; i < max && !done; i++) {
+    await vi.advanceTimersByTimeAsync(stepMs);
+    await settleIo(pool, turns, () => done);
+  }
+  return p;
+}
+
 /**
  * A test app over a fresh database. Setup counts as complete unless `setupComplete: false` (the setup gate's own tests): most tests
  * exercise the running app, and a fresh database is otherwise in setup mode (spec Part E).
  */
 export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extra & { ctxPatch?: (c: Ctx) => void; seerr?: Record<string, Handler>; settingsEnv?: NodeJS.ProcessEnv; setupComplete?: boolean; server?: 'plex'; plexFake?: PlexFake; plexFetch?: (fake: PlexFake) => typeof fetch } = {}): Promise<TestEnv> { // server, plexFake, plexFetch
   const pool = await resetDb();
+  trackDb(pool);
   if (extra.setupComplete !== false) await updateMeta(pool, { setupCompletedAt: new Date() });
   const kv = new MemoryKV();
   const jfCalls: Call[] = [];

@@ -14,12 +14,12 @@ import { CHANNEL_SELECT, toEffective, type EffectiveRow } from '../src/livetv/ch
 import { detectLivetv } from '../src/livetv/detect.js';
 import { listEvents } from '../src/livetv/events.js';
 import { invalidateLivetvRights } from '../src/livetv/rights.js';
-import { __switchHooks, invalidateLiveConversions, livetvTick, startOrJoin } from '../src/livetv/streams.js';
+import { __switchHooks, invalidateLiveConversions, invalidateRecordingUses, livetvTick, startOrJoin } from '../src/livetv/streams.js';
 import { deviceLiveView, liveViewKey, mintLiveToken, revokeLiveToken } from '../src/livetv/tokens.js';
 import type { StreamView } from '../src/livetv/wire.js';
 import { invalidateRights } from '../src/rights.js';
 import { invalidateRoles } from '../src/roles.js';
-import { cfg, ENC_KEY, fakeHttp, makeEnv, type TestEnv } from './helpers.js';
+import { cfg, driveClock, ENC_KEY, fakeHttp, makeEnv, settleIo, type TestEnv } from './helpers.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 const key = keyFromBase64(ENC_KEY);
@@ -112,15 +112,7 @@ const released = async () => (await listEvents(env.ctx)).filter((e) => e.code ==
 const grants = async () => (await env.kv.keys('conv:grant:')).sort();
 
 /** drives a promise that waits on (faked) timers: 100-ms steps of the fake clock, with real I/O turns in between */
-async function drive<T>(p: Promise<T>, stepMs = 100, max = 400): Promise<T> {
-  let done = false;
-  void p.then(() => { done = true; }, () => { done = true; });
-  for (let i = 0; i < max && !done; i++) {
-    await vi.advanceTimersByTimeAsync(stepMs);
-    for (let j = 0; j < 25 && !done; j++) await new Promise((r) => setImmediate(r));
-  }
-  return p;
-}
+const drive = <T>(p: Promise<T>, stepMs = 100, max = 400): Promise<T> => driveClock(env.pool, p, stepMs, max);
 
 async function person(id: string, sub: string, name: string, role: string): Promise<Sess> {
   await env.pool.query(
@@ -427,7 +419,7 @@ describe('release on switch', () => {
     const annaP = watch(anna, b);
     let done = false;
     void annaP.then(() => { done = true; }, () => { done = true; });
-    const step = async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); for (let j = 0; j < 25; j++) await new Promise((r) => setImmediate(r)); };
+    const step = async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); await settleIo(env.pool); };
     for (let i = 0; i < 100 && !order.includes(`POST:${b}`); i++) await step(50);
     expect(order).toContain(`POST:${b}`);
     await step(1_000);
@@ -476,6 +468,44 @@ describe('release on switch', () => {
     vi.setSystemTime(Date.now() + 2_000);
     await livetvTick(env.ctx);
     expect(dels()).toEqual([`DELETE:${a}`]);
+  });
+
+  it('idle stop and release on switch leave a recorded channel running', async () => {
+    const one = await addSource(1);
+    const a = await addChannel(one, 'Hafenkanal', 4);
+    const b = await addChannel(one, 'Nordlicht TV', 1);
+    expect((await watch(anna, a)).statusCode).toBe(200);
+    // a recording of A runs (Phase 3): zapping to B on the 1-connection provider does not release A, B is refused as without a release
+    const rec = (channelId: string, state: string, startInMs: number) => env.pool.query(
+      `insert into livetv_recordings(id, profile_id, user_id, channel_id, channel_name, title, start_at, end_at, pad_before_s, pad_after_s, state, storage, dir)
+       values (gen_random_uuid(), $1, $1, $2, 'Hafenkanal', 'Sternstunde Physik', $3, $4, 120, 300, $5, 'ff', gen_random_uuid())`,
+      [annaId, channelId, new Date(Date.now() + startInMs), new Date(Date.now() + startInMs + 3_600_000), state]);
+    await rec(a, 'recording', -60_000);
+    invalidateRecordingUses();
+    const wb = await watch(anna, b);
+    expect([wb.statusCode, wb.json().error]).toEqual([503, 'provider_limit']);
+    expect(dels()).toEqual([]);
+    expect(await released()).toEqual([]);
+    // nobody watches A any more and its idle time is long over: the tick still leaves it running
+    for (const k of await env.kv.keys('ltv:view:')) await env.kv.del(k);
+    await env.kv.set(`ltv:zero:${a}`, String(Date.now() - 120_000), 3600);
+    await livetvTick(env.ctx);
+    expect(dels()).toEqual([]);
+    // a channel whose recording starts within padding + 5 min is kept as well; one starting later is not
+    const src = await addSource();
+    const c = await addChannel(src, 'Sternwarte 24', 7);
+    const d = await addChannel(src, 'Testkanal', 8);
+    streams.set(c, view(c));
+    streams.set(d, view(d));
+    await rec(c, 'scheduled', 6 * 60_000);
+    await rec(d, 'scheduled', 30 * 60_000);
+    invalidateRecordingUses();
+    await env.kv.set(`ltv:zero:${c}`, String(Date.now() - 120_000), 3600);
+    await env.kv.set(`ltv:zero:${d}`, String(Date.now() - 120_000), 3600);
+    await livetvTick(env.ctx);
+    expect(dels()).toEqual([`DELETE:${d}`]);
+    await env.pool.query('delete from livetv_recordings; delete from livetv_recording_purges');
+    invalidateRecordingUses();
   });
 
   it('the tick leaves a channel that is being released alone', async () => {

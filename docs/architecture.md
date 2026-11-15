@@ -2,7 +2,7 @@
 
 ## Containers and networks
 
-Who talks to whom, and on which Docker network. Only the reverse proxy is public; every published port is bound to `127.0.0.1`.
+Who talks to whom, and on which Docker network, as `compose.prod.yaml` and its optional overlays set it up. Only the reverse proxy is public; every published port is bound to `127.0.0.1` (`BIND_ADDR`), except the optional SRT range of `livetv`, which you open only when you push feeds. Two pictures: the path of a viewer's request, then secrets, updates and outbound traffic.
 
 ```mermaid
 ---
@@ -18,45 +18,47 @@ config:
 ---
 flowchart TB
   accTitle: FriendFlix containers and networks
-  accDescr: Viewers reach Nginx Proxy Manager, which routes to web, backend and gateway on the front network. The backend alone also reaches Postgres and Redis on the internal db network and the media services on the internal media network. Authentik is reached through the proxy. With the optional Live TV profile, backend and gateway reach the livetv service on its own internal network; livetv alone reaches the providers, and encoders can push SRT feeds into its UDP range.
-  V("📺 <b>Viewers</b>"):::ext
-  NPM("🛡️ <b>Nginx Proxy Manager</b><br/><small>:443 · TLS</small>"):::edge
+  accDescr: Viewers reach Nginx Proxy Manager, the only public entry, which routes to web, backend and gateway on the front network. The gateway asks the backend before every media request and streams from the media server, Jellyfin or Plex, on the internal media network. The backend alone reaches Postgres and Redis on the internal db network and the request service on the media network, and signs in through Authentik. With the optional Live TV profile, backend and gateway reach the livetv service on its own internal network; only livetv reaches the providers, and encoders can push SRT feeds into its UDP range.
+  V("📺 <b>Viewers</b><br/><small>browser · PWA · Android<br/>Fire TV · Samsung · LG · Windows</small>"):::ext
+  NPM("🛡️ <b>Nginx Proxy Manager</b><br/><small>:443 · TLS · the only public entry</small>"):::edge
   AK("🔑 <b>Authentik</b><br/><small>:9000 · own stack</small>"):::svc
-  PV("📡 <b>Providers · own feeds</b><br/><small>M3U · XMLTV · HLS · TS · SRT</small>"):::ext
-  ENC("🎥 <b>Encoders</b><br/><small>OBS · SRT push</small>"):::ext
-  subgraph HOST["Docker host · ports on 127.0.0.1 only"]
+  subgraph HOST["Docker host · published ports on 127.0.0.1 only"]
     subgraph FRONT["front network"]
       WEB("🖥️ <b>web</b><br/><small>:3080</small>"):::app
-      GW("📡 <b>gateway</b><br/><small>:3082 · front + media</small>"):::app
-      BE("⚙️ <b>backend</b><br/><small>:3081 · front + db + media + egress</small>"):::app
+      GW("📡 <b>gateway</b><br/><small>:3082 · front + media + livetv</small>"):::app
+      BE("⚙️ <b>backend</b><br/><small>:3081 · front + db + media + livetv<br/>+ updater + egress</small>"):::app
     end
     subgraph MEDIA["media network · internal"]
-      S("🎬 <b>jellyfin</b><br/><small>:8096</small>"):::media
-      SE("🔔 <b>requests</b><br/><small>:5055</small>"):::svc
-    end
-    subgraph LTV["livetv network · internal · optional profile livetv"]
-      LT("📺 <b>livetv</b><br/><small>:8090 · ffmpeg · HLS proxy · DVR cache · SRT listener</small>"):::app
+      S("🎬 <b>Jellyfin or Plex</b><br/><small>bundled Jellyfin :8096 · Plex at PLEX_URL</small>"):::media
+      SE("🔔 <b>requests</b><br/><small>:5055 · optional</small>"):::svc
     end
     subgraph DB["db network · internal"]
       PG[("🗄️ <b>postgres</b>")]:::store
       RD[("⚡ <b>redis</b>")]:::store
+      BK("💾 <b>backup</b><br/><small>optional · pg_dump</small>"):::store
+    end
+    subgraph LTV["livetv network · internal · optional profile livetv"]
+      LT("📺 <b>livetv</b><br/><small>:8090 · ffmpeg · HLS · rewind cache · SRT</small>"):::app
     end
   end
+  PV("📡 <b>Providers · own feeds</b><br/><small>M3U · XMLTV · HLS · TS · SRT</small>"):::ext
+  ENC("🎥 <b>Encoders</b><br/><small>OBS · SRT push</small>"):::ext
 
   V -->|HTTPS| NPM
-  NPM -->|"/"| WEB
-  NPM -->|"/media/*"| GW
+  NPM -->|"/ · pages"| WEB
+  NPM -->|"/media/* · /media/c · /media/l"| GW
   NPM -->|"/api /auth /ws"| BE
   NPM -->|"auth.example.com"| AK
   GW -->|"/internal/authz"| BE
-  GW ==>|"user token"| S
-  BE -->|"admin key + user token"| S
+  GW ==>|"video · media token"| S
+  BE -->|"media API · tokens stay here"| S
   BE -->|"REST · API key"| SE
   BE -->|SQL| PG
   BE -->|"RESP · password"| RD
-  BE -.->|"OIDC, via public URL"| NPM
+  BK -->|pg_dump| PG
+  BE -.->|"OIDC · flows API · AUTHENTIK_URL"| AK
   BE -.->|"signed HTTP · what to run"| LT
-  GW -.->|"/media/l/token → /s/key"| LT
+  GW ==>|"/media/l → live HLS"| LT
   LT -.->|"livetv-egress · fetch"| PV
   ENC -.->|"SRT push · UDP 9000-9009 · not via proxy"| LT
   classDef ext fill:#30363d,stroke:#8b949e,stroke-width:1px,color:#f0f6fc
@@ -67,6 +69,7 @@ flowchart TB
   classDef svc fill:#163e4c,stroke:#56b6d6,stroke-width:1px,color:#eaf9ff
   classDef fork fill:#4a1d3c,stroke:#e070b0,stroke-width:1px,stroke-dasharray:4 3,color:#fff0f8
   linkStyle default stroke:#8b949e,stroke-width:1.4px
+  linkStyle 6,14 stroke:#3fb68b,stroke-width:3px
   style HOST fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
   style FRONT fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
   style DB fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
@@ -74,28 +77,92 @@ flowchart TB
   style LTV fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
 ```
 
-> 🟥 FriendFlix · 🟩 media server · 🟦 other service · 🟪 reverse proxy · 🟨 data store · ⬛ viewers / outside · dashed frame = network or boundary · thick line = video stream · dotted = optional / via public URL
+> 🟥 FriendFlix · 🟩 media server · 🟦 other service · 🟪 reverse proxy · 🟨 data store · ⬛ viewers / outside · dashed frame = network or boundary · thick green line = video stream · dotted = optional / via public URL
+
+```mermaid
+---
+config:
+  flowchart:
+    curve: basis
+    nodeSpacing: 50
+    rankSpacing: 65
+    padding: 14
+  themeVariables:
+    edgeLabelBackground: 'rgba(150,150,150,0.12)'
+  themeCSS: '.labelBkg { background-color: rgba(127,127,127,0.12) !important; }'
+---
+flowchart TB
+  accTitle: Secrets, updates and outbound traffic
+  accDescr: The bootstrap init container has no network; it writes the generated secrets into three volumes that backend, gateway, updater and livetv mount read-only. The backend signs requests to the updater on the internal updater network. The updater reaches the Docker socket only through the docker-proxy on the internal updater-docker network, and pulls and verifies images over its own egress network. A Portainer stack is redeployed by the backend through the Portainer API or webhook instead. The backend's egress network reaches notification services, data sources and GitHub. The optional monitoring stack scrapes backend and gateway on an internal network.
+  subgraph HOST["Docker host"]
+    BS("🔐 <b>bootstrap</b><br/><small>one-shot · network none</small>"):::app
+    VOL[("🗝️ <b>secrets volumes</b><br/><small>bootstrap · bootstrap-gateway · bootstrap-livetv</small>")]:::store
+    BE("⚙️ <b>backend</b>"):::app
+    GW("📡 <b>gateway</b>"):::app
+    subgraph UPD["updater · updater-docker · internal"]
+      UP("🔄 <b>updater</b><br/><small>:7070 · pull · cosign verify · recreate</small>"):::app
+      DP("🧱 <b>docker-proxy</b><br/><small>the only container with the socket · ro</small>"):::edge
+    end
+    SOCK("🐳 <b>Docker socket</b>"):::ext
+    subgraph MON["monitoring network · internal · optional"]
+      PR("📈 <b>prometheus</b>"):::svc
+      GF("📊 <b>grafana</b><br/><small>:3083</small>"):::svc
+    end
+  end
+  REG("📦 <b>GHCR · Sigstore</b><br/><small>images · signatures</small>"):::ext
+  PT("🚢 <b>Portainer</b><br/><small>optional</small>"):::svc
+  NET("🌐 <b>Internet</b><br/><small>ntfy · Discord · web push<br/>TMDB · OMDb · GitHub releases</small>"):::ext
+
+  BS -->|writes| VOL
+  VOL -.->|"read-only · backend, gateway, updater, livetv"| BE
+  BE -->|"signed HTTP"| UP
+  UP -->|"Docker API"| DP
+  DP -->|"read-only mount"| SOCK
+  UP -.->|"updater-egress"| REG
+  BE -.->|"API or webhook"| PT
+  BE -.->|egress| NET
+  PR -->|"/metrics"| BE
+  PR -->|"/metrics"| GW
+  GF --> PR
+  classDef ext fill:#30363d,stroke:#8b949e,stroke-width:1px,color:#f0f6fc
+  classDef edge fill:#2d2a4a,stroke:#9d8cf0,stroke-width:1px,color:#f0f6fc
+  classDef app fill:#4a1a24,stroke:#ff4f6d,stroke-width:1px,color:#fff5f7
+  classDef store fill:#4a3a14,stroke:#d4a72c,stroke-width:1px,color:#fff8e6
+  classDef media fill:#173f30,stroke:#3fb68b,stroke-width:1px,color:#eafff6
+  classDef svc fill:#163e4c,stroke:#56b6d6,stroke-width:1px,color:#eaf9ff
+  classDef fork fill:#4a1d3c,stroke:#e070b0,stroke-width:1px,stroke-dasharray:4 3,color:#fff0f8
+  linkStyle default stroke:#8b949e,stroke-width:1.4px
+  style HOST fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
+  style UPD fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
+  style MON fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
+```
+
+> 🟥 FriendFlix · 🟦 other service · 🟪 Docker socket proxy · 🟨 data store · ⬛ outside · dashed frame = network or boundary · dotted = optional or outbound
 
 | Service | Networks | Host port (127.0.0.1) | Holds |
 |---|---|---|---|
 | web | front | 3080 | nothing secret |
 | bootstrap (one-shot) | none | none | writes the generated secrets into the `bootstrap` volume, `INTERNAL_SECRET` into `bootstrap-gateway` and the optional livetv service's derived key (never the secret) into `bootstrap-livetv`, then exits; every other service waits for it |
-| backend | front, db, media, egress | 3081 | `APP_ENC_KEY`, `INTERNAL_SECRET` and the database and Redis passwords (`bootstrap` volume, read-only); the settings with Jellyfin admin API key and OIDC client secret (encrypted in Postgres); sessions (cookie `ff_sid`) in Redis; per-user Jellyfin credentials encrypted in Postgres |
-| gateway | front, media | 3082 | `INTERNAL_SECRET` (`bootstrap-gateway` volume, read-only); pulls the media server URL from the backend; gets the user's media token per request from the backend (cached 5 s), never stores it |
+| backend | front, db, media, egress, updater, livetv | 3081 | `APP_ENC_KEY`, `INTERNAL_SECRET` and the database and Redis passwords (`bootstrap` volume, read-only); the settings with the media server key and OIDC client secret (encrypted in Postgres); sessions (cookie `ff_sid`) in Redis; per-user Jellyfin credentials encrypted in Postgres. `egress` is for OIDC discovery, ntfy / Discord / web push, TMDB / OMDb, the GitHub version check and Portainer |
+| gateway | front, media, livetv | 3082 | `INTERNAL_SECRET` (`bootstrap-gateway` volume, read-only); pulls the media server URL from the backend; gets the user's media token per request from the backend (cached 5 s), never stores it |
 | postgres, redis | db (internal) | none | accounts, profiles, settings, sessions; their passwords come from the `bootstrap` volume |
-| livetv (optional, profile `livetv`) | livetv (internal, with backend and gateway), livetv-egress (livetv only) | UDP `LIVETV_SRT_PORTS` (default 9000-9009) on `LIVETV_SRT_BIND` (default `127.0.0.1`); the API on 8090 is never published | its own derived key (`bootstrap-livetv` volume, read-only), never `INTERNAL_SECRET`; provider URLs in memory while a job runs; the disposable `livetv-cache` volume (DVR segments) |
-| jellyfin, requests (request service, profile `bundled`) | media (+egress) | none | media, request data |
-| Authentik (`compose.authentik.yaml`) | front, ak-db, egress | 9000 | identities |
+| backup (optional, profile `backup`) | db (internal) | none | daily `pg_dump` into `BACKUP_PATH`; reads the database password from the `bootstrap` volume |
+| updater (on by default; off with `compose.no-updater.yaml`) | updater (internal, with the backend), updater-docker (internal, with docker-proxy), updater-egress | none | `INTERNAL_SECRET` (`bootstrap-gateway` volume, read-only, for the signed requests); the stack directory, read-only; channel and last job in `updater-state`. Pulls from GHCR and verifies with cosign before it recreates anything ([security.md](security.md#updater)) |
+| docker-proxy (with the updater) | updater-docker (internal) | none | the Docker socket, read-only, the only container that mounts it; refuses exec, build and everything else the updater does not need |
+| livetv (optional, profile `livetv`) | livetv (internal, with backend and gateway), livetv-egress (livetv only) | UDP `LIVETV_SRT_PORTS` (default 9000-9009) on `LIVETV_SRT_BIND` (default `127.0.0.1`); the API on 8090 is never published | its own derived key (`bootstrap-livetv` volume, read-only), never `INTERNAL_SECRET`; provider URLs in memory while a job runs; the disposable `livetv-cache` volume (rewind buffer) |
+| jellyfin, requests (request service, profile `bundled`) | media (+egress) | none | media, request data. An existing Jellyfin joins the `friendflix_media` network instead; Plex is not a container here: backend and gateway reach it at `PLEX_URL` ([plex.md](plex.md)) |
+| prometheus, grafana (optional, `compose.monitoring.yaml`) | monitoring (internal, joined by backend and gateway); grafana also monitoring-ui | grafana 3083 | metrics (`METRICS_TOKEN` as a compose secret), the provisioned dashboard ([monitoring.md](monitoring.md)) |
+| Authentik (`compose.authentik.yaml`) | its own stack: front, ak-db, egress | 9000 | identities |
 
-The browser only ever sees a session cookie and `/media/...` URLs, never a Jellyfin token.
+The browser only ever sees a session cookie and `/media/...` URLs, never a media server token. A Portainer stack is updated through the Portainer API or webhook from the backend instead of the updater (the updater does not change a stack Portainer manages).
 
 ### Live TV (optional)
 
 The `livetv` service exists only with the compose profile `livetv` ([livetv.md](livetv.md)). Three components share the work:
 
 - **backend** owns all Live TV state (sources, channels, groups, guide, rights, push feeds), decides who may watch what, admits conversions against the shared budget, mints the watch tokens and tells `livetv` what to run with HMAC-signed requests. It never talks to provider hosts itself.
-- **livetv** (Node and jellyfin-ffmpeg) is the only component that fetches provider or own-feed addresses: lists, guides, logos, stream inputs, probes, benchmarks. It runs ffmpeg or acts as an HLS proxy, keeps the DVR cache, and listens for pushed SRT feeds. It holds no database and no credentials at rest: the backend sends each decrypted address in the signed start request and `livetv` keeps it in memory only.
-- **gateway** serves the live HLS from `livetv` under `/media/l/<token>/…` (the existing `/media` location of the proxy, so no proxy change), after the backend has authorised the token (`/internal/authz/live`).
+- **livetv** (Node and jellyfin-ffmpeg) is the only component that fetches provider or own-feed addresses: lists, guides, logos, stream inputs, probes, benchmarks. It passes a stream through, repackages it (sound that a browser cannot play, such as MP2 or AC-3, becomes AAC) or converts it with ffmpeg, keeps the rewind buffer, and listens for pushed SRT feeds. It holds no database and no credentials at rest: the backend sends each decrypted address in the signed start request and `livetv` keeps it in memory only.
+- **gateway** serves the live HLS from `livetv` under `/media/l/<token>/…` (the existing `/media` location of the proxy, plus a `location /media/l/` block that keeps the tokens out of the proxy's logs), after the backend has authorised the token (`/internal/authz/live`).
 
 The updater has fixed actions to pull, start, stop and remove the `livetv` service ([security.md](security.md#updater)). Streams are shared: one per channel for all viewers, started on the first viewer and stopped 60 seconds after the last. Hardening and the token model: [security.md](security.md#the-livetv-container).
 
@@ -107,7 +174,7 @@ Configuration has four classes (`backend/src/settings/registry.ts`; every key of
 
 - **bootstrap** – needed before the database can be read: `DATABASE_URL`, `REDIS_URL`, `APP_ENC_KEY`, `INTERNAL_SECRET`. Environment (incl. `_FILE`) first, else the files the `bootstrap` service writes into `/run/friendflix` (`settings/bootstrapFiles.ts`; the URLs are built from `postgres_password` / `redis_password`). A missing file stops the backend with the file name and the fix.
 - **setting** – stored in the `settings` table (secrets AES-256-GCM encrypted with `APP_ENC_KEY`, API keys of data sources with their last four characters), edited in *Admin → Settings*. Environment > database > default. Most apply live (`API_COMPRESSION` too: it is read per response); `DOWNLOAD_CREATE_PER_HOUR` needs a restart (`pendingRestart()`). The recommendation engine (`RECO_ENGINE` v1 | v2 | shadow, `RECO_EXPLORE`, `RECO_HALF_LIFE_DAYS`, `POSTPLAY_ENABLED`; group *Recommendations*) applies live: every reader takes `ctx.cfg` per request, and the cache keys of the home page, the "because" rows and the post-play screen carry the engine (docs/discovery.md, German).
-- **env-only** – per container or shared with a container that reads env only (`MEDIA_SERVER`, `BACKGROUND_JOBS`, `METRICS_TOKEN`, `GATEWAY_URL`, paths, …), plus the expert tuning of the recommendation engine (`RECO_COEFFS`, `RECO_W_*`); shown read-only.
+- **env-only** – per container or shared with a container that reads env only (`MEDIA_SERVER`, `BACKGROUND_JOBS`, `METRICS_TOKEN`, `GATEWAY_URL`, the database pool limits `DB_*_TIMEOUT_MS`, paths, …), plus the expert tuning of the recommendation engine (`RECO_COEFFS`, `RECO_W_*`); shown read-only.
 - **build** – baked into the image (`GIT_SHA`, `APP_VERSION`, …).
 
 `resolveConfig()` (`settings/resolve.ts`) is pure: environment (an empty value counts as unset, `_FILE` and the older names included), then the decrypted rows, then defaults. A row that cannot be decrypted or fails its schema is ignored, listed as invalid and logged by key name. An environment `PUBLIC_URL` with a path or query is reduced to its origin with one warning; a saved one must be an origin.
@@ -133,7 +200,7 @@ config:
 ---
 sequenceDiagram
   accTitle: Press play
-  accDescr: Browser asks the backend for playback info, then streams HLS through the gateway, which authorises every request with the backend before talking to the media server.
+  accDescr: Browser asks the backend for playback info, then streams HLS through the gateway, which authorises every request with the backend before talking to the media server, Jellyfin or Plex.
   autonumber
   box rgba(139,148,158,0.10) Viewer
     actor browser as 📺 Browser
@@ -144,26 +211,26 @@ sequenceDiagram
     participant gateway as 📡 gateway
   end
   box rgba(63,182,139,0.09) Media server
-    participant Jellyfin as 🎬 Jellyfin
+    participant media as 🎬 Jellyfin or Plex
   end
   browser->>web: GET /watch/:id
   web-->>browser: app shell
   browser->>+backend: POST /api/playback/info · ff_sid
-  Note over backend: session · profile · role limits
-  backend->>+Jellyfin: PlaybackInfo · user token
-  Jellyfin-->>-backend: streams
+  Note over backend: session · profile · role limits · conversion slot
+  backend->>+media: playback info · media token
+  media-->>-backend: streams
   backend-->>-browser: HLS URL /media/… (no token)
   loop playlist + every segment
     browser->>+gateway: GET /media/….m3u8 · ff_sid
     gateway->>+backend: POST /internal/authz · INTERNAL_SECRET
     backend-->>-gateway: token + limits (cached 5 s)
     Note over gateway: allowlist · clamp height / bitrate
-    gateway->>Jellyfin: GET HLS · user token
-    Jellyfin-->>gateway: playlist / segment
+    gateway->>media: GET HLS · media token
+    media-->>gateway: playlist / segment
     gateway-->>-browser: stream
   end
   browser->>backend: POST /api/playback/start · progress · stop
-  backend->>Jellyfin: report position
+  backend->>media: report position
 ```
 
 ## Media server seam
@@ -186,28 +253,35 @@ config:
 ---
 flowchart TB
   accTitle: The media server seam
-  accDescr: Backend routes call the MediaServer interface and the gateway core calls the Upstream adapter interface. Each media server kind provides one implementation of each, selected by MEDIA_SERVER.
+  accDescr: Backend routes call the MediaServer interface and the gateway core calls the Upstream adapter interface. Jellyfin and Plex each provide one implementation of each, selected by MEDIA_SERVER; a further server would add its own pair.
   subgraph BEL["backend"]
     RT("🧭 <b>routes + jobs</b><br/><small>ctx.jf</small>"):::app
     IF("📐 <b>MediaServer</b><br/><small>media/types.ts · createMediaServer()</small>"):::app
-    NI("➕ <b>another server</b><br/><small>backend/src/&lt;kind&gt;/*</small>"):::fork
     JFI("🧩 <b>JellyfinService</b><br/><small>backend/src/jellyfin/*<br/>admin key + user tokens</small>"):::app
+    PXI("🧩 <b>PlexMediaServer</b><br/><small>backend/src/plex/*<br/>one server token</small>"):::app
+    NI("➕ <b>another server</b><br/><small>backend/src/&lt;kind&gt;/*</small>"):::fork
   end
   subgraph GWL["gateway"]
     CORE("📡 <b>gateway core</b><br/><small>authz · clamp · sanitise</small>"):::app
     UP("📐 <b>Upstream</b><br/><small>upstream/types.ts · selectUpstream()</small>"):::app
     JFU("🔌 <b>jellyfinUpstream</b><br/><small>upstream/jellyfin.ts<br/>user token</small>"):::app
+    PXU("🔌 <b>plexUpstream</b><br/><small>upstream/plex.ts<br/>server token · authorize()</small>"):::app
     NU("➕ <b>another adapter</b><br/><small>upstream/&lt;kind&gt;.ts</small>"):::fork
   end
   RT -->|calls| IF
   CORE -->|uses| UP
   IF -.->|"implements"| JFI
+  IF -.->|"implements"| PXI
   IF -.->|"implements"| NI
-  JFI ==>|API| JF
   UP -.->|"implements"| JFU
+  UP -.->|"implements"| PXU
   UP -.->|"implements"| NU
+  JFI -->|API| JF
   JFU ==>|"video"| JF
-  JF("🎬 <b>Jellyfin</b>"):::media
+  PXI -->|API| PX
+  PXU ==>|"video"| PX
+  JF("🎬 <b>Jellyfin</b><br/><small>MEDIA_SERVER=jellyfin</small>"):::media
+  PX("🎬 <b>Plex</b><br/><small>MEDIA_SERVER=plex</small>"):::media
   classDef ext fill:#30363d,stroke:#8b949e,stroke-width:1px,color:#f0f6fc
   classDef edge fill:#2d2a4a,stroke:#9d8cf0,stroke-width:1px,color:#f0f6fc
   classDef app fill:#4a1a24,stroke:#ff4f6d,stroke-width:1px,color:#fff5f7
@@ -216,6 +290,7 @@ flowchart TB
   classDef svc fill:#163e4c,stroke:#56b6d6,stroke-width:1px,color:#eaf9ff
   classDef fork fill:#4a1d3c,stroke:#e070b0,stroke-width:1px,stroke-dasharray:4 3,color:#fff0f8
   linkStyle default stroke:#8b949e,stroke-width:1.4px
+  linkStyle 9,11 stroke:#3fb68b,stroke-width:3px
   style BEL fill:none,stroke:#ff4f6d,stroke-width:1px,stroke-dasharray:4 4
   style GWL fill:none,stroke:#ff4f6d,stroke-width:1px,stroke-dasharray:4 4
 ```
@@ -230,6 +305,7 @@ flowchart TB
 | `backend/src/media/index.ts` | `MEDIA_SERVERS` (the accepted `MEDIA_SERVER` values) and the one factory `createMediaServer()`. The only shared file that imports an implementation. |
 | `backend/src/media/setup.ts` | `MediaSetupProvider` and `MEDIA_SETUP` (Block 25): per kind the registry keys of the wizard's media step, the gateway's URL key, the `media` settings probe and, optionally, `auto` (create the server's API key from an administrator's sign-in). |
 | `backend/src/jellyfin/*` | `JellyfinService implements MediaServer` (`service.ts`), the HTTP client (`client.ts`), Jellyfin JSON → DTO mapping (`dto.ts`), the setup provider `jellyfinSetup` (`setup.ts`). `JellyfinError extends MediaError`. |
+| `backend/src/plex/*` | `PlexMediaServer implements MediaServer` (`service.ts`), its HTTP client (`client.ts`), its own tables and version table (`migrations.ts`), its setup provider (`setup.ts`). Details: [plex.md](plex.md). |
 
 Routes and jobs use `ctx.jf` (the name is kept from the Jellyfin-only days; its type is `MediaServer`). They never build server paths themselves. A test (`backend/test/media-seam.test.ts`, "seam boundary") fails when a file outside `jellyfin/`, `media/index.ts` and `media/setup.ts` imports from `jellyfin/`.
 
@@ -247,7 +323,7 @@ Conventions: item ids are 32 lower-case hex characters (an implementation with o
 
 **Capabilities.** `ctx.jf.capabilities` says what the server can do: supported skip-segment types, trickplay, upcoming episodes, remote subtitle search, webhooks, a change feed, Plan B and chapters. The backend sends them once in `/api/me` (`server: { kind, capabilities }`, also `GET /api/server`); the web keeps them in `web/src/lib/capabilities.ts` (default: everything supported) and hides the skip buttons / timeline marks of unsupported segment types, the subtitle search and the calendar link. Jellyfin reports everything, so nothing changes visibly. `capabilities.requestUsers` (backend only, not in `/api/me`) picks how accounts become request service users for wishes: `'jellyfin-import'` (Jellyfin) or `'local'` (default when absent: a local request service user per account, see [integrations.md](integrations.md#request-service)).
 
-**Configuration.** `MEDIA_SERVER` (default `jellyfin`; the only accepted value in this repository) selects the implementation in the backend and in the gateway. Each kind declares its config fields (`MEDIA_FIELDS`) and its settings (`mediaSettings()`: `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` for Jellyfin, required once setup is complete) in `media/index.ts`; `mediaConfigProblems()` in `media/index.ts` can refuse settings a kind cannot work with at startup.
+**Configuration.** `MEDIA_SERVER` (default `jellyfin`; `jellyfin` or `plex`, the values of `MEDIA_SERVERS`) selects the implementation in the backend and in the gateway. Each kind declares its config fields (`MEDIA_FIELDS`) and its settings (`mediaSettings()`: `JELLYFIN_URL`, `JELLYFIN_ADMIN_API_KEY` for Jellyfin, required once setup is complete) in `media/index.ts`; `mediaConfigProblems()` in `media/index.ts` can refuse settings a kind cannot work with at startup.
 
 **Setup provider (Block 25).** `MEDIA_SETUP[kind]` (`backend/src/media/setup.ts`) is what the setup wizard and the `media` settings probe know about a kind:
 
@@ -300,7 +376,7 @@ Every event, whatever its source, goes through `media/events.ts` `dispatchMediaE
 
 ### Gateway
 
-`gateway/src/upstream/types.ts` defines the `Upstream` adapter: the path allowlists (cookie and Chromecast), the direct-stream and image patterns, the query parameters that carry credentials or caps, and `authHeaders(credentials)`. `gateway/src/upstream/jellyfin.ts` is the Jellyfin adapter, `gateway/src/upstream/index.ts` holds the registry and `selectUpstream(MEDIA_SERVER)`, which refuses unknown values. `createGateway({ upstream, upstreamUrl, … })` takes the adapter (`upstreamUrl` may be a getter: the live URL from `remoteConfig`); everything else (authorization against the backend, clamping, cast scope checks, playlist sanitising with the adapter's credential parameters, downloads) stays generic. Optional adapter hooks (all absent for Jellyfin):
+`gateway/src/upstream/types.ts` defines the `Upstream` adapter: the path allowlists (cookie and Chromecast), the direct-stream and image patterns, the query parameters that carry credentials or caps, and `authHeaders(credentials)`. `gateway/src/upstream/jellyfin.ts` is the Jellyfin adapter, `gateway/src/upstream/plex.ts` the Plex adapter (it uses the hooks below), `gateway/src/upstream/index.ts` holds the registry and `selectUpstream(MEDIA_SERVER)`, which refuses unknown values. `createGateway({ upstream, upstreamUrl, … })` takes the adapter (`upstreamUrl` may be a getter: the live URL from `remoteConfig`); everything else (authorization against the backend, clamping, cast scope checks, playlist sanitising with the adapter's credential parameters, downloads) stays generic. Optional adapter hooks (all absent for Jellyfin):
 
 - `authorize(ctx)` – per-request access check after the allowlist / session / direct-stream checks, for servers the gateway reaches with one server-wide token. `ctx.checkItem(itemId, kind)` asks the backend `POST /internal/authz/item {sid, itemId, kind}` (internal secret; answers `{allow}` from the active profile's visibility via `ctx.jf.item`, 401 without a usable session; memoised 5 s on both sides, dropped on a profile switch). On the Chromecast route it compares with the token's item scope. `false` → 403, a throw → 503.
 - `rewrite(path, query)` – maps the public `/media/…` shape (what the web and the DTOs use) to the upstream request; the result must stay server-relative (else 502). The shared `test-vectors/media-paths.json` results are unchanged for the Jellyfin adapter.

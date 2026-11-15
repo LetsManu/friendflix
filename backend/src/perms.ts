@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { z } from 'zod';
+import type { AreaKey } from './areas.js';
 
 /**
  * The permission registry (spec §1): on/off switches per role (role_settings.perms) and per account (user_limits.perms). Downloads stay
@@ -11,11 +12,11 @@ export type PermKey = (typeof PERM_KEYS)[number];
 export type Perms = Record<PermKey, boolean>;
 
 const ALL_ON: Perms = { requests: true, cast: true, party: true, partySchedule: true, comments: true, liveTv: true, liveRecord: true };
-/** today's behaviour: guests have no comments (anime.ts), only admins keep more than 3 scheduled parties (party.ts) */
+/** today's behaviour: guests have no comments (anime.ts), only admins keep more than 3 scheduled parties (party.ts); recording (`liveRecord`) is off for everyone but admins until a role turns it on (owner decision 2026-11-15) */
 export const DEFAULT_PERMS: Record<'admin' | 'family' | 'friend' | 'guest', Perms> = {
   admin: { ...ALL_ON },
-  family: { ...ALL_ON, partySchedule: false },
-  friend: { ...ALL_ON, partySchedule: false },
+  family: { ...ALL_ON, partySchedule: false, liveRecord: false },
+  friend: { ...ALL_ON, partySchedule: false, liveRecord: false },
   guest: { ...ALL_ON, partySchedule: false, comments: false, liveRecord: false },
 };
 
@@ -42,29 +43,36 @@ export const permsPatch: z.ZodType<Partial<Record<PermKey, boolean | null>>> = z
 
 export type FieldKind = 'bool' | 'int' | 'bitrate' | 'height' | 'rating' | 'libraries';
 export type FieldGroup = 'access' | 'playback' | 'downloads' | 'requests' | 'together' | 'cast' | 'livetv';
-export interface MatrixField { key: string; group: FieldGroup; kind: FieldKind; min?: number; max?: number; options?: Array<number | null>; requires?: 'requests' | 'cast' | 'livetv' }
+export interface MatrixField {
+  key: string; group: FieldGroup; kind: FieldKind; min?: number; max?: number; options?: Array<number | null>; requires?: 'requests' | 'cast' | 'livetv';
+  /** the area the field belongs to (roles redesign spec §2.1); 'general' = always shown, no area switch (maxStreams, cast) */
+  area: AreaKey | 'general';
+  /** a field whose feature does not exist yet: stored and resolved, hidden from every editor and the compare view (§2.1); none today */
+  planned?: 'recordings';
+}
 
 const BITRATE = { kind: 'bitrate', min: 300_000, max: 200_000_000 } as const;
 /** the rows of the role matrix and the rights editor, in display order */
 export const MATRIX_FIELDS: readonly MatrixField[] = [
-  { key: 'libraries', group: 'access', kind: 'libraries' },
-  { key: 'maxParentalRating', group: 'access', kind: 'rating', options: [null, 0, 6, 12, 16, 18] },
-  { key: 'maxStreams', group: 'playback', kind: 'int', min: 1, max: 50 },
-  { key: 'maxBitrate', group: 'playback', ...BITRATE },
-  { key: 'remoteMaxBitrate', group: 'playback', ...BITRATE },
-  { key: 'transcoding', group: 'playback', kind: 'bool' },
-  { key: 'maxHeight', group: 'playback', kind: 'height', options: [null, 720, 1080, 1440, 2160] },
-  { key: 'download', group: 'downloads', kind: 'bool' },
-  { key: 'maxDownloads', group: 'downloads', kind: 'int', min: 0, max: 200 },
-  { key: 'downloadMaxHeight', group: 'downloads', kind: 'height', options: [480, 720, 1080, 2160] },
-  { key: 'downloadDays', group: 'downloads', kind: 'int', min: 1, max: 90 },
-  { key: 'requests', group: 'requests', kind: 'bool', requires: 'requests' },
-  { key: 'requestsPerMonth', group: 'requests', kind: 'int', min: 0, max: 100, options: [null], requires: 'requests' },
-  { key: 'party', group: 'together', kind: 'bool' },
-  { key: 'partySchedule', group: 'together', kind: 'bool' },
-  { key: 'comments', group: 'together', kind: 'bool' },
-  { key: 'cast', group: 'cast', kind: 'bool', requires: 'cast' },
-  { key: 'liveTv', group: 'livetv', kind: 'bool', requires: 'livetv' },
-  { key: 'liveRecord', group: 'livetv', kind: 'bool', requires: 'livetv' },
+  { key: 'libraries', group: 'access', kind: 'libraries', area: 'library' },
+  { key: 'maxParentalRating', group: 'access', kind: 'rating', options: [null, 0, 6, 12, 16, 18], area: 'library' },
+  { key: 'maxStreams', group: 'playback', kind: 'int', min: 1, max: 50, area: 'general' },
+  { key: 'maxBitrate', group: 'playback', ...BITRATE, area: 'library' },
+  { key: 'remoteMaxBitrate', group: 'playback', ...BITRATE, area: 'library' },
+  { key: 'transcoding', group: 'playback', kind: 'bool', area: 'library' },
+  { key: 'maxHeight', group: 'playback', kind: 'height', options: [null, 720, 1080, 1440, 2160], area: 'library' },
+  { key: 'download', group: 'downloads', kind: 'bool', area: 'downloads' },
+  { key: 'maxDownloads', group: 'downloads', kind: 'int', min: 0, max: 200, area: 'downloads' },
+  { key: 'downloadMaxHeight', group: 'downloads', kind: 'height', options: [480, 720, 1080, 2160], area: 'downloads' },
+  { key: 'downloadDays', group: 'downloads', kind: 'int', min: 1, max: 90, area: 'downloads' },
+  { key: 'requests', group: 'requests', kind: 'bool', requires: 'requests', area: 'requests' },
+  { key: 'requestsPerMonth', group: 'requests', kind: 'int', min: 0, max: 100, options: [null], requires: 'requests', area: 'requests' },
+  { key: 'party', group: 'together', kind: 'bool', area: 'together' },
+  { key: 'partySchedule', group: 'together', kind: 'bool', area: 'together' },
+  { key: 'comments', group: 'together', kind: 'bool', area: 'together' },
+  { key: 'cast', group: 'cast', kind: 'bool', requires: 'cast', area: 'general' },
+  { key: 'liveTv', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv' },
+  // "Darf aufnehmen": visible, no longer planned; the recordings backend (Phase 3a) enforces it and the recordings screens (Phase 3b) use it (roles redesign §5.4)
+  { key: 'liveRecord', group: 'livetv', kind: 'bool', requires: 'livetv', area: 'livetv' },
 ];
 

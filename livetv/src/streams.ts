@@ -6,7 +6,7 @@ import { evict, fsStore, type Store } from './cache.js';
 import type { Log } from './log.js';
 import type { StreamInput } from './probe.js';
 import type { Encoder } from './system.js';
-import { SegmentWindow, type SegmentExt } from './window.js';
+import { SegmentWindow, initName, type SegmentExt } from './window.js';
 
 /**
  * The shared streams of spec §3.3 (plan rulings 23, 47): one stream per channel for every viewer, started idempotently by the
@@ -34,6 +34,12 @@ export interface StreamView {
    */
   segments: 'ts' | 'fmp4' | null;
 }
+
+/**
+ * A segment as the hooks see it (Phase 3 plan Task 2): its stored path and file name in the stream's directory, its length, whether a
+ * discontinuity starts with it, its init version (fMP4: `init-<n>.mp4` at `initPath`, else null) and its program date-time (epoch ms).
+ */
+export interface SegmentInfo { path: string; file: string; duration: number; discontinuity: boolean; init: number | null; initPath: string | null; pdt: number }
 
 export const MODES: readonly Mode[] = ['passthrough', 'remux', 'transcode'];
 /** spec §3.3: the reconnect delays; the last one repeats */
@@ -124,8 +130,8 @@ export interface StreamsOptions {
   store?: Store;
   log?: Log;
   now?: () => number;
-  /** a segment reached a running stream's window (its file path): the previews */
-  onSegment?(channelId: string, path: string): void;
+  /** a segment reached a running stream's window: the previews and the recorder (Phase 3) */
+  onSegment?(channelId: string, info: SegmentInfo): void;
   /** a stream stopped (any reason) */
   onStop?(channelId: string): void;
 }
@@ -143,6 +149,8 @@ interface Entry {
   timer: NodeJS.Timeout | null;
   outageAt: number | null;
   attempt: number;
+  /** outages so far: `input lost #n` in the log (each is an `input_lost` event, what Live-Status counts as reconnects) */
+  outages: number;
   /** the next segment starts a run (start, outage): without a provider date-time it gets arrival − duration */
   runBreak: boolean;
   /** the playlist writes of this stream, one after the other */
@@ -176,7 +184,7 @@ export class Streams {
     const e: Entry = {
       view: { channelId: b.channelId, streamKey, mode: b.mode, since: now, state: 'starting', bitrate: null, errors: [], lastSegmentAt: null, segments: null },
       dvrSeconds: b.dvrSeconds, dir: join(this.o.root, streamKey), window: null, dropped: [], ac: new AbortController(),
-      done: Promise.resolve(), lastTouch: now, timer: null, outageAt: null, attempt: 0, runBreak: true, writing: Promise.resolve(),
+      done: Promise.resolve(), lastTouch: now, timer: null, outageAt: null, attempt: 0, outages: 0, runBreak: true, writing: Promise.resolve(),
     };
     this.byChannel.set(b.channelId, e);
     this.byKey.set(streamKey, e);
@@ -226,6 +234,18 @@ export class Streams {
     if (e) e.lastTouch = this.now();
   }
 
+  /** a recording uses the channel (Phase 3): counts like a `/s/` fetch for the 180-s safety net */
+  keepAlive(channelId: string): void {
+    const e = this.byChannel.get(channelId);
+    if (e) e.lastTouch = this.now();
+  }
+
+  /** the view of a channel's stream (a copy), null when none is listed */
+  view(channelId: string): StreamView | null {
+    const e = this.byChannel.get(channelId);
+    return e ? { ...e.view, errors: e.view.errors.map((x) => ({ ...x })) } : null;
+  }
+
   /** the file behind `/s/<streamKey>/<name>`, null when there is none (the route answers 404) */
   file(streamKey: string, name: string): { path: string; type: string } | null {
     const e = this.byKey.get(streamKey);
@@ -271,7 +291,12 @@ export class Streams {
         await this.writePlaylist(e);
         await this.cap();
         if (live()) {
-          try { this.o.onSegment?.(id, join(e.dir, s.file)); } catch { /* a hook's bug never breaks the stream */ }
+          const init = s.init ?? null;
+          const info: SegmentInfo = {
+            path: join(e.dir, s.file), file: s.file, duration: s.duration, discontinuity: s.discontinuity === true, init,
+            initPath: init === null ? null : join(e.dir, initName(init)), pdt,
+          };
+          try { this.o.onSegment?.(id, info); } catch { /* a hook's bug never breaks the stream */ }
         }
         return seq;
       },
@@ -285,7 +310,7 @@ export class Streams {
         if (e.outageAt === null && live()) {
           e.outageAt = this.now();
           this.event(e, { at: e.outageAt, code: 'input_lost' });
-          this.log(`stream ${id} input lost`);
+          this.log(`stream ${id} input lost #${++e.outages}`);
         }
         e.runBreak = true;
         if (e.view.state !== 'failed') e.view.state = 'reconnecting';

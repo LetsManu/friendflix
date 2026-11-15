@@ -37,9 +37,11 @@ export function missingLibraries(libraries: 'all' | string[], known: Library[] |
 
 /**
  * Names a write wants → the server's spelling of each (deduplicated). A name the cached list lacks gets one fresh look (a library added
- * a minute ago); still unknown → 400 unknown_library. 502 libraries_unavailable while the server cannot list them.
+ * a minute ago); still unknown → 400 unknown_library. 502 libraries_unavailable while the server cannot list them. No names (no library)
+ * need no lookup: [] without asking the server.
  */
 export async function knownLibraries(ctx: Pick<Ctx, 'jf'>, names: string[]): Promise<string[]> {
+  if (!names.length) return [];
   const find = (list: Library[]) => names.map((n) => list.find((l) => lc(l.name) === lc(n))?.name);
   let list = await fetchLibraries(ctx);
   let found = list && find(list);

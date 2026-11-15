@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { hasKey, setLocale } from '#lib/i18n';
-import { EVENT_CODES, bitrateText, cacheLine, eventText, inputText, levelWord, matchLine, modeText, type LiveEvent } from './status';
+import { EVENT_CODES, bitrateText, cacheLine, eventText, inputText, levelWord, loadCounts, loadStatus, matchLine, modeText, startChannel, stopChannel, type LiveEvent } from './status';
 
 afterEach(async () => { await setLocale('de'); });
 
@@ -15,6 +15,7 @@ describe('EVENT_CODES (F20)', () => {
   it('EVENT_CODES mirrors the backend list', () => {
     expect([...EVENT_CODES]).toEqual([
       'source_refresh_failed', 'ingest_sync_pending', 'stopped_by_admin', 'start_refused_full', 'start_failed', 'input_lost', 'input_back', 'push_rejected', 'released_on_switch',
+      'rec_started', 'rec_done', 'rec_partial', 'rec_failed', 'rec_moved', 'rec_no_slot', 'rec_storage_full', 'rec_export_failed',
     ]);
     // and the file it mirrors says the same, in the same order
     const src = readFileSync(fileURLToPath(new URL('../../../../../backend/src/livetv/events.ts', import.meta.url)), 'utf8');
@@ -55,6 +56,18 @@ describe('eventText', () => {
     expect(eventText(ev({ code: 'start_refused_full' }))).toBe('Start abgelehnt: alle Plätze belegt');
     expect(eventText(ev({ code: 'push_rejected' }))).toBe('Verbindung abgelehnt: falsche Kennung oder Passphrase');
     expect(eventText(ev({ code: 'released_on_switch' }))).toBe('Beim Umschalten sofort beendet (Platz oder Verbindung gebraucht)');
+  });
+  it('rec_storage_full event text', () => {
+    expect(eventText(ev({ code: 'rec_storage_full' }))).toBe('Aufnahmespeicher voll: eine Aufnahme wurde beendet');
+  });
+  it('recording events name their gaps and their reason (Phase 3 Task 11); an unknown reason is never shown', () => {
+    expect(eventText(ev({ code: 'rec_partial', n: 3 }))).toBe('Aufnahme unvollständig (3 Lücken)');
+    expect(eventText(ev({ code: 'rec_partial', n: 1 }))).toBe('Aufnahme unvollständig (1 Lücke)');
+    expect(eventText(ev({ code: 'rec_partial' }))).toBe('Aufnahme unvollständig');
+    expect(eventText(ev({ code: 'rec_failed', reason: 'no_slot' }))).toBe('Aufnahme fehlgeschlagen (kein Platz frei)');
+    expect(eventText(ev({ code: 'rec_failed', reason: 'weird_code' }))).toBe('Aufnahme fehlgeschlagen');
+    expect(eventText(ev({ code: 'rec_failed' }))).toBe('Aufnahme fehlgeschlagen');
+    expect(eventText(ev({ code: 'rec_no_slot', reason: 'provider_limit' }))).toBe('Aufnahme wartet: kein Platz frei');
   });
   it('source_refresh_failed names the source and the reason through adminLive.src.err', () => {
     expect(eventText(ev({ code: 'source_refresh_failed', reason: 'unreachable' }), { source: 'Anbieter A' })).toBe('Quelle Anbieter A: Aktualisierung fehlgeschlagen (Nicht erreichbar)');
@@ -97,5 +110,35 @@ describe('matchLine', () => {
     expect(matchLine({ total: 3, matched: 3, unmatched: 0 })).toBe('3 von 3 Sendern mit Programm · 0 ohne');
     await setLocale('en');
     expect(matchLine({ total: 412, matched: 398, unmatched: 14 })).toBe('398 of 412 channels with a programme · 14 without');
+  });
+});
+
+describe('the status calls', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  /** fetch answering per path (200 unless a status is given), recording `METHOD url body` */
+  function stub(answer: (u: string) => { status?: number; body: unknown }) {
+    const f = vi.fn(async (u: string, _i: { method?: string; body?: string }) => {
+      const a = answer(u), status = a.status ?? 200;
+      return { status, ok: status < 400, headers: { get: () => null }, text: async () => JSON.stringify(a.body) };
+    });
+    vi.stubGlobal('fetch', f);
+    return () => f.mock.calls.map(([u, i]) => `${i.method ?? 'GET'} ${u}${i.body ? ` ${i.body}` : ''}`);
+  }
+  it('status, the EPG counts and Stoppen go to their endpoints', async () => {
+    const calls = stub((u) => ({ body: u.endsWith('/summary') ? { matched: 1, total: 2, unmatched: 1 } : { ok: true } }));
+    await loadStatus();
+    expect(await loadCounts()).toEqual({ matched: 1, total: 2, unmatched: 1 });
+    await stopChannel('ch nord');
+    expect(calls()).toEqual(['GET /api/admin/livetv/status', 'GET /api/admin/livetv/epg/summary', 'POST /api/admin/livetv/streams/ch%20nord/stop']);
+  });
+  it('Neu starten: the stream test starts it and its token is let go; no preview or an error is false', async () => {
+    let calls = stub((u) => ({ body: u.endsWith('/test') ? { ok: true, preview: { token: 'pt-1' } } : { ok: true } }));
+    expect(await startChannel('ch-nord')).toBe(true);
+    expect(calls()).toEqual(['POST /api/admin/livetv/channels/ch-nord/test', 'DELETE /api/livetv/watch {"token":"pt-1"}']);
+    calls = stub(() => ({ body: { ok: false } }));
+    expect(await startChannel('ch-nord')).toBe(false);
+    expect(calls()).toHaveLength(1);
+    stub(() => ({ status: 503, body: { error: 'livetv_unreachable' } }));
+    expect(await startChannel('ch-nord')).toBe(false);
   });
 });

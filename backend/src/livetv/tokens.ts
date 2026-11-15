@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { REC_MAX_S } from '../recItem.js';
 import { randomBytes } from 'node:crypto';
 import { AIRPLAY_PIN2_WINDOW_MS, CAST_TOKEN_RE, hashToken, takePin } from '../cast.js';
 import type { Ctx } from '../ctx.js';
@@ -7,6 +8,7 @@ import { clearLive, getLive, setLive } from '../live.js';
 import { getProfile } from '../profiles.js';
 import { effectiveRole } from '../roles.js';
 import { getUserById } from '../users.js';
+import { getRecording, visibleRecording } from './recordings.js';
 import { channelAllowed } from './rights.js';
 
 /**
@@ -28,6 +30,8 @@ import { channelAllowed } from './rights.js';
 export const LIVE_IDLE_TTL_S = 90;
 export const LIVE_TOUCH_MS = 20_000;
 export const LIVE_CAP_S = 12 * 3600;
+/** a recording token's absolute cap (B-M1): the longest recording (24 h + 30 min before + 2 h after) and the hour after it */
+export const REC_CAP_S = REC_MAX_S;
 export const MAX_LIVE_TOKENS = 4;
 export const VIEW_TTL_S = 45;
 /** how long a rights decision of a token is reused (spec §7.1 "memo 2 s"); also the gateway's memo of an authz answer (`maxAgeS`) */
@@ -44,7 +48,10 @@ export interface LiveTokenRec {
   sidHash: string;
   channelId: string;
   channelName: string;
-  kind: 'live';
+  /** `rec` (Phase 3): a recording's playback (`/media/r/`); it is no viewer of its channel and no live view of its device */
+  kind: 'live' | 'rec';
+  /** `rec` tokens: the recording */
+  recordingId?: string;
   via: 'local' | 'chromecast' | 'airplay';
   remote: boolean;
   /** admin stream-test preview (F10): no channel right and no release check, but the current role must be admin */
@@ -91,6 +98,8 @@ async function listTokens(ctx: Pick<Ctx, 'kv'>, userId: string): Promise<Array<{
   return out;
 }
 
+/** a token's kind (records of a backend before Phase 3 have `live`) */
+const kindOf = (r: Pick<LiveTokenRec, 'kind'>): 'live' | 'rec' => (r.kind === 'rec' ? 'rec' : 'live');
 /** the replacement slot class of a token's `via` (R14): a Chromecast token is a `cast`; local and AirPlay views are `local` */
 const viaClass = (via: LiveTokenRec['via']): 'cast' | 'local' => (via === 'chromecast' ? 'cast' : 'local');
 
@@ -106,20 +115,23 @@ const rightsMemo = new Map<string, { exp: number; v: { userName: string; profile
  * racing past the limit. Seeds the viewer key at once (F9): a viewer who has not fetched a file yet already counts. Returns the raw
  * token (once) and its hash.
  */
-export async function mintLiveToken(ctx: Ctx, rec: Omit<LiveTokenRec, 'exp' | 'createdAt'>): Promise<{ token: string; hash: string; expiresAt: number }> {
+export async function mintLiveToken(ctx: Ctx, rec: Omit<LiveTokenRec, 'exp' | 'createdAt'>, o: { capS?: number } = {}): Promise<{ token: string; hash: string; expiresAt: number }> {
   const now = Date.now();
-  const exp = now + LIVE_CAP_S * 1000;
+  const kind = rec.kind === 'rec' ? 'rec' : 'live';
+  const maxCap = kind === 'rec' ? REC_CAP_S : LIVE_CAP_S;
+  const capS = Math.max(60, Math.min(maxCap, Math.ceil(o.capS ?? LIVE_CAP_S)));
+  const exp = now + capS * 1000;
   const token = randomBytes(32).toString('base64url');
   const hash = hashToken(token);
   const { test, ...rest } = rec;
-  const full: LiveTokenRec = { ...rest, ...(test === true ? { test: true as const } : {}), kind: 'live', exp, createdAt: now };
+  const full: LiveTokenRec = { ...rest, ...(test === true ? { test: true as const } : {}), kind, exp, createdAt: now };
   await ctx.kv.set(dataKey(hash), JSON.stringify(full), keyTtl(exp, now));
-  await ctx.kv.indexAdd(idxKey(rec.userId), hash, LIVE_CAP_S);
-  await ctx.kv.set(liveViewKey(hash), rec.channelId, VIEW_TTL_S);
+  await ctx.kv.indexAdd(idxKey(rec.userId), hash, maxCap);
+  if (kind === 'live') await ctx.kv.set(liveViewKey(hash), rec.channelId, VIEW_TTL_S);
   const me = { hash, rec: full };
   for (const t of await listTokens(ctx, rec.userId)) {
     // marked `replaced`: a second window of the same browser took over, and the one before must not take it back (bughunt L4)
-    if (t.hash !== hash && t.rec.deviceId === rec.deviceId && Boolean(t.rec.test) === Boolean(full.test) && viaClass(t.rec.via) === viaClass(full.via) && older(t, me) < 0) await revokeLiveToken(ctx, t.hash, { replacedFor: rec.userId });
+    if (t.hash !== hash && t.rec.deviceId === rec.deviceId && Boolean(t.rec.test) === Boolean(full.test) && kindOf(t.rec) === kind && viaClass(t.rec.via) === viaClass(full.via) && older(t, me) < 0) await revokeLiveToken(ctx, t.hash, { replacedFor: rec.userId });
   }
   const all = (await listTokens(ctx, rec.userId)).sort(older);
   while (all.length > MAX_LIVE_TOKENS) await revokeLiveToken(ctx, all.shift()!.hash);
@@ -158,8 +170,8 @@ export async function endLiveToken(ctx: Ctx, token: string, userId: string): Pro
  * watch route leaves them out of the `maxStreams` count (spec §7.2). Admin test previews and the other slot (cast or local, R14) are
  * not replaced by that watch, so they are not among them.
  */
-export async function deviceLiveSessions(ctx: Ctx, userId: string, deviceId: string, via: LiveTokenRec['via'] = 'local'): Promise<string[]> {
-  return (await listTokens(ctx, userId)).filter((t) => t.rec.deviceId === deviceId && !t.rec.test && viaClass(t.rec.via) === viaClass(via)).map((t) => livePlaySessionId(t.hash));
+export async function deviceLiveSessions(ctx: Ctx, userId: string, deviceId: string, via: LiveTokenRec['via'] = 'local', kind: 'live' | 'rec' = 'live'): Promise<string[]> {
+  return (await listTokens(ctx, userId)).filter((t) => t.rec.deviceId === deviceId && !t.rec.test && kindOf(t.rec) === kind && viaClass(t.rec.via) === viaClass(via)).map((t) => livePlaySessionId(t.hash));
 }
 
 /**
@@ -188,7 +200,7 @@ export async function countStreams(ctx: Ctx, userId: string): Promise<number> {
  * views a watch replaces (R8), and neither is a cast (R14): a Chromecast token is a viewer of its channel, never the device's own view.
  */
 export async function deviceLiveView(ctx: Ctx, userId: string, deviceId: string): Promise<{ hash: string; channelId: string } | null> {
-  const mine = (await listTokens(ctx, userId)).filter((t) => t.rec.deviceId === deviceId && !t.rec.test && viaClass(t.rec.via) === 'local').sort(older);
+  const mine = (await listTokens(ctx, userId)).filter((t) => t.rec.deviceId === deviceId && !t.rec.test && kindOf(t.rec) === 'live' && viaClass(t.rec.via) === 'local').sort(older);
   const t = mine[mine.length - 1];
   return t ? { hash: t.hash, channelId: t.rec.channelId } : null;
 }
@@ -213,7 +225,8 @@ export const adminStopViewKey = (userId: string, deviceId: string) => `ltv:admin
 export async function stopLiveSession(ctx: Ctx, userId: string, playSessionId: string): Promise<{ channelId: string } | null> {
   const t = (await listTokens(ctx, userId)).find((x) => livePlaySessionId(x.hash) === playSessionId);
   if (!t) return null;
-  await ctx.kv.set(adminStopViewKey(userId, t.rec.deviceId), t.rec.channelId, ADMIN_STOP_TTL_S);
+  // a recording's playback names its channel too, but stopping it must not keep that device from watching the channel live (B-M6)
+  if (kindOf(t.rec) === 'live') await ctx.kv.set(adminStopViewKey(userId, t.rec.deviceId), t.rec.channelId, ADMIN_STOP_TTL_S);
   await revokeLiveToken(ctx, t.hash);
   return { channelId: t.rec.channelId };
 }
@@ -223,7 +236,7 @@ export async function revokeChannelTokens(ctx: Ctx, channelId: string): Promise<
   let n = 0;
   for (const idx of await ctx.kv.keys(idxKey(''))) {
     for (const t of await listTokens(ctx, idx.slice(idxKey('').length))) {
-      if (t.rec.channelId !== channelId) continue;
+      if (t.rec.channelId !== channelId || kindOf(t.rec) !== 'live') continue;
       await revokeLiveToken(ctx, t.hash);
       n++;
     }
@@ -265,14 +278,21 @@ export async function beatLiveToken(ctx: Ctx, token: string, who: { userId: stri
   const rec = await load(ctx, hash);
   const now = Date.now();
   if (!rec || rec.exp <= now || rec.userId !== who.userId) return gone;
-  const ttl = keyTtl(rec.exp, now);
   if (!(await rightsOf(ctx, hash, rec))) return gone; // a refused token is no viewer: nothing slides, re-pins or refreshes
+  // a growing recording whose end moved later (followEpg): its token's end follows, within REC_CAP_S of the mint (B-M1)
+  if (kindOf(rec) === 'rec' && rec.recordingId) {
+    const until = (await ctx.db.query<{ until: Date }>(
+      "select end_at + make_interval(secs => pad_after_s) + interval '1 hour' as until from livetv_recordings where id = $1 and state = 'recording'", [rec.recordingId])).rows[0]?.until;
+    const exp = until ? Math.min(until.getTime(), rec.createdAt + REC_CAP_S * 1000) : rec.exp;
+    if (exp > rec.exp) rec.exp = exp;
+  }
+  const ttl = keyTtl(rec.exp, now);
   if (ttl <= 0 || !(await ctx.kv.replace(dataKey(hash), JSON.stringify(rec), ttl))) return gone; // never resurrects a revoked one
   if (rec.via === 'local' && rec.sidHash === who.sidHash) {
     await ctx.kv.set(pinKey(hash), who.ip, pinTtl(rec.exp, now));
     await ctx.kv.del(pin2Key(hash));
   }
-  await ctx.kv.set(liveViewKey(hash), rec.channelId, VIEW_TTL_S);
+  if (kindOf(rec) === 'live') await ctx.kv.set(liveViewKey(hash), rec.channelId, VIEW_TTL_S);
   const ps = livePlaySessionId(hash);
   const cur = await getLive(ctx, rec.userId, ps);
   if (cur) await setLive(ctx, { ...cur, updatedAt: now });
@@ -302,9 +322,13 @@ async function rightsOf(ctx: Ctx, hash: string, rec: StoredRec): Promise<{ userN
   const prof = user && role ? await getProfile(ctx, user.id, rec.profileId) : null;
   const dev = prof ? await ctx.db.query<{ approved: boolean }>('select approved from devices where user_id=$1 and device_id=$2', [rec.userId, rec.deviceId]) : null;
   if (user && prof && dev?.rows[0]?.approved) {
-    const ok = rec.test
-      ? user.role === 'admin' && (await channelPresent(ctx, rec.channelId))
-      : await channelAllowed(ctx, { id: user.id, role: user.role }, { id: prof.id, kids: prof.kids }, rec.channelId);
+    const who = { id: user.id, role: user.role };
+    const profile = { id: prof.id, kids: prof.kids };
+    const ok = kindOf(rec) === 'rec'
+      ? rec.recordingId !== undefined && (await visibleRecording(ctx, who, profile, rec.recordingId)) !== null
+      : rec.test
+        ? user.role === 'admin' && (await channelPresent(ctx, rec.channelId))
+        : await channelAllowed(ctx, who, profile, rec.channelId);
     if (ok) v = { userName: user.name, profileName: prof.name };
   }
   rightsMemo.set(hash, { exp: Date.now() + LIVE_RIGHTS_MEMO_MS, v });
@@ -325,7 +349,7 @@ export async function resolveLiveToken(
   const hash = hashToken(token);
   if (await ctx.kv.get(goneKey(hash))) return { status: 410 };
   const rec = await load(ctx, hash);
-  if (!rec || rec.exp <= Date.now()) return { status: 401 };
+  if (!rec || rec.exp <= Date.now() || kindOf(rec) !== 'live') return { status: 401 };
   const owner = await rightsOf(ctx, hash, rec);
   if (!owner) return { status: 403 };
   const streamKey = await deps.streamKeyFor(rec.channelId); // before the pin: a refused (410) request never takes one
@@ -342,15 +366,73 @@ async function touch(ctx: Ctx, hash: string, rec: StoredRec, owner: { userName: 
   const now = Date.now();
   const ttl = keyTtl(rec.exp, now);
   if (ttl <= 0 || !(await ctx.kv.replace(dataKey(hash), JSON.stringify({ ...rec, seen: now } satisfies StoredRec), ttl))) return;
-  await ctx.kv.set(liveViewKey(hash), rec.channelId, VIEW_TTL_S);
+  if (kindOf(rec) === 'live') await ctx.kv.set(liveViewKey(hash), rec.channelId, VIEW_TTL_S);
   const ps = livePlaySessionId(hash);
   const cur = await getLive(ctx, rec.userId, ps);
   await setLive(ctx, cur
     ? { ...cur, updatedAt: now, ...(bitrate !== null ? { bitrate } : {}) }
     : {
-      userId: rec.userId, userName: owner.userName, profileName: owner.profileName, itemId: `ch:${rec.channelId}`, title: rec.channelName,
+      userId: rec.userId, userName: owner.userName, profileName: owner.profileName, itemId: kindOf(rec) === 'rec' ? `rec:${rec.recordingId}` : `ch:${rec.channelId}`, title: rec.channelName,
       positionTicks: 0, isPaused: false, playSessionId: ps, updatedAt: now, source: 'livetv', deviceId: rec.deviceId, remote: rec.remote,
       ...(bitrate !== null ? { bitrate } : {}),
     });
   if (await ctx.kv.get(goneKey(hash))) await forgetView(ctx, hash, rec.userId);
+}
+
+// ---- recordings (Phase 3, plan Task 5) ----
+
+/**
+ * A recording's playback token (`/media/r/<token>/…`): a live token of kind `rec` (same keys, pins, idle 90 s, beat and the 4-per-account
+ * cap), capped at `capS` (its duration + 1 h, so a re-watch from the start fits; while growing its end + padding + 1 h, moved along on
+ * the beat when the end moves), at most REC_CAP_S. It is no viewer of its channel.
+ */
+export function mintRecToken(ctx: Ctx, rec: Omit<LiveTokenRec, 'exp' | 'createdAt' | 'kind' | 'recordingId' | 'test'> & { recordingId: string }, capS: number) {
+  return mintLiveToken(ctx, { ...rec, kind: 'rec' }, { capS });
+}
+
+/**
+ * The gateway's authz of `/media/r/<token>/…` (`/internal/authz/rec`): 401 unknown, expired or not a recording token; 410 revoked, or
+ * the recording is gone (deleted, or only in the library now); 403 pinned elsewhere, or account, profile, device or the recording's
+ * visibility lost. 200 with the recording's folder and whether it still grows.
+ */
+export async function resolveRecToken(ctx: Ctx, token: string, ip: string): Promise<{ status: 200; dir: string; growing: boolean; maxAgeS: number } | { status: 401 | 403 | 410 }> {
+  if (!CAST_TOKEN_RE.test(token)) return { status: 401 };
+  const hash = hashToken(token);
+  if (await ctx.kv.get(goneKey(hash))) return { status: 410 };
+  const rec = await load(ctx, hash);
+  if (!rec || rec.exp <= Date.now() || kindOf(rec) !== 'rec' || !rec.recordingId) return { status: 401 };
+  const row = await getRecording(ctx, rec.recordingId);
+  if (!row || row.state === 'cancelled' || row.state === 'deleting' || row.state === 'scheduled' || row.state === 'starting' || (row.storage === 'library' && row.library_path !== null)) return { status: 410 };
+  const owner = await rightsOf(ctx, hash, rec);
+  if (!owner) return { status: 403 };
+  const airplay = rec.via === 'airplay';
+  const slots = airplay && Date.now() - rec.createdAt <= AIRPLAY_PIN2_WINDOW_MS ? 2 : 1;
+  if (!(await takePin(ctx, airplay ? [pinKey(hash), pin2Key(hash)] : [pinKey(hash)], ip, pinTtl(rec.exp), slots))) return { status: 403 };
+  if (rec.seen === undefined || Date.now() - rec.seen >= LIVE_TOUCH_MS) await touch(ctx, hash, rec, owner, null);
+  return { status: 200, dir: row.dir, growing: row.state === 'recording', maxAgeS: LIVE_AUTHZ_MAX_AGE_S };
+}
+
+/**
+ * Revokes the playback tokens of a recording (all accounts). `onlyLost`: only those whose profile cannot see it any more, checked now
+ * (a narrower share keeps the others playing).
+ */
+export async function revokeRecordingTokens(ctx: Ctx, recordingId: string, o: { onlyLost?: boolean } = {}): Promise<number> {
+  let n = 0;
+  for (const idx of await ctx.kv.keys(idxKey(''))) {
+    for (const t of await listTokens(ctx, idx.slice(idxKey('').length))) {
+      if (kindOf(t.rec) !== 'rec' || t.rec.recordingId !== recordingId) continue;
+      if (o.onlyLost && (await stillSees(ctx, t.rec))) continue;
+      await revokeLiveToken(ctx, t.hash);
+      n++;
+    }
+  }
+  return n;
+}
+
+/** whether the token's account and profile still see its recording (no memo) */
+async function stillSees(ctx: Ctx, rec: LiveTokenRec): Promise<boolean> {
+  const user = await getUserById(ctx, rec.userId);
+  const prof = user && !user.disabled ? await getProfile(ctx, user.id, rec.profileId) : null;
+  if (!user || !prof || !rec.recordingId) return false;
+  return (await visibleRecording(ctx, { id: user.id, role: user.role }, { id: prof.id, kids: prof.kids }, rec.recordingId)) !== null;
 }

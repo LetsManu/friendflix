@@ -310,4 +310,9 @@ export default {
     already: 'Schon gewünscht',
     wishFailed: 'Wunsch konnte nicht gestellt werden.',
   },
+  /** the start page of a person with neither a library nor a Live-TV channel (roles redesign §3.2) */
+  noAccess: {
+    title: 'Für dich ist noch nichts freigegeben',
+    body: 'Frag die Person, die FriendFlix betreibt.',
+  },
 } as const;

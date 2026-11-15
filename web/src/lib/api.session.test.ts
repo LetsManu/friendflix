@@ -9,7 +9,7 @@ vi.mock('#lib/native/bridge', () => ({
 }));
 vi.mock('#lib/native/play', () => ({ nativeCaps: async () => ({ api: h.api, play: true, download: true, cast: true, castBar: true }) }));
 
-import { api, setCsrf } from './api';
+import { api, ApiError, setCsrf } from './api';
 
 let loc: { pathname: string; href: string };
 const respond = (status: number, body: unknown) => vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status })));
@@ -58,5 +58,19 @@ describe('a 401 (the session is gone)', () => {
     setCsrf('t'); // a successful /api/me after signing in again
     void api('/api/d');
     await vi.waitFor(() => expect(h.sent).toEqual([null, null]));
+  });
+});
+
+describe('an error page that is not JSON', () => {
+  it('a proxy\'s 413 page reaches the caller as ApiError 413 (body null), not as a parse error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html><body>413 Request Entity Too Large</body></html>', { status: 413, headers: { 'content-type': 'text/html' } })));
+    const e = await api('/api/admin/livetv/sources/x/file', { method: 'PUT', raw: new Blob(['x']) }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(ApiError);
+    expect((e as ApiError).status).toBe(413);
+    expect((e as ApiError).body).toBeNull();
+  });
+  it('a 200 that is not JSON still throws (a wrong route must not pass as success)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<!doctype html>', { status: 200 })));
+    await expect(api('/api/x')).rejects.toBeInstanceOf(SyntaxError);
   });
 });

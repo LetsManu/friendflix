@@ -42,8 +42,6 @@ export const loadHevcCheck = (): Promise<{ running: boolean }> => api<{ running:
 /** polling: every 2 s, give up after 3 minutes */
 export const HEVC_POLL_MS = 2000;
 export const HEVC_POLL_MAX_MS = 180_000;
-/** the advice lines of a row (only known codes) */
-export const adviceKeys = (s: Pick<ServiceHealth, 'advice'>): TKey[] => (s.advice ?? []).filter((a) => (ENCODER_ADVICE as readonly string[]).includes(a)).map((a) => `adminContent.health.advice.${a}` as TKey);
 export type DiskId = 'downloads' | 'previews' | 'database';
 export interface DiskHealth {
   id: DiskId; level: Level; reason?: Reason; totalBytes?: number; freeBytes?: number; usedPct?: number; ownBytes: number; capBytes?: number;
@@ -77,12 +75,6 @@ const TONE: Record<Level, Tone> = { ok: 'ok', warn: 'warn', err: 'err', off: 'mu
 export const levelTone = (l: Level): Tone => TONE[l];
 /** icon of a level pill (never colour alone) */
 export const levelIcon = (l: Level): string => ({ ok: 'check', warn: 'clock', err: 'alert', off: 'x' })[l];
-
-const RANK: Record<Level, number> = { err: 0, warn: 1, ok: 2, off: 3 };
-/** worst first: err, warn, ok, off (stable inside a level) */
-export function sortServices<T extends { level: Level }>(s: readonly T[]): T[] {
-  return s.map((x, i) => [x, i] as const).sort((a, b) => RANK[a[0].level] - RANK[b[0].level] || a[1] - b[1]).map(([x]) => x);
-}
 
 /** text key of a reason; a few reasons read differently for disks ("Nicht lesbar") than for services */
 export function reasonKey(id: string, reason: Reason): TKey {

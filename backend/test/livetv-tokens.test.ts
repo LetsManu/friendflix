@@ -4,15 +4,19 @@
  * Live TV Phase 1, Task 30: live tokens (spec §7.1), pinning, `/internal/authz/live` and revocation. Only the hash is stored; the
  * token is never logged.
  */
+import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { hashToken } from '../src/cast.js';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { revokeSessions } from '../src/devices.js';
 import { getLive } from '../src/live.js';
+import { deleteRecording, setVisibility } from '../src/livetv/recordings.js';
 import { invalidateLivetvRights } from '../src/livetv/rights.js';
 import {
-  beatLiveToken, LIVE_CAP_S, liveSidHash, liveViewKey, MAX_LIVE_TOKENS, mintLiveToken, resolveLiveToken, VIEW_TTL_S, type LiveTokenRec,
+  beatLiveToken, LIVE_CAP_S, liveSidHash, liveViewKey, MAX_LIVE_TOKENS, mintLiveToken, mintRecToken, resolveLiveToken, resolveRecToken, revokeChannelTokens, VIEW_TTL_S,
+  type LiveTokenRec,
 } from '../src/livetv/tokens.js';
+import { WATCH_IP_MAX } from '../src/livetv/routes.js';
 import { invalidateRights } from '../src/rights.js';
 import { invalidateRoles } from '../src/roles.js';
 import { lockUser } from '../src/users.js';
@@ -465,5 +469,244 @@ describe('live tokens', () => {
       expect(all).not.toContain(token);
       expect(all).not.toContain(token.slice(0, 20));
     } finally { spies.forEach((s) => s.mockRestore()); }
+  });
+});
+
+describe('recording tokens (Phase 3)', () => {
+  let adminProfile = '';
+  let adm = admin;
+  const rec = async (o: Record<string, unknown> = {}) => {
+    const row: Record<string, unknown> = {
+      id: randomUUID(), profile_id: ANNA, user_id: ANNA, channel_id: nord, channel_name: 'Nordlicht TV', title: 'Sternstunde Physik',
+      start_at: new Date(Date.now() - 2 * 3_600_000), end_at: new Date(Date.now() - 3_600_000), pad_before_s: 120, pad_after_s: 300, storage: 'ff',
+      dir: randomUUID(), state: 'done', bytes: 4096, duration_s: 3600, segments: 'ts', ...o,
+    };
+    const keys = Object.keys(row);
+    await env.pool.query(`insert into livetv_recordings(${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')})`, Object.values(row));
+    return { id: row.id as string, dir: row.dir as string };
+  };
+  const play = (id: string, body: Record<string, unknown> = {}) =>
+    env.app.inject({ method: 'POST', url: `/api/livetv/recordings/${id}/play`, cookies: adm.cookies, headers: { 'x-csrf-token': adm.csrf }, payload: body });
+  const authzRec = (token: string, ip = IP1) => env.app.inject({ method: 'POST', url: '/internal/authz/rec', headers: H, payload: { token, ip } });
+  const annaRec = (recordingId: string) => mintRecToken(env.ctx, {
+    userId: ANNA, profileId: ANNA, deviceId: 'dev-anna-1', sidHash: SID_A, recordingId, channelId: nord, channelName: 'Nordlicht TV', via: 'local', remote: false,
+  }, 7200);
+  beforeEach(async () => {
+    await env.pool.query('delete from livetv_recordings; delete from livetv_recording_purges');
+    adm = await env.login(); // earlier tests of this file end the admin's first session
+    adminProfile = (await env.pool.query<{ id: string }>('select id from profiles where user_id = $1 and is_owner', [adminId])).rows[0]!.id;
+  });
+
+  it('play mints a rec token for a visible recording, 404 otherwise', async () => {
+    const mine = await rec({ profile_id: adminProfile, user_id: adminId });
+    const r = await play(mine.id);
+    expect(r.statusCode, r.body).toBe(200);
+    const b = r.json();
+    expect(b).toMatchObject({ url: `/media/r/${b.token}/index.m3u8`, growing: false, segments: 'ts', durationS: 3600, positionS: 0 });
+    expect(b.expiresAt).toBeGreaterThan(Date.now() + 7_100_000);
+    expect(b.expiresAt).toBeLessThan(Date.now() + 7_300_000);
+    expect(r.headers['cache-control']).toBe('no-store');
+    const a = await authzRec(b.token);
+    expect([a.statusCode, a.json()]).toEqual([200, { dir: mine.dir, growing: false, maxAgeS: 2 }]);
+    expect((await authzRec(b.token, IP2)).statusCode).toBe(403); // pinned
+    // a recording token is no viewer of the channel and no live token; a live token is no recording token
+    expect(await env.kv.get(liveViewKey(hashToken(b.token)))).toBeNull();
+    expect(await status(b.token)).toBe(401);
+    expect((await authzRec((await mint()).token)).statusCode).toBe(401);
+    // Anna's private recording is unknown to the admin's profile; a plan is not playable
+    expect((await play((await rec()).id)).statusCode).toBe(404);
+    const plan = await rec({ profile_id: adminProfile, user_id: adminId, state: 'scheduled', bytes: 0, start_at: new Date(Date.now() + 3_600_000), end_at: new Date(Date.now() + 7_200_000) });
+    expect((await play(plan.id)).json()).toEqual({ error: 'not_ready' });
+  });
+
+  it('AirPlay pins two addresses within the window (a recording cast with via airplay, Phase 3 Task 10)', async () => {
+    const mine = await rec({ profile_id: adminProfile, user_id: adminId });
+    const ap = (await play(mine.id, { via: 'airplay' })).json().token as string;
+    expect((await authzRec(ap, IP1)).statusCode).toBe(200); // the phone
+    expect((await authzRec(ap, IP2)).statusCode).toBe(200); // the Apple TV, within the window
+    expect((await authzRec(ap, IP3)).statusCode).toBe(403); // a third address never
+    expect((await authzRec(ap, IP1)).statusCode).toBe(200);
+    expect((await authzRec(ap, IP2)).statusCode).toBe(200);
+    // a chromecast recording token: one address
+    const cc = (await play(mine.id, { via: 'chromecast' })).json().token as string;
+    expect((await authzRec(cc, IP2)).statusCode).toBe(200);
+    expect((await authzRec(cc, IP1)).statusCode).toBe(403);
+  });
+
+  it('B-M1: a long recording plays past 12 h; a growing one\'s token follows a later end on the beat', async () => {
+    const long = await rec({ profile_id: adminProfile, user_id: adminId, start_at: new Date(Date.now() - 22 * 3_600_000), end_at: new Date(Date.now() - 2 * 3_600_000), duration_s: 20 * 3600 });
+    const l = (await play(long.id)).json();
+    expect(l.expiresAt).toBeGreaterThan(Date.now() + 21 * 3_600_000 - 60_000); // its whole length + 1 h, not the 12 h of a live token
+    const r = await rec({ profile_id: adminProfile, user_id: adminId, state: 'recording', start_at: new Date(Date.now() - 600_000), end_at: new Date(Date.now() + 1_800_000), duration_s: 600 });
+    const b = (await play(r.id)).json();
+    // the programme runs 2 h longer (followEpg grew the end): the next beat moves the token's end along
+    await env.pool.query("update livetv_recordings set end_at = end_at + interval '2 hours' where id = $1", [r.id]);
+    const beat = await beatLiveToken(env.ctx, b.token, { userId: adminId, sidHash: liveSidHash(adm.cookies.ff_sid!), ip: IP1 });
+    expect(beat.ok && beat.expiresAt).toBeGreaterThan(b.expiresAt + 2 * 3_600_000 - 60_000);
+    expect((await authzRec(b.token)).statusCode).toBe(200);
+  });
+
+  it('growing playlist is no-store: the authz says growing while it records; the cap follows its end', async () => {
+    const r = await rec({ profile_id: adminProfile, user_id: adminId, state: 'recording', start_at: new Date(Date.now() - 600_000), end_at: new Date(Date.now() + 1_800_000), duration_s: 600 });
+    const b = (await play(r.id)).json();
+    expect(b.growing).toBe(true);
+    expect(b.expiresAt).toBeGreaterThan(Date.now() + 1_800_000 + 300_000 + 3_500_000);
+    expect(b.expiresAt).toBeLessThan(Date.now() + 1_800_000 + 300_000 + 3_700_000);
+    expect((await authzRec(b.token)).json()).toEqual({ dir: r.dir, growing: true, maxAgeS: 2 });
+    // the beat renews it like a live token
+    expect((await beatLiveToken(env.ctx, b.token, { userId: adminId, sidHash: liveSidHash(adm.cookies.ff_sid!), ip: IP1 })).ok).toBe(true);
+  });
+
+  it('rec token is revoked when the recording is deleted (410)', async () => {
+    const r = await rec();
+    const { token } = await annaRec(r.id);
+    expect((await resolveRecToken(env.ctx, token, IP1)).status).toBe(200);
+    expect(await deleteRecording(env.ctx, r.id, 'owner')).toBe('deleted');
+    expect(await resolveRecToken(env.ctx, token, IP1)).toEqual({ status: 410 });
+    expect((await authzRec(token)).json()).toEqual({ error: 'gone' });
+  });
+
+  it('visibility change to private revokes other profiles\' tokens', async () => {
+    const r = await rec({ visibility: 'everyone' });
+    const theirs = (await play(r.id)).json().token as string; // the admin's profile sees it while it is shared with everyone
+    const own = (await annaRec(r.id)).token;
+    expect((await authzRec(theirs)).statusCode).toBe(200);
+    await setVisibility(env.ctx, { userId: ANNA, profileId: ANNA, admin: false }, r.id, 'private');
+    expect((await authzRec(theirs)).statusCode).toBe(410);
+    expect((await resolveRecToken(env.ctx, own, IP1)).status).toBe(200);
+    // an admin's channel stop never ends a recording's playback
+    await revokeChannelTokens(env.ctx, nord);
+    expect((await resolveRecToken(env.ctx, own, IP1)).status).toBe(200);
+  });
+
+  it('B-I4: a wider share revokes nothing; a narrower one only the tokens of profiles that lose access; the next request of a lost one is refused anyway', async () => {
+    const r = await rec({ visibility: 'account' });
+    // Anna's second profile (same account) and the admin's profile (another account) watch it while it is shared with everyone
+    const ANNA2 = '0d000000-0000-4000-a000-0000000000a2';
+    await env.pool.query(`insert into profiles(id, user_id, name, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values ($1, $2, 'Zweit', $3, 'anna-zweit', $4) on conflict do nothing`,
+      [ANNA2, ANNA, '9'.repeat(32), encrypt(key, 'pw')]);
+    const sameAccount = (await mintRecToken(env.ctx, { userId: ANNA, profileId: ANNA2, deviceId: 'dev-anna-2', sidHash: SID_B, recordingId: r.id, channelId: nord, channelName: 'Nordlicht TV', via: 'local', remote: false }, 7200)).token;
+    await setVisibility(env.ctx, { userId: ANNA, profileId: ANNA, admin: false }, r.id, 'everyone'); // widening
+    const other = (await play(r.id)).json().token as string;
+    expect((await resolveRecToken(env.ctx, sameAccount, IP2)).status).toBe(200);
+    expect((await authzRec(other)).statusCode).toBe(200);
+    await setVisibility(env.ctx, { userId: ANNA, profileId: ANNA, admin: false }, r.id, 'everyone'); // no change
+    await setVisibility(env.ctx, { userId: ANNA, profileId: ANNA, admin: false }, r.id, 'account'); // narrowing: the other account loses it
+    expect((await authzRec(other)).statusCode).toBe(410);
+    expect((await resolveRecToken(env.ctx, sameAccount, IP2)).status).toBe(200);
+  });
+
+  it('B-I5: play applies the watch gates: Live TV installed, the stream limit, the per-address cap, the profile re-check', async () => {
+    const r = await rec({ profile_id: adminProfile, user_id: adminId });
+    const { livetvInstalled } = await import('../src/livetv/detect.js');
+    vi.mocked(livetvInstalled).mockReturnValueOnce(false);
+    expect((await play(r.id)).json()).toEqual({ error: 'livetv_off' });
+    // the account's stream limit, as for a watch: another device plays something already
+    await env.pool.query('insert into user_limits(user_id, max_streams) values ($1, 1) on conflict (user_id) do update set max_streams = 1', [adminId]);
+    invalidateRights();
+    await env.kv.set(`play:${adminId}:ps-other-device`, JSON.stringify({ userId: adminId }), 60);
+    try {
+      expect((await play(r.id)).json()).toEqual({ error: 'max_streams', max: 1 });
+    } finally {
+      await env.pool.query('delete from user_limits where user_id = $1', [adminId]);
+      await env.kv.del(`play:${adminId}:ps-other-device`);
+      invalidateRights();
+    }
+    expect((await play(r.id)).statusCode).toBe(200);
+  });
+
+  it('N8: play has the watch route\'s per-address cap and takes its token back when the profile changed during the mint', async () => {
+    const r = await rec({ profile_id: adminProfile, user_id: adminId });
+    const nat = '198.51.100.7';
+    const fromNat = () => env.app.inject({ method: 'POST', url: `/api/livetv/recordings/${r.id}/play`, cookies: adm.cookies, headers: { 'x-csrf-token': adm.csrf }, remoteAddress: nat, payload: {} });
+    await env.kv.set(`ltv:watchip:${nat}`, String(WATCH_IP_MAX), 60);
+    try {
+      const capped = await fromNat();
+      expect([capped.statusCode, capped.json()]).toEqual([429, { error: 'rate_limited' }]);
+    } finally {
+      for (const k of await env.kv.keys('ltv:watchip:')) await env.kv.del(k);
+    }
+    // a profile switch of this session lands while the token is minted: the token is taken back, the answer is 409
+    const sessKey = `sess:${adm.cookies.ff_sid}`;
+    const other = randomUUID(); // the session now names another profile (the check compares ids only)
+    const set = env.kv.set.bind(env.kv);
+    let switched = false;
+    const spy = vi.spyOn(env.kv, 'set').mockImplementation(async (k, v, ttl) => {
+      await set(k, v, ttl);
+      if (!switched && /^ltv:[A-Za-z0-9_-]{20,}$/.test(k)) {
+        switched = true;
+        await set(sessKey, JSON.stringify({ ...JSON.parse((await env.kv.get(sessKey))!), profileId: other }), 3600);
+      }
+    });
+    try {
+      const p = await play(r.id);
+      expect([p.statusCode, p.json()]).toEqual([409, { error: 'profile_changed' }]);
+    } finally { spy.mockRestore(); }
+    expect(switched).toBe(true);
+    expect((await env.kv.keys('ltv:')).filter((k) => /^ltv:[A-Za-z0-9_-]{20,}$/.test(k))).toEqual([]);
+  });
+
+  it('B-M6: an admin stop of a recording playback in Wiedergabe-Check sets no stop marker for the channel', async () => {
+    const r = await rec();
+    const { hash } = await annaRec(r.id);
+    const { adminStopViewKey, livePlaySessionId, stopLiveSession } = await import('../src/livetv/tokens.js');
+    expect(await stopLiveSession(env.ctx, ANNA, livePlaySessionId(hash))).toEqual({ channelId: nord });
+    expect(await env.kv.get(adminStopViewKey(ANNA, 'dev-anna-1'))).toBeNull();
+  });
+
+  it('B-I7: an expired rec token is 401; a lost right is 403 without a revoke; sign-out and device removal revoke rec tokens', async () => {
+    const r = await rec({ visibility: 'everyone' });
+    const { token } = await annaRec(r.id);
+    expect((await resolveRecToken(env.ctx, token, IP1)).status).toBe(200);
+    // the account loses liveTv: refused (403) on the next authz after the 2-s memo; the token itself stays, and comes back with the right
+    await env.pool.query(`insert into role_settings(role, perms) values ('family', '{"liveTv": false}') on conflict (role) do update set perms = role_settings.perms || excluded.perms`);
+    invalidateRoles(env.ctx);
+    invalidateRights();
+    skipClock(3_000);
+    try {
+      expect((await resolveRecToken(env.ctx, token, IP1)).status).toBe(403);
+    } finally {
+      await env.pool.query(`update role_settings set perms = perms - 'liveTv' where role = 'family'`);
+      invalidateRoles(env.ctx);
+      invalidateRights();
+    }
+    skipClock(3_000);
+    expect((await resolveRecToken(env.ctx, token, IP1)).status).toBe(200);
+    // expired: 401
+    skipClock(7200_000 + 1000);
+    expect((await resolveRecToken(env.ctx, token, IP1)).status).toBe(401);
+    vi.useRealTimers();
+    // sign-out (every session of the account) and the removal of one device revoke rec tokens like live ones
+    const a = (await annaRec(r.id)).token;
+    await revokeSessions(env.ctx, ANNA);
+    expect((await resolveRecToken(env.ctx, a, IP1)).status).toBe(410);
+    const b = (await annaRec(r.id)).token;
+    const { revokeLiveTokens } = await import('../src/livetv/tokens.js');
+    await revokeLiveTokens(env.ctx, ANNA, 'dev-anna-1');
+    expect((await resolveRecToken(env.ctx, b, IP1)).status).toBe(410);
+  });
+
+  it('B-I7: the token never appears in a backend log line of /internal/authz/rec', async () => {
+    const lines: string[] = [];
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((k) => vi.spyOn(console, k).mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); }));
+    const from = logLines.length;
+    try {
+      const r = await rec();
+      const { token } = await annaRec(r.id);
+      expect((await authzRec(token)).statusCode).toBe(200);
+      expect((await authzRec(token, IP2)).statusCode).toBe(403);
+      expect((await env.app.inject({ method: 'POST', url: '/internal/authz/rec', headers: { 'x-internal-secret': 'wrong' }, payload: { token, ip: IP1 } })).statusCode).toBe(403);
+      expect((await authzRec('A'.repeat(43))).json()).toEqual({ error: 'unauthenticated' });
+      const all = [...lines, ...logLines.slice(from)].join('\n');
+      expect(logLines.length).toBeGreaterThan(from);
+      expect(all).not.toContain(token.slice(0, 20));
+    } finally { spies.forEach((x) => x.mockRestore()); }
+  });
+
+  it('a recording that now lives only in the library is gone for its tokens', async () => {
+    const r = await rec();
+    const { token } = await annaRec(r.id);
+    await env.pool.query("update livetv_recordings set storage = 'library', library_path = 'Sternstunde Physik/Sternstunde Physik – 2026-11-15 20.15.ts' where id = $1", [r.id]);
+    expect(await resolveRecToken(env.ctx, token, IP1)).toEqual({ status: 410 });
   });
 });

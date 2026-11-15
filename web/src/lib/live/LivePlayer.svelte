@@ -22,12 +22,13 @@
   import { toast } from '#lib/ui/toast';
   import { watchFirstFrame } from '#lib/player/firstframe';
   import { BRIGHTNESS_MIN, levelFromDrag, registerTap, TAP_WINDOW, zoneOf, type TapState, type Zone } from '#lib/player/gestures';
-  import { liveHlsConfig, loadHls } from '#lib/player/hls';
+  import { LIVE_CATCHUP_RATE, LIVE_LATENCY, liveHlsConfig, loadHls, raiseLatency, type LiveLatency } from '#lib/player/hls';
   import { bindPlayerMediaSession } from '#lib/player/mediasession';
   import { CONTROLS_HIDE_MS, CONTROLS_HIDE_TV_MS, createTiming, deviceClass, sendTiming } from '#lib/player/timing';
   import { parseVolume } from '#lib/player/volume';
   import { beat, channels as fetchChannels, clock, nowLines, setLast, stopWatching, watch, type LiveChannel, type LiveList, type Prog, type RunningChannel, type WatchAnswer } from './api';
   import { BANNER_HOLD_MS, bannerVisible } from './banner';
+  import { createPauseIntent, latencyOf, shouldCatchUp } from './catchup';
   import { startsLocally } from './castGate';
   import { atEdge, behind, oldestPoint, restartTarget, RESUME_MARGIN_S, resumePoint } from './dvr';
   import { minute } from './fade';
@@ -36,6 +37,7 @@
   import FullSheet from './FullSheet.svelte';
   import InfoBanner from './InfoBanner.svelte';
   import InfoPanel from './InfoPanel.svelte';
+  import RecordSheet from './RecordSheet.svelte';
   import { hintKeys, noteKey, seenKeys, type SeenKey } from './keyhints';
   import { resolveLiveKey, type LiveKeyAction } from './livekeys';
   import { liveRemote, type LiveRemote } from './remotekeys';
@@ -57,7 +59,11 @@
    * ignored) and stopped (keepalive) on pagehide and close.
    *
    * While the viewer is deliberately behind the edge (paused, rewound, Von Anfang an) hls.js must not pull them back to live: its
-   * latency limit (liveMaxLatencyDurationCount 10) applies only at the edge and is lifted while they are behind.
+   * latency rules (liveHlsConfig: the 1.1× catch-up, back to the sync point beyond 30 s) apply only at the edge and are lifted while
+   * they are behind. Only the viewer's own pause (the button, a key, the OS media session: lock screen, headset, media keys) counts
+   * as deliberate (`pauseIntent`); a pause from outside (a hidden tab, audio focus lost) does not, and its resume goes on at live.
+   * Long playlist segments raise the sync point and the max latency for the session (raiseLatency, `lat`), never lower them. After a stall, any resume and the tab
+   * coming back the player catches up itself when further behind than the max latency (catchup.ts, H3).
    *
    * A pause is timed from the viewer's press, not from the media `pause` event (the browser fires that a task later); resuming
    * checks the pause against the buffer before it plays.
@@ -102,7 +108,6 @@
   const START_WATCHDOG_MS = 30_000;
   const NOTE_MS = 2000;
   const SWITCH_DELAY_MS = 400;
-  const EDGE_LATENCY_COUNT = 10;
   const SWIPE_PX = 40;
   const LIST_REFRESH_MS = 60_000;
   const AIR_OFF_GRACE_MS = 3000;
@@ -122,6 +127,11 @@
   let sheet: Refusal | null = null;
   let hls: Hls | null = null, HlsCtor: typeof Hls | null = null;
   let paused = false, pausedWall: number | null = null, ignorePause = false, deliberate = false;
+  /** whether the next media `pause` is the viewer's own press (H3); `ownPause`: the current pause is */
+  const pauseIntent = createPauseIntent();
+  let ownPause = false;
+  /** the live latency of the attached stream: raised for long segments, reset with each attach (review I3) */
+  let lat: LiveLatency = LIVE_LATENCY;
   let nowMs = Date.now(), switchingAt: number | null = nowMs, firstFrameAt: number | null = null, cardHoldUntil = 0;
   let controls = true, panelOpen = false, tv = false, coarse = false, motion = true, fullscreen = false;
   /** the Senderliste panel (listOpen) and its state; `okHeld`: the OK that opened it by a long press is still down (its repeats switch nothing) */
@@ -378,6 +388,7 @@
     if (!v) return;
     attachedGen = g;
     refused = 'none';
+    lat = LIVE_LATENCY;
     timing.begin(); timing.mode('live');
     const noFrame = () => { if (g === attachedGen) { dropStream(); onFail({ k: 'lost', attempt: 0 }); } };
     stopFrame = watchFirstFrame(v, START_WATCHDOG_MS, () => {
@@ -393,6 +404,9 @@
     if (H && H.isSupported()) {
       const h = new H(liveHlsConfig(dvrSeconds, tv));
       hls = h; HlsCtor = H;
+      // before hls.js picks the start position (LEVEL_LOADED): a media playlist's details come with MANIFEST_LOADED already
+      h.on(H.Events.MANIFEST_LOADED, (_e: unknown, d: { levels: Array<{ details?: { targetduration: number } }> }) => onTarget(d.levels[0]?.details?.targetduration, g));
+      h.on(H.Events.LEVEL_UPDATED, (_e: unknown, d: { details: { targetduration: number } }) => onTarget(d.details.targetduration, g));
       h.on(H.Events.MANIFEST_PARSED, () => { if (g === attachedGen) void playV(); });
       h.on(H.Events.LEVEL_UPDATED, () => { if (g === attachedGen) recheckRestart(); });
       h.on(H.Events.LEVEL_LOADED, () => { if (g === attachedGen && refused === 'resumed') refused = 'none'; });
@@ -509,13 +523,25 @@
       return v.play().catch(() => undefined);
     });
   }
-  /** the viewer pauses: the pause is timed from this press (the media `pause` event comes a task later) */
-  function pauseV(): void {
+  /**
+   * A pause: `own` = the viewer's press (the button, a key, the OS media session), timed from it (the media `pause` event comes a task later) and the start
+   * of being deliberately behind; without it it is a pause from outside, like the element's own (a hidden tab, audio focus).
+   */
+  function pauseV(own = false): void {
     const v = video;
     if (!v || v.paused) return;
     ignorePause = false;
     pausedWall = Date.now();
+    if (own) pauseIntent.own();
     v.pause();
+  }
+  /**
+   * playing again after a pause: the viewer's own (or any while they are deliberately behind) is checked against the buffer
+   * (resumeCheck); one from outside goes on at live (catchUp, once it plays)
+   */
+  function resumeFromPause(): void {
+    if (ownPause || deliberate) resumeCheck();
+    else pausedWall = null;
   }
   /**
    * A pause ends: checked against the buffer before playback goes on. Longer than the buffer: on from the oldest point with the
@@ -535,7 +561,7 @@
   function togglePlay(): void {
     const v = video;
     if (!v) return;
-    if (v.paused) { resumeCheck(); void playV(); } else pauseV();
+    if (v.paused) { resumeFromPause(); void playV(); } else pauseV(true);
   }
   function edge(): number {
     const s = hls ? hls.liveSyncPosition : null;
@@ -553,10 +579,38 @@
     if (o) return o.time;
     return src.video.seekable.length ? src.video.seekable.start(0) : 0;
   }
+  /** hls.js' latency rules hold at the edge only: deliberately behind, neither the speed-up nor the jump back to the sync point */
   function applyLatency(): void {
-    if (hls) (hls.config as unknown as { liveMaxLatencyDurationCount: number }).liveMaxLatencyDurationCount = deliberate ? Number.POSITIVE_INFINITY : EDGE_LATENCY_COUNT;
+    if (!hls) return;
+    const c = hls.config as unknown as { liveSyncDuration: number; liveMaxLatencyDuration: number; maxLiveSyncPlaybackRate: number };
+    c.liveSyncDuration = lat.syncS;
+    c.liveMaxLatencyDuration = deliberate ? Number.POSITIVE_INFINITY : lat.maxLatencyS;
+    c.maxLiveSyncPlaybackRate = deliberate ? 1 : LIVE_CATCHUP_RATE;
+    // hls.js leaves a sped-up rate as it is once the speed-up is off
+    const v = video;
+    if (deliberate && v && v.playbackRate > 1) v.playbackRate = 1;
   }
+  /**
+   * After a stall, a resume or the tab coming back (H3): further behind the newest end than the max latency, and not deliberately
+   * behind, the player goes back to the sync point. Nothing while a switch's watch is out, a cast or AirPlay plays, or before the
+   * first frame.
+   */
+  function catchUp(): void {
+    const v = video;
+    if (!v || !playingId || firstFrameAt === null || startPending || remoteOn || airMode) return;
+    const target = hls ? hls.targetLatency : null;
+    const latencyS = latencyOf(behind(v, edge()), target, hls ? lat.syncS : 0);
+    if (!shouldCatchUp({ latencyS, maxLatencyS: lat.maxLatencyS, deliberate, paused: v.paused })) return;
+    v.currentTime = edge();
+  }
+  function onVisibility(): void { if (!document.hidden) catchUp(); }
   function markDeliberate(): void { deliberate = true; applyLatency(); }
+  /** a playlist's target duration: long segments raise the latency for this stream (review I3) */
+  function onTarget(targetDuration: number | undefined, g: number): void {
+    if (g !== attachedGen || typeof targetDuration !== 'number') return;
+    const next = raiseLatency(lat, targetDuration);
+    if (next !== lat) { lat = next; applyLatency(); }
+  }
   function seekTo(sec: number): void {
     const v = video;
     if (!v || !playingId) return;
@@ -610,6 +664,8 @@
     }
     clearTimeout(stallT);
     if (ui.k === 'starting' || ui.k === 'buffering') ui = { k: 'playing' };
+    // after a stall or any resume: back to live when it fell too far behind (not when the viewer chose to be behind)
+    catchUp();
   }
   function onWaiting(): void {
     const v = video;
@@ -619,16 +675,19 @@
     stallT = setTimeout(() => { if (ui.k === 'buffering') { dropStream(); onFail({ k: 'lost', attempt: 0 }); } }, STALL_LOST_MS);
   }
   function onPause(): void {
-    if (ignorePause) { ignorePause = false; return; }
+    if (ignorePause) { ignorePause = false; pauseIntent.drop(); return; }
     paused = true;
     if (pausedWall === null) pausedWall = Date.now(); // a pause from outside the player (system, headset): timed from its event
-    markDeliberate();
+    // only the viewer's own pause is a choice to be behind; one from outside (OS media session, hidden tab, audio focus) is not
+    ownPause = pauseIntent.take();
+    if (ownPause) markDeliberate();
     wake();
   }
   function onPlay(): void {
     ignorePause = false;
     paused = false;
-    resumeCheck(); // a resume from outside the player (system, headset); the player's own resume has checked already
+    resumeFromPause(); // a resume from outside the player (system, headset); the player's own resume has checked already
+    ownPause = false;
     // a TV keeps hidden controls hidden: a switch's new stream starting must not bring them up (▲/▼ would move the focus instead of
     // zapping, spec §12.3); visible ones get their full time again
     if (!tv || controls) wake();
@@ -663,6 +722,22 @@
   }
   function onMouse(): void { if (!coarse) wake(); }
   function openPanel(): void { panelOpen = true; controls = true; clearTimeout(hideT); }
+  // ---- the programme's detail sheet over the info panel (Phase 3 Task 7): *Aufnehmen* on Jetzt / Danach ----
+  let recordFor: Prog | null = null;
+  let recordFrom: HTMLElement | null = null;
+  let recKey = 0;
+  $: canRecord = $perms.liveRecord && !$kidsMode;
+  function openRecord(p: Prog): void { recordFrom = document.activeElement as HTMLElement | null; recordFor = p; }
+  function closeRecord(): void {
+    recordFor = null;
+    const back = recordFrom;
+    recordFrom = null;
+    void tick().then(() => { if (back?.isConnected) back.focus(); });
+  }
+  function recordWatch(id: string): void {
+    recordFor = null; recordFrom = null; panelOpen = false;
+    if (id !== curId) pickChannel(id); else wake();
+  }
   function closePanel(): void { panelOpen = false; wake(); void tick().then(() => infoBtn?.focus()); }
 
   // ---- the Senderliste panel (spec §12.2, ruling 51, 59) ----
@@ -780,6 +855,8 @@
     const s = noteKey(key);
     if (s.size !== seen.size) seen = s;
     const back = e.key === 'Escape' || (tv && isBackKey(e));
+    // the programme's detail sheet: Back closes it (focus back to its button on the info panel); its own keys stay with it
+    if (recordFor) { if (back) { e.preventDefault(); e.stopImmediatePropagation(); closeRecord(); } return; }
     // the Play on sheet: Back closes it (focus back to its button); its own keys stay with it
     if (playOnOpen) { if (back) { e.preventDefault(); e.stopImmediatePropagation(); closePlayOn(); } return; }
     // the remote screen of a live cast: Back leaves the player, every other key belongs to its buttons
@@ -1021,7 +1098,8 @@
     return { title: c?.now?.title ?? c?.name ?? '', artist: c ? channelHead(c) : '', artworkIds: [] as string[] };
   }
   const msActions = {
-    play: () => { resumeCheck(); void playV(); }, pause: () => pauseV(), seekTo: (s: number) => seekTo(s), seekBy: (d: number) => seekBy(d),
+    // the OS media session (lock screen, headset, media keys) is the viewer's own command: a deliberate pause (review M7)
+    play: () => { resumeFromPause(); void playV(); }, pause: () => pauseV(true), seekTo: (s: number) => seekTo(s), seekBy: (d: number) => seekBy(d),
     next: () => switcher.press(1), prev: () => switcher.press(-1),
   };
   function replaceUrl(id: string): void {
@@ -1082,6 +1160,7 @@
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('pageshow', onPageShow);
     document.addEventListener('fullscreenchange', onFs);
+    document.addEventListener('visibilitychange', onVisibility);
     tickT = setInterval(onTick, 250);
     listT = setInterval(() => { if (!document.hidden) void loadList(); }, LIST_REFRESH_MS);
     if (video) session = bindPlayerMediaSession(video, msItem(cur), msActions);
@@ -1100,6 +1179,7 @@
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('pageshow', onPageShow);
       document.removeEventListener('fullscreenchange', onFs);
+      document.removeEventListener('visibilitychange', onVisibility);
       offCast();
       if (v0) { v0.removeEventListener('webkitplaybacktargetavailabilitychanged', onAirAvail); v0.removeEventListener('webkitcurrentplaybacktargetiswirelesschanged', onWireless); }
       airProbe?.remove();
@@ -1198,8 +1278,12 @@
   {#if tv}<p class="ctlhint" class:hide={!controls}>{hint}</p>{/if}
 
   {#if panelOpen}
-    <InfoPanel channel={cur} now={$minute} canRestart={restartAt !== null} last={prev} phone={phoneUi} {still} listButton={phoneUi}
-      on:close={closePanel} on:restart={() => { closePanel(); restart(); }} on:last={() => { panelOpen = false; jumpLast(); wake(); }} on:list={openList} />
+    <InfoPanel channel={cur} now={$minute} canRestart={restartAt !== null} last={prev} phone={phoneUi} {still} listButton={phoneUi} {canRecord} {recKey}
+      on:close={closePanel} on:restart={() => { closePanel(); restart(); }} on:last={() => { panelOpen = false; jumpLast(); wake(); }} on:list={openList} on:record={(e) => openRecord(e.detail)} />
+  {/if}
+  {#if recordFor && cur && canRecord}
+    <RecordSheet channel={cur} programme={recordFor} now={$minute} phone={phoneUi} {still}
+      on:close={closeRecord} on:changed={() => recKey++} on:watch={(e) => recordWatch(e.detail.channelId)} />
   {/if}
   {#if listOpen && pstate}
     <ChannelPanel state={pstate} groups={list?.groups ?? []} playingId={curId} now={$minute} phone={phoneUi} {still} {tv} trigger={listBtn ?? null}

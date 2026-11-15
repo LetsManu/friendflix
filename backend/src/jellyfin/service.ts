@@ -1129,7 +1129,8 @@ export class JellyfinService implements MediaServer {
       applyPolicy: async (id, p: IdentityPolicy) => {
         const t = p.template;
         let ids: string[] | null = null;
-        if (t.libraries !== 'all') {
+        if (t.libraries !== 'all' && !t.libraries.length) ids = []; // no library: nothing to look up
+        else if (t.libraries !== 'all') {
           const folders = await client.mediaFolders();
           const want = new Set(t.libraries.map((n) => n.toLowerCase()));
           ids = folders.filter((f) => want.has(f.Name.toLowerCase())).map((f) => f.Id);
@@ -1188,6 +1189,36 @@ export class JellyfinService implements MediaServer {
         return foundItem(i, (await client.libraryOf(want).catch(() => null)) ?? '');
       },
       ping: () => client.ping(),
+      // Live TV recordings in a library (spec §15.3): scan it, list the libraries with their folders, create one, find an item by its file
+      refreshLibrary: async (id) => {
+        if (!/^[0-9a-f-]{32,36}$/i.test(id)) return;
+        const res = await client.adminFetch(`/Items/${encodeURIComponent(id)}/Refresh?Recursive=true&MetadataRefreshMode=Default&ImageRefreshMode=Default`, { method: 'POST' });
+        await res.body?.cancel().catch(() => undefined);
+        if (!res.ok) throw new JellyfinError(res.status, `Jellyfin POST refresh -> ${res.status}`);
+      },
+      libraryFolders: async () => {
+        const list = await client.adminJson<Array<{ ItemId?: unknown; Name?: unknown; Locations?: unknown }>>('/Library/VirtualFolders');
+        return (Array.isArray(list) ? list : []).flatMap((f) => (typeof f.ItemId === 'string' && typeof f.Name === 'string'
+          ? [{ id: f.ItemId, name: f.Name.slice(0, 200), paths: Array.isArray(f.Locations) ? f.Locations.filter((x): x is string => typeof x === 'string').slice(0, 50) : [] }]
+          : []));
+      },
+      createLibrary: async (name, path, kind) => {
+        const q = new URLSearchParams({ name, collectionType: kind, paths: path, refreshLibrary: 'true' });
+        const res = await client.adminFetch(`/Library/VirtualFolders?${q}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ LibraryOptions: {} }) });
+        await res.body?.cancel().catch(() => undefined);
+        if (!res.ok) throw new JellyfinError(res.status, `Jellyfin POST VirtualFolders -> ${res.status}`);
+        const lib = (await client.adminJson<Array<{ ItemId?: unknown; Name?: unknown }>>('/Library/VirtualFolders')).find((f) => f.Name === name);
+        return { id: typeof lib?.ItemId === 'string' ? lib.ItemId : null };
+      },
+      itemByPath: async (libraryId, path) => {
+        // TODO(A-M14): Jellyfin's /Items has no path filter, so this lists at most 2 000 items of the library and an item beyond them
+        // is not found (the recording stays unlinked and is looked up again). A recordings library larger than that needs paging here.
+        if (!/^[0-9a-f-]{32,36}$/i.test(libraryId)) return null;
+        const q = new URLSearchParams({ ParentId: libraryId, Recursive: 'true', Fields: 'Path', IncludeItemTypes: 'Movie,Video,Episode', Limit: '2000' });
+        const r = await client.adminJson<{ Items?: Array<{ Id?: unknown; Path?: unknown }> }>(`/Items?${q}`);
+        const hit = (r.Items ?? []).find((i) => i.Path === path && typeof i.Id === 'string');
+        return hit ? nid(hit.Id as string) : null;
+      },
       encoderSettings: async () => encoderSettingsOf(await client.adminJson<Record<string, unknown>>('/System/Configuration/encoding')),
       /** sessions of other apps: FriendFlix' own devices ("ff-<id>") are tracked by the portal itself */
       externalSessions: async (): Promise<ExternalSession[]> => (await client.sessions())

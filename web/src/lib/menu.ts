@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { TKey } from '#lib/i18n';
+import { libraryFree } from '#lib/gate';
 
 /** Link groups of the account menu: used by the desktop dropdown and the /me page. Labels are i18n keys (render with $t). */
 export type MenuLink = [href: string, label: TKey, icon: string];
@@ -52,6 +53,14 @@ export function liveTabs<T extends [string, ...unknown[]]>(tabs: T[], entry: T, 
   if (!on || tabs.some((t) => t[0] === entry[0])) return tabs;
   const at = tabs.findIndex((t) => t[0] === '/browse/movies');
   return at < 0 ? [...tabs, entry] : [...tabs.slice(0, at + 1), entry, ...tabs.slice(at + 1)];
+}
+
+/**
+ * `tabs` for a person with (`library`) or without the Mediathek (roles redesign §6): without it only the entries that need no
+ * library stay (the Live entry; search goes too, it searches the library). With it the very same array.
+ */
+export function libraryTabs<T extends [string, ...unknown[]]>(tabs: T[], library: boolean): T[] {
+  return library ? tabs : tabs.filter((t) => libraryFree(t[0]));
 }
 
 /**

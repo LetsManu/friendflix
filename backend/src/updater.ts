@@ -3,7 +3,7 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { audit } from './audit.js';
 import type { Ctx } from './ctx.js';
-import { portainerMode, redeployViaPortainer, updateInfo, type UpdateInfo } from './updates.js';
+import { portainerMode, portainerSetup, redeployViaPortainer, updateInfo, type UpdateInfo } from './updates.js';
 
 /**
  * Client of the updater container (updater/, on by default since 2.0, off with compose.no-updater.yaml; docs/security.md "Updater"). The backend never
@@ -173,7 +173,9 @@ const PENDING = 'updater:pending:';
  * recreate the services without Portainer's variables). Plain compose installs without Portainer keep the updater as before.
  */
 function portainerStack(ctx: Ctx, s: UpdaterStatus): boolean {
-  return s.stack === 'foreign' || (portainerMode(ctx) !== null && s.stack !== 'own');
+  // Portainer set up only in part (some PORTAINER_* API setting) counts too: the admin is setting up the Portainer way, and an
+  // updater that cannot tell the stack (one from before the label check) would only fail with compose_config on it
+  return s.stack === 'foreign' || (s.stack !== 'own' && (portainerMode(ctx) !== null || portainerSetup(ctx).missing.length > 0));
 }
 
 export async function startJob(ctx: Ctx, action: UpdateJobAction, actor: string | null): Promise<StartResult> {
@@ -183,7 +185,10 @@ export async function startJob(ctx: Ctx, action: UpdateJobAction, actor: string 
   if ('status' in pre && portainerStack(ctx, pre.status)) {
     const mode = action === 'update' ? portainerMode(ctx) : null;
     if (!mode) return { ok: false, status: 409, error: 'foreign_stack' };
-    const r = await redeployViaPortainer(ctx, actor, mode);
+    const r = await redeployViaPortainer(ctx, actor, mode, undefined, { updater: pre.status.services.length > 0 });
+    if (!r.ok && r.error === 'busy') return { ok: false, status: 409, error: 'busy' };
+    // the redeploy could not be recorded (store busy or down): nothing was sent, try again in a moment
+    if (!r.ok && r.error === 'unavailable') return { ok: false, status: 503, error: 'busy' };
     if (!r.ok) return { ok: false, status: 502, error: r.error, portainer: { status: r.status, step: r.step, ...(r.code ? { code: r.code } : {}) } };
     return { ok: true, portainer: mode };
   }
@@ -293,7 +298,8 @@ export async function autoUpdateTick(ctx: Ctx, now = new Date(), log?: { warn(o:
     if (!target) return 'current';
     const doneKey = `updater:portainer:${target}`;
     if (await ctx.kv.get(doneKey)) return 'done';
-    const r = await redeployViaPortainer(ctx, null, mode, info);
+    const r = await redeployViaPortainer(ctx, null, mode, info, { updater: v.status.services.length > 0 });
+    if (!r.ok && (r.error === 'busy' || r.error === 'unavailable')) return 'busy';
     if (!r.ok) {
       log?.warn({ mode, step: r.step, status: r.status, ...(r.code ? { code: r.code } : {}) }, 'automatic update through Portainer failed');
       return 'failed';

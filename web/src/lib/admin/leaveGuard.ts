@@ -10,6 +10,7 @@
  * Call it during component init (it registers beforeNavigate/afterNavigate).
  *
  *   leaveGuard(() => changes > 0, () => ({ title: …, body: …, danger: true, confirmLabel: … }));
+ *   leaveGuard((nav) => leavesRoute(nav) && dirty, …)   // asks only when the page itself is left (tab switches pass)
  */
 import { afterNavigate, beforeNavigate, goto, type BeforeNavigate } from '$app/navigation';
 import { confirm, type ConfirmOptions } from '#lib/ui/confirm';
@@ -24,12 +25,17 @@ export function rerunOf(nav: Pick<BeforeNavigate, 'type' | 'from' | 'to' | 'will
   return { url: nav.to.url, replace: nav.from !== null && nav.from.url.pathname === nav.to.url.pathname };
 }
 
-export function leaveGuard(dirty: () => boolean, ask: () => ConfirmOptions): void {
+/** a navigation to another page of the app (not a same-page change such as `?tab=`, not an unload, which the browser handles) */
+export const leavesRoute = (nav: Pick<BeforeNavigate, 'from' | 'to' | 'willUnload'>): boolean =>
+  !nav.willUnload && !!nav.to && nav.to.url.pathname !== nav.from?.url.pathname;
+
+/** `dirty` decides per navigation whether to ask (it gets the navigation, e.g. for `leavesRoute`) */
+export function leaveGuard(dirty: (nav: BeforeNavigate) => boolean, ask: () => ConfirmOptions): void {
   let leaving = false;
   // a same-route navigation keeps the page: the guard watches again once it has landed
   afterNavigate(() => { leaving = false; });
   beforeNavigate((nav) => {
-    if (leaving || !dirty()) return;
+    if (leaving || !dirty(nav)) return;
     nav.cancel(); // unload: the browser asks itself
     const again = rerunOf(nav);
     if (!again) return;
