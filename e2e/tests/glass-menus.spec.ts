@@ -135,7 +135,16 @@ async function expectGrows(menu: Locator, trigger: Locator) {
   // it ends in its place, next to its trigger, and untransformed
   expect(await css(menu, 'transform')).toBe('none');
   const r = (await menu.boundingBox())!, t = (await trigger.boundingBox())!;
-  expect(r.x < t.x + t.width + 400 && r.x + r.width > t.x - 400).toBe(true);
+  // its nearest edge sits within 16 px of the button, on both axes (a gap, or 0 where they overlap)
+  const gapY = Math.max(0, r.y - (t.y + t.height), t.y - (r.y + r.height));
+  const gapX = Math.max(0, r.x - (t.x + t.width), t.x - (r.x + r.width));
+  expect(gapY, `menu ${JSON.stringify(r)} vs button ${JSON.stringify(t)}`).toBeLessThanOrEqual(16);
+  expect(gapX, `menu ${JSON.stringify(r)} vs button ${JSON.stringify(t)}`).toBeLessThanOrEqual(16);
+  // and it slid out of the button's side: a menu below its button starts 8 px higher (y -8), one above it 8 px lower
+  const first = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(a.frames[0]!.transform);
+  expect(first, a.frames[0]!.transform).not.toBeNull();
+  const below = r.y >= t.y + t.height / 2;
+  expect(Number(first![2])).toBe(below ? -8 : 8);
 }
 
 test.describe('glass menus', () => {
