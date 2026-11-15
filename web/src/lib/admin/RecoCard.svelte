@@ -11,6 +11,7 @@
   import { api } from '#lib/api';
   import { fmtDateTime, fmtNumber, locale, t } from '#lib/i18n';
   import Skeleton from '#lib/ui/Skeleton.svelte';
+  import { settingHref } from './syscheck';
 
   interface EngineStats { impressions: number; clicks: number; plays: number; dismisses: number; ctr: number | null; playRate: number | null }
   /** locked: RECO_ENGINE comes from the environment (older backends send no flag: treated as not locked) */
@@ -19,8 +20,8 @@
   onMount(() => { api<RecoStats>('/api/admin/reco').then((s) => (stats = s), () => (failed = true)); });
   $: pct = (v: number | null) => (v === null ? $t('reco.admin.empty') : new Intl.NumberFormat($locale, { style: 'percent', maximumFractionDigits: 1 }).format(v));
   const ENGINES = ['v1', 'v2'] as const;
-  /** the settings group of the engine (Admin → Settings scrolls to it) */
-  const SETTINGS_HREF = '/admin/settings#settings-recommendations';
+  /** the engine's setting (Admin → Einstellungen opens its tab and highlights it) */
+  const SETTINGS_HREF = settingHref('RECO_ENGINE');
 </script>
 
 <section class="card panel" aria-labelledby="dash-reco" data-testid="reco-card">

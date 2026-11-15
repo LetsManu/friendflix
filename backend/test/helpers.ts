@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import pg from 'pg';
+import { vi } from 'vitest';
 import { buildApp, type Extra } from '../src/app.js';
 import type { Config } from '../src/config.js';
 import { createLiveCtx, type Ctx } from '../src/ctx.js';
@@ -167,12 +168,51 @@ export async function testSettings(pool: pg.Pool, c: Config = cfg, extraEnv: Nod
   return store;
 }
 
+/** queries of a pool that are on their way to Postgres (real I/O a fake clock cannot see) */
+const dbInflight = new WeakMap<pg.Pool, { n: number }>();
+function trackDb(pool: pg.Pool): void {
+  const st = { n: 0 };
+  dbInflight.set(pool, st);
+  const query = pool.query.bind(pool) as (...a: unknown[]) => unknown;
+  (pool as unknown as { query: (...a: unknown[]) => unknown }).query = (...a: unknown[]) => {
+    const r = query(...a);
+    if (!(r instanceof Promise)) return r;
+    st.n++;
+    return r.finally(() => { st.n--; });
+  };
+}
+
+/**
+ * Lets the real I/O of the code under test finish before the next turn of a fake clock: `turns` setImmediate turns in a row with no
+ * database query in flight (or `stop()` true). A fake clock that advances while a query is still on its way makes every timeout, TTL
+ * and deadline of the code under test lapse in a few real milliseconds of a slow runner, though it would take seconds in real life.
+ */
+export async function settleIo(pool: pg.Pool, turns = 25, stop: () => boolean = () => false): Promise<void> {
+  const st = dbInflight.get(pool);
+  for (let quiet = 0; quiet < turns && !stop();) {
+    await new Promise((r) => setImmediate(r));
+    quiet = st && st.n > 0 ? 0 : quiet + 1;
+  }
+}
+
+/** drives a promise that waits on faked timers: `stepMs` steps of the fake clock, the real I/O settled after each (settleIo) */
+export async function driveClock<T>(pool: pg.Pool, p: Promise<T>, stepMs: number, max: number, turns = 25): Promise<T> {
+  let done = false;
+  void p.then(() => { done = true; }, () => { done = true; });
+  for (let i = 0; i < max && !done; i++) {
+    await vi.advanceTimersByTimeAsync(stepMs);
+    await settleIo(pool, turns, () => done);
+  }
+  return p;
+}
+
 /**
  * A test app over a fresh database. Setup counts as complete unless `setupComplete: false` (the setup gate's own tests): most tests
  * exercise the running app, and a fresh database is otherwise in setup mode (spec Part E).
  */
 export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extra & { ctxPatch?: (c: Ctx) => void; seerr?: Record<string, Handler>; settingsEnv?: NodeJS.ProcessEnv; setupComplete?: boolean; server?: 'plex'; plexFake?: PlexFake; plexFetch?: (fake: PlexFake) => typeof fetch } = {}): Promise<TestEnv> { // server, plexFake, plexFetch
   const pool = await resetDb();
+  trackDb(pool);
   if (extra.setupComplete !== false) await updateMeta(pool, { setupCompletedAt: new Date() });
   const kv = new MemoryKV();
   const jfCalls: Call[] = [];

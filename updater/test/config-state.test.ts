@@ -19,6 +19,12 @@ describe('updater config', () => {
     expect(c.secret).toBe(SECRET);
   });
 
+  it('HOSTNAME (the own container, for telling a Portainer stack from its labels) only as a plain name', () => {
+    expect(loadConfig({ INTERNAL_SECRET: SECRET, HOSTNAME: 'a1b2c3d4e5f6' }).self).toBe('a1b2c3d4e5f6');
+    expect(loadConfig({ INTERNAL_SECRET: SECRET, HOSTNAME: '--format x' }).self).toBeUndefined();
+    expect(loadConfig({ INTERNAL_SECRET: SECRET }).self).toBeUndefined();
+  });
+
   it('an empty UPDATER_COMPOSE_FILES (compose passes "") means automatic', () => {
     expect(loadConfig({ INTERNAL_SECRET: SECRET, UPDATER_COMPOSE_FILES: '' })).toMatchObject({ composeFiles: ['compose.prod.yaml'], composeFilesAuto: true });
     expect(loadConfig({ INTERNAL_SECRET: SECRET, UPDATER_COMPOSE_FILES: ' ' })).toMatchObject({ composeFiles: ['compose.prod.yaml'], composeFilesAuto: true });

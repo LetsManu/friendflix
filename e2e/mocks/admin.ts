@@ -74,9 +74,8 @@ export interface AdminState {
   leaving: LeavingRow[];
   /** optional TMDB/OMDb keys (/api/admin/sources); the real API never returns more than last4 */
   sources: SourceRow[];
-  /** Block 22: health snapshot (/api/admin/health); `healthRefreshed` replaces it on ?refresh=1 */
+  /** Block 22: health snapshot (/api/admin/health) */
   health: Record<string, any>;
-  healthRefreshed: Record<string, any> | null;
   /** query strings of /api/admin/health calls ('' or '?refresh=1') */
   healthCalls: string[];
   /** Block 23 phase 3: /api/admin/health/login (backend flowCheck.ts LoginCheck) */
@@ -600,7 +599,6 @@ export function adminState(): AdminState {
     leaving: [leavingRow('00000000000000000000000000000001', 1, 'Lizenz endet'), leavingRow('00000000000000000000000000000002', 5, null), leavingRow('00000000000000000000000000000003', 20, 'Rechte laufen aus')],
     sources: [{ name: 'tmdb', set: false, last4: null, from: null, invalid: false }, { name: 'omdb', set: true, last4: 'k3y9', from: 'db', invalid: false, usedToday: 12, budget: 900 }],
     health: healthOk(),
-    healthRefreshed: null,
     healthCalls: [],
     loginCheck: loginCheckOk(),
     repairs: [],
@@ -1840,7 +1838,6 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   // ---- operations ----
   if (p === '/api/admin/health' && m === 'GET') {
     st.healthCalls.push(sp.get('refresh') === '1' ? '?refresh=1' : '');
-    if (sp.get('refresh') === '1' && st.healthRefreshed) { st.health = st.healthRefreshed; st.healthRefreshed = null; }
     return J(st.health);
   }
   if (p === '/api/admin/health/login' && m === 'GET') return J(st.loginCheck);

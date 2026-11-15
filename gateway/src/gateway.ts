@@ -145,6 +145,11 @@ const CAST_CORS: Record<string, string> = {
  */
 export const LIVE_ROUTE = /^\/media\/l\/([A-Za-z0-9_-]{43})\/(index\.m3u8|init-[0-9]{1,10}\.mp4|(?:0|[1-9][0-9]{0,9})\.(?:ts|m4s))$/;
 const LIVE_PREFIX = '/media/l/';
+/** the Systemcheck's buffering probe (handleDrip) */
+const DRIP_PATH = '/media/probe/drip';
+const DRIP_CHUNK = Buffer.alloc(1024);
+const DRIP_PAUSE_MS = 1500;
+const DRIP_MAX = 4;
 /** a URI inside a live playlist: a bare file name of the route (resolved next to the playlist, so it stays under /media/l/<token>/) */
 const LIVE_FILE = /^(?:init-[0-9]{1,10}\.mp4|(?:0|[1-9][0-9]{0,9})\.(?:ts|m4s))$/;
 /** livetv's stream key (livetv/src/routes/files.ts STREAM_KEY_RE); anything else from the backend is refused, never put into a path */
@@ -587,6 +592,26 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     return p;
   }
 
+  /**
+   * The Systemcheck's buffering probe (Admin → Status, browser line proxy.buffering): 1 KiB, a pause, 1 KiB. Through a proxy that
+   * buffers /media/ the browser sees the first bytes only at the end. No session, no upstream call, nothing of the request in the answer,
+   * no log line; at most DRIP_MAX at once (a slot is held for the pause only).
+   */
+  let drips = 0;
+  function handleDrip(req: IncomingMessage, res: ServerResponse) {
+    if (req.method !== 'GET') return end(res, 405, 'method not allowed');
+    if (drips >= DRIP_MAX) return end(res, 429, 'busy', 'text/plain', { 'cache-control': 'no-store', 'retry-after': '5' });
+    drips++;
+    // the pause timer is set after the first chunk; `release` (close or end) clears it whichever comes first
+    const pause: { timer?: ReturnType<typeof setTimeout> } = {};
+    let released = false;
+    const release = () => { if (released) return; released = true; drips--; clearTimeout(pause.timer); };
+    res.on('close', release);
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': String(2 * DRIP_CHUNK.length), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+    res.write(DRIP_CHUNK);
+    pause.timer = setTimeout(() => { res.end(DRIP_CHUNK); release(); }, DRIP_PAUSE_MS);
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://x');
     if (url.pathname === '/health') return end(res, 200, '{"status":"ok"}', 'application/json');
@@ -597,6 +622,8 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     // live TV does not need the media server: before the "no media server yet" answer. Dispatched on the raw path too, so a
     // `/media/l/<t>/../x` that URL normalisation would turn into another route is refused here.
     if (url.pathname.startsWith(LIVE_PREFIX) || (req.url ?? '').startsWith(LIVE_PREFIX)) return handleLive(req, res);
+    // the Systemcheck's buffering probe needs no media server either
+    if (url.pathname === DRIP_PATH) return handleDrip(req, res);
     // no media server yet (setup not done): 503 before any backend call; /health stays 200 so the container is not restarted
     if (url.pathname.startsWith('/media/') && !upstreamBase()) {
       const cast = url.pathname.startsWith(CAST_PREFIX); // a receiver must be able to read the 503 (CORS), counted as a cast request

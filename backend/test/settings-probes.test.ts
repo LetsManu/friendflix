@@ -128,6 +128,10 @@ describe('settings probes', () => {
     expect(await runProbe(w.ctx, 'portainer', { ...api, PORTAINER_API_KEY: 'wrong' })).toEqual({ ok: false, code: 'unauthorized' });
     expect(await runProbe(w.ctx, 'portainer', { ...api, PORTAINER_STACK_ID: '8' })).toEqual({ ok: false, code: 'invalid', detail: 'not_found' });
     expect(await runProbe(w.ctx, 'portainer', { ...api, PORTAINER_STACK_ID: undefined })).toEqual({ ok: false, code: 'invalid', detail: 'incomplete' });
+    // a redirect (e.g. http -> https on another host) is reported, never followed: the key only goes to the host entered
+    const moved = world({ 'GET /api/stacks/7': (_u, init) => { expect(init.redirect).toBe('manual'); return { status: 301 }; } });
+    expect(await runProbe(moved.ctx, 'portainer', api)).toEqual({ ok: false, code: 'invalid', detail: 'redirect' });
+    expect(moved.calls.map((c) => c.host)).toEqual(['portainer.example.com']);
     const calls = w.calls.length;
     expect(await runProbe(w.ctx, 'portainer', withCfg({ PORTAINER_WEBHOOK_URL: 'https://portainer.example.com/api/stacks/webhooks/abc' }))).toEqual({ ok: true, code: 'ok' });
     expect(await runProbe(w.ctx, 'portainer', withCfg({ PORTAINER_WEBHOOK_URL: 'ftp://x' }))).toEqual({ ok: false, code: 'invalid', detail: 'invalid_url' });

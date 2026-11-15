@@ -15,7 +15,7 @@ test.describe('admin: settings (Plex)', () => {
   test.beforeEach(({ api }) => { api.asAdmin = true; api.serverKind = 'plex'; api.settings = settingsState('plex'); });
 
   test('the media group shows the Plex address and token only; the token canary never reaches the page', async ({ page }) => {
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     const media = card(page, 'Mediaserver');
     await expect(setting(page, 'Plex-Adresse').getByRole('textbox')).toHaveValue('http://plex.example.com:32400');
     const token = setting(page, 'Plex-Token');
@@ -31,7 +31,7 @@ test.describe('admin: settings (Plex)', () => {
 
   test('Save checks first: a token that is not the owner\'s is saved and the note is shown', async ({ page, api }) => {
     api.settings.testResult = { ok: true, code: 'warning', detail: 'not_admin' };
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     const media = card(page, 'Mediaserver');
     await setting(page, 'Plex-Token').getByRole('button', { name: 'Plex-Token ersetzen' }).click();
     await setting(page, 'Plex-Token').getByLabel('Neuer Wert').fill(TOKEN);
@@ -43,7 +43,7 @@ test.describe('admin: settings (Plex)', () => {
   });
 
   test('an owner token is saved without a note; a refused token is not saved', async ({ page, api }) => {
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     const media = card(page, 'Mediaserver');
     await setting(page, 'Plex-Adresse').getByRole('textbox').fill('http://plex.example.com:32400/');
     await media.getByRole('button', { name: 'Speichern' }).click();
@@ -57,7 +57,7 @@ test.describe('admin: settings (Plex)', () => {
 
   test('an address with ?X-Plex-Token=… is refused with its own hint on Test and Save; nothing is saved, the token never comes back', async ({ page, api }) => {
     const CANARY = 'url-token-canary-placeholder';
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     const media = card(page, 'Mediaserver');
     const address = setting(page, 'Plex-Adresse');
     await address.getByRole('textbox').fill(`http://plex.example.com:32400/?X-Plex-Token=${CANARY}`);
@@ -75,7 +75,7 @@ test.describe('admin: settings (Plex)', () => {
 
   test('the Test button shows the same note', async ({ page, api }) => {
     api.settings.testResult = { ok: true, code: 'warning', detail: 'not_admin' };
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     const media = card(page, 'Mediaserver');
     await media.getByRole('button', { name: 'Testen' }).click();
     await expect(media.getByRole('status')).toContainText('nicht dem Besitzer des Plex-Servers');
@@ -93,7 +93,7 @@ test.describe('admin: settings (Plex), the pre-check fails', () => {
   ] as const) {
     test(`${name} of the pre-check: the token is still saved, no note`, async ({ page, api }) => {
       await setup(page, api as never);
-      await page.goto('/admin/settings');
+      await page.goto('/admin/settings?tab=media');
       const media = card(page, 'Mediaserver');
       await setting(page, 'Plex-Token').getByRole('button', { name: 'Plex-Token ersetzen' }).click();
       await setting(page, 'Plex-Token').getByLabel('Neuer Wert').fill(TOKEN);

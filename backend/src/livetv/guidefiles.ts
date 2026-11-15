@@ -21,6 +21,36 @@ import type { Ctx } from '../ctx.js';
  * Names are built from the source id (a lowercase uuid) and random tokens only, never from anything the admin sent.
  */
 export const GUIDE_FILE_MAX_BYTES = 300 * 1024 * 1024;
+/**
+ * The Systemcheck's upload-limit probe (Admin → Status): a PUT of a guide file to this id never reaches a source. The backend reads
+ * the body, counting at most PROBE_MAX_BYTES, keeps nothing and answers how many bytes arrived; it proves that the proxy lets a guide
+ * file through (its general `/api/` location allows 1 MB).
+ */
+export const PROBE_SOURCE_ID = '00000000-0000-0000-0000-000000000000';
+export const PROBE_MAX_BYTES = 4 * 1024 * 1024;
+/** a probe that sends nothing for this long is cut off */
+const PROBE_IDLE_MS = 10_000;
+
+/** Reads and discards a probe body: its length, or 'too_large' (more than `max`, reading stops), or 'broken' (it broke off or stalled). */
+export async function drainProbe(body: Readable, max = PROBE_MAX_BYTES, idleMs = PROBE_IDLE_MS): Promise<number | 'too_large' | 'broken'> {
+  let n = 0;
+  let timer: NodeJS.Timeout | undefined;
+  const arm = () => { clearTimeout(timer); timer = setTimeout(() => body.destroy(new Error('idle')), idleMs); timer.unref?.(); };
+  try {
+    arm();
+    for await (const chunk of body) {
+      n += (chunk as Buffer).length;
+      if (n > max) return 'too_large';
+      arm();
+    }
+    return n;
+  } catch {
+    return 'broken';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** an upload that sends nothing for this long is cut off (a stalled client must not hold the source's lock) */
 export const GUIDE_FILE_IDLE_MS = 60_000;
 /** what the card shows of the uploaded name; longer ones are cut */

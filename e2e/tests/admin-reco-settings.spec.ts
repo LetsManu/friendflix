@@ -12,7 +12,7 @@ test.describe('admin: recommendation settings', () => {
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
   test('the group explains the engines and the .env-only expert keys; switching to v2 saves and the card shows it', async ({ page, api }) => {
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     const g = group(page);
     await expect(g.getByText(/RECO_COEFFS.*RECO_W_\*.*\.env/)).toBeVisible();
     const engine = setting(page, 'Empfehlungs-Engine');
@@ -34,15 +34,18 @@ test.describe('admin: recommendation settings', () => {
     await expect(card.getByTestId('reco-engine')).toContainText('v2 (eigenes Modell) ist aktiv · in Admin → Einstellungen änderbar');
   });
 
-  test('"Engine ändern" on the admin card opens the group, scrolled into view', async ({ page }) => {
+  test('"Engine ändern" on the admin card opens the engine setting on Medien, in view and highlighted', async ({ page }) => {
     await page.goto('/admin');
     const card = page.getByTestId('reco-card');
     await expect(card.getByTestId('reco-engine')).toContainText('Shadow (v2 läuft nebenher) ist aktiv');
     await card.getByRole('link', { name: 'Engine ändern' }).click();
-    await expect(page).toHaveURL(/\/admin\/settings#settings-recommendations$/);
+    await expect(page).toHaveURL(/\/admin\/settings\?tab=media$/);
     const heading = page.getByRole('heading', { level: 2, name: 'Empfehlungen', exact: true });
     await expect(heading).toHaveAttribute('id', 'settings-recommendations');
-    await expect(heading).toBeInViewport();
+    const row = page.locator('#setting-RECO_ENGINE');
+    await expect(row).toBeInViewport();
+    await expect(row).toHaveAttribute('data-flash', 'static');
+    await expect(row.getByRole('combobox')).toBeFocused();
   });
 
   test('RECO_ENGINE from .env: the card says it is locked, the field is disabled', async ({ page, api }) => {
@@ -58,7 +61,7 @@ test.describe('admin: recommendation settings', () => {
   });
 
   test('the post-play screen can be switched off for everyone', async ({ page, api }) => {
-    await page.goto('/admin/settings');
+    await page.goto('/admin/settings?tab=media');
     const post = setting(page, 'Bildschirm nach dem Ende');
     await post.getByRole('switch').click();
     await group(page).getByRole('button', { name: 'Speichern' }).click();

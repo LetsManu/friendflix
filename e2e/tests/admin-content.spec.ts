@@ -425,8 +425,8 @@ test.describe('admin content pages (desktop)', () => {
     test('health and counters link to where they are handled', async ({ page }) => {
       await page.goto('/admin/status');
       await expect(page.getByRole('heading', { level: 1, name: 'Status' })).toBeVisible();
-      const health = page.getByRole('region', { name: 'Systemzustand' });
-      await expect(health.getByRole('link', { name: /Medienserver.*Läuft/ })).toBeVisible();
+      const sc = page.getByRole('region', { name: 'Systemcheck' });
+      await expect(sc.locator('li[data-id="media.server"] .pill.ok')).toHaveText('In Ordnung');
       const nums = page.getByRole('region', { name: 'Zahlen' });
       await expect(nums.getByRole('link', { name: /Vorschauen.*10 fehlgeschlagen/ })).toHaveAttribute('href', '/admin/previews');
       await expect(nums.getByRole('link', { name: /Geräte warten/ })).toHaveAttribute('href', '/admin/devices');

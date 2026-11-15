@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encrypt } from '../src/crypto.js';
 import { recordError, resetErrorLogForTests } from '../src/errorlog.js';
-import { buildSnapshot, getSnapshot, healthSettled, healthTick, issueFp, type DiskDeps, type HealthSnapshot } from '../src/health.js';
+import { buildSnapshot, forgetOidcProbe, getSnapshot, healthSettled, healthTick, issueFp, type DiskDeps, type HealthSnapshot } from '../src/health.js';
 import { INVALID_KEY, OMDB_COUNT_KEY, PAUSE_KEY, setSourceKey } from '../src/sources/keys.js';
 import { ADMIN, cfg, fakeHttp, makeEnv, type Call, type TestEnv } from './helpers.js';
 
@@ -207,12 +207,52 @@ describe('traffic lights', () => {
     expect(httpCalls.filter((c) => c.path === '/.well-known/openid-configuration')).toHaveLength(1);
     await buildSnapshot(env.ctx, deps());
     expect(httpCalls.filter((c) => c.path === '/.well-known/openid-configuration')).toHaveLength(1); // cached 5 min
-    await env.kv.del('health:oidc');
+    await forgetOidcProbe(env.ctx);
     oidc.issuer = 'https://evil.example.com/';
     expect(svc(await buildSnapshot(env.ctx, deps()), 'oidc')).toMatchObject({ level: 'err', reason: 'issuer_mismatch' });
-    await env.kv.del('health:oidc');
+    await forgetOidcProbe(env.ctx);
     oidc.status = 500;
     expect(svc(await buildSnapshot(env.ctx, deps()), 'oidc')).toMatchObject({ level: 'err', reason: 'down' });
+  });
+
+  it('the cached OIDC answer belongs to its issuer: a refresh asks again, another issuer is asked at once', async () => {
+    oidc.issuer = 'https://evil.example.com/';
+    expect(svc(await buildSnapshot(env.ctx, deps()), 'oidc')).toMatchObject({ level: 'err', reason: 'issuer_mismatch' });
+    // fixed in Authentik: a plain build still reads the cached answer, the refresh (Jetzt prüfen) asks the issuer
+    oidc.issuer = 'https://auth.example.com';
+    expect(svc(await buildSnapshot(env.ctx, deps()), 'oidc').level).toBe('err');
+    expect(svc(await getSnapshot(env.ctx, { refresh: true }, deps()), 'oidc').level).toBe('ok');
+    // and the refreshed answer is what the next plain build reads
+    expect(svc(await buildSnapshot(env.ctx, deps()), 'oidc').level).toBe('ok');
+    // another issuer has no cached answer: probed at once (here it does not answer as itself)
+    const calls = httpCalls.length;
+    env.ctx.cfg = { ...cfg, OIDC_ISSUER: 'https://auth2.example.com/' };
+    expect(svc(await buildSnapshot(env.ctx, deps()), 'oidc')).toMatchObject({ level: 'err', reason: 'issuer_mismatch' });
+    expect(httpCalls.length).toBeGreaterThan(calls);
+    expect((await env.kv.keys('health:oidc:')).length).toBe(2);
+    // the issuer never appears in the key
+    expect((await env.kv.keys('health:oidc:')).join(' ')).not.toMatch(/example/);
+  });
+
+  it('a refresh never takes the cached OIDC answer from a plain build that is still running', async () => {
+    oidc.issuer = 'https://evil.example.com/';
+    await buildSnapshot(env.ctx, deps());
+    oidc.issuer = 'https://auth.example.com';
+    const tick = healthTick(env.ctx, deps()); // the minute job's plain build is running
+    const fresh = getSnapshot(env.ctx, { refresh: true }, deps());
+    expect(svc(await fresh, 'oidc').level).toBe('ok');
+    await tick;
+    await healthSettled(env.ctx);
+    // the fresh build stored last
+    expect(svc((await getSnapshot(env.ctx, {}, deps())), 'oidc').level).toBe('ok');
+  });
+
+  it('saving an OIDC setting drops the cached OIDC answers', async () => {
+    oidc.issuer = 'https://evil.example.com/';
+    await buildSnapshot(env.ctx, deps());
+    expect(await env.kv.keys('health:oidc:')).toHaveLength(1);
+    await env.ctx.settings.save({ OIDC_CLIENT_ID: 'friendflix-2' }, null);
+    await expect.poll(async () => (await env.kv.keys('health:oidc:')).length).toBe(0);
   });
 
   it('request service down → warn (never err)', async () => {
