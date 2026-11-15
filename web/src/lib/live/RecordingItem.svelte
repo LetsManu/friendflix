@@ -13,8 +13,9 @@
    * *Geplant*: the time span, the *Konflikt* chip from the forecast and *Abbrechen*. The state chip, the progress line and the chip
    * slot are reserved, so arriving data moves nothing. 44 px targets; on a phone the actions wrap under the text.
    * A running recording of the owner also offers *Jetzt beenden* (DVR follow-ups): it ends now and stays, playable; *Löschen* still
-   * removes it. Its slot is there on every own item (hidden, out of the focus order and the accessibility tree while the recording does
-   * not run), so the actions never change width when a recording finishes.
+   * removes it. An item that ran while the list showed it (`reserveStop`) keeps the button's slot after it finished (hidden, out of the
+   * focus order and the accessibility tree), so its actions do not change width while you watch; items that were finished already
+   * have no slot at all.
    */
   export let rec: Recording;
   export let kind: 'done' | 'planned' = 'done';
@@ -27,6 +28,8 @@
   export let canRecord = true;
   /** *Behalten → in Bibliothek* is possible on this server (storage mode `both` with a library) */
   export let libraryExport = false;
+  /** it ran while the list showed it: *Jetzt beenden* keeps its (then hidden) slot after it finished */
+  export let reserveStop = false;
 
   const dispatch = createEventDispatcher<{ play: Recording; keep: Recording; share: { rec: Recording; visibility: Visibility }; delete: Recording; cancel: Recording; library: Recording; stop: Recording }>();
   let shareOpen = false;
@@ -78,9 +81,9 @@
         {#if exportable}<button type="button" class="ab" aria-busy={busy} on:click={() => dispatch('library', rec)}>{$t('live.mine.toLibrary')}</button>{/if}
         <button type="button" class="ab" aria-expanded={shareOpen} on:click={() => (shareOpen = !shareOpen)}>{$t('live.mine.share')}</button>
         <button type="button" class="ab del" on:click={() => dispatch('delete', rec)}>{$t('live.mine.delete')}</button>
-        <!-- reserved on every own item: shown only while it records -->
-        <button type="button" class="ab stopb" class:hold={!running} aria-hidden={running ? undefined : 'true'} tabindex={running ? undefined : -1} disabled={!running} aria-busy={busy}
-          on:click={() => dispatch('stop', rec)}><span class="ic on" aria-hidden="true"><Icon name="stop" size={18} /></span>{$t('live.mine.stop')}</button>
+        <!-- shown while it records; its slot stays (hidden) once it finished while the list showed it -->
+        {#if running || reserveStop}<button type="button" class="ab stopb" class:hold={!running} aria-hidden={running ? undefined : 'true'} tabindex={running ? undefined : -1} disabled={!running} aria-busy={busy}
+          on:click={() => dispatch('stop', rec)}><span class="ic on" aria-hidden="true"><Icon name="stop" size={18} /></span>{$t('live.mine.stop')}</button>{/if}
       {:else}
         <span class="shared">{$t('live.mine.shared')}</span>
       {/if}

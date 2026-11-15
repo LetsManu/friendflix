@@ -45,6 +45,9 @@
   let chans: LiveChannel[] | null = null;
   /** *Behalten → in Bibliothek* is possible on this server (mode `both` with a library) */
   let libraryExport = false;
+  /** recordings that ran while this page showed them: their *Jetzt beenden* slot stays after they finished (until the page is left) */
+  let seenRunning = new Set<string>();
+  $: if (recs?.some((r) => r.state === 'recording' && !seenRunning.has(r.id))) seenRunning = new Set([...seenRunning, ...recs.filter((r) => r.state === 'recording').map((r) => r.id)]);
 
   $: canRecord = $perms.liveRecord && !$kidsMode;
   $: if ($featuresKnown && !$features.livetv) void goto('/', { replaceState: true });
@@ -226,13 +229,13 @@
               <h2 id="lmr-{g.key}">{g.title} <span class="cnt">{$t('live.mine.episodes', { n: g.items.length })}</span></h2>
               <ul class="list">
                 {#each g.items as r (r.id)}
-                  <RecordingItem rec={r} {canRecord} {libraryExport} busy={busy.has(r.id)} on:play={(e) => play(e.detail)} on:keep={(e) => void keep(e.detail)} on:share={(e) => void share(e.detail.rec, e.detail.visibility)} on:delete={(e) => remove(e.detail)} on:library={(e) => void keepInLibrary(e.detail)} on:stop={(e) => void stop(e.detail)} />
+                  <RecordingItem rec={r} {canRecord} {libraryExport} reserveStop={seenRunning.has(r.id)} busy={busy.has(r.id)} on:play={(e) => play(e.detail)} on:keep={(e) => void keep(e.detail)} on:share={(e) => void share(e.detail.rec, e.detail.visibility)} on:delete={(e) => remove(e.detail)} on:library={(e) => void keepInLibrary(e.detail)} on:stop={(e) => void stop(e.detail)} />
                 {/each}
               </ul>
             </section>
           {:else}
             <ul class="list single">
-              <RecordingItem rec={g.item} {canRecord} {libraryExport} busy={busy.has(g.item.id)} on:play={(e) => play(e.detail)} on:keep={(e) => void keep(e.detail)} on:share={(e) => void share(e.detail.rec, e.detail.visibility)} on:delete={(e) => remove(e.detail)} on:library={(e) => void keepInLibrary(e.detail)} on:stop={(e) => void stop(e.detail)} />
+              <RecordingItem rec={g.item} {canRecord} {libraryExport} reserveStop={seenRunning.has(g.item.id)} busy={busy.has(g.item.id)} on:play={(e) => play(e.detail)} on:keep={(e) => void keep(e.detail)} on:share={(e) => void share(e.detail.rec, e.detail.visibility)} on:delete={(e) => remove(e.detail)} on:library={(e) => void keepInLibrary(e.detail)} on:stop={(e) => void stop(e.detail)} />
             </ul>
           {/if}
         {/each}

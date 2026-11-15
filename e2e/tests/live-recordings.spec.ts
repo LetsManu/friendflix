@@ -236,15 +236,13 @@ test.describe('Aufnahmen row and Meine Aufnahmen', () => {
     await page.goto('/live/recordings');
     const it = items(page).filter({ hasText: 'Sternstunde Physik' });
     await expect(it.getByText('Läuft', { exact: true })).toBeVisible();
-    // only a running recording has it; a finished one keeps its slot hidden (unseen, unreachable)
+    // only a running recording has it; one that was finished when the list loaded has no slot at all
     const other = items(page).filter({ hasText: 'Die Leuchtturmwärter' });
     await expect(other.getByRole('button', { name: 'Jetzt beenden' })).toHaveCount(0);
-    await expect(other.locator('button.stopb')).toBeHidden();
-    expect(await other.locator('button.stopb').evaluate((b) => [b.getAttribute('aria-hidden'), b.tabIndex, (b as HTMLButtonElement).disabled])).toEqual(['true', -1, true]);
-    // the actions keep their place and the item its size when it finishes (the slot stays)
+    await expect(other.locator('button.stopb')).toHaveCount(0);
+    // finishing while watched: the actions keep their place and the item its size (its slot stays, hidden and unreachable)
     const parts = () => Promise.all([box(it), box(it.getByRole('button', { name: 'Behalten' })), box(it.getByRole('button', { name: 'Löschen' })), box(it.locator('button.stopb'))]);
     const before = await parts();
-    expect(before[1].y).toBeCloseTo((await box(other.getByRole('button', { name: 'Behalten' }))).y - (await box(other)).y + before[0].y, 0);
     await it.getByRole('button', { name: 'Jetzt beenden' }).click();
     await expect.poll(() => api.livetv.recCalls).toEqual([`POST /api/livetv/recordings/${running.id}/stop`]);
     await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Aufnahme beendet. Das Aufgenommene bleibt erhalten.')).toBeVisible();
@@ -255,6 +253,12 @@ test.describe('Aufnahmen row and Meine Aufnahmen', () => {
     await expect(items(page)).toHaveCount(2);
     const after = await parts();
     for (let i = 0; i < 4; i++) for (const k of ['x', 'y', 'width', 'height'] as const) expect(after[i]![k], `${i} ${k}`).toBeCloseTo(before[i]![k], 0);
+    await expect(it.locator('button.stopb')).toBeHidden();
+    expect(await it.locator('button.stopb').evaluate((b) => [b.getAttribute('aria-hidden'), b.tabIndex, (b as HTMLButtonElement).disabled])).toEqual(['true', -1, true]);
+    // a reload (the page shown anew): it was finished when the list loaded, so no slot any more
+    await page.reload();
+    await expect(it.getByText('Fertig', { exact: true })).toBeVisible();
+    await expect(it.locator('button.stopb')).toHaveCount(0);
     // the list was asked again after the stop
     expect(api.livetv.recLists.length).toBeGreaterThan(1);
   });
