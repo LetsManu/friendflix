@@ -165,6 +165,47 @@ describe('Portainer redeploy phases', () => {
     expect(await redeployView(ctx, all('sha-aaaaaaa'), T0 + 4_000, BEFORE)).toMatchObject({ phase: 'unchanged' });
   });
 
+  it('a failure names where it happened: refused at once = before anything ran (at null), a late refusal while pulling or recreating, a stack in error after recreating', async () => {
+    const fast = ctxOf();
+    const f = await start(fast);
+    await settleRedeploy(fast, f, { ok: false, error: 'portainer', step: 'stack', status: 401 }, T0 + 1_000);
+    expect(await redeployView(fast, null, T0 + 2_000, BEFORE)).toMatchObject({ phase: 'failed', at: null, step: 'stack' });
+    const late = ctxOf();
+    const l = await start(late);
+    await settleRedeploy(late, l, { ok: false, error: 'portainer', step: 'redeploy', status: 500, late: true }, T0 + 60_000);
+    expect(await redeployView(late, null, T0 + 61_000, BEFORE)).toMatchObject({ phase: 'failed', at: 'pulling' });
+    const seen = ctxOf();
+    const s = await start(seen);
+    // a service was seen recreated before Portainer's refusal came in
+    expect(await redeployView(seen, all('sha-aaaaaaa', { web: svc('web', 'sha-aaaaaaa', 'exited', '') }), T0 + 20_000, BEFORE)).toMatchObject({ phase: 'recreating' });
+    await settleRedeploy(seen, s, { ok: false, error: 'portainer', step: 'redeploy', status: 500, late: true }, T0 + 60_000);
+    expect(await redeployView(seen, null, T0 + 61_000, BEFORE)).toMatchObject({ phase: 'failed', at: 'recreating' });
+    const deploy = ctxOf();
+    const d = await start(deploy);
+    await settleRedeploy(deploy, d, { ok: false, error: 'portainer', step: 'deploy', status: null }, T0 + 3_000);
+    expect(await redeployView(deploy, null, T0 + 4_000, BEFORE)).toMatchObject({ phase: 'failed', at: 'recreating', step: 'deploy' });
+  });
+
+  it('a late "ok" landing between the read and the store: the phase is judged again from the newer record, never an end that was not stored', async () => {
+    const kv = new MemoryKV();
+    const ctx = ctxOf(OLD, kv);
+    const id = await start(ctx);
+    // Portainer's API answers "done" (sync) right when this read takes the mutex to store a timeout judged from the older record
+    const setnx = kv.setnx.bind(kv);
+    let once = true;
+    kv.setnx = async (k: string, v: string, ttl: number) => {
+      if (once && k.endsWith(':mutex')) {
+        once = false;
+        const r = JSON.parse((await kv.get(REDEPLOY_KEY))!);
+        await kv.set(REDEPLOY_KEY, JSON.stringify({ ...r, answer: 'ok', answeredAt: T0 + 1_000, sync: true }), 60);
+      }
+      return setnx(k, v, ttl);
+    };
+    const v = await redeployView(ctx, all('sha-aaaaaaa'), T0 + REDEPLOY_TIMEOUT_MS + 1, BEFORE);
+    expect(v).toMatchObject({ id, phase: 'unchanged', running: false });
+    expect(JSON.parse((await kv.get(REDEPLOY_KEY))!)).toMatchObject({ final: 'unchanged' });
+  });
+
   it('the slot cannot be held (its claim expired, another took it): nothing is recorded, no phantom "pulling", the next claim succeeds', async () => {
     const kv = new MemoryKV();
     const ctx = ctxOf(OLD, kv);

@@ -396,7 +396,7 @@ describe('admin update', () => {
     // one redeploy at a time: forget the first (it would end by its timeout) before the second
     await env.kv.del(REDEPLOY_LOCK); await env.kv.del(REDEPLOY_KEY);
     const v = await late(500);
-    expect(v).toMatchObject({ phase: 'failed', running: false, error: 'portainer', step: 'redeploy', status: 500 });
+    expect(v).toMatchObject({ phase: 'failed', running: false, error: 'portainer', step: 'redeploy', status: 500, at: 'pulling' }); // Portainer was at work: not "refused before anything ran"
     expect(JSON.stringify(v)).not.toContain('secret detail');
     const a = await env.pool.query("select meta from audit_log where action='system.update_result' order by id");
     expect(a.rows.at(-1).meta).toMatchObject({ result: 'failed', late: true, status: 500, step: 'redeploy' });

@@ -13,7 +13,8 @@ import type { Ctx } from './ctx.js';
  *   health      every service runs the new build, not all of them healthy yet
  *   done        a new build runs (or, of the same build, a change was seen) and every service is up and healthy
  *   unchanged   Portainer finished, but nothing was recreated (the tag had nothing newer, or the stack does not use FF_TAG)
- *   failed      Portainer refused the redeploy, also when its answer came only after the page was told "started"
+ *   failed      Portainer refused the redeploy, also when its answer came only after the page was told "started" (`at`:
+ *               null = refused before anything ran; pulling / recreating = a late refusal, or a stack in error after recreating)
  *   timeout     no end within 15 minutes (`at`: the phase it hung in)
  *
  * Judging the services needs the updater's listing. Without an updater (UPDATER_URL unset, or none answered when the redeploy
@@ -49,7 +50,7 @@ interface Rec {
   changed: boolean;
   error: string | null; step: string | null; status: number | null; code: string | null;
   final: RedeployPhase | null; finishedAt: number | null;
-  /** timeout: the phase it hung in */
+  /** timeout: the phase it hung in; failed: the phase it failed in (null: refused before anything ran) */
   at: RedeployPhase | null;
 }
 
@@ -60,7 +61,10 @@ export interface RedeployView {
   services: { updated: number; total: number } | null;
   /** failed: the fixed code (portainer, portainer_unreachable, no_target), Portainer's HTTP status, the step, the errno code */
   error: string | null; status: number | null; step: string | null; code: string | null;
-  /** timeout: the phase it hung in (pulling / recreating / health) */
+  /**
+   * timeout: the phase it hung in (pulling / recreating / health); failed: the phase it failed in (null: Portainer refused before
+   * anything ran; pulling / recreating: a refusal after "started", or a stack in error after recreating). Older backends: null.
+   */
   at: RedeployPhase | null;
 }
 
@@ -143,7 +147,8 @@ export async function beginRedeploy(ctx: Ctx, id: string, mode: 'webhook' | 'api
 /** gives the slot back when nothing was recorded or started (Portainer refused at once is settled instead) */
 export const abandonRedeploy = release;
 
-export type Answer = { ok: true; sync: boolean } | { ok: false; error: string; step: string; status: number | null; code?: string };
+/** `late`: the refusal came after "started" went out (Portainer was already at work) */
+export type Answer = { ok: true; sync: boolean } | { ok: false; error: string; step: string; status: number | null; code?: string; late?: boolean };
 /**
  * Portainer's answer (also a late one, after "started" went out): a refusal ends the redeploy as failed and frees the slot.
  * Under the mutex, a few tries; then written without it: a lost refusal is worse than a rare overwrite of a stored end.
@@ -153,7 +158,12 @@ export async function settleRedeploy(ctx: Ctx, id: string, a: Answer, now = Date
     const r = await read(ctx);
     if (!r || r.id !== id || r.answer !== 'pending' || (r.final && !(r.final === 'timeout' && !a.ok))) return true;
     if (a.ok) Object.assign(r, { answer: 'ok', answeredAt: now, sync: a.sync });
-    else Object.assign(r, { answer: 'failed', answeredAt: now, error: a.error, step: a.step, status: a.status, code: a.code ?? null, final: 'failed', finishedAt: now, at: null });
+    else {
+      // where it failed: a stack in error (Status 4) was deployed, so it failed recreating; a late refusal while Portainer pulled, or
+      // recreated once a service was seen changed; a refusal at once happened before anything ran
+      const at: RedeployPhase | null = a.step === 'deploy' ? 'recreating' : a.late ? (r.changed ? 'recreating' : 'pulling') : null;
+      Object.assign(r, { answer: 'failed', answeredAt: now, error: a.error, step: a.step, status: a.status, code: a.code ?? null, final: 'failed', finishedAt: now, at });
+    }
     await write(ctx, r);
     if (r.final) await release(ctx, id);
     return true;
@@ -169,7 +179,7 @@ const healthy = (s: ServiceSeen) => s.state === 'running' && (s.health === '' ||
  * unset), null = an updater is set up but gave no listing now. A phase that ended is stored (and the slot freed), so a later read
  * (another update by hand, a restart) does not change it.
  */
-export async function redeployView(ctx: Ctx, services: readonly ServiceSeen[] | null | undefined, now = Date.now(), bootedAt = BOOTED_AT): Promise<RedeployView | null> {
+export async function redeployView(ctx: Ctx, services: readonly ServiceSeen[] | null | undefined, now = Date.now(), bootedAt = BOOTED_AT, again = true): Promise<RedeployView | null> {
   const r = await read(ctx);
   if (!r) return null;
   const fromTag = /^[0-9a-f]{7,40}$/.test(r.from) ? `sha-${r.from.slice(0, 7)}` : null;
@@ -218,6 +228,9 @@ export async function redeployView(ctx: Ctx, services: readonly ServiceSeen[] | 
       });
       if (stored && stored.id === r.id && stored.final) return view(stored, stored.final, counts);
       if (stored === undefined && FINAL.includes(phase)) return view({ ...r, finishedAt: now, at }, phase, counts);
+      // Portainer's answer landed between the read and the store: the phase was judged from the older record, judge it again
+      // (once: the answer changes only from pending) instead of reporting an end that was never stored
+      if (stored && stored.id === r.id && stored.answer !== r.answer && again) return redeployView(ctx, services, now, bootedAt, false);
     }
   }
   return view(r, phase, counts);
@@ -227,6 +240,6 @@ function view(r: Rec, phase: RedeployPhase, counts: RedeployView['services']): R
   return {
     id: r.id, mode: r.mode, tag: r.tag, phase, running: !FINAL.includes(phase), startedAt: new Date(r.startedAt).toISOString(),
     finishedAt: r.finishedAt ? new Date(r.finishedAt).toISOString() : null, services: counts,
-    error: r.error, status: r.status, step: r.step, code: r.code, at: phase === 'timeout' ? r.at : null,
+    error: r.error, status: r.status, step: r.step, code: r.code, at: phase === 'timeout' || phase === 'failed' ? r.at : null,
   };
 }

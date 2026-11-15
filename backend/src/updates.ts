@@ -289,7 +289,7 @@ export async function redeployViaPortainer(ctx: Ctx, actor: string | null, mode:
     if (!a.ok && !a.deploy && (a.status === null || a.status >= 502)) return;
     const step = !a.ok && a.deploy ? 'deploy' : 'redeploy';
     const error = !a.ok && mode === 'webhook' && a.status === 404 ? 'webhook_gone' : 'portainer';
-    void settleRedeploy(ctx, id, a.ok ? { ok: true, sync: a.sync } : { ok: false, error, step, status: a.status })
+    void settleRedeploy(ctx, id, a.ok ? { ok: true, sync: a.sync } : { ok: false, error, step, status: a.status, late: true })
       .then(() => (a.ok ? undefined : audit(ctx, actor, 'system.update_result', undefined, { mode, ...auto, result: 'failed', late: true, error, step, status: a.status })))
       .catch(() => undefined);
   };
