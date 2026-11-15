@@ -11,7 +11,7 @@ import { initName, type SegmentExt, type SegmentWindow } from './window.js';
  * start's `maxBitrate`), polls its media playlist every `max(1, targetDuration / 2)` s and fetches every new segment once, through
  * `guardedFetch` only (playlists ≤ 2 MB, segments ≤ 50 MB), into the stream's directory. Provider numbering never reaches a
  * client: a media sequence that goes back (an encoder restart) or skips ahead becomes a discontinuity and local numbering just
- * continues (Review Focus 5). `pdt` is the provider's `#EXT-X-PROGRAM-DATE-TIME` when its playlist has one, else arrival −
+ * continues (Review Focus 5); a read only a segment or two behind the last one (a stale CDN node) is no update (`follow`). `pdt` is the provider's `#EXT-X-PROGRAM-DATE-TIME` when its playlist has one, else arrival −
  * duration (ruling 47, done by the context). A failed fetch is an outage: the master is read again after the backoff (variant
  * URLs may carry tokens that expire). A refused address or scheme fails the stream at once: retrying cannot help.
  */
@@ -26,6 +26,34 @@ const MAX_POLL_S = 15;
 const MAX_DURATION_S = 120;
 /** this many segments in a row gone (404) while the playlist still loads count as an outage (`input_lost`, backoff) */
 export const SKIP_OUTAGE = 3;
+/**
+ * A read whose newest segment is older than the last one taken, by no more than the playlist's own window, is a stale read (a CDN
+ * node a segment or two behind the one read before): no update. This many of them in a row are taken as a real step back (an
+ * encoder restart that reused lower numbers). At a poll of half a target duration that is 1.5 target durations: a node that is
+ * merely behind has caught up by then, since it gets every new segment from the origin within about one target duration.
+ */
+export const STALE_READS = 3;
+
+/**
+ * The segments to take from a playlist read, with `last` the provider number of the newest one taken (null: none yet). `jump`:
+ * `restart` when the sequence really went back (it dropped by more than the window, or STALE_READS stale reads in a row; `st`
+ * counts them across reads), `gap` when segments were missed; both take the newest START_SEGMENTS. hls.js treats a stale read
+ * the same way: it keeps the playlist it has.
+ */
+export function follow<T extends { seq: number }>(segs: T[], last: number | null, st: { stale: number }): { take: T[]; jump: 'none' | 'gap' | 'restart' } {
+  if (last === null) return { take: segs.slice(-START_SEGMENTS), jump: 'none' };
+  if (segs.length === 0) return { take: [], jump: 'none' };
+  const newest = segs.at(-1)!.seq;
+  if (newest < last) {
+    if (last - newest <= segs.length && ++st.stale < STALE_READS) return { take: [], jump: 'none' };
+    st.stale = 0;
+    return { take: segs.slice(-START_SEGMENTS), jump: 'restart' };
+  }
+  st.stale = 0;
+  const after = segs.filter((s) => s.seq > last);
+  if (after.length > 0 && after[0]!.seq > last + 1) return { take: after.slice(-START_SEGMENTS), jump: 'gap' };
+  return { take: after, jump: 'none' };
+}
 const FATAL = new Set(['address_refused', 'scheme']);
 
 export interface MediaSegment { uri: string; duration: number; pdt?: number; discontinuity: boolean; map: string | null }
@@ -142,6 +170,8 @@ export function passthroughDriver(d: { guard: GuardDeps } | { fetch: FetchFn }):
     let pendingDisc = false;
     /** consecutive segments skipped as gone (404); SKIP_OUTAGE of them while playlists still load is an outage */
     let skipped = 0;
+    /** stale reads in a row (follow) */
+    const stale = { stale: 0 };
 
     /** fetches and stores one segment; a segment that already left the provider's window (404) is skipped */
     const take = async (s: MediaSegment & { seq: number }, base: string): Promise<void> => {
@@ -201,24 +231,11 @@ export function passthroughDriver(d: { guard: GuardDeps } | { fetch: FetchFn }):
         const p = parseMedia(pl.text);
         if (!p) throw new Invalid();
         const segs = p.segments.map((s, i) => ({ ...s, seq: p.mediaSequence + i }));
-        let next: typeof segs = [];
-        if (segs.length > 0) {
-          const newest = segs.at(-1)!.seq;
-          if (last === null) next = segs.slice(-START_SEGMENTS);
-          else if (newest < last) {
-            // the provider's sequence went back (encoder restart, reset to 0): a new start at its live edge
-            next = segs.slice(-START_SEGMENTS);
-            pendingDisc = true;
-          } else {
-            next = segs.filter((s) => s.seq > last!);
-            if (next.length > 0 && next[0]!.seq > last + 1) {
-              // segments were missed (skipped by the provider or gone during an outage)
-              next = next.slice(-START_SEGMENTS);
-              pendingDisc = true;
-            }
-          }
-        }
-        for (const s of next) {
+        // a stale read (a node a little behind) takes nothing; a sequence that really went back (encoder restart) or skipped
+        // ahead (segments missed during an outage) starts again at the edge with a discontinuity
+        const f = follow(segs, last, stale);
+        if (f.jump !== 'none') pendingDisc = true;
+        for (const s of f.take) {
           if (ctx.signal.aborted) break;
           await take(s, pl.base);
         }

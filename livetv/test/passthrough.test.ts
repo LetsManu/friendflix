@@ -110,6 +110,38 @@ describe('passthrough', () => {
     expect(streams.list()[0]!.state).toBe('running');
   });
 
+  it('H1: a read from a node a segment or two behind is no update (nothing stored twice, no discontinuity); 3 in a row are a restart', async () => {
+    let seq = 100;
+    let stale = false;
+    routes.set(MASTER, () => (stale ? media(seq - 2, 3) : media(seq, 3)));
+    segments(`${HOST}/live/anna/geheim`, 90, 130);
+    const { streamKey } = streams.start(body());
+    await flush();
+    for (const s of [101, 102]) {
+      seq = s;
+      await vi.advanceTimersByTimeAsync(2000);
+    }
+    // one stale read, then the edge moves on
+    stale = true;
+    await vi.advanceTimersByTimeAsync(2000);
+    stale = false;
+    seq = 103;
+    await vi.advanceTimersByTimeAsync(2000);
+    await flush();
+    let text = playlist(streamKey);
+    expect(uris(text)).toEqual(['0.ts', '1.ts', '2.ts', '3.ts', '4.ts', '5.ts']);
+    expect(text.split('\n')).not.toContain('#EXT-X-DISCONTINUITY');
+    // provider 100..105 in order: local 5 is provider 105
+    expect(mem.files.get(`${ROOT}/${streamKey}/5.ts`)).toEqual(Buffer.alloc(188, 105));
+    // three stale reads in a row: the provider really went back, a new start at its edge with a discontinuity
+    stale = true;
+    for (let i = 0; i < 3; i++) await vi.advanceTimersByTimeAsync(2000);
+    await flush();
+    text = playlist(streamKey);
+    expect(uris(text)).toHaveLength(9);
+    expect(text.split('\n').filter((l) => l === '#EXT-X-DISCONTINUITY')).toHaveLength(1);
+  });
+
   it('a media sequence that skips ahead marks a discontinuity; a contiguous one does not', async () => {
     let seq = 10;
     routes.set(MASTER, () => media(seq, 3));

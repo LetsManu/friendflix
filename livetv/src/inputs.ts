@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { FetchError, guardedFetch, type GuardDeps, type GuardedResponse } from './fetch.js';
 import { checkUrl, ipLiteralUrl, resolveChecked } from './netguard.js';
-import { PLAYLIST_TIMEOUT_MS, PlaylistRefused, SEGMENT_TIMEOUT_MS, START_SEGMENTS, parseMedia, type FetchFn, type MediaPlaylist, type MediaSegment } from './passthrough.js';
+import { PLAYLIST_TIMEOUT_MS, PlaylistRefused, SEGMENT_TIMEOUT_MS, START_SEGMENTS, follow, parseMedia, type FetchFn, type MediaPlaylist, type MediaSegment } from './passthrough.js';
 import { segmentFormat, urlFormat, type PipeFormat } from './ffmpeg.js';
 import { DEFAULT_MAX_BITRATE, PLAYLIST_MAX_BYTES, SEGMENT_MAX_BYTES, pickVariant, type StreamInput } from './probe.js';
 import type { IngestReader } from './srtingest.js';
@@ -51,6 +51,15 @@ export interface InputDeps {
  */
 export class AudioUnavailable extends Error {
   constructor(readonly fatal: boolean) { super('audio_unavailable'); }
+}
+
+/**
+ * Why an HLS input ended its run by itself (fixed codes; the driver logs them): `restart` the provider's sequence went back
+ * (follow), `gap` segments were missed, both in a strict pair only (a single playlist starts again at the edge instead).
+ */
+export type InputEndCode = 'restart' | 'gap';
+export class InputEnd extends Error {
+  constructor(readonly code: InputEndCode) { super(code); }
 }
 
 /** an MPEG-TS stream that delivers nothing for this long ends (ffmpeg sees EOF, the driver reconnects) */
@@ -102,17 +111,6 @@ async function* watched(body: AsyncIterable<Uint8Array>, ms: number, onIdle: () 
   }
 }
 
-/**
- * The segments to take from a media playlist: at the first look, or when the provider's sequence went back (an encoder
- * restart), the newest START_SEGMENTS; else every segment after `last`, and only the newest START_SEGMENTS of them when some were
- * missed.
- */
-function pick<T extends { seq: number }>(segs: T[], last: number | null): T[] {
-  if (last === null || (segs.length > 0 && segs.at(-1)!.seq < last)) return segs.slice(-START_SEGMENTS);
-  const after = segs.filter((s) => s.seq > last);
-  return after.length > 0 && after[0]!.seq > last + 1 ? after.slice(-START_SEGMENTS) : after;
-}
-
 type Get = (url: string, maxBytes: number, timeoutMs: number) => Promise<GuardedResponse>;
 
 interface Follow {
@@ -136,14 +134,17 @@ async function* hlsBytes(first: { text: string; base: string; url: string }, get
   let last: number | null = o.from === undefined || o.from === null ? null : o.from - 1;
   let initUrl: string | null = null;
   let started = false;
-  const skip = () => { o.onSkip?.(); return new FetchError('unreachable'); };
+  /** stale reads in a row (follow) */
+  const stale = { stale: 0 };
+  const skip = (code: InputEndCode | null = null) => { o.onSkip?.(); return code ? new InputEnd(code) : new FetchError('unreachable'); };
   while (!signal.aborted) {
     const p = parseMedia(pl.text);
     if (!p) throw new FetchError('unreachable');
     const segs = p.segments.map((s, i) => ({ ...s, seq: p.mediaSequence + i }));
-    const next = pick(segs, last);
-    if (o.strict && last !== null && next.length > 0 && next[0]!.seq !== last + 1) throw skip();
-    for (const s of next) {
+    // a stale read (a CDN node a little behind) takes nothing, in a pair too
+    const f = follow(segs, last, stale);
+    if (o.strict && f.jump !== 'none') throw skip(f.jump);
+    for (const s of f.take) {
       if (signal.aborted) return;
       if (o.strict && started && s.discontinuity) throw skip();
       started = true;

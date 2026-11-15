@@ -172,7 +172,7 @@ describe('openInput with a separate audio rendition (I1)', () => {
   });
 
   it('missed segments or a discontinuity on a later poll end both pipes too', async () => {
-    for (const later of [pl(18, 6, { prefix: 'a', dur: 2 }), pl(11, 6, { prefix: 'a', dur: 2, disc: [16] })]) {
+    for (const [later, code] of [[pl(18, 6, { prefix: 'a', dur: 2 }), 'gap'], [pl(11, 6, { prefix: 'a', dur: 2, disc: [16] }), 'unreachable']] as const) {
       let polls = 0;
       const routes = new Map<string, Route>([[`${BASE}/master.m3u8`, MASTER], [`${BASE}/video/index.m3u8`, pl(10, 6, { prefix: 'v', dur: 2 })],
         [`${BASE}/audio/de.m3u8`, () => (++polls === 1 ? pl(10, 6, { prefix: 'a', dur: 2 }) : later)]]);
@@ -182,7 +182,7 @@ describe('openInput with a separate audio rendition (I1)', () => {
       if (ff.kind !== 'pipe' || !ff.audio) throw new Error('an audio pipe is expected');
       const audio = await drain(ff.audio.stdin);
       expect(audio.text).toBe('a13;a14;a15;');
-      expect(audio.error).toBeInstanceOf(FetchError);
+      expect((audio.error as { code?: string }).code).toBe(code);
       expect(polls).toBe(2);
       expect((await drain(ff.stdin)).text).toBe('');
     }
