@@ -9,9 +9,9 @@ import { z } from 'zod';
  */
 
 /** C0/C1 controls and the bidi embedding/override/isolate marks (a name must not reorder the text around it) */
-const CONTROL = /[\p{Cc}؜‎‏‪-‮⁦-⁩]/u;
+const CONTROL = /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 /** the same, but line breaks are allowed (the about text) */
-const CONTROL_EXCEPT_NEWLINE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f؜‎‏‪-‮⁦-⁩]/u;
+const CONTROL_EXCEPT_NEWLINE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 
 /** length in characters (code points), as a person counts them: an emoji is one, not two UTF-16 units */
 const chars = (s: string) => [...s].length;

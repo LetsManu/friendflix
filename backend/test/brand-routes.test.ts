@@ -123,7 +123,7 @@ describe('brand routes', () => {
     const { rev } = await current();
     const cases: Array<[Record<string, unknown>, string]> = [
       [{ name: '' }, 'name'], [{ name: '   ' }, 'name'], [{ name: 'x'.repeat(25) }, 'name'], [{ name: 'Kino\u0007' }, 'name'], [{ name: 'Kino\nabend' }, 'name'],
-      [{ name: 'Kino‮abend' }, 'name'],
+      [{ name: 'Kino\u202eabend' }, 'name'],
       [{ accent: '#ff4f6' }, 'accent'], [{ accent: 'red' }, 'accent'], [{ accent: '#ff4f6dzz' }, 'accent'],
       [{ byline: 'x'.repeat(33) }, 'byline'], [{ shortName: 'x'.repeat(13) }, 'shortName'], [{ about: 'x'.repeat(281) }, 'about'],
       [{ website: 'javascript:alert(1)' }, 'website'], [{ website: 'https://user:pw@example.com/' }, 'website'],
