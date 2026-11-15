@@ -407,6 +407,18 @@ describe('finalisation and races (fix round 1)', () => {
     expect(await recorder.closeFolder(ID, '0f000000-0000-4000-a000-0000000000ee')).toBeNull();
   });
 
+  it('B-M3: ticks past the end while the queue is busy queue one finish, not one per tick', async () => {
+    await startStream();
+    expect((await recorder.start({ id: ID, channelId: CH, dir: DIR, endAt: T0 + 10_000 })).ok).toBe(true);
+    await emit({ pdt: T0 });
+    await vi.waitFor(() => expect(segs(playlist())).toHaveLength(1));
+    const finish = vi.spyOn(recorder as unknown as { finish: (...a: unknown[]) => Promise<void> }, 'finish');
+    clock = T0 + 20_000;
+    for (let i = 0; i < 5; i++) recorder.tick();
+    expect(finish).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(recorder.list()[0]!.state).toBe('done'));
+  });
+
   it('A-I3/B-I3: stop and remove during an in-flight start leave no recorder and do not recreate the folder', async () => {
     let releaseFree!: () => void;
     const slow: RecFs = { ...fsSeam, free: () => new Promise((r) => { releaseFree = () => r(50 * 1024 ** 3); }) };

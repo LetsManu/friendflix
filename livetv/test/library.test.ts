@@ -154,6 +154,17 @@ describe('the library export', () => {
     expect(Math.abs(d - 10)).toBeLessThan(1);
   }, 60_000);
 
+  it('A-M6: a long name numbered " (2)" stays within the limit and can be removed again', async () => {
+    recording();
+    const at = { dir: DIR, folder: 'Sternwarte 24', file: 'Sternstunde Physik '.repeat(20) };
+    await lib.export(ID, at);
+    const b = await lib.export(ID, at);
+    expect(b.path).toMatch(/ \(2\)\.ts$/);
+    expect([...b.path.split('/')[1]!].length).toBeLessThanOrEqual(120);
+    await lib.remove(ID, b.path);
+    expect(existsSync(join(libRoot, b.path))).toBe(false);
+  });
+
   it('refuses a non-empty unmarked folder', async () => {
     recording();
     writeFileSync(join(libRoot, 'Film.mkv'), 'a film of the media share');

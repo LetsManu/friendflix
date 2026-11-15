@@ -272,6 +272,24 @@ describe('EPG follow', () => {
     expect((await getRecording(env.ctx, r!.id))!.start_at.getTime()).toBe(t + 35 * MIN);
   });
 
+  it('A-M10: a follow that fails for another reason than a taken slot is logged by code', async () => {
+    const t = t0();
+    await prog('Nordlicht TV.de', t, { episode: 'S01E01' });
+    await rule({ channel_id: nordlicht, series_key: 'die leuchtturmwärter', only_new: false });
+    await expandRules(env.ctx);
+    await env.pool.query("update livetv_programmes set start_at = start_at + interval '5 minutes', end_at = end_at + interval '5 minutes'");
+    const db = env.ctx.db as { query: (...a: unknown[]) => Promise<unknown> };
+    const inner = (Object.getPrototypeOf(db) as typeof db).query;
+    db.query = function (this: unknown, ...a: unknown[]) {
+      if (typeof a[0] === 'string' && a[0].startsWith('update livetv_recordings set start_at = $2')) return Promise.reject(Object.assign(new Error('deadlock'), { code: '40P01' }));
+      return inner.apply(this, a);
+    } as typeof db.query;
+    try {
+      expect(await followEpg(env.ctx)).toBe(0);
+    } finally { delete (db as Partial<typeof db>).query; }
+    await vi.waitFor(async () => expect((await listErrors(env.ctx, { source: 'job' })).entries.map((e) => e.code)).toContain('livetv-rec-follow-40P01'));
+  });
+
   it('a channel EPG offset change moves scheduled recordings', async () => {
     const t = t0();
     await prog('Nordlicht TV.de', t, { episode: 'S01E01' });
@@ -452,7 +470,7 @@ describe('the tick', () => {
       await tick();
       expect((await getRecording(env.ctx, good))!.bytes).toBe('777');
     } finally { delete (db as Partial<typeof db>).query; }
-    expect((await listErrors(env.ctx, { source: 'job' })).entries.map((e) => e.code)).toEqual(expect.arrayContaining(['livetv-rec-tick-start', 'livetv-rec-tick-reconcile']));
+    await vi.waitFor(async () => expect((await listErrors(env.ctx, { source: 'job' })).entries.map((e) => e.code)).toEqual(expect.arrayContaining(['livetv-rec-tick-start', 'livetv-rec-tick-reconcile'])));
   });
 
   it('two recordings of one channel share one stream and one record slot', async () => {
