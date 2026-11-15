@@ -1,6 +1,6 @@
 # Menus, sheets and dialogs: one glass system, release-ready motion
 
-Status: proposed 2026-11-15 (owner review pending). Mockup: the "Menus & pop-ups" design canvas (desktop + phone artboards).
+Status: approved by the owner 2026-11-15 ("go" on the design and the mockup). Mockup: the "Menus & pop-ups" design canvas (desktop + phone artboards).
 Builds on: `2026-11-09-glass-design.md` (the glass material and its tokens), `docs/ui-kit.md`.
 
 ## Why
