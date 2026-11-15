@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MediaUser } from '../../src/media/types.js';
-import { ratingAge, resolveAccess, UNKNOWN_AGE } from '../../src/plex/access.js';
+import { paramList, ratingAge, resolveAccess, UNKNOWN_AGE, visibleSql } from '../../src/plex/access.js';
 import { DEFAULT_ROLES } from '../../src/roles.js';
 import { identity, ids, item, kids, plexEnv, section, tag, type PlexEnv } from './setup.js';
 
@@ -34,6 +34,13 @@ describe('resolveAccess', () => {
     expect(resolveAccess({ identity: 'x', libraries: null, maxAge: null, blockUnrated: [], disabled: true }, secs, 'x').sections).toEqual([]);
     expect(resolveAccess({ identity: 'x', libraries: ['movies', 'Nope'], maxAge: 12, blockUnrated: ['Movie', 'Series'], disabled: false }, secs, 'x'))
       .toEqual({ identity: 'x', sections: [1], maxAge: 12, blockTypes: ['movie', 'show', 'season', 'episode'] });
+  });
+  it('resolveAccess({ libraries: [] }) → sections [] and the SQL predicate matches no item', () => {
+    const acc = resolveAccess({ identity: 'x', libraries: [], maxAge: null, blockUnrated: [], disabled: false }, secs, 'x');
+    expect(acc.sections).toEqual([]);
+    const { params, p } = paramList();
+    expect(visibleSql(acc, 'i', p)).toContain('i.section_id = any($1::int[])');
+    expect(params[0]).toEqual([]);
   });
 });
 
@@ -128,6 +135,13 @@ describe('Plex access control (server side, over the mirror)', () => {
     expect(await e.ms.trailer(u, item(1))).toBeNull();
     await expect(e.ms.item(u, trailers[0]!.id)).rejects.toMatchObject({ status: 404 });
     expect((await e.ms.item(admin, trailers[0]!.id)).type).toBe('Trailer');
+  });
+
+  it('a role with no library sees no item, view or section', async () => {
+    const u = await identity(e.ms, { ...DEFAULT_ROLES.friend!, libraries: [] });
+    expect((await e.ms.views(u)).map((v) => v.name)).toEqual([]);
+    expect((await e.ms.items(u, { types: 'Movie,Series', limit: 200 })).items).toEqual([]);
+    expect(await sees(u, lib.g!)).toBe(false);
   });
 
   it('role libraries map to Plex section titles: views, lists, parents and items outside them are invisible', async () => {

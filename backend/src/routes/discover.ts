@@ -15,6 +15,7 @@ import { notify } from '../notify.js';
 import { clipPath, previews } from '../previews.js';
 import { loadPrefs } from './prefs.js';
 import { requireGrownUp } from '../kids.js';
+import { requirePerm } from '../permGuard.js';
 import { countFallback, recoProfileOf, v2Active, withReason, type EngineName } from '../reco/engine.js';
 import { recommend, shadowCompare } from '../reco/recommend.js';
 import { requireAdmin, requireUser } from '../session.js';
@@ -344,8 +345,8 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
   }));
   app.get('/api/library/collections', pre, wrap(async (req) => ({ items: await ctx.jf.collections(req.jfUser!), studios: await ctx.jf.studios(req.jfUser!).catch(() => []) })));
 
-  // ---- Upcoming (Seerr discover) with wish status ----
-  app.get('/api/seerr/upcoming', grown, wrap(async (req) => {
+  // ---- Upcoming (Seerr discover) with wish status; needs the wishes right like every other request route ----
+  app.get('/api/seerr/upcoming', { preHandler: [requireGrownUp(ctx), requirePerm(ctx, 'requests', 'requests_forbidden')] }, wrap(async (req) => {
     const type = z.enum(['movie', 'tv']).default('movie').parse((req.query as { type?: string }).type);
     const r = await requestsClient(ctx).upcoming(type, 1, await viewerLanguage(ctx, req)); // no request service: 404 requests_disabled
     return {
