@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { join } from 'node:path';
-import { FetchError, guardedFetch, type FetchOptions, type GuardDeps, type GuardedResponse } from './fetch.js';
+import { FetchError, createPool, guardedFetch, type FetchOptions, type GuardDeps, type GuardedResponse } from './fetch.js';
 import { PLAYLIST_MAX_BYTES, SEGMENT_MAX_BYTES, pickVariant } from './probe.js';
 import type { Driver } from './streams.js';
 import { initName, type SegmentExt, type SegmentWindow } from './window.js';
@@ -143,8 +143,10 @@ export function passthroughDriver(d: { guard: GuardDeps } | { fetch: FetchFn }):
   return async (ctx) => {
     const input = ctx.input;
     if ('push' in input || input.kind !== 'hls') { ctx.fail('invalid'); return; }
+    // one kept-alive connection per host (H1 item 4: polls stay on one CDN edge); a new pool, new addresses, after an outage
+    let pool = createPool();
     const get = async (url: string, maxBytes: number, timeoutMs: number) =>
-      fetchFn(url, { allowLan: input.allowLan, userAgent: input.userAgent, timeoutMs, maxBytes, signal: ctx.signal });
+      fetchFn(url, { allowLan: input.allowLan, userAgent: input.userAgent, timeoutMs, maxBytes, signal: ctx.signal, pool });
     const playlist = async (url: string) => {
       const r = await get(url, PLAYLIST_MAX_BYTES, PLAYLIST_TIMEOUT_MS);
       // relative references resolve against the final hop (after redirects), never the requested URL
@@ -246,9 +248,12 @@ export function passthroughDriver(d: { guard: GuardDeps } | { fetch: FetchFn }):
         if (e instanceof FetchError && FATAL.has(e.code)) { ctx.fail(e.code); return; }
         if (e instanceof PlaylistRefused) { ctx.fail(e.code); return; }
         media = null;
+        pool.destroy();
+        pool = createPool();
         wait = ctx.lost();
       }
       if (!(await ctx.sleep(wait))) break;
     }
+    pool.destroy();
   };
 }

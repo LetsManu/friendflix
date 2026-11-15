@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { FetchError, guardedFetch, type GuardDeps, type GuardedResponse } from './fetch.js';
+import { FetchError, createPool, guardedFetch, type GuardDeps, type GuardedResponse } from './fetch.js';
 import { checkUrl, ipLiteralUrl, resolveChecked } from './netguard.js';
 import { PLAYLIST_TIMEOUT_MS, PlaylistRefused, SEGMENT_TIMEOUT_MS, START_SEGMENTS, follow, parseMedia, type FetchFn, type MediaPlaylist, type MediaSegment } from './passthrough.js';
 import { segmentFormat, urlFormat, type PipeFormat } from './ffmpeg.js';
@@ -476,10 +476,12 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
   const outer = () => ac.abort();
   if (deps.signal?.aborted) ac.abort();
   else deps.signal?.addEventListener('abort', outer, { once: true });
-  const close = () => { deps.signal?.removeEventListener('abort', outer); ac.abort(); };
+  // one kept-alive connection per host for this run, to the address checked once (H1 item 4: the polls stay on one CDN edge)
+  const pool = createPool();
+  const close = () => { deps.signal?.removeEventListener('abort', outer); ac.abort(); pool.destroy(); };
   const fetchFn: FetchFn = deps.fetch ?? ((url, o) => guardedFetch(url, o, deps.guard));
   const get: Get = (url, maxBytes, timeoutMs) =>
-    fetchFn(url, { allowLan: input.allowLan, userAgent: input.userAgent, timeoutMs, maxBytes, signal: ac.signal });
+    fetchFn(url, { allowLan: input.allowLan, userAgent: input.userAgent, timeoutMs, maxBytes, signal: ac.signal, pool });
   const log = (m: string) => deps.log?.(m);
   try {
     if (input.kind === 'ts') {
