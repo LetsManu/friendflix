@@ -16,6 +16,7 @@ import {
   beatLiveToken, LIVE_CAP_S, liveSidHash, liveViewKey, MAX_LIVE_TOKENS, mintLiveToken, mintRecToken, resolveLiveToken, resolveRecToken, revokeChannelTokens, VIEW_TTL_S,
   type LiveTokenRec,
 } from '../src/livetv/tokens.js';
+import { WATCH_IP_MAX } from '../src/livetv/routes.js';
 import { invalidateRights } from '../src/rights.js';
 import { invalidateRoles } from '../src/roles.js';
 import { lockUser } from '../src/users.js';
@@ -598,6 +599,37 @@ describe('recording tokens (Phase 3)', () => {
       invalidateRights();
     }
     expect((await play(r.id)).statusCode).toBe(200);
+  });
+
+  it('N8: play has the watch route\'s per-address cap and takes its token back when the profile changed during the mint', async () => {
+    const r = await rec({ profile_id: adminProfile, user_id: adminId });
+    const nat = '198.51.100.7';
+    const fromNat = () => env.app.inject({ method: 'POST', url: `/api/livetv/recordings/${r.id}/play`, cookies: adm.cookies, headers: { 'x-csrf-token': adm.csrf }, remoteAddress: nat, payload: {} });
+    await env.kv.set(`ltv:watchip:${nat}`, String(WATCH_IP_MAX), 60);
+    try {
+      const capped = await fromNat();
+      expect([capped.statusCode, capped.json()]).toEqual([429, { error: 'rate_limited' }]);
+    } finally {
+      for (const k of await env.kv.keys('ltv:watchip:')) await env.kv.del(k);
+    }
+    // a profile switch of this session lands while the token is minted: the token is taken back, the answer is 409
+    const sessKey = `sess:${adm.cookies.ff_sid}`;
+    const other = randomUUID(); // the session now names another profile (the check compares ids only)
+    const set = env.kv.set.bind(env.kv);
+    let switched = false;
+    const spy = vi.spyOn(env.kv, 'set').mockImplementation(async (k, v, ttl) => {
+      await set(k, v, ttl);
+      if (!switched && /^ltv:[A-Za-z0-9_-]{20,}$/.test(k)) {
+        switched = true;
+        await set(sessKey, JSON.stringify({ ...JSON.parse((await env.kv.get(sessKey))!), profileId: other }), 3600);
+      }
+    });
+    try {
+      const p = await play(r.id);
+      expect([p.statusCode, p.json()]).toEqual([409, { error: 'profile_changed' }]);
+    } finally { spy.mockRestore(); }
+    expect(switched).toBe(true);
+    expect((await env.kv.keys('ltv:')).filter((k) => /^ltv:[A-Za-z0-9_-]{20,}$/.test(k))).toEqual([]);
   });
 
   it('B-M6: an admin stop of a recording playback in Wiedergabe-Check sets no stop marker for the channel', async () => {
