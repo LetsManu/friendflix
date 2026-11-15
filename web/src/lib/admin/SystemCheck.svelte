@@ -8,8 +8,10 @@
    * The four checks only the browser can run (syscheckBrowser.ts) start once there is an answer to read Live TV from (on mount, and again
    * after Jetzt prüfen); their lines read "wird geprüft…" until they are back and then replace their placeholders. The upload line depends
    * on Live TV: it runs again on its own when a later answer knows Live TV differently (a remembered answer said "not known" or the opposite).
-   * The last answer of this tab is shown at once and revalidated (stale-while-revalidate); `ready` turns true as soon as there is an
-   * answer to show (remembered, loaded or failed), so the page can hold what sits below until the list has its final height.
+   * The last answer of this tab is shown at once and revalidated (stale-while-revalidate), the browser lines' last results too (they
+   * read "wird geprüft…" in place while they run again, keeping their rows). `ready` turns true once the list has its final height: at
+   * once with both remembered, else when the answer is there and the browser checks are back (at most 2.5 s later), so the page can
+   * hold what sits below and a failing browser line never pushes it down.
    */
   import { createEventDispatcher, onMount } from 'svelte';
   import { apiCode } from '#lib/api';
@@ -25,12 +27,12 @@
   import CheckLine from './CheckLine.svelte';
   import { runBrowserChecks, runUploadCheck, uploadNotSetUp } from './syscheckBrowser';
   import {
-    CHECK_GROUPS, CHECK_IDS, cachedSystemcheck, checkedAtText, countLines, isNewer, loadSystemcheck, mergeLines, statusIcon, statusTone, summaryOf,
+    CHECK_GROUPS, CHECK_IDS, cachedBrowserLines, cachedSystemcheck, rememberBrowserLines, checkedAtText, countLines, isNewer, loadSystemcheck, mergeLines, statusIcon, statusTone, summaryOf,
     type CheckGroup, type CheckId, type CheckLine as Line, type CheckStatus, type SystemcheckResult,
   } from './syscheck';
 
   /** the browser checks' results, and the lines still running ("wird geprüft…") */
-  let browserLines: Line[] = [];
+  let browserLines: Line[] = cachedBrowserLines();
   let running = new Set<CheckId>();
   let browserRun = 0;
   const OTHER_BROWSER: CheckId[] = ['proxy.websocket', 'proxy.buffering', 'proxy.headers'];
@@ -44,7 +46,9 @@
   const dispatch = createEventDispatcher<{ checked: void }>();
 
   let result: SystemcheckResult | null = cachedSystemcheck();
-  if (result) ready = true;
+  if (result && browserLines.length) ready = true;
+  /** how long past the answer the page below waits for the browser checks (the drip alone takes 1.5 s) */
+  const BROWSER_HOLD_MS = 2_500;
   let failed = false, checking = false, retrying = false;
   /** a reload failed while an older answer is shown: the time reads "Stand von …" until one succeeds */
   let stale = false;
@@ -63,31 +67,50 @@
   async function runBrowser() {
     const mine = ++browserRun;
     setRunning(OTHER_BROWSER, true);
-    void runUpload(livetvOf(result));
+    const up = runUpload(livetvOf(result));
     const lines = await runBrowserChecks({ livetvInstalled: null }).catch(() => [] as Line[]);
-    if (mine !== browserRun) return;
-    browserLines = [...lines, ...browserLines.filter((l) => l.id === 'proxy.upload')];
-    setRunning(OTHER_BROWSER, false);
+    if (mine === browserRun) {
+      browserLines = [...lines, ...browserLines.filter((l) => l.id === 'proxy.upload')];
+      setRunning(OTHER_BROWSER, false);
+      rememberBrowserLines(browserLines);
+    }
+    await up;
   }
   /** the Live-TV state the upload line was last decided with (undefined: not yet) */
   let uploadFor: boolean | null | undefined;
   let uploadRun = 0;
-  /** the upload line for a Live-TV state: the old result goes at once (it was for another state); a newer run wins */
+  /**
+   * the upload line for a Live-TV state: a result for another state goes at once (a remembered one for the same state stays, reading
+   * "wird geprüft…", until the new one is back); a newer run wins
+   */
   async function runUpload(lt: boolean | null) {
     const mine = ++uploadRun;
     uploadFor = lt;
-    browserLines = browserLines.filter((l) => l.id !== 'proxy.upload');
+    const old = browserLines.find((l) => l.id === 'proxy.upload');
+    if (old && (lt === null || (old.status === 'not_set_up') !== (lt === false))) browserLines = browserLines.filter((l) => l !== old);
     setRunning(['proxy.upload'], lt === true);
     const l = await runUploadCheck(lt).catch(() => null);
     if (mine !== uploadRun) return;
     browserLines = [...browserLines.filter((x) => x.id !== 'proxy.upload'), ...(l ? [l] : [])];
     setRunning(['proxy.upload'], false);
+    rememberBrowserLines(browserLines);
   }
   let browserStarted = false;
+  let browserDone: Promise<void> = Promise.resolve();
   function startBrowser() {
     if (browserStarted) return;
     browserStarted = true;
-    void runBrowser();
+    browserDone = runBrowser();
+  }
+  /** the list has its final height: the answer (or the failure) is there and the browser checks are back, or 2.5 s have passed */
+  let holding = false;
+  async function markReady() {
+    if (ready || holding) return;
+    holding = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([browserDone, new Promise<void>((res) => { timer = setTimeout(res, BROWSER_HOLD_MS); })]);
+    clearTimeout(timer);
+    ready = true;
   }
 
   /** the cached answer; it never replaces a newer one (a poll that started before Jetzt prüfen and answers after it) */
@@ -104,8 +127,8 @@
       stale = result !== null;
       if (failed) announce = tr('syscheck.loadFailed');
     }
-    ready = true;
     startBrowser();
+    void markReady();
   }
   async function retry() { retrying = true; await load(); retrying = false; }
   /** "Jetzt prüfen": a fresh run on the server (it waits for the slow inputs, bounded there) */
@@ -127,7 +150,8 @@
     checking = false;
   }
   onMount(() => {
-    if (result) startBrowser(); // the remembered answer says enough about Live TV
+    // the remembered answer says enough about Live TV; with it, the list is final once the browser checks are back
+    if (result) { startBrowser(); void markReady(); }
     void load();
     return poll(load, 30_000);
   });

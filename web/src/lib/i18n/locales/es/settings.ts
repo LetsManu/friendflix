@@ -194,6 +194,7 @@ const settings: Translation<typeof de> = {
   },
   tabs: { label: 'Secciones de ajustes', general: 'General', signin: 'Inicio de sesión', media: 'Medios', playback: 'Reproducción', updates: 'Actualizaciones', notifications: 'Notificaciones', unsaved: 'cambios sin guardar' },
   search: { label: 'Buscar en los ajustes', placeholder: 'Buscar por nombre, clave o palabra', results: { one: '{n} ajuste encontrado', many: '{n} ajustes encontrados', other: '{n} ajustes encontrados' }, none: 'Ningún ajuste coincide con «{q}».' },
+  leave: { title: '¿Descartar los cambios?', body: 'Hay ajustes sin guardar. Se perderán si sales de la página.', confirm: 'Descartar' },
   livetvMoved: 'Los ajustes de TV en directo ahora están en TV en directo.',
 };
 export default settings;

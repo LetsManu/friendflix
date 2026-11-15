@@ -663,6 +663,41 @@ test.describe('admin: settings search', () => {
     await expect(page.locator('#setting-LIVETV_ENCODER')).toHaveAttribute('data-flash', 'static');
   });
 
+  test('unsaved drafts: leaving the page (a Live-TV result) asks first; tab switches and deep links on the page do not', async ({ page, api }) => {
+    Object.assign(api.admin.livetv, { installed: true, wanted: true, ltState: 'enabled' });
+    await page.goto('/admin/settings?tab=signin');
+    await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
+    const dlg = page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' });
+    // on the page: a tab switch, a result on this page
+    await page.getByRole('tab', { name: 'Updates' }).click();
+    await search(page).fill('portainer');
+    await page.locator('#set-results').getByRole('link').first().click();
+    await expect(page.locator('#setting-PORTAINER_WEBHOOK_URL')).toHaveAttribute('data-flash', 'static');
+    await expect(dlg).toHaveCount(0);
+    // a Live-TV result leaves the page: asked; Abbrechen stays with the draft
+    await search(page).fill('encoder');
+    await page.locator('#set-results').getByRole('link', { name: /Encoder für Live-TV/ }).click();
+    await expect(dlg).toBeVisible();
+    await expect(dlg).toContainText('ungespeicherte Einstellungen');
+    await dlg.getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(page).toHaveURL(/\/admin\/settings/);
+    await page.getByRole('tab', { name: 'Anmeldung' }).click();
+    await expect(setting(page, 'Admin-Gruppe').getByRole('textbox')).toHaveValue('ff-admins');
+    // Verwerfen goes there
+    await search(page).fill('encoder');
+    await search(page).press('Enter');
+    await dlg.getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page).toHaveURL(/\/admin\/livetv\?tab=settings$/);
+    await expect(page.locator('#setting-LIVETV_ENCODER')).toHaveAttribute('data-flash', 'static');
+    expect(api.settings.puts).toEqual([]);
+  });
+
+  test('without drafts nothing asks: the menu leaves at once', async ({ page }) => {
+    await page.goto('/admin/settings?tab=media');
+    await page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: 'Status' }).click();
+    await expect(page).toHaveURL(/\/admin\/status/);
+  });
+
   test('secrets: a result shows label and key only, never a value', async ({ page }) => {
     await page.goto('/admin/settings');
     await search(page).fill('tmdb');

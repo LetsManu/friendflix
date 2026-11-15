@@ -194,6 +194,7 @@ const settings: Translation<typeof de> = {
   },
   tabs: { label: 'Sezioni delle impostazioni', general: 'Generale', signin: 'Accesso', media: 'Media', playback: 'Riproduzione', updates: 'Aggiornamenti', notifications: 'Notifiche', unsaved: 'modifiche non salvate' },
   search: { label: 'Cerca nelle impostazioni', placeholder: 'Cerca per nome, chiave o parola', results: { one: '{n} impostazione trovata', many: '{n} impostazioni trovate', other: '{n} impostazioni trovate' }, none: 'Nessuna impostazione corrisponde a «{q}».' },
+  leave: { title: 'Annullare le modifiche?', body: 'Ci sono impostazioni non salvate. Andranno perse se lasci la pagina.', confirm: 'Annulla modifiche' },
   livetvMoved: 'Le impostazioni della TV in diretta ora si trovano sotto TV in diretta.',
 };
 export default settings;

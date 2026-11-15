@@ -31,3 +31,48 @@ export async function listHoldsNothingBelow(page: Page): Promise<void> {
   await page.waitForLoadState('networkidle');
   expect(Math.abs((await disks.boundingBox())!.y - top)).toBeLessThanOrEqual(1);
 }
+
+/**
+ * The page's own headers without nosniff: the browser's proxy.headers line becomes a warning (headers_stripped; hsts_missing needs an
+ * https origin, which the e2e server is not; the row is the same). `hold(true)` keeps that answer back until `hold(false)`.
+ */
+export async function stripHeaders(page: Page): Promise<{ hold(on: boolean): void }> {
+  let gate: Promise<void> | null = null, open: () => void = () => undefined;
+  await page.route((u) => u.pathname === '/' && u.search === '', async (r) => {
+    await gate;
+    await r.fulfill({ status: 200, contentType: 'text/html', headers: { 'referrer-policy': 'same-origin' }, body: '<!doctype html>' });
+  });
+  return { hold: (on) => { if (on) gate = new Promise((res) => { open = res; }); else { open(); gate = null; } } };
+}
+
+/**
+ * A failing browser line (proxy.headers warning) never pushes the page down: on a cold visit the content below waits for the
+ * browser checks; on the next visit their remembered results are in place at once, while they run again. The disks card stays put.
+ */
+export async function browserLinesHoldStill(page: Page): Promise<void> {
+  const probe = await stripHeaders(page);
+  const sc = page.locator('#systemcheck');
+  const headers = sc.locator('li[data-id="proxy.headers"]');
+  const disks = page.getByRole('region', { name: 'Speicher' });
+  // cold: the warning and its fix are in before the disks appear
+  await page.goto('/admin/status');
+  await expect(disks).toBeVisible();
+  await expect(headers.locator('.pill.warn')).toBeVisible();
+  const top = (await disks.boundingBox())!.y;
+  await page.waitForLoadState('networkidle');
+  expect(Math.abs((await disks.boundingBox())!.y - top)).toBeLessThanOrEqual(1);
+  // the next visit: the server answer and the probes held, the remembered warning is shown at once with its height
+  const release = await gateSyscheck(page);
+  probe.hold(true);
+  await page.goto('/admin');
+  await page.goto('/admin/status');
+  await expect(headers).toContainText('Sicherheits');
+  await expect(headers.locator('.pill')).toHaveText('wird geprüft…');
+  await expect(disks).toBeVisible();
+  const top2 = (await disks.boundingBox())!.y;
+  release();
+  probe.hold(false);
+  await expect(headers.locator('.pill.warn')).toBeVisible();
+  await page.waitForLoadState('networkidle');
+  expect(Math.abs((await disks.boundingBox())!.y - top2)).toBeLessThanOrEqual(1);
+}

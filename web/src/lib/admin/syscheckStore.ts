@@ -4,9 +4,16 @@
  * The Systemcheck answer this tab saw last (module + sessionStorage): Admin → Status renders it at once and revalidates. Kept apart from
  * syscheck.ts so the logout path, which runs on every page, can forget it without pulling in the admin code.
  */
-import type { SystemcheckResult } from './syscheck';
+import type { CheckLine, SystemcheckResult } from './syscheck';
 
 const STORE_KEY = 'ff-syscheck';
+/** the browser lines of the last run on the Status page (they are not part of the server's answer) */
+const BROWSER_KEY = 'ff-syscheck-browser';
+const BROWSER = new Set(['proxy.websocket', 'proxy.buffering', 'proxy.upload', 'proxy.headers']);
+const browserLine = (l: unknown): l is CheckLine =>
+  !!l && typeof l === 'object' && BROWSER.has((l as CheckLine).id) && typeof (l as CheckLine).status === 'string'
+  && (l as CheckLine).runs === 'browser' && !(l as CheckLine).placeholder;
+let lastBrowser: CheckLine[] | null = null;
 let last: SystemcheckResult | null = null;
 const atOf = (r: SystemcheckResult | null): number => (r ? Date.parse(r.at) : NaN);
 /** a stored or received answer of the right shape, every line with an id and a status (codes only: nothing in it is secret) */
@@ -33,8 +40,24 @@ export function cachedSystemcheck(): SystemcheckResult | null {
   } catch { /* nothing stored, unreadable, or no storage */ }
   return last;
 }
-/** Forgets the remembered answer (logout, tests). */
+/** Keeps the browser lines of a finished run for this tab: the next visit shows them at once, so their rows already have their height. */
+export function rememberBrowserLines(lines: readonly CheckLine[]): void {
+  lastBrowser = lines.filter(browserLine);
+  try { sessionStorage.setItem(BROWSER_KEY, JSON.stringify(lastBrowser)); } catch { /* private mode, quota, no storage */ }
+}
+/** the browser lines this tab saw last ([] on a cold start, or for a stored entry of the wrong shape) */
+export function cachedBrowserLines(): CheckLine[] {
+  if (lastBrowser) return lastBrowser;
+  try {
+    const v: unknown = JSON.parse(sessionStorage.getItem(BROWSER_KEY) ?? '[]');
+    if (Array.isArray(v) && v.every(browserLine)) lastBrowser = v;
+  } catch { /* nothing stored, unreadable, or no storage */ }
+  return lastBrowser ?? [];
+}
+
+/** Forgets the remembered answer and browser lines (logout, tests). */
 export function forgetSystemcheck(): void {
   last = null;
-  try { sessionStorage.removeItem(STORE_KEY); } catch { /* no storage */ }
+  lastBrowser = null;
+  try { sessionStorage.removeItem(STORE_KEY); sessionStorage.removeItem(BROWSER_KEY); } catch { /* no storage */ }
 }

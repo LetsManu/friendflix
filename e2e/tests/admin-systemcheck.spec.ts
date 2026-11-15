@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { result, syscheckHealthy, syscheckOk, syscheckTroubled, syscheckTroubledEncoder, syscheckWith } from '../mocks/syscheck.js';
-import { gateSyscheck, listHoldsNothingBelow } from './syscheck-helpers.js';
+import { browserLinesHoldStill, gateSyscheck, listHoldsNothingBelow } from './syscheck-helpers.js';
 
 /** the catalogue in display order (backend/src/syscheck/types.ts CHECK_IDS) */
 const CATALOGUE = [
@@ -243,6 +243,10 @@ test.describe('Systemcheck on Admin → Status', () => {
     await expect.poll(() => api.syscheck.calls.length).toBe(2);
     await page.waitForLoadState('networkidle');
     expect(Math.abs((await disks.boundingBox())!.y - top)).toBeLessThanOrEqual(1);
+  });
+
+  test('a failing browser line (proxy headers) never pushes the cards below down: cold, and on the next visit', async ({ page }) => {
+    await browserLinesHoldStill(page);
   });
 
   test('every encoder advice says what is wrong and how to fix it', async ({ page, api }) => {

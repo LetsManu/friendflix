@@ -17,14 +17,15 @@
   export let line: CheckLine | null;
   /** the catalogue id (the skeleton of the encoder line reserves its HEVC row) */
   export let id: CheckId | undefined = undefined;
-  /** the browser checks are running: a browser line without a result reads "wird geprüft…" */
+  /** this browser line's check is running: it reads "wird geprüft…" (an earlier result keeps its texts until the new one is back) */
   export let browserRunning = false;
   const dispatch = createEventDispatcher<{ refresh: void }>();
 
   // $t as an argument: the texts follow a language switch (lineText reads the same store)
   const textOf = (l: CheckLine | null, _tr: unknown) => (l ? lineText(l) : null);
   $: text = textOf(line, $t);
-  $: running = !!line?.placeholder && line.runs === 'browser' && browserRunning;
+  // a remembered result keeps its row while its check runs again: only the pill says "wird geprüft…"
+  $: running = !!line && line.runs === 'browser' && browserRunning;
   $: pillText = line ? (running ? $t('syscheck.browser.running') : $t(`syscheck.status.${line.status}`)) : '';
   /** the encoder line's further advice (the first is its cause and fix), each with what is wrong and how to fix it */
   const adviceOf = (l: CheckLine | null, _tr: unknown) => (l ? adviceTexts(l) : []);

@@ -15,7 +15,7 @@ vi.mock('$app/navigation', () => ({
 }));
 vi.mock('#lib/ui/confirm', () => ({ confirm: h.confirm }));
 
-const { leaveGuard, rerunOf } = await import('./leaveGuard');
+const { leaveGuard, leavesRoute, rerunOf } = await import('./leaveGuard');
 
 const target = (href: string) => ({ url: new URL(href, 'https://ff.example.org'), params: {}, route: { id: null } });
 const nav = (type: string, from: string, to: string | null, extra: Record<string, unknown> = {}) => ({
@@ -88,5 +88,29 @@ describe('leaveGuard', () => {
     h.before!(n);
     expect(n.cancel).toHaveBeenCalled();
     expect(h.confirm).not.toHaveBeenCalled();
+  });
+});
+
+describe('leavesRoute (a guard that asks only when the page is left)', () => {
+  it('another page in the app → true; a tab switch, an unload or no target → false', () => {
+    expect(leavesRoute(nav('link', '/admin/settings?tab=media', '/admin/livetv?tab=settings&setting=LIVETV_ENCODER') as never)).toBe(true);
+    expect(leavesRoute(nav('goto', '/admin/settings?tab=media', '/admin/settings?tab=signin') as never)).toBe(false);
+    expect(leavesRoute(nav('goto', '/admin/settings', '/admin/settings?setting=PUBLIC_URL') as never)).toBe(false);
+    // the classic re-authentication leaves by a full load: never asked (the change is stashed for it)
+    expect(leavesRoute(nav('link', '/admin/settings', '/auth/reauth?next=x', { willUnload: true }) as never)).toBe(false);
+    expect(leavesRoute(nav('leave', '/admin/settings', null, { willUnload: true }) as never)).toBe(false);
+  });
+
+  it('as a guard condition: a tab switch with drafts passes, leaving the page asks', async () => {
+    h.confirm.mockClear();
+    leaveGuard((n) => leavesRoute(n), () => ({ title: 'Leave?' }));
+    const tab = nav('goto', '/admin/settings?tab=media', '/admin/settings?tab=signin');
+    h.before!(tab);
+    expect(tab.cancel).not.toHaveBeenCalled();
+    const away = nav('link', '/admin/settings', '/admin/livetv?tab=settings');
+    h.before!(away);
+    expect(away.cancel).toHaveBeenCalled();
+    await flush();
+    expect(h.confirm).toHaveBeenCalledTimes(1);
   });
 });

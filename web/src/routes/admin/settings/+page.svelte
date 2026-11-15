@@ -16,10 +16,12 @@
    * `#settings-<group>` links open the group's tab at its card. Either way the address then reads the plain tab.
    * The search above the tabs (search.ts) covers every setting, Live TV's too: while a query is typed its results take the tab panel's
    * place; choosing one clears the query and opens `?setting=<KEY>`; Esc clears. Nothing is edited in the result list.
+   * Leaving the page (a Live-TV result or link, the menu) with unsaved drafts asks first; a tab switch or a deep link on this page does not.
    */
   import { onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { pageStore } from '#lib/page';
+  import { leaveGuard, leavesRoute } from '#lib/admin/leaveGuard';
   import Icon from '#lib/Icon.svelte';
   import { isReauthError, reauthenticate } from '#lib/account/reauth';
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
@@ -87,6 +89,9 @@
   $: tab = view && (linkKey || linkGroup) ? linkTab(view, linkKey, linkGroup) : tabOf(url.searchParams.get('tab'));
   $: tabGroups = TAB_GROUPS[tab].flatMap((id) => groups.filter((g) => g.id === id));
   $: dirty = dirtyTabs(changes);
+  leaveGuard((nav) => leavesRoute(nav) && dirty.size > 0, () => ({
+    title: tr('settings.leave.title'), body: tr('settings.leave.body'), danger: true, confirmLabel: tr('settings.leave.confirm'),
+  }));
 
   const select = (to: SettingsTab) => { q = ''; return goto(tabHref(to), { replace: true, reset: false }); };
 

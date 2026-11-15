@@ -11,7 +11,7 @@ import it_ from '#lib/i18n/locales/it/index';
 import pl from '#lib/i18n/locales/pl/index';
 import tr_ from '#lib/i18n/locales/tr/index';
 import {
-  CHECK_GROUPS, CHECK_IDS, BROWSER_IDS, adviceTexts, cachedSystemcheck, checkedAtText, docsHref, forgetSystemcheck, isNewer, lineText, mergeLines, rememberSystemcheck, settingHref, statusIcon,
+  CHECK_GROUPS, CHECK_IDS, BROWSER_IDS, adviceTexts, cachedBrowserLines, cachedSystemcheck, checkedAtText, docsHref, forgetSystemcheck, isNewer, lineText, mergeLines, rememberBrowserLines, rememberSystemcheck, settingHref, statusIcon,
   statusTone, summaryOf, type CheckLine, type CheckStatus, type SystemcheckResult,
 } from './syscheck';
 
@@ -111,6 +111,28 @@ describe('remembered answer (stale-while-revalidate)', () => {
     vi.stubGlobal('sessionStorage', { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); }, removeItem: () => { throw new Error('denied'); } });
     expect(() => rememberSystemcheck(res('2026-11-14T10:00:00.000Z'))).not.toThrow();
     expect(cachedSystemcheck()?.at).toBe('2026-11-14T10:00:00.000Z');
+  });
+
+  it('the browser lines are remembered too (codes only), per tab, and forgotten with the answer', () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('sessionStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) });
+    expect(cachedBrowserLines()).toEqual([]);
+    const hsts = ln({ id: 'proxy.headers', status: 'warning', cause: 'hsts_missing', fix: 'hsts_missing', docs: 'setup.md#6-nginx-proxy-manager-portal-proxy-host', runs: 'browser' });
+    // a server line, a placeholder or a malformed entry is never kept as a browser line
+    rememberBrowserLines([hsts, ln({ id: 'core.database', status: 'ok' }), { ...ln({ id: 'proxy.upload', status: 'unknown', runs: 'browser' }), placeholder: true }, null as unknown as CheckLine]);
+    expect(cachedBrowserLines()).toEqual([hsts]);
+    // a reload reads them back; a stored entry of the wrong shape is ignored
+    const saved = store.get('ff-syscheck-browser')!;
+    forgetSystemcheck();
+    store.set('ff-syscheck-browser', saved);
+    expect(cachedBrowserLines()).toEqual([hsts]);
+    forgetSystemcheck();
+    store.set('ff-syscheck-browser', '[{"id":"proxy.websocket"}]');
+    expect(cachedBrowserLines()).toEqual([]);
+    rememberBrowserLines([hsts]);
+    forgetSystemcheck();
+    expect(store.has('ff-syscheck-browser')).toBe(false);
+    expect(cachedBrowserLines()).toEqual([]);
   });
 
   it('a stored entry with a malformed line is ignored, never thrown on in mergeLines', () => {

@@ -49,7 +49,7 @@ export interface CheckLine {
 export interface SystemcheckResult { at: string; lines: CheckLine[]; counts: Record<CheckStatus, number> }
 
 // the remembered answer lives in a tiny module of its own: the logout path (session.ts) clears it without loading this one
-export { cachedSystemcheck, forgetSystemcheck, isNewer, rememberSystemcheck } from './syscheckStore';
+export { cachedBrowserLines, cachedSystemcheck, forgetSystemcheck, isNewer, rememberBrowserLines, rememberSystemcheck } from './syscheckStore';
 
 /** The time of the list: "geprüft um 10:05", or "Stand von 10:05 (veraltet)" while reloading it fails and an older answer is shown. */
 export const checkedAtText = (at: string, stale: boolean): string => tr(stale ? 'syscheck.staleAt' : 'syscheck.checkedAt', { time: fmtTime(at) });

@@ -190,5 +190,7 @@ export default {
   tabs: { label: 'Bereiche der Einstellungen', general: 'Allgemein', signin: 'Anmeldung', media: 'Medien', playback: 'Wiedergabe', updates: 'Updates', notifications: 'Benachrichtigungen', unsaved: 'ungespeicherte Änderungen' },
   /** the search above the tabs: results name their tab; choosing one opens the setting */
   search: { label: 'Einstellungen durchsuchen', placeholder: 'Suchen nach Name, Schlüssel oder Stichwort', results: { one: '{n} Einstellung gefunden', other: '{n} Einstellungen gefunden' }, none: 'Keine Einstellung passt zu „{q}“.' },
+  /** leaving Admin → Einstellungen (not switching its tabs) with unsaved edits */
+  leave: { title: 'Änderungen verwerfen?', body: 'Es gibt ungespeicherte Einstellungen. Sie gehen verloren, wenn du die Seite verlässt.', confirm: 'Verwerfen' },
   livetvMoved: 'Live-TV-Einstellungen findest du jetzt unter Live-TV.',
 } as const;

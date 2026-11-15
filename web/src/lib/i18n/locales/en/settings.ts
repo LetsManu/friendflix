@@ -190,6 +190,7 @@ const settings: Translation<typeof de> = {
   },
   tabs: { label: 'Settings sections', general: 'General', signin: 'Sign-in', media: 'Media', playback: 'Playback', updates: 'Updates', notifications: 'Notifications', unsaved: 'unsaved changes' },
   search: { label: 'Search settings', placeholder: 'Search by name, key or keyword', results: { one: '{n} setting found', other: '{n} settings found' }, none: 'No setting matches “{q}”.' },
+  leave: { title: 'Discard changes?', body: 'There are unsaved settings. They are lost if you leave this page.', confirm: 'Discard' },
   livetvMoved: 'You will now find the Live TV settings under Live TV.',
 };
 export default settings;

@@ -194,6 +194,7 @@ const settings: Translation<typeof de> = {
   },
   tabs: { label: 'Rubriques des réglages', general: 'Général', signin: 'Connexion', media: 'Médias', playback: 'Lecture', updates: 'Mises à jour', notifications: 'Notifications', unsaved: 'modifications non enregistrées' },
   search: { label: 'Rechercher dans les réglages', placeholder: 'Rechercher par nom, clé ou mot', results: { one: '{n} réglage trouvé', many: '{n} réglages trouvés', other: '{n} réglages trouvés' }, none: 'Aucun réglage ne correspond à « {q} ».' },
+  leave: { title: 'Abandonner les modifications ?', body: 'Des réglages ne sont pas enregistrés. Ils seront perdus si vous quittez la page.', confirm: 'Abandonner' },
   livetvMoved: 'Les réglages de la télévision en direct se trouvent désormais sous Télévision en direct.',
 };
 export default settings;

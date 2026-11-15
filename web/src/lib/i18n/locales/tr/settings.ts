@@ -193,6 +193,7 @@ const settings: Translation<typeof de> = {
   },
   tabs: { label: 'Ayar bölümleri', general: 'Genel', signin: 'Oturum açma', media: 'Medya', playback: 'Oynatma', updates: 'Güncellemeler', notifications: 'Bildirimler', unsaved: 'kaydedilmemiş değişiklikler' },
   search: { label: 'Ayarlarda ara', placeholder: 'Ad, anahtar veya kelimeyle ara', results: { one: '{n} ayar bulundu', other: '{n} ayar bulundu' }, none: '“{q}” ile eşleşen ayar yok.' },
+  leave: { title: 'Değişiklikler silinsin mi?', body: 'Kaydedilmemiş ayarlar var. Sayfadan ayrılırsan kaybolur.', confirm: 'Sil' },
   livetvMoved: 'Canlı TV ayarlarını artık Canlı TV bölümünde bulursun.',
 };
 export default settings;

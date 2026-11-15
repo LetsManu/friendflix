@@ -3,7 +3,7 @@
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
 import { syscheckHealthy, syscheckTroubled, syscheckTroubledEncoder, syscheckWith } from '../mocks/syscheck.js';
-import { gateSyscheck, listHoldsNothingBelow } from './syscheck-helpers.js';
+import { browserLinesHoldStill, gateSyscheck, listHoldsNothingBelow } from './syscheck-helpers.js';
 
 test.describe('Systemcheck (phone)', () => {
   test.beforeEach(({ api }) => {
@@ -65,5 +65,10 @@ test.describe('Systemcheck (phone)', () => {
     await expect(sc.locator('li[data-id="media.encoder"]').getByRole('button', { name: 'HEVC jetzt prüfen' })).toBeVisible();
     const after = (await sc.boundingBox())!;
     expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(1);
+  });
+
+  test('375 px: a failing browser line never pushes the cards below down, cold and on the next visit', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await browserLinesHoldStill(page);
   });
 });

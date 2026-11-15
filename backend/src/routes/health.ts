@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { checkLoginFlows } from '../flowCheck.js';
-import { getSnapshot, worstOf, type HealthIssue } from '../health.js';
+import { forgetOidcProbe, getSnapshot, OIDC_PROBE_KEYS, worstOf, type HealthIssue } from '../health.js';
 import { requireAdmin } from '../session.js';
 
 const REFRESH_PER_MIN = 6;
@@ -18,6 +18,9 @@ const dismissBody = z.object({
 /** Block 22: admin health snapshot and the warning banner (admin role on the owner profile only). */
 export function healthRoutes(app: FastifyInstance, ctx: Ctx) {
   const admin = { preHandler: requireAdmin(ctx) };
+  // a saved OIDC setting: the cached discovery answer goes, so the next check (Systemcheck, banner) asks the issuer again
+  const offOidc = ctx.settings.onChange([...OIDC_PROBE_KEYS], () => { void forgetOidcProbe(ctx); });
+  app.addHook('onClose', async () => { offOidc(); });
 
   app.get('/api/admin/health', admin, async (req, reply) => {
     const q = healthQuery.parse(req.query);
