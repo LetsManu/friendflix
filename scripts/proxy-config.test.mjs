@@ -35,3 +35,13 @@ test('Plan B keeps the token locations: its setup notes name /media/l/ and /medi
   const planB = readFileSync(fileURLToPath(import.meta.resolve('../deploy/npm/plan-b-auth-request.conf')), 'utf8');
   for (const prefix of ['/media/l/', '/media/r/']) assert.match(planB, new RegExp(`keep[^\\n]*\\n?[^\\n]*${prefix.replaceAll('/', '\\/')}`, 'i'), prefix);
 });
+
+test('the operator docs keep /media/l/ and /media/r/ in Plan B, and the bug report warns about their addresses (N6)', () => {
+  const ops = readFileSync(fileURLToPath(import.meta.resolve('../docs/operations.md')), 'utf8');
+  const planB = ops.slice(ops.indexOf('## Plan B'), ops.indexOf('**Sicherheitsmerkmale', ops.indexOf('## Plan B')));
+  assert.match(planB, /`location \/media\/l\/`[^\n]*`location \/media\/r\/`[^\n]*\*\*bleiben stehen\*\*/);
+  // the gateway serves both tokens under Plan B too: stopping it is only for installations without Live TV
+  assert.doesNotMatch(planB, /Gateway-Container kann gestoppt werden/);
+  const bug = readFileSync(fileURLToPath(import.meta.resolve('../.github/ISSUE_TEMPLATE/bug_report.yml')), 'utf8');
+  for (const p of ['/media/c/', '/media/l/', '/media/r/']) assert.ok(bug.includes(`\`${p}…\``), p);
+});
