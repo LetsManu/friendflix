@@ -139,6 +139,8 @@
 
   const word = (v: unknown) => tr(v ? 'adminPeople.roles.allowed' : 'adminPeople.roles.denied');
   const valueText = (f: MatrixField, v: unknown): string => (f.kind === 'bool' ? word(v) : cellText(f, v));
+  /** Darf aufnehmen keeps its own value while Live-TV is off; the line says it does nothing until Live-TV is on */
+  const needsLivetv = (f: MatrixField, s: Record<string, unknown>, rows: typeof rowOf): boolean => { const lt = rows.get('liveTv'); return f.key === 'liveRecord' && !!lt && stagedValue(lt, s) !== true; };
   const roleText = (f: MatrixField, row: RightsRow): string => tr('adminPeople.rights.roleIs', { value: valueText(f, row.roleValue) });
   const triText = (o: Tri): string => tr(`adminPeople.rights.${o === 'role' ? 'asRole' : o}` as 'adminPeople.rights.allow');
 
@@ -216,7 +218,7 @@
             {@const row = rowOf.get(f.key)!}
             {@const label = $locale && fieldLabel(f.key)}
             <li class="row">
-              <div class="lab"><span class="nm">{label}</span><span class="role">{roleText(f, row)}</span></div>
+              <div class="lab"><span class="nm">{label}</span><span class="role">{roleText(f, row)}</span>{#if f.key === 'liveRecord'}<span class="role need">{needsLivetv(f, staged, rowOf) ? $t('adminPeople.roles.areas.needsLivetv') : ''}</span>{/if}</div>
               <div class="ctl">
                 {#if isLocked(f)}
                   <span class="locked">{$t('adminPeople.roles.adminLocked')}</span>
@@ -314,6 +316,8 @@
   .row:first-child { border-top: 0; }
   .lab { display: flex; flex-direction: column; min-width: 0; }
   .nm { overflow-wrap: anywhere; }
+  /* the Live-TV hint's line is always there on its row, so staging Live-TV moves nothing */
+  .need { display: block; min-height: 1.5em; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .role { font-size: .82rem; color: var(--mut); overflow-wrap: anywhere; }
   .ctl { display: flex; align-items: center; gap: .6rem; min-width: 0; }
   .ctl > :global(.fc) { flex: 1; }

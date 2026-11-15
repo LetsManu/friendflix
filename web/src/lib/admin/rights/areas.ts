@@ -8,8 +8,9 @@
  * The coupling (§2.3): Wünsche, Gemeinsam and Downloads need the Mediathek. `areasOf` does not apply it (like the backend); the
  * role page does: `stageArea` and `stageField` never stage one of them on without a library, switching the Mediathek off (or
  * unticking the last library) stages them off with it, and `stagedAreas` shows them off while the Mediathek is off. In the same
- * way *Darf aufnehmen* (`liveRecord`, the Live-TV section's sub-switch since recordings shipped, §5.4) needs Live-TV: Live-TV off
- * stages it off, and it does not go on while Live-TV is off (`fieldNeeds`, `fieldLocks`, `coupledValue`).
+ * way *Darf aufnehmen* (`liveRecord`, the Live-TV section's sub-switch since recordings shipped, §5.4) only works with Live-TV,
+ * but it is its own right (owner decision 2026-11-15): Live-TV off or on never changes its value, it keeps reading what is
+ * stored, and while Live-TV is off its control is locked with a hint (`fieldNeeds`, `fieldLocks`).
  */
 import type { AreaKey, Areas } from '#lib/capabilities';
 import { tr } from '#lib/i18n';
@@ -47,7 +48,7 @@ const AREA_SWITCH: ReadonlySet<string> = new Set(['liveTv', 'requests', 'downloa
 /** what switching an area off stages (§2.3) */
 const OFF: Record<AreaKey, Record<string, unknown>> = {
   library: { libraries: [], requests: false, party: false, partySchedule: false, comments: false, download: false },
-  livetv: { liveTv: false, liveRecord: false },
+  livetv: { liveTv: false },
   requests: { requests: false },
   together: { party: false, partySchedule: false, comments: false },
   downloads: { download: false },
@@ -76,8 +77,8 @@ export function fieldNeeds(v: Record<string, unknown>, key: string): 'library' |
   return null;
 }
 
-/** a field's value as the app offers it: a switch whose area is off reads off (the compare view, the role page's locked switch) */
-export const coupledValue = (v: Record<string, unknown>, key: string): unknown => (fieldNeeds(v, key) ? false : v[key]);
+/** a field's value as the app offers it: a switch whose Mediathek is off reads off; Darf aufnehmen always reads its stored value (its Live-TV need is a hint) */
+export const coupledValue = (v: Record<string, unknown>, key: string): unknown => (fieldNeeds(v, key) === 'library' ? false : v[key]);
 
 /** the role page's locked switches (as staged): field key → what it waits for */
 export function fieldLocks(s: Stage, r: MatrixRole): Record<string, 'library' | 'livetv'> {
@@ -136,11 +137,11 @@ export function stageArea(s: Stage, m: RoleMatrix, r: MatrixRole, area: AreaKey,
 
 /**
  * One field edited on the role page, coupled: no library left is the Mediathek switched off (with what needs it), a switch of
- * Wünsche, Gemeinsam or Downloads does not go on while the Mediathek is off, nor Darf aufnehmen while Live-TV is off. Everything
+ * Wünsche, Gemeinsam or Downloads does not go on while the Mediathek is off. Everything
  * else is a plain `stageSet`.
  */
 export function stageField(s: Stage, m: RoleMatrix, r: MatrixRole, key: string, v: unknown): Stage {
-  if (v === true && fieldNeeds(stagedValues(s, r), key)) return s;
+  if (v === true && fieldNeeds(stagedValues(s, r), key) === 'library') return s;
   // the admin role keeps a library (the server refuses none, admin_library_required); its areas are locked
   if (key === 'libraries' && !hasLibrary(v) && r.base !== 'admin') return stageArea(s, m, r, 'library', false);
   return stageSet(s, m, r.key, key, v);

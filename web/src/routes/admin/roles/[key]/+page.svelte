@@ -62,7 +62,7 @@
 
   // ---- staging: the area switches and the fields keep the coupling (areas.ts); the name and the groups are plain staged keys
   $: areas = role ? stagedAreas(stage, role) : null;
-  /** switches that wait for another area (Darf aufnehmen while Live-TV is off): locked, shown off */
+  /** switches that wait for another area (Darf aufnehmen while Live-TV is off): locked, showing their real value (Darf aufnehmen is its own right) */
   $: locks = role ? fieldLocks(stage, role) : {};
   $: counts = matrix ? stageCounts(stage, matrix) : null;
   $: dirty = counts?.roles ?? 0;

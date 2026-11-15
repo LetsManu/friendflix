@@ -96,6 +96,8 @@ beforeAll(async () => {
   anna = await person(annaId, 'anna', 'Anna Beispiel', 'family');
   ben = await person(benId, 'ben', 'Ben Muster', 'friend');
   gast = await person(gastId, 'gast', 'Gast Probe', 'guest');
+  // recording is off by default for every role but Admin (owner decision 2026-11-15): these tests grant it to Familie and Freund explicitly
+  await env.pool.query(`insert into role_settings(role, perms) values ('family', '{"liveRecord": true}'), ('friend', '{"liveRecord": true}')`);
   await env.pool.query(
     `insert into profiles(id, user_id, name, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, kids, kids_max_rating) values ($1, $2, 'Kiddo', $3, 'anna-kiddo', $4, true, 6)`,
     [annaKidsId, annaId, 'f'.repeat(32), encrypt(key, 'kpw')]);
@@ -134,6 +136,28 @@ describe('rights', () => {
     expect((await call(gast, 'POST', '/api/livetv/rules', { kind: 'series', channelId: nordlicht, seriesKey: 'x', title: 'x', onlyNew: true })).statusCode).toBe(403);
     // the programme detail says so
     expect((await call(gast, 'GET', `/api/livetv/programme/${nordlicht}/${iso(T())}`)).json().canRecord).toBe(false);
+  });
+
+  it('a role without liveRecord (the new default) gets 403 record_forbidden; with it on, Live-TV off still blocks every write', async () => {
+    await prog('Nordlicht TV.de', T());
+    const noRec = async (role: string, perms: string) => {
+      await env.pool.query('update role_settings set perms = $2 where role = $1', [role, perms]);
+      invalidateRoles(env.ctx); invalidateRights();
+    };
+    try {
+      await noRec('friend', '{}');
+      expect((await call(ben, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(T()) })).json()).toEqual({ error: 'record_forbidden' });
+      expect((await call(ben, 'GET', `/api/livetv/programme/${nordlicht}/${iso(T())}`)).json().canRecord).toBe(false);
+      // recording is a right of its own: liveRecord on, Live-TV off, is no recording (liveTv AND liveRecord)
+      await noRec('friend', '{"liveRecord": true, "liveTv": false}');
+      expect((await call(ben, 'POST', '/api/livetv/recordings', { channelId: nordlicht, start: iso(T()) })).statusCode).toBe(403);
+      expect((await call(ben, 'POST', '/api/livetv/rules', { kind: 'series', channelId: nordlicht, seriesKey: 'x', title: 'x', onlyNew: true })).statusCode).toBe(403);
+      expect((await call(ben, 'PATCH', `/api/livetv/rules/${randomUUID()}`, { enabled: false })).json()).toEqual({ error: 'record_forbidden' });
+      expect((await call(ben, 'DELETE', `/api/livetv/rules/${randomUUID()}`)).json()).toEqual({ error: 'record_forbidden' });
+      expect((await call(ben, 'POST', `/api/livetv/recordings/${randomUUID()}/library`, {})).json()).toEqual({ error: 'record_forbidden' });
+    } finally {
+      await noRec('friend', '{"liveRecord": true}');
+    }
   });
 
   it('kids profile cannot schedule or delete', async () => {

@@ -55,6 +55,7 @@
             <span class="nm">{$locale && roleName(r)}</span>
             <span class="val" class:off={c.bool && !c.value}>{#if c.bool}<Icon name={c.value ? 'check' : 'x'} size={16} />{/if}{words(c)}</span>
             {#if c.locked}<span class="note"><Icon name="lock" size={14} />{$t('adminPeople.roles.adminLocked')}</span>{:else if n}<span class="note">{n}</span>{/if}
+            {#if c.needs && !c.locked}<span class="note">{$t('adminPeople.roles.areas.needsLivetv')}</span>{/if}
           </div>
           {#if c.href}<a class="ed" href={c.href} aria-label={c.label}>{$t('adminPeople.roles.edit')}</a>{/if}
         </li>

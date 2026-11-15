@@ -82,6 +82,8 @@ beforeAll(async () => {
   await env.pool.query(
     `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values ($1, 'anna', 'anna@friend.example.com', 'Anna Beispiel', 'family', $2, 'anna', $3)`,
     [annaId, 'a'.repeat(32), encrypt(key, 'pw')]);
+  // recording is off by default for every role but Admin (owner decision 2026-11-15): Familie gets it explicitly here
+  await env.pool.query(`insert into role_settings(role, perms) values ('family', '{"liveRecord": true}')`);
   anna = await env.login({ sub: 'anna', email: 'anna@friend.example.com', name: 'Anna Beispiel', groups: [] });
   await env.pool.query('update devices set approved = true where user_id = $1', [annaId]);
 });

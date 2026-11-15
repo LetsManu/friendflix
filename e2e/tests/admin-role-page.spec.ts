@@ -191,39 +191,51 @@ test.describe('Rollen & Rechte: the role page', () => {
     await expect(page.getByRole('button', { name: 'Keine', exact: true })).toBeDisabled();
   });
 
-  test('Live-TV: Darf aufnehmen is a sub-switch; Live-TV off switches it off and locks it ("Braucht Live-TV"), on again restores it', async ({ page, api }) => {
+  test('Live-TV: Darf aufnehmen is its own right, off by default; Live-TV off or on never changes it, it shows its value disabled ("Braucht Live-TV")', async ({ page, api }) => {
     liveTv(api);
-    Object.assign(values(api, 'friend'), { liveRecord: true });
     await page.goto('/admin/roles/friend');
     const sec = page.getByRole('region', { name: 'Live-TV', exact: true });
     const rec = sec.getByRole('switch', { name: 'Darf aufnehmen' });
-    await expect(rec).toBeChecked();
-    await expect(rec).toBeEnabled();
-    const line = sec.locator('[data-field="liveRecord"] .mark');
-    const box = await pageBox(line);
-    await area(page, 'Live-TV').click();
+    // off by default (the mock's code default), enabled while Live-TV is on
     await expect(rec).not.toBeChecked();
+    await expect(rec).toBeEnabled();
+    await rec.click();
+    await expect(rec).toBeChecked();
+    await expect(bar(page)).toContainText('1 Änderung');
+    const line = sec.locator('[data-field="liveRecord"] .mark');
+    await expect(line).toHaveText('Nicht gespeichert');
+    const box = await pageBox(line);
+    // Live-TV off: Darf aufnehmen keeps its (staged) value, is locked, says why, nothing moves; the review lists only Live-TV
+    await area(page, 'Live-TV').click();
+    await expect(rec).toBeChecked();
     await expect(rec).toBeDisabled();
     await expect(line).toHaveText('Braucht Live-TV');
-    expect(await pageBox(line)).toEqual(box); // the line was there all along
+    expect(await pageBox(line)).toEqual(box);
     await expect(bar(page)).toContainText('2 Änderungen');
     const sheet = await review(page);
-    await expect(sheet.getByRole('listitem')).toHaveText(['Freund · Live-TV: ✓ → –', 'Freund · Darf aufnehmen: ✓ → –']);
+    await expect(sheet.getByRole('listitem')).toHaveText(['Freund · Live-TV: ✓ → –', 'Freund · Darf aufnehmen: – → ✓']);
     await page.keyboard.press('Escape');
     await area(page, 'Live-TV').click();
-    await expect(bar(page)).toHaveCount(0);
     await expect(rec).toBeChecked();
-    // on its own it switches like any right
-    await rec.click();
+    await expect(rec).toBeEnabled();
+    await expect(bar(page)).toContainText('1 Änderung');
     await (await review(page)).getByRole('button', { name: 'Speichern' }).click();
     await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
-    expect(api.admin.matrix.puts).toEqual([{ role: 'friend', body: { perms: { liveRecord: false } } }]);
-    // a role saved without Live-TV: the switch reads off and stays locked
+    expect(api.admin.matrix.puts).toEqual([{ role: 'friend', body: { perms: { liveRecord: true } } }]);
+    // a stored right is shown as stored while Live-TV is off, locked, with no staged change
     Object.assign(values(api, 'guest'), { liveTv: false, liveRecord: true });
     await page.goto('/admin/roles/guest');
     const g = page.getByRole('region', { name: 'Live-TV', exact: true }).getByRole('switch', { name: 'Darf aufnehmen' });
-    await expect(g).not.toBeChecked();
+    await expect(g).toBeChecked();
     await expect(g).toBeDisabled();
+    await expect(bar(page)).toHaveCount(0);
+    // Live-TV off on a role that records stages Live-TV only
+    Object.assign(values(api, 'family'), { liveTv: true, liveRecord: true });
+    await page.goto('/admin/roles/family');
+    await area(page, 'Live-TV').click();
+    await expect(bar(page)).toContainText('1 Änderung');
+    await expect(sec.getByRole('switch', { name: 'Darf aufnehmen' })).toBeChecked();
+    await expect((await review(page)).getByRole('listitem')).toHaveText(['Familie · Live-TV: ✓ → –']);
   });
 
   test('admin page: area switches locked with "Admins dürfen immer alles"; groups read "Alle freigegebenen Gruppen"', async ({ page, api }) => {

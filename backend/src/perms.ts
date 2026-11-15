@@ -12,11 +12,11 @@ export type PermKey = (typeof PERM_KEYS)[number];
 export type Perms = Record<PermKey, boolean>;
 
 const ALL_ON: Perms = { requests: true, cast: true, party: true, partySchedule: true, comments: true, liveTv: true, liveRecord: true };
-/** today's behaviour: guests have no comments (anime.ts), only admins keep more than 3 scheduled parties (party.ts) */
+/** today's behaviour: guests have no comments (anime.ts), only admins keep more than 3 scheduled parties (party.ts); recording (`liveRecord`) is off for everyone but admins until a role turns it on (owner decision 2026-11-15) */
 export const DEFAULT_PERMS: Record<'admin' | 'family' | 'friend' | 'guest', Perms> = {
   admin: { ...ALL_ON },
-  family: { ...ALL_ON, partySchedule: false },
-  friend: { ...ALL_ON, partySchedule: false },
+  family: { ...ALL_ON, partySchedule: false, liveRecord: false },
+  friend: { ...ALL_ON, partySchedule: false, liveRecord: false },
   guest: { ...ALL_ON, partySchedule: false, comments: false, liveRecord: false },
 };
 

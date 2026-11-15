@@ -20,7 +20,7 @@ import { noteHandoff } from '../handoff.js';
 
 /**
  * The recording routes (spec §15.8, plan Phase 3 Task 4). User side (`requireUser`): the programme detail, scheduling with the conflict
- * forecast, the lists, keep / share / padding, delete, rules, progress. Every write needs `liveRecord` (403 `record_forbidden`; kids
+ * forecast, the lists, keep / share / padding, delete, rules, progress. Every write needs `liveRecord` and `liveTv` (separate rights; 403 `record_forbidden`; kids
  * profiles are refused by the kids overlay) and the channel in the profile's set (else 404). Admin side (`requireAdmin`, audited as
  * `livetv.rec.*` with ids and field names only): the metadata list, delete, delete all (typed "LÖSCHEN"), storage. No answer carries a
  * stream URL, a folder or a token.
@@ -76,7 +76,7 @@ function ruleView(r: RuleRow) {
 export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
   const user = { preHandler: requireUser(ctx) };
   const writeLimit = { rateLimit: { max: 30, timeWindow: '1 minute' } };
-  const write = { preHandler: [requireUser(ctx), requirePerm(ctx, 'liveRecord', 'record_forbidden')], config: writeLimit };
+  const write = { preHandler: [requireUser(ctx), requirePerm(ctx, 'liveRecord', 'record_forbidden'), requirePerm(ctx, 'liveTv', 'record_forbidden')], config: writeLimit };
   const read = { ...user, config: { rateLimit: { max: 120, timeWindow: '1 minute' } } };
   const off = (reply: FastifyReply) => reply.code(404).send({ error: 'livetv_off' });
 
@@ -175,8 +175,9 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   /** *Behalten*, *Teilen…* (owner or admin), padding (owner, while scheduled) */
-  // an owner may always narrow a share and delete their own recordings, also after their role lost `liveRecord` (A-M13); widening a
-  // share, keep and padding still need it (checked inside)
+  // an owner may narrow a share and delete their own recordings while Live TV is installed, also after their role lost `liveRecord` (A-M13;
+  // recordings live in the Live-TV area, so with Live-TV off for the role the owner gets 404; an admin can always delete); widening a share,
+  // keep and padding need `liveRecord` and `liveTv` (checked inside)
   const ownerWrite = { preHandler: requireUser(ctx), config: writeLimit };
   app.patch('/api/livetv/recordings/:id', ownerWrite, async (req, reply) => {
     const id = idParam(req);
@@ -191,7 +192,7 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     if (r.profile_id !== profile.id && !a.admin) return reply.code(403).send({ error: 'forbidden' });
     const widens = b.data.visibility !== undefined && VISIBILITIES.indexOf(b.data.visibility) > VISIBILITIES.indexOf(r.visibility);
     const needsRecord = widens || b.data.keep !== undefined || b.data.padBefore !== undefined || b.data.padAfter !== undefined;
-    if (needsRecord && !(await permsOf(ctx, req)).liveRecord) return reply.code(403).send({ error: 'record_forbidden' });
+    if (needsRecord) { const p = await permsOf(ctx, req); if (!(p.liveRecord && p.liveTv)) return reply.code(403).send({ error: 'record_forbidden' }); }
     if ((b.data.padBefore !== undefined || b.data.padAfter !== undefined)) {
       if (r.profile_id !== profile.id) return reply.code(403).send({ error: 'forbidden' });
       const u2 = await ctx.db.query(

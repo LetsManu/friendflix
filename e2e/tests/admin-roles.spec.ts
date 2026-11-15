@@ -308,14 +308,16 @@ test.describe('compare (read-only)', () => {
     expect(await rowHeads(page, 'Allgemein')).toEqual(['Gleichzeitige Streams', 'Auf Fernseher übertragen']);
   });
 
-  test('compare: Darf aufnehmen is a Live-TV detail row, read-only, off while Live-TV is off', async ({ page, api }) => {
+  test('compare: Darf aufnehmen is a Live-TV detail row, read-only, shows its stored value with "Braucht Live-TV" while Live-TV is off', async ({ page, api }) => {
     api.admin.matrix.features.livetv = true;
     Object.assign(api.admin.matrix.roles.find((r) => r.key === 'friend')!.values, { liveTv: true, liveRecord: true });
     Object.assign(api.admin.matrix.roles.find((r) => r.key === 'guest')!.values, { liveTv: false, liveRecord: true });
     await page.goto('/admin/roles?view=compare');
     await expect.poll(() => rowHeads(page, 'Live-TV')).toEqual(['Darf aufnehmen', 'Kanalgruppen']);
     await expect(link(page, 'Freund, Darf aufnehmen: erlaubt, bearbeiten')).toHaveAttribute('href', '/admin/roles/friend?field=liveRecord');
-    await expect(link(page, 'Gast, Darf aufnehmen: nicht erlaubt, bearbeiten')).toBeVisible();
+    await expect(link(page, 'Gast, Darf aufnehmen: erlaubt, bearbeiten')).toBeVisible();
+    await expect(link(page, 'Gast, Darf aufnehmen: erlaubt, bearbeiten')).toHaveAttribute('title', 'Braucht Live-TV'); // stored value, with the hint
+    await expect(link(page, 'Freund, Darf aufnehmen: erlaubt, bearbeiten')).not.toHaveAttribute('title', /.+/);
     await expect(cell(page, 'Admin, Darf aufnehmen: erlaubt')).toHaveAttribute('aria-disabled', 'true');
   });
 
@@ -430,7 +432,7 @@ test.describe('compare (read-only)', () => {
     api.admin.matrix.features.livetv = true;
     Object.assign(api.admin.matrix.roles.find((r) => r.key === 'guest')!.values, { liveTv: false, liveRecord: true });
     await page.goto('/admin/roles?view=compare');
-    await link(page, 'Gast, Darf aufnehmen: nicht erlaubt, bearbeiten').click();
+    await link(page, 'Gast, Darf aufnehmen: erlaubt, bearbeiten').click();
     await expect(page).toHaveURL(/\/admin\/roles\/guest\?field=liveRecord$/);
     await expect(page.locator('[data-area="livetv"] [role="switch"]')).toBeFocused();
     await expect(page.locator('[data-field="liveRecord"]')).toBeInViewport();
