@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { InputEnd, alignStart, openInput, type Resume } from '../src/inputs.js';
+import { InputEnd, MEASURE_MS, alignStart, openInput, type Resume } from '../src/inputs.js';
 import { parseMedia } from '../src/passthrough.js';
 import { AAC, H264, tsSegment } from './ts-builder.js';
 import { GUARD, INPUT, provider, reader, win } from './hls-provider.js';
@@ -81,6 +81,45 @@ describe('separate audio aligned by the first timestamps', () => {
     const r = await open(900_000, 4_000_000_000);
     expect(r.shift).toBeUndefined();
     expect(r.logs).toEqual(['separate audio: timestamps do not fit the playlists (clock_mismatch), aligned by sequence']);
+  });
+});
+
+describe('a resumed run at the live edge (review I2)', () => {
+  it('the resume segment is listed only ~6 s later: the offset is still measured (the deadline starts when both begin to load)', async () => {
+    const logs: string[] = [];
+    // read 0 is openInput's own; polls every 2 s; 110 appears with read 3 (~6 s)
+    const list = (prefix: string) => (read: number) => win(100, read >= 3 ? 110 : 109, { prefix });
+    const p = provider({ video: list('v'), audio: list('a'), segment: tsSegments(900_000, 900_000 + 27_000) });
+    const pending = openInput(INPUT, { guard: GUARD, fetch: p.fetch, log: (m) => logs.push(m), resume: { video: 109, audio: 109 } });
+    await vi.advanceTimersByTimeAsync(8_000);
+    const o = await pending;
+    if (o.ffInput.kind !== 'pipe' || !o.ffInput.audio) throw new Error('pair expected');
+    expect(o.ffInput.audio.shift).toBe(0.3);
+    expect(logs).toEqual(['separate audio: aligned by timestamps, offset 300 ms']);
+    o.close();
+  });
+
+  it('a resume segment that is never listed: the wait ends with the not-advancing timeout (12 s at target 4), not later', async () => {
+    const p = provider({ video: at('v'), audio: at('a'), segment: tsSegments(900_000, 900_000) });
+    const pending = openInput(INPUT, { guard: GUARD, fetch: p.fetch, resume: { video: 109, audio: 109 } }).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(11_500);
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((await pending as InputEnd).code).toBe('not_advancing');
+  });
+
+  it('a first segment that is listed but does not arrive within MEASURE_MS once loading began: timestamps_late', async () => {
+    const logs: string[] = [];
+    const p = provider({ video: at('v'), audio: at('a'), segment: tsSegments(900_000, 900_000) });
+    const fetch: typeof p.fetch = async (url, o) => (url.endsWith('/a107.ts') ? new Promise((_, rej) => o.signal?.addEventListener('abort', () => rej(new Error('aborted')))) : p.fetch(url, o));
+    const pending = openInput(INPUT, { guard: GUARD, fetch, log: (m) => logs.push(m) });
+    await vi.advanceTimersByTimeAsync(MEASURE_MS + 100);
+    const o = await pending;
+    expect(logs).toEqual(['separate audio: first timestamps not read in time (timestamps_late), aligned by sequence']);
+    o.close();
   });
 });
 

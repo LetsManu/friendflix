@@ -163,6 +163,8 @@ interface Follow {
   side?: 'video' | 'audio';
   /** whether the other rendition of the pair carries the discontinuity at `s` too (then the run goes on) */
   peerDisc?: (s: Numbered) => Promise<boolean>;
+  /** the first segment starts to load (once): openInput's measuring deadline starts when both renditions got there (review I2) */
+  onLoading?: () => void;
   /** a segment was delivered (its last bytes handed on) or skipped: a restart resumes after it */
   onTaken?: (seq: number) => void;
   /** every playlist read (parsed and numbered), for the other rendition's `peerDisc` */
@@ -195,6 +197,7 @@ async function* hlsBytes(first: { text: string; base: string; url: string }, get
   /** segments skipped in a row and their seconds */
   let failed = 0;
   let hole = 0;
+  let loading = false;
   /** when the playlist last gave a new segment (taken or skipped), for advanceTimeoutMs */
   let progress = Date.now();
   const side = o.side ? `${o.side} ` : '';
@@ -230,6 +233,7 @@ async function* hlsBytes(first: { text: string; base: string; url: string }, get
           initUrl = u;
         }
       }
+      if (!loading) { loading = true; o.onLoading?.(); }
       const r = await load(resolveRef(s.uri, pl.base));
       if ('failed' in r) {
         failed++;
@@ -350,8 +354,9 @@ export function alignStart(v: MediaPlaylist, a: MediaPlaylist, after: { video?: 
 /** the most of a rendition's first segment held back to read its first timestamps before ffmpeg starts */
 const MEASURE_MAX_BYTES = 4 * 1024 * 1024;
 /**
- * how long openInput waits for the first bytes of both renditions before it starts ffmpeg without the measured offset (the
- * playlist alignment then): the stall watchdog only runs once ffmpeg does, and the backend waits 15 s for a stream's first segment
+ * how long openInput waits for the first bytes of both renditions, counted from when both first segments began to load, before
+ * it starts ffmpeg without the measured offset (the playlist alignment then): the stall watchdog only runs once ffmpeg does. A
+ * resumed run that waits for its segment to be listed is bounded by advanceTimeoutMs instead (not_advancing).
  */
 export const MEASURE_MS = 5_000;
 
@@ -574,9 +579,16 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
     };
     // the first segment of each was read through (for measuring its first timestamps)
     const firstDone = { video: false, audio: false };
+    // the measuring deadline starts once both first segments began to load, not before a resumed run's segment is listed (that
+    // wait is bounded by the not-advancing timeout of the rendition that waits)
+    const loading = { video: false, audio: false };
+    let timer: NodeJS.Timeout | undefined;
+    let armDeadline = () => {};
+    const deadline = new Promise<'late'>((r) => { armDeadline = () => { timer ??= setTimeout(() => r('late'), MEASURE_MS); }; });
+    const onLoading = (side: 'video' | 'audio') => () => { loading[side] = true; if (loading.video && loading.audio) armDeadline(); };
     const followOf = (side: 'video' | 'audio', from: number | null) => ({
       from, strict: true, side, log, peerDisc: peerDisc(side), onPlaylist: (l: Numbered[]) => { seen[side] = l; },
-      onTaken: (seq: number) => { firstDone[side] = true; if (resume) resume[side] = seq; },
+      onTaken: (seq: number) => { firstDone[side] = true; if (resume) resume[side] = seq; }, onLoading: onLoading(side),
     });
     /**
      * a rendition that ends while its first timestamps are read (review M10): the same rules as in the run (`linked`). Its side goes
@@ -604,8 +616,6 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
       // say which segments to start with; the encoder's clock says where they really are against each other)
       const vc = new TsClock();
       const acl = new TsClock();
-      let timer: NodeJS.Timeout | undefined;
-      const deadline = new Promise<'late'>((r) => { timer = setTimeout(() => r('late'), MEASURE_MS); });
       const [vm, am] = await Promise.all([
         measured(video, vc, () => firstDone.video, ac.signal, deadline).catch((e: unknown) => { throw measureFailed(e, 'video'); }),
         measured(audio, acl, () => firstDone.audio, ac.signal, deadline).catch((e: unknown) => { throw measureFailed(e, 'audio'); }),
