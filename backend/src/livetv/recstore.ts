@@ -59,17 +59,31 @@ async function linkItem(ctx: Ctx, r: Pick<RecRow, 'id' | 'library_path'>): Promi
   return id;
 }
 
-export type ExportResult = 'exported' | 'not_available' | 'not_found' | 'failed';
+export type ExportResult = 'exported' | 'not_available' | 'not_found' | 'failed' | 'busy';
+const exportKey = (id: string) => `ltv:recexport:${id}`;
+const EXPORT_LOCK_S = 15 * 60;
 
 /**
  * Exports a finished recording into the Jellyfin library folder (mode `library` after its end; `both` on *Behalten → in Bibliothek*,
  * `keep`). Mode `library` then deletes the HLS folder. A failure keeps the FriendFlix copy and notes `rec_export_failed` for the admins.
  */
 export async function exportToLibrary(ctx: Ctx, id: string, o: { keep?: boolean } = {}): Promise<ExportResult> {
+  // one export of a recording at a time, across processes (A-M7: a double click, the store job and a route)
+  const token = `${Date.now()}-${Math.random()}`;
+  if (!(await ctx.kv.setnx(exportKey(id), token, EXPORT_LOCK_S).catch(() => false))) return 'busy';
+  try {
+    return await exportLocked(ctx, id, o);
+  } finally {
+    await ctx.kv.delIfEquals(exportKey(id), token).catch(() => false);
+  }
+}
+
+async function exportLocked(ctx: Ctx, id: string, o: { keep?: boolean }): Promise<ExportResult> {
   const r = await getRecording(ctx, id);
   if (!r || (r.state !== 'done' && r.state !== 'partial')) return 'not_found';
   const s = recordSettings(ctx);
   const fail = async (reason: string): Promise<ExportResult> => {
+    await ctx.db.query("update livetv_recordings set export_state = 'failed' where id = $1 and export_state = 'pending'", [r.id]);
     await event(ctx, { level: 'error', code: 'rec_export_failed', ...(r.channel_id ? { channelId: r.channel_id } : {}), recordingId: r.id, reason });
     return reason === 'no_library' ? 'not_available' : 'failed';
   };
@@ -91,7 +105,7 @@ export async function exportToLibrary(ctx: Ctx, id: string, o: { keep?: boolean 
   if (typeof ans?.path !== 'string' || typeof ans.bytes !== 'number') return fail('invalid_answer');
   const libraryOnly = r.storage === 'library';
   await ctx.db.query(
-    `update livetv_recordings set library_path = $2, keep = keep or $3, bytes = case when $4 then $5::bigint else bytes + $5::bigint end,
+    `update livetv_recordings set library_path = $2, export_state = null, keep = keep or $3, bytes = case when $4 then $5::bigint else bytes + $5::bigint end,
        delete_after = case when $3 then null else delete_after end where id = $1`,
     [r.id, ans.path, o.keep === true, libraryOnly, Math.max(0, Math.round(ans.bytes))]);
   // mode library: the FriendFlix folder goes (its playback tokens now answer 410); a failed removal leaves a folder the next delete takes
@@ -134,6 +148,8 @@ export async function spaceTick(ctx: Ctx, now: number = Date.now()): Promise<voi
       await deleteRecording(ctx, r.id, 'retention');
     }
   }
+  // past cancelled airings protect nothing any more (a rule plans from now on): pruned (A-M1); files are never among them
+  await ctx.db.query("delete from livetv_recordings where state = 'cancelled' and delete_after is null and mode is null and bytes = 0 and start_at < $1", [new Date(now - DAY_MS)]);
   // the limit
   const used = await usage(ctx);
   if (used > 0.9 * s.limitBytes) {
@@ -162,14 +178,34 @@ export async function spaceTick(ctx: Ctx, now: number = Date.now()): Promise<voi
   }
 }
 
-/** server.ts: at most once an hour across processes (KV `ltv:recspace`); a finished recording runs spaceTick at once as well */
-export async function livetvSpaceTick(ctx: Ctx): Promise<void> {
-  if (!(await ctx.kv.setnx(SPACE_KEY, '1', SPACE_EVERY_S))) return;
-  await spaceTick(ctx);
+const STORE_LOCK = 'ltv:recstore';
+const STORE_LOCK_S = 20 * 60;
+const SPACE_DUE = 'ltv:recspace:due';
+
+/**
+ * The store job (A-I2; server.ts every 30 s, one runner: KV `ltv:recstore`), apart from the 15-s recording tick so a long export never
+ * delays a start, a resume or a stop: the pending library exports, then the space check when a recording finished since (or once an
+ * hour).
+ */
+export async function livetvStoreTick(ctx: Ctx): Promise<void> {
+  const token = `${Date.now()}-${Math.random()}`;
+  if (!(await ctx.kv.setnx(STORE_LOCK, token, STORE_LOCK_S).catch(() => false))) return;
+  try {
+    for (const r of (await ctx.db.query<{ id: string }>("select id from livetv_recordings where export_state = 'pending' and state in ('done','partial') order by end_at limit 20")).rows) {
+      await exportToLibrary(ctx, r.id).catch(() => 'failed');
+    }
+    const due = await ctx.kv.take(SPACE_DUE).catch(() => null);
+    if (due || (await ctx.kv.setnx(SPACE_KEY, '1', SPACE_EVERY_S).catch(() => false))) await spaceTick(ctx);
+  } finally {
+    await ctx.kv.delIfEquals(STORE_LOCK, token).catch(() => false);
+  }
 }
 
-// a finished recording: the library export of mode `library`, then the space check (recsched.ts collect)
+/** kept for callers of the hourly space check; the store job does the same and more */
+export const livetvSpaceTick = livetvStoreTick;
+
+// a finished recording (recsched.ts collect): mode `library` queues its export, and the space check is due; both run in the store job
 finishHooks.finished = async (ctx, row) => {
-  if (row.storage === 'library') await exportToLibrary(ctx, row.id);
-  await spaceTick(ctx);
+  if (row.storage === 'library' && !row.library_path) await ctx.db.query("update livetv_recordings set export_state = 'pending' where id = $1 and export_state is null", [row.id]);
+  await ctx.kv.set(SPACE_DUE, '1', 3600).catch(() => undefined);
 };

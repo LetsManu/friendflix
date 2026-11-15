@@ -11,7 +11,7 @@ import { detectLivetv } from '../src/livetv/detect.js';
 import { listEvents } from '../src/livetv/events.js';
 import { effectiveStorage, getRecording } from '../src/livetv/recordings.js';
 import { insertScheduled, livetvRecordTick } from '../src/livetv/recsched.js';
-import { exportToLibrary, spaceTick, stamp, usage } from '../src/livetv/recstore.js';
+import { exportToLibrary, livetvStoreTick, spaceTick, stamp, usage } from '../src/livetv/recstore.js';
 import { invalidateLivetvRights } from '../src/livetv/rights.js';
 import { resolveRecToken } from '../src/livetv/tokens.js';
 import { invalidateLiveConversions, invalidateRecordingUses } from '../src/livetv/streams.js';
@@ -183,8 +183,12 @@ describe('storage modes (spec §15.3)', () => {
     // a running recording in mode library is collected by the tick, then exported
     const id = await row({ storage: 'library', state: 'recording', bytes: 5000, start_at: new Date(Date.now() - 2 * HOUR), end_at: new Date(Date.now() - HOUR) });
     const dir = (await getRecording(env.ctx, id))!.dir;
-    recorders.set(id, { id, channelId: nordlicht, state: 'done', segments: 'ts', bytes: 6000, durationS: 3600, gaps: [], error: null, since: 1 });
+    recorders.set(id, { id, channelId: nordlicht, dir: '0f000000-0000-4000-a000-0000000000d1', state: 'done', segments: 'ts', bytes: 6000, durationS: 3600, gaps: [], error: null, since: 1 });
     await livetvRecordTick(env.ctx);
+    // A-I2: the recording tick only collects; the export waits for the store job
+    expect(calls.filter((c) => c.path.endsWith('/export'))).toEqual([]);
+    expect((await env.pool.query('select export_state from livetv_recordings where id = $1', [id])).rows[0].export_state).toBe('pending');
+    await livetvStoreTick(env.ctx);
     const exp = calls.find((c) => c.path === `/v1/recordings/${id}/export`)!;
     expect(exp.body).toEqual({ dir, folder: 'Sternstunde Physik', file: `Sternstunde Physik – ${stamp((await getRecording(env.ctx, id))!.start_at)}` });
     expect(calls.filter((c) => c.path === `/v1/recordings/${id}/delete`).map((c) => c.body)).toEqual([{ dir }]);
@@ -265,6 +269,36 @@ describe('storage modes (spec §15.3)', () => {
     expect((await call(anna, 'GET', '/api/admin/livetv/recordings/libraries')).statusCode).toBe(403);
     const st = (await call(admin, 'GET', '/api/admin/livetv/recordings/storage')).json();
     expect(st.library).toEqual({ mounted: true, writable: true, dedicated: true, freeBytes: 900 * GB });
+  });
+});
+
+describe('the store job (fix round 1)', () => {
+  it('A-I2: a finished recording does not run the space sweep inside the recording tick; the store job does', async () => {
+    const due = await row({ delete_after: new Date(Date.now() - 1000) });
+    const id = await row({ state: 'recording', bytes: 5000, start_at: new Date(Date.now() - 2 * HOUR), end_at: new Date(Date.now() - HOUR) });
+    recorders.set(id, { id, channelId: nordlicht, dir: '0f000000-0000-4000-a000-0000000000d1', state: 'done', segments: 'ts', bytes: 6000, durationS: 3600, gaps: [], error: null, since: 1 });
+    await livetvRecordTick(env.ctx);
+    expect((await state(id)).state).toBe('done');
+    expect(await state(due)).not.toBeNull();
+    await livetvStoreTick(env.ctx);
+    expect(await state(due)).toBeNull();
+  });
+
+  it('A-M7: two exports of one recording at once export once', async () => {
+    env.ctx.cfg = { ...cfg, LIVETV_RECORD_STORAGE: 'both', LIVETV_RECORD_LIBRARY_ID: 'lib-aufnahmen' };
+    const id = await row({});
+    const [a, b] = await Promise.all([exportToLibrary(env.ctx, id, { keep: true }), exportToLibrary(env.ctx, id, { keep: true })]);
+    expect([a, b].sort()).toEqual(['busy', 'exported']);
+    expect(calls.filter((c) => c.path.endsWith('/export'))).toHaveLength(1);
+    expect((await state(id)).bytes).toBe('8000');
+  });
+
+  it('A-M1: past cancelled airings without pending files are pruned', async () => {
+    const old = await row({ state: 'cancelled', bytes: 0, mode: null, start_at: new Date(Date.now() - 3 * DAY), end_at: new Date(Date.now() - 3 * DAY + HOUR) });
+    const future = await row({ state: 'cancelled', bytes: 0, mode: null, start_at: new Date(Date.now() + DAY), end_at: new Date(Date.now() + DAY + HOUR) });
+    await spaceTick(env.ctx);
+    expect(await state(old)).toBeNull();
+    expect(await state(future)).not.toBeNull();
   });
 });
 

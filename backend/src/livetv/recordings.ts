@@ -48,6 +48,7 @@ export interface RecRow {
   storage: 'ff' | 'library';
   dir: string;
   library_path: string | null;
+  export_state: 'pending' | 'failed' | null;
   jellyfin_item_id: string | null;
   /** bigint: pg answers a string */
   bytes: string;

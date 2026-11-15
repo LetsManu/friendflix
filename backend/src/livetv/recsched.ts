@@ -367,7 +367,8 @@ async function noticeFailed(ctx: Ctx, r: RecRow, state: RecState, error: string 
 }
 /** owner and admins once per recording when the recordings storage is full */
 async function noticeStorageFull(ctx: Ctx, r: RecRow): Promise<void> {
-  await notifyAdmins(ctx, { kind: 'livetv.rec.storage', title: m('livetv.rec.storageFull.title'), link: '/admin/livetv', dedupe: `ltvrec-full-${r.id}` }).catch(() => 0);
+  // once a day for the admins (A-M16): every refused recording is an event, not another notice
+  await notifyAdmins(ctx, { kind: 'livetv.rec.storage', title: m('livetv.rec.storageFull.title'), link: '/admin/livetv', dedupe: `ltvrec-full-${new Date().toISOString().slice(0, 10)}` }).catch(() => 0);
   await event(ctx, { level: 'error', code: 'rec_storage_full', ...(r.channel_id ? { channelId: r.channel_id } : {}), recordingId: r.id });
 }
 

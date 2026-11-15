@@ -557,7 +557,7 @@ describe('the tick', () => {
     await tick();
     expect((await getRecording(env.ctx, b))!.error).toBe('storage_full');
     expect(of('POST', '/v1/streams')).toEqual([]);
-    expect(await notices('livetv.rec.storage')).toHaveLength(2);
+    expect(await notices('livetv.rec.storage')).toHaveLength(1); // A-M16: the admins hear of it once a day
   });
 
   it('owner without liveRecord at start: cancelled forbidden', async () => {

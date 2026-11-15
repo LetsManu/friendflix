@@ -1252,6 +1252,7 @@ export const MIGRATIONS: string[] = [
     storage text not null check (storage in ('ff','library')),
     dir uuid not null unique,               -- the folder under /recordings
     library_path text,                      -- relative path inside the library folder once exported
+    export_state text check (export_state in ('pending','failed')), -- the library export waits for the store job, or failed (the HLS copy stays)
     jellyfin_item_id text,
     bytes bigint not null default 0, duration_s int, gaps jsonb not null default '[]',
     error text check (char_length(error) <= 40),

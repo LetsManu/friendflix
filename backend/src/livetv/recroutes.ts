@@ -206,7 +206,7 @@ export function recordingRoutes(app: FastifyInstance, ctx: Ctx) {
     if (effectiveStorage(ctx) !== 'both' || !recordSettings(ctx).libraryId) return reply.code(409).send({ error: 'not_available' });
     if (r.state !== 'done' && r.state !== 'partial') return reply.code(409).send({ error: 'not_ready' });
     const res = await exportToLibrary(ctx, id, { keep: true });
-    if (res !== 'exported') return reply.code(res === 'failed' ? 502 : 409).send({ error: res === 'failed' ? 'export_failed' : 'not_available' });
+    if (res !== 'exported') return reply.code(res === 'failed' ? 502 : 409).send({ error: res === 'failed' ? 'export_failed' : res === 'busy' ? 'busy' : 'not_available' });
     return { recording: await recordingView(ctx, u, profile, id) };
   });
 

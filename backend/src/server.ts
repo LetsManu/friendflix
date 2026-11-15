@@ -23,7 +23,7 @@ import { livetvIngestTick } from './livetv/ownfeeds.js';
 import { sweepPendingGuideFiles } from './livetv/guidefiles.js';
 import { livetvRefreshTick, refreshRunning } from './livetv/refresh.js';
 import { livetvRecordTick } from './livetv/recsched.js';
-import { livetvSpaceTick } from './livetv/recstore.js';
+import { livetvStoreTick } from './livetv/recstore.js';
 import { livetvTick } from './livetv/streams.js';
 import { hevcTick } from './hevcenc.js';
 import { digestTick } from './digest.js';
@@ -182,8 +182,13 @@ if (cfg.BACKGROUND_JOBS === 'true') {
     livetvRecordBusy = true;
     void livetvRecordTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-record', 'livetv recording tick failed')).finally(() => { livetvRecordBusy = false; });
   }, 15_000));
-  // recordings storage and retention (spec §15.5): at most hourly across processes (KV ltv:recspace); a finished recording runs it at once
-  timers.push(setInterval(() => { if (op()) void livetvSpaceTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-space', 'livetv recordings space tick failed')); }, 600_000));
+  // the recordings store job (A-I2): library exports, space and retention (spec §15.5); one runner (KV ltv:recstore), apart from the tick
+  let livetvStoreBusy = false;
+  timers.push(setInterval(() => {
+    if (livetvStoreBusy || !op()) return;
+    livetvStoreBusy = true;
+    void livetvStoreTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-store', 'livetv recordings store job failed')).finally(() => { livetvStoreBusy = false; });
+  }, 30_000));
   // always scheduled: DOWNLOADS_ENABLED applies live, each tick checks it
   const downloadsOn = () => op() && ctx.cfg.DOWNLOADS_ENABLED === 'true';
   timers.push(setInterval(() => {
