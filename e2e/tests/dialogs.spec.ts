@@ -42,6 +42,9 @@ async function sharedRules(dlg: Locator, names: [string, string], primaryBg: str
 }
 
 test.use({ viewport: { width: 1440, height: 900 } });
+// a desktop with a classic scrollbar (Playwright's headless Chromium hides scrollbars by default): the page lock must not move
+// anything sideways. The launch options repeat the config's (PW_CHROMIUM), plus the scrollbars.
+test.use({ launchOptions: { executablePath: process.env.PW_CHROMIUM || undefined, args: process.env.PW_CHROMIUM ? ['--no-sandbox'] : [], ignoreDefaultArgs: ['--hide-scrollbars'] } });
 test.beforeEach(({ api }) => { api.asAdmin = true; });
 
 test('Neue Rolle: no dead space above the buttons, one focus ring, the shared frame and row', async ({ page, api }) => {
@@ -117,3 +120,34 @@ test.describe('the delete dialogs', () => {
     await expect(dlg).toHaveCount(0);
   });
 });
+
+test('a dialog over a scrolled page with a classic scrollbar: the fixed header and the page content stay put', async ({ page, api }) => {
+  extraRole(api, 'oma', 'Oma', 2, 1);
+  extraRole(api, 'leer', 'Leer');
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto('/admin/roles');
+  await expect(page.getByRole('heading', { level: 1, name: 'Rollen & Rechte' })).toBeVisible();
+  // the page scrolls and has a real scrollbar
+  expect(await page.evaluate(() => innerWidth - document.documentElement.clientWidth)).toBeGreaterThan(0);
+  await page.mouse.wheel(0, 240);
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0);
+  const header = page.getByRole('button', { name: /^Profilmenü/ }); // right-aligned in the fixed header: it would move first
+  const brand = page.getByRole('link', { name: 'FriendFlix Startseite' });
+  const content = page.getByRole('list', { name: 'Rollen' });
+  const boxes = async () => ({ header: await header.boundingBox(), brand: await brand.boundingBox(), content: await content.boundingBox(), y: await page.evaluate(() => scrollY) });
+  const before = await boxes();
+  // a script click: Playwright's own click would first scroll the button (now under the fixed header) into view
+  await page.getByRole('button', { name: 'Neue Rolle' }).evaluate((b: HTMLElement) => b.click());
+  const dlg = page.getByRole('dialog', { name: 'Neue Rolle' });
+  await expect(dlg).toBeVisible();
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).overflow)).toBe('hidden');
+  expect(await boxes()).toEqual(before);
+  await page.keyboard.press('Escape');
+  await expect(dlg).toHaveCount(0);
+  expect(await boxes()).toEqual(before);
+  // unlocked again: the page scrolls
+  expect(await page.evaluate(() => document.documentElement.style.overflow)).toBe('');
+  await page.mouse.wheel(0, 120);
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(before.y);
+});
+

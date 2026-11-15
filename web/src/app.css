@@ -69,6 +69,13 @@
 /* focus not obscured (WCAG 2.4.11): an element scrolled into view (Tab, find, a #hash jump) stops clear of the glass bars - below
    the fixed header and, on phones, above the floating tab bar and the home indicator. TV scrolls its rows itself. */
 html { scroll-padding-top: calc(var(--nav-total) + 8px); }
+/* the scrollbar's room stays reserved (a desktop with a classic scrollbar), so nothing moves sideways when a dialog or sheet locks
+   the page (lib/ui/scrollLock.ts): not the content, not the fixed bars. Overlay scrollbars (phones, macOS) reserve nothing. Not on
+   TV (no scrollbar; its layout is measured to the edge), not on the player pages (a fixed full-window player would get an empty
+   strip) and not where scrollbars take no room at all (html.no-gutter, set by the root layout: overlay or hidden scrollbars);
+   there scrollLock pads instead, which only matters where a scrollbar shows. */
+html { scrollbar-gutter: stable; }
+html.tv, html.no-gutter { scrollbar-gutter: auto; }
 @media (max-width: 720px) { html:not(.kids) { scroll-padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 16px); } }
 html.tv { scroll-padding: 0; }
 /* no global smooth scrolling: it animated SvelteKit's scroll restoration on back/forward. In-page jumps pass behavior:'smooth' explicitly. */

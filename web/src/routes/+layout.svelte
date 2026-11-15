@@ -3,6 +3,7 @@
 <script lang="ts">
   import '../app.css';
   import { onDestroy, onMount, tick } from 'svelte';
+  import { classicScrollbar, scrollLockToggle } from '#lib/ui/scrollLock';
   import { get } from 'svelte/store';
   import { afterNavigate, beforeNavigate, goto, onNavigate } from '$app/navigation';
   import { pageStore } from '#lib/page';
@@ -264,10 +265,16 @@
     const to = areaRedirect(me, path, $features.livetv) ?? kidsRedirect(me, path) ?? (needsWelcome(me, path) ? welcomeHref(path + $page.url.search, kidsHomeOf(me)) : null);
     if (to) void goto(to, { replaceState: true });
   }
+  const pageLock = scrollLockToggle();
+  /** classic scrollbars take room here (measured once in the browser; scrollLock.ts) */
+  const classicBar = typeof document !== 'undefined' && classicScrollbar();
   $: if (typeof document !== 'undefined') {
     document.documentElement.classList.toggle('m-chips', chipsRoom && !watchPage && !profilesPage);
-    document.documentElement.style.overflow = catOpen ? 'hidden' : ($previewSheet ? 'hidden' : ''); // no page scroll behind the overlay / sheet
+    // no reserved scrollbar strip (app.css): on the full-window player pages, and where scrollbars take no room (overlay / hidden)
+    document.documentElement.classList.toggle('no-gutter', watchPage || !classicBar);
+    pageLock(catOpen || !!$previewSheet); // no page scroll behind the overlay / sheet (the one owner of the lock: scrollLock.ts)
   }
+  onDestroy(() => pageLock(false));
   // the web app manifest (name, shortcuts) follows the UI language
   $: if (typeof document !== 'undefined') document.querySelector('link[rel="manifest"]')?.setAttribute('href', `/manifest.webmanifest?lang=${$locale}`);
   $: if (!$mobile) { catOpen = false; catGone(); closePreview(); }

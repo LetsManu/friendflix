@@ -2,6 +2,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { lockScroll } from '#lib/ui/scrollLock';
   import type { Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import DetailView from '#lib/detail/DetailView.svelte';
@@ -37,7 +38,7 @@
   onMount(() => {
     opener = document.activeElement;
     const release = holdBillboard(); // the billboard behind the dialog pauses while it is open
-    document.body.style.overflow = 'hidden';
+    const unlock = lockScroll(); // the page behind stays put (scrollLock.ts)
     // everything behind the dialog (siblings of the overlay in the app root) becomes inert
     const inerted: HTMLElement[] = [];
     for (const el of Array.from(overlay?.parentElement?.children ?? []) as HTMLElement[]) {
@@ -45,7 +46,7 @@
       el.setAttribute('inert', ''); inerted.push(el);
     }
     tick().then(() => closeBtn?.focus());
-    return () => { release(); document.body.style.overflow = ''; for (const el of inerted) el.removeAttribute('inert'); (opener as HTMLElement | null)?.focus?.(); };
+    return () => { release(); unlock(); for (const el of inerted) el.removeAttribute('inert'); (opener as HTMLElement | null)?.focus?.(); };
   });
 </script>
 

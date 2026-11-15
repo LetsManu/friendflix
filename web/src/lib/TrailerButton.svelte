@@ -1,15 +1,19 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
+  import { scrollLockToggle } from '#lib/ui/scrollLock';
   import { t } from '#lib/i18n';
 
   /** Trailer for a title that is not in the library. Nothing from YouTube loads before the click; the key is fetched on click. */
   export let mediaType: string;
   export let tmdbId: number;
   export let title: string;
+  /** the page does not scroll behind the open trailer (scrollLock.ts) */
+  const lock = scrollLockToggle();
+  onDestroy(() => lock(false));
   let open = false, busy = false, none = false, key = '', box: HTMLDivElement, closeBtn: HTMLButtonElement, opener: Element | null = null;
 
   const portal = (n: HTMLElement) => { document.body.appendChild(n); return { destroy: () => n.remove() }; };
@@ -22,11 +26,11 @@
       busy = false;
       if (none) return;
     }
-    opener = document.activeElement; open = true; document.body.style.overflow = 'hidden';
+    opener = document.activeElement; open = true; lock(true);
     await tick(); closeBtn?.focus();
   }
   function close() {
-    open = false; document.body.style.overflow = '';
+    open = false; lock(false);
     (opener as HTMLElement | null)?.focus?.();
   }
   function onkey(e: KeyboardEvent) {
