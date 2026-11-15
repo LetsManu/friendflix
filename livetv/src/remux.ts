@@ -4,7 +4,7 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { FetchError, type GuardDeps } from './fetch.js';
 import { AUDIO_BITRATE, SEGMENT_SECONDS, audioFor, ffmpegArgs, videoBitrate } from './ffmpeg.js';
-import { AudioUnavailable, openInput, type OpenedInput } from './inputs.js';
+import { AudioUnavailable, InputEnd, openInput, type OpenedInput, type Resume } from './inputs.js';
 import type { Log } from './log.js';
 import { PlaylistRefused, type FetchFn } from './passthrough.js';
 import { START_PROBE_MS, probe, type ProbeDeps, type ProbeResult, type StreamInput } from './probe.js';
@@ -169,9 +169,11 @@ export function remuxDriver(d: RemuxDeps): MediaDriver {
       faults = [];
       ctx.log(`separate audio rendition unavailable, playing the video without it; trying it again in ${wait / 60_000} min`);
     };
-    // fixed texts from openInput; the same one again in a row (each restart of a source that cannot be aligned) is said once
-    let lastInputLog = '';
-    const inputLog = (m: string) => { if (m !== lastInputLog) { lastInputLog = m; ctx.log(m); } };
+    /** where each rendition's next run starts: after the last segment it delivered (inputs.ts `resume`, no replay on a restart) */
+    const resume: Resume = { video: null, audio: null };
+    /** runs ended while the stream lives: each restart is logged with its number and reason, never folded into the one before */
+    let restarts = 0;
+    const restarted = (reason: string) => ctx.log(`run ended (${reason}), restart #${++restarts}`);
 
     while (!ctx.signal.aborted) {
       let opened: OpenedInput;
@@ -185,17 +187,19 @@ export function remuxDriver(d: RemuxDeps): MediaDriver {
       try {
         opened = await openInput(input, {
           guard: d.guard, ...(d.fetch ? { fetch: d.fetch } : {}), ...(d.ingest ? { ingest: d.ingest } : {}), signal: ctx.signal, maxBitrate: ctx.maxBitrate,
-          log: inputLog, ...(noAudio ? { noAudio: true } : {}),
+          log: (m) => ctx.log(m), resume, ...(noAudio ? { noAudio: true } : {}),
         });
       } catch (e) {
         if (ctx.signal.aborted) break;
         if (e instanceof AudioUnavailable) {
           audioFailed(e.fatal);
+          restarted('audio_unavailable');
           // left out now: without it at once, the video works
           if (retryAt !== null) continue;
         } else {
           if (e instanceof FetchError && FATAL.has(e.code)) { ctx.fail(e.code); return; }
           if (e instanceof PlaylistRefused) { ctx.fail(e.code); return; }
+          restarted(e instanceof InputEnd ? `${e.side ? `${e.side} ` : ''}${e.code}` : e instanceof FetchError ? e.code : 'error');
         }
         disc = true;
         if (!(await ctx.sleep(ctx.lost()))) break;
@@ -274,6 +278,7 @@ export function remuxDriver(d: RemuxDeps): MediaDriver {
         opened.close();
       }
       if (ctx.signal.aborted) break;
+      restarted(stalled ? 'stalled' : retryDue ? 'audio_retry' : opened.endReason?.() ?? 'ffmpeg_exit');
       if (withAudio) {
         if (delivered >= AUDIO_HEALTHY_SEGMENTS) { audioFails = 0; drops = 0; }
         if (opened.audioFault?.(stalled)) audioFailed(false);
