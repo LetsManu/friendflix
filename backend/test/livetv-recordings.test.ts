@@ -155,6 +155,30 @@ describe('visibility (spec §15.6)', () => {
     expect(await sees(who.annaKids(), accKids)).toBe(false);
   });
 
+  it('A-M8: the own recordings are never cut off by others\' shares, and the list costs a fixed number of queries', async () => {
+    const own = await rec({ profile: ANNA, start: '2026-01-01T19:00:00Z' });
+    // 1 040 newer recordings of Ben's: half shared with everyone (Anna sees 520, more than a list holds), half private
+    await env.pool.query(
+      `insert into livetv_recordings(id, profile_id, user_id, channel_id, channel_name, title, start_at, end_at, pad_before_s, pad_after_s, state, storage, dir, visibility, bytes)
+       select gen_random_uuid(), $1, $1, $2, 'Nordlicht TV', 'Sternstunde Physik', now() - make_interval(mins => g), now() - make_interval(mins => g) + interval '1 hour', 0, 0,
+              'done', 'ff', gen_random_uuid(), case when g % 2 = 0 then 'private' else 'everyone' end, 10
+         from generate_series(1, 1040) g`, [BEN, nordlicht]);
+    const list = await listed(who.anna());
+    expect(list).toContain(own);
+    expect(list).toHaveLength(501); // her own, and the newest 500 shares
+    // a kids profile with many account shares: no query per row
+    await env.pool.query(
+      `insert into livetv_recordings(id, profile_id, user_id, channel_id, channel_name, title, start_at, end_at, pad_before_s, pad_after_s, state, storage, dir, visibility, bytes)
+       select gen_random_uuid(), $1, $1, case when g % 2 = 0 then $2::uuid else $3::uuid end, 'Hafenkanal', 'Sternstunde Physik', now() - make_interval(mins => g), now() - make_interval(mins => g) + interval '1 hour', 0, 0,
+              'done', 'ff', gen_random_uuid(), 'account', 10
+         from generate_series(1, 40) g`, [ANNA, hafen, nordlicht]);
+    const spy = vi.spyOn(env.ctx.db, 'query');
+    try {
+      expect(await listed(who.annaKids())).toHaveLength(20);
+      expect(spy.mock.calls.length).toBeLessThan(10);
+    } finally { spy.mockRestore(); }
+  });
+
   it('admin list shows metadata but visibleRecording refuses an unshared one', async () => {
     const id = await rec({ profile: ANNA, title: 'Die Leuchtturmwärter' });
     expect(await sees(who.admin(), id)).toBe(false);

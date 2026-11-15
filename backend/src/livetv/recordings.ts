@@ -239,19 +239,29 @@ const STATE_FILTER: Record<'done' | 'scheduled' | 'all', readonly RecState[]> = 
 export async function listRecordings(ctx: RightsCtx, user: LivetvUser, profile: LivetvProfile, o: { state?: 'done' | 'scheduled' | 'all' } = {}): Promise<RecordingView[]> {
   if (!(await mayUseLiveTv(ctx, user, profile))) return [];
   const states = STATE_FILTER[o.state ?? 'all'];
-  const rows = (await ctx.db.query<RecRow & { position_s: number | null }>(
-    `select r.*, p.position_s from livetv_recordings r
-       left join livetv_recording_progress p on p.recording_id = r.id and p.profile_id = $1
-      where r.state = any($4::text[])
-        and (r.profile_id = $1 or (r.visibility = 'account' and r.user_id = $2) or r.visibility = 'everyone')
-      order by r.start_at desc, r.id limit $3`,
-    [profile.id, user.id, LIST_MAX, states])).rows;
-  let memo: Promise<ReadonlySet<string>> | null = null;
-  const set = () => (memo ??= channelSet(ctx, user, profile));
-  const seen: typeof rows = [];
-  for (const r of rows) if (await sees(ctx, user, profile, r, set)) seen.push(r);
-  const logos = await logoHashes(ctx, seen.map((r) => r.channel_id));
-  return seen.map((r) => toView(r, { profileId: profile.id, logoHash: logos.get(r.channel_id ?? '') ?? null, positionS: r.position_s ?? 0 }));
+  const sel = `select r.*, p.position_s from livetv_recordings r
+       left join livetv_recording_progress p on p.recording_id = r.id and p.profile_id = $1`;
+  // the profile's own recordings, all of them: others' shares never push one out of the list (A-M8)
+  const own = profile.kids ? [] : (await ctx.db.query<RecRow & { position_s: number | null }>(
+    `${sel} where r.profile_id = $1 and r.state = any($2::text[]) order by r.start_at desc, r.id`, [profile.id, states])).rows;
+  // the shares it sees, filtered here as `sees` does (A-M8: in SQL, a fixed number of queries): somebody else's while it records or
+  // once finished; `account` within the account (a kids profile: kid-friendly channels only), `everyone` on a channel of its set
+  const shared = SHARED_STATES.filter((x) => states.includes(x));
+  let others: Array<RecRow & { position_s: number | null }> = [];
+  if (shared.length) {
+    const set = [...(await channelSet(ctx, user, profile))];
+    const kidSafe = profile.kids ? (await ctx.db.query<{ id: string }>(
+      `select e.id from (${CHANNEL_SELECT}) e join livetv_groups g on g.id = e.group_id where g.kid_friendly and g.released`)).rows.map((x) => x.id) : [];
+    others = (await ctx.db.query<RecRow & { position_s: number | null }>(
+      `${sel} where ($6 or r.profile_id is distinct from $1) and r.state = any($2::text[])
+          and ((r.visibility = 'account' and r.user_id = $3 and (not $6 or r.channel_id = any($7::uuid[])))
+            or (r.visibility = 'everyone' and r.channel_id = any($4::uuid[])))
+        order by r.start_at desc, r.id limit $5`,
+      [profile.id, shared, user.id, set, LIST_MAX, profile.kids, kidSafe])).rows;
+  }
+  const rows = [...own, ...others].sort((x, y) => y.start_at.getTime() - x.start_at.getTime() || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+  const logos = await logoHashes(ctx, rows.map((r) => r.channel_id));
+  return rows.map((r) => toView(r, { profileId: profile.id, logoHash: logos.get(r.channel_id ?? '') ?? null, positionS: r.position_s ?? 0 }));
 }
 
 /** who changes a recording: the owner profile, or an admin (role admin, grown-up profile) */
