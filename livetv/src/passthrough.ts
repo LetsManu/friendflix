@@ -245,8 +245,8 @@ export function passthroughDriver(d: { guard: GuardDeps } | { fetch: FetchFn }):
         wait = Math.min(MAX_POLL_S, Math.max(MIN_POLL_S, p.targetDuration / 2)) * 1000;
       } catch (e) {
         if (ctx.signal.aborted) break;
-        if (e instanceof FetchError && FATAL.has(e.code)) { ctx.fail(e.code); return; }
-        if (e instanceof PlaylistRefused) { ctx.fail(e.code); return; }
+        if (e instanceof FetchError && FATAL.has(e.code)) { ctx.fail(e.code); break; }
+        if (e instanceof PlaylistRefused) { ctx.fail(e.code); break; }
         media = null;
         pool.destroy();
         pool = createPool();
@@ -254,6 +254,7 @@ export function passthroughDriver(d: { guard: GuardDeps } | { fetch: FetchFn }):
       }
       if (!(await ctx.sleep(wait))) break;
     }
+    // the stream stopped or failed: its connections go with it
     pool.destroy();
   };
 }
