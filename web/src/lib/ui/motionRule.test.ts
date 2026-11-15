@@ -115,7 +115,12 @@ function scan(): Finding[] {
     const raw = readFileSync(abs, 'utf8');
     const styleMatches = [...raw.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)];
     const css = file.endsWith('.css') ? raw : styleMatches.map((m) => m[1]).join('\n');
-    const code = file.endsWith('.css') ? '' : stripComments(raw.replace(/<style[^>]*>[\s\S]*?<\/style>/g, ''));
+    // the script and markup: the source with the style blocks cut out by position (a source scan, not HTML sanitizing)
+    let rest = '';
+    let from = 0;
+    for (const m of styleMatches) { rest += raw.slice(from, m.index); from = m.index! + m[0].length; }
+    rest += raw.slice(from);
+    const code = file.endsWith('.css') ? '' : stripComments(rest);
     for (const b of cssBlocks(stripComments(css))) {
       if (b.at === 'keyframes' && /scale\(/.test(b.body)) found.push({ file, detail: b.sel });
       else if (!b.at && /transform\s*:[^;]*scale\(/.test(b.body) && STATE.test(b.sel)) found.push({ file, detail: b.sel });
