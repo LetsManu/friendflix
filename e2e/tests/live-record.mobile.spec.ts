@@ -17,9 +17,14 @@ test('sheet fits 375 px, buttons ≥ 44 px', async ({ page, api }) => {
   await page.clock.install({ time: NOW });
   await page.goto('/live/watch/ch-nord?f=all');
   await expect(page.locator('[data-live-state]')).toHaveAttribute('data-live-state', 'playing', { timeout: 15_000 });
-  if (await bar(page).evaluate((e) => e.classList.contains('hide'))) await page.locator('.lstage').tap();
-  await bar(page).getByRole('button', { name: 'Programm' }).tap();
   const panel = page.getByRole('dialog', { name: 'Programm' });
+  // one step: the bar hides itself after 3 s, so wake it, see it shown and tap at once; a tap that came too late is tried again
+  await expect(async () => {
+    if (await bar(page).evaluate((e) => e.classList.contains('hide'))) await page.locator('.lstage').tap();
+    await expect(bar(page)).not.toHaveClass(/hide/, { timeout: 1000 });
+    await bar(page).getByRole('button', { name: 'Programm' }).tap({ timeout: 1500 });
+    await expect(panel).toBeVisible({ timeout: 3000 });
+  }).toPass({ timeout: 20_000 });
   await panel.getByRole('button', { name: 'Aufnehmen' }).first().tap();
   const s = page.getByRole('dialog', { name: 'Die Leuchtturmwärter' });
   await expect(s).toBeVisible();
