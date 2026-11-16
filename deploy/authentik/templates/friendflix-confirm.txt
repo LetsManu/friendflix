@@ -1,0 +1,10 @@
+{# FriendFlix: plain-text twin of friendflix-confirm.html. Authentik renders the file with the same name and a .txt ending as the text part of the mail; mount both files. #}{# SPDX-FileCopyrightText: 2026 Manuel Weißböck #}{# SPDX-License-Identifier: AGPL-3.0-or-later #}{% load i18n %}{% autoescape off %}{% trans "Confirm your e-mail address" %}
+
+{% trans "Use the button below to confirm this e-mail address for your FriendFlix account." %}
+
+{{ url }}
+
+{% blocktrans with expires=expires|timeuntil %}If you did not ask for this, ignore this e-mail. The link is valid for {{ expires }}.{% endblocktrans %}
+
+FriendFlix
+{% endautoescape %}

@@ -67,3 +67,49 @@ describe('Authentik mail templates', () => {
     expect(s).toContain('{# ff:brand: the accent colour');
   });
 });
+
+const TXT = FILES.map((f) => f.replace(/\.html$/, '.txt'));
+const transStrings = (s: string) => [...code(s).matchAll(/\{% trans "([^"]*)" %\}/g)].map((m) => m[1]!);
+const blocktrans = (s: string) => [...code(s).matchAll(/\{% blocktrans[^%]*%\}([\s\S]*?)\{% endblocktrans %\}/g)].map((m) => m[1]!.trim());
+
+describe('Authentik plain-text twins', () => {
+  // Authentik renders template_name.replace("html", "txt") for the text part (stages/email/utils.py)
+  it.each(FILES)('%s has a .txt twin with the same name', (f) => {
+    expect(() => read(f.replace(/\.html$/, '.txt'))).not.toThrow();
+  });
+
+  it.each(FILES)('%s twin: balanced blocks, same link and expiry as the HTML, plain text', (f) => {
+    const html = read(f);
+    const txt = read(f.replace(/\.html$/, '.txt'));
+    const t = code(txt);
+    expect(txt).toContain('{% load i18n %}');
+    expect(txt).toContain('{% autoescape off %}');
+    expect(txt.trimEnd().endsWith('{% endautoescape %}')).toBe(true);
+    for (const tag of ['autoescape', 'blocktrans']) {
+      const open = (t.match(new RegExp(`\\{% ${tag}\\b`, 'g')) ?? []).length;
+      const close = (t.match(new RegExp(`\\{% end${tag} %\\}`, 'g')) ?? []).length;
+      expect(open, tag).toBe(close);
+    }
+    const link = HREFS[f][0]!;
+    expect(t.split('\n').map((l) => l.trim())).toContain(link);
+    expect(code(html)).toContain(link);
+    expect(t).toContain('{% blocktrans with expires=expires|timeuntil %}');
+    expect(blocktrans(txt)).toEqual(blocktrans(html));
+    expect(t).not.toMatch(/<[a-z!/]/i);
+    expect(t).not.toContain('&nbsp;');
+    expect(t.trimEnd().replace(/\{% endautoescape %\}$/, '').trimEnd().endsWith('FriendFlix')).toBe(true);
+  });
+
+  it.each(FILES)('%s twin: its trans strings are the HTML ones', (f) => {
+    const htmlStrings = transStrings(read(f));
+    const own = transStrings(read(f.replace(/\.html$/, '.txt')));
+    expect(own.length).toBeGreaterThanOrEqual(2);
+    for (const x of own) expect(htmlStrings).toContain(x);
+    expect(own[0]).toBe(htmlStrings[0]);
+    expect(own[1]).toBe(htmlStrings[1]);
+  });
+
+  it('ships exactly four twins', () => {
+    expect(TXT).toHaveLength(4);
+  });
+});

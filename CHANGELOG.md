@@ -18,6 +18,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 - **Invitations by e-mail.** The invite dialog has *E-Mail-Adresse (optional)* (greyed out until e-mail is set up): the link goes straight to that address in the language you pick (the instance language by default), and the dialog says *verschickt*, that it waits in the outbox, or why it was not sent. Only for invitations for one person, at most 20 mails a day per admin; the address is kept only, encrypted, until the mail is sent, and the audit log shows it masked. Revoking an invitation withdraws a mail still waiting in the outbox. The shipped proxy template keeps unsubscribe links out of its logs. In all seven languages ([docs/mail.md](docs/mail.md#invitations)).
 
 ### Fixed
+- Authentik's FriendFlix mails now carry a plain-text part: each template in `deploy/authentik/templates/` has a `.txt` twin (mount both files), so mail programs that show plain text only no longer show an empty mail ([docs/authentik.md](docs/authentik.md#10b-e-mails-in-the-friendflix-look)).
 - *Zum Konto* on the page that confirms a new e-mail address now loads the account page in full, so it shows the new address and a fresh state instead of a page carried over from the confirmation.
 
 ## [3.5.0] – Churros – 2026-11-16
