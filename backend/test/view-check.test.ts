@@ -6,10 +6,11 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
+import { JellyfinClient, libraryOfPath } from '../src/jellyfin/client.js';
 import type { MediaAdmin } from '../src/media/types.js';
 import { DEFAULT_ROLES } from '../src/roles.js';
 import { ageOf, mapLimit } from '../src/viewcheck.js';
-import { ADMIN, ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+import { ADMIN, ENC_KEY, fakeHttp, makeEnv, type Call, type TestEnv } from './helpers.js';
 
 let env: TestEnv;
 let admin: { cookies: Record<string, string>; csrf: string };
@@ -20,16 +21,20 @@ const hex = (c: string) => c.repeat(32);
 // libraries (CollectionFolder ids) and titles (fictional)
 const FILME = hex('1'), SERIEN = hex('2'), KINDER = hex('3');
 const LIBS = [{ Id: FILME, Name: 'Filme' }, { Id: SERIEN, Name: 'Serien' }, { Id: KINDER, Name: 'Kinder' }];
+/** each library's folder on the server's disk (`/Library/VirtualFolders` Locations); Kinder's sits inside Filme's, as nested folders can */
+const LOCATIONS: Record<string, string[]> = { [FILME]: ['/media/filme/'], [SERIEN]: ['/media/serien', '/mnt/usb/serien'], [KINDER]: ['/media/filme/kinder'] };
 const DUN = hex('a'), SALT = hex('b'), WREN = hex('c'), SALT2 = '0123456789abcdef'.repeat(2);
 const ITEMS = [
-  { Id: DUN, Name: 'Dunmoor', Type: 'Series', ProductionYear: 2024, OfficialRating: 'FSK-16', lib: SERIEN },
-  { Id: SALT, Name: 'Saltwater Almanac', Type: 'Movie', ProductionYear: 2021, OfficialRating: 'FSK-6', lib: KINDER },
-  { Id: WREN, Name: 'Wrenfield Pier', Type: 'Movie', ProductionYear: 2019, lib: FILME },
+  { Id: DUN, Name: 'Dunmoor', Type: 'Series', ProductionYear: 2024, OfficialRating: 'FSK-16', lib: SERIEN, Path: '/mnt/usb/serien/Dunmoor' },
+  { Id: SALT, Name: 'Saltwater Almanac', Type: 'Movie', ProductionYear: 2021, OfficialRating: 'FSK-6', lib: KINDER, Path: '/media/filme/kinder/Saltwater Almanac (2021)/Saltwater Almanac (2021).mkv' },
+  { Id: WREN, Name: 'Wrenfield Pier', Type: 'Movie', ProductionYear: 2019, lib: FILME, Path: '/media/filme/Wrenfield Pier (2019).mp4' },
   // a rating the app's generic table cannot read (Jellyfin knows it); left out of the library counts and of ALL_TERM
-  { Id: SALT2, Name: 'Saltwater Almanac 2', Type: 'Movie', ProductionYear: 2023, OfficialRating: 'MA15+', lib: KINDER, extra: true },
-] as Array<{ Id: string; Name: string; Type: string; ProductionYear: number; OfficialRating?: string; lib: string; extra?: boolean }>;
+  { Id: SALT2, Name: 'Saltwater Almanac 2', Type: 'Movie', ProductionYear: 2023, OfficialRating: 'MA15+', lib: KINDER, Path: '/media/filme/kinder/Saltwater Almanac 2.mkv', extra: true },
+] as Array<{ Id: string; Name: string; Type: string; ProductionYear: number; OfficialRating?: string; lib: string; Path: string; extra?: boolean }>;
 const libName = (id: string) => LIBS.find((l) => l.Id === id)!.Name;
-const dto = ({ lib: _lib, extra: _extra, ...i }: (typeof ITEMS)[number]) => ({ ...i, UserData: { Played: false } });
+/** like Jellyfin: Path only when Fields asks for it */
+const dto = ({ lib: _lib, extra: _extra, Path, ...i }: (typeof ITEMS)[number], fields = '') =>
+  ({ ...i, ...(/(^|,)Path(,|$)/i.test(fields) ? { Path } : {}), UserData: { Played: false } });
 
 // media server users and what the fake lets each of them see (anyone else, e.g. the admin, sees everything)
 const GUEST_JF = hex('4'), KINO_JF = hex('5'), ANNA_JF = hex('6'), KID_JF = hex('7'), FA_JF = hex('8'), OTHER_JF = hex('9');
@@ -97,7 +102,7 @@ beforeAll(async () => {
       if (term === ALL_TERM || parent) list = list.filter((i) => !i.extra);
       if (parent) list = list.filter((i) => i.lib === parent);
       const limit = Number(get('limit') ?? 100);
-      return { json: { Items: list.slice(0, limit).map(dto), TotalRecordCount: list.length } };
+      return { json: { Items: list.slice(0, limit).map((i) => dto(i, get('fields') ?? '')), TotalRecordCount: list.length } };
     },
     'GET /Items/[0-9a-f]{32}': (u) => {
       const id = u.pathname.split('/')[2]!;
@@ -106,11 +111,22 @@ beforeAll(async () => {
       if (!it || !sees(u.searchParams.get('userId'), id)) return { status: 404 };
       return { json: dto(it) };
     },
+    // the answer Jellyfin 12.4 (and 10.x, Ferrofin) gives: with the admin key and no userId the chain ends in the physical folder and
+    // the AggregateFolder "root"; only with a userId does the CollectionFolder (the library) show up, and a user who cannot see it gets 404
     'GET /Items/[0-9a-f]{32}/Ancestors': (u) => {
       const it = ITEMS.find((i) => i.Id === u.pathname.split('/')[2]);
       if (!it) return { status: 404 };
-      return { json: [{ Id: hex('e'), Name: 'Unterordner', Type: 'Folder' }, { Id: it.lib, Name: libName(it.lib), Type: 'CollectionFolder' }, { Id: hex('f'), Name: 'Media Folders', Type: 'AggregateFolder' }] };
+      const uid = u.searchParams.get('userId');
+      if (uid && !sees(uid, it.Id)) return { status: 404 };
+      const folder = it.Path.split('/').slice(0, 3).join('/');
+      return {
+        json: uid
+          ? [{ Id: it.lib, Name: libName(it.lib), Type: 'CollectionFolder', CollectionType: 'movies' }, { Id: hex('f'), Name: 'Media Folders', Type: 'UserRootFolder' }]
+          : [{ Id: hex('e'), Name: folder.split('/').pop(), Type: 'Folder' }, { Id: hex('f'), Name: 'root', Type: 'AggregateFolder' }],
+      };
     },
+    // Jellyfin 12.4 after a restart answers ItemId null here (seen on a real server); the name and Locations are what count
+    'GET /Library/VirtualFolders': () => ({ json: LIBS.map((l) => ({ Name: l.Name, Locations: LOCATIONS[l.Id], CollectionType: 'movies', ItemId: null })) }),
   }, {
     ctxPatch: (c) => {
       c.roles = {
@@ -148,15 +164,21 @@ describe('POST /api/admin/users/:id/check (title search as the profile)', () => 
     ]);
   });
 
-  it('the search runs with the admin key (no userId), ancestors give the library', async () => {
+  it('the search runs with the admin key (no userId), the item\'s Path under a library folder gives the library', async () => {
     const before = env.jfCalls.length;
-    await check(guest, guest, 'Wrenfield');
+    const r = await check(guest, guest, 'Wrenfield');
+    expect(hit(r.json().hits, WREN)).toMatchObject({ library: 'Filme' });
     const calls = env.jfCalls.slice(before);
     const search = calls.filter((c) => c.path === '/Items' && /searchterm=/i.test(c.search));
     expect(search).toHaveLength(1);
     expect(search[0]!.search).not.toMatch(/userid=/i);
+    expect(search[0]!.search).toMatch(/fields=[^&]*path/i);
     expect(search[0]!.auth).not.toMatch(/tok-/); // the admin key, not a user token
-    expect(calls.filter((c) => c.path.endsWith('/Ancestors'))).toHaveLength(1);
+    // no lookup per hit: the library folders are read once and kept
+    expect(calls.filter((c) => c.path.endsWith('/Ancestors'))).toHaveLength(0);
+    const again = env.jfCalls.length;
+    expect(hit((await check(guest, guest, ALL_TERM)).json().hits, SALT)).toMatchObject({ library: 'Kinder' });
+    expect(env.jfCalls.slice(again).filter((c) => c.path === '/Library/VirtualFolders')).toHaveLength(0);
     // the visibility probe is the profile's own identity
     expect(calls.some((c) => c.path === `/Items/${WREN}` && c.search.includes(`userId=${GUEST_JF}`))).toBe(true);
   });
@@ -454,5 +476,38 @@ describe('ageOf (the rating behind why = rating / unrated_kids)', () => {
   it('reads the app spellings and country-prefixed ones; unrated and unknown are null', () => {
     expect([ageOf('FSK-16'), ageOf('DE-6'), ageOf('12'), ageOf('PG-13'), ageOf('de/16'), ageOf('us/PG-13'), ageOf('de/FSK 12')]).toEqual([16, 6, 12, 13, 16, 13, 12]);
     expect([ageOf(null), ageOf(''), ageOf('NR'), ageOf('xx/whatever')]).toEqual([null, null, null, null]);
+  });
+});
+
+describe('the library of an item from its Path (Jellyfin answers no CollectionFolder among the ancestors without a userId)', () => {
+  const libs = [
+    { name: 'Filme', paths: ['/media/filme/'] }, { name: 'Kinder', paths: ['/media/filme/kinder'] },
+    { name: 'Serien', paths: ['/media/serien', '/mnt/usb/serien'] }, { name: 'Win', paths: ['D:\\Medien\\Filme\\'] },
+  ];
+  it('the folder that holds the path names it; the deepest folder wins; a sibling with the same prefix is no match', () => {
+    expect(libraryOfPath('/media/filme/Wrenfield Pier (2019).mp4', libs)).toBe('Filme');
+    expect(libraryOfPath('/media/filme/kinder/Saltwater/Saltwater.mkv', libs)).toBe('Kinder');
+    expect(libraryOfPath('/mnt/usb/serien/Dunmoor', libs)).toBe('Serien');
+    expect(libraryOfPath('/media/serien', libs)).toBe('Serien');
+    expect(libraryOfPath('D:\\Medien\\Filme\\Nordlicht\\Nordlicht.mkv', libs)).toBe('Win');
+    expect(libraryOfPath('/media/serien2/Dunmoor', libs)).toBeNull();
+    expect(libraryOfPath('/media/filmeX/a.mkv', libs)).toBeNull();
+    expect([libraryOfPath(undefined, libs), libraryOfPath('', libs), libraryOfPath(42, libs)]).toEqual([null, null, null]);
+  });
+
+  it('the library folders are read once and kept; a failed read is not kept', async () => {
+    const calls: Call[] = [];
+    let fail = true;
+    const client = new JellyfinClient('http://jf.test:8096', 'adminkey', fakeHttp({
+      'GET /Library/VirtualFolders': () => (fail ? { status: 500 } : { json: [{ Name: 'Filme', Locations: ['/media/filme'], ItemId: null }, { Name: 7, Locations: ['/x'] }, { Name: 'Leer' }] }),
+    }, calls));
+    await expect(client.libraryLocations()).rejects.toThrow();
+    fail = false;
+    expect(await client.libraryLocations()).toEqual([{ name: 'Filme', paths: ['/media/filme'] }, { name: 'Leer', paths: [] }]);
+    await client.libraryLocations();
+    expect(calls.filter((c) => c.path === '/Library/VirtualFolders')).toHaveLength(2);
+    client.forgetLibraryLocations();
+    await client.libraryLocations();
+    expect(calls.filter((c) => c.path === '/Library/VirtualFolders')).toHaveLength(3);
   });
 });
