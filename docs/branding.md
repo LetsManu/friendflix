@@ -82,7 +82,8 @@ last brand it saw, so a known brand shows on the first paint, also before sign-i
   (EXIF, XMP, ICC profiles, text). Errors: 413 `too_large`, 415 `unsupported_type`, 400 `dimensions` or `corrupt`. The page shows
   each one as a sentence on the image's row.
 - **An upload counts only once you save.** The page uploads an image as soon as you pick it, so the preview can show it. An image
-  that no saved brand uses is deleted after an hour. If that happened before you saved, the page asks you to upload it again.
+  that no saved brand uses is deleted after an hour (except the logo last sent to Authentik, see
+  [authentik.md §10b](authentik.md#10b-e-mails-in-the-friendflix-look)). If that happened before you saved, the page asks you to upload it again.
 - **Serving:** images are served by the backend under `/api/public/brand/img/<sha256>.<png|webp>`. The name is the hash of the
   content, so the address changes whenever the image does, and browsers may cache it forever.
 

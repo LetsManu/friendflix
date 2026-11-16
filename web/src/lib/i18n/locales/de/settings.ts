@@ -252,6 +252,7 @@ export default {
     authentik: {
       title: 'Authentik',
       text: 'Überträgt Name und Logo aus dem Branding auf Authentiks Anmeldeseite und die Absenderadresse in die E-Mail-Stufe des Passwort-Resets.',
+      again: 'Eine einmalige Kopie: Nach einer Änderung an Logo, Name oder Mail-Server-Einstellungen hier erneut übertragen.',
       rowTitle: 'Titel',
       rowLogo: 'Logo',
       rowFrom: 'Absender',

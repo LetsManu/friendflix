@@ -254,6 +254,7 @@ const settings: Translation<typeof de> = {
     authentik: {
       title: 'Authentik',
       text: 'Markalama’daki adı ve logoyu Authentik’in giriş sayfasına, gönderen adresini parola sıfırlamanın e-posta aşamasına aktarır.',
+      again: 'Tek seferlik bir kopya: logoyu, adı veya posta sunucusu ayarlarını değiştirdikten sonra burada yeniden aktar.',
       rowTitle: 'Başlık',
       rowLogo: 'Logo',
       rowFrom: 'Gönderen',

@@ -6,7 +6,8 @@
    * API is configured. Name, logo URL and sender are read-only here (they come from Branding and the mail settings). The SMTP checkbox
    * starts unchecked on every load and clears after each transfer: the password goes to Authentik only on an explicit tick (the backend
    * also wants a fresh sign-in, which runs in place). The two result lines keep their room whether they show text or not, and sit
-   * below the button, so nothing moves when a result arrives; a result fades in (opacity only).
+   * below the button, so nothing moves when a result arrives; a result fades in (opacity only). It is a one-time copy (Authentik keeps the
+   * logo URL, the sender and the SMTP settings as sent), so the card says to transfer again after a change.
    */
   import { t, type TKey, type TParams } from '#lib/i18n';
   import { busyKeys, runAction } from '#lib/ui/action';
@@ -59,6 +60,7 @@
   <section class="ak" aria-labelledby="ak-sync-h">
     <h3 id="ak-sync-h">{$t('settings.mail.authentik.title')}</h3>
     <p class="text">{$t('settings.mail.authentik.text')}</p>
+    <p class="hint">{$t('settings.mail.authentik.again')}</p>
     <dl class="rows">
       <div><dt>{$t('settings.mail.authentik.rowTitle')}</dt><dd>{preview.title}</dd></div>
       <div><dt>{$t('settings.mail.authentik.rowLogo')}</dt><dd>{preview.logoUrl ?? $t('settings.mail.authentik.noLogo')}</dd></div>

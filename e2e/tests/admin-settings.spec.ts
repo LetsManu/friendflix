@@ -732,6 +732,8 @@ test.describe('admin: settings, Authentik branding', () => {
     await expect(ak(page).getByText('Nordlicht TV', { exact: true })).toBeVisible();
     await expect(ak(page).getByText(api.settings.ak.logoUrl)).toBeVisible();
     await expect(ak(page).getByText('kino@friend.example.com', { exact: true })).toBeVisible();
+    // the copy goes stale: the card says when to run it again
+    await expect(ak(page).getByText('Eine einmalige Kopie: Nach einer Änderung an Logo, Name oder Mail-Server-Einstellungen hier erneut übertragen.', { exact: true })).toBeVisible();
     await run(page).click();
     await expect(ak(page).getByTestId('ak-brand-result')).toHaveText('Name und Logo übertragen.');
     await expect(ak(page).getByTestId('ak-stage-result')).toHaveText('Absender übertragen.');

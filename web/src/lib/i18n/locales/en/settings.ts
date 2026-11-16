@@ -251,6 +251,7 @@ const settings: Translation<typeof de> = {
     authentik: {
       title: 'Authentik',
       text: 'Copies the name and logo from Branding to Authentik’s sign-in page and the sender address to the e-mail stage of the password reset.',
+      again: 'A one-time copy: after a change to the logo, the name or the mail server settings, transfer again here.',
       rowTitle: 'Title',
       rowLogo: 'Logo',
       rowFrom: 'Sender',

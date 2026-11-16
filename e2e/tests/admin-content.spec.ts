@@ -369,8 +369,17 @@ test.describe('admin content pages (desktop)', () => {
       await expect(save).toBeDisabled();
       expect(api.log.some((l) => l.startsWith('PUT /api/admin/digest') && l.includes('"hour":20'))).toBe(true);
       await page.getByRole('button', { name: 'Test an mich senden' }).click();
-      await expect(toasts(page).getByText('Test gesendet.', { exact: false })).toBeVisible();
-      await expect(toasts(page).getByText('Eine E-Mail steht in der Warteschlange.', { exact: false })).toBeVisible(); // the answer's mailed: true
+      // the answer's mailed: true
+      await expect(toasts(page).getByText('Test gesendet. Eine E-Mail steht in der Warteschlange.', { exact: true })).toBeVisible();
+      await expect(toasts(page).getByText('Test gesendet. Siehe Benachrichtigungen und /digest.', { exact: true })).toHaveCount(0);
+    });
+
+    test('a test without a mail (mailed: false) points to the notifications and /digest', async ({ page }) => {
+      await page.route('**/api/admin/digest/test', (r) => r.fulfill({ json: { sent: 1, mailed: false } }));
+      await page.goto('/admin/digest');
+      await page.getByRole('button', { name: 'Test an mich senden' }).click();
+      await expect(toasts(page).getByText('Test gesendet. Siehe Benachrichtigungen und /digest.', { exact: true })).toBeVisible();
+      await expect(toasts(page).getByText(/Warteschlange/)).toHaveCount(0);
     });
   });
 

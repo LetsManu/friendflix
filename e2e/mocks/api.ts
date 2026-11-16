@@ -7,13 +7,14 @@ import { adminRoute, adminState, type AdminState } from './admin.js';
 import { akBrandingRoute, mailRoute, settingsRoute, settingsState, type SettingsMock } from './settings.js';
 import { setupRoute, type SetupMock } from './setup.js';
 import { startRedeploy, updaterRoute, updaterState, type UpdaterMock } from './updater.js';
-
-const PERSON_MAIL_TYPES = ['available', 'recording', 'licence', 'digest'] as const;
-const ADMIN_MAIL_TYPES = ['update', 'updatefailed', 'syscheck', 'storage'] as const;
-type MailType = (typeof PERSON_MAIL_TYPES)[number] | (typeof ADMIN_MAIL_TYPES)[number];
 import { syscheckDrip, syscheckRoute, syscheckSocket, syscheckState, syscheckUpload, type SyscheckMock } from './syscheck.js';
 import { livetvMedia, livetvRoute, livetvState, type LivetvMock } from './livetv.js';
 import { brandAdminRoute, brandAdminState, type BrandAdminMock } from './brand.js';
+
+/** E-mail stage C: the person and admin mail types, in the backend's order */
+const PERSON_MAIL_TYPES = ['available', 'recording', 'licence', 'digest'] as const;
+const ADMIN_MAIL_TYPES = ['update', 'updatefailed', 'syscheck', 'storage'] as const;
+type MailType = (typeof PERSON_MAIL_TYPES)[number] | (typeof ADMIN_MAIL_TYPES)[number];
 
 /** Item whose reactions are locked (viewer has not seen it) / unlocked and contain an XSS probe. */
 export const LOCKED_ID = MOVIE.id;

@@ -635,7 +635,7 @@ By default FriendFlix shows its own sign-in screens over a wall of covers (`/log
 
 ## 10b. E-mails in the FriendFlix look
 
-Authentik sends two kinds of mail on its own: the password reset link and, in the enrollment flow, the confirmation of a new address. Out of the box they look like Authentik. [`deploy/authentik/templates/`](../deploy/authentik/templates/) has four template files that give them the FriendFlix look (a light card, a letter tile "F", the name and one button). Each file is **standalone** (copying one file is enough), shows no remote image and no tracking, and has English texts that Authentik translates for the recipient where it can.
+Authentik sends two kinds of mail on its own: the password reset link and, in the enrollment flow, the confirmation of a new address. Out of the box they look like Authentik. [`deploy/authentik/templates/`](../deploy/authentik/templates/) has four template files that give them the FriendFlix look (a light card, a letter tile "F", the name and one button). Each file is **standalone** (copying one file is enough) and shows no remote image and no tracking. Their texts are **English only**: they are the templates' own sentences, which Authentik's translations do not cover, so every recipient reads them in English (translate them in your copy if you want another language). Authentik does not turn the HTML into a plain-text part: it takes the plain text from a `.txt` file of the same name next to the template, and none is shipped. So the page title and the letter tile never turn up as stray text, and a mail program that shows plain text only shows an empty mail.
 
 | File | Use it for | Its link |
 |---|---|---|
@@ -648,33 +648,36 @@ An existing install keeps working without doing anything: the two older files ke
 
 1. **Mount the folder** (the one from [§10a](#10a-in-app-sign-in), step 4, or any folder of yours) at `/templates` on the Authentik **server and worker**, and recreate both. A template Authentik does not list is not selectable.
 2. **Select the template per stage:** *Flows and Stages → Stages* → the recovery flow's e-mail stage (`default-recovery-email`) → *Edit* → **Template**: `friendflix-reset.html` (or `friendflix-recovery.html`); the enrollment flow's e-mail stage → **Template**: `friendflix-confirm.html`. Set a **Subject** on each stage too (for example `Reset your FriendFlix password` and `Confirm your e-mail address`), because the template only changes the body.
-3. **The two lines you may edit.** Authentik cannot read FriendFlix's branding, so the files carry the default look: the name `FriendFlix` and the accent colour `#d6325a`. Each is marked with a `{# ff:brand: … #}` comment line right above it: change the name there, and replace the colour (it appears three times in the file) with your accent. Keep everything else: the part between the `ff:head` and `ff:foot` markers is the same in all four files. In `friendflix-recovery.html` and `friendflix-email-change.html` also replace `friend.example.com` in the link (their first line names it).
+3. **The two lines you may edit.** Authentik cannot read FriendFlix's branding, so the files carry the default look: the name `FriendFlix` and the accent colour `#d6325a`. Each is marked with a `{# ff:brand: … #}` comment line right above it: change the name there, and replace every `#d6325a` in the file with your accent (six places in the bar, the letter tile and the button, plus the comment line that names it; find and replace all is easiest). Keep everything else: the part between the `ff:head` and `ff:foot` markers is the same in all four files. In `friendflix-recovery.html` and `friendflix-email-change.html` also replace `friend.example.com` in the link (their first line names it).
 4. **Test** with a test user: *Forgot username or password?* on Authentik's sign-in page, or *Send password link* on the user's admin page.
 
 ### Branding an Authentik übertragen
 
-*Admin → Einstellungen → Benachrichtigungen*, below the E-Mail card, has the card **Branding an Authentik übertragen** (only when the Authentik API is set up). It copies what FriendFlix already knows into Authentik, so the sign-in page and the reset mail carry your name and sender:
+*Admin → Einstellungen → Benachrichtigungen*, below the E-Mail card, has the card **Branding an Authentik übertragen** (only when the Authentik API is set up). It copies what FriendFlix already knows into Authentik, so the sign-in page and the reset mail carry your name and sender. It is a **one-time copy**: Authentik keeps what was sent and does not follow later changes, so **run the transfer again after you change the logo or the name under *Branding*, or the mail server settings** (server, port, encryption, user, password or sender). Until then Authentik shows the old name and sends with the old settings, and a rotated SMTP password makes its reset mails fail. The logo Authentik was last given stays stored in FriendFlix (the brand clean-up keeps it) until the next transfer sends another one, so Authentik's sign-in page never shows a broken logo.
 
 - **Brand.** The title (your *Branding* name) and, when there is one, the logo (the brand's logo, else its symbol, as an address on `PUBLIC_URL`; without `PUBLIC_URL` no logo is sent). The brand is chosen the way Authentik chooses it for a request: the host of `OIDC_ISSUER` (with its port) is matched against the brands' domains, an exact match or a parent domain (`auth.example.com` fits a brand for `example.com`), the longest match wins, and without a match the default brand is used.
-- **Sender.** The recovery flow's first e-mail stage (`AUTHENTIK_RECOVERY_FLOW`, default `default-recovery-flow`) gets FriendFlix's sender address as its *From address*. It is the **bare address** (`MAIL_FROM`, for example `kino@friend.example.com`): Authentik's field takes an address only, not `Name <address>`, so mails from Authentik show no display name. When that stage uses Authentik's **global settings** (*Use global connection settings*, the default), the sender is not changed: the card says *skipped: global settings*.
-- **SMTP settings, only with the checkbox.** *Also copy the SMTP settings* is off by default. Only when it is ticked **and** you signed in within the last 10 minutes (the card asks for it in place) does FriendFlix also switch the stage to its own connection settings (server, port, *Use TLS* for STARTTLS or *Use SSL* for TLS, user and password, timeout 10 s). With *Keine* encryption it sends no user and no password, like FriendFlix itself. The password goes only in that one request to Authentik: it is not shown, not stored anywhere new, and not in the audit log. It needs mail set up in FriendFlix first.
+- **Sender.** The recovery flow's first e-mail stage (`AUTHENTIK_RECOVERY_FLOW`, default `default-recovery-flow`) gets FriendFlix's sender address as its *From address*. It is the **bare address** (`MAIL_FROM`, for example `kino@friend.example.com`): Authentik's field takes an address only, not `Name <address>`, so mails from Authentik show no display name. When that stage uses Authentik's **global settings** (*Use global connection settings*, the default), the sender is not changed: the card says *Authentik nutzt seine globalen E-Mail-Einstellungen – Absender nicht geändert.*
+- **SMTP settings, only with the checkbox.** *Auch die SMTP-Einstellungen übertragen* is off by default. Only when it is ticked **and** you signed in within the last 10 minutes (the card asks for it in place) does FriendFlix also switch the stage to its own connection settings (server, port, *Use TLS* for STARTTLS or *Use SSL* for TLS, user and password, timeout 10 s). With *Keine* encryption it sends no user and no password, like FriendFlix itself. The password goes only in that one request to Authentik: it is not shown, not stored anywhere new, and not in the audit log. It needs mail set up in FriendFlix first.
 
 Each part reports on its own, so a refusal of one does not stop the other. Results and what they mean:
 
-| Result | Meaning |
+| Result (as the card says it) | Meaning |
 |---|---|
-| *Name and logo copied* / *Sender copied* / *Sender and SMTP settings copied* | Done. |
-| *No sender address entered* | `MAIL_FROM` is empty; the stage stays as it is. |
-| *Authentik uses its global e-mail settings – sender not changed* | The stage has *Use global connection settings* on and no consent was given for SMTP; set the sender in Authentik's global settings or tick the SMTP box. |
-| *The Authentik token lacks the permission “…”* | The service account's role misses the named permission: see the table in [§8.2](#82-role-with-exactly-these-global-permissions). |
-| *Authentik rejects the API token* | The token is wrong or revoked ([§8.3](#83-copy-the-token)). |
-| *Not found in Authentik* | No brand to change (none matches and there is no default brand). |
-| *The reset flow has no e-mail stage* | The recovery flow has no e-mail stage bound ([§10](#10-password-recovery-by-e-mail)). |
-| *Authentik cannot be reached* | Authentik is down or not reachable from the backend. |
-| *Authentik did not accept the change* | Any other refusal; the backend log has the code. |
-| *Sign in again to copy the SMTP settings* | The sign-in is older than 10 minutes; confirm and the transfer runs again. |
-| *Enter the server and the sender address first, then save* | The SMTP box needs a saved mail setup. |
-| *Too many attempts* | At most 6 transfers a minute. |
+| *Name und Logo übertragen.* / *Name übertragen.* / *Absender übertragen.* / *Absender und SMTP-Einstellungen übertragen.* | Done (*Name übertragen.*: there was no logo to send). |
+| *Keine Absenderadresse eingetragen: die E-Mail-Stufe bleibt, wie sie ist.* | `MAIL_FROM` is empty; the stage stays as it is. |
+| *Authentik nutzt seine globalen E-Mail-Einstellungen – Absender nicht geändert.* | The stage has *Use global connection settings* on and no consent was given for SMTP; set the sender in Authentik's global settings or tick the SMTP box. |
+| *Dem Authentik-Token fehlt die Berechtigung „…“.* | The service account's role misses the named permission: see the table in [§8.2](#82-role-with-exactly-these-global-permissions). |
+| *Authentik lehnt das API-Token ab.* | The token is wrong or revoked ([§8.3](#83-copy-the-token)). |
+| *In Authentik nicht gefunden.* | For *Name und Logo*: no brand to change (none matches and there is no default brand). For *E-Mail-Stufe*: the recovery flow's e-mail stage is gone (FriendFlix looked it up once more and still did not find it). |
+| *Der Ablauf zum Zurücksetzen hat keine E-Mail-Stufe.* | The recovery flow has no e-mail stage bound ([§10](#10-password-recovery-by-e-mail)). |
+| *Authentik ist nicht erreichbar.* | Authentik is down or not reachable from the backend. |
+| *Authentik hat die Änderung nicht angenommen.* | Any other refusal. The code is in the audit log (action `authentik.branding`, for example `stage: failed:error`), and the last Authentik failure (class, HTTP status, endpoint) shows on *Admin → Status → Anmeldung*. |
+| *Für die SMTP-Einstellungen musst du dich erneut anmelden.* | The sign-in is older than 10 minutes. Confirm in the sign-in window and the transfer is sent once more; when the sign-in opened as its own page instead, tick the box and transfer again after it. |
+| *Trag erst Server und Absenderadresse ein und speichere.* | The SMTP box needs a saved mail setup. |
+| *Die Authentik-API ist nicht eingerichtet.* | `AUTHENTIK_URL` or the API token is missing ([§8](#8-service-account-and-api-token)). |
+| *Zu viele Versuche. Warte eine Minute.* | At most 6 transfers a minute. |
+| *Das können nur Admins.* | FriendFlix refused the request: the account is not an admin (any more), or the profile in use is not the account's own. |
+| *Die Übertragung ließ sich nicht starten. Versuch es gleich noch einmal.* | The request did not reach FriendFlix or got no usable answer (offline, the sign-in given up, an expired page whose security token no longer fits, a server error); nothing was sent to Authentik. Reload the page and try again. |
 
 The transfer needs **three permissions that the blueprint does not grant** (least privilege: this is an optional action). Add them to the service account's role only if you want to use it: [§8.2](#82-role-with-exactly-these-global-permissions), second table.
 

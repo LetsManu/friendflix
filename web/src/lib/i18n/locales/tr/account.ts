@@ -416,7 +416,7 @@ const tr: Translation<typeof de> = {
         available: { label: 'Kullanılabilir istekler', hint: 'İstediğin bir şey geldiğinde.' },
         recording: { label: 'Kayıtlar', hint: 'Bir kayıt bittiğinde, başarısız olduğunda veya silindiğinde.' },
         licence: { label: 'Süresi dolan indirmeler', hint: 'Cihazlarındaki indirmelerin süresi dolmadan kısa süre önce.' },
-        digest: { label: 'Haftalık özet', hint: 'Haftada bir kez; yeni filmler ve bölümler, istekleriniz ve öneriler içeren bir e-posta.' },
+        digest: { label: 'Haftalık özet', hint: 'Haftada bir kez; yeni filmler ve bölümler, isteklerin ve öneriler içeren bir e-posta.' },
         update: { label: 'Yeni sürümler', hint: 'Yeni bir sürüm hazır olduğunda, sürüm başına bir kez.' },
         updatefailed: { label: 'Başarısız güncellemeler', hint: 'Bir güncelleme başarısız olduğunda.' },
         syscheck: { label: 'Sistem kontrolü sorunları', hint: 'Sistem kontrolündeki bir satır soruna dönüştüğünde, günde en fazla bir kez.' },

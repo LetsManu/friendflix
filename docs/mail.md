@@ -129,7 +129,7 @@ The welcome mail is sent at the end of the first successful sign-in of a new acc
 *Wochenrückblick* is the e-mail form of the weekly recap and is **opt-in**: it is off for everyone until a person switches it on under *Konto → E-Mails*, so updating mails nobody a recap. It is independent of the in-app recap (the *Wochenrückblick* notice and the `/digest` page): either can be on without the other. The mail has the same headline and range as the notice and lists titles as plain text, with no images and no links per title:
 
 - *Neue Filme* (up to 12 names, then "… und n weitere"),
-- *Neue Folgen* (up to 20 series the person follows, "Name (n neue Folgen)"),
+- *Neue Folgen* (up to 20 series with new episodes, the ones the person follows first, "Name (n neue Folgen)"),
 - *Deine Wünsche sind da* (up to 20),
 - *Empfehlungen für dich* (up to 5, "Name – von Anna").
 
@@ -151,8 +151,8 @@ Four mails go to **active admins that have an address**, and only to them. Each 
 |---|---|---|
 | *Neue Versionen* (`update`) | A newer version is available on the channel that is selected. Checked every hour, but the update check itself runs at most every 6 hours. Link: *Admin → Update*. | Stable: each release. Pinned version: each pinned target. Nightly: at most one per calendar week (a nightly build appears almost daily). |
 | *Fehlgeschlagene Updates* (`updatefailed`) | An update, a self-update or a rollback through the updater failed, or the new version did not come up and was rolled back; also the automatic redeploy through Portainer failing. Livetv jobs never mail, and a manual Portainer redeploy shows its error on the screen instead. Link: *Admin → Update*. | Each updater job (once, however often the page is opened); the Portainer redeploy once per target and day. |
-| *Probleme im Systemcheck* (`syscheck`) | A server-side line of the Systemcheck turns into a **problem**. Checked every 15 minutes. All lines that turn in one run make **one** mail naming their groups (a database or Authentik outage flips several at once). A problem that stays does not repeat, and a line that flaps alerts at most once a day. After an update, lines that are already in problem at the first run alert once. Link: *Admin → Status*. | One mail per run; each line at most once per day. |
-| *Speicherplatz* (`storage`) | The downloads or previews disk is almost full or short of free space (not the download size cap), checked after every health check; and the two Live TV recordings storage notices (full, or recordings deleted to make room). Links: *Admin → Status* and *Admin → Live-TV*. | Each disk, level (*fast voll*, *voll*) and day, so a disk that stays full mails daily, and *voll* after *fast voll* on the same day mails again. The recordings notices are once a day. |
+| *Probleme im Systemcheck* (`syscheck`) | A server-side line of the Systemcheck turns into a **problem**. Checked every 15 minutes. All lines that turn in one run make **one** mail naming their groups (a database or Authentik outage flips several at once). A problem that stays does not repeat (also when its check did not answer in between), and a line that flaps alerts at most once a day. The downloads and previews disk lines are left out: *Speicherplatz* tells them. After an update, lines that are already in problem at the first run alert once. Link: *Admin → Status*. | One mail per run; each line at most once per day. |
+| *Speicherplatz* (`storage`) | The downloads or previews disk is almost full or short of free space (not the download size cap), checked after every health check; and the two Live TV recordings storage notices (full, so a recording was stopped, or almost full). Links: *Admin → Status* and *Admin → Live-TV*. | Each disk, level (*fast voll*, *voll*) and day, so a disk that stays full mails daily, and *voll* after *fast voll* on the same day mails again. The recordings notices are once a day. |
 
 Known limits:
 

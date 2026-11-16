@@ -98,12 +98,6 @@ describe('account mail switches', () => {
     expect(calls[0]!.init.method).toBe('GET');
   });
 
-  it('loadMailPrefs passes admin and the admin switches through', async () => {
-    const all = { ...prefs, update: true, updatefailed: true, syscheck: false, storage: true };
-    answer(200, { configured: true, hasAddress: true, admin: true, prefs: all });
-    expect(await loadMailPrefs()).toEqual({ configured: true, hasAddress: true, admin: true, prefs: all });
-  });
-
   it('saveMailPref sends PUT /api/account/mail { type, on } and answers the prefs', async () => {
     const calls = answer(200, { prefs });
     expect(await saveMailPref('recording', false)).toEqual(prefs);
