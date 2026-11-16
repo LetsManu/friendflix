@@ -9,6 +9,8 @@ export interface MenuPlaceOpts {
   up?: boolean;
   /** the menu is at least as wide as its button (a row-wide picker) */
   wide?: boolean;
+  /** which edge of the button the menu lines up with (default: the one toward the window's middle) */
+  align?: 'start' | 'end';
   /** the button moved (a scroll outside the menu, a layout shift): the owner closes the menu */
   onMoved?: () => void;
 }
@@ -35,7 +37,7 @@ export function menuPlace(node: HTMLElement, opts: MenuPlaceOpts) {
     vw = window.innerWidth; vh = window.innerHeight;
     if (o.wide) node.style.minWidth = `${Math.round(Math.min(r.width, vw - 2 * MENU_MARGIN))}px`;
     node.style.removeProperty('max-height'); // its natural height
-    const p = placeMenu(r, { w: node.offsetWidth, h: node.offsetHeight }, { w: vw, h: vh }, { up: o.up, side });
+    const p = placeMenu(r, { w: node.offsetWidth, h: node.offsetHeight }, { w: vw, h: vh }, { up: o.up, align: o.align, side });
     side = p.up ? 'up' : 'down';
     node.style.setProperty('left', `${p.left}px`);
     node.style.setProperty('top', `${p.top}px`);

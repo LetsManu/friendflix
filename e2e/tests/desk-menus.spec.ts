@@ -290,3 +290,103 @@ test.describe('header menus', () => {
     await expect(pop(page)).toHaveCount(0);
   });
 });
+
+test.describe('Select', () => {
+  const role = (page: Page) => page.getByRole('combobox', { name: 'Rolle', exact: true });
+  const list = (page: Page) => page.locator('[role=listbox]');
+  test.beforeEach(({ api }) => { api.asAdmin = true; });
+
+  test('a click opens a glass listbox: 44 px options, the current one checked, inside the window', async ({ page }) => {
+    await page.goto('/admin/users');
+    await expect.poll(() => role(page).locator('option').count()).toBeGreaterThan(3); // the roles have loaded
+    await role(page).click();
+    const lb = list(page);
+    await expect(lb).toBeVisible();
+    await expect(lb).toHaveClass(/\bfrost\b/);
+    await expect(lb).toBeFocused();
+    const opts = lb.locator('[role=option]');
+    expect(await opts.count()).toBe(await role(page).locator('option').count());
+    for (const o of await opts.all()) expect(Math.abs((await o.boundingBox())!.height - 44)).toBeLessThanOrEqual(0.5);
+    await expect(lb.locator('[role=option][aria-selected="true"]')).toHaveCount(1);
+    await expect(lb.locator('[role=option][aria-selected="true"]')).toHaveText('Alle Rollen');
+    const fit = await boxInViewport(page, lb);
+    expect(fit.ok, JSON.stringify(fit)).toBe(true);
+    // as wide as the select at least, right under it
+    const sb = (await role(page).boundingBox())!;
+    expect(fit.box!.width).toBeGreaterThanOrEqual(sb.width - 0.5);
+    expect(fit.box!.y).toBeGreaterThanOrEqual(sb.y + sb.height);
+    // a second press on the select closes it
+    await role(page).click();
+    await expect(lb).toHaveCount(0);
+  });
+
+  test('keys: Space opens, End and ArrowUp move, Enter picks and fires change', async ({ page, api }) => {
+    await page.goto('/admin/users');
+    const sel = role(page);
+    await expect.poll(() => sel.locator('option').count()).toBeGreaterThan(3); // the roles have loaded
+    const values = await sel.locator('option').evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+    const want = values[values.length - 2]!;
+    await sel.focus();
+    await page.keyboard.press('Space');
+    const lb = list(page);
+    await expect(lb).toBeVisible();
+    await page.keyboard.press('End');
+    await page.keyboard.press('ArrowUp');
+    await expect(lb.locator(`#${await lb.getAttribute('aria-activedescendant')}`)).toHaveAttribute('data-value', want);
+    await page.keyboard.press('Enter');
+    await expect(lb).toHaveCount(0);
+    await expect(sel).toHaveValue(want);
+    await expect(sel).toBeFocused();
+    // the filter ran (change): the people with that role are listed, the others are not
+    const table = page.getByRole('table', { name: 'Nutzer' });
+    const holder = api.admin.users.find((u) => u.role === want)!;
+    const other = api.admin.users.find((u) => u.role !== want && u.role !== 'admin')!;
+    await expect(table.getByRole('row', { name: new RegExp(holder.name) })).toBeVisible();
+    await expect(table.getByRole('row', { name: new RegExp(other.name) })).toHaveCount(0);
+  });
+
+  test('near the window\'s bottom it opens upward', async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 600 });
+    await page.goto('/admin/users');
+    const sel = role(page);
+    await expect(sel).toBeVisible();
+    // room above the filter row so it can sit on the window's bottom edge
+    await sel.evaluate((e) => { (e.closest('main') as HTMLElement).style.paddingTop = '900px'; });
+    await sel.evaluate((e) => e.scrollIntoView({ block: 'end' }));
+    await sel.click();
+    const lb = list(page);
+    await expect(lb).toBeVisible();
+    const fit = await boxInViewport(page, lb);
+    expect(fit.ok, JSON.stringify(fit)).toBe(true);
+    expect(fit.box!.y + fit.box!.height).toBeLessThanOrEqual((await sel.boundingBox())!.y + 0.5);
+  });
+
+  test.describe('in the delete dialog', () => {
+    test.use({ allowedConsole: /status of 409/ }); // the role is in use: the server asks where its people go
+    test('Escape inside a dialog closes only the listbox', async ({ page, api }) => {
+      const extra = api.admin.matrix.roles.find((r) => r.key === 'family')!;
+      api.admin.matrix.roles.splice(4, 0, { ...extra, key: 'oma', label: 'Oma', builtinLabel: false, origin: 'admin', accounts: 2, profiles: 0, kidsProfiles: 0, invites: 0, values: { ...extra.values } });
+      await page.goto('/admin/roles');
+      await omaMenu(page).click();
+      await pop(page).getByRole('button', { name: 'Löschen' }).click();
+      const dlg = page.locator('[role=alertdialog]');
+      const to = dlg.getByRole('combobox', { name: 'Neue Rolle' });
+      await expect(to).toBeVisible();
+      await to.click();
+      await expect(list(page)).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(list(page)).toHaveCount(0);
+      await expect(dlg).toBeVisible();
+      await expect(to).toBeFocused();
+    });
+  });
+
+  test('selectOption still works and closes an open listbox', async ({ page }) => {
+    await page.goto('/admin/users');
+    await role(page).click();
+    await expect(list(page)).toBeVisible();
+    await role(page).selectOption('guest');
+    await expect(role(page)).toHaveValue('guest');
+    await expect(list(page)).toHaveCount(0);
+  });
+});
