@@ -5,6 +5,9 @@ import { readBrand, resetBrand, saveBrand } from '../src/brand/repo.js';
 import type { Config } from '../src/config.js';
 import { HttpError } from '../src/users.js';
 import { BACKOFF_S, enqueueMail, LIMITS, MAX_ATTEMPTS, mailStatus } from '../src/mail/outbox.js';
+import { setMailPref } from '../src/mail/people.js';
+import type { MailKind } from '../src/mail/templates.js';
+import { unsubscribeToken } from '../src/mail/unsubscribe.js';
 import { setMailTestCa } from '../src/mail/transport.js';
 import { deliverNow, mailTick, setMailClockForTests } from '../src/mail/worker.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
@@ -460,5 +463,82 @@ describe('mail outbox and worker', () => {
     expect(json).not.toContain('geheim');
     env.ctx.cfg = cfg;
     expect((await mailStatus(env.ctx)).configured).toBe(false);
+  });
+  // Mail stage B, Task 2: the worker renders a person mail for the row's user, and re-checks that person right before sending.
+  const FRIEND = { PUBLIC_URL: 'https://friend.example.com' };
+  const enqueuePerson = (kind: MailKind, dedupe?: string) =>
+    enqueueMail(env.ctx, { kind, to: ANNA, userId: anna, lang: 'de', params: kind === 'welcome' ? { name: 'Anna Beispiel' } : { title: 'Nordlicht', link: '/downloads' }, dedupe });
+  const resetAnna = () => Promise.all([
+    env.pool.query('update users set disabled = false, access_until = null where id = $1', [anna]),
+    env.pool.query('delete from user_prefs where user_id = $1', [anna]),
+  ]);
+
+  it("worker renders with the row's user", async () => {
+    await resetAnna();
+    const f = await useFake({}, FRIEND);
+    await enqueuePerson('licence');
+    expect(await mailTick(env.ctx, await dbNow())).toEqual({ sent: 1, failed: 0, deferred: 0 });
+    const m = f.messages[0]!;
+    const lu = header(m.raw, 'List-Unsubscribe');
+    expect(lu).toHaveLength(1);
+    expect(lu[0]!.replace(/\s+/g, '')).toBe(`List-Unsubscribe:<https://friend.example.com/api/public/mail/unsubscribe?t=${unsubscribeToken(env.ctx.encKey, anna, 'licence')}>`);
+    expect(header(m.raw, 'List-Unsubscribe-Post')).toEqual(['List-Unsubscribe-Post: List-Unsubscribe=One-Click']);
+  });
+
+  it('a type switched off after queueing is dropped without sending', async () => {
+    await resetAnna();
+    const f = await useFake({}, FRIEND);
+    // the race: queued after the switch was read as on, the switch goes off before the worker sends
+    const id = (await enqueuePerson('available'))!;
+    await env.pool.query("insert into user_prefs(user_id, data) values ($1, '{\"mail\": {\"available\": false}}')", [anna]);
+    const keep = (await enqueuePerson('recording'))!;
+    expect(await mailTick(env.ctx, await dbNow(), log)).toEqual({ sent: 1, failed: 0, deferred: 0 });
+    expect(f.messages).toHaveLength(1);
+    expect(f.messages[0]!.raw).toContain(unsubscribeToken(env.ctx.encKey, anna, 'recording').slice(0, 40));
+    expect(await env.pool.query('select 1 from mail_outbox where id = $1', [id])).toMatchObject({ rowCount: 0 });
+    expect((await row(keep)).state).toBe('sent');
+    expect(logs).toEqual([{ mail: id, code: 'unsubscribed' }]);
+  });
+
+  it('a type switched off while its row is being sent is dropped at the re-check', async () => {
+    await resetAnna();
+    const f = await useFake({}, FRIEND);
+    const id = (await enqueuePerson('licence'))!;
+    // switched off once the worker holds the row (setMailPref leaves a sending row alone): the check right before the send sees it
+    const real = env.ctx.db;
+    env.ctx.db = Object.assign(Object.create(real) as typeof real, {
+      query: async (sql: unknown, ...rest: unknown[]) => {
+        const res = await (real.query as (...a: unknown[]) => Promise<unknown>).call(real, sql, ...rest);
+        if (typeof sql === 'string' && sql.startsWith('update mail_outbox set state = \'sending\'')) await setMailPref({ db: real }, anna, 'licence', false);
+        return res;
+      },
+    });
+    try {
+      expect(await mailTick(env.ctx, await dbNow(), log)).toEqual({ sent: 0, failed: 0, deferred: 0 });
+    } finally {
+      env.ctx.db = real;
+    }
+    expect(f.messages).toHaveLength(0);
+    expect(await rows()).toEqual([]);
+    expect(logs).toEqual([{ mail: id, code: 'unsubscribed' }]);
+  });
+
+  it('person mail of an account disabled or expired after queueing is dropped', async () => {
+    await resetAnna();
+    const f = await useFake({}, FRIEND);
+    const a = (await enqueuePerson('available'))!;
+    const w = (await enqueuePerson('welcome'))!;
+    await env.pool.query('update users set disabled = true where id = $1', [anna]);
+    expect(await mailTick(env.ctx, await dbNow(), log)).toEqual({ sent: 0, failed: 0, deferred: 0 });
+    await env.pool.query("update users set disabled = false, access_until = now() - interval '1 minute' where id = $1", [anna]);
+    const r = (await enqueuePerson('recording'))!;
+    await mailTick(env.ctx, await dbNow(), log);
+    expect(f.messages).toHaveLength(0);
+    expect(await rows()).toEqual([]);
+    expect(logs).toEqual([{ mail: a, code: 'inactive' }, { mail: w, code: 'inactive' }, { mail: r, code: 'inactive' }]);
+    // the admin's test mail is not a person mail: it still goes out
+    await enqueue();
+    expect(await mailTick(env.ctx, await dbNow())).toMatchObject({ sent: 1 });
+    await resetAnna();
   });
 });

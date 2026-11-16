@@ -7,7 +7,7 @@ import { MediaError } from './media/types.js';
 import { jfUserFor } from './profiles.js';
 import type { JfUser, ProfileRow, UserRow } from './types.js';
 
-type Db = Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>;
+type Db = Pick<Ctx, 'db' | 'cfg' | 'fetchImpl' | 'encKey'>;
 
 interface ReminderRow {
   id: string;

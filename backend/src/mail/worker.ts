@@ -8,6 +8,7 @@ import { isLanguage } from '../i18n.js';
 import { HttpError } from '../users.js';
 import { mailBrand } from './brand.js';
 import { BACKOFF_S, LIMITS, MAX_ATTEMPTS } from './outbox.js';
+import { isMailPrefType, personMailBlock } from './people.js';
 import { renderMail, type MailKind } from './templates.js';
 import { classifyMailError, createMailTransport, mailConfigured, type MailFailure } from './transport.js';
 
@@ -21,6 +22,8 @@ import { classifyMailError, createMailTransport, mailConfigured, type MailFailur
  * - A transport-class error (unreachable, timeout, tls, auth) is nobody's message's fault: the tick gives back the rows it has not sent
  *   (attempts − 1), waits by the backoff of consecutive transport failures (kv `mail:transport:fails`) and stops.
  * - A row over a rate limit goes back without an attempt counted, due when the oldest counted mail leaves the window.
+ * - A person mail (welcome or a per-type mail, with its user) is checked once more right before the send: an account disabled or
+ *   expired since it was queued, or a type switched off since, deletes the row unsent (see `dropUnwanted`).
  *
  * Times come from the database clock (or the caller's `now`), so next_at and created_at compare on one clock. Log lines carry the row
  * id and a code only; never an address, a text or the server's reply.
@@ -49,7 +52,9 @@ const TRANSPORT_TTL_S = 7 * 86_400;
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 
-interface Claimed { id: string; kind: string; rcpt_enc: string | null; rcpt_key: string; params_enc: string | null; lang: string; attempts: number }
+interface Claimed {
+  id: string; kind: string; user_id: string | null; rcpt_enc: string | null; rcpt_key: string; params_enc: string | null; lang: string; attempts: number;
+}
 type Outcome = DeliverResult;
 
 /** the database clock, rounded up to the next millisecond (a Date has no microseconds: rounded down, a row queued in the same
@@ -79,7 +84,7 @@ async function claim(db: Db, now: Date, lease: Date, id?: string): Promise<Claim
   const r = await db.query<Claimed>(
     `update mail_outbox set state = 'sending', lease_until = $2, attempts = attempts + 1
       where id in (select id from mail_outbox where ${due} order by next_at limit ${BATCH} for update skip locked)
-      returning id, kind, rcpt_enc, rcpt_key, params_enc, lang, attempts`,
+      returning id, kind, user_id, rcpt_enc, rcpt_key, params_enc, lang, attempts`,
     id === undefined ? [now, lease] : [now, lease, id]);
   return r.rows;
 }
@@ -121,6 +126,20 @@ const giveBack = (db: Db, ids: string[], lease: Date, next: Date | null) => db.q
 
 const withSmtp = (o: Outcome, smtp: number | null): Outcome => (smtp === null ? o : { ...o, smtp });
 
+/**
+ * The last check of a person mail before it goes out: a code when its person no longer wants or may get it, and then the row is
+ * deleted (still under this tick's lease). It closes the race with the enqueue (which read the switch before the person turned it
+ * off; setMailPref only deletes rows that are queued by then) and with a switch turned off while the row waited. Deleted, not
+ * `failed`: nothing went wrong with the mail system, so it must not count as a failure in the status or the Systemcheck, and the
+ * end state is the one setMailPref gives a row it reaches in time. The admin's test mail and the invitation are not person mails.
+ */
+async function dropUnwanted(db: Db, r: Claimed, lease: Date): Promise<string | null> {
+  if (!r.user_id || (r.kind !== 'welcome' && !isMailPrefType(r.kind))) return null;
+  const code = await personMailBlock({ db }, r.user_id, r.kind);
+  if (code) await db.query(`delete from mail_outbox where ${OWNED}`, [r.id, lease]);
+  return code;
+}
+
 /** the claim's lease: its value (the fence of every update) and when it ends on the monotonic clock */
 interface Lease { until: Date; endsAt: number }
 
@@ -156,6 +175,11 @@ async function sendClaimed(ctx: Ctx, rows: Claimed[], transport: Transporter, no
       out.set(r.id, { state: 'queued', code: 'rate_limited' });
       continue;
     }
+    const dropped = await dropUnwanted(db, r, lease);
+    if (dropped) {
+      log.warn({ mail: r.id, code: dropped }, 'mail dropped');
+      continue;
+    }
     let to: string;
     let params: Record<string, unknown>;
     try {
@@ -170,7 +194,7 @@ async function sendClaimed(ctx: Ctx, rows: Claimed[], transport: Transporter, no
     }
     let f: MailFailure | null = null;
     try {
-      const m = await renderMail(ctx, r.kind as MailKind, isLanguage(r.lang) ? r.lang : 'de', params);
+      const m = await renderMail(ctx, r.kind as MailKind, isLanguage(r.lang) ? r.lang : 'de', params, { userId: r.user_id });
       // `from` as an address object: nodemailer quotes or encodes the brand name, so it can never add a header or a recipient
       await transport.sendMail({ from, to, subject: m.subject, html: m.html, text: m.text, attachments: m.attachments, headers: m.headers });
     } catch (e) {

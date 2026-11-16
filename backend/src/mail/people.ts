@@ -67,6 +67,19 @@ export async function mailRecipient(ctx: Pick<Ctx, 'db' | 'cfg'>, userId: string
   return { to: u.email, lang: await userLanguage(ctx, userId), name: u.name };
 }
 
+/**
+ * Why a queued person mail of `kind` must not go out now, or null when it may: `inactive` (the account is gone, disabled or its
+ * access ended) or `unsubscribed` (the type is switched off). The worker asks right before each send, so a switch turned off or an
+ * account locked after the row was queued (the enqueue read the old state) still stops the mail. One query.
+ */
+export async function personMailBlock(ctx: Pick<Ctx, 'db'>, userId: string, kind: PersonMailKind): Promise<'inactive' | 'unsubscribed' | null> {
+  const r = (await ctx.db.query<{ mail: unknown }>(
+    `select p.data->'mail' mail from users u left join user_prefs p on p.user_id = u.id
+      where u.id = $1 and not u.disabled and (u.access_until is null or u.access_until > now())`, [userId])).rows[0];
+  if (!r) return 'inactive';
+  return isMailPrefType(kind) && !toPrefs(r.mail)[kind] ? 'unsubscribed' : null;
+}
+
 /** Queues a person mail: the outbox row id, or null when nobody is to be mailed or the dedupe key was used before. */
 export async function mailPerson(ctx: Pick<Ctx, 'db' | 'cfg' | 'encKey'>, userId: string, kind: PersonMailKind, params: Record<string, unknown>, dedupe: string): Promise<string | null> {
   const r = await mailRecipient(ctx, userId, kind);
