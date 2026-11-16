@@ -21,8 +21,10 @@
 # BuildKit (BUILDKIT_IMAGE), BUILD_TIME and the `created` label derived from the commit time; the published candidate is
 # built without cache import. The `reproducible` job rebuilds every image from scratch and requires the same digest.
 # mediaserver (trial, mediaserver/README.md) is the thin FriendFlix image on top of the pinned Ferrofin release: no Rust or
-# Node build, only image-level changes. Built, scanned, SBOM'd, signed and published like the others, but its Trivy gate only
-# reports (CVEs of the third-party base can only be fixed by a Ferrofin release) and it is exempt from `reproducible`.
+# Node build, only image-level changes. It has its OWN jobs (`mediaserver-image`, `publish-mediaserver`) that nothing else
+# needs, so it can never block or cancel the other images: built, SBOM'd, signed and published the same way, but its Trivy
+# scan only reports (CVEs of the third-party base can only be fixed by a Ferrofin release) and it is exempt from `reproducible`.
+# Neither job is a required status check (docs/operations.md).
 name: CI
 on:
   push: { branches: [main], tags: ["v*"] }
@@ -351,11 +353,9 @@ jobs:
       packages: write # literal on purpose: permissions don't accept expressions; PRs never push and fork PRs get a read-only token anyway
       security-events: write # Trivy SARIF upload (push only, same reasoning)
     strategy:
-      matrix: { service: [backend, gateway, web, updater, livetv, mediaserver] }
+      matrix: { service: [backend, gateway, web, updater, livetv] }
     env:
       SERVICE: ${{ matrix.service }}
-      # mediaserver: findings of the pinned Ferrofin base are reported (table / code scanning), not a gate - see the top
-      TRIVY_GATE_EXIT: ${{ matrix.service == 'mediaserver' && '0' || '1' }}
       # push (main / v* tags) or a dispatch on main / a v* tag: push the candidate to GHCR; everything else builds locally
       PUBLISHABLE: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) }}
     steps:
@@ -402,7 +402,7 @@ jobs:
           image-ref: friendflix-${{ matrix.service }}:ci
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          exit-code: ${{ env.TRIVY_GATE_EXIT }}
+          exit-code: "1"
       # ---- push (main / v* tags) or dispatch: build once, push candidate tag, scan that exact digest ----
       - name: Log in to GHCR
         if: env.PUBLISHABLE == 'true'
@@ -414,13 +414,9 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ${{ steps.img.outputs.name }}
-          # default would be the clock; the commit time keeps the label (part of the image config) reproducible.
-          # mediaserver: its own title, description and licence (Ferrofin is GPL-3.0-only), not the repository's AGPL default
+          # default would be the clock; the commit time keeps the label (part of the image config) reproducible
           labels: |
             org.opencontainers.image.created=${{ steps.ver.outputs.build_time }}
-            ${{ matrix.service == 'mediaserver' && 'org.opencontainers.image.title=FriendFlix media server (Ferrofin)' || '' }}
-            ${{ matrix.service == 'mediaserver' && 'org.opencontainers.image.description=Ferrofin with FriendFlix''s numbered changes (mediaserver/README.md). Trial.' || '' }}
-            ${{ matrix.service == 'mediaserver' && 'org.opencontainers.image.licenses=GPL-3.0-only' || '' }}
       - name: Build and push candidate
         id: build
         if: env.PUBLISHABLE == 'true'
@@ -480,7 +476,7 @@ jobs:
           output: ""
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          exit-code: ${{ env.TRIVY_GATE_EXIT }}
+          exit-code: "1"
           skip-setup-trivy: true
       # backend only: every production dependency resolves inside the image (a package npm kept in backend/node_modules once shipped
       # missing: the backend crashed at start with ERR_MODULE_NOT_FOUND)
@@ -516,6 +512,129 @@ jobs:
           for h in 'x-content-type-options: *nosniff' 'cross-origin-resource-policy: *[a-z]'; do
             grep -iqE "^${h}" <<< "$headers" || { echo "::error::missing header ${h%%:*} on /favicon.svg"; exit 1; }
           done
+  # The trial media server image (mediaserver/README.md), on its own: nothing in this workflow needs this job, so a failed
+  # build or download here never blocks or cancels the other images or their publish. Same build as the `docker` job (PR:
+  # local build + scan; push / publishable dispatch: candidate ci-<sha> with SBOM + provenance, no cache import), but Trivy
+  # only REPORTS: table on every run, SARIF to code scanning on push. linux/amd64 only (Ferrofin publishes nothing else).
+  # Not a required status check (docs/operations.md) and exempt from `reproducible` (docs/reproducible-builds.md).
+  mediaserver-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # same reasoning as `docker`: PRs never push, fork PRs get a read-only token
+      security-events: write # Trivy SARIF upload (push only)
+    env:
+      SERVICE: mediaserver
+      PUBLISHABLE: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        with:
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+      - name: Image name (GHCR needs lowercase)
+        id: img
+        run: repo="${GITHUB_REPOSITORY#*/}"; echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${repo,,}-${SERVICE}" >> "$GITHUB_OUTPUT"   # friendflix-mediaserver
+      - name: Build time (commit time)
+        id: ver
+        run: |
+          set -euo pipefail
+          sde=$(git log -1 --format=%ct)
+          {
+            echo "sde=$sde"
+            echo "build_time=$(date -u -d "@$sde" +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+      # ---- pull_request / other dispatch: build locally, report, discard ----
+      - name: Build (PR / other dispatch, not pushed)
+        if: env.PUBLISHABLE != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: mediaserver/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: friendflix-mediaserver:ci
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ steps.ver.outputs.sde }}
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=mediaserver
+          cache-to: type=gha,mode=max,scope=mediaserver
+      - name: Scan (PR / other dispatch, report only)
+        if: env.PUBLISHABLE != 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: friendflix-mediaserver:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+      # ---- push (main / v* tags) or dispatch: build once, push candidate tag, report on that exact digest ----
+      - name: Log in to GHCR
+        if: env.PUBLISHABLE == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - name: OCI labels
+        id: meta
+        if: env.PUBLISHABLE == 'true'
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ${{ steps.img.outputs.name }}
+          # commit time, not the clock; its own title, description and licence (Ferrofin is GPL-3.0-only), not the
+          # repository's AGPL default
+          labels: |
+            org.opencontainers.image.created=${{ steps.ver.outputs.build_time }}
+            org.opencontainers.image.title=FriendFlix media server (Ferrofin)
+            org.opencontainers.image.description=Ferrofin with FriendFlix's numbered changes (mediaserver/README.md). Trial.
+            org.opencontainers.image.licenses=GPL-3.0-only
+      - name: Build and push candidate
+        id: build
+        if: env.PUBLISHABLE == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: mediaserver/Dockerfile
+          platforms: linux/amd64
+          outputs: type=image,name=${{ steps.img.outputs.name }}:ci-${{ github.sha }},push=true,oci-mediatypes=true,compression=gzip,rewrite-timestamp=true
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ steps.ver.outputs.sde }}
+            GIT_SHA=${{ github.sha }}
+          no-cache: true
+          cache-to: type=gha,mode=max,scope=mediaserver
+          sbom: true
+          provenance: mode=max
+      - name: Scan pushed digest (SARIF for code scanning)
+        if: env.PUBLISHABLE == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
+          format: sarif
+          output: trivy-mediaserver.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          limit-severities-for-sarif: true
+          ignore-unfixed: true
+          exit-code: "0"
+      - name: Upload Trivy SARIF
+        if: env.PUBLISHABLE == 'true'
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy-mediaserver.sarif
+          category: trivy-mediaserver
+      - name: Scan pushed digest (table, report only)
+        if: env.PUBLISHABLE == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
+          format: table
+          output: ""
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+          skip-setup-trivy: true
   # Reproducible builds (OpenSSF build_reproducible, docs/reproducible-builds.md): each image is rebuilt from scratch by
   # scripts/reproduce-image.sh (fresh docker-container builder with BUILDKIT_IMAGE, --no-cache, context = git archive,
   # SOURCE_DATE_EPOCH = commit time, rewrite-timestamp, no SBOM/provenance) and its image manifest digest must match:
@@ -621,3 +740,12 @@ jobs:
     needs: [test, e2e, dast, secrets, docker, reproducible]
     permissions: { contents: read, packages: write, id-token: write, attestations: write }
     uses: ./.github/workflows/publish.yml
+  # the trial media server image: the same re-tag + cosign + attestations, as its own call that only needs its own image job
+  # (and the shared checks), so it can fail alone; `publish` above never waits for it
+  publish-mediaserver:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
+    needs: [test, e2e, dast, secrets, mediaserver-image]
+    permissions: { contents: read, packages: write, id-token: write, attestations: write }
+    uses: ./.github/workflows/publish.yml
+    with:
+      services: '["mediaserver"]'

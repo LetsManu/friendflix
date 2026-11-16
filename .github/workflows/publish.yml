@@ -7,6 +7,8 @@ name: Publish images
 #   main          nightly + short sha: every green commit on main. Never latest.
 #   vX.Y.Z tag    X.Y.Z, X.Y, X + short sha (cut by release.yml), plus latest only when the tag is the highest plain vX.Y.Z
 #                 (backports and pre-releases never move latest). latest = the stable channel.
+# Input `services` (JSON array) picks the images: ci.yml's `publish` uses the default five; its separate `publish-mediaserver`
+# job passes ["mediaserver"] (the trial image, mediaserver/README.md), so that one can fail alone and never cancels the others.
 # Called by CI after tests, secret scan and image scan pass; workflow_dispatch is the manual escape hatch
 # (only works for a commit whose CI run pushed its ci-<sha> images; run it on that commit's ref).
 # After promotion the digest is signed with cosign KEYLESS (GitHub OIDC -> Fulcio cert, Rekor log; no keys or secrets)
@@ -16,7 +18,12 @@ name: Publish images
 # Never runs on pull_request (CI calls it only for push events).
 on:
   workflow_call:
+    inputs:
+      # which images (JSON array): ci.yml's `publish` takes the default, `publish-mediaserver` passes ["mediaserver"]
+      services: { type: string, required: false, default: '["backend","gateway","web","updater","livetv"]' }
   workflow_dispatch:
+    inputs:
+      services: { type: string, required: false, default: '["backend","gateway","web","updater","livetv"]', description: 'JSON array of images, e.g. ["mediaserver"]' }
 permissions: { contents: read }
 jobs:
   publish:
@@ -27,7 +34,7 @@ jobs:
       id-token: write # cosign keyless + attestation signing (Sigstore)
       attestations: write # GitHub attestation store (gh attestation verify)
     strategy:
-      matrix: { service: [backend, gateway, web, updater, livetv, mediaserver] }
+      matrix: { service: "${{ fromJSON(inputs.services) }}" }
     steps:
       # tags: decides whether this version is the highest release (only then it may move `latest`)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

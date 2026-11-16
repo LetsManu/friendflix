@@ -118,8 +118,8 @@ The trial media server image (`ghcr.io/letsmanu/friendflix-mediaserver`, [medias
 not part of the `reproducible` job either, and `scripts/reproduce-image.sh mediaserver` refuses. It is the third-party Ferrofin
 release image, pinned by digest, plus Intel's OpenCL runtime installed with `dpkg` from release debs that are pinned by version
 and sha256 (nothing comes from a live repository). Whether two clean builds give the same digest has not been shown yet. It is
-built, scanned, SBOM'd and cosign-signed like the others; its Trivy findings are reported, not a gate (see the top of
-`ci.yml`). To lift the exemption, show two identical builds with `scripts/reproduce-image.sh` and add it to the job's matrix.
+built, scanned, SBOM'd and cosign-signed like the others, in its own jobs (`mediaserver-image`, `publish-mediaserver`) that
+the other images never wait for; its Trivy findings are reported, not a gate (see the top of `ci.yml`). To lift the exemption, show two identical builds with `scripts/reproduce-image.sh` and add it to the job's matrix.
 
 ## When the `reproducible` check fails
 

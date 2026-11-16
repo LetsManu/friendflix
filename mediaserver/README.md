@@ -63,16 +63,26 @@ docker buildx build --platform linux/amd64 -f mediaserver/Dockerfile -t friendfl
 IMAGE=friendflix-mediaserver:dev bash mediaserver/probe.sh     # on a host with an Intel GPU
 ```
 
-CI builds it in the `docker` matrix of `.github/workflows/ci.yml` like the other images (no Rust or Node build: only the
-base image, the Intel debs and the NOTICE), with the SPDX SBOM and SLSA provenance, scans it with Trivy, and
-`publish.yml` re-tags, cosign-signs and attests it as `ghcr.io/letsmanu/friendflix-mediaserver` (`nightly` from main,
-`X.Y.Z` / `latest` from FriendFlix releases, short sha). Two differences:
+CI builds it in its own job `mediaserver-image` of `.github/workflows/ci.yml`, with the same steps as the other images (no
+Rust or Node build: only the base image, the Intel debs and the NOTICE): SPDX SBOM and SLSA provenance, a Trivy scan, and
+its own `publish-mediaserver` job, which calls `publish.yml` with `services: ["mediaserver"]` to re-tag, cosign-sign and
+attest it as `ghcr.io/letsmanu/friendflix-mediaserver` (`nightly` from main, `X.Y.Z` / `latest` from FriendFlix releases,
+short sha). Nothing else needs those two jobs: when this image fails to build or publish, the other images are still built
+and published, and neither job is a required status check.
 
-- its Trivy findings are **reported, not a gate**: CVEs in the third-party base can only be fixed by a Ferrofin release;
-- it is **exempt from the `reproducible` job** ([docs/reproducible-builds.md](../docs/reproducible-builds.md#exemption-mediaserver)).
+The FriendFlix updater never pulls or recreates it (it only manages FriendFlix's own services).
 
-The FriendFlix updater never pulls or recreates it (it only manages FriendFlix's own services). linux/amd64 only:
-Ferrofin v1.5.1 publishes no other platform.
+## Known limits
+
+- **Trivy only reports.** Findings go to the job log and (on push) to code scanning, but never fail the build or stop the
+  publish. CVEs in the third-party base can only be fixed by a Ferrofin release; we take releases, not package upgrades of
+  our own. Check the `trivy-mediaserver` code-scanning category when bumping.
+- **Not reproducible-checked:** exempt from the `reproducible` job
+  ([docs/reproducible-builds.md](../docs/reproducible-builds.md#exemption-mediaserver)).
+- **linux/amd64 only:** Ferrofin v1.5.1 publishes no other platform (the Intel runtime is amd64-only anyway).
+- **Larger image:** the Intel runtime adds several hundred MB (the debs alone are about 260 MB).
+- **The IGC hashes are trust-on-first-download:** Intel publishes no checksum file for those releases (the compute-runtime
+  ones match Intel's `ww*.sum`).
 
 ## New Ferrofin release
 
