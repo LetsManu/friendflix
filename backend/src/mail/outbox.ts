@@ -95,3 +95,8 @@ function parseTransport(raw: string | null): MailStatus['transport'] {
     return null;
   }
 }
+
+/** A working connection was just seen (a good probe): the old transport failure and its backoff counter are history. Best effort. */
+export async function clearMailTransport(ctx: Pick<Ctx, 'kv'>): Promise<void> {
+  await Promise.all([ctx.kv.del('mail:transport'), ctx.kv.del('mail:transport:fails')]).catch(() => undefined);
+}

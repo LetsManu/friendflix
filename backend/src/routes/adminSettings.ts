@@ -10,6 +10,7 @@ import type { Ctx } from '../ctx.js';
 import { livetvInstalled } from '../livetv/detect.js';
 import { addressOnly } from '../media/address.js';
 import { MEDIA_SERVERS, mediaSettings, mediaSetupKeys } from '../media/index.js';
+import { clearMailTransport } from '../mail/outbox.js';
 import { REAUTH_WINDOW_S, recentlyAuthenticated } from '../reauth.js';
 import { requireAdmin } from '../session.js';
 import { resetSourceState } from '../sources/keys.js';
@@ -346,6 +347,8 @@ export function adminSettingsRoutes(app: FastifyInstance, ctx: Ctx) {
     const r = await testGroup(ctx, b.group, values);
     if ('noProbe' in r) return reply.code(400).send({ error: 'no_probe' });
     if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors });
+    // a connection that works again is no longer shown as failing
+    if (r.ok && r.probe === 'mail') await clearMailTransport(ctx);
     return r;
   });
 

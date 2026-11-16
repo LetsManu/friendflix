@@ -21,6 +21,7 @@ import { accountSecurityRoutes } from './routes/accountSecurity.js';
 import { authentikRepairRoutes } from './routes/authentikRepair.js';
 import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { adminSettingsRoutes } from './routes/adminSettings.js';
+import { mailRoutes } from './mail/routes.js';
 import { updaterRoutes } from './routes/updater.js';
 import { livetvAdminRoutes } from './livetv/adminRoutes.js';
 import { livetvRoutes } from './livetv/routes.js';
@@ -83,7 +84,7 @@ export interface Extra {
  * routes whose bodies hold secrets or one-time credentials (spec Part E3; the in-app sign-in's passwords and codes; Live TV provider
  * URLs, F13; the brand's image bytes and admin ids, branding plan Task 1): never logged with an error
  */
-const SENSITIVE_BODY = /^\/(api\/(setup\/|admin\/settings|admin\/authentik\/|admin\/livetv\/(sources|channels)|admin\/brand)|auth\/flow\/)/;
+const SENSITIVE_BODY = /^\/(api\/(setup\/|admin\/settings|admin\/mail|admin\/authentik\/|admin\/livetv\/(sources|channels)|admin\/brand)|auth\/flow\/)/;
 
 /**
  * What answers while setup is incomplete (spec Part E1, rulings D23): matched by the route pattern, so an unknown or encoded path is
@@ -273,6 +274,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   internalRoutes(app, ctx);
   adminRoutes(app, ctx);
   adminSettingsRoutes(app, ctx);
+  mailRoutes(app, ctx);
   updaterRoutes(app, ctx);
   livetvAdminRoutes(app, ctx);
   livetvRoutes(app, ctx);
