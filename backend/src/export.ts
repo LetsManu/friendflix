@@ -14,7 +14,7 @@
 import type { Ctx } from './ctx.js';
 import { jfUserFor } from './profiles.js';
 import { loadPrefs } from './routes/prefs.js';
-import { readMailPrefs } from './mail/people.js';
+import { readMailPrefs, visibleMailPrefs } from './mail/people.js';
 import { requestStateKey, SeerrError } from './seerr/client.js';
 import type { ItemDto } from './media/types.js';
 import type { JfUser, ProfileRow, UserRow } from './types.js';
@@ -216,7 +216,7 @@ export async function* exportUserData(ctx: Ctx, user: UserRow): AsyncGenerator<s
   const notes = await q<{ kind: string; created_at: Date; read: boolean }>(
     'select kind, created_at, read_at is not null read from notifications where user_id=$1 order by created_at desc');
   yield field('notifications', {
-    weeklyDigest: prefs.weeklyDigest, ntfyTopicSet: prefs.ntfyTopic !== '', pushSubscriptions: Number(push.n), mail: await readMailPrefs(ctx, uid),
+    weeklyDigest: prefs.weeklyDigest, ntfyTopicSet: prefs.ntfyTopic !== '', pushSubscriptions: Number(push.n), mail: visibleMailPrefs(await readMailPrefs(ctx, uid), user.role === 'admin'),
     items: notes.map((n) => ({ kind: n.kind, createdAt: n.created_at, read: n.read })),
   });
 

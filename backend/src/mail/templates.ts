@@ -122,8 +122,17 @@ function inviteMail(c: Common, raw: Record<string, unknown>): Parts {
   };
 }
 
-/** the paragraph of a per-type mail whose notice has no body: the kind's own line, or a neutral one (the licence notice always has a body) */
-const KIND_LINE: Record<MailPrefType, MsgKey> = { available: 'mail.available.body', recording: 'mail.recording.body', licence: 'mail.fallback.body' };
+/** the per-type mails that are a notice's mail channel: every switch but the digest, which has its own template */
+type NoticeMailType = Exclude<MailPrefType, 'digest'>;
+
+/**
+ * the paragraph of a per-type mail whose notice has no body: the kind's own line, or a neutral one (the licence notice always has a
+ * body; an admin alert says what happened in its title and body)
+ */
+const KIND_LINE: Record<NoticeMailType, MsgKey> = {
+  available: 'mail.available.body', recording: 'mail.recording.body', licence: 'mail.fallback.body',
+  update: 'mail.fallback.body', updatefailed: 'mail.fallback.body', syscheck: 'mail.fallback.body', storage: 'mail.fallback.body',
+};
 
 /**
  * A notice mailed through a switch (notify(), `Notice.mail`): the notice's title is subject and heading, its body (else the kind's
@@ -132,7 +141,7 @@ const KIND_LINE: Record<MailPrefType, MsgKey> = { available: 'mail.available.bod
  * refers to a message key removed while the mail waited (a release in between) never shows the raw key: the title becomes a neutral
  * subject, the body the kind's line.
  */
-function prefMail(c: Common, encKey: Buffer, kind: MailPrefType, raw: Record<string, unknown>, userId: string | null): Parts {
+function prefMail(c: Common, encKey: Buffer, kind: NoticeMailType, raw: Record<string, unknown>, userId: string | null): Parts {
   const { lang, app } = c;
   const p = PARAMS.pref.parse(raw);
   if (!c.origin) throw new Error('mail_no_public_url');
@@ -175,7 +184,11 @@ export async function renderMail(
     case 'test': parts = testMail(c); break;
     case 'welcome': parts = welcomeMail(c, params); break;
     case 'invite': parts = inviteMail(c, params); break;
-    case 'available': case 'recording': case 'licence': parts = prefMail(c, ctx.encKey, kind, params, o.userId); break;
+    case 'available': case 'recording': case 'licence':
+    case 'update': case 'updatefailed': case 'syscheck': case 'storage':
+      parts = prefMail(c, ctx.encKey, kind, params, o.userId); break;
+    // its own template comes with the digest mail itself (stage C, Task 2); until then nothing queues one
+    case 'digest': throw new Error('mail_kind_not_rendered');
     default: {
       const never: never = kind;
       throw new Error(`unknown mail kind: ${String(never).slice(0, 40)}`);

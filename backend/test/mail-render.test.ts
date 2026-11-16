@@ -228,6 +228,38 @@ describe('mail layout and test template', () => {
     expect(msg('de', 'mail.fallback.subject', { app: 'FriendFlix' })).not.toMatch(/mail\./);
   });
 
+  // Mail stage C, Task 1: an admin alert is a notice mail like the stage B kinds, with its own button, reason and token.
+  it('admin kinds render as notice mails with unsubscribe', async () => {
+    atFriend();
+    const r = await renderMail(env.ctx, 'syscheck', 'de', { title: 'Systemcheck: ein neues Problem', body: null, link: '/admin/status' }, { userId: actor });
+    const tok = unsubscribeToken(env.ctx.encKey, actor, 'syscheck');
+    expect(r.subject).toBe('Systemcheck: ein neues Problem');
+    expect(r.html).toContain(`href="${ORIGIN}/admin/status"`);
+    expect(r.text).toContain(`Zum Systemcheck: ${ORIGIN}/admin/status`);
+    expect(r.headers['List-Unsubscribe']).toBe(`<${ORIGIN}/api/public/mail/unsubscribe?t=${tok}>`);
+    expect(r.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+    expect(r.text).toContain(`Diese E-Mails abbestellen: ${ORIGIN}/mail/unsubscribe?t=${tok}`);
+    expect(r.text).toContain(`E-Mail-Einstellungen: ${ORIGIN}/me/account#mail`);
+    expect(r.text).toContain(msg('de', 'mail.syscheck.reason', { app: 'FriendFlix' }));
+    expect(r.text).toContain('Du bekommst diese E-Mail, weil du Admin von FriendFlix bist und E-Mails zu Problemen im Systemcheck eingeschaltet hast.');
+    // no body: the neutral line
+    expect(r.text).toContain(msg('de', 'mail.fallback.body', { app: 'FriendFlix' }));
+    const buttons = { update: 'Zum Update', updatefailed: 'Zum Update', syscheck: 'Zum Systemcheck', storage: 'Details ansehen' } as const;
+    for (const kind of ['update', 'updatefailed', 'syscheck', 'storage'] as const) {
+      const k = await renderMail(env.ctx, kind, 'de', { title: 'Nordlicht', body: 'Ein Text aus der Mitteilung', link: '/admin/update' }, { userId: actor });
+      expect(k.text, kind).toContain('Ein Text aus der Mitteilung');
+      expect(k.text, kind).toContain(`${buttons[kind]}: ${ORIGIN}/admin/update`);
+      expect(k.text, kind).toContain(msg('de', `mail.${kind}.reason`, { app: 'FriendFlix' }));
+      expect(k.headers['List-Unsubscribe'], kind).toContain(unsubscribeToken(env.ctx.encKey, actor, kind));
+      // every language has the texts
+      for (const lang of ['en', 'pl'] as const) {
+        const l = await renderMail(env.ctx, kind, lang, { title: 'Nordlicht' }, { userId: actor });
+        expect(l.text, `${kind} ${lang}`).toContain(msg(lang, `mail.${kind}.reason`, { app: 'FriendFlix' }));
+        expect(l.text, `${kind} ${lang}`).not.toContain(`mail.${kind}.`);
+      }
+    }
+  });
+
   it('a pref kind without its recipient or without PUBLIC_URL throws', async () => {
     atFriend();
     await expect(renderMail(env.ctx, 'available', 'de', { title: 'Nordlicht' })).rejects.toThrow();
@@ -238,7 +270,7 @@ describe('mail layout and test template', () => {
 
   it('an unknown kind throws', async () => {
     atFriend();
-    await expect(renderMail(env.ctx, 'digest' as MailKind, 'de', {}, { userId: actor })).rejects.toThrow(/unknown mail kind/);
+    await expect(renderMail(env.ctx, 'weekly' as MailKind, 'de', {}, { userId: actor })).rejects.toThrow(/unknown mail kind/);
     await expect(renderMail(env.ctx, 'toString' as MailKind, 'de', {}, { userId: actor })).rejects.toThrow(/unknown mail kind/);
   });
 

@@ -469,7 +469,7 @@ describe('mail outbox and worker', () => {
   const enqueuePerson = (kind: MailKind, dedupe?: string) =>
     enqueueMail(env.ctx, { kind, to: ANNA, userId: anna, lang: 'de', params: kind === 'welcome' ? { name: 'Anna Beispiel' } : { title: 'Nordlicht', link: '/downloads' }, dedupe });
   const resetAnna = () => Promise.all([
-    env.pool.query('update users set disabled = false, access_until = null where id = $1', [anna]),
+    env.pool.query("update users set disabled = false, access_until = null, role = 'admin' where id = $1", [anna]),
     env.pool.query('delete from user_prefs where user_id = $1', [anna]),
   ]);
 
@@ -540,6 +540,26 @@ describe('mail outbox and worker', () => {
     await enqueue();
     expect(await mailTick(env.ctx, await dbNow())).toMatchObject({ sent: 1 });
     await resetAnna();
+  });
+
+  // Mail stage C, Task 1: an admin alert mail never reaches someone who stopped being an admin while it waited.
+  it('worker drops an admin mail after a demotion', async () => {
+    await resetAnna();
+    const f = await useFake({}, FRIEND);
+    try {
+      const id = (await enqueuePerson('update'))!;
+      await env.pool.query("update users set role = 'friend' where id = $1", [anna]);
+      expect(await mailTick(env.ctx, await dbNow(), log)).toEqual({ sent: 0, failed: 0, deferred: 0 });
+      expect(f.messages).toHaveLength(0);
+      expect(await rows()).toEqual([]);
+      expect(logs).toEqual([{ mail: id, code: 'not_admin' }]);
+      expect(JSON.stringify(logs)).not.toContain('@');
+      // a person mail of the same account still goes out
+      await enqueuePerson('available');
+      expect(await mailTick(env.ctx, await dbNow(), log)).toEqual({ sent: 1, failed: 0, deferred: 0 });
+    } finally {
+      await resetAnna();
+    }
   });
 
   // Mail stage B, Task 3: a person mail never goes to an address the person no longer has.

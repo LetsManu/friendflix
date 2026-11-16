@@ -7,13 +7,15 @@ import { publicOrigin } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { requireOwner } from '../session.js';
 import { isMailAddress } from './address.js';
-import { MAIL_PREF_TYPES, readMailPrefs, setMailPref } from './people.js';
+import { isAdminMailType, MAIL_PREF_TYPES, readMailPrefs, setMailPref, visibleMailPrefs } from './people.js';
 import { mailConfigured } from './transport.js';
 import { verifyUnsubscribeToken } from './unsubscribe.js';
 
 /**
  * Mail for people (plan "E-mail, stage B", Controller's calls 1, 2, 7, 11):
- * - the account page's switches (`/api/account/mail`, owner profile only: a kids profile has none, mail is account level);
+ * - the account page's switches (`/api/account/mail`, owner profile only: a kids profile has none, mail is account level). The admin
+ *   alert switches (stage C, Controller's call 1) are listed for an admin only (`admin: true`); a non-admin's PUT of one answers 403
+ *   admin_only and writes nothing;
  * - the public unsubscribe route. `POST /api/public/mail/unsubscribe?t=` is the RFC 8058 one-click target of `List-Unsubscribe`: no
  *   session, no CSRF token (app.ts CSRF_EXEMPT), the form or multipart body `List-Unsubscribe=One-Click` is accepted and ignored, the
  *   token is the only authorisation. The confirm page posts `{ t, on }` as JSON (the token in the body, not the URL), also to switch
@@ -36,11 +38,13 @@ export function mailPersonRoutes(app: FastifyInstance, ctx: Ctx) {
     reply.header('cache-control', 'no-store');
     const userId = req.user!.id;
     const email = (await ctx.db.query<{ email: string | null }>('select email from users where id = $1', [userId])).rows[0]?.email;
+    const admin = req.user!.role === 'admin';
     return {
       configured: mailConfigured(ctx.cfg) && publicOrigin(ctx.cfg) !== null,
       // no address in the answer: the account page has it from /api/account
       hasAddress: !!email && isMailAddress(email),
-      prefs: await readMailPrefs(ctx, userId),
+      admin,
+      prefs: visibleMailPrefs(await readMailPrefs(ctx, userId), admin),
     };
   });
 
@@ -48,9 +52,11 @@ export function mailPersonRoutes(app: FastifyInstance, ctx: Ctx) {
     reply.header('cache-control', 'no-store');
     const { type, on } = putBody.parse(req.body);
     const userId = req.user!.id;
+    const admin = req.user!.role === 'admin';
+    if (isAdminMailType(type) && !admin) return reply.code(403).send({ error: 'admin_only' });
     const prefs = await setMailPref(ctx, userId, type, on);
     await audit(ctx, userId, 'mail.pref', undefined, { type, on, via: 'account' });
-    return { prefs };
+    return { prefs: visibleMailPrefs(prefs, admin) };
   });
 
   app.get('/api/public/mail/unsubscribe', { config: PUBLIC_LIMIT }, async (req, reply) => {
