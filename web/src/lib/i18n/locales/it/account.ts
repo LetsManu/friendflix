@@ -414,7 +414,7 @@ const it: Translation<typeof de> = {
       types: {
         available: { label: 'Richieste disponibili', hint: 'Quando arriva qualcosa che hai richiesto.' },
         recording: { label: 'Registrazioni', hint: 'Quando una registrazione è finita, non riesce o viene eliminata.' },
-        licence: { label: 'Download in scadenza', hint: 'Due giorni prima che scadano i download sui tuoi dispositivi.' },
+        licence: { label: 'Download in scadenza', hint: 'Poco prima che scadano i download sui tuoi dispositivi.' },
       },
       saveFailed: 'Impossibile salvare l’impostazione. Riprova.',
       loadFailed: 'Impossibile caricare le impostazioni e-mail.',

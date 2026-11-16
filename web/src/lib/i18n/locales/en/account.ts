@@ -413,7 +413,7 @@ const en: Translation<typeof de> = {
       types: {
         available: { label: 'Available requests', hint: 'When something you asked for is here.' },
         recording: { label: 'Recordings', hint: 'When a recording is finished, fails or is deleted.' },
-        licence: { label: 'Expiring downloads', hint: 'Two days before downloads on your devices expire.' },
+        licence: { label: 'Expiring downloads', hint: 'Shortly before downloads on your devices expire.' },
       },
       saveFailed: 'The setting could not be saved. Please try again.',
       loadFailed: 'Could not load the email settings.',

@@ -41,6 +41,19 @@ test.describe('/mail/unsubscribe', () => {
     expect(api.log.every((l) => !l.includes('/api/public/mail/unsubscribe?'))).toBe(true); // the token never goes into a URL
   });
 
+  test('E-Mail-Einstellungen opens the account page at the E-Mails card', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 700 });
+    await page.route('**/api/account/mail', async (r) => { if (r.request().method() === 'GET') await new Promise((f) => setTimeout(f, 400)); await r.fallback(); });
+    await page.goto(`/mail/unsubscribe?t=${TOKEN}`);
+    await page.getByRole('button', { name: 'Abbestellen' }).click();
+    const link = page.getByRole('link', { name: 'E-Mail-Einstellungen' });
+    // a full load: the app shell (sign-in check, navigation) starts only on a load, never from this public page
+    await expect(link).toHaveAttribute('data-sveltekit-reload', '');
+    await link.click();
+    await expect(page).toHaveURL(/\/me\/account#mail$/);
+    await expect(page.getByRole('region', { name: 'E-Mails' }).getByRole('heading', { level: 2, name: 'E-Mails' })).toBeInViewport();
+  });
+
   test('an invalid token shows the invalid view', async ({ page, api }) => {
     await page.goto(`/mail/unsubscribe?t=v2.${MAC}`);
     await expect(page.getByText('Dieser Link ist ungültig.')).toBeVisible();

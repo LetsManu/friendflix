@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /** /me/account (owner profile only): profile, security (2FA state), sessions & devices, e-mails, your data (export), delete the account, and the privacy note. */
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { api, ApiError, type Account } from '#lib/api';
   import DataCard from '#lib/account/DataCard.svelte';
@@ -15,18 +15,33 @@
   import SessionsCard from '#lib/account/SessionsCard.svelte';
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
+  import { reducedMotion } from '#lib/ui/motion';
 
   let account: Account | null = null, mail: MailState | null = null, phase: 'loading' | 'ok' | 'owner' | 'error' = 'loading', reauthFailed = false;
 
   async function load() {
     phase = 'loading';
+    // both at once; the cards appear together once both answered (nothing pops in). The switches are account level like the account:
+    // a kids profile's 403 shows only the hint, whatever the switches answered. Their failure only greys out the E-Mails card.
+    const switches = loadMailPrefs().catch(() => null);
     try {
       account = await api<Account>('/api/account');
-      // after the account (a kids profile's 403 asks nothing more); a failure here only greys out the E-Mails card
-      mail = await loadMailPrefs().catch(() => null);
+      mail = await switches;
       phase = 'ok';
     }
     catch (e) { phase = e instanceof ApiError && e.status === 403 ? 'owner' : 'error'; }
+  }
+
+  /**
+   * A link to a card (/me/account#mail, the settings link in every mail's footer) finds its target only once the cards are rendered:
+   * the browser's own jump (a first load) and SvelteKit's (a client navigation) both ran while the skeleton showed. Once, then the
+   * person scrolls.
+   */
+  let scrolled = false;
+  $: if (phase === 'ok' && !scrolled) { scrolled = true; void tick().then(scrollToHash); }
+  function scrollToHash() {
+    const id = location.hash.slice(1);
+    if (id && /^[a-z-]+$/.test(id)) document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
   }
   /** re-reads the account without the loading state (the security section stays mounted) */
   async function refresh() {

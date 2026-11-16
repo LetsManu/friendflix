@@ -51,8 +51,9 @@
   let role = 'friend', expiry = 'd2', note = '', hasAccount = false, creating = false;
   let maxUses: string | number | null = 1, accessDays: string | number | null = '';
   let created: Created | null = null;
-  // mail: the e-mail field exists once the instance can send; the language defaults to the instance language
-  let mailOn = false, email = '', mailLang = 'de';
+  // mail: the e-mail field is there from the start (greyed out until the server says it can send, so the form never moves when
+  // the answers come in); the language defaults to the instance language
+  let mailState: 'loading' | 'on' | 'off' = 'loading', email = '', mailLang = 'de';
   /** accounts per invite (undefined = not loaded, null = failed) */
   let uses: Record<string, Use[] | null | undefined> = {};
 
@@ -79,11 +80,11 @@
   function refilter() { page = 0; cur = { ...cur, offset: 0 }; void load(); }
   async function loadMail() {
     try {
-      if (!(await loadMailStatus()).configured) return;
+      if (!(await loadMailStatus()).configured) { mailState = 'off'; return; }
       const l = (await api<{ language: string }>('/api/admin/settings/language')).language;
       if (isLocale(l)) mailLang = l;
-      mailOn = true;
-    } catch { /* no e-mail field: the invite works as before */ }
+      mailState = 'on';
+    } catch { mailState = 'off'; /* the field stays greyed out: the invite works as before */ }
   }
   onMount(() => { void load(); void loadMail(); });
 
@@ -118,7 +119,10 @@
   $: multi = maxUsesN !== null && maxUsesN > 1;
   $: mailAddr = email.trim();
   $: mailErr = mailAddr && !mailAddressOk(mailAddr) ? $t('adminPeople.invites.errMailAddress') : '';
-  $: sendMail = mailOn && !multi && mailAddr !== '' && !mailErr;
+  $: sendMail = mailState === 'on' && !multi && mailAddr !== '' && !mailErr;
+  /** the address field's hint: all three take the same room (one grid cell), so switching between them moves nothing */
+  const MAIL_HINTS = ['adminPeople.invites.mailAddressHint', 'adminPeople.invites.mailSingleOnly', 'adminPeople.invites.errMailOff'] as const;
+  $: mailHint = mailState === 'off' ? MAIL_HINTS[2] : multi ? MAIL_HINTS[1] : MAIL_HINTS[0];
   const MAIL_ERR: Record<string, TKey> = { invite_mail_single_use: 'adminPeople.invites.errMailSingle', mail_not_configured: 'adminPeople.invites.errMailOff', rate_limited: 'adminPeople.invites.errMailLimit' };
   const failText = (e: unknown) => (e instanceof ApiError && typeof e.body?.error === 'string' && MAIL_ERR[e.body.error] ? trDynamic(MAIL_ERR[e.body.error]!) : errorText(e));
   const mailLine = (c: Created): string => !c.mail ? '' : c.mail.state === 'sent' ? tr('adminPeople.invites.mailSent', { masked: c.maskedTo ?? '…' })
@@ -127,13 +131,15 @@
   async function create() {
     if (creating || rolesState !== 'ready' || maxUsesErr || accessDaysErr || mailErr) return;
     creating = true;
+    // the address as sent: the field may change while the request runs
+    const to = sendMail ? mailAddr : '';
     try {
       const hours = EXPIRY_PRESETS.find((p) => p.id === expiry)?.hours ?? 48;
       created = await api<Created>('/api/admin/invites', {
         method: 'POST',
-        body: { role, ttlHours: hours, note: note.trim() || undefined, enroll: !hasAccount, maxUses: maxUsesN, accessDays: accessDaysN, ...(sendMail ? { email: mailAddr, lang: mailLang } : {}) },
+        body: { role, ttlHours: hours, note: note.trim() || undefined, enroll: !hasAccount, maxUses: maxUsesN, accessDays: accessDaysN, ...(to ? { email: to, lang: mailLang } : {}) },
       });
-      if (created.mail) created.maskedTo = maskMail(mailAddr);
+      if (created.mail) created.maskedTo = maskMail(to);
       note = ''; email = '';
       toast.success(tr('adminPeople.invites.createdToast'));
       page = 0; cur = { ...cur, offset: 0 };
@@ -189,14 +195,17 @@
     <Select label={$t('adminPeople.invites.expiry')} options={expiryOptions} bind:value={expiry} />
     <Field type="number" label={$t('adminPeople.invites.maxUses')} bind:value={maxUses} min={1} max={50} step={1} hint={$t('adminPeople.invites.maxUsesHint')} error={maxUsesErr} />
     <Field type="number" label={$t('adminPeople.invites.accessDays')} bind:value={accessDays} min={1} max={3650} step={1} placeholder={$t('adminPeople.invites.accessUnlimited')} hint={$t('adminPeople.invites.accessDaysHint')} error={accessDaysErr} />
-    {#if mailOn}
-      <Field type="email" label={$t('adminPeople.invites.mailAddress')} bind:value={email} autocomplete="off" maxlength={254} disabled={multi}
-        hint={multi ? $t('adminPeople.invites.mailSingleOnly') : $t('adminPeople.invites.mailAddressHint')} error={mailErr} />
-      <!-- always laid out (hidden until an address is typed), so the form never jumps -->
-      <div class="lang" class:off={!sendMail} inert={!sendMail}>
-        <Select label={$t('adminPeople.invites.mailLang')} options={LOCALES.map((l) => ({ value: l.code, label: l.name }))} bind:value={mailLang} />
-      </div>
-    {/if}
+    <!-- always laid out (greyed out until the server can send, the language hidden until an address is typed), so the form never jumps -->
+    <Field label={$t('adminPeople.invites.mailAddress')} error={mailErr} let:id let:describedby let:invalid>
+      <input {id} type="email" bind:value={email} autocomplete="off" maxlength={254} disabled={mailState !== 'on' || multi}
+        aria-describedby={[`${id}-mh`, describedby].filter(Boolean).join(' ')} aria-invalid={invalid} />
+      <span class="mhint" id="{id}-mh">
+        {#each MAIL_HINTS as h (h)}<span class:on={h === mailHint} aria-hidden={h !== mailHint}>{$t(h)}</span>{/each}
+      </span>
+    </Field>
+    <div class="lang" class:off={!sendMail} inert={!sendMail}>
+      <Select label={$t('adminPeople.invites.mailLang')} options={LOCALES.map((l) => ({ value: l.code, label: l.name }))} bind:value={mailLang} />
+    </div>
     <div class="wide"><Field label={$t('adminPeople.invites.note')} bind:value={note} placeholder={$t('adminPeople.invites.notePlaceholder')} hint={$t('adminPeople.invites.noteHint')} maxlength={100} /></div>
     <div class="wide"><Toggle label={$t('adminPeople.invites.hasAccount')} hint={$t('adminPeople.invites.hasAccountHint')} bind:checked={hasAccount} /></div>
     <div class="wide"><Button type="submit" icon="plus" pending={creating} disabled={rolesState !== 'ready'}>{$t('adminPeople.invites.create')}</Button></div>
@@ -264,6 +273,10 @@
   .result { display: flex; flex-direction: column; gap: .8rem; border-color: var(--ok); }
   .rh { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
   .rh h2 { margin: 0; }
+  /* the hints on top of each other in one cell: the field is as tall as its longest hint, whichever shows */
+  .mhint { display: grid; font-size: .82rem; color: var(--hint, var(--mut)); overflow-wrap: anywhere; }
+  .mhint > span { grid-area: 1 / 1; visibility: hidden; }
+  .mhint > span.on { visibility: visible; }
   .lang { transition: opacity .2s ease; }
   .lang.off { opacity: 0; visibility: hidden; }
   .mailline { display: flex; gap: .5rem; align-items: flex-start; margin: 0; min-height: 2.8em; font-size: .9rem; color: var(--mut); }

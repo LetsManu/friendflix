@@ -181,7 +181,7 @@ test.describe('mail card', () => {
     }
     await expect(mail.getByText('Wenn etwas, das du dir gewünscht hast, da ist.')).toBeVisible();
     await expect(mail.getByText('Wenn eine Aufnahme fertig ist, fehlschlägt oder gelöscht wird.')).toBeVisible();
-    await expect(mail.getByText('Zwei Tage bevor Downloads auf deinen Geräten ablaufen.')).toBeVisible();
+    await expect(mail.getByText('Kurz bevor Downloads auf deinen Geräten ablaufen.')).toBeVisible();
     await expect(mail.getByText('Dein Server verschickt noch keine E-Mails.')).toHaveCount(0);
     await sw('Aufnahmen').click();
     await expect(sw('Aufnahmen')).toHaveAttribute('aria-checked', 'false');
@@ -190,6 +190,69 @@ test.describe('mail card', () => {
     await expect(sw('Verfügbare Wünsche')).toHaveAttribute('aria-checked', 'true');
     // the card sits between the sessions and "Deine Daten", and the settings link of the mails finds it
     await expect(page.locator('section#mail')).toBeAttached();
+    // the address is changed under "Sicherheit", as on the profile card
+    await expect(mail.getByRole('link', { name: 'Zur E-Mail-Adresse' })).toHaveAttribute('href', '#sec-email');
+  });
+
+  test('/me/account#mail scrolls to the E-Mails card once it is there', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 700 });
+    // the switches answer late: the card renders long after the browser looked for #mail
+    await page.route('**/api/account/mail', async (r) => { if (r.request().method() === 'GET') await new Promise((f) => setTimeout(f, 400)); await r.fallback(); });
+    await page.goto('/me/account#mail');
+    await expect(card(page).getByRole('heading', { level: 2, name: 'E-Mails' })).toBeInViewport();
+    expect(await page.evaluate(() => scrollY)).toBeGreaterThan(300);
+    // nothing scrolls it away once the sessions have loaded
+    await expect(page.getByRole('region', { name: 'Sitzungen & Geräte' }).getByRole('listitem')).toHaveCount(2);
+    await expect(card(page).getByRole('heading', { level: 2, name: 'E-Mails' })).toBeInViewport();
+  });
+
+  test('the account and its switches are read at once', async ({ page }) => {
+    const order: string[] = [];
+    page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/account/mail') order.push('mail asked'); });
+    await page.route('**/api/account', async (r) => { await new Promise((f) => setTimeout(f, 300)); order.push('account answered'); await r.fallback(); });
+    await page.goto('/me/account');
+    await expect(card(page).getByRole('switch', { name: 'Aufnahmen' })).toBeEnabled();
+    expect(order.indexOf('mail asked')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('mail asked')).toBeLessThan(order.indexOf('account answered'));
+  });
+
+  test('without a hash the page stays at the top', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 700 });
+    await page.goto('/me/account');
+    await expect(card(page)).toBeAttached();
+    expect(await page.evaluate(() => scrollY)).toBe(0);
+  });
+
+  test('two switches flipped at once keep their own new values', async ({ page }) => {
+    let server = { available: true, recording: true, licence: true };
+    let firstHeld!: () => void;
+    const second = new Promise<void>((f) => { firstHeld = f; });
+    let releaseSecond!: () => void;
+    const secondHeld = new Promise<void>((f) => { releaseSecond = f; });
+    await page.route('**/api/account/mail', async (r) => {
+      if (r.request().method() !== 'PUT') return r.fallback();
+      const b = r.request().postDataJSON() as { type: 'available' | 'recording'; on: boolean };
+      if (b.type === 'available') await second; // answers once the second switch is on its way
+      else { firstHeld(); await secondHeld; }
+      server = { ...server, [b.type]: b.on };
+      await r.fulfill({ json: { prefs: server } });
+    });
+    await page.goto('/me/account');
+    const sw = (name: string) => card(page).getByRole('switch', { name });
+    await expect(sw('Aufnahmen')).toBeEnabled();
+    const first = page.waitForResponse((res) => res.request().method() === 'PUT' && res.request().postData()!.includes('available'));
+    await sw('Verfügbare Wünsche').click();
+    await sw('Aufnahmen').click();
+    await first;
+    // the first answer (the server did not have the second switch yet) leaves the second one alone
+    await page.waitForTimeout(150);
+    await expect(sw('Verfügbare Wünsche')).toHaveAttribute('aria-checked', 'false');
+    await expect(sw('Aufnahmen')).toHaveAttribute('aria-checked', 'false');
+    releaseSecond();
+    await expect(sw('Aufnahmen')).not.toHaveAttribute('aria-busy', 'true');
+    await expect(sw('Aufnahmen')).toHaveAttribute('aria-checked', 'false');
+    await expect(sw('Verfügbare Wünsche')).toHaveAttribute('aria-checked', 'false');
+    await expect(sw('Ablaufende Downloads')).toHaveAttribute('aria-checked', 'true');
   });
 
   test.describe('saving fails', () => {
@@ -238,15 +301,17 @@ test.describe('owner profile only', () => {
   test.describe('refused', () => {
     test.use({ allowedConsole: /status of 403/ });
     test('/me/account answering 403 shows the hint, no cards and no device list', async ({ page }) => {
-      let devices = 0, mail = 0;
-      page.on('request', (r) => { const p = new URL(r.url()).pathname; if (p === '/api/devices') devices++; if (p === '/api/account/mail') mail++; });
+      let devices = 0;
+      page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/devices') devices++; });
       await page.route('**/api/me', (r) => r.fulfill({ json: KID }));
       await page.route('**/api/account', (r) => r.fulfill({ status: 403, json: { error: 'owner_required' } }));
+      // the switches are read alongside the account; the backend refuses them to a kids profile too, and an answer is never shown
+      await page.route('**/api/account/mail', (r) => r.fulfill({ status: 403, json: { error: 'owner_required' } }));
       await page.goto('/me/account');
       await expect(page.getByText('Dein Konto verwaltest du im Hauptprofil.')).toBeVisible();
       await expect(page.locator('main').getByRole('region')).toHaveCount(0);
+      await expect(page.getByRole('switch')).toHaveCount(0); // a kids profile has no mail switches: mail is account level
       expect(devices).toBe(0);
-      expect(mail).toBe(0); // a kids profile has no mail switches: mail is account level
     });
   });
 });

@@ -22,6 +22,10 @@
 
   type Panel = 'ask' | 'off' | 'on' | 'invalid';
   const PANELS: readonly Panel[] = ['ask', 'off', 'on', 'invalid'];
+  /**
+   * The account card. A full page load (data-sveltekit-reload): this public page runs without the app shell, which starts (reads
+   * /api/me, or sends to the sign-in) only on a load; the account page then scrolls to the card once it has rendered.
+   */
   const SETTINGS = '/me/account#mail';
 
   let token = '';
@@ -80,15 +84,15 @@
             <p class="af-sub">{$t('login.unsubscribe.doneText', { type: typeText })}</p>
             <p class="af-hint line">{#if panel === p && problem}<span role="alert">{$t(`login.unsubscribe.${problem}`)}</span>{/if}</p>
             <button class="af-sec" type="button" disabled={busy || panel !== p} on:click={() => send(true)}>{$t('login.unsubscribe.resubscribe')}</button>
-            <a class="af-link" href={SETTINGS} tabindex={panel === p ? undefined : -1}>{$t('login.unsubscribe.settings')}</a>
+            <a class="af-link" href={SETTINGS} data-sveltekit-reload tabindex={panel === p ? undefined : -1}>{$t('login.unsubscribe.settings')}</a>
           {:else if p === 'on'}
             <p class="lead" tabindex="-1" bind:this={leads.on}>{$t('login.unsubscribe.resubscribedTitle')}</p>
             <p class="af-sub">{$t('login.unsubscribe.resubscribedText', { type: typeText })}</p>
-            <a class="af-link" href={SETTINGS} tabindex={panel === p ? undefined : -1}>{$t('login.unsubscribe.settings')}</a>
+            <a class="af-link" href={SETTINGS} data-sveltekit-reload tabindex={panel === p ? undefined : -1}>{$t('login.unsubscribe.settings')}</a>
           {:else}
             <p class="lead" tabindex="-1" bind:this={leads.invalid}>{$t('login.unsubscribe.invalidTitle')}</p>
             <p class="af-sub">{$t('login.unsubscribe.invalidText')}</p>
-            <a class="af-link" href={SETTINGS} tabindex={panel === p ? undefined : -1}>{$t('login.unsubscribe.settings')}</a>
+            <a class="af-link" href={SETTINGS} data-sveltekit-reload tabindex={panel === p ? undefined : -1}>{$t('login.unsubscribe.settings')}</a>
           {/if}
         </div>
       {/each}

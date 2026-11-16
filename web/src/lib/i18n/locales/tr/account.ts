@@ -414,7 +414,7 @@ const tr: Translation<typeof de> = {
       types: {
         available: { label: 'Kullanılabilir istekler', hint: 'İstediğin bir şey geldiğinde.' },
         recording: { label: 'Kayıtlar', hint: 'Bir kayıt bittiğinde, başarısız olduğunda veya silindiğinde.' },
-        licence: { label: 'Süresi dolan indirmeler', hint: 'Cihazlarındaki indirmelerin süresi dolmadan iki gün önce.' },
+        licence: { label: 'Süresi dolan indirmeler', hint: 'Cihazlarındaki indirmelerin süresi dolmadan kısa süre önce.' },
       },
       saveFailed: 'Ayar kaydedilemedi. Lütfen tekrar dene.',
       loadFailed: 'E-posta ayarları yüklenemedi.',

@@ -414,7 +414,7 @@ const es: Translation<typeof de> = {
       types: {
         available: { label: 'Peticiones disponibles', hint: 'Cuando ya está aquí algo que pediste.' },
         recording: { label: 'Grabaciones', hint: 'Cuando una grabación termina, falla o se elimina.' },
-        licence: { label: 'Descargas que caducan', hint: 'Dos días antes de que caduquen las descargas de tus dispositivos.' },
+        licence: { label: 'Descargas que caducan', hint: 'Poco antes de que caduquen las descargas de tus dispositivos.' },
       },
       saveFailed: 'No se pudo guardar el ajuste. Inténtalo de nuevo.',
       loadFailed: 'No se pudieron cargar los ajustes de correo.',

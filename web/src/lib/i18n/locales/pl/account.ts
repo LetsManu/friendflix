@@ -434,7 +434,7 @@ const pl: Translation<typeof de> = {
       types: {
         available: { label: 'Dostępne życzenia', hint: 'Gdy pojawi się coś, czego sobie życzysz.' },
         recording: { label: 'Nagrania', hint: 'Gdy nagranie się zakończy, nie powiedzie się lub zostanie usunięte.' },
-        licence: { label: 'Wygasające pobrania', hint: 'Dwa dni przed wygaśnięciem pobrań na Twoich urządzeniach.' },
+        licence: { label: 'Wygasające pobrania', hint: 'Krótko przed wygaśnięciem pobrań na Twoich urządzeniach.' },
       },
       saveFailed: 'Nie udało się zapisać ustawienia. Spróbuj ponownie.',
       loadFailed: 'Nie udało się wczytać ustawień e-maili.',

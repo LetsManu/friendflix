@@ -414,7 +414,7 @@ const fr: Translation<typeof de> = {
       types: {
         available: { label: 'Demandes disponibles', hint: 'Quand quelque chose que vous avez demandé est là.' },
         recording: { label: 'Enregistrements', hint: 'Quand un enregistrement est terminé, échoue ou est supprimé.' },
-        licence: { label: 'Téléchargements qui expirent', hint: 'Deux jours avant l’expiration des téléchargements sur vos appareils.' },
+        licence: { label: 'Téléchargements qui expirent', hint: 'Peu avant l’expiration des téléchargements sur vos appareils.' },
       },
       saveFailed: 'Le réglage n’a pas pu être enregistré. Veuillez réessayer.',
       loadFailed: 'Impossible de charger les réglages des e-mails.',

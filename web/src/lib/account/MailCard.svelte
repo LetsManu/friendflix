@@ -37,7 +37,11 @@
   async function flip(type: MailType, on: boolean) {
     err = '';
     pending = { ...pending, [type]: true };
-    try { prefs = await saveMailPref(type, on); }
+    // only this switch takes the answer: another switch still saving keeps the value it shows (its own answer brings its own)
+    try {
+      const saved = await saveMailPref(type, on);
+      prefs = { ...prefs, [type]: saved[type] }; // read after the await: the other switches as they are now
+    }
     catch {
       prefs = { ...prefs, [type]: !on };
       err = 'saveFailed';
@@ -52,8 +56,9 @@
       <span class="muted">{$t('account.account.mail.to')}</span> <strong class="addr">{address}</strong>
     {:else}
       <span class="muted">{$t('account.account.mail.noAddress')}</span>
-      <a class="ext" href="#sec-email">{$t('account.account.profile.emailManage')}</a>
     {/if}
+    <!-- the address is set and changed under "Sicherheit", as the profile card says too -->
+    <a class="ext" href="#sec-email">{$t('account.account.profile.emailManage')}</a>
   </div>
   {#if !configured}<p class="note">{$t('account.account.mail.notConfigured')}</p>{/if}
   <ul class="list">
