@@ -1320,6 +1320,35 @@ export const MIGRATIONS: string[] = [
     created_at timestamptz not null default now()
   );
   `,
+  // 57: Mail stage A outbox (mail/outbox.ts, mail/worker.ts; docs/superpowers/specs/2026-11-16-mail-design.md "Outbox"): one row per
+  // mail. The address and the template params are encrypted (crypto.encrypt) while queued and set to null once the row is final; what
+  // stays is the kind, the masked address, the keyed hash of the address (rate limits), state, codes and times. The workers claim due
+  // rows with `for update skip locked` and a 2-minute lease. mail_outbox_sent serves the instance-wide hourly limit. Rerunnable.
+  `
+  create table if not exists mail_outbox (
+    id uuid primary key,
+    kind text not null check (kind ~ '^[a-z][a-z_]{0,39}$'),
+    user_id uuid references users(id) on delete cascade,
+    rcpt_enc text,
+    rcpt_mask text not null,
+    rcpt_key text not null,
+    params_enc text,
+    lang text not null check (lang in ('de','en','fr','es','it','tr','pl')),
+    state text not null default 'queued' check (state in ('queued','sending','sent','failed')),
+    attempts int not null default 0,
+    next_at timestamptz not null default now(),
+    lease_until timestamptz,
+    last_code text check (last_code ~ '^[a-z][a-z0-9_]{0,39}$'),
+    last_smtp int check (last_smtp between 200 and 599),
+    dedupe text unique,
+    created_at timestamptz not null default now(),
+    sent_at timestamptz,
+    finished_at timestamptz
+  );
+  create index if not exists mail_outbox_due on mail_outbox(next_at) where state in ('queued','sending');
+  create index if not exists mail_outbox_rcpt on mail_outbox(rcpt_key, sent_at) where state = 'sent';
+  create index if not exists mail_outbox_sent on mail_outbox(sent_at) where state = 'sent';
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
