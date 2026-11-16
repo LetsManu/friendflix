@@ -175,7 +175,7 @@ const dict: Translation<typeof de> = {
     mail_insecure_auth: 'Sin cifrado, {app} no envía ninguna contraseña y por tanto no inicia sesión en el servidor de correo.',
     mail_no_user: 'Hay una contraseña pero ningún nombre de usuario: así {app} no inicia sesión.',
     mail_last_failed: 'Un correo no salió en las últimas 24 horas: {reason}.',
-    mail_queue_stuck: 'Hay correos esperando a ser enviados desde hace más de una hora.',
+    mail_queue_stuck: 'Hay correos pendientes desde hace más de 15 minutos que no se están enviando.',
   },
   fix: {
     envLocked: '{key} está en el .env: cámbialo allí y reinicia el contenedor.',
@@ -288,7 +288,7 @@ const dict: Translation<typeof de> = {
     mail_insecure_auth: 'Elige STARTTLS o TLS, o vacía el usuario y la contraseña.',
     mail_no_user: 'Escribe el nombre de usuario (MAIL_SMTP_USER) o quita la contraseña.',
     mail_last_failed: 'Mira el estado en Ajustes → Correo electrónico y envía un correo de prueba.',
-    mail_queue_stuck: 'Comprueba que las tareas en segundo plano se ejecutan (BACKGROUND_JOBS=true) y envía un correo de prueba.',
+    mail_queue_stuck: 'Comprueba que las tareas en segundo plano se ejecutan (BACKGROUND_JOBS=true): son las que envían la cola. Después envía un correo de prueba.',
   },
   action: { toSetting: 'Ir al ajuste', details: 'Detalles', docs: 'Guía', hevc: 'Comprobar HEVC ahora' },
   summary: {

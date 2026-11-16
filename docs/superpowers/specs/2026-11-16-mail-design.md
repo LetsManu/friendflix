@@ -265,7 +265,8 @@ A mail over a limit is not dropped: its `next_at` moves to when the window frees
 - **Systemcheck** line `core.mail` (*E-Mail-Versand*, after `core.env`, Controller's call: mail is basic infrastructure and the group
   order is fixed): not set up → `not_set_up`/`mail_not_set`; probe `unreachable`/`timeout` → `problem`/`mail_unreachable`; `tls` →
   `problem`/`mail_tls`; `unauthorized` → `problem`/`mail_auth`; `invalid`/`insecure_auth` → `problem`/`mail_insecure_auth`; probe ok
-  but a final failure in the last 24 h → `warning`/`mail_last_failed` (params `code`, `smtp`); queued mail older than 1 h →
+  but a final failure in the last 24 h → `warning`/`mail_last_failed` (params `code`, `smtp`); a row overdue for more than
+  15 min (queued with `next_at` passed, or sending with its lease run out; stage B, Controller's call 13) →
   `warning`/`mail_queue_stuck`; else ok. The probe result is cached in kv for 10 minutes (`mail:probe`), *Jetzt prüfen* probes
   again (Controller's call: a Systemcheck view must not log in to the provider every minute).
 

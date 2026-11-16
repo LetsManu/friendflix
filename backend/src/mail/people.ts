@@ -10,8 +10,9 @@ import { mailConfigured } from './transport.js';
 /**
  * Mail for people (docs/superpowers/specs/2026-11-16-mail-design.md, "Preferences (stage B)"): one switch per mail type, stored
  * account-level in user_prefs.data.mail (`{ [type]: boolean }`, missing = on), and who gets a person mail at all. Mail is account
- * level: it goes to users.email, never to a kids profile of its own. No valid address, a disabled account, mail not set up, no
- * PUBLIC_URL or the type switched off -> no outbox row; the in-app notice is unchanged.
+ * level: it goes to users.email, never to a kids profile of its own. No valid address, a disabled account, an account whose access
+ * ended (access_until passed, before the expiry tick locks it), mail not set up, no PUBLIC_URL or the type switched off -> no
+ * outbox row; the in-app notice is unchanged.
  */
 export const MAIL_PREF_TYPES = ['available', 'recording', 'licence'] as const;
 export type MailPrefType = (typeof MAIL_PREF_TYPES)[number];
@@ -59,9 +60,9 @@ export interface MailRecipient { to: string; lang: Language; name: string }
 export async function mailRecipient(ctx: Pick<Ctx, 'db' | 'cfg'>, userId: string, kind: PersonMailKind): Promise<MailRecipient | null> {
   // without PUBLIC_URL a mail has no link to the app (and no unsubscribe link)
   if (!mailConfigured(ctx.cfg) || !publicOrigin(ctx.cfg)) return null;
-  const u = (await ctx.db.query<{ email: string | null; name: string; disabled: boolean }>(
-    'select email, name, disabled from users where id = $1', [userId])).rows[0];
-  if (!u || u.disabled || !u.email || !isMailAddress(u.email)) return null;
+  const u = (await ctx.db.query<{ email: string | null; name: string }>(
+    'select email, name from users where id = $1 and not disabled and (access_until is null or access_until > now())', [userId])).rows[0];
+  if (!u?.email || !isMailAddress(u.email)) return null;
   if (isMailPrefType(kind) && !(await readMailPrefs(ctx, userId))[kind]) return null;
   return { to: u.email, lang: await userLanguage(ctx, userId), name: u.name };
 }

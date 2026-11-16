@@ -78,7 +78,7 @@ If you run your own SMTP server:
 | *Ohne Verschlüsselung sendet … kein Passwort* | Choose *STARTTLS* or *TLS*, or empty user name and password. |
 | *Ein Passwort ist eingetragen, aber kein Benutzername* | Enter the user name or remove the password. |
 | *Eine E-Mail ging in den letzten 24 Stunden nicht raus* (warning) | See the error code below; the E-Mail card shows the last error. |
-| *E-Mails warten seit über einer Stunde* (warning) | Background jobs must run (`BACKGROUND_JOBS=true`); check the connection and send a test mail. |
+| *E-Mails sind seit über 15 Minuten fällig* (warning) | Mail has been due (or its send lease ran out) for over 15 minutes and is not going out: background jobs must run (`BACKGROUND_JOBS=true`); send a test mail. Mail waiting for a retry or a rate limit does not count. |
 
 ## The outbox
 

@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Config } from '../src/config.js';
 import { encrypt } from '../src/crypto.js';
+import { mailSubkey } from '../src/mail/address.js';
 import { MAIL_PREF_TYPES, isMailPrefType, mailPerson, mailRecipient, readMailPrefs, setMailPref } from '../src/mail/people.js';
 import { unsubscribeToken, unsubscribeUrls, verifyUnsubscribeToken } from '../src/mail/unsubscribe.js';
 import { prefsSchema } from '../src/routes/prefs.js';
@@ -46,7 +47,7 @@ describe('mail preferences and recipients', () => {
     env.ctx.cfg = { ...cfg, ...MAIL_CFG };
     await env.pool.query('delete from mail_outbox');
     await env.pool.query('delete from user_prefs where user_id = any($1)', [[anna, ben]]);
-    await env.pool.query("update users set email = case when id = $1 then $2 else $3 end, disabled = false where id = any($4)", [anna, ANNA, BEN, [anna, ben]]);
+    await env.pool.query("update users set email = case when id = $1 then $2 else $3 end, disabled = false, access_until = null where id = any($4)", [anna, ANNA, BEN, [anna, ben]]);
     await env.pool.query('delete from profile_prefs where profile_id = any($1)', [[anna, ben]]);
   });
   afterEach(() => {
@@ -113,10 +114,19 @@ describe('mail preferences and recipients', () => {
     expect(await mailRecipient(env.ctx, anna, 'available')).toBeNull();
     expect(await mailRecipient(env.ctx, anna, 'welcome')).toBeNull();
     await env.pool.query('update users set disabled = false where id = $1', [anna]);
+    // access ended (not yet locked by the expiry tick): no mail, welcome included; access still running: mail
+    await env.pool.query("update users set access_until = now() - interval '1 minute' where id = $1", [anna]);
+    expect(await mailRecipient(env.ctx, anna, 'available')).toBeNull();
+    expect(await mailRecipient(env.ctx, anna, 'welcome')).toBeNull();
+    await env.pool.query("update users set access_until = now() + interval '1 day' where id = $1", [anna]);
+    expect(await mailRecipient(env.ctx, anna, 'available')).toEqual({ to: ANNA, lang: 'en', name: 'Anna Beispiel' });
+    expect(await mailRecipient(env.ctx, anna, 'welcome')).toEqual({ to: ANNA, lang: 'en', name: 'Anna Beispiel' });
     // mail not set up, no public URL
     env.ctx.cfg = { ...cfg, ...MAIL_CFG, MAIL_SMTP_HOST: undefined };
     expect(await mailRecipient(env.ctx, anna, 'available')).toBeNull();
     env.ctx.cfg = { ...cfg, ...MAIL_CFG, PUBLIC_URL: '' };
+    expect(await mailRecipient(env.ctx, anna, 'available')).toBeNull();
+    env.ctx.cfg = { ...cfg, ...MAIL_CFG, PUBLIC_URL: 'not a url' };
     expect(await mailRecipient(env.ctx, anna, 'available')).toBeNull();
     env.ctx.cfg = { ...cfg, ...MAIL_CFG };
     // type switched off; welcome has no switch
@@ -175,6 +185,18 @@ describe('unsubscribe token', () => {
     expect(verifyUnsubscribeToken(k, '')).toBeNull();
     expect(verifyUnsubscribeToken(k, `${t}.x`)).toBeNull();
     expect(verifyUnsubscribeToken(k, ` ${t}`)).toBeNull();
+    expect(verifyUnsubscribeToken(k, `${t}\n`)).toBeNull();
+    // an uppercase id, even with a valid mac for it
+    const upper = anna.toUpperCase();
+    const macUpper = createHmac('sha256', mailSubkey(k, 'unsubscribe')).update(`v1|${upper}|licence`).digest('base64url');
+    expect(verifyUnsubscribeToken(k, `v1.${upper}.licence.${macUpper}`)).toBeNull();
+    // a padded mac, and another encoding of the same 32 bytes (the last character carries 4 unused bits)
+    expect(verifyUnsubscribeToken(k, `${t}=`)).toBeNull();
+    const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const last = B64.indexOf(mac.at(-1)!);
+    const twin = `${mac.slice(0, -1)}${B64[last ^ 1]}`;
+    expect(Buffer.from(twin, 'base64url').equals(Buffer.from(mac, 'base64url'))).toBe(true);
+    expect(verifyUnsubscribeToken(k, `v1.${anna}.licence.${twin}`)).toBeNull();
   });
 
   it('unsubscribeUrls', () => {

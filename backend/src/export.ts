@@ -208,9 +208,9 @@ export async function* exportUserData(ctx: Ctx, user: UserRow): AsyncGenerator<s
     'select label, name, approved, created_at, last_seen from devices where user_id=$1 order by created_at'))
     .map((d) => ({ label: d.label, name: d.name, approved: d.approved, createdAt: d.created_at, lastSeen: d.last_seen })));
 
-  // notification settings are account level (user_prefs, the mail switches included); the ntfy topic is a secret, so only whether one is set. Own notices
-  // without title, body and link: they are rendered with other people's names, lists and parties (invites, recommendations,
-  // admin notices about other accounts), and links carry their ids.
+  // notification settings are account level (user_prefs, the mail switches too); the ntfy topic is a secret, so only whether
+  // one is set. Own notices without title, body and link: they are rendered with other people's names, lists and parties
+  // (invites, recommendations, admin notices about other accounts), and links carry their ids.
   const prefs = await loadPrefs(ctx, uid);
   const push = (await q<{ n: string }>('select count(*) n from push_subscriptions where user_id=$1'))[0]!;
   const notes = await q<{ kind: string; created_at: Date; read: boolean }>(

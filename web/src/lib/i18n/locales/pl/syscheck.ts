@@ -175,7 +175,7 @@ const dict: Translation<typeof de> = {
     mail_insecure_auth: 'Bez szyfrowania {app} nie wysyła hasła, więc nie loguje się na serwerze poczty.',
     mail_no_user: 'Wpisano hasło, ale nie nazwę użytkownika: tak {app} się nie loguje.',
     mail_last_failed: 'W ciągu ostatnich 24 godzin jeden e-mail nie wyszedł: {reason}.',
-    mail_queue_stuck: 'E-maile czekają na wysyłkę od ponad godziny.',
+    mail_queue_stuck: 'E-maile miały zostać wysłane ponad 15 minut temu, ale nie wychodzą.',
   },
   fix: {
     envLocked: '{key} jest w .env: zmień to tam i uruchom kontener ponownie.',
@@ -288,7 +288,7 @@ const dict: Translation<typeof de> = {
     mail_insecure_auth: 'Wybierz STARTTLS lub TLS albo wyczyść nazwę użytkownika i hasło.',
     mail_no_user: 'Wpisz nazwę użytkownika (MAIL_SMTP_USER) albo usuń hasło.',
     mail_last_failed: 'Sprawdź stan w Ustawienia → E-mail i wyślij testowy e-mail.',
-    mail_queue_stuck: 'Sprawdź, czy działają zadania w tle (BACKGROUND_JOBS=true), i wyślij testowy e-mail.',
+    mail_queue_stuck: 'Sprawdź, czy działają zadania w tle (BACKGROUND_JOBS=true): to one wysyłają kolejkę. Potem wyślij testowy e-mail.',
   },
   action: { toSetting: 'Do ustawienia', details: 'Szczegóły', docs: 'Instrukcja', hevc: 'Sprawdź HEVC teraz' },
   summary: {
