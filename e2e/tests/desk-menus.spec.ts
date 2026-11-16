@@ -531,3 +531,31 @@ test.describe('Select', () => {
     await expect(list(page)).toHaveCount(0);
   });
 });
+
+test.describe('toasts', () => {
+  test.use({ viewport: { width: 1100, height: 700 } });
+  const LONG = 'Dunmoor Part Two Extended Director Cut with all the long placeholder words that keep going on and on and on';
+
+  test('a long toast wraps inside the window with 44 px controls; the message is 15 px / 600', async ({ page, api }) => {
+    api.asAdmin = true;
+    api.admin.requests.find((r) => r.id === 101)!.title = LONG;
+    await page.goto('/admin');
+    await page.getByRole('region', { name: 'Wartet auf dich' }).getByRole('button', { name: new RegExp(`„${LONG}“ freigeben`) }).click();
+    const toast = page.locator('.toast');
+    await expect(toast).toBeVisible();
+    await page.waitForTimeout(450); // the rise has settled
+    expect((await boxInViewport(page, toast)).ok).toBe(true);
+    const x = await page.locator('.toast .x').boundingBox();
+    expect(x!.width).toBeCloseTo(44, 0);
+    expect(x!.height).toBeCloseTo(44, 0);
+    const t = (await toast.boundingBox())!;
+    expect(Math.abs(x!.y + x!.height / 2 - (t.y + t.height / 2))).toBeLessThanOrEqual(1);
+    expect(t.height).toBeGreaterThan(52); // it wrapped
+    const m = await page.locator('.toast .msg').evaluate((e) => { const s = getComputedStyle(e); return { fs: s.fontSize, fw: s.fontWeight, lh: s.lineHeight }; });
+    expect(m.fs).toBe('15px');
+    expect(m.fw).toBe('600');
+    expect(parseFloat(m.lh)).toBeCloseTo(19.5, 1);
+    const pad = await toast.evaluate((e) => { const s = getComputedStyle(e); return [s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft, s.columnGap]; });
+    expect(pad).toEqual(['4px', '4px', '4px', '20px', '12px']);
+  });
+});

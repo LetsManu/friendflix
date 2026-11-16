@@ -98,13 +98,13 @@
     transform: translate(calc(-50% - var(--sheet-w, 0px) / 2), calc(-1 * max(var(--castbar-h, 0px) + var(--savebar-h, 0px), var(--sheet-h, 0px) - var(--toast-b) + 12px)));
     transition: transform 240ms var(--fr-out); width: max-content; max-width: min(560px, calc(100vw - var(--sheet-w, 0px) - 2rem)); pointer-events: none; }
   ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; gap: .5rem; }
-  .toast { pointer-events: auto; display: flex; align-items: center; gap: 10px; max-width: 100%; box-sizing: border-box; padding: 4px 4px 4px 18px; min-height: 52px; font-weight: 700; }
+  .toast { pointer-events: auto; display: flex; align-items: center; gap: 12px; max-width: 100%; box-sizing: border-box; padding: 4px 4px 4px 20px; min-height: 52px; }
   .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--mut); }
   .dot.success { background: var(--ok); box-shadow: 0 0 12px var(--ok); }
   /* (error and info lightened so the dot keeps 3:1 on the glass over a white backdrop; success already does) */
   .dot.error { background: var(--err-mark); box-shadow: 0 0 12px var(--err); }
   .dot.info { background: var(--info-mark); box-shadow: 0 0 12px var(--info); }
-  .msg { flex: 1; margin: 0; font-size: .93rem; line-height: 1.35; overflow-wrap: anywhere; }
+  .msg { flex: 1; margin: 0; font-size: 15px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
   /* the action is white text (AA on glass over any backdrop); its colour is the coral countdown ring beside it */
   .act { flex: none; min-height: 44px; background: transparent; color: #fff; padding: 0 8px; font-weight: 800; border-radius: var(--fr-r-pill); text-decoration: underline; text-decoration-color: var(--acc-line); text-decoration-thickness: 2px; text-underline-offset: 4px; }
   .act:hover:not(:disabled) { background: var(--fr-sel); }

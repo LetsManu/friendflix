@@ -63,7 +63,7 @@ export default {
     empty: 'Aktuell ist für keinen Titel ein Datum gesetzt.',
     colTitle: 'Titel',
     colSetBy: 'Gesetzt von',
-    menu: 'Entfernungsdatum setzen …',
+    menu: 'Entfernungsdatum setzen…',
     dialogTitle: 'Nicht mehr verfügbar ab',
   },
 } as const;

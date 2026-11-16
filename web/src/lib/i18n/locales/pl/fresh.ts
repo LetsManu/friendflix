@@ -66,7 +66,7 @@ const dict: Translation<typeof de> = {
     empty: 'Obecnie żaden tytuł nie ma ustawionej daty.',
     colTitle: 'Tytuł',
     colSetBy: 'Ustawił(a)',
-    menu: 'Ustaw datę usunięcia …',
+    menu: 'Ustaw datę usunięcia…',
     dialogTitle: 'Niedostępne od',
   },
 };
