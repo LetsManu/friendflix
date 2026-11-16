@@ -71,11 +71,12 @@ describe('status mapping', () => {
 describe('core lines', () => {
   it('a healthy instance: every core and media line ok, in catalogue order', async () => {
     const r = await run();
-    const ids: CheckId[] = ['core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env',
+    const ids: CheckId[] = ['core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env', 'core.mail',
       'media.server', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder'];
     const mine = r.lines.filter((l) => l.group === 'core' || l.group === 'media');
     expect(mine.map((l) => l.id)).toEqual(ids);
-    expect(mine.filter((l) => l.status !== 'ok').map((l) => [l.id, l.status, l.cause])).toEqual([]);
+    // e-mail is optional and not set up here: neutral, not a problem
+    expect(mine.filter((l) => l.status !== 'ok').map((l) => [l.id, l.status, l.cause])).toEqual([['core.mail', 'not_set_up', 'mail_not_set']]);
   });
 
   it('database down → core.database problem db_down; redis slow → warning', async () => {
@@ -164,7 +165,7 @@ describe('media lines', () => {
     expect(get(r, 'media.requests')).toMatchObject({ status: 'not_set_up', cause: 'requests_not_set', settingKey: 'REQUESTS_URL' });
     expect(r.counts.problem).toBe(0);
     expect(r.counts.warning).toBe(0);
-    expect(r.lines.filter((l) => l.status === 'not_set_up' && (l.group === 'core' || l.group === 'media')).map((l) => l.id)).toEqual(['media.requests']);
+    expect(r.lines.filter((l) => l.status === 'not_set_up' && (l.group === 'core' || l.group === 'media')).map((l) => l.id)).toEqual(['core.mail', 'media.requests']);
   });
 
   it('request service answers 401 → media.requests warning requests_key_invalid settingKey REQUESTS_API_KEY', async () => {

@@ -108,7 +108,11 @@ describe('core.mail', () => {
   it('a changed setting is not answered from the cache', async () => {
     await useFake();
     expect((await line()).status).toBe('ok');
+    // a new password arrives by a save (it bumps the settings revision) or by .env and a restart; here: the save
     env.ctx.cfg = { ...env.ctx.cfg, MAIL_SMTP_PASSWORD: 'wrong' };
+    const rev = env.ctx.settings.rev();
+    await env.ctx.settings.save({ MAIL_SMTP_USER: 'anna' }, null);
+    expect(env.ctx.settings.rev()).toBeGreaterThan(rev);
     expect(await line()).toMatchObject({ status: 'problem', cause: 'mail_auth' });
   });
 
