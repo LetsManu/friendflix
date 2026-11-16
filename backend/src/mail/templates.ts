@@ -40,6 +40,16 @@ const PARAMS = {
     inviter: z.string().min(1),
   }),
   pref: z.object({ title: text, body: text.nullish(), link: z.string().nullish() }),
+  /** digest.ts `DigestMailParams` */
+  digest: z.object({
+    headline: text,
+    since: z.iso.datetime({ offset: true }),
+    until: z.iso.datetime({ offset: true }),
+    movies: z.object({ names: z.array(z.string()), total: z.number().int().nonnegative() }),
+    series: z.array(z.object({ name: z.string(), count: z.number().int().nonnegative(), followed: z.boolean() })),
+    wishes: z.array(z.string()),
+    recs: z.array(z.object({ name: z.string(), from: z.string() })),
+  }),
 };
 
 /** what one kind contributes; the frame (brand, layout, attachments, the common headers) is the same for all */
@@ -122,6 +132,22 @@ function inviteMail(c: Common, raw: Record<string, unknown>): Parts {
   };
 }
 
+/**
+ * What every mail of a switch ends with: the brand's links, the mail settings and the unsubscribe link, plus the RFC 8058 headers,
+ * all with the token of exactly this recipient and type. Without a recipient or a public URL there is no such link, so such a mail is
+ * not rendered at all.
+ */
+function switchFooter(c: Common, encKey: Buffer, type: MailPrefType, userId: string | null): Pick<Parts, 'footerLinks' | 'headers'> & { origin: string } {
+  if (!c.origin) throw new Error('mail_no_public_url');
+  if (!userId) throw new Error('mail_no_recipient');
+  const urls = unsubscribeUrls(c.origin, unsubscribeToken(encKey, userId, type));
+  return {
+    origin: c.origin,
+    footerLinks: [...c.brandLinks, settingsLink(c, c.origin), { label: msg(c.lang, 'mail.footer.unsubscribe'), url: urls.page }],
+    headers: { 'List-Unsubscribe': `<${urls.oneClick}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
+  };
+}
+
 /** the per-type mails that are a notice's mail channel: every switch but the digest, which has its own template */
 type NoticeMailType = Exclude<MailPrefType, 'digest'>;
 
@@ -136,28 +162,52 @@ const KIND_LINE: Record<NoticeMailType, MsgKey> = {
 
 /**
  * A notice mailed through a switch (notify(), `Notice.mail`): the notice's title is subject and heading, its body (else the kind's
- * own line) the paragraph, its link the button. It carries the unsubscribe link and the RFC 8058 headers with the token of exactly
- * this recipient and type; without a recipient or a public URL there is no such link, so it is not rendered at all. A text that
- * refers to a message key removed while the mail waited (a release in between) never shows the raw key: the title becomes a neutral
- * subject, the body the kind's line.
+ * own line) the paragraph, its link the button, and the switch's footer (`switchFooter`). A text that refers to a message key removed
+ * while the mail waited (a release in between) never shows the raw key: the title becomes a neutral subject, the body the kind's line.
  */
 function prefMail(c: Common, encKey: Buffer, kind: NoticeMailType, raw: Record<string, unknown>, userId: string | null): Parts {
   const { lang, app } = c;
   const p = PARAMS.pref.parse(raw);
-  if (!c.origin) throw new Error('mail_no_public_url');
-  if (!userId) throw new Error('mail_no_recipient');
-  const urls = unsubscribeUrls(c.origin, unsubscribeToken(encKey, userId, kind));
+  const { origin, ...footer } = switchFooter(c, encKey, kind, userId);
   const title = renderKnown(lang, p.title) || msg(lang, 'mail.fallback.subject', { app });
   const body = p.body == null ? '' : renderKnown(lang, p.body) ?? '';
-  const target = p.link == null ? `${c.origin}/` : appLink(c.origin, p.link);
+  const target = p.link == null ? `${origin}/` : appLink(origin, p.link);
   return {
     subject: title,
     heading: title,
     paragraphs: [body || msg(lang, KIND_LINE[kind], { app })],
     ...(target ? { button: { label: msg(lang, `mail.${kind}.button`), url: target } } : {}),
     reason: msg(lang, `mail.${kind}.reason`, { app }),
-    footerLinks: [...c.brandLinks, settingsLink(c, c.origin), { label: msg(lang, 'mail.footer.unsubscribe'), url: urls.page }],
-    headers: { 'List-Unsubscribe': `<${urls.oneClick}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
+    ...footer,
+  };
+}
+
+/**
+ * The weekly recap (digest.ts `sendDigest`): the in-app headline as subject and heading, the week's range, then the titles as plain
+ * text lists (new movies with a "… and n more" line, new episodes per series, requests that arrived, recommendations), each section
+ * only when it has entries. No per-title links and no pictures: the one button opens the recap page, which has them. The params are
+ * already capped and cut (`digestMailParams`).
+ */
+function digestMail(c: Common, encKey: Buffer, raw: Record<string, unknown>, userId: string | null): Parts {
+  const { lang, app } = c;
+  const p = PARAMS.digest.parse(raw);
+  const { origin, ...footer } = switchFooter(c, encKey, 'digest', userId);
+  const title = renderKnown(lang, p.headline) || msg(lang, 'digest.title');
+  const more = p.movies.total - p.movies.names.length;
+  const sections = [
+    { heading: msg(lang, 'mail.digest.movies'), items: p.movies.names.length && more > 0 ? [...p.movies.names, msg(lang, 'mail.digest.more', { n: more })] : p.movies.names },
+    { heading: msg(lang, 'mail.digest.series'), items: p.series.map((s) => msg(lang, 'mail.digest.episodes', { name: s.name, n: s.count })) },
+    { heading: msg(lang, 'mail.digest.wishes'), items: p.wishes },
+    { heading: msg(lang, 'mail.digest.recs'), items: p.recs.map((r) => msg(lang, 'mail.digest.rec', { name: r.name, from: r.from })) },
+  ].filter((s) => s.items.length > 0);
+  return {
+    subject: title,
+    heading: title,
+    paragraphs: [msg(lang, 'mail.digest.range', { app, from: { date: p.since }, to: { date: p.until } })],
+    sections,
+    button: { label: msg(lang, 'mail.digest.button'), url: `${origin}/digest` },
+    reason: msg(lang, 'mail.digest.reason', { app }),
+    ...footer,
   };
 }
 
@@ -187,8 +237,7 @@ export async function renderMail(
     case 'available': case 'recording': case 'licence':
     case 'update': case 'updatefailed': case 'syscheck': case 'storage':
       parts = prefMail(c, ctx.encKey, kind, params, o.userId); break;
-    // its own template comes with the digest mail itself (stage C, Task 2); until then nothing queues one
-    case 'digest': throw new Error('mail_kind_not_rendered');
+    case 'digest': parts = digestMail(c, ctx.encKey, params, o.userId); break;
     default: {
       const never: never = kind;
       throw new Error(`unknown mail kind: ${String(never).slice(0, 40)}`);

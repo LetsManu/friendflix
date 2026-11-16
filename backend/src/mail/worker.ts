@@ -147,7 +147,8 @@ const withSmtp = (o: Outcome, smtp: number | null): Outcome => (smtp === null ? 
  * read the switch before the person turned it off; setMailPref only deletes rows that are queued by then), with a switch turned off
  * while the row waited, with an admin demoted while an alert waited (`not_admin`), and with an address changed while it waited (the
  * old address must never get it). Deleted, not `failed`: nothing went wrong with the mail system, so it must not count as a failure
- * in the status or the Systemcheck, and the end state is the one setMailPref gives a row it reaches in time. The admin's test mail and the invitation are not person mails.
+ * in the status or the Systemcheck, and the end state is the one setMailPref gives a row it reaches in time. The admin's test mail
+ * and the invitation are not person mails.
  */
 async function dropUnwanted(ctx: Pick<Ctx, 'db' | 'encKey'>, r: Claimed, lease: Date): Promise<string | null> {
   if (!r.user_id || (r.kind !== 'welcome' && !isMailPrefType(r.kind))) return null;

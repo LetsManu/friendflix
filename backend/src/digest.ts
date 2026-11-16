@@ -3,6 +3,7 @@
 import type { Ctx } from './ctx.js';
 import type { ItemDto } from './media/types.js';
 import { m, userLanguage, type Text } from './i18n.js';
+import { mailPerson } from './mail/people.js';
 import { localizeStored, notify } from './notify.js';
 import type { UserRow } from './types.js';
 
@@ -180,23 +181,78 @@ export function digestPushText(d: DigestData): Text {
   return { join: lines.slice(0, 5) };
 }
 
+/** What the digest mail carries (the `digest` mail template's params): names and counts only, no ids, links or pictures. */
+export interface DigestMailParams {
+  headline: Text;
+  since: string;
+  until: string;
+  movies: { names: string[]; total: number };
+  series: Array<{ name: string; count: number; followed: boolean }>;
+  wishes: string[];
+  recs: Array<{ name: string; from: string }>;
+}
+
+const MAIL_NAME_MAX = 120;
+const MAIL_WISHES = 20;
+
+/** a name cut to MAIL_NAME_MAX UTF-16 units, "…" included; never in the middle of a surrogate pair */
+function cutName(s: string): string {
+  if (s.length <= MAIL_NAME_MAX) return s;
+  const head = s.slice(0, MAIL_NAME_MAX - 1);
+  return `${/[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head}…`;
+}
+
+/**
+ * The digest as mail params: at most 12 movie names (and the total, for the "… and n more" line), 20 series (followed first), 20
+ * requests that arrived and 5 recommendations, every name cut to 120 characters, so a full recap stays a small mail.
+ */
+export function digestMailParams(d: DigestData): DigestMailParams {
+  const series = [...d.newEpisodes].sort((a, b) => Number(b.followed) - Number(a.followed)); // stable: buildDigest's order otherwise
+  return {
+    headline: digestText(d).title,
+    since: d.since,
+    until: d.until,
+    movies: { names: d.newMovies.slice(0, MAX_MOVIES).map((x) => cutName(x.name)), total: d.newMovieCount },
+    series: series.slice(0, MAX_SERIES).map((g) => ({ name: cutName(g.seriesName), count: g.count, followed: g.followed })),
+    wishes: d.available.slice(0, MAIL_WISHES).map((a) => cutName(a.title)),
+    recs: d.recommendations.slice(0, MAX_RECS).map((r) => ({ name: cutName(r.name), from: cutName(r.from) })),
+  };
+}
+
 export interface DigestWindow { key: string; since: Date; until: Date }
 
-/** Builds, claims the (user, week) row and notifies. `test` skips the claim (admin preview) and uses a unique dedupe key. */
-export async function sendDigest(ctx: Ctx, user: UserRow, w: DigestWindow, test = false): Promise<{ sent: boolean; data: DigestData | null }> {
+/** the account's in-app weekly digest switch (user_prefs.weeklyDigest, default on) */
+async function weeklyDigestOn(ctx: Pick<Ctx, 'db'>, userId: string): Promise<boolean> {
+  const r = await ctx.db.query<{ on: boolean }>("select coalesce(data->>'weeklyDigest', 'true') <> 'false' as on from user_prefs where user_id = $1", [userId]);
+  return r.rows[0]?.on ?? true;
+}
+
+/**
+ * Builds, claims the (user, week) row, notifies and mails. The two channels are independent: the in-app notice (with the personal
+ * push) only when the account's `weeklyDigest` is on, the mail whenever the account's `digest` mail switch is on (mailPerson decides).
+ * `test` (the admin's preview) skips the claim, always notifies and uses unique dedupe keys. `sent` = the notice was created,
+ * `mailed` = a mail was queued.
+ */
+export async function sendDigest(ctx: Ctx, user: UserRow, w: DigestWindow, test = false): Promise<{ sent: boolean; mailed: boolean; data: DigestData | null }> {
   const data = await buildDigest(ctx, user, w.since, w.until);
-  if (!data) return { sent: false, data: null };
+  if (!data) return { sent: false, mailed: false, data: null };
   if (!test) {
     const claim = await ctx.db.query('insert into digests(user_id, week, data) values ($1,$2,$3) on conflict do nothing returning week', [user.id, w.key, JSON.stringify(data)]);
-    if (!claim.rowCount) return { sent: false, data };
+    if (!claim.rowCount) return { sent: false, mailed: false, data };
   }
-  const { title, body } = digestText(data);
-  const sent = await notify(ctx, {
-    userId: user.id, kind: 'digest', title, body, pushBody: digestPushText(data), link: '/digest',
-    dedupe: test ? `digest-test-${user.id}-${Date.now()}` : `digest-${user.id}-${w.key}`,
-    personal: true, // own ntfy topic only, never the global channels
-  });
-  return { sent, data };
+  let sent = false;
+  if (test || await weeklyDigestOn(ctx, user.id)) {
+    const { title, body } = digestText(data);
+    sent = await notify(ctx, {
+      userId: user.id, kind: 'digest', title, body, pushBody: digestPushText(data), link: '/digest',
+      dedupe: test ? `digest-test-${user.id}-${Date.now()}` : `digest-${user.id}-${w.key}`,
+      personal: true, // own ntfy topic only, never the global channels
+    });
+  }
+  // like a notice's mail (notify.ts): a failing enqueue never fails the in-app digest
+  const queued = await mailPerson(ctx, user.id, 'digest', { ...digestMailParams(data) },
+    test ? `digest-test:${user.id}:${Date.now()}` : `digest:${user.id}:${w.key}`).catch(() => null);
+  return { sent, mailed: queued !== null, data };
 }
 
 const busy = new WeakSet<Ctx>();
@@ -205,7 +261,10 @@ const RECHECK_MS = 2 * 3600_000;
 /** Test hook: forget which accounts had an empty week. */
 export function resetDigestState() { empty.clear(); }
 
-/** Timer tick (every 10 min): inside the 24 h after the weekly slot, sends each opted-in account its digest once. */
+/**
+ * Timer tick (every 10 min): inside the 24 h after the weekly slot, sends each account with the in-app digest or the digest mail on
+ * its digest once. Returns how many accounts got it on either channel.
+ */
 export async function digestTick(ctx: Ctx, now = new Date()): Promise<number> {
   const s = await digestSchedule(ctx);
   if (!s.enabled || s.hour < 0 || busy.has(ctx)) return 0;
@@ -217,7 +276,7 @@ export async function digestTick(ctx: Ctx, now = new Date()): Promise<number> {
   try {
     const users = (await ctx.db.query<UserRow>(
       `select u.* from users u left join user_prefs p on p.user_id = u.id
-        where not u.disabled and coalesce(p.data->>'weeklyDigest', 'true') <> 'false'
+        where not u.disabled and (coalesce(p.data->>'weeklyDigest', 'true') <> 'false' or p.data->'mail'->>'digest' = 'true')
           and not exists (select 1 from digests d where d.user_id = u.id and d.week = $1) order by u.created_at`,
       [key],
     )).rows;
@@ -227,7 +286,7 @@ export async function digestTick(ctx: Ctx, now = new Date()): Promise<number> {
       if (now.getTime() - (empty.get(ek) ?? -Infinity) < RECHECK_MS) continue;
       try {
         const r = await sendDigest(ctx, u, window);
-        if (r.sent) sent++;
+        if (r.sent || r.mailed) sent++;
         else if (!r.data) { empty.set(ek, now.getTime()); if (empty.size > 5000) empty.clear(); }
       } catch (e) {
         console.error('digest failed for', u.id, e);

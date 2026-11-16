@@ -6,7 +6,7 @@ import { reqSerializer } from '../src/app.js';
 import type { Config } from '../src/config.js';
 import { encrypt } from '../src/crypto.js';
 import { mailSubkey } from '../src/mail/address.js';
-import { MAIL_PREF_TYPES, readMailPrefs } from '../src/mail/people.js';
+import { ADMIN_MAIL_TYPES, MAIL_PREF_TYPES, readMailPrefs } from '../src/mail/people.js';
 import { unsubscribeToken } from '../src/mail/unsubscribe.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
@@ -262,7 +262,7 @@ describe('mail person routes', () => {
   });
 
   it('PUT of an admin type as a non-admin answers 403', async () => {
-    for (const type of ['update', 'updatefailed', 'syscheck', 'storage']) {
+    for (const type of ADMIN_MAIL_TYPES) {
       const r = await as(benS, 'PUT', '/api/account/mail', { type, on: false });
       expect(r.statusCode, type).toBe(403);
       expect(r.json()).toEqual({ error: 'admin_only' });

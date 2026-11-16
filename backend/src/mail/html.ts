@@ -22,6 +22,8 @@ export interface LayoutInput {
   brand: MailBrand;
   heading: string;
   paragraphs: string[];
+  /** titled lists after the paragraphs (the weekly recap): plain text items, no links */
+  sections?: Array<{ heading: string; items: string[] }>;
   button?: { label: string; url: string };
   /** why the recipient gets this mail */
   reason: string;
@@ -57,6 +59,9 @@ export function layout(i: LayoutInput): { html: string; text: string } {
   const btnUrl = i.button ? safeHref(i.button.url) : null;
   const links = i.footerLinks.map((l) => ({ label: l.label, url: safeHref(l.url) })).filter((l): l is { label: string; url: string } => l.url !== null);
   const paras = i.paragraphs.map((p) => `<tr><td style="padding:0 0 16px 0;${cell(TEXT, 16)}">${esc(p)}</td></tr>`).join('');
+  // a list as table rows, not <ul>: clients disagree on list indents and bullets, a row with "•" looks the same everywhere
+  const sections = (i.sections ?? []).map((s) => `<tr><td style="padding:0 0 6px 0;${cell(TEXT, 16, 'font-weight:700;')}">${esc(s.heading)}</td></tr>`
+    + s.items.map((it, n) => `<tr><td style="padding:0 0 ${n === s.items.length - 1 ? 16 : 4}px 0;${cell(TEXT, 16)}">• ${esc(it)}</td></tr>`).join('')).join('');
   const button = i.button && btnUrl
     ? `<tr><td style="padding:8px 0 24px 0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>`
       + `<td align="center" bgcolor="${b.fill}" style="background-color:${b.fill};border-radius:8px;${cell(ON_FILL, 16)}">`
@@ -76,12 +81,13 @@ export function layout(i: LayoutInput): { html: string; text: string } {
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="${CARD}" style="width:100%;max-width:600px;background-color:${CARD};border-radius:12px;"><tr><td height="4" bgcolor="${b.fill}" style="height:4px;font-size:0;line-height:0;background-color:${b.fill};border-radius:12px 12px 0 0;">&nbsp;</td></tr>
 <tr><td style="padding:28px 32px 8px 32px;${cell(TEXT, 16)}">${head(b)}</td></tr>
 <tr><td style="padding:16px 32px 8px 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-<tr><td style="padding:0 0 16px 0;${cell(TEXT, 22, 'font-weight:700;line-height:1.3;')}">${esc(i.heading)}</td></tr>${paras}${button}
+<tr><td style="padding:0 0 16px 0;${cell(TEXT, 22, 'font-weight:700;line-height:1.3;')}">${esc(i.heading)}</td></tr>${paras}${sections}${button}
 </table></td></tr>
 <tr><td style="padding:8px 32px 28px 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="border-top:1px solid #e3e5e9;padding:16px 0 0 0;${cell(MUTED, 13)}">${esc(i.reason)}</td></tr>${footLinks}</table></td></tr>
 </table></td></tr></table></body></html>`;
   const text = [
     i.heading, '', ...i.paragraphs.flatMap((p) => [p, '']),
+    ...(i.sections ?? []).flatMap((s) => [s.heading, ...s.items.map((it) => `- ${it}`), '']),
     ...(i.button && btnUrl ? [`${i.button.label}: ${btnUrl}`, ''] : []),
     '-- ', i.reason,
     ...links.map((l) => `${l.label}: ${l.url}`),

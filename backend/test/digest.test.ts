@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { encrypt } from '../src/crypto.js';
-import { digestTick, resetDigestState, slotFor, weekKey } from '../src/digest.js';
+import type { Config } from '../src/config.js';
+import { decrypt, encrypt } from '../src/crypto.js';
+import { digestMailParams, digestTick, resetDigestState, sendDigest, slotFor, weekKey, type DigestData } from '../src/digest.js';
+import { m } from '../src/i18n.js';
+import type { UserRow } from '../src/types.js';
 import { cfg, ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
 import { keyFromBase64 } from '../src/crypto.js';
 
@@ -60,7 +63,7 @@ beforeEach(async () => {
   hidden.clear();
   nextUp = [];
   created = [movie('a', 'Neuer Film'), movie('b', 'Alter Film', old())];
-  await env.pool.query('delete from digests; delete from notifications; delete from user_prefs; delete from series_follows; delete from app_settings; delete from recommendations; delete from ratings');
+  await env.pool.query('delete from digests; delete from notifications; delete from user_prefs; delete from series_follows; delete from app_settings; delete from recommendations; delete from ratings; delete from mail_outbox');
 });
 
 describe('schedule helpers', () => {
@@ -280,6 +283,7 @@ describe('admin settings', () => {
       await setPrefs(adminId, { ntfyTopic: 'testing' });
       const a = (await call(admin, 'POST', '/api/admin/digest/test')).json();
       expect(a.sent).toBe(true);
+      expect(a.mailed).toBe(false); // mail not set up
       expect(a.data).not.toBeNull();
       expect(sent.map((s) => s.url)).toContain('https://ntfy.example.com/testing');
       expect((await env.pool.query('select count(*) n from digests')).rows[0].n).toBe('0');
@@ -287,6 +291,121 @@ describe('admin settings', () => {
       const b = (await call(admin, 'POST', '/api/admin/digest/test')).json();
       expect(b.sent).toBe(true); // unique dedupe per test
     });
+
+    it('admin test digest mails when the admin opted in', async () => {
+      const before = env.ctx.cfg;
+      env.ctx.cfg = { ...before, ...MAIL_CFG };
+      try {
+        expect((await call(admin, 'POST', '/api/admin/digest/test')).json()).toMatchObject({ sent: true, mailed: false });
+        expect(await digestMails()).toEqual([]);
+        vi.setSystemTime(now.getTime() + 1000);
+        await setPrefs(adminId, { mail: { digest: true } });
+        const a = (await call(admin, 'POST', '/api/admin/digest/test')).json();
+        expect(a).toMatchObject({ sent: true, mailed: true });
+        expect(a.data.newMovieCount).toBe(1);
+        const rows = await digestMails();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.user_id).toBe(adminId);
+        expect(rows[0]!.dedupe.startsWith(`digest-test:${adminId}:`)).toBe(true);
+        expect((await env.pool.query('select count(*) n from digests')).rows[0].n).toBe('0');
+      } finally {
+        env.ctx.cfg = before;
+      }
+    });
+  });
+});
+
+// Mail stage C, Task 2: the weekly recap as an opt-in mail, independent of the in-app digest (weeklyDigest).
+const MAIL_CFG: Partial<Config> = { MAIL_SMTP_HOST: 'mail.example.com', MAIL_FROM: 'kino@friend.example.com', PUBLIC_URL: 'https://friend.example.com' };
+const digestMails = async () => (await env.pool.query<{ kind: string; dedupe: string; user_id: string; params_enc: string }>(
+  "select kind, dedupe, user_id, params_enc from mail_outbox where kind = 'digest' order by created_at")).rows;
+
+describe('digest mail', () => {
+  let before: Config;
+  const week = weekKey(slotFor(now, SLOT_DAY, SLOT_HOUR));
+  const window = () => ({ key: week, since: new Date(slotFor(now, SLOT_DAY, SLOT_HOUR).getTime() - 7 * 24 * 3600_000), until: now });
+  const userRow = async (id: string) => (await env.pool.query<UserRow>('select * from users where id = $1', [id])).rows[0]!;
+  beforeEach(() => { before = env.ctx.cfg; env.ctx.cfg = { ...before, ...MAIL_CFG }; });
+  afterEach(() => { env.ctx.cfg = before; });
+
+  it('nobody is mailed by default', async () => {
+    expect(await digestTick(env.ctx, now)).toBe(2);
+    expect(await digestNotes()).toHaveLength(2);
+    expect(await digestMails()).toEqual([]);
+  });
+
+  it('opted in: one mail per week', async () => {
+    await setPrefs(adminId, { mail: { digest: true } });
+    expect(await digestTick(env.ctx, now)).toBe(2);
+    const rows = await digestMails();
+    expect(rows.map((r) => [r.kind, r.dedupe, r.user_id])).toEqual([['digest', `digest:${adminId}:${week}`, adminId]]);
+    // the queued params name the titles, nothing else
+    const params = JSON.parse(decrypt(env.ctx.encKey, rows[0]!.params_enc));
+    expect(params.movies).toEqual({ names: ['Neuer Film'], total: 1 });
+    expect(JSON.stringify(params)).not.toMatch(/a{32}/);
+    // in-app as before
+    expect(await digestNotes(adminId)).toHaveLength(1);
+    expect(await digestTick(env.ctx, new Date(now.getTime() + 3600_000))).toBe(0);
+    await env.pool.query('delete from digests'); // a lost claim: the outbox key still holds
+    await digestTick(env.ctx, now);
+    expect(await digestMails()).toHaveLength(1);
+  });
+
+  it('mail only when weeklyDigest is off', async () => {
+    await setPrefs(adminId, { weeklyDigest: false, mail: { digest: true } });
+    await setPrefs(friendId, { weeklyDigest: false });
+    expect(await digestTick(env.ctx, now)).toBe(1); // the admin, by mail; the friend has both off
+    expect(await digestNotes(adminId)).toHaveLength(0);
+    expect(await digestNotes(friendId)).toHaveLength(0);
+    expect((await digestMails()).map((r) => r.user_id)).toEqual([adminId]);
+    // the week's digest is stored all the same: the mail's button leads to it
+    expect((await env.pool.query('select user_id from digests')).rows.map((r) => r.user_id)).toEqual([adminId]);
+    await env.pool.query('delete from digests; delete from mail_outbox');
+    expect(await sendDigest(env.ctx, await userRow(adminId), window())).toMatchObject({ sent: false, mailed: true });
+    expect(await digestNotes(adminId)).toHaveLength(0);
+    expect(await digestMails()).toHaveLength(1);
+  });
+
+  it('in-app only when the mail switch is off', async () => {
+    const r = await sendDigest(env.ctx, await userRow(adminId), window());
+    expect(r).toMatchObject({ sent: true, mailed: false });
+    expect(r.data).not.toBeNull();
+    expect(await digestNotes(adminId)).toHaveLength(1);
+    expect(await digestMails()).toEqual([]);
+    // switched off explicitly: the same
+    await setPrefs(friendId, { mail: { digest: false } });
+    expect(await sendDigest(env.ctx, await userRow(friendId), window())).toMatchObject({ sent: true, mailed: false });
+  });
+
+  it('digestMailParams caps and cuts', () => {
+    const long = (s: string) => `${s} ${'Nordlicht '.repeat(30)}`; // 300+ characters
+    const d: DigestData = {
+      since: '2026-11-08T17:00:00.000Z', until: '2026-11-15T17:30:00.000Z',
+      newMovies: Array.from({ length: 30 }, (_, i) => ({ id: String(i), name: long(`Film ${i}`) })),
+      newMovieCount: 30,
+      newEpisodes: Array.from({ length: 25 }, (_, i) => ({ seriesId: String(i), seriesName: long(`Serie ${i}`), count: i + 1, followed: i >= 20, episodes: [] })),
+      newEpisodeCount: 325,
+      available: Array.from({ length: 25 }, (_, i) => ({ title: long(`Wunsch ${i}`), link: null, itemId: null })),
+      recommendations: Array.from({ length: 8 }, (_, i) => ({ itemId: String(i), name: long(`Tipp ${i}`), from: long('Anna Beispiel'), note: null, kind: 'recommended' as const })),
+    };
+    const p = digestMailParams(d);
+    expect(p.movies.names).toHaveLength(12);
+    expect(p.movies.total).toBe(30);
+    expect(p.series).toHaveLength(20);
+    expect(p.series.slice(0, 5).map((x) => x.followed)).toEqual([true, true, true, true, true]);
+    expect(p.series[0]).toMatchObject({ count: 21, followed: true });
+    expect(p.series[5]).toMatchObject({ count: 1, followed: false });
+    expect(p.wishes).toHaveLength(20);
+    expect(p.recs).toHaveLength(5);
+    const names = [...p.movies.names, ...p.series.map((x) => x.name), ...p.wishes, ...p.recs.flatMap((x) => [x.name, x.from])];
+    for (const n of names) expect(n.length).toBeLessThanOrEqual(120);
+    expect(p.movies.names[0]!.endsWith('…')).toBe(true);
+    expect(p.movies.names[0]!.startsWith('Film 0 Nordlicht')).toBe(true);
+    expect(p).toMatchObject({ since: d.since, until: d.until, headline: m('digest.titleWith', { parts: { join: [m('digest.movies', { n: 30 }), m('digest.episodes', { n: 325 })], sep: ', ' } }) });
+    // a short name stays as it is, a surrogate pair is never cut in half
+    const short = digestMailParams({ ...d, newMovies: [{ id: 'x', name: 'Nordlicht' }, { id: 'y', name: `${'a'.repeat(118)}🎬🎬` }], newMovieCount: 2 });
+    expect(short.movies.names[0]).toBe('Nordlicht');
+    expect(short.movies.names[1]).toBe(`${'a'.repeat(118)}…`);
   });
 });
 
