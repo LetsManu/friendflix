@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync, readdirSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { hasKey, setLocale } from '#lib/i18n';
+import { hasKey, setLocale, trDynamic } from '#lib/i18n';
 import de from '#lib/i18n/locales/de/index';
 import en from '#lib/i18n/locales/en/index';
 import es from '#lib/i18n/locales/es/index';
@@ -21,6 +21,23 @@ const counts = (o: Partial<Record<CheckStatus, number>>): Record<CheckStatus, nu
 const ln = (o: Partial<CheckLine> & Pick<CheckLine, 'id' | 'status'>): CheckLine => ({ group: o.id.split('.')[0] as CheckLine['group'], runs: 'server', ...o });
 
 describe('Systemcheck texts', () => {
+  it('core.mail comes right after core.env', () => {
+    expect(CHECK_IDS.indexOf('core.mail')).toBe(CHECK_IDS.indexOf('core.env') + 1);
+  });
+
+  it('the mail line: its title, a last failure names the code sentence and the SMTP status', () => {
+    const t = lineText(ln({ id: 'core.mail', status: 'warning', cause: 'mail_last_failed', fix: 'mail_last_failed', params: { code: 'recipient_refused', smtp: 550 } }));
+    expect(t.label).toBe('E-Mail-Versand');
+    expect(t.cause).toContain(trDynamic('settings.mail.code.recipient_refused'));
+    expect(t.cause).toContain('SMTP 550');
+    expect(t.cause).not.toContain('{');
+    // without a status, and with a code of another form: the generic sentence, never the raw code
+    const bare = lineText(ln({ id: 'core.mail', status: 'warning', cause: 'mail_last_failed', fix: 'mail_last_failed', params: { code: 'Weird Code' } }));
+    expect(bare.cause).toContain(trDynamic('settings.mail.code.unexpected'));
+    expect(bare.cause).not.toContain('SMTP');
+    expect(lineText(ln({ id: 'core.mail', status: 'problem', cause: 'mail_no_user', fix: 'mail_no_user' })).fix).toContain('MAIL_SMTP_USER');
+  });
+
   it('lineText of a known cause and fix', () => {
     const t = lineText(ln({ id: 'core.database', status: 'problem', cause: 'db_down', fix: 'db_down' }));
     expect(t.label).toBe('Datenbank');
@@ -237,7 +254,7 @@ describe('Systemcheck lines', () => {
 
   it('CHECK_IDS matches the backend catalogue (literal copy of backend/src/syscheck/types.ts)', () => {
     expect([...CHECK_IDS]).toEqual([
-      'core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env',
+      'core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env', 'core.mail',
       'signin.oidc', 'signin.authentik', 'signin.flows', 'signin.issuerHost', 'signin.passkeys', 'signin.mail',
       'media.server', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder',
       'livetv.container', 'livetv.encoder', 'livetv.sources', 'livetv.guides',

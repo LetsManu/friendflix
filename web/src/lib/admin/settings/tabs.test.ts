@@ -6,7 +6,7 @@ import { highlightSetting } from './highlight';
 import { SETTINGS_TABS, TAB_GROUPS, dirtyTabs, tabHref, tabOf, tabOfGroup, tabOfKey } from './tabs';
 
 /** every registry group (backend/src/settings/registry.ts SettingGroup) */
-const GROUPS: SettingGroup[] = ['general', 'signin', 'media', 'requests', 'notifications', 'push', 'sources', 'downloads', 'playback', 'livetv',
+const GROUPS: SettingGroup[] = ['general', 'signin', 'media', 'requests', 'notifications', 'push', 'mail', 'sources', 'downloads', 'playback', 'livetv',
   'recommendations', 'updates', 'health', 'sessions'];
 const row = (key: string): SettingView => ({ key, kind: 'string', source: 'default', value: null, set: false, apply: 'live', restartPending: false, invalid: false, envNames: [key], updatedAt: null });
 const view = (spec: Record<string, string[]>): SettingsGroupView[] => Object.entries(spec).map(([id, keys]) => ({ id: id as SettingsGroupView['id'], items: keys.map(row) }));
@@ -27,6 +27,11 @@ describe('settings tabs', () => {
       expect(tabOfGroup(g)).toBe(g === 'livetv' ? 'livetv' : tabs[0]);
     }
     expect(TAB_GROUPS.media).toEqual(['media', 'requests', 'sources', 'recommendations']);
+  });
+
+  it('mail is on the notifications tab', () => {
+    expect(tabOfGroup('mail')).toBe('notifications');
+    expect(TAB_GROUPS.notifications).toEqual(['notifications', 'push', 'mail']);
   });
 
   it("tabOf('nope') → general; a known tab is kept", () => {

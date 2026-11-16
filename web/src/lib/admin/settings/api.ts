@@ -8,7 +8,7 @@
 import { api, ApiError } from '#lib/api';
 
 export type SettingKind = 'string' | 'url' | 'secret' | 'int' | 'number' | 'bool' | 'enum' | 'cidrList' | 'json';
-export type SettingGroup = 'general' | 'signin' | 'media' | 'requests' | 'notifications' | 'push' | 'sources'
+export type SettingGroup = 'general' | 'signin' | 'media' | 'requests' | 'notifications' | 'push' | 'mail' | 'sources'
   | 'downloads' | 'playback' | 'livetv' | 'recommendations' | 'updates' | 'health' | 'sessions';
 export type Source = 'env' | 'db' | 'bootstrap' | 'default' | 'unset';
 export type ProbeCode = 'ok' | 'unreachable' | 'timeout' | 'unauthorized' | 'invalid' | 'not_admin' | 'issuer_mismatch' | 'wizard_pending' | 'warning';
@@ -41,7 +41,7 @@ export interface SettingsView { rev: number; pendingRestart: string[]; groups: S
 export interface ProbeResult { ok: boolean; code: ProbeCode; detail?: string }
 
 /** The groups whose settings have a live check (registry `probe`): they get a "Test" button. */
-export const PROBE_GROUPS: ReadonlySet<SettingGroup> = new Set(['general', 'signin', 'media', 'requests', 'sources', 'updates']);
+export const PROBE_GROUPS: ReadonlySet<SettingGroup> = new Set(['general', 'signin', 'media', 'requests', 'mail', 'sources', 'updates']);
 /** Probe failures that "Save anyway" (force) may override; every other failure blocks (backend probes.ts HARD). */
 export const SOFT_PROBE_CODES: ReadonlySet<ProbeCode> = new Set(['unreachable', 'timeout']);
 

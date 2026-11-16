@@ -17,7 +17,7 @@ export const TAB_GROUPS: Record<SettingsTab, readonly SettingGroup[]> = {
   media: ['media', 'requests', 'sources', 'recommendations'],
   playback: ['playback', 'downloads'],
   updates: ['updates'],
-  notifications: ['notifications', 'push'],
+  notifications: ['notifications', 'push', 'mail'],
 };
 
 const TAB_OF = new Map<string, SettingsTab>(SETTINGS_TABS.flatMap((t) => TAB_GROUPS[t].map((g) => [g, t] as const)));

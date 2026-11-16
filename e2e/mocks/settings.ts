@@ -30,6 +30,22 @@ export interface SettingsMock {
   imports: Array<string[] | 'all'>;
   /** whether the livetv group is listed (the backend lists it only while Live TV is installed) */
   livetvInstalled: boolean;
+  /** Admin → E-Mail (backend/src/mail/routes.ts): the status line and the test mail */
+  mail: MailMock;
+}
+
+/** GET /api/admin/mail/status and POST /api/admin/mail/test (the real answers carry codes only; extra fields here are canaries) */
+export interface MailMock {
+  status: {
+    configured: boolean; queued: number; failed24h: number; lastSentAt: string | null;
+    lastFailure: ({ kind: string; code: string; smtp: number | null; at: string } & Record<string, unknown>) | null;
+    transport: { code: string; at: string } | null;
+  };
+  /** the answer of the next test mail (status and body) */
+  test: { status: number; body: unknown };
+  /** how often each route was called */
+  statusCalls: number;
+  tests: number;
 }
 
 const UPDATED = '2026-10-01T09:30:00Z';
@@ -83,6 +99,15 @@ const GROUPS: Array<[string, Array<[string, Spec]>]> = [
     ['VAPID_PUBLIC_KEY', { kind: 'string', source: 'unset', generate: 'vapidPair' }],
     ['VAPID_PRIVATE_KEY', { kind: 'secret', source: 'unset', set: false, generate: 'vapidPair' }],
     ['VAPID_SUBJECT', { kind: 'string', source: 'unset' }],
+  ]],
+  // mail stage A: not configured by default (no server, no sender); the password row carries the canary the UI must ignore
+  ['mail', [
+    ['MAIL_SMTP_HOST', { kind: 'string', source: 'unset' }],
+    ['MAIL_SMTP_PORT', { kind: 'int', source: 'default', value: 587, min: 1, max: 65535 }],
+    ['MAIL_SMTP_TLS', { kind: 'enum', source: 'default', value: 'starttls', options: ['starttls', 'tls', 'none'] }],
+    ['MAIL_SMTP_USER', { kind: 'string', source: 'unset' }],
+    ['MAIL_SMTP_PASSWORD', { kind: 'secret', source: 'unset', set: false, leak: LEAK }],
+    ['MAIL_FROM', { kind: 'string', source: 'unset' }],
   ]],
   ['sources', [
     ['TMDB_API_KEY', { kind: 'secret', source: 'db', set: true, last4: 'abcd', leak: LEAK }],
@@ -191,7 +216,29 @@ export function settingsState(kind: 'jellyfin' | 'plex' = 'jellyfin'): SettingsM
       key, kind: kind_, source, value: key === 'MEDIA_SERVER' ? kind : value, set: value !== null || source === 'bootstrap', apply: 'restart', restartPending: false, invalid: false, envNames: env(key), updatedAt: null,
     })),
   });
-  return { rev: 7, groups, reauthRequired: false, probeFail: null, saveErrors: null, testResult: { ok: true, code: 'ok' }, puts: [], tests: [], imports: [], livetvInstalled: false };
+  return { rev: 7, groups, reauthRequired: false, probeFail: null, saveErrors: null, testResult: { ok: true, code: 'ok' }, puts: [], tests: [], imports: [], livetvInstalled: false,
+    mail: {
+      status: { configured: false, queued: 0, failed24h: 0, lastSentAt: null, lastFailure: null, transport: null },
+      test: { status: 400, body: { error: 'mail_not_configured' } }, statusCalls: 0, tests: 0,
+    },
+  };
+}
+
+/** a configured mail server (rows saved, a mail sent this morning); the test answers `sent` */
+export function mailConfigured(st: SettingsMock): void {
+  const rows = st.groups.find((g) => g.id === 'mail')!.items;
+  const set = (key: string, value: unknown) => Object.assign(rows.find((i) => i.key === key)!, { source: 'db', value, set: true, updatedAt: UPDATED });
+  set('MAIL_SMTP_HOST', 'mail.example.com');
+  set('MAIL_FROM', 'kino@friend.example.com');
+  Object.assign(rows.find((i) => i.key === 'MAIL_SMTP_PASSWORD')!, { source: 'db', set: true, updatedAt: UPDATED });
+  st.mail.status = { ...st.mail.status, configured: true, lastSentAt: '2026-11-16T08:15:00Z' };
+  st.mail.test = { status: 200, body: { state: 'sent' } };
+}
+
+export function mailRoute(st: SettingsMock, m: string, p: string, J: Reply): Promise<void> | null {
+  if (p === '/api/admin/mail/status' && m === 'GET') { st.mail.statusCalls++; return J(st.mail.status); }
+  if (p === '/api/admin/mail/test' && m === 'POST') { st.mail.tests++; return J(st.mail.test.body, st.mail.test.status); }
+  return null;
 }
 
 const itemsOf = (st: SettingsMock) => st.groups.filter((g) => g.id !== 'server').flatMap((g) => g.items.map((i) => ({ group: g.id, item: i })));

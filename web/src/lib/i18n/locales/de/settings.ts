@@ -5,7 +5,7 @@ export default {
   intro: 'Hier stellst du FriendFlix ein, ohne die .env zu bearbeiten. Werte aus der Umgebung haben Vorrang und lassen sich hier nur übernehmen.',
   loadFailed: 'Einstellungen konnten nicht geladen werden.',
   groups: {
-    general: 'Allgemein', signin: 'Anmeldung', media: 'Mediaserver', requests: 'Anfragen', notifications: 'Benachrichtigungen', push: 'Push-Mitteilungen',
+    general: 'Allgemein', signin: 'Anmeldung', media: 'Mediaserver', requests: 'Anfragen', notifications: 'Benachrichtigungen', push: 'Push-Mitteilungen', mail: 'E-Mail',
     sources: 'Datenquellen', downloads: 'Downloads', playback: 'Wiedergabe', livetv: 'Live-TV', recommendations: 'Empfehlungen', updates: 'Updates', health: 'Systemzustand', sessions: 'Sitzungen', server: 'Server',
   },
   /** a group's note under its title (Admin → Settings) */
@@ -63,6 +63,9 @@ export default {
     not_set: 'Noch nichts eingetragen.',
     budget: 'Das Tageslimit ist erreicht; morgen erneut testen.',
     rate_limited: 'Zu viele Anfragen; später erneut testen.',
+    insecure_auth: 'Ohne Verschlüsselung sendet {app} kein Passwort. Wähle STARTTLS oder TLS, oder lass Benutzername und Passwort leer.',
+    tls: 'Die verschlüsselte Verbindung kam nicht zustande (Zertifikat ungültig oder kein STARTTLS).',
+    no_user: 'Ein Passwort ohne Benutzername wird nicht gesendet. Trag den Benutzernamen ein oder lösch das Passwort.',
   },
   errors: {
     invalid: 'Ungültiger Wert.',
@@ -81,6 +84,7 @@ export default {
     required: 'Wird gebraucht und kann nicht geleert werden.',
     warn_above_critical: 'Die Warnstufe muss unter der kritischen Stufe liegen.',
     redacted: 'Die Adresse enthält noch den Platzhalter „redacted“ statt des Zugangstokens. Gib das Token erneut ein oder lass das Feld unverändert.',
+    invalid_email: 'Keine gültige E-Mail-Adresse.',
   },
   reauth: {
     resumed: 'Du hast dich erneut angemeldet. Deine Änderungen sind wieder eingetragen.',
@@ -104,7 +108,7 @@ export default {
     PLEX_URL: { invalid_url: 'Bitte nur die Serveradresse eingeben: mit http:// oder https://, ohne Benutzername und Passwort und ohne etwas nach ? oder #. Der Token gehört in das Feld Plex-Token.' },
   },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
-  options: { auto: 'Automatisch', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (eigenes Geschmacksmodell)', shadow: 'Shadow (v2 neben v1)' }, UPDATE_CHANNEL: { stable: 'Stabil', nightly: 'Nightly', pinned: 'Feste Version' }, AUTO_UPDATE: { off: 'Aus', 'nightly-window': 'Nachtfenster' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatisch', off: 'Aus' }, LIVETV_ENCODER: { auto: 'Automatisch', qsv: 'Intel Quick Sync (QSV)', vaapi: 'VA-API', nvenc: 'NVIDIA NVENC', software: 'Software (Prozessor)' }, LIVETV_RECORD_STORAGE: { ff: 'FriendFlix-Ordner', library: 'Jellyfin-Bibliothek', both: 'Beides' } },
+  options: { auto: 'Automatisch', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (eigenes Geschmacksmodell)', shadow: 'Shadow (v2 neben v1)' }, UPDATE_CHANNEL: { stable: 'Stabil', nightly: 'Nightly', pinned: 'Feste Version' }, AUTO_UPDATE: { off: 'Aus', 'nightly-window': 'Nachtfenster' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatisch', off: 'Aus' }, LIVETV_ENCODER: { auto: 'Automatisch', qsv: 'Intel Quick Sync (QSV)', vaapi: 'VA-API', nvenc: 'NVIDIA NVENC', software: 'Software (Prozessor)' }, LIVETV_RECORD_STORAGE: { ff: 'FriendFlix-Ordner', library: 'Jellyfin-Bibliothek', both: 'Beides' }, MAIL_SMTP_TLS: { starttls: 'STARTTLS', tls: 'TLS', none: 'Keine' } },
   keys: {
     PUBLIC_URL: { label: 'Öffentliche Adresse', help: 'Unter dieser Adresse erreichen alle FriendFlix, z. B. https://friend.example.com. Links, Anmeldung und Streaming bauen darauf auf.' },
     WEBHOOK_SECRET: { label: 'Webhook-Geheimnis', help: 'Gemeinsames Geheimnis für die Webhooks von Mediaserver und Anfragen-Dienst.' },
@@ -140,6 +144,12 @@ export default {
     VAPID_PUBLIC_KEY: { label: 'Öffentlicher Push-Schlüssel', help: 'Öffentlicher VAPID-Schlüssel für Push-Mitteilungen im Browser. Wird mit dem privaten Schlüssel als Paar erzeugt.' },
     VAPID_PRIVATE_KEY: { label: 'Privater Push-Schlüssel', help: 'Privater VAPID-Schlüssel. Verlässt den Server nie.' },
     VAPID_SUBJECT: { label: 'Kontakt für Push-Dienste', help: 'mailto:- oder https:-Kontakt für die Push-Dienste der Browser. Leer = öffentliche Adresse.' },
+    MAIL_SMTP_HOST: { label: 'SMTP-Server', help: 'Hostname oder IP-Adresse des Mailservers deines Anbieters, ohne Port, z. B. mail.example.com.' },
+    MAIL_SMTP_PORT: { label: 'Port', help: 'Meist 587 mit STARTTLS oder 465 mit TLS.' },
+    MAIL_SMTP_TLS: { label: 'Verschlüsselung', help: 'Ohne Verschlüsselung nur für einen Mailserver im Heimnetz, der keine Anmeldung braucht.' },
+    MAIL_SMTP_USER: { label: 'Benutzername' },
+    MAIL_SMTP_PASSWORD: { label: 'Passwort', help: 'Bei vielen Anbietern ein eigenes App-Passwort.' },
+    MAIL_FROM: { label: 'Absenderadresse', help: 'Von dieser Adresse sendet {app}. Als Name steht der Name aus Branding davor.' },
     TMDB_API_KEY: { label: 'TMDB-API-Schlüssel', help: 'Optional: Besetzung, Bilder und Infos von TMDB auf den Detailseiten.' },
     OMDB_API_KEY: { label: 'OMDb-API-Schlüssel', help: 'Optional: Bewertungen von OMDb auf den Detailseiten.' },
     DOWNLOADS_ENABLED: { label: 'Downloads erlauben', help: 'Titel zum Offline-Ansehen herunterladen (je nach Rolle).' },
@@ -201,4 +211,39 @@ export default {
   /** leaving Admin → Einstellungen (not switching its tabs) with unsaved edits */
   leave: { title: 'Änderungen verwerfen?', body: 'Es gibt ungespeicherte Einstellungen. Sie gehen verloren, wenn du die Seite verlässt.', confirm: 'Verwerfen' },
   livetvMoved: 'Live-TV-Einstellungen findest du jetzt unter Live-TV.',
+  /** Admin → Einstellungen → E-Mail: the status line, Testmail senden and its result; `code` names a delivery or transport code */
+  mail: {
+    test: 'Testmail senden',
+    testHint: 'Geht an deine eigene Adresse.',
+    sent: 'Testmail gesendet. Schau in dein Postfach.',
+    queued: 'Noch nicht gesendet ({code}); {app} versucht es weiter.',
+    queuedLater: 'Noch nicht gesendet; {app} versucht es gleich weiter.',
+    failed: 'Nicht gesendet: {reason}',
+    notConfigured: 'Trag Server und Absenderadresse ein und speichere.',
+    noAddress: 'Dein Konto hat keine E-Mail-Adresse.',
+    rateLimited: 'Zu viele Testmails. Warte ein paar Minuten.',
+    forbidden: 'Testmails können nur Admins senden.',
+    testFailed: 'Die Testmail ließ sich nicht senden. Versuch es gleich noch einmal.',
+    lastSent: 'Zuletzt gesendet: {when}',
+    neverSent: 'Noch keine E-Mail gesendet.',
+    lastFailure: 'Letzter Fehler: {reason} ({when})',
+    transport: 'Verbindung gestört: {reason} ({when})',
+    queuedCount: { one: '{n} E-Mail wartet', other: '{n} E-Mails warten' },
+    withSmtp: '{reason} (SMTP {smtp})',
+    code: {
+      unreachable: 'Mailserver nicht erreichbar',
+      timeout: 'Mailserver antwortet nicht (Zeitüberschreitung)',
+      tls: 'Verschlüsselte Verbindung kam nicht zustande',
+      auth: 'Benutzername oder Passwort abgelehnt',
+      sender_refused: 'Absenderadresse abgelehnt',
+      recipient_refused: 'Empfängeradresse abgelehnt',
+      message_refused: 'Nachricht abgelehnt',
+      expired: 'Nach 72 Stunden aufgegeben',
+      unexpected: 'Unerwarteter Fehler',
+      rate_limited: 'Versandgrenze erreicht, es geht später weiter',
+      unreadable: 'Gespeicherte Empfängeradresse nicht lesbar',
+      not_configured: 'Server oder Absenderadresse fehlt',
+      insecure_auth: 'Ohne Verschlüsselung wird kein Passwort gesendet',
+    },
+  },
 } as const;
