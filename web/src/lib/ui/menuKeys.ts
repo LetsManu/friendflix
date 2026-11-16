@@ -32,6 +32,19 @@ export function moveIndex(move: MenuMove, i: number, n: number): number {
   return move === 'next' ? (i + 1) % n : (i - 1 + n) % n;
 }
 
+const NO_ARROW_INPUTS = ['checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file', 'image'];
+
+/** true when the focused element uses the arrow / Home / End keys itself (a text field, a select, a range or number input, a
+ *  slider): a menu around it leaves those keys alone */
+export function ownsArrowKeys(el: Element | null | undefined): boolean {
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag === 'INPUT') return !NO_ARROW_INPUTS.includes((el as HTMLInputElement).type);
+  if ((el as HTMLElement).isContentEditable) return true;
+  return el.getAttribute('role') === 'slider';
+}
+
 export interface MenuKeysOpts { close: () => void; trigger?: HTMLElement | null }
 
 /** the enabled items of a menu, in order */
@@ -52,7 +65,7 @@ export function menuKeys(node: HTMLElement, opts: MenuKeysOpts) {
       return;
     }
     const move = menuMove(e.key);
-    if (!move) return;
+    if (!move || ownsArrowKeys(document.activeElement)) return;
     const items = menuItems(node);
     const j = moveIndex(move, items.indexOf(document.activeElement as HTMLElement), items.length);
     if (j < 0) return;

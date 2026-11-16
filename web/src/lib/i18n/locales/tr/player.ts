@@ -92,7 +92,7 @@ const tr: Translation<typeof de> = {
   subs: {
     title: 'Altyazı',
     search: 'Altyazı ara',
-    searchMenu: 'Altyazı ara …',
+    searchMenu: 'Altyazı ara…',
     searchButton: 'Ara',
     language: 'Dil',
     notFound: 'Altyazı bulunamadı.',

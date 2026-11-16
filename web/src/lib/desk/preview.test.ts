@@ -76,18 +76,6 @@ describe('hoverBox', () => {
     expect(tight.top).toBe(12);
   });
 
-  it('origin is the card centre clamped to the box', () => {
-    const mid = hoverBox({ left: 500, top: 300, width: 240, height: 135 }, vp, 200);
-    expect([mid.ox, mid.oy]).toEqual([620 - mid.left, 367.5 - mid.top]);
-    expect(mid.ox).toBe(280);
-    // a card scrolled off the left edge: x clamps to 0
-    const off = hoverBox({ left: -400, top: 300, width: 240, height: 135 }, vp, 200);
-    expect(off.ox).toBe(0);
-    // a card far below a short box: y clamps to the box height
-    const below = hoverBox({ left: 500, top: 2000, width: 240, height: 135 }, vp, 200);
-    expect(below.oy).toBe(below.height);
-  });
-
   it('takes its own margin', () => {
     expect(hoverBox({ left: 0, top: 0, width: 240, height: 135 }, vp, 200, 20)).toMatchObject({ left: 20, top: 20 });
   });

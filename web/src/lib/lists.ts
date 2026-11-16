@@ -29,6 +29,38 @@ export const loadList = (id: string) => api<ListDetail>(`/api/lists/${id}`);
 export const createList = (name: string, description?: string, look?: { themed: boolean; emoji?: string; coverColor?: string }) =>
   api<{ id: string }>('/api/lists', { method: 'POST', body: { name, description: description || undefined, ...look } });
 export const itemLists = (itemId: string) => api<{ lists: PickerList[] }>(`/api/items/${itemId}/lists`).then((r) => r.lists);
+
+/** how long the list picker keeps a title's lists (ListMenu), and a failed load (no new request on every hover meanwhile) */
+export const PICKER_TTL_MS = 30_000, PICKER_FAIL_TTL_MS = 5_000;
+type PickerEntry = { at: number; done: boolean; failed: boolean; lists: PickerList[] | null; p: Promise<PickerList[]> };
+/**
+ * The list picker's lists per title, kept a short while: ListMenu loads them on its button's pointerenter / focus, so the
+ * picker opens complete. `get` shares a running request and a fresh result (or a fresh failure: the promise rejects again);
+ * `fresh` loads anew (after a change). `now` gives the settled result without waiting (null: not in, or too old).
+ */
+export function pickerCache(load: (itemId: string) => Promise<PickerList[]>, clock: () => number = Date.now, max = 200) {
+  const m = new Map<string, PickerEntry>();
+  const live = (e: PickerEntry | undefined): e is PickerEntry => !!e && (!e.done || clock() - e.at < (e.failed ? PICKER_FAIL_TTL_MS : PICKER_TTL_MS));
+  return {
+    get(itemId: string, fresh = false): Promise<PickerList[]> {
+      const e = m.get(itemId);
+      if (!fresh && live(e)) return e.p;
+      const n: PickerEntry = { at: clock(), done: false, failed: false, lists: null, p: load(itemId) };
+      n.p.then((l) => { n.done = true; n.lists = l; n.at = clock(); }, () => { n.done = true; n.failed = true; n.at = clock(); });
+      m.delete(itemId);
+      m.set(itemId, n);
+      if (m.size > max) m.delete(m.keys().next().value!); // the oldest
+      return n.p;
+    },
+    now(itemId: string): { lists: PickerList[] } | { failed: true } | null {
+      const e = m.get(itemId);
+      if (!live(e) || !e.done) return null;
+      return e.failed ? { failed: true } : { lists: e.lists! };
+    },
+    forget(itemId: string) { m.delete(itemId); },
+  };
+}
+export const pickerLists = pickerCache(itemLists);
 export const addToList = (listId: string, itemId: string, note?: string) => api(`/api/lists/${listId}/items`, { method: 'POST', body: { itemId, note: note || undefined } });
 export const removeFromList = (listId: string, itemId: string) => api(`/api/lists/${listId}/items/${itemId}`, { method: 'DELETE' });
 export const setMember = (listId: string, userId: string, role: 'editor' | 'viewer') => api(`/api/lists/${listId}/members/${userId}`, { method: 'PUT', body: { role } });

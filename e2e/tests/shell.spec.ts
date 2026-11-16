@@ -101,9 +101,9 @@ test.describe('app shell (desktop)', () => {
     await page.goto('/new');
     await page.getByRole('button', { name: /Profilmenü/ }).click();
     const menu = page.getByRole('menu', { name: 'Profilmenü' });
-    await expect(menu.getByRole('menuitem', { name: 'Anna' })).toBeVisible();
-    await expect(menu.getByRole('menuitem', { name: 'Tester' })).toHaveCount(0); // the active profile is not offered
-    await menu.getByRole('menuitem', { name: 'Ben' }).click();
+    await expect(menu.getByRole('menuitemradio', { name: 'Anna' })).toHaveAttribute('aria-checked', 'false');
+    await expect(menu.getByRole('menuitemradio', { name: 'Tester' })).toHaveAttribute('aria-checked', 'true'); // the active profile, checked
+    await menu.getByRole('menuitemradio', { name: 'Ben' }).click();
     await expect(page).toHaveURL(/\/new$/); // picked right away, back where we were
   });
 });

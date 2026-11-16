@@ -25,17 +25,18 @@
   import { HOVER_MARGIN, INFO_UNDERLAY, hoverBox, hoverWidth, type HoverBox } from '#lib/desk/preview';
   import { cachedTone, toneFor, toneVars, type Tone } from '#lib/glass/tone';
   import { sheen } from '#lib/glass/pointer';
-  import { fxMode, REDUCED_MS } from '#lib/glass/fx';
+  import { fxMode, REDUCED_MS, REVEAL_IN_MS, REVEAL_OUT_MS, revealKeyframes, revealShift } from '#lib/glass/fx';
 
   /**
    * Desktop hover card (glass spec §3): a portal on <body>, one frosted card of the same size on every card. On top a 16:9 picture
    * (the trailer or backdrop with the title, mute and progress) centred on the card; below Play, My list, rating, more, ⌄ (detail),
    * the meta line with the match score, the episode line, a three-line synopsis and the engine's reason. It is measured hidden,
-   * placed fully inside the window, grows out of the card and shrinks back into it (`leave`). It never takes focus: keyboard
+   * placed fully inside the window, fades in sliding a few px from the card and fades back toward it (`leave`); nothing scales. It
+   * never takes focus: keyboard
    * users open the title with Enter on the card.
    */
   export let item: Item;
-  /** the card's thumbnail; the tile grows out of exactly this rect */
+  /** the card's thumbnail; the tile reveals from exactly this rect */
   export let anchor: HTMLElement;
   export let href: string;
   export let detail: string;
@@ -93,8 +94,6 @@
     front = back;
   }
 
-  /** the card's centre inside the box, clamped to it: the grow and shrink origin */
-  let org = '50% 50%';
   /** measured hidden at the hover width, then placed (glass spec §3); a width change (short window) is measured once more */
   async function place(): Promise<DOMRect> {
     const r = anchor.getBoundingClientRect();
@@ -102,7 +101,6 @@
     let b = hoverBox(r, vp, info.offsetHeight);
     if (b.width !== w) { w = b.width; await tick(); b = hoverBox(r, vp, info.offsetHeight); }
     box = b;
-    org = `${Math.round(b.ox)}px ${Math.round(b.oy)}px`;
     return r;
   }
   /** the text part's room is short (a 600–630 px window): the synopsis drops to 2 lines; last resort, the text part scrolls */
@@ -134,14 +132,14 @@
       if (closing) return;
       ready = true;
       if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(() => void refit()); ro.observe(info); }
-      // grow out of the card (transform + opacity only, origin = the card centre): full motion scales up from the card's width,
-      // the reduced set fades in 160 ms, calm mode / reduced motion show it at once
+      // reveal from the card (transform + opacity only, text never scales): full motion fades in while sliding at most 12 px from
+      // the card's side, the reduced set fades in 160 ms, calm mode / reduced motion show it at once
       const mode = fxMode();
       if (!box || !el?.animate || mode === 'still') return;
-      if (mode === 'reduced') grow = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: REDUCED_MS, easing: 'linear' });
+      if (mode === 'reduced') reveal = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: REDUCED_MS, easing: 'linear' });
       else {
-        watchFrames(); // the frame guard measures the grow (the card's blur is the most expensive glass moment)
-        grow = el.animate([{ transform: `scale(${Math.max(0.1, r.width / box.width)})`, opacity: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 260, easing: EMPH_OUT });
+        watchFrames(); // the frame guard measures the reveal (the card's blur is the most expensive glass moment)
+        reveal = el.animate(revealKeyframes(revealShift(r, box), 'in'), { duration: REVEAL_IN_MS, easing: EMPH_OUT });
       }
     });
     startT = setTimeout(startVideo, 1000);
@@ -151,10 +149,10 @@
   onDestroy(() => { ro?.disconnect(); releaseBillboard?.(); clearTimeout(startT); clearTimeout(fbT); if (playing || $previewOwner === item.id) stopPreview(item.id); });
 
   // ---- closing: the card keeps this mounted until `leave` resolves (glass spec §3) ----
-  let shrink: Animation | null = null, grow: Animation | null = null;
+  let hide: Animation | null = null, reveal: Animation | null = null;
   /**
-   * Shrinks back into the card: 180 ms GLASS_IN toward the card's rect with opacity → 0 (the reduced set: a 160 ms fade; calm mode /
-   * reduced motion: at once). The trailer stops right away.
+   * Fades back toward the card: 150 ms GLASS_IN, opacity → 0 while it slides at most 12 px toward the card's rect (the reduced set:
+   * a 160 ms fade; calm mode / reduced motion: at once). The trailer stops right away.
    */
   export async function leave(): Promise<void> {
     closing = true;
@@ -163,27 +161,23 @@
     if (playing || $previewOwner === item.id) { stopPreview(item.id); playing = false; }
     const mode = fxMode();
     if (!ready || !box || !el?.animate || mode === 'still') return;
-    // a close while it still grows reverses from where it is (no jump to full size first)
-    const growing = grow?.playState === 'running';
+    // a close mid-reveal continues from where it is (its opacity and its translate; no jump to the settled card first)
+    const revealing = reveal?.playState === 'running';
     const cs = getComputedStyle(el);
-    const from = growing ? { transform: cs.transform, opacity: Number(cs.opacity) } : { transform: 'none', opacity: 1 };
-    if (growing) grow!.cancel();
-    if (mode === 'reduced') shrink = el.animate([{ opacity: from.opacity }, { opacity: 0 }], { duration: REDUCED_MS, easing: 'linear', fill: 'forwards' });
+    const m = revealing && cs.transform !== 'none' ? new DOMMatrix(cs.transform) : null;
+    const from = { transform: `translate(${m ? Math.round(m.e * 10) / 10 : 0}px, ${m ? Math.round(m.f * 10) / 10 : 0}px)`, opacity: revealing ? Number(cs.opacity) : 1 };
+    if (revealing) reveal!.cancel();
+    if (mode === 'reduced') hide = el.animate([{ opacity: from.opacity }, { opacity: 0 }], { duration: REDUCED_MS, easing: 'linear', fill: 'forwards' });
     else {
-      // toward where the card is now (it may have scrolled): scale about its centre clamped into the box, then move the rest
-      // (mid-grow the origin stays the grow's, so the current transform is read about the same point)
-      const r = anchor.getBoundingClientRect();
-      const cx = r.left + r.width / 2 - box.left, cy = r.top + r.height / 2 - box.top;
-      const ox = growing ? box.ox : Math.min(box.width, Math.max(0, cx)), oy = growing ? box.oy : Math.min(box.height, Math.max(0, cy));
-      if (!growing) { org = `${Math.round(ox)}px ${Math.round(oy)}px`; await tick(); }
-      const s = Math.max(0.1, (r.width || box.width * 0.2) / box.width);
+      // toward where the card is now (it may have scrolled)
+      const to = revealKeyframes(revealShift(anchor.getBoundingClientRect(), box), 'out')[1]!;
       watchFrames();
-      shrink = el.animate([from, { transform: `translate(${Math.round(cx - ox)}px, ${Math.round(cy - oy)}px) scale(${s})`, opacity: 0 }], { duration: 180, easing: GLASS_IN, fill: 'forwards' });
+      hide = el.animate([from, to], { duration: REVEAL_OUT_MS, easing: GLASS_IN, fill: 'forwards' });
     }
-    try { await shrink.finished; } catch { /* cancelled: closed all the same */ }
+    try { await hide.finished; } catch { /* cancelled: closed all the same */ }
   }
   /** a new open during the close: the close ends at once */
-  export function finish(): void { shrink?.finish(); }
+  export function finish(): void { hide?.finish(); }
 
   /** muted trailer after 1 s, same rules as every other preview (#lib/preview) */
   async function startVideo() {
@@ -248,7 +242,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   class="dpv frost" class:frost-safe={!tone} class:ready class:closing data-play-scope use:portal use:sheen bind:this={el} role="dialog" aria-label={$t('home.card.preview', { name: item.name })}
-  style="{box ? `left:${box.left}px;top:${box.top}px;` : 'left:0;top:0;'}width:{box?.width ?? w}px;transform-origin:{org};{toneVars(tone)}"
+  style="{box ? `left:${box.left}px;top:${box.top}px;` : 'left:0;top:0;'}width:{box?.width ?? w}px;{toneVars(tone)}"
   on:mouseenter={() => { if (!closing) over = true; }} on:mouseleave={() => (over = false)}
   on:focusin={() => { if (!closing) focused = true; }} on:focusout={leaveFocus}
 >
@@ -270,7 +264,7 @@
       <button type="button" class="frost-btn round" aria-label={inList ? $t('home.card.removeFromList') : $t('home.card.addToListLong')} title={$t('home.card.myList')} on:click={toggleInList}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
       {#if item.type !== 'BoxSet'}<RatingButton itemId={listId} size={44} bind:value={thumb} on:change={onThumb} on:error={flash} />{/if}
       <span class="right">
-        <MoreActions {actions} size={44} title={item.name} label={$t('home.card.moreActionsFor', { name: item.name })}>
+        <MoreActions {actions} size={44} {title} label={$t('home.card.moreActionsFor', { name: item.name })}>
           {#if item.type !== 'BoxSet' && !$kidsMode}<ListMenu itemId={listId} variant="row" on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
         </MoreActions>
         <a class="frost-btn round dpv-more" href={detail} aria-label={$t('home.card.moreInfoFor', { name: item.name })} title={$t('home.card.moreInfo')} on:click={more}><Icon name="chevron-down" size={18} /></a>

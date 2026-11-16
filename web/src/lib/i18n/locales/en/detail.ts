@@ -206,8 +206,7 @@ const en: Translation<typeof de> = {
   },
   lists: {
     add: 'Add to list',
-    addMore: 'Add to list …',
-    loading: 'Loading …',
+    addMore: 'Add to list…',
     none: 'No list yet that you can add to.',
     newName: 'Name of the new list',
     create: 'Create',

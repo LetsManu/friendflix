@@ -53,7 +53,7 @@ export async function saveFavorite(itemId: string, want: boolean): Promise<boole
 export function previewActions(o: { fav: boolean; removable: boolean; t: TFn; toggleFav: () => void; remove: () => void; detail?: string }): MoreAction[] {
   return [
     { id: 'fav', label: o.fav ? o.t('home.card.favRemove') : o.t('home.card.favAdd'), icon: 'heart', pressed: o.fav, run: o.toggleFav },
-    ...(o.removable ? [{ id: 'remove', label: o.t('home.card.removeResume'), icon: 'x', run: o.remove }] : []),
+    ...(o.removable ? [{ id: 'remove', label: o.t('home.card.removeResume'), icon: 'x', tail: true, run: o.remove }] : []),
     ...(o.detail ? [{ id: 'details', label: o.t('home.card.openDetail'), icon: 'info', href: o.detail }] : []),
   ];
 }

@@ -314,7 +314,7 @@ const dict: Translation<typeof de> = {
     type: 'Rodzaj',
     allTypes: 'Wszystkie rodzaje',
     types: { Movie: 'Filmy', Series: 'Seriale', Episode: 'Odcinki' },
-    search: 'Szukaj tytułu lub serialu …',
+    search: 'Szukaj tytułu lub serialu…',
     col: { title: 'Tytuł', issues: 'Problemy', file: 'Plik', size: 'Rozmiar', bitrate: 'Przepływność' },
     versions: { one: '{n} wersja', few: '{n} wersje', many: '{n} wersji', other: '{n} wersji' },
     dupOf: 'Duplikat',

@@ -61,7 +61,7 @@ const dict: Translation<typeof de> = {
     empty: 'Şu anda hiçbir yapım için tarih belirlenmemiş.',
     colTitle: 'Yapım',
     colSetBy: 'Belirleyen',
-    menu: 'Kaldırma tarihi belirle …',
+    menu: 'Kaldırma tarihi belirle…',
     dialogTitle: 'Şu tarihten itibaren izlenemez',
   },
 };
