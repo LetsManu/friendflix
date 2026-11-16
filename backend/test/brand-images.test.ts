@@ -139,7 +139,7 @@ describe('PNG', () => {
   it('a bad CRC is corrupt', () => {
     expect(refused(png(4, 2, { before: [chunk('tEXt', Buffer.from('a\0b'), true)] }))).toBe('corrupt');
     const b = png(4, 2);
-    b[b.length - 20] ^= 0xff; // inside the IDAT
+    b.writeUInt8(b.readUInt8(b.length - 20) ^ 0xff, b.length - 20); // inside the IDAT
     expect(refused(b)).toBe('corrupt');
   });
 

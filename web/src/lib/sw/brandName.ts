@@ -11,7 +11,6 @@ export const BRAND_NAME_URL = '/__ff/brand-name';
 export const FALLBACK_NAME = 'FriendFlix';
 /** the backend's limit (24) with room; anything longer, empty or with control characters is not a remembered name */
 const MAX = 64;
-// eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
 /** Page side: remember the brand name (best effort; no Cache Storage → nothing happens). */
