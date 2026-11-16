@@ -112,6 +112,27 @@ describe('Authentik plain-text twins', () => {
     expect(txt.toLowerCase()).not.toContain('button');
   });
 
+  // the address an admin edits in the HTML is in the twin too (else its text part links to the placeholder host)
+  it.each(FILES)('%s twin: first line is the HTML\'s edit marker, and its link is the HTML\'s link', (f) => {
+    const html = read(f);
+    const txt = read(f.replace(/\.html$/, '.txt'));
+    const first = html.split('\n')[0]!;
+    expect(txt.startsWith(first)).toBe(true);
+    const href = [...code(html).matchAll(/href="([^"]*)"/g)].map((x) => x[1]!);
+    expect(href).toHaveLength(1);
+    expect(first).toContain(href[0]!);
+    const links = code(txt).split('\n').map((l) => l.trim()).filter((l) => /^https?:\/\//.test(l) || l.startsWith('{{ url'));
+    expect(links).toEqual(href);
+  });
+
+  it.each(FILES)('%s twin: the name line is marked ff:brand, as in the HTML', (f) => {
+    const marker = '{# ff:brand: the name #}';
+    const htmlLines = read(f).split('\n');
+    expect(htmlLines[htmlLines.indexOf(marker) + 1]).toContain('>FriendFlix<');
+    const lines = read(f.replace(/\.html$/, '.txt')).split('\n');
+    expect(lines[lines.indexOf('FriendFlix') - 1]).toBe(marker);
+  });
+
   it('ships exactly four twins', () => {
     expect(TXT).toHaveLength(4);
   });
