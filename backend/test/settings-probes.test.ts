@@ -176,6 +176,12 @@ describe('settings probes', () => {
     expect(await runProbe(throwing(Object.assign(new Error('t'), { name: 'TimeoutError' })), 'publicUrl', cfg)).toEqual({ ok: true, code: 'warning', detail: 'timeout' });
   });
 
+  it('mail probe is not run when the host is empty', () => {
+    expect(probeConfigured('mail', cfg)).toBe(false);
+    expect(probeConfigured('mail', withCfg({ MAIL_FROM: 'kino@friend.example.com' }))).toBe(false);
+    expect(probeConfigured('mail', withCfg({ MAIL_SMTP_HOST: 'mail.example.com' }))).toBe(true);
+  });
+
   it('probeConfigured and probeBlocks', () => {
     expect(probeConfigured('authentik', cfg)).toBe(false);
     expect(probeConfigured('media', cfg)).toBe(true);

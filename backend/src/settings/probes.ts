@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import type { Config } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { akBase } from '../invites.js';
+import { probeMail } from '../mail/transport.js';
 import { mediaSettings } from '../media/index.js';
 import { MEDIA_SETUP } from '../media/setup.js';
 import { SeerrClient, SeerrError } from '../seerr/client.js';
@@ -42,6 +43,7 @@ export function probeConfigured(id: ProbeId, cfg: Config): boolean {
     case 'omdb': return any('OMDB_API_KEY');
     case 'portainer': return any('PORTAINER_WEBHOOK_URL', 'PORTAINER_URL', 'PORTAINER_API_KEY');
     case 'github': return any('GITHUB_TOKEN');
+    case 'mail': return any('MAIL_SMTP_HOST');
   }
 }
 
@@ -209,6 +211,8 @@ export async function runProbe(ctx: Ctx, id: ProbeId, cfg: Config, opts: { timeo
       case 'omdb': return source(ctx, r.fetch, 'omdb', cfg.OMDB_API_KEY);
       case 'portainer': return portainer(r.fetch, cfg);
       case 'github': return github(r.fetch, cfg);
+      // connect, TLS and login only, never a send; nodemailer's own timeouts stay inside the runner's deadline
+      case 'mail': return probeMail(cfg, { timeoutMs: opts.timeoutMs ?? PROBE_TIMEOUT_MS });
     }
   });
 }

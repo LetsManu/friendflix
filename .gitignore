@@ -10,6 +10,8 @@ logs/
 !.env.example
 secrets/
 *.pem
+# the test-only, self-signed SMTP test certificate and key (backend/test/fixtures/smtp/README.md)
+!backend/test/fixtures/smtp/*.pem
 *.key
 *.jks
 *.keystore

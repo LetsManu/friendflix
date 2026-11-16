@@ -28,7 +28,7 @@ import { SettingsError } from '../settings/store.js';
  * is this route's business). Values never reach a log or an audit row: audits list key names, errors and probe results are codes.
  */
 
-export const SETTING_GROUPS: readonly SettingGroup[] = ['general', 'signin', 'media', 'requests', 'notifications', 'push', 'sources',
+export const SETTING_GROUPS: readonly SettingGroup[] = ['general', 'signin', 'media', 'requests', 'notifications', 'push', 'mail', 'sources',
   'downloads', 'playback', 'livetv', 'recommendations', 'updates', 'health', 'sessions'];
 
 export interface SettingView {
@@ -162,6 +162,8 @@ export const CREDENTIAL_DESTINATIONS: Readonly<Record<string, readonly string[]>
   AUTHENTIK_API_TOKEN: ['AUTHENTIK_URL'],
   PORTAINER_API_KEY: ['PORTAINER_URL'],
   OIDC_CLIENT_SECRET: ['OIDC_ISSUER'], // the token endpoint comes from the issuer's discovery
+  // the SMTP login goes to host and port; a new TLS mode could send it over another channel
+  MAIL_SMTP_PASSWORD: ['MAIL_SMTP_HOST', 'MAIL_SMTP_PORT', 'MAIL_SMTP_TLS'],
 };
 /** secrets that go to a fixed host (TMDB, OMDb, GitHub), are their own URL (Discord, Portainer webhook) or never leave (inbound, VAPID) */
 export const NO_DESTINATION: readonly string[] = ['TMDB_API_KEY', 'OMDB_API_KEY', 'GITHUB_TOKEN', 'DISCORD_WEBHOOK_URL', 'PORTAINER_WEBHOOK_URL',

@@ -380,13 +380,27 @@ describe('saved credentials never go to a new host without re-authentication', (
   const stale = () => h.reauth(h.admin, Date.now() - 20 * 60_000);
   const test = (group: string, values: Record<string, unknown>) => h.as(h.admin, 'POST', '/api/admin/settings/test', { group, values });
 
-  it('every secret of the registry is a credential with destinations or one without (and every destination is a URL setting)', () => {
+  it('every secret of the registry is a credential with destinations or one without (and every destination is a URL setting or the SMTP server)', () => {
     const secrets = SETTINGS.filter((d) => d.secret).map((d) => d.key).sort();
     expect([...Object.keys(CREDENTIAL_DESTINATIONS), ...NO_DESTINATION].sort()).toEqual(secrets);
-    for (const dests of Object.values(CREDENTIAL_DESTINATIONS)) {
+    for (const [cred, dests] of Object.entries(CREDENTIAL_DESTINATIONS)) {
       expect(dests.length).toBeGreaterThan(0);
-      for (const d of dests) expect(settingDef(d)?.kind).toBe('url');
+      // the SMTP password goes to host + port + TLS mode (three settings, none a URL)
+      for (const d of dests) expect(cred === 'MAIL_SMTP_PASSWORD' ? settingDef(d)?.group : settingDef(d)?.kind, d).toBe(cred === 'MAIL_SMTP_PASSWORD' ? 'mail' : 'url');
     }
+  });
+
+  it('changing the smtp host with a saved password needs a fresh sign-in', () => {
+    expect(CREDENTIAL_DESTINATIONS.MAIL_SMTP_PASSWORD).toEqual(['MAIL_SMTP_HOST', 'MAIL_SMTP_PORT', 'MAIL_SMTP_TLS']);
+    const mail = { ...cfg, MAIL_SMTP_HOST: 'mail.example.com', MAIL_SMTP_PORT: 587, MAIL_SMTP_TLS: 'starttls' as const, MAIL_SMTP_USER: 'anna',
+      MAIL_SMTP_PASSWORD: 'saved-smtp-password', MAIL_FROM: 'kino@friend.example.com' };
+    expect(redirectsSavedCredential(mail, { ...mail, MAIL_SMTP_HOST: EVIL })).toBe(true);
+    expect(redirectsSavedCredential(mail, { ...mail, MAIL_SMTP_PORT: 25 })).toBe(true);
+    expect(redirectsSavedCredential(mail, { ...mail, MAIL_SMTP_TLS: 'tls' })).toBe(true);
+    expect(redirectsSavedCredential(mail, { ...mail, MAIL_FROM: 'anna@friend.example.com' })).toBe(false);
+    expect(redirectsSavedCredential(mail, { ...mail, MAIL_SMTP_HOST: EVIL, MAIL_SMTP_PASSWORD: 'typed-for-the-new-host' })).toBe(false);
+    expect(redirectsSavedCredential(mail, mail)).toBe(false);
+    for (const k of ['MAIL_SMTP_HOST', 'MAIL_SMTP_PORT', 'MAIL_SMTP_TLS', 'MAIL_SMTP_PASSWORD']) expect(needsReauth([k]), k).toBe(true);
   });
 
   it('a saved PLEX_TOKEN never goes to a new PLEX_URL without re-authentication', async () => {
@@ -430,7 +444,8 @@ describe('saved credentials never go to a new host without re-authentication', (
     h.hosts.length = 0;
     h.probe = { 'GET .*': () => ({ json: {} }) };
     const group = settingDef(dest)!.group;
-    const url = `https://${EVIL}`;
+    // a new value of the destination's own kind: a URL, or the SMTP server's host, port or TLS mode (MAIL_FROM is unset: no connection)
+    const url = ({ MAIL_SMTP_HOST: EVIL, MAIL_SMTP_PORT: 2525, MAIL_SMTP_TLS: 'tls' } as Record<string, unknown>)[dest] ?? `https://${EVIL}`;
     expect((await h.put({ [dest]: url })).statusCode).toBe(401);
     expect((await test(group, { [dest]: url })).statusCode).toBe(401);
     expect(h.hosts).not.toContain(EVIL);

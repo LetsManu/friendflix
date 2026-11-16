@@ -107,6 +107,16 @@ const hostSchema = z.string().trim().toLowerCase().transform((v, ctx) => {
   return z.NEVER;
 });
 
+/** an optional host: blank (also only spaces) is unset */
+const optionalHost = () => z.preprocess((v) => (typeof v === 'string' && !v.trim() ? undefined : v), hostSchema.optional());
+
+/** an e-mail address (zod's check: no display name, no whitespace), trimmed; anything else is `invalid_email` */
+const mailAddressSchema = z.string().trim().transform((v, ctx) => {
+  if (z.email().safeParse(v).success) return v;
+  ctx.addIssue({ code: 'custom', message: 'expected an e-mail address, e.g. kino@example.com', params: { code: 'invalid_email' } });
+  return z.NEVER;
+});
+
 /** a RECO_W_* weight: 0 to 10, compose passes '' for an unset variable */
 const recoWeight = (dflt: number) => z.preprocess(emptyAsUnset, z.coerce.number().min(0).max(10).default(dflt));
 
@@ -152,6 +162,17 @@ export const configSchema = z.object({
   VAPID_PRIVATE_KEY: opt,
   /** mailto: or https: contact for push services, default PUBLIC_URL */
   VAPID_SUBJECT: opt,
+  /**
+   * E-mail through the owner's SMTP server (mail/transport.ts): configured once host and sender are set (a relay may need no login).
+   * starttls requires the upgrade, tls is implicit TLS (port 465), none is a relay inside the home network and refuses user/password.
+   */
+  MAIL_SMTP_HOST: optionalHost(),
+  MAIL_SMTP_PORT: z.preprocess(emptyAsUnset, z.coerce.number().int().min(1).max(65535).default(587)),
+  MAIL_SMTP_TLS: z.preprocess(emptyAsUnset, z.enum(['starttls', 'tls', 'none']).default('starttls')),
+  MAIL_SMTP_USER: opt,
+  MAIL_SMTP_PASSWORD: opt,
+  /** the sender address; the display name comes from Branding */
+  MAIL_FROM: z.preprocess(emptyAsUnset, mailAddressSchema.optional()),
   /** Chromecast sender support (needs a PUBLIC_URL with a valid https certificate) */
   CAST_ENABLED: z.enum(['true', 'false']).default('true'),
   /**
@@ -206,7 +227,7 @@ export const configSchema = z.object({
   /** Live TV conversions (spec §5.4): auto = Jellyfin's hardware when livetv can use it, else VA-API, NVENC, software; read per stream start */
   LIVETV_ENCODER: z.preprocess(emptyAsUnset, z.enum(['auto', 'qsv', 'vaapi', 'nvenc', 'software']).default('auto')),
   /** the host shown in the SRT push setup hint (spec §3.5); unset = the host of PUBLIC_URL, derived when read (livetv/channels.ts srtHost) */
-  LIVETV_SRT_HOST: z.preprocess((v) => (typeof v === 'string' && !v.trim() ? undefined : v), hostSchema.optional()),
+  LIVETV_SRT_HOST: optionalHost(),
   /** the rewind buffer of a live channel in minutes (spec §3.3, ruling 47: 0-120); read per stream start and per watch answer */
   LIVETV_DVR_MINUTES: z.preprocess(emptyAsUnset, z.coerce.number().int().min(0).max(120).default(30)),
   /** the highest bitrate livetv picks from a provider's HLS variants (spec §3.3), bit/s; read per stream start */

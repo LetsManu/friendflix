@@ -3,7 +3,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { configSchema, loadConfig } from '../src/config.js';
 import { mediaSettings } from '../src/media/index.js';
-import { BOOTSTRAP_KEYS, BUILD_KEYS, ENV_ONLY_KEYS, SETTINGS, parseEnvValue, publicUrlSchema, settingDef } from '../src/settings/registry.js';
+import { BOOTSTRAP_KEYS, BUILD_KEYS, ENV_ONLY_KEYS, SETTINGS, parseEnvValue, parseSettingValue, publicUrlSchema, settingDef } from '../src/settings/registry.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 /** the nine keys of phase 3, all shown: T9 the first five, Task 12 the account-security flows (D1) */
@@ -21,12 +21,12 @@ const def = (key: string) => {
 describe('key classification', () => {
   it('every key of the config schema is in exactly one of SETTINGS, ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS', () => {
     const keys = Object.keys(configSchema.shape);
-    expect(keys).toHaveLength(122); // + the eight LIVETV_RECORD_* (Phase 3), + DB_CONNECT/STATEMENT/IDLE_TX/LONG_STATEMENT_TIMEOUT_MS, + LIVETV_DVR_MINUTES, LIVETV_MAX_BITRATE, + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
+    expect(keys).toHaveLength(128); // + the six MAIL_*, + the eight LIVETV_RECORD_* (Phase 3), + DB_CONNECT/STATEMENT/IDLE_TX/LONG_STATEMENT_TIMEOUT_MS, + LIVETV_DVR_MINUTES, LIVETV_MAX_BITRATE, + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
     const classes = [SETTINGS.map((s) => s.key), ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS];
     for (const k of keys) expect(classes.filter((c) => c.includes(k)), k).toHaveLength(1);
     expect(classes.flat().sort()).toEqual([...keys].sort()); // nothing outside the schema, no duplicates
-    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 26, 4, 88]); // + the eight LIVETV_RECORD_*, + DB_*_TIMEOUT_MS (4 env-only), + LIVETV_DVR_MINUTES, LIVETV_MAX_BITRATE, + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
-    expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(87);
+    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 26, 4, 94]); // + the six MAIL_*, + the eight LIVETV_RECORD_*, + DB_*_TIMEOUT_MS (4 env-only), + LIVETV_DVR_MINUTES, LIVETV_MAX_BITRATE, + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
+    expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(93);
     expect(SETTINGS.filter((s) => s.visible === false).map((s) => s.key)).toEqual(['LIVETV_WANTED']);
   });
   it('each setting parses with the config schema field of the same key', () => {
@@ -46,7 +46,7 @@ describe('key classification', () => {
   });
   it('secrets and last4 hints', () => {
     expect(SETTINGS.filter((s) => s.secret).map((s) => s.key).sort()).toEqual(['OIDC_CLIENT_SECRET', 'JELLYFIN_ADMIN_API_KEY', 'REQUESTS_API_KEY', 'DISCORD_WEBHOOK_URL',
-      'VAPID_PRIVATE_KEY', 'TMDB_API_KEY', 'OMDB_API_KEY', 'AUTHENTIK_API_TOKEN', 'GITHUB_TOKEN', 'PORTAINER_WEBHOOK_URL', 'PORTAINER_API_KEY', 'WEBHOOK_SECRET', 'PLEX_TOKEN'].sort()); // PLEX_TOKEN
+      'VAPID_PRIVATE_KEY', 'TMDB_API_KEY', 'OMDB_API_KEY', 'AUTHENTIK_API_TOKEN', 'GITHUB_TOKEN', 'PORTAINER_WEBHOOK_URL', 'PORTAINER_API_KEY', 'WEBHOOK_SECRET', 'PLEX_TOKEN', 'MAIL_SMTP_PASSWORD'].sort()); // PLEX_TOKEN, MAIL_SMTP_PASSWORD
     expect(SETTINGS.filter((s) => s.hint === 'last4').map((s) => s.key).sort()).toEqual(['OMDB_API_KEY', 'TMDB_API_KEY']);
     for (const s of SETTINGS) expect(s.secret === true, s.key).toBe(s.kind === 'secret');
   });
@@ -122,6 +122,31 @@ describe('key classification', () => {
       '[2001:db8::1]:9000', '192.0.2.10:9000']) {
       expect(parseEnvValue(def('LIVETV_SRT_HOST'), v), v).toEqual({ ok: false, code: 'invalid_host' });
     }
+  });
+  it('mail keys are registered', () => {
+    expect(SETTINGS.filter((s) => s.group === 'mail').map((s) => s.key)).toEqual(['MAIL_SMTP_HOST', 'MAIL_SMTP_PORT', 'MAIL_SMTP_TLS', 'MAIL_SMTP_USER',
+      'MAIL_SMTP_PASSWORD', 'MAIL_FROM']);
+    // right after the push group (the Benachrichtigungen tab shows notifications, push, mail)
+    const keys = SETTINGS.map((s) => s.key);
+    expect(keys.indexOf('MAIL_SMTP_HOST')).toBe(keys.indexOf('VAPID_SUBJECT') + 1);
+    for (const k of ['MAIL_SMTP_HOST', 'MAIL_SMTP_PORT', 'MAIL_SMTP_TLS', 'MAIL_SMTP_USER', 'MAIL_SMTP_PASSWORD', 'MAIL_FROM']) {
+      expect(def(k), k).toMatchObject({ group: 'mail', probe: 'mail', apply: 'live' });
+    }
+    expect(def('MAIL_SMTP_PASSWORD')).toMatchObject({ kind: 'secret', secret: true });
+    expect(def('MAIL_SMTP_PASSWORD').hint).toBeUndefined(); // a password: not even the last 4 characters
+    expect(def('MAIL_SMTP_PORT')).toMatchObject({ kind: 'int', default: 587, min: 1, max: 65535 });
+    expect(def('MAIL_SMTP_TLS')).toMatchObject({ kind: 'enum', default: 'starttls', options: ['starttls', 'tls', 'none'] });
+    for (const k of ['MAIL_SMTP_HOST', 'MAIL_SMTP_USER', 'MAIL_SMTP_PASSWORD', 'MAIL_FROM']) expect(def(k).default, k).toBeUndefined();
+    const c = loadConfig({ ...BOOT, MAIL_SMTP_HOST: '', MAIL_SMTP_PORT: '', MAIL_SMTP_TLS: '', MAIL_SMTP_USER: '', MAIL_SMTP_PASSWORD: '', MAIL_FROM: '' });
+    expect([c.MAIL_SMTP_HOST, c.MAIL_SMTP_PORT, c.MAIL_SMTP_TLS, c.MAIL_SMTP_USER, c.MAIL_SMTP_PASSWORD, c.MAIL_FROM]).toEqual([undefined, 587, 'starttls', undefined, undefined, undefined]);
+    expect(parseSettingValue(def('MAIL_FROM'), 'kein-at')).toEqual({ ok: false, code: 'invalid_email' });
+    expect(parseSettingValue(def('MAIL_FROM'), ' kino@friend.example.com ')).toEqual({ ok: true, value: 'kino@friend.example.com' });
+    expect(parseSettingValue(def('MAIL_SMTP_HOST'), 'mail.example.com:587')).toEqual({ ok: false, code: 'invalid_host' });
+    expect(parseSettingValue(def('MAIL_SMTP_HOST'), ' Mail.Example.com ')).toEqual({ ok: true, value: 'mail.example.com' });
+    expect(parseSettingValue(def('MAIL_SMTP_PORT'), '0')).toEqual({ ok: false, code: 'too_small' });
+    expect(parseSettingValue(def('MAIL_SMTP_PORT'), '65536')).toEqual({ ok: false, code: 'too_big' });
+    expect(parseSettingValue(def('MAIL_SMTP_PORT'), 465)).toEqual({ ok: true, value: 465 });
+    expect(parseSettingValue(def('MAIL_SMTP_TLS'), 'ssl')).toEqual({ ok: false, code: 'invalid_option' });
   });
   it('UPDATE_CHANNEL: a database setting in group updates, stable by default, stable | nightly | pinned', () => {
     expect(def('UPDATE_CHANNEL')).toMatchObject({ kind: 'enum', group: 'updates', apply: 'live', default: 'stable', options: ['stable', 'nightly', 'pinned'] });
