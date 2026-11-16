@@ -206,7 +206,7 @@
   function mediaPlay() { if (!castBusy && video?.paused) togglePlay(); }
   $: mediaActions = {
     play: mediaPlay,
-    pause: () => { if (video && !video.paused) togglePlay(); },
+    pause: () => { if (video && (!video.paused || (wantAutoplay && !paused))) togglePlay(); }, // also a start pending on a new stream (cancelPendingStart)
     seekTo: (t: number) => seekTo(t),
     seekBy: (d: number) => seekBy(d, true),
     next: hasNext ? () => { if (allowed()) void goNext(); } : null,
@@ -1194,7 +1194,7 @@
     if (!air && !airProbe && !remote) void (srcRec ? initRecAirPlay() : initAirPlay());
   }
 
-  const doPause = () => { if (remote) { if (!paused) castEngine.playPause(); } else video?.pause(); };
+  const doPause = () => { if (remote) { if (!paused) castEngine.playPause(); } else if (!cancelPendingStart()) video?.pause(); };
 
   async function changeAudio(i: number) {
     const lang = audioOpts.find((a) => a.index === i)?.language;
@@ -1209,14 +1209,26 @@
     resumeOnReady(intent, r);
   }
   /** what a switch (track, quality, surround, a downloaded subtitle) remembers before it stops the old stream */
-  const playIntent = () => ({ wasPlaying: !(video?.paused ?? true), pending: wantAutoplay });
+  const playIntent = () => ({ wasPlaying: !(video?.paused ?? true), pending: wantAutoplay, pauses: pauseSeq });
   /**
    * after the switch's load(): the new stream starts through the start path (its `canplay` -> playSafe, muted or the play button when
    * the browser refuses), never a play() right after load() that races the attach (lib/player/switchresume.ts). load() has replaced
-   * the old stream by now, so no late `canplay` of the old one takes this intent.
+   * the old stream by now, so no late `canplay` of the old one takes this intent. A pause of the viewer in between, or a load()
+   * that ended in an error (no new stream), leaves nothing pending.
    */
-  function resumeOnReady(intent: { wasPlaying: boolean; pending: boolean }, result: 'busy' | undefined) {
-    if (resumeAfterSwitch({ ...intent, result })) wantAutoplay = true;
+  function resumeOnReady(intent: { wasPlaying: boolean; pending: boolean; pauses: number }, result: 'busy' | undefined) {
+    wantAutoplay = resumeAfterSwitch({ wasPlaying: intent.wasPlaying, pending: intent.pending, result, pausedSince: pauseSeq !== intent.pauses, failed: Boolean(error) });
+  }
+  /** pause events and cancelled pending starts so far: a switch on its way compares it with its snapshot (a pause in between wins) */
+  let pauseSeq = 0;
+  /**
+   * the viewer's pause while a start is pending on a new stream (a switch, a fallback): the element is empty, so pause() does nothing
+   * and fires no event, while the bar still shows Pause; the pending start is dropped and the bar shows Play
+   */
+  function cancelPendingStart(): boolean {
+    if (!wantAutoplay || paused || !video?.paused) return false;
+    wantAutoplay = false; paused = true; pauseSeq++;
+    return true;
   }
   /** the last subtitle track that was on (-1 = none yet): the LG red key turns this one back on */
   let lastSubIndex = -1;
@@ -1299,7 +1311,7 @@
   function announce(t: string) { live = t + (liveN++ % 2 ? '\u200b' : ''); }
   function flash(t: string, ms = 1100) { toast = t; announce(t); clearTimeout(toastTimer); toastTimer = setTimeout(() => (toast = ''), ms); }
   function allowed(): boolean { if (canControl) return true; flash(denyHint, 1800); return false; }
-  function togglePlay() { if (remote) { if (allowed()) castEngine.playPause(); return; } if (!video || !allowed()) return; if (video.paused) video.play().catch(() => undefined); else video.pause(); }
+  function togglePlay() { if (remote) { if (allowed()) castEngine.playPause(); return; } if (!video || !allowed() || cancelPendingStart()) return; if (video.paused) video.play().catch(() => undefined); else video.pause(); }
   function seekTo(t: number) {
     if (sp.active) { clearTimeout(spT); sp = seekCancel(); } // a direct seek (±10 s, wheel, FF/REW, phone) replaces a pending preview
     if (remote) { if (!allowed()) return; castEngine.seek(t); return; } // the engine clamps, reports and mirrors the position
@@ -2010,7 +2022,7 @@
   {#key videoGen}
   <video bind:this={video} playsinline crossorigin="use-credentials" poster={swapShot || undefined} style:filter={brightness < 1 ? `brightness(${brightness})` : null}
     on:error={onVideoError}
-    on:play={onPlay} on:pause={() => { postFireTv('keepAwake:0'); if (handedOff || swapping) return; paused = true; resetStall(); restorePlainSoon(); const quiet = hiddenPause; hiddenPause = false; if (!castBusy && !stopped && !quiet) send('progress'); }} on:seeked={() => { if (swapping) return; timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
+    on:play={onPlay} on:pause={() => { postFireTv('keepAwake:0'); if (handedOff || swapping) return; paused = true; pauseSeq++; resetStall(); restorePlainSoon(); const quiet = hiddenPause; hiddenPause = false; if (!castBusy && !stopped && !quiet) send('progress'); }} on:seeked={() => { if (swapping) return; timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
     on:ended={() => { postFireTv('keepAwake:0'); if (handedOff) return; stopped = true; paused = true; if (srcRec) recEnded(srcRec); else send('stop'); }}
     on:timeupdate={() => { syncTime(); reportTick(); }} on:progress={syncTime} on:loadedmetadata={() => { reapplyRate(video, rate, partyMode); syncTime(); }}
     on:waiting={onWaiting} on:seeking={() => { if (swapping) return; resetStall(); timing.seeking(); }} on:playing={onPlaying} on:loadeddata={firstFrame} on:canplay={() => { if (handedOff) return; waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}

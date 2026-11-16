@@ -8,7 +8,10 @@
  * when the browser refuses), so it is decided here once:
  * - it was playing, or a start was still pending (a switch before the first frame): resume
  * - it was paused: stay paused
- * - the server refused the switch (busy): its error shows, nothing starts
+ * - the viewer paused while the switch was on its way (`pausedSince`): stay paused
+ * - the server refused the switch (busy), or load() ended in an error without a new stream (`failed`): its error shows, nothing
+ *   starts, and no pending start is left behind for a later `canplay` (a retry, a rebuffer) to act on
+ * The caller assigns the answer to its pending start (true or false), so a stale intent never outlives the switch.
  */
-export const resumeAfterSwitch = (s: { wasPlaying: boolean; pending: boolean; result: 'busy' | undefined }): boolean =>
-  s.result !== 'busy' && (s.wasPlaying || s.pending);
+export const resumeAfterSwitch = (s: { wasPlaying: boolean; pending: boolean; result: 'busy' | undefined; pausedSince: boolean; failed: boolean }): boolean =>
+  s.result !== 'busy' && !s.failed && !s.pausedSince && (s.wasPlaying || s.pending);
