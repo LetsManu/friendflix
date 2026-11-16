@@ -54,7 +54,7 @@ import { healthTick } from './health.js';
 import { hygieneDue, stopHygiene } from './hygiene/scan.js';
 import { recoIndexDue, startRecoIndexListener, stopRecoIndex } from './reco/indexJob.js';
 import { announceSetupCode } from './setup/code.js';
-import { isOperational, isSetupComplete } from './setup/state.js';
+import { isOperational, isSetupComplete, onOperational } from './setup/state.js';
 import { autoUpdateTick, syncChannel } from './updater.js';
 import { joinedStopsSettled } from './cast.js';
 
@@ -221,9 +221,11 @@ if (cfg.BACKGROUND_JOBS === 'true') {
   timers.push(setInterval(() => { if (op()) void syscheckAlertTick(ctx).catch(jobFailed(ctx, app.log, 'syscheck-alert', 'syscheck alert tick failed')); }, 900_000));
   if (op()) void healthTick(ctx);
   timers.push(setInterval(() => { if (op()) void langIndexTick(ctx); }, 1800_000)); // self-limits to every 12 h, never throws
-  if (op()) void langIndexTick(ctx);
   timers.push(setInterval(() => { if (op()) void qualityIndexTick(ctx); }, 1800_000)); // 4K / HDR browse filter; self-limits to every 12 h, never throws
-  if (op()) void qualityIndexTick(ctx);
+  // and once as soon as the app is operational: now when it already is, else within 5 s of the end of setup (not 30 min later)
+  const indexesOnOperational = onOperational(op, () => { void langIndexTick(ctx); void qualityIndexTick(ctx); });
+  indexesOnOperational();
+  timers.push(setInterval(indexesOnOperational, 5_000));
   timers.push(setInterval(() => { if (op()) void leavingTick(ctx).catch(jobFailed(ctx, app.log, 'leaving-soon', 'leaving-soon tick failed')); }, 1800_000)); // expired dates + 7-day / last-day notices
   timers.push(setInterval(() => { if (op()) void pollJellyfinSessions(ctx).catch(jobFailed(ctx, app.log, 'session-poll', 'session poll failed')); }, 10_000));
   // library hygiene (Block 22): every 30 min + early after library additions, checked every minute from 2 min after start; never throws

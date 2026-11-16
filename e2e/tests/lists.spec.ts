@@ -53,4 +53,17 @@ test.describe('lists (desktop)', () => {
     expect(api.lists.find((l) => l.id === LIST_A)!.items).toHaveLength(1);
     expect(api.log.some((l) => l.startsWith(`DELETE /api/lists/${LIST_A}/items/`))).toBe(true);
   });
+
+  test.describe('friends for the member picker fail to load', () => {
+    test.use({ allowedConsole: /status of 503/ });
+    test('a failed /api/friends is not retried in a loop', async ({ page }) => {
+      let hits = 0;
+      await page.route('**/api/friends', (r) => { hits++; return r.fulfill({ status: 503, json: { error: 'unavailable' } }); });
+      await page.goto('/lists/' + LIST_A);
+      await expect(page.getByRole('heading', { level: 1, name: 'Filmabend' })).toBeVisible();
+      await page.waitForTimeout(2000);
+      expect(hits).toBeGreaterThanOrEqual(1);
+      expect(hits).toBeLessThanOrEqual(2);
+    });
+  });
 });

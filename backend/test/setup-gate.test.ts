@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import http from 'node:http';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { createInvite } from '../src/invites.js';
 import { pushPersonal } from '../src/notify.js';
 import { pollTick } from '../src/polls.js';
 import { issueSetupCode } from '../src/setup/code.js';
-import { isOperational, isSetupComplete } from '../src/setup/state.js';
+import { completeSetup, isOperational, isSetupComplete, onOperational } from '../src/setup/state.js';
 import { runProbe } from '../src/settings/probes.js';
 import { updateMeta } from '../src/settings/repo.js';
 import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
@@ -220,6 +220,39 @@ describe('the setup gate while setup is incomplete', () => {
     await updateMeta(env.pool, { setupCompletedAt: null });
     await env.ctx.settings.reload();
     expect((await env.app.inject('/api/me')).statusCode).toBe(503);
+  });
+
+  it('completing setup runs the "once after start" jobs (language index) once, not 30 min later', async () => {
+    // server.ts runs the language and quality index once at start only when the app is already operational, then every 30 min: a fresh
+    // install finished setup with an empty language index for half an hour. onOperational fires on the edge instead (checked every 5 s).
+    const run = vi.fn();
+    const check = onOperational(() => isOperational(env.ctx), run);
+    check();
+    expect(run).not.toHaveBeenCalled(); // setup mode
+    const uid = (await env.pool.query("insert into users(id, authentik_sub, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(),'sub-idx','Idx','admin','jfidx','Idx','x') returning id")).rows[0].id;
+    await completeSetup(env.ctx, uid, {});
+    await isSetupComplete(env.ctx); // the gate cache sees the new rev (a timer tick does the same within its 5 s)
+    check();
+    expect(run).toHaveBeenCalledTimes(1);
+    check(); check();
+    expect(run).toHaveBeenCalledTimes(1); // once, not on every tick
+    // already operational at process start: runs on the first check (replaces the old start-up call)
+    const atStart = vi.fn();
+    onOperational(() => isOperational(env.ctx), atStart)();
+    expect(atStart).toHaveBeenCalledTimes(1);
+    await updateMeta(env.pool, { setupCompletedAt: null });
+    await env.ctx.settings.reload();
+    await env.pool.query('delete from users where id=$1', [uid]);
+  });
+
+  it('onOperational fires again after the app was not operational in between (a run-required setting removed and restored)', () => {
+    let on = true;
+    const run = vi.fn();
+    const check = onOperational(() => on, run);
+    check(); check();
+    on = false; check();
+    on = true; check(); check();
+    expect(run).toHaveBeenCalledTimes(2);
   });
 });
 

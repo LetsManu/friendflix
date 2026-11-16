@@ -40,7 +40,7 @@
   $: member = data?.list.role === 'owner' || data?.list.role === 'editor' || data?.list.role === 'viewer'; // anything else (guest of a featured list) is read-only
   $: canEdit = data?.list.role === 'owner' || data?.list.role === 'editor';
   $: candidates = friends.filter((f) => !data?.members.some((m) => m.id === f.id));
-  $: if (owner && !friendsLoaded) { friendsLoaded = true; api('/api/friends').then((r) => (friends = r.friends)).catch(() => (friendsLoaded = false)); }
+  $: if (owner && !friendsLoaded) { friendsLoaded = true; api('/api/friends').then((r) => (friends = r.friends)).catch(() => undefined); } // once per visit: resetting the flag on failure re-ran this block in a loop
 
   const errText = (e: any) => e?.body?.error === 'too_many_featured' ? tr('mine.themed.tooManyPinned') : e?.body?.error === 'too_many_members' ? tr('social.lists.tooManyMembers') : e?.body?.error === 'bad_member' ? tr('social.lists.badMember') : tr('common.failed');
   /** role name for a list role ('owner', 'editor' …); unknown roles are shown as they are */
