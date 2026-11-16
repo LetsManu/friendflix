@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  dayKey, diskAlerts, isoWeek, portainerFailedAlert, updateAlertTick, updateFailedAlert,
+  dayKey, diskAlerts, isoWeek, portainerFailedAlert, updateAlertTick, updateFailedAlert, updateStartFailedAlert,
 } from '../src/adminAlerts.js';
 import type { Config } from '../src/config.js';
 import { encrypt } from '../src/crypto.js';
@@ -215,6 +215,49 @@ describe('update failed', () => {
     expect(await portainerFailedAlert(env.ctx, 'stable:3.6.0', at(16, 23))).toBe(0);
     expect(await portainerFailedAlert(env.ctx, 'stable:3.6.0', at(17, 2))).toBe(2);
     expect(await mails('updatefailed')).toHaveLength(4);
+  });
+
+  it('the nightly window could not start a newer version: once per version and day, naming the version and the reason', async () => {
+    expect(await updateStartFailedAlert(env.ctx, 'unreachable', at(16, 2, 10))).toBe(2);
+    const n = await notices('update_failed');
+    expect(n[0]).toMatchObject({
+      title: 'Automatisches Update konnte nicht starten', body: 'Version 3.6.0 wurde nicht installiert: der Updater ist nicht erreichbar. Mehr unter Admin → Update.',
+      link: '/admin/update', dedupe: `update-start-stable-3.6.0-2026-11-16-${anna}`,
+    });
+    expect((await mails('updatefailed')).map((r) => r.user_id).sort()).toEqual([anna, carla].sort());
+    // the same day: the kv claim stops the next tick, the notice's key stops a second instance
+    expect(await updateStartFailedAlert(env.ctx, 'refused', at(16, 2, 11))).toBe(0);
+    for (const k of await env.kv.keys('alerts:')) await env.kv.del(k);
+    expect(await updateStartFailedAlert(env.ctx, 'refused', at(16, 2, 12))).toBe(0);
+    // the next day, and a newer version the same day
+    expect(await updateStartFailedAlert(env.ctx, 'portainer', at(17, 2, 10))).toBe(2);
+    expect((await notices('update_failed')).at(-1)!.body).toBe('Version 3.6.0 wurde nicht installiert: der Stack wird von Portainer verwaltet, aber Portainer ist nicht eingerichtet. Mehr unter Admin → Update.');
+    gh.release = 'v3.6.1';
+    for (const k of await env.kv.keys('update:')) await env.kv.del(k);
+    expect(await updateStartFailedAlert(env.ctx, 'error', at(17, 2, 15))).toBe(2);
+    expect((await notices('update_failed')).at(-1)!.body).toBe('Version 3.6.1 wurde nicht installiert: beim Start ist ein Fehler aufgetreten. Mehr unter Admin → Update.');
+    expect(await mails('updatefailed')).toHaveLength(6);
+  });
+
+  it('nothing to install, or unknown: no start alert', async () => {
+    gh.release = 'v3.5.0';
+    expect(await updateStartFailedAlert(env.ctx, 'unreachable', at(16, 2))).toBe(0);
+    for (const k of await env.kv.keys('update:')) await env.kv.del(k);
+    gh.fail = true;
+    expect(await updateStartFailedAlert(env.ctx, 'unreachable', at(16, 2))).toBe(0);
+    expect(await notices('update_failed')).toEqual([]);
+  });
+
+  it('nightly names its build; a failed notice gives the day claim back', async () => {
+    env.ctx.cfg = { ...env.ctx.cfg, UPDATE_CHANNEL: 'nightly', GIT_SHA: CUR };
+    vi.spyOn(notify, 'notifyAdmins').mockRejectedValueOnce(new Error('database down'));
+    await expect(updateStartFailedAlert(env.ctx, 'refused', at(16, 2))).rejects.toThrow('database down');
+    expect(await env.kv.keys('alerts:update:start:')).toEqual([]);
+    expect(await updateStartFailedAlert(env.ctx, 'refused', at(16, 2))).toBe(2);
+    expect((await notices('update_failed'))[0]).toMatchObject({
+      body: 'Version nightly · ddddddd wurde nicht installiert: der Updater hat den Start abgelehnt. Mehr unter Admin → Update.',
+      dedupe: `update-start-nightly-${'d'.repeat(40)}-2026-11-16-${anna}`,
+    });
   });
 });
 

@@ -28,9 +28,11 @@ const fake = {
   release: 'v2.0.0', portainerStatus: 204,
   /** what the updater lists as running (null: the backend alone, on sha-aaaaaaa) */
   services: null as unknown[] | null,
+  /** the updater refuses POST /v1/update with this error (null: it starts the job) */
+  refuse: null as string | null,
   calls: [] as Array<{ method: string; path: string; body: string; sigOk: boolean }>,
   portainer: [] as Array<{ method: string; url: string }>,
-  reset() { Object.assign(this, { up: true, busy: false, previous: 'sha-aaaaaaa', status: 200, jobState: 'running', answer: null, stack: undefined, release: 'v2.0.0', portainerStatus: 204, services: null, calls: [], portainer: [] }); },
+  reset() { Object.assign(this, { up: true, busy: false, previous: 'sha-aaaaaaa', status: 200, jobState: 'running', answer: null, stack: undefined, release: 'v2.0.0', portainerStatus: 204, services: null, refuse: null, calls: [], portainer: [] }); },
 };
 const HOOK = 'https://portainer.example.com/api/stacks/webhooks/0e1d2c3b-hook';
 const job = () => ({ id: JOB_ID, action: 'update', state: fake.jobState, step: fake.jobState === 'running' ? 'pull' : null, from: 'sha-aaaaaaa', to: 'latest',
@@ -63,6 +65,7 @@ const updaterFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     ...(fake.stack ? { stack: fake.stack } : {}) });
   if (u.pathname === '/v1/channel') return fake.busy ? j({ error: 'busy' }, 409) : j({ ...JSON.parse(body), targetTag: 'latest' });
   if (fake.busy) return j({ error: 'busy' }, 409);
+  if (u.pathname === '/v1/update' && fake.refuse) return j({ error: fake.refuse }, 409);
   if (u.pathname === '/v1/rollback' && !fake.previous) return j({ error: 'no_previous' }, 400);
   return j({ job: { ...job(), action: u.pathname.slice(4) } }, 202);
 };
@@ -284,6 +287,123 @@ describe('admin alerts', () => {
     // the next night it fails again: one more alert
     expect(await autoUpdateTick(env.ctx, at(2, 1, 3))).toBe('failed');
     expect(await failedNotices()).toHaveLength(2 * ids.length);
+  });
+
+  // the window wanted to install a newer version but could not start it: the same alert (fix after mail stage C)
+  describe('the nightly window cannot start a newer version', () => {
+    const at = (h: number, m: number, d: number) => new Date(2026, 10, d, h, m);
+    const startNotices = async () => (await env.pool.query<{ title: string; body: string | null; dedupe: string }>(
+      "select title, body, dedupe from notifications where kind = 'update_failed' and dedupe like 'update-start-%' order by id")).rows;
+    const body = (version: string, reason: string) => `Version ${version} wurde nicht installiert: ${reason}. Mehr unter Admin → Update.`;
+    /** the GitHub answer cache ran out (the release the tick compares with is fetched again) */
+    const freshInfo = async () => { for (const k of await env.kv.keys('update:')) await env.kv.del(k); };
+    beforeEach(async () => {
+      await endRedeploy();
+      await freshInfo();
+      setCfg({ AUTO_UPDATE: 'nightly-window', AUTO_UPDATE_TIME: '02:00', APP_VERSION: undefined });
+    });
+
+    it('an unreachable updater alerts once per version and day, from the 10th minute of the window on', async () => {
+      const ctx = { ...env.ctx }; // its own "absent" memo, so the other tests see the updater again at once
+      fake.release = 'v99.4.0';
+      fake.up = false;
+      expect(await autoUpdateTick(ctx, at(2, 1, 4))).toBe('absent');
+      expect(await startNotices()).toEqual([]); // it may still come up within the window
+      expect(await autoUpdateTick(ctx, at(2, 10, 4))).toBe('absent');
+      const ids = await admins();
+      const n = await startNotices();
+      expect(n).toHaveLength(ids.length);
+      expect(n[0]).toMatchObject({ title: 'Automatisches Update konnte nicht starten', body: body('99.4.0', 'der Updater ist nicht erreichbar') });
+      expect(n[0]!.dedupe).toMatch(/^update-start-stable-99\.4\.0-2026-11-04-/);
+      // the next ticks the same day do not alert again
+      expect(await autoUpdateTick(ctx, at(2, 11, 4))).toBe('absent');
+      expect(await autoUpdateTick(ctx, at(2, 29, 4))).toBe('absent');
+      expect(await autoUpdateTick(ctx, at(2, 30, 4))).toBe('outside');
+      expect(await startNotices()).toHaveLength(ids.length);
+      // a newer version the same day does, and the next day again
+      await freshInfo();
+      fake.release = 'v99.4.1';
+      expect(await autoUpdateTick(ctx, at(2, 12, 4))).toBe('absent');
+      expect(await startNotices()).toHaveLength(2 * ids.length);
+      expect(await autoUpdateTick(ctx, at(2, 12, 5))).toBe('absent');
+      expect(await startNotices()).toHaveLength(3 * ids.length);
+    });
+
+    it('a refused signature (secret mismatch) alerts as refused, once per day', async () => {
+      const ctx = { ...env.ctx, cfg: { ...env.ctx.cfg, INTERNAL_SECRET: 'another-secret-value-123' } };
+      fake.release = 'v99.4.2';
+      expect(await autoUpdateTick(ctx, at(2, 10, 6))).toBe('absent');
+      expect(await autoUpdateTick(ctx, at(2, 20, 6))).toBe('absent');
+      const n = await startNotices();
+      expect(n).toHaveLength((await admins()).length);
+      expect(n[0]!.body).toBe(body('99.4.2', 'der Updater hat den Start abgelehnt'));
+    });
+
+    it('the updater refuses the job: alerts once per version and day', async () => {
+      fake.release = 'v99.5.0';
+      fake.refuse = 'pull_denied';
+      expect(await autoUpdateTick(env.ctx, at(2, 1, 7))).toBe('failed');
+      const ids = await admins();
+      expect((await startNotices()).map((x) => x.body)).toEqual(ids.map(() => body('99.5.0', 'der Updater hat den Start abgelehnt')));
+      expect(await autoUpdateTick(env.ctx, at(2, 2, 7))).toBe('done');
+      expect(await startNotices()).toHaveLength(ids.length);
+      expect(await autoUpdateTick(env.ctx, at(2, 1, 8))).toBe('failed');
+      expect(await startNotices()).toHaveLength(2 * ids.length);
+    });
+
+    it('a Portainer stack without Portainer set up: alerts once per version and day, the updater never runs', async () => {
+      fake.release = 'v99.6.0';
+      fake.stack = 'foreign';
+      expect(await autoUpdateTick(env.ctx, at(2, 1, 9))).toBe('foreign');
+      expect(await autoUpdateTick(env.ctx, at(2, 2, 9))).toBe('done');
+      const ids = await admins();
+      expect((await startNotices()).map((x) => x.body)).toEqual(ids.map(() => body('99.6.0', 'der Stack wird von Portainer verwaltet, aber Portainer ist nicht eingerichtet')));
+      expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
+    });
+
+    it('the start throws: alerts, and the error still reaches the caller', async () => {
+      fake.release = 'v99.6.1';
+      // the store fails right where the start is recorded (synchronously, so nothing on the way catches it)
+      const kv = new Proxy(env.ctx.kv, {
+        get(t, p) {
+          if (p === 'set') return (k: string, ...rest: [string, number]) => { if (k.startsWith('updater:pending:')) throw new Error('store down'); return t.set(k, ...rest); };
+          const v = Reflect.get(t, p) as unknown;
+          return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+        },
+      });
+      await expect(autoUpdateTick({ ...env.ctx, kv }, at(2, 1, 10))).rejects.toThrow('store down');
+      const n = await startNotices();
+      expect(n).toHaveLength((await admins()).length);
+      expect(n[0]!.body).toBe(body('99.6.1', 'beim Start ist ein Fehler aufgetreten'));
+    });
+
+    it('never for nothing to install, outside the window, a busy updater or a job that started', async () => {
+      // nothing newer: the same failures stay quiet
+      setCfg({ APP_VERSION: '99.7.0' });
+      fake.release = 'v99.7.0';
+      const ctx = { ...env.ctx };
+      fake.up = false;
+      expect(await autoUpdateTick(ctx, at(2, 15, 11))).toBe('absent');
+      fake.up = true;
+      fake.refuse = 'pull_denied';
+      expect(await autoUpdateTick(env.ctx, at(2, 1, 11))).toBe('failed');
+      fake.refuse = null;
+      fake.stack = 'foreign';
+      expect(await autoUpdateTick(env.ctx, at(2, 1, 12))).toBe('foreign');
+      fake.stack = undefined;
+      // something newer, but outside the window, a busy updater, or the job started (its later failure: reconcileAudit)
+      setCfg({ APP_VERSION: undefined });
+      await freshInfo();
+      fake.release = 'v99.8.0';
+      fake.up = false;
+      expect(await autoUpdateTick({ ...env.ctx }, at(3, 0, 13))).toBe('outside');
+      fake.up = true;
+      fake.busy = true;
+      expect(await autoUpdateTick(env.ctx, at(2, 15, 13))).toBe('busy');
+      fake.busy = false;
+      expect(await autoUpdateTick(env.ctx, at(2, 16, 13))).toBe('started');
+      expect(await startNotices()).toEqual([]);
+    });
   });
 });
 
