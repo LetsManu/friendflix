@@ -52,6 +52,8 @@ case "$SERVICE" in
   # exempt on purpose: its runtime stage installs jellyfin-ffmpeg7 with apt from the live Jellyfin repository (no snapshot
   # archive, only current versions), so a rebuild is not promised to be bit for bit. docs/livetv.md, docs/reproducible-builds.md
   livetv) log "livetv is exempt from the reproducible-build check (apt packages from the Jellyfin repository), see docs/livetv.md"; exit 2 ;;
+  # exempt as well: the trial image on top of the third-party Ferrofin release (docs/reproducible-builds.md, mediaserver/README.md)
+  mediaserver) log "mediaserver is exempt from the reproducible-build check (third-party base image), see docs/reproducible-builds.md"; exit 2 ;;
   *) usage ;;
 esac
 REF=HEAD COMPARE='' OUT=''

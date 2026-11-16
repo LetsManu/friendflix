@@ -1,0 +1,30 @@
+FriendFlix media server image (trial)
+=====================================
+
+This image is the Ferrofin server image
+
+  ghcr.io/mangoleaf/ferrofin:v1.5.1
+  sha256:5980a3c29c0bab564793f4fcf786e737b91a9eba26e9fb1d6f1c203ccb56580a
+
+with the numbered changes listed in mediaserver/README.md of https://github.com/LetsManu/friendflix
+(built from mediaserver/Dockerfile there). Each change is also offered to the Ferrofin project.
+
+Ferrofin
+  A Rust re-implementation of the Jellyfin server API. Copyright its authors.
+  Licence: GNU General Public License v3.0 only (GPL-3.0-only).
+  Source: https://github.com/mangoleaf/ferrofin, tag v1.5.1. This image does not change Ferrofin's source code: the
+  ferrofin-server binary is the one in the image above, built by the Ferrofin project from that tag.
+
+Also in the base image (unchanged, licences as shipped by their projects)
+  jellyfin-ffmpeg8 (GPL-3.0, /usr/lib/jellyfin-ffmpeg), jellyfin-web (GPL-2.0, /usr/share/ferrofin/web),
+  Debian trixie packages (each under /usr/share/doc/<package>/copyright).
+
+Added by FriendFlix, change 0001 (Intel OpenCL runtime, amd64 only)
+  Intel compute-runtime (NEO) 26.35.39758.10 and 24.35.30872.36 (legacy) - MIT, https://github.com/intel/compute-runtime
+  Intel Graphics Compiler 2.41.5 and 1.0.17537.24 (legacy) - MIT, https://github.com/intel/intel-graphics-compiler
+  Intel Graphics Memory Management Library (gmmlib) 22.10.0 - MIT, https://github.com/intel/gmmlib
+  Unchanged release packages from those projects; their bundled third-party parts keep their own licences (see
+  /usr/share/doc/<package>/copyright where the package ships one, and the projects' LICENSE files).
+
+FriendFlix's own build files (mediaserver/Dockerfile, try.sh, probe.sh) are AGPL-3.0-or-later; they are not part of this
+image. Corresponding source for the GPL parts: the URLs and tags above.

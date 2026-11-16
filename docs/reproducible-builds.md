@@ -4,7 +4,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 # Reproducible builds
 
-The container images (`ghcr.io/letsmanu/friendflix-{backend,gateway,web,updater}`) are built so that building the same commit
+The container images (`ghcr.io/letsmanu/friendflix-{backend,gateway,web,updater}`; `livetv` and `mediaserver` are exempt, see below) are built so that building the same commit
 again – on another machine, at another time, with an empty cache – gives **the same bytes**: the same image manifest
 digest. Anyone can rebuild a release and check that the published image contains exactly what the source says, and
 nothing an attacker slipped into the build machine. CI checks it for every pull request and every image it publishes
@@ -111,6 +111,15 @@ The optional `livetv` image (`ghcr.io/letsmanu/friendflix-livetv`) is **not** pa
 repository, which keeps only current versions (no snapshot archive, so an exact pin would stop building) and whose apt/dpkg
 state is not shown to be byte-stable, so the Alpine ruling above cannot be extended to it. Its base images are digest-pinned
 and the image is built, scanned, SBOM'd and cosign-signed like the others; see [livetv.md](livetv.md#image-and-reproducible-builds-exemption). To lift the exemption, pin or vendor the Jellyfin `.deb`, then show two identical builds with `scripts/reproduce-image.sh livetv`.
+
+## Exemption: `mediaserver`
+
+The trial media server image (`ghcr.io/letsmanu/friendflix-mediaserver`, [mediaserver/README.md](../mediaserver/README.md)) is
+not part of the `reproducible` job either, and `scripts/reproduce-image.sh mediaserver` refuses. It is the third-party Ferrofin
+release image, pinned by digest, plus Intel's OpenCL runtime installed with `dpkg` from release debs that are pinned by version
+and sha256 (nothing comes from a live repository). Whether two clean builds give the same digest has not been shown yet. It is
+built, scanned, SBOM'd and cosign-signed like the others; its Trivy findings are reported, not a gate (see the top of
+`ci.yml`). To lift the exemption, show two identical builds with `scripts/reproduce-image.sh` and add it to the job's matrix.
 
 ## When the `reproducible` check fails
 

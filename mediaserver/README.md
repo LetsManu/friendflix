@@ -1,0 +1,100 @@
+<!--
+SPDX-FileCopyrightText: 2026 Manuel Weißböck
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+# FriendFlix media server image (trial)
+
+`ghcr.io/letsmanu/friendflix-mediaserver` is FriendFlix's own media server image: the pinned release image of
+[Ferrofin](https://github.com/mangoleaf/ferrofin) (a GPL-3.0 Rust re-implementation of the Jellyfin server API) plus a short,
+numbered list of our changes. FriendFlix talks to it exactly as to Jellyfin.
+
+**Status: trial.** Jellyfin stays the production media server until both hold:
+
+1. HDR / Dolby Vision → SDR tone mapping works with this image on the production Intel GPU (`probe.sh`, then a real title), and
+2. Ferrofin 1.6.0 is out: adopting a Jellyfin database is one-way until then, so there is no way back with the watch state
+   made in between.
+
+User-facing steps: [docs/mediaserver.md](../docs/mediaserver.md).
+
+## The light-fork model
+
+- **Our image = the developer's pinned release + our numbered changes.** `Dockerfile` starts `FROM` one Ferrofin release,
+  pinned by tag and digest, and adds the changes listed below. Nothing else.
+- **Every change is also offered upstream** (issue or PR at https://github.com/mangoleaf/ferrofin), and dropped here once a
+  release contains it. The goal is an empty list.
+- **Follow releases, not commits.** We never build Ferrofin from a branch. A new Ferrofin release is taken as a whole, after
+  the checks below.
+- **Image-level first.** A change that can live in the Dockerfile (packages, configuration) stays there. A source patch
+  would need a Rust build stage, which the image does not have; that is decided per change, and only when upstream cannot
+  take the fix in time.
+- **What stays upstream:** Ferrofin's source code, its Jellyfin API compatibility, database adoption and migrations, the
+  bundled jellyfin-web and jellyfin-ffmpeg, its release cadence and signing. Bugs we find go to Ferrofin first.
+
+## Changes
+
+| # | Change | Kind | Why | Upstream | Status |
+|---|---|---|---|---|---|
+| 0001 | [Intel OpenCL runtime](patches/0001-intel-opencl-runtime.md) | Dockerfile | Ferrofin's image has no Intel OpenCL driver, so HDR → SDR tone mapping on Intel GPUs fails (`OpenCL platforms: -1001`). Installed the way Jellyfin's image does, pinned by version and sha256. | not filed yet | in the image |
+| 0002 | [VA-API HDR tone-mapping chain](patches/0002-vaapi-hdr-tonemap-chain.md) | probably source | Placeholder: being investigated separately. | – | open |
+
+Each entry in `patches/` says why, the upstream link once filed, the status and when to drop it. New entries take the next
+number; numbers are never reused.
+
+## Files
+
+| File | What |
+|---|---|
+| `Dockerfile` | the image: `FROM ghcr.io/mangoleaf/ferrofin:v1.5.1@sha256:5980…`, change 0001, labels, back to the image's user `ferrofin`, Ferrofin's entrypoint |
+| `NOTICE` | licences of what is in the image (copied to `/usr/share/doc/friendflix-mediaserver/NOTICE`) |
+| `patches/` | one file per change |
+| `probe.sh` | does HDR tone mapping with OpenCL work on this host's GPU? Throw-away containers only, Jellyfin is not touched |
+| `try.sh` | runs the image next to Jellyfin on a **copy** of Jellyfin's config folder, for testing behind FriendFlix |
+
+Both scripts are self-contained (copy one file to the host and run it with `bash`). They need LF line endings: if bash
+says `$'\r': command not found`, the file was saved with Windows line endings; `sed -i 's/\r$//' try.sh` fixes it
+(`.gitattributes` keeps them LF in git).
+
+## Build and publish
+
+Locally, from the repository root (the build copies `mediaserver/NOTICE`):
+
+```bash
+docker buildx build --platform linux/amd64 -f mediaserver/Dockerfile -t friendflix-mediaserver:dev .
+IMAGE=friendflix-mediaserver:dev bash mediaserver/probe.sh     # on a host with an Intel GPU
+```
+
+CI builds it in the `docker` matrix of `.github/workflows/ci.yml` like the other images (no Rust or Node build: only the
+base image, the Intel debs and the NOTICE), with the SPDX SBOM and SLSA provenance, scans it with Trivy, and
+`publish.yml` re-tags, cosign-signs and attests it as `ghcr.io/letsmanu/friendflix-mediaserver` (`nightly` from main,
+`X.Y.Z` / `latest` from FriendFlix releases, short sha). Two differences:
+
+- its Trivy findings are **reported, not a gate**: CVEs in the third-party base can only be fixed by a Ferrofin release;
+- it is **exempt from the `reproducible` job** ([docs/reproducible-builds.md](../docs/reproducible-builds.md#exemption-mediaserver)).
+
+The FriendFlix updater never pulls or recreates it (it only manages FriendFlix's own services). linux/amd64 only:
+Ferrofin v1.5.1 publishes no other platform.
+
+## New Ferrofin release
+
+1. **Read the release notes**, especially database migrations: an upgraded copy cannot go back.
+2. **Update tag and digest together** in `Dockerfile` (`FROM`, the `base.name` / `base.digest` labels and the
+   `io.github.letsmanu.friendflix.mediaserver.ferrofin` label), `NOTICE`, and `UPSTREAM_IMAGE` in `try.sh` and `probe.sh`.
+   The digest of the multi-arch index:
+   `docker buildx imagetools inspect ghcr.io/mangoleaf/ferrofin:vX.Y.Z --format '{{.Manifest.Digest}}'`.
+   (Dependabot opens a PR for the `FROM` line; it is only the reminder for the rest.)
+3. **Go through the changes:** for each one, is it still needed? Upstream took it → drop it, mark it *upstream* in the table.
+   Still needed → check it still applies (for 0001: does the new base still lack the runtime, is it still Debian trixie
+   with `ocl-icd-libopencl1`?).
+4. **Rebuild** (`docker buildx build …` above, or let CI build the PR).
+5. **Run the probe** on the Intel host: `IMAGE=<the new image> bash probe.sh` – tests 1 and 2 must pass.
+6. **Run the FriendFlix test:** `try.sh` on a fresh copy, then the checklist in [docs/mediaserver.md](../docs/mediaserver.md).
+7. Merge; the next nightly or release publishes it.
+
+Intel runtime updates (change 0001) follow Jellyfin's Dockerfile, not our own choice of versions: see
+[patches/0001](patches/0001-intel-opencl-runtime.md#bumping).
+
+## Licence
+
+The Ferrofin server in the image is GPL-3.0-only (its source: the upstream tag). The Intel runtime is MIT; the other
+components keep their licences ([NOTICE](NOTICE)). The image is labelled `org.opencontainers.image.licenses=GPL-3.0-only`.
+The files in this folder are FriendFlix's own, AGPL-3.0-or-later like the rest of the repository.

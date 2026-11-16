@@ -20,6 +20,9 @@
 # Reproducible builds (docs/reproducible-builds.md): SOURCE_DATE_EPOCH = commit time, rewrite-timestamp=true, pinned
 # BuildKit (BUILDKIT_IMAGE), BUILD_TIME and the `created` label derived from the commit time; the published candidate is
 # built without cache import. The `reproducible` job rebuilds every image from scratch and requires the same digest.
+# mediaserver (trial, mediaserver/README.md) is the thin FriendFlix image on top of the pinned Ferrofin release: no Rust or
+# Node build, only image-level changes. Built, scanned, SBOM'd, signed and published like the others, but its Trivy gate only
+# reports (CVEs of the third-party base can only be fixed by a Ferrofin release) and it is exempt from `reproducible`.
 name: CI
 on:
   push: { branches: [main], tags: ["v*"] }
@@ -348,9 +351,11 @@ jobs:
       packages: write # literal on purpose: permissions don't accept expressions; PRs never push and fork PRs get a read-only token anyway
       security-events: write # Trivy SARIF upload (push only, same reasoning)
     strategy:
-      matrix: { service: [backend, gateway, web, updater, livetv] }
+      matrix: { service: [backend, gateway, web, updater, livetv, mediaserver] }
     env:
       SERVICE: ${{ matrix.service }}
+      # mediaserver: findings of the pinned Ferrofin base are reported (table / code scanning), not a gate - see the top
+      TRIVY_GATE_EXIT: ${{ matrix.service == 'mediaserver' && '0' || '1' }}
       # push (main / v* tags) or a dispatch on main / a v* tag: push the candidate to GHCR; everything else builds locally
       PUBLISHABLE: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) }}
     steps:
@@ -397,7 +402,7 @@ jobs:
           image-ref: friendflix-${{ matrix.service }}:ci
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          exit-code: "1"
+          exit-code: ${{ env.TRIVY_GATE_EXIT }}
       # ---- push (main / v* tags) or dispatch: build once, push candidate tag, scan that exact digest ----
       - name: Log in to GHCR
         if: env.PUBLISHABLE == 'true'
@@ -409,9 +414,13 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ${{ steps.img.outputs.name }}
-          # default would be the clock; the commit time keeps the label (part of the image config) reproducible
+          # default would be the clock; the commit time keeps the label (part of the image config) reproducible.
+          # mediaserver: its own title, description and licence (Ferrofin is GPL-3.0-only), not the repository's AGPL default
           labels: |
             org.opencontainers.image.created=${{ steps.ver.outputs.build_time }}
+            ${{ matrix.service == 'mediaserver' && 'org.opencontainers.image.title=FriendFlix media server (Ferrofin)' || '' }}
+            ${{ matrix.service == 'mediaserver' && 'org.opencontainers.image.description=Ferrofin with FriendFlix''s numbered changes (mediaserver/README.md). Trial.' || '' }}
+            ${{ matrix.service == 'mediaserver' && 'org.opencontainers.image.licenses=GPL-3.0-only' || '' }}
       - name: Build and push candidate
         id: build
         if: env.PUBLISHABLE == 'true'
@@ -471,7 +480,7 @@ jobs:
           output: ""
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          exit-code: "1"
+          exit-code: ${{ env.TRIVY_GATE_EXIT }}
           skip-setup-trivy: true
       # backend only: every production dependency resolves inside the image (a package npm kept in backend/node_modules once shipped
       # missing: the backend crashed at start with ERR_MODULE_NOT_FOUND)
@@ -519,6 +528,8 @@ jobs:
   # Jellyfin repository (Debian + third-party packages, dpkg state, no snapshot archive; the repository keeps only current
   # versions), which this job cannot show to reproduce bit for bit. It is still built, scanned, SBOM'd and signed by the
   # `docker` matrix and publish; base images are digest-pinned. See scripts/reproduce-image.sh and docs/livetv.md.
+  # mediaserver is NOT in this matrix either (documented exemption, docs/reproducible-builds.md): a third-party base image plus
+  # dpkg-installed Intel debs; two identical builds have not been shown yet.
   # Not scheduled: a later rebuild differs as soon as Alpine ships a newer apk package (see the Dockerfiles).
   reproducible:
     needs: docker

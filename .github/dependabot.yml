@@ -49,6 +49,14 @@ updates:
     groups:
       docker-minor-patch:
         update-types: [minor, patch]
+  # the trial media server image (mediaserver/README.md): a new Ferrofin release arrives as its own PR, which is only the
+  # reminder: finish it by hand (labels, NOTICE, try.sh/probe.sh, probe on the Intel host, FriendFlix test) before merging
+  - package-ecosystem: docker
+    directory: /mediaserver
+    schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
+    rebase-strategy: disabled
+    open-pull-requests-limit: 1
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: monthly }
