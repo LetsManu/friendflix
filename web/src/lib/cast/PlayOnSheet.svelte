@@ -166,7 +166,7 @@
   .t { font-weight: 700; font-size: .98rem; overflow-wrap: anywhere; }
   .h { font-size: .84rem; font-weight: 500; color: rgba(255, 255, 255, .9); }
   .row.on .h, .row:hover .h { color: #fff; }
-  .tick { flex: none; color: var(--acc-light, #ff8aa0); display: grid; place-items: center; }
+  .tick { flex: none; color: var(--acc-light); display: grid; place-items: center; }
   /* calm mode and reduced motion: nothing moves */
   :global(html.m-still) .po-wrap :global(*) { transition: none !important; animation: none !important; }
   @media (prefers-reduced-motion: reduce) { .po-wrap :global(*) { transition: none !important; animation: none !important; } }

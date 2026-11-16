@@ -2692,7 +2692,7 @@
     background: linear-gradient(transparent, rgba(0,0,0,.62) 4.5rem, rgba(0,0,0,.72) 60%, rgba(0,0,0,.88)); transition: opacity 250ms ease; }
   .ttlblock { display: grid; gap: .15rem; min-width: 0; max-width: min(60%, 46rem); text-shadow: 0 1px 10px rgba(0,0,0,.5); }
   /* white with a coral bar: coral text sank to 1:1 over a bright frame (WCAG 1.4.3) */
-  .ttlblock em { font-style: normal; color: #fff; border-left: 3px solid var(--acc, #ff4f6d); padding-left: .45rem; justify-self: start; font-weight: 700; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ttlblock em { font-style: normal; color: #fff; border-left: 3px solid var(--acc); padding-left: .45rem; justify-self: start; font-weight: 700; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ttlblock b { font-size: 2.1em; font-weight: 800; line-height: 1.05; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ttlblock span { color: #e8e8ec; font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tlrow { gap: .9rem; }
@@ -2703,7 +2703,7 @@
   :is(.stage.desk, .stage.pui) .track :is(.buf, .seg, .played, .chap) { transition: transform 150ms var(--m-emph-out, ease-out); }
   :is(.stage.desk, .stage.pui) .track:is(:hover, :focus-visible, .scrub) :is(.bars, .buf, .seg, .played, .chap) { transform: scaleY(2); }
   :is(.stage.desk, .stage.pui) .mark { top: -4px; }
-  :is(.stage.desk, .stage.pui) .knob { width: 14px; height: 14px; margin: -7px 0 0 -7px; background: #fff; box-shadow: 0 0 0 3px rgba(255,79,109,.35); }
+  :is(.stage.desk, .stage.pui) .knob { width: 14px; height: 14px; margin: -7px 0 0 -7px; background: #fff; box-shadow: 0 0 0 3px rgba(var(--acc-rgb), .35); }
   .stage.desk .row { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
   .pill { flex-wrap: nowrap; gap: .15rem; padding: .25rem .4rem; border-radius: 99px; background: rgba(20,20,24,.62); border: 1px solid rgba(255,255,255,.12); }
   .ctl.blur .pill, .ctl.blur.dock .menu:not(.bare) { -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }

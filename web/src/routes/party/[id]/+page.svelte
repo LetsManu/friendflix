@@ -220,6 +220,7 @@
   .sp { flex: 1; }
   .avatars { display: flex; list-style: none; margin: 0 .4rem 0 0; padding: 0; }
   .avatars li { position: relative; margin-left: -8px; }
+  /* the guests' avatars (and their reaction badges below): a person colour like lib/avatars.ts, not the brand accent */
   .av { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #ff4f6d, #9a2440); border: 2px solid #000; font-weight: 800; font-size: .9rem; }
   .buf .av { outline: 2px solid var(--warn); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .55; } }

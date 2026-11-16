@@ -56,7 +56,7 @@
 {#if shown}
 <main class="pair">
   <div class="txt">
-    <span class="logo"><Logo wordmark size={52} /></span>
+    <span class="logo"><Logo wordmark byline size={52} /></span>
     <h1>{$t('player.tv.title')}</h1>
     <ol>
       <li><Rich key="player.tv.step1" /></li>
@@ -82,9 +82,11 @@
 {/if}
 
 <style>
-  .pair { min-height: 100vh; display: flex; align-items: center; justify-content: center; gap: clamp(2rem, 7vw, 7rem); padding: calc(3rem + var(--safe-top)) var(--pad-x) 3rem; background: radial-gradient(900px 500px at 20% 10%, rgba(255, 79, 109, .16), transparent 70%), var(--bg); flex-wrap: wrap; }
+  .pair { min-height: 100vh; display: flex; align-items: center; justify-content: center; gap: clamp(2rem, 7vw, 7rem); padding: calc(3rem + var(--safe-top)) var(--pad-x) 3rem; background: radial-gradient(900px 500px at 20% 10%, rgba(var(--acc-rgb), .16), transparent 70%), var(--bg); flex-wrap: wrap; }
   .txt { max-width: 38rem; }
-  .logo { display: inline-flex; }
+  .logo { display: inline-flex; max-width: 100%; --logo-name-max: 16em; }
+  /* the TV start screen: the byline reads from the sofa */
+  .logo :global(.by) { font-size: 1.15rem; }
   h1 { font-size: clamp(2rem, 4.5vw, 3.2rem); margin: 1.2rem 0 1rem; }
   ol { color: #e5e5e5; font-size: 1.15rem; padding-left: 1.3rem; display: grid; gap: .5rem; }
   .code { font-size: clamp(2.6rem, 7vw, 5rem); font-weight: 800; letter-spacing: .14em; font-variant-numeric: tabular-nums; margin: 1.2rem 0 .8rem; padding: .3rem 1.2rem; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; display: inline-block; font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace; }

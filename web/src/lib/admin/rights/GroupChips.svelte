@@ -88,8 +88,8 @@
     box-shadow: inset 0 0 0 1px var(--fr-line); font-weight: 600; font-size: .9rem; max-width: 100%; }
   .chip:hover:not(:disabled) { background: rgba(var(--fr-scrim-rgb), .45); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .42); }
   .chip:active:not(:disabled) { transform: none; }
-  .chip.on { background: rgba(255, 79, 109, .2); box-shadow: inset 0 0 0 1.5px var(--acc); }
-  .chip.on:hover:not(:disabled) { background: rgba(255, 79, 109, .28); }
+  .chip.on { background: rgba(var(--acc-rgb), .2); box-shadow: inset 0 0 0 1.5px var(--acc); }
+  .chip.on:hover:not(:disabled) { background: rgba(var(--acc-rgb), .28); }
   .chip:disabled { cursor: default; }
   /* the check's room is always there: a chip keeps its width when it is ticked */
   .ck { width: 18px; height: 18px; flex: none; display: grid; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, .12); color: transparent; }

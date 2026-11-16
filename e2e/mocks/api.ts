@@ -23,6 +23,20 @@ export const DEFAULT_BRAND_ANSWER = {
   images: {},
 };
 
+/** the tokens the backend derives for the blue preset #4c9dff (backend/src/brand/colors.ts; brand.spec.ts) */
+export const BLUE_TOKENS = { acc: '#4c9dff', accHover: '#2d8cff', accFill: '#006ff4', accFillHover: '#0063db', accText: '#4c9dff', accLight: '#89bfff', accLine: '#99c7ff', adjusted: { text: false, fill: true } };
+/** an image URL of the public brand route (`kind` makes the hash unique; the mock serves a PNG for any of them) */
+export const brandImage = (kind: string) => `/api/public/brand/img/${kind.padEnd(64, '0').slice(0, 64).replace(/[^0-9a-f]/g, 'a')}.png`;
+/** GET /api/public/brand of a branded instance: Nordlicht Kino by Anna Beispiel in blue (override any field) */
+export function brandAnswer(over: Record<string, unknown> = {}, images: Record<string, string> = {}, tokens: Record<string, unknown> = BLUE_TOKENS) {
+  return {
+    rev: 7,
+    brand: { ...DEFAULT_BRAND_ANSWER.brand, name: 'Nordlicht Kino', byline: 'by Anna Beispiel', shortName: 'Nordlicht', accent: '#4c9dff', glow: 'accentViolet', ...over },
+    tokens: structuredClone(tokens),
+    images,
+  };
+}
+
 export interface MockState {
   lists: MockList[];
   watch: Set<string>;
@@ -256,6 +270,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     // the public brand (every page loads it at boot, signed in or not)
     if (p === '/api/public/brand' && m === 'GET') return J(st.brand);
+    if (/^\/api\/public\/brand\/img\/[0-9a-f]{64}\.(png|webp)$/.test(p) && m === 'GET') return route.fulfill({ status: 200, contentType: 'image/png', body: pngFor(req.url()) });
     // the public cover wall of the sign-in pages (/login, /pending): the list, and the generated image for every path
     if (p === '/api/public/login-art' && m === 'GET') {
       return st.loginArt.status === 200 ? J({ images: st.loginArt.images }) : J({ error: st.loginArt.status === 503 ? 'setup_required' : 'unavailable' }, st.loginArt.status);

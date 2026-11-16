@@ -402,7 +402,7 @@
 
 <header class="nav desk" class:solid class:still data-desk-bar bind:this={root}>
   <span class="scrim" aria-hidden="true"></span>
-  <a class="logo" href={home} aria-label={$t('shell.nav.homeLink')}><Logo wordmark size={30} /></a>
+  <a class="logo" href={home} aria-label={$t('shell.nav.homeLink')}><Logo header size={30} /></a>
   <nav class="pill" class:on={fillOn} class:open class:compact class:collapse class:empty={!library && !tabs.length} class:lib-held={held} class:lib-in={fadeIn} aria-label={$t('shell.nav.main')} bind:this={pill} style:--fw="{fw}px" style:--fwc="{open ? fw : lastFw}px" style:--sel-a={selA ?? undefined} use:clipSheen>
     <!-- the background: at rest ONE glass surface the size of the pill (.whole, no edge inside it); while the pill changes size
          two glass halves instead, each with one of its round ends, that slide (never scale) and cross-fade into each other in
@@ -505,7 +505,8 @@
     background: linear-gradient(to bottom, rgb(16, 20, 24) 0, rgb(16, 20, 24) calc(64px + var(--safe-top)), rgba(16, 20, 24, .74) calc(80px + var(--safe-top)),
       rgba(16, 20, 24, .38) calc(98px + var(--safe-top)), rgba(16, 20, 24, .12) calc(114px + var(--safe-top)), rgba(16, 20, 24, 0) 100%); }
   .solid > .scrim { opacity: 1; }
-  .logo { justify-self: start; display: inline-flex; align-items: center; min-height: 44px; filter: drop-shadow(0 1px 6px rgba(0, 0, 0, .45)); }
+  /* the brand's name ellipsizes at 8.5 em (a 24-character name keeps the pill centred at 1280 px; "Nordlicht Kino" fits whole) */
+  .logo { justify-self: start; display: inline-flex; align-items: center; min-height: 44px; filter: drop-shadow(0 1px 6px rgba(0, 0, 0, .45)); --logo-name-max: 8.5em; }
 
   /* ---- the pill: transparent itself; its look is the background layer (.pbg), so a size change can be played back by
      sliding that layer's two halves (transform only) while the content glides; the field lives at its right end ---- */
@@ -615,6 +616,7 @@
   .avatar { display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; padding: 0; background: transparent; border-radius: 10px; }
   .avatar:hover:not(:disabled) { background: transparent; }
   /* the initial is large bold text (19 px, 800): 3:1 is the bar over the lighter avatar colours (WCAG 1.4.3) */
+  /* the profile avatar's default colour (lib/avatars.ts 'red'): a person's colour, not the brand accent */
   .face { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, #ff6b81, #9a2440); font-size: 1.2rem; font-weight: 800; color: #fff; box-shadow: 0 0 0 1px rgba(255, 255, 255, .14); }
   .avatar[aria-expanded='true'] .face { box-shadow: 0 0 0 2px #fff; }
 

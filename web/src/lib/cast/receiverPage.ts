@@ -2,8 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * The HTML and the Content-Security-Policy of FriendFlix's own Cast receiver (routes/cast-receiver/+server.ts). Its scripts and
- * styles are static files (web/static/cast-receiver/).
+ * styles are static files (web/static/cast-receiver/). The idle screen shows the instance's brand (name, byline, symbol, accent),
+ * rendered here from the public brand the web server fetched (lib/manifest.ts cachedManifestBrand): every text escaped, the colours
+ * only the validated #rrggbb tokens, the symbol only a URL of the public brand image route (parseBrand checks all three).
  */
+import { brandInitial, brandPalette, builtInMark, DEFAULT_LOADED, isDefaultAccent, type LoadedBrand } from '#lib/brand';
+
+const HEX = /^#[0-9a-f]{6}$/;
+const IMAGE_URL = /^\/api\/public\/brand\/img\/[0-9a-f]{64}\.(png|webp)$/;
+/** HTML text and attribute escaping (the brand's texts are the admin's, but never markup) */
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /** Google's Cast Application Framework (CAF v3) receiver script */
 export const CAF_URL = 'https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js';
@@ -30,21 +38,43 @@ export const RECEIVER_CSP = [
   "frame-ancestors 'none'",
 ].join('; ');
 
-/** the receiver page (no user data in it: everything else comes from the sender over the Cast channel) */
-export function receiverHtml(): string {
+/** the brand's colours over receiver.css's defaults (an inline style: the receiver's CSP allows it); nothing for today's coral */
+function brandStyle(b: LoadedBrand): string {
+  if (isDefaultAccent(b.tokens)) return '';
+  const p = brandPalette(b.tokens);
+  const vars: Array<[string, string]> = [['--acc', b.tokens.acc], ['--acc-fill', b.tokens.accFill], ['--coral', p.glassText]];
+  return vars.every(([, v]) => HEX.test(v)) ? ` style="${vars.map(([k, v]) => `${k}: ${v}`).join('; ')}"` : '';
+}
+
+/** the idle screen's brand: today's mark and name for the default brand, else the symbol (upload, F tile or initial), name and byline */
+function brandBlock(b: LoadedBrand): string {
+  const name = esc(b.name);
+  const by = b.brand.byline.trim();
+  const sym = b.images.symbol && IMAGE_URL.test(b.images.symbol)
+    ? `<img src="${b.images.symbol}" alt="">`
+    : builtInMark(b) && isDefaultAccent(b.tokens)
+      ? '<img src="/logo-icon.svg" alt="">'
+      : builtInMark(b)
+        ? `<svg viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="g" x1="8" y1="2" x2="56" y2="62" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="${esc(brandPalette(b.tokens).markFrom)}"/><stop offset="1" stop-color="${esc(brandPalette(b.tokens).markTo)}"/></linearGradient></defs><rect x="2" y="2" width="60" height="60" rx="15" fill="url(#g)"/><path fill="#fff" d="M19 18a4 4 0 0 1 4-4h23a4 4 0 0 1 0 8H28v28a4.500 4.500 0 0 1-9 0z"/><path fill="#fff" stroke="#fff" stroke-width="3" stroke-linejoin="round" d="M33.500 29.500 45.500 36 33.500 42.500z"/></svg>`
+        : `<span class="initial">${esc(brandInitial(b.name))}</span>`;
+  return by ? `<div>${sym}<span class="names"><span class="nm">${name}</span><span class="by">${esc(by)}</span></span></div>` : `<div>${sym}${name}</div>`;
+}
+
+/** the receiver page (no user data in it: everything else comes from the sender over the Cast channel; the brand is public) */
+export function receiverHtml(b: LoadedBrand = DEFAULT_LOADED): string {
   return `<!doctype html>
-<html lang="en">
+<html lang="en"${brandStyle(b)}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FriendFlix</title>
+<title>${esc(b.name)}</title>
 <link rel="stylesheet" href="/cast-receiver/receiver.css">
 <script src="${CAF_URL}"></script>
 <script type="module" src="/cast-receiver/receiver.js"></script>
 </head>
 <body class="idle">
 <video id="v"></video>
-<div class="brand" aria-hidden="true"><div><img src="/logo-icon.svg" alt="">FriendFlix</div></div>
+<div class="brand" aria-hidden="true">${brandBlock(b)}</div>
 <div id="scrim" class="scrim fx flat" aria-hidden="true"></div>
 <div id="who" class="who fx" role="status"></div>
 <button id="skip" class="skip" hidden></button>

@@ -449,7 +449,7 @@
      the backdrop's tone is known (inline toneVars win); its sheen sits in a clip layer (the panel does not clip its content) */
   .col { margin-top: auto; width: 42vw; min-width: 440px; max-width: 720px; box-sizing: border-box; padding: 28px; border-radius: var(--fr-r-sheet); }
   /* the dimmest text on the panel is white at .9 (lib/glass/tone.ts TEXT_DIM; the scrim is solved for it). The eyebrow is the
-     light coral (--acc-light #ff8aa0, as the hover card's reason line) on a dark underlay (scrim colour at .5, like the hover card's text
+     light coral (--acc-light, as the hover card's reason line) on a dark underlay (scrim colour at .5, like the hover card's text
      part): the milk alone lightens the panel past what coral can pass, even over a black backdrop (tone.test.ts,
      desk-detail.spec.ts "contrast fallback") */
   .col { --mut: rgba(255, 255, 255, .9); }

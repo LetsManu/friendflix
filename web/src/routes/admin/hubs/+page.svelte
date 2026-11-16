@@ -28,6 +28,7 @@
   let suggestions: Suggestion[] | null = null;
   /** form state: editing = id of the hub being edited, '' = a new one, null = closed */
   let editing: string | null = null;
+  // a hub's own accent (data the admin saves for that hub; off by default): the picker's starting value, not the brand's accent
   let name = '', source: Source = 'genre', value = '', accentOn = false, accent = '#ff4f6d', enabled = true, imageId = '', imageName = '';
   let q = '', results: Item[] = [], searchSeq = 0, searchT: ReturnType<typeof setTimeout>;
   let formEl: HTMLElement | undefined;

@@ -330,13 +330,17 @@ describe('the ambient background (AMB_*)', () => {
   const css = readFileSync(fileURLToPath(new URL('../../app.css', import.meta.url)), 'utf8');
   const amb = css.slice(css.indexOf('.frost-amb {'), css.indexOf('}', css.indexOf('.frost-amb {')));
   /** the glows as app.css paints them (top first): colour, alpha, centre and radii (fractions of the box) */
-  const glows = [...amb.matchAll(/radial-gradient\((\d+)% (\d+)% at (\d+)% (\d+)%, rgba\((\d+), (\d+), (\d+), ([\d.]+)\), transparent 70%\)/g)]
+  // the accent spot is `rgba(var(--acc-rgb), a)`: the default brand paints it in :root's --acc-rgb (today's coral)
+  const accRgb = /--acc-rgb: (\d+, \d+, \d+);/.exec(css)![1]!;
+  const glows = [...amb.replaceAll('var(--acc-rgb)', accRgb).matchAll(/radial-gradient\((\d+)% (\d+)% at (\d+)% (\d+)%, rgba\((\d+), (\d+), (\d+), ([\d.]+)\), transparent 70%\)/g)]
     .map((m) => ({ rx: +m[1]! / 100, ry: +m[2]! / 100, x: +m[3]! / 100, y: +m[4]! / 100, c: [+m[5]!, +m[6]!, +m[7]!] as RGB, a: +m[8]! }));
 
   it('app.css paints the glows AMB_* describes (0.6 of the demo\'s alphas)', () => {
     expect(glows.map((g) => [g.c, g.a])).toEqual([[AMB_ORANGE, AMB_ORANGE_A], [AMB_VIOLET, AMB_VIOLET_A], [AMB_CORAL, AMB_CORAL_A]]);
     expect([AMB_ORANGE_A, AMB_VIOLET_A, AMB_CORAL_A]).toEqual([0.33, 0.25, 0.13]);
     expect(amb).toContain('#0a090d');
+    expect(amb).toContain('rgba(var(--acc-rgb), .13)'); // the spot follows the brand's accent (lib/brand.ts brandPalette)
+    expect(accRgb).toBe(AMB_CORAL.join(', '));
   });
 
   it('AMB_PEAK is the brightest point of the real gradients (the orange centre)', () => {

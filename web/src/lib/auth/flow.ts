@@ -17,6 +17,8 @@ import { goto } from '$app/navigation';
 import { getCsrf } from '#lib/api';
 import type { TKey } from '#lib/i18n';
 import { readCookie } from '#lib/setup/api';
+import { brandPalette } from '#lib/brand';
+import { DEFAULT_TOKENS } from '#lib/brandColors';
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // The step DTOs: a copy of backend/src/flowSteps.ts (Task 2), not an import (the web does not import backend code). flow.test.ts holds
@@ -305,11 +307,16 @@ export function wallColumns(images: string[], cols = 5): string[][] {
   return out.map((c) => [...c, ...c]);
 }
 
-/** bright and deep colours of the app's palette (app.css tokens and the logo gradient) */
-const ART_FROM = ['#ff4f6d', '#d6325a', '#ff6b81', '#4ade80', '#f5a623', '#ff6b6b'] as const;
-const ART_TO = ['#16323a', '#3a1a2a', '#2a3f6b', '#242b33', '#161b21'] as const;
+/**
+ * bright and deep colours of the app's palette: the brand's accent shades (lib/brand.ts brandPalette `art`; today's corals by default),
+ * then the fixed status colours (--ok, --warn, --err: not the accent, they stay whatever the brand is)
+ */
+const ART_FROM_FIXED = ['#4ade80', '#f5a623', '#ff6b6b'] as const;
+const ART_TO_FIXED = ['#16323a', '#2a3f6b', '#242b33', '#161b21'] as const;
 /** generated cover tiles (no text) for a wall without images: deterministic for a seed (mulberry32) */
-export function fallbackArt(seed: number, n: number): Array<{ from: string; to: string; angle: number }> {
+export function fallbackArt(seed: number, n: number, accents: readonly string[] = brandPalette(DEFAULT_TOKENS).art, deep = brandPalette(DEFAULT_TOKENS).wall): Array<{ from: string; to: string; angle: number }> {
+  const ART_FROM = [...accents.slice(0, 3), ...ART_FROM_FIXED];
+  const ART_TO = [ART_TO_FIXED[0], deep, ...ART_TO_FIXED.slice(1)]; // the deep accent tone second, where today's wine was
   let a = seed >>> 0;
   const rnd = () => {
     a = (a + 0x6d2b79f5) >>> 0;

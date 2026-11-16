@@ -63,7 +63,7 @@
   .card { position: relative; margin: 0; min-height: 96px; box-sizing: border-box; padding: .9rem .7rem .9rem 1rem; display: grid;
     grid-template-columns: 40px minmax(0, 1fr) 52px; align-items: center; gap: .8rem; }
   .ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: rgba(255, 255, 255, .08); color: var(--mut); }
-  .card.on .ic { background: rgba(255, 79, 109, .18); color: var(--acc-text, #ffa7b6); }
+  .card.on .ic { background: rgba(var(--acc-rgb), .18); color: var(--acc-text); }
   .tx { min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
   .ti { font-weight: 800; font-size: 1rem; color: var(--fg); }
   .de { font-size: .84rem; color: var(--mut); line-height: 1.35; }

@@ -3,16 +3,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setLocale } from './i18n';
 import { renderCard, shareCard } from './wrapped';
+import { applyBrand, parseBrand, resetBrandForTests } from './brand';
+import { deriveTokens } from './brandColors';
 
 /** 2D context double: records every fillText; measureText = 20 px per character. */
 function fakeCanvas() {
-  const texts: Array<{ text: string; x: number; y: number }> = [];
+  const texts: Array<{ text: string; x: number; y: number; color: string }> = [];
   const g = {
     font: '', fillStyle: '', textAlign: 'left',
     createLinearGradient: () => ({ addColorStop: () => undefined }),
     fillRect: () => undefined, beginPath: () => undefined, arc: () => undefined, fill: () => undefined, roundRect: () => undefined,
     measureText: (t: string) => ({ width: t.length * 20 }),
-    fillText: (text: string, x: number, y: number) => texts.push({ text, x, y }),
+    fillText: (text: string, x: number, y: number) => texts.push({ text, x, y, color: String(g.fillStyle) }),
   };
   const canvas = { width: 0, height: 0, getContext: () => g, toBlob: (cb: (b: Blob | null) => void) => cb(blobResult) };
   return { canvas, texts };
@@ -53,6 +55,18 @@ afterEach(async () => {
 });
 
 describe('renderCard', () => {
+  it('carries the brand: its name on top, its accent for the highlights (no coral for a blue brand)', () => {
+    const accent = '#4c9dff';
+    applyBrand(parseBrand({ rev: 1, brand: { name: 'Nordlicht Kino', accent }, tokens: deriveTokens(accent), images: {} })!, null);
+    try {
+      renderCard(stats);
+      const top = canvas.texts.find((t) => t.text === 'Nordlicht Kino')!;
+      expect(top.color).toBe(accent);
+      expect(canvas.texts.map((t) => t.text)).not.toContain('FriendFlix');
+      expect(canvas.texts.map((t) => t.color)).not.toContain('#ff4f6d');
+    } finally { resetBrandForTests(); }
+  });
+
   it('draws a 1080x1350 card with the year, hours and minutes, counts, favourite day and achievements', () => {
     const c = renderCard(stats, 'Lea');
     expect([c.width, c.height]).toEqual([1080, 1350]);

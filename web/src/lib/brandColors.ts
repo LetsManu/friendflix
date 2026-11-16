@@ -155,3 +155,24 @@ export function deriveTokens(accent: string): BrandTokens {
     adjusted: { text: accText !== hex, fill: accFill !== hex },
   };
 }
+
+// ---- web-only helpers (not part of the backend port: nothing above uses them) ----
+
+/** `hex` lightened in 1 % lightness steps from its own lightness until `ok` holds (white at the latest); `hex` itself when it passes */
+export function lightenUntil(hex: string, ok: (c: string) => boolean): string {
+  const h = toHex(parseHex(hex));
+  if (ok(h)) return h;
+  const hsl = toHsl(parseHex(h));
+  return step(hsl, hsl[2], 1, ok);
+}
+
+/** `a` mixed with `b` (`t` = the share of `b`, 0..1) in sRGB, as #rrggbb */
+export function mixHex(a: string, b: string, t: number): string {
+  const x = parseHex(a), y = parseHex(b);
+  return toHex([0, 1, 2].map((i) => x[i]! * (1 - t) + y[i]! * t) as RGB);
+}
+
+/** "r, g, b" of a #rrggbb colour (for `rgba(var(--acc-rgb), a)`) */
+export function rgbTriplet(hex: string): string {
+  return parseHex(hex).join(', ');
+}

@@ -24,6 +24,10 @@
      background and on a glass surface's dark underlay (AA); coral lines (underlines, the toast ring) and light-red marks
      (danger icons, error dots) on glass (3:1 over a white backdrop); the info dot */
   --acc-light: #ff8aa0; --acc-line: #ff9cad; --err-mark: #ff9d9d; --info-mark: #73c6cf;
+  /* the brand's palette around the tokens (lib/brand.ts brandPalette; the brand sets them inline on <html> like the tokens):
+     the accent as "r, g, b" for translucent washes (rgba(var(--acc-rgb), a) also works where color-mix() does not: TV browsers),
+     accent text on the light glass cards, and the built-in mark's gradient */
+  --acc-rgb: 255, 79, 109; --acc-glass: #ffa7b6; --mark-from: #ff6b81; --mark-to: #e23c5b;
   --line: #2a323b;
   --pad-x: clamp(1rem, 4vw, 3.6rem);
   --nav-h: 68px;
@@ -206,11 +210,13 @@ button[aria-busy='true'] { cursor: progress; }
 .frost-dim { position: fixed; inset: 0; background: rgba(8, 7, 11, .45); transition: opacity 200ms var(--fr-out); }
 html.m-still .frost-dim { transition: none; } /* calm mode / reduced motion: at once */
 /* the still ambient background for pages without artwork (never animated). The glow alphas are the demo's at 0.6 (owner
-   ruling B′; lib/glass/tone.ts AMB_* mirrors them and tone.test.ts checks both agree) */
+   ruling B′; lib/glass/tone.ts AMB_* mirrors them and tone.test.ts checks both agree). The small spot is the brand's accent
+   (--acc-rgb: today's coral by default, so an unbranded instance paints exactly what it did; lib/brand.test.ts keeps every
+   accent's spot below the orange peak) */
 .frost-amb { position: fixed; inset: 0; z-index: -1; pointer-events: none; background:
   radial-gradient(60% 55% at 78% 22%, rgba(214, 92, 64, .33), transparent 70%),
   radial-gradient(45% 50% at 20% 85%, rgba(78, 64, 190, .25), transparent 70%),
-  radial-gradient(40% 40% at 55% 60%, rgba(255, 79, 109, .13), transparent 70%), #0a090d; }
+  radial-gradient(40% 40% at 55% 60%, rgba(var(--acc-rgb), .13), transparent 70%), #0a090d; }
 /* the brand's glow (html.glow-<mode>, lib/brand.ts): accentViolet (the default) is the rule above, today's look; accent: only the
    accent, its big spot in the darker fill shade; neutral: grey; off: the plain base. No mode paints a spot brighter than the orange
    peak above (AMB_PEAK in lib/glass/tone.ts, which the glass and text contrast checks measure against): the fill shade is dark enough
@@ -249,7 +255,7 @@ html.m-still .frost-sheen, html.m-still .frost-tint, html.tv .frost-sheen, html.
 /* text on the light glass over the ambient background (.panel and the .frost-text surfaces: settings, /me, phone search):
    the mockup's hierarchy, AA on the light card over the brightest glow, on the raw ambient and on the solid fallback
    (lib/glass/pages.test.ts): dim text white .72, hints white .66, the status colours a step lighter, links and coral text lighter */
-.panel, .frost-text { --mut: rgba(255, 255, 255, .72); --hint: rgba(255, 255, 255, .66); --ok: #4ade80; --warn: #f7b344; --err: #ffa8a8; --link: #80cbd4; --info: #80cbd4; --acc-text: #ffa7b6; }
+.panel, .frost-text { --mut: rgba(255, 255, 255, .72); --hint: rgba(255, 255, 255, .66); --ok: #4ade80; --warn: #f7b344; --err: #ffa8a8; --link: #80cbd4; --info: #80cbd4; --acc-text: var(--acc-glass); }
 /* pages on the ambient background (html.amb, +layout.svelte): the usual greys and status colours pass straight on it; coral
    text needs the lighter coral (the brand's --acc-light) */
 html.amb body { --acc-text: var(--acc-light); } /* on body: the brand's tokens sit inline on <html> (lib/brand.ts) and would win there */

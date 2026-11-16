@@ -1,7 +1,8 @@
 /* SPDX-FileCopyrightText: 2026 Manuel Weißböck */
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /*
- * FriendFlix Cast receiver: the app's tokens (coral accent, OLED dark), sized for reading from 3 m (10 ft) on a TV.
+ * FriendFlix Cast receiver: the app's tokens (coral accent, OLED dark), sized for reading from 3 m (10 ft) on a TV. The tokens below
+ * are the default brand's; a branded instance overrides --acc, --acc-fill and --coral inline on <html> (lib/cast/receiverPage.ts).
  * Everything is laid out in --u (1 u = 1 px at 1280 wide, scales with the viewport) inside 5vw safe margins. Every panel is SOLID
  * (no backdrop-filter: TV GPUs are slow, and text must stay readable over a white picture). Only transform and opacity animate.
  */
@@ -26,7 +27,13 @@ button { font: inherit; }
 .brand { position: fixed; inset: 0; display: none; place-items: center; background: radial-gradient(circle at 50% 40%, #1b2128, var(--bg) 70%); }
 body.idle .brand { display: grid; }
 .brand div { display: flex; align-items: center; gap: .6em; font-size: calc(56 * var(--u)); font-weight: 700; letter-spacing: -.01em; }
-.brand img { width: calc(96 * var(--u)); height: calc(96 * var(--u)); }
+.brand img, .brand svg, .brand .initial { flex: none; width: calc(96 * var(--u)); height: calc(96 * var(--u)); }
+.brand img { border-radius: 23%; object-fit: cover; }
+.brand img[src$=".svg"] { border-radius: 0; }
+/* a brand without its own symbol: the initial on the accent fill; a byline under the name */
+.brand .initial { display: grid; place-items: center; border-radius: 23%; background: var(--acc-fill); color: #fff; font-weight: 800; font-size: calc(52 * var(--u)); }
+.brand .names { display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
+.brand .by { font-size: calc(26 * var(--u)); font-weight: 600; color: var(--mut); letter-spacing: 0; }
 
 /* screens and panels come and go by the .on class (never by [hidden]), so closing animates: in = opacity + translateY 260 ms,
    out = opacity 200 ms (the offset is reset only after the fade, so nothing jumps while it fades) */

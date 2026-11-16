@@ -54,7 +54,7 @@
   .rc { position: absolute; left: var(--gutter, 16px); top: var(--rc-top, 88px); z-index: 2; display: flex; align-items: center; gap: 10px; max-width: min(320px, calc(100% - 2 * var(--gutter, 16px))); padding: 8px 14px 8px 12px; border-radius: 14px; pointer-events: none; user-select: none;
     opacity: 0; transform: translateY(-4px); transition: opacity 400ms ease-out, transform 400ms ease-out; }
   .rc.on { opacity: 1; transform: none; }
-  .ic { display: inline-flex; color: #ffa7b6; }
+  .ic { display: inline-flex; color: var(--acc-glass); }
   .tx { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
   b { font-size: 15px; font-weight: 800; }
   small { font-size: 12px; color: rgba(255, 255, 255, .8); }

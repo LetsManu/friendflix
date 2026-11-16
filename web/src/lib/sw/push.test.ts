@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LOCALE_URL, META_CACHE, offlineLocale, rememberOfflineLocale } from './locale';
+import { BRAND_NAME_URL, brandName, rememberBrandName } from './brandName';
 import { installPush, safeLink } from './push';
 
 const ORIGIN = 'https://portal.example';
@@ -134,5 +135,46 @@ describe('offline UI language', () => {
     expect(await offlineLocale()).toBeNull();
     vi.stubGlobal('caches', { open: async () => { throw new Error('SecurityError'); } });
     await expect(rememberOfflineLocale('en')).resolves.toBeUndefined();
+  });
+});
+
+describe('the brand name for pushes without a title', () => {
+  let store: Map<string, Map<string, Response>>;
+  beforeEach(() => {
+    store = new Map();
+    vi.stubGlobal('caches', {
+      open: async (name: string) => {
+        if (!store.has(name)) store.set(name, new Map());
+        const s = store.get(name)!;
+        return { put: async (k: string, r: Response) => void s.set(k, r), match: async (k: string) => s.get(k)?.clone() };
+      },
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('the page remembers the last fetched brand name; a push without a title shows it', async () => {
+    expect(await brandName()).toBe('FriendFlix');
+    await rememberBrandName('Nordlicht Kino');
+    expect(store.get(META_CACHE)!.has(BRAND_NAME_URL)).toBe(true);
+    expect(await brandName()).toBe('Nordlicht Kino');
+    const handlers = new Map<string, (e: unknown) => void>();
+    const shown: string[] = [];
+    installPush({
+      location: { origin: ORIGIN }, registration: { showNotification: async (title: string) => void shown.push(title) },
+      clients: { matchAll: async () => [], openWindow: async () => undefined }, addEventListener: (t: string, f: (e: unknown) => void) => handlers.set(t, f),
+    });
+    const waits: Promise<unknown>[] = [];
+    handlers.get('push')!({ data: { json: () => ({ body: 'x' }) }, waitUntil: (p: Promise<unknown>) => waits.push(p) });
+    handlers.get('push')!({ data: { json: () => ({ title: 'Own title' }) }, waitUntil: (p: Promise<unknown>) => waits.push(p) });
+    await Promise.all(waits);
+    expect(shown.sort()).toEqual(['Nordlicht Kino', 'Own title']);
+  });
+
+  it('control characters or nothing remembered: FriendFlix; never throws without Cache Storage', async () => {
+    store.set(META_CACHE, new Map([[BRAND_NAME_URL, new Response('a\u0007b')]]));
+    expect(await brandName()).toBe('FriendFlix');
+    vi.stubGlobal('caches', undefined);
+    await expect(rememberBrandName('X')).resolves.toBeUndefined();
+    expect(await brandName()).toBe('FriendFlix');
   });
 });

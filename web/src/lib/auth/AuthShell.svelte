@@ -2,19 +2,21 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /**
-   * The frame of the public sign-in pages (/login, /pending; later /reset and /confirm-email): the logo, the cover wall and one card.
+   * The frame of the public sign-in pages (/login, /pending; later /reset and /confirm-email): the brand (symbol, name and byline),
+   * the background the brand chose (the cover wall, its own sign-in image or just the glow; CoverWall) and one card.
    * Desktop: the card is centred, at most 420px wide. Phone: the card sits at the bottom with a 16px gutter (and the safe areas).
    */
   import Logo from '#lib/Logo.svelte';
+  import { brand } from '#lib/brand';
   import CoverWall from './CoverWall.svelte';
   /** extra class on the card (e.g. `center` for the notice screens) */
   export let center = false;
 </script>
 
 <div class="shell">
-  <CoverWall />
+  <CoverWall mode={$brand.brand.signInBg} image={$brand.images.signIn ?? null} />
   <div class="in">
-    <div class="logo"><Logo wordmark size={34} /></div>
+    <div class="logo"><Logo wordmark byline size={34} /></div>
     <main class="card" class:center id="main" tabindex="-1">
       <slot />
     </main>
@@ -25,7 +27,7 @@
   .shell { position: relative; min-height: 100vh; min-height: 100dvh; overflow: hidden; background: var(--bg); }
   .in { position: relative; z-index: 1; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column;
     padding: calc(1.5rem + var(--safe-top)) max(16px, var(--safe-right)) calc(16px + var(--safe-bottom)) max(16px, var(--safe-left)); }
-  .logo { display: flex; align-self: flex-start; }
+  .logo { display: flex; align-self: flex-start; max-width: 100%; }
   .card { margin-top: auto; width: 100%; background: rgba(22, 27, 33, .86); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
     border: 1px solid var(--line); border-radius: 16px; padding: 20px; outline: none; }
   .card.center { text-align: center; }

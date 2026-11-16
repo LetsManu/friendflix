@@ -6,9 +6,12 @@ import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appName, setLocale, t, tr } from '#lib/i18n';
 import { markParams, richParts } from '#lib/i18n/rich';
-import { applyBrand, applyCached, brand, BRAND_CACHE_KEY, DEFAULT_LOADED, loadBrand, parseBrand, refetchOnVisible, resetBrandForTests } from './brand';
+import {
+  applyBrand, applyCached, brand, BRAND_CACHE_KEY, brandInitial, brandPalette, builtInMark, DEFAULT_LOADED, GLASS_TEXT_ON, headerParts, loadBrand, parseBrand,
+  refetchOnVisible, resetBrandForTests,
+} from './brand';
 import { ACC_FILL_ON, ACC_LIGHT_ON, ACC_LINE_ON, ACC_TEXT_ON, contrast, DEFAULT_TOKENS, deriveTokens, TOKENS_VERSION, type BrandTokens } from './brandColors';
-import { AMB_PEAK, DARK_BASE, frostComposite, luminance, SCRIM_MENU, type RGB } from './glass/tone';
+import { AMB_PEAK, contrast as rgbContrast, DARK_BASE, frostComposite, luminance, SCRIM_LIGHT, SCRIM_MENU, type RGB } from './glass/tone';
 
 // Branding stage A, Task 2: the web loads the public brand before sign-in and applies its colour tokens (inline custom properties on
 // <html>), glow, name ({app}, the tab title), home-screen title and icons. Browser APIs are small doubles (fake document, storage).
@@ -92,10 +95,14 @@ describe('applyBrand', () => {
     const b = loaded(answer(3));
     applyBrand(b, asDoc(f));
     const tk = deriveTokens('#4c9dff');
+    const pal = brandPalette(tk);
     expect(Object.fromEntries(f.props)).toEqual({
       '--acc': tk.acc, '--acc-hover': tk.accHover, '--acc-fill': tk.accFill, '--acc-fill-hover': tk.accFillHover, '--acc-text': tk.accText,
       '--acc-light': tk.accLight, '--acc-line': tk.accLine,
+      // the palette around them (Task 3): the accent as "r, g, b", the glass text, the built-in mark's gradient
+      '--acc-rgb': pal.rgb, '--acc-glass': pal.glassText, '--mark-from': pal.markFrom, '--mark-to': pal.markTo,
     });
+    expect(pal.rgb).toBe('76, 157, 255');
     expect([...f.classes]).toEqual(['glow-accent']);
     expect(get(brand)).toBe(b);
     // another glow replaces the class
@@ -114,9 +121,11 @@ describe('applyBrand', () => {
     expect(b.tokens).toEqual(deriveTokens('#4c9dff'));
     // and applyBrand itself checks every value again (a LoadedBrand built by hand)
     applyBrand({ ...b, tokens: { ...b.tokens, accLine: evil } as BrandTokens }, asDoc(f));
-    expect(f.doc.documentElement.style.setProperty.mock.calls.map(([k]) => k).every((k) => k.startsWith('--acc'))).toBe(true);
+    expect(f.doc.documentElement.style.setProperty.mock.calls.map(([k]) => k).every((k) => k.startsWith('--acc') || k.startsWith('--mark-'))).toBe(true);
+    // the hand-built brand with a bad token wrote no palette (it is derived from the tokens, so only from valid ones)
+    expect(f.doc.documentElement.style.setProperty.mock.calls.filter(([k]) => k === '--acc-rgb')).toHaveLength(1);
     for (const [k, v] of f.doc.documentElement.style.setProperty.mock.calls) {
-      expect(v, k).toMatch(/^#[0-9a-f]{6}$/);
+      expect(v, k).toMatch(k === '--acc-rgb' ? /^\d{1,3}, \d{1,3}, \d{1,3}$/ : /^#[0-9a-f]{6}$/);
       expect(v).not.toContain(b.brand.byline);
     }
     // no brand field value is ever written as a property value
@@ -371,5 +380,89 @@ describe('the glow classes', () => {
       expect(peak([at(.78, .22, .6, .55, rgb(tk.accFill), .33), at(.2, .85, .45, .5, rgb(tk.accFill), .18), at(.55, .6, .4, .4, rgb(tk.acc), .13)]), `accent ${accent}`).toBeLessThanOrEqual(limit);
     }
     expect(peak([{ x: .78, y: .22, rx: .6, ry: .55, c: [150, 150, 165], a: .2 }, { x: .2, y: .85, rx: .45, ry: .5, c: [110, 110, 128], a: .16 }])).toBeLessThanOrEqual(limit);
+  });
+});
+
+// ---- Task 3: what the surfaces show ----
+
+const css = () => readFileSync(fileURLToPath(new URL('../app.css', import.meta.url)), 'utf8');
+const rootVar = (k: string) => new RegExp(`${k}: ([^;]+);`).exec(css().slice(css().indexOf(':root {')))![1]!.trim();
+
+describe('brandPalette', () => {
+  it('the default accent keeps today\'s stylesheet values verbatim (an unbranded instance paints what it did)', () => {
+    const p = brandPalette(DEFAULT_TOKENS);
+    expect([p.rgb, p.glassText, p.markFrom, p.markTo]).toEqual([rootVar('--acc-rgb'), rootVar('--acc-glass'), rootVar('--mark-from'), rootVar('--mark-to')]);
+    expect(p).toEqual({ glassText: '#ffa7b6', rgb: '255, 79, 109', markFrom: '#ff6b81', markTo: '#e23c5b', flare: '255, 120, 140', wall: '#3a1a2a', deep: '#5a1424', art: ['#ff4f6d', '#d6325a', '#ff6b81'] });
+    // and the light glass cards take it: .panel and .frost-text read --acc-glass
+    expect(css()).toContain('--info: #80cbd4; --acc-text: var(--acc-glass); }');
+  });
+
+  it('accent text on light glass passes AA on all four glass backgrounds for any accent', () => {
+    const rgb = (h: string): RGB => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)) as RGB;
+    expect(GLASS_TEXT_ON[0]).toEqual(frostComposite(AMB_PEAK, SCRIM_LIGHT));
+    for (const accent of ['#ff4f6d', '#4c9dff', '#a37cff', '#2fc4b2', '#f2b52c', '#5ccf6a', '#0000ff', '#000000', '#ffffff', '#808080', '#ff0000']) {
+      const p = brandPalette(deriveTokens(accent));
+      for (const bg of GLASS_TEXT_ON) expect(rgbContrast(rgb(p.glassText), bg), `${accent} → ${p.glassText}`).toBeGreaterThanOrEqual(4.5);
+      expect(p.rgb).toMatch(/^\d{1,3}, \d{1,3}, \d{1,3}$/);
+      for (const c of [p.glassText, p.markFrom, p.markTo, p.wall, p.deep, ...p.art]) expect(c).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
+  it('a blue accent has no coral left in its palette', () => {
+    const p = brandPalette(deriveTokens('#4c9dff'));
+    const coral = ['#ff4f6d', '#d6325a', '#ff6b81', '#e23c5b', '#ffa7b6', '#3a1a2a', '#5a1424'];
+    for (const v of [p.glassText, p.markFrom, p.markTo, p.wall, p.deep, ...p.art]) expect(coral).not.toContain(v);
+    expect(p.rgb).not.toBe('255, 79, 109');
+  });
+});
+
+describe('the surfaces', () => {
+  const b = (over: Record<string, unknown> = {}, images: Record<string, string> = {}) => loaded(answer(1, over, images));
+  const IMG = `/api/public/brand/img/${HASH}.png`;
+
+  it('headerParts: wordmark, symbol plus name, the uploaded logo', () => {
+    // FriendFlix's own wordmark is its F tile plus the lettering (today's header); another name is the lettering alone
+    expect(headerParts(DEFAULT_LOADED)).toEqual({ mark: true, name: true, logo: null });
+    expect(headerParts(b())).toEqual({ mark: false, name: true, logo: null });
+    expect(headerParts(b({ header: 'symbol' }))).toEqual({ mark: true, name: true, logo: null });
+    expect(headerParts(b({ header: 'logo' }, { logo: IMG }))).toEqual({ mark: false, name: false, logo: IMG });
+    // the logo style without an upload: symbol plus name
+    expect(headerParts(b({ header: 'logo' }))).toEqual({ mark: true, name: true, logo: null });
+  });
+
+  it('the built-in F tile only for the shipped name without an uploaded symbol', () => {
+    expect(builtInMark(DEFAULT_LOADED)).toBe(true);
+    expect(builtInMark(b())).toBe(false);
+    expect(builtInMark(b({ name: 'FriendFlix' }))).toBe(true);
+    expect(builtInMark(b({ name: 'FriendFlix' }, { symbol: IMG }))).toBe(false);
+  });
+
+  it('the initial: the first grapheme, upper-cased (an emoji stays whole)', () => {
+    expect(brandInitial('nordlicht Kino')).toBe('N');
+    expect(brandInitial('  ärger')).toBe('Ä');
+    expect(brandInitial('👨‍👩‍👧 Kino')).toBe('👨‍👩‍👧');
+    expect(brandInitial('')).toBe('F');
+  });
+});
+
+describe('the default glow follows the accent', () => {
+  it('its small spot is rgba(var(--acc-rgb), .13): today\'s coral by default, never brighter than the orange peak', () => {
+    const rule = css().slice(css().indexOf('.frost-amb {'), css().indexOf('}', css().indexOf('.frost-amb {')));
+    expect(rule).toContain('radial-gradient(40% 40% at 55% 60%, rgba(var(--acc-rgb), .13), transparent 70%)');
+    const at = (x: number, y: number, rx: number, ry: number, c: RGB, a: number) => ({ x, y, rx, ry, c, a });
+    let best = 0;
+    for (const accent of ['#ffffff', '#ffff00', '#00ff00', '#00ffff', '#4c9dff', '#ff4f6d']) {
+      const c = brandPalette(deriveTokens(accent)).rgb.split(', ').map(Number) as RGB;
+      const glows = [at(.78, .22, .6, .55, [214, 92, 64], .33), at(.2, .85, .45, .5, [78, 64, 190], .25), at(.55, .6, .4, .4, c, .13)];
+      for (let i = 0; i <= 50; i++) for (let j = 0; j <= 50; j++) {
+        let px: RGB = [...DARK_BASE] as RGB;
+        for (const g of [...glows].reverse()) {
+          const d = Math.hypot((i / 50 - g.x) / g.rx, (j / 50 - g.y) / g.ry);
+          if (d < 0.7) px = [0, 1, 2].map((k) => px[k]! * (1 - g.a * (1 - d / 0.7)) + g.c[k]! * g.a * (1 - d / 0.7)) as RGB;
+        }
+        best = Math.max(best, luminance(px));
+      }
+      expect(best, accent).toBeLessThanOrEqual(luminance(AMB_PEAK) + 1e-9);
+    }
   });
 });

@@ -146,7 +146,7 @@
   .go { position: relative; overflow: hidden; background: #fff; color: #111; border-radius: 8px; font-weight: 700; }
   .go:hover:not(:disabled) { background: #e9e9ee; }
   .go > :not(.fill) { position: relative; }
-  .fill { position: absolute; inset: 0; background: rgba(255, 79, 109, .35); transform-origin: left; transform: scaleX(0); }
+  .fill { position: absolute; inset: 0; background: rgba(var(--acc-rgb), .35); transform-origin: left; transform: scaleX(0); }
   .fill.run { animation: cs-fill linear forwards; }
   @keyframes cs-fill { to { transform: scaleX(1); } }
   /* beat 3: the picture sits in the top-left corner (Player: translate(-27%, -24%) scale(.42) = 2–44 % x, 5–47 % y) */
@@ -162,7 +162,7 @@
   .ring { width: 22px; height: 22px; flex: none; }
   .ring circle { fill: none; stroke-width: 3; }
   .ring .bg { stroke: rgba(0, 0, 0, .18); }
-  .ring .fg { stroke: var(--acc, #ff4f6d); stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
+  .ring .fg { stroke: var(--acc); stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
   .sugg { position: absolute; left: clamp(1.5rem, 3vw, 3rem); right: clamp(1.5rem, 3vw, 3rem); bottom: clamp(1.25rem, 4vh, 2.5rem); display: grid; gap: .5rem; }
   .sugg ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .7rem; }
   .sugg a { display: grid; gap: .35rem; color: #fff; text-decoration: none; border-radius: 8px; outline-offset: 3px; }

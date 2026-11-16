@@ -13,6 +13,6 @@
   .pline { position: absolute; left: var(--safe-left, 0px); right: calc(var(--safe-right, 0px) + var(--inset, 0px)); bottom: var(--safe-bottom, 0px); z-index: 8;
     height: 3px; background: rgba(255, 255, 255, .18); pointer-events: none; opacity: 0; transition: opacity 250ms ease; }
   .pline.on { opacity: 1; }
-  i { position: absolute; inset: 0; background: var(--acc, #ff4f6d); transform-origin: 0 50%; }
+  i { position: absolute; inset: 0; background: var(--acc); transform-origin: 0 50%; }
   @media (prefers-reduced-motion: reduce) { .pline { transition: none; } }
 </style>

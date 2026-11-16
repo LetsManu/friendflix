@@ -101,7 +101,7 @@
   .opt { display: flex; align-items: center; gap: .8rem; min-height: 56px; box-sizing: border-box; padding: .45rem .8rem; border-radius: 12px; cursor: pointer;
     background: rgba(255, 255, 255, .04); box-shadow: inset 0 0 0 1px #323a43; }
   .opt:hover { background: rgba(255, 255, 255, .07); }
-  .opt.on { background: rgba(255, 79, 109, .12); box-shadow: inset 0 0 0 1.5px var(--acc); }
+  .opt.on { background: rgba(var(--acc-rgb), .12); box-shadow: inset 0 0 0 1.5px var(--acc); }
   .opt:has(input:focus-visible) { outline: 2px solid #fff; outline-offset: 2px; }
   .opt input { width: 20px; height: 20px; margin: 0; flex: none; accent-color: var(--acc); outline: none; }
   .tx { min-width: 0; display: flex; flex-direction: column; gap: .1rem; }

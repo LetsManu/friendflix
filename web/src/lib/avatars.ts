@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Profile avatars are a colour key; rendered as a rounded square with the initial. */
 export const AVATARS: Array<[key: string, label: string, css: string]> = [
-  ['red', 'Rot', 'linear-gradient(135deg, #ff6b81, #9a2440)'],
+  ['red', 'Rot', 'linear-gradient(135deg, #ff6b81, #9a2440)'], // a person's colour, not the brand accent: stays whatever the brand is
   ['blue', 'Blau', 'linear-gradient(135deg, #3b82f6, #12347a)'],
   ['green', 'Grün', 'linear-gradient(135deg, #34d399, #0b5a3c)'],
   ['yellow', 'Gelb', 'linear-gradient(135deg, #facc15, #8a5a00)'],

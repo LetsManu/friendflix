@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Web Push handlers for the service worker. Kept free of the webworker lib so it type-checks next to the DOM lib. */
+import { brandName } from './brandName';
+
 interface PushClient { url: string; focus(): Promise<unknown>; navigate?(url: string): Promise<unknown>; postMessage(m: unknown): void }
 interface SwScope {
   location: { origin: string };
@@ -35,15 +37,19 @@ export function installPush(sw: unknown): void {
     let d: { title?: unknown; body?: unknown; link?: unknown; tag?: unknown } = {};
     try { d = e.data ? e.data.json() : {}; } catch { try { d = { body: e.data?.text() }; } catch { /* ignore */ } }
     if (!d || typeof d !== 'object') d = {};
-    const title = typeof d.title === 'string' && d.title ? d.title.slice(0, 120) : 'FriendFlix';
     const link = safeLink(d.link, s.location.origin) ?? '/';
-    e.waitUntil(s.registration.showNotification(title, {
-      body: typeof d.body === 'string' ? d.body.slice(0, 300) : '',
-      icon: '/icon-192.png',
-      badge: '/icon-192.png',
-      tag: typeof d.tag === 'string' ? d.tag : undefined,
-      data: { link },
-    }).then(() => updateBadge(s)));
+    e.waitUntil((async () => {
+      // no title of its own: the instance's name (the brand the page saw last; FriendFlix when none was remembered)
+      const title = typeof d.title === 'string' && d.title ? d.title.slice(0, 120) : await brandName();
+      await s.registration.showNotification(title, {
+        body: typeof d.body === 'string' ? d.body.slice(0, 300) : '',
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        tag: typeof d.tag === 'string' ? d.tag : undefined,
+        data: { link },
+      });
+      await updateBadge(s);
+    })());
   });
   s.addEventListener('notificationclick', (e) => {
     e.notification.close();

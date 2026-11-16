@@ -38,9 +38,13 @@ const parse = (v: string): RGB | number => (v.startsWith('#') ? hex(v) : Number(
 const cr = (t: RGB | number, bg: RGB) => (typeof t === 'number' ? textContrast(bg, t) : contrast(t, bg));
 
 describe('glass pages: text contrast (B′)', () => {
-  const glass = vars('.panel, .frost-text');
+  const root0 = vars(':root');
+  /** the glass block's values with the brand's palette variable resolved (`--acc-glass`: the default brand's value in :root) */
+  const glass = Object.fromEntries(Object.entries(vars('.panel, .frost-text')).map(([k, v]) => [k, v === 'var(--acc-glass)' ? root0['--acc-glass']! : v]));
 
   it('the light glass cards carry the mockup\'s levels', () => {
+    // the accent text on glass is the brand's --acc-glass (lib/brand.ts brandPalette: #ffa7b6 for the default, AA for any accent)
+    expect(vars('.panel, .frost-text')['--acc-text']).toBe('var(--acc-glass)');
     expect(glass).toEqual({
       '--mut': 'rgba(255, 255, 255, .72)', '--hint': 'rgba(255, 255, 255, .66)',
       '--ok': '#4ade80', '--warn': '#f7b344', '--err': '#ffa8a8', '--link': '#80cbd4', '--info': '#80cbd4', '--acc-text': '#ffa7b6',

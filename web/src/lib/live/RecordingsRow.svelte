@@ -66,7 +66,7 @@
   .recrow { margin: 1.6rem 0 1rem; }
   .hd { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 44px; margin-bottom: .5rem; }
   h2 { margin: 0; font-size: 1.25rem; }
-  .all { display: inline-flex; align-items: center; min-height: 44px; padding: 0 .9rem; border-radius: 999px; color: var(--acc-text, #ff8aa0); font-weight: 700; text-decoration: none; }
+  .all { display: inline-flex; align-items: center; min-height: 44px; padding: 0 .9rem; border-radius: 999px; color: var(--acc-text); font-weight: 700; text-decoration: none; }
   .all:hover { text-decoration: underline; }
   .tiles { display: flex; gap: 14px; margin: 0; padding: 4px 2px 10px; list-style: none; overflow-x: auto; scrollbar-width: thin; }
   .tiles > li { flex: none; width: 220px; list-style: none; }
