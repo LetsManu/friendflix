@@ -548,26 +548,29 @@ keep that safe (`backend/src/brand/`):
   and is revalidated on every load (`no-cache`), rate-limited to 120 requests a minute.
 - **Text.** Every text field is trimmed, counted in code points and limited (name 24, byline 32, short name 12, website 200, about
   280). C0/C1 controls, line and paragraph separators, bidi marks, the Hangul fillers and every other format character except the
-  zero-width joiner are refused. The name needs at least one letter, digit or symbol. The website must be `http(s)` without
+  zero-width joiner and non-joiner (U+200D, U+200C: emoji sequences and some scripts need them) are refused. The name needs at least one letter, digit or symbol. The website must be `http(s)` without
   credentials and is stored in its normalised form. The web app shows every brand text as text: none is ever HTML, and none is
   written into CSS.
 - **Colours.** Only the accent is stored, as `#rrggbb`. Every shade the app uses is derived from it on the server (and again in the
-  browser, from the same test vectors), each lightened or darkened until it passes (text and button shades 4.5:1, outline shades 3:1). A chosen
-  colour can never lower the contrast below AA. Only validated `#rrggbb` values reach a style attribute.
+  browser, from the same test vectors), each lightened or darkened until it passes: the accent text 4.5:1 on every dark surface
+  that carries it (`--bg`, `--surface`, `--surface-2`), white on the button fill 4.5:1, the light glass shade 4.5:1, the outline
+  shade 3:1. A chosen colour can never lower the contrast below AA. The one exception is today's default coral, kept exactly as
+  before branding: 4.49:1 on `--surface-2`. Only validated `#rrggbb` values reach a style attribute.
 - **Images.** The upload (`PUT /api/admin/brand/image/:kind`) is for admins only: the check runs in `onRequest`, before the body is
   read, and CSRF is still checked. The body is parsed only in that route, at most 2 MB (413 `too_large`), PNG or WebP only (415
   `unsupported_type`, and the magic bytes must agree with the declared type). SVG is never accepted. The backend rewrites every
   image. A PNG keeps only its image chunks: every chunk length and CRC is checked, the dimensions are checked before anything is
-  inflated, the inflate is capped at the size the header implies, and nothing may follow the image data. A WebP keeps only its
-  VP8/VP8L/ALPH (and animation) chunks; EXIF, XMP and ICC are dropped. Each kind has fixed dimension rules (symbol square, 512 to
+  inflated, the inflate is capped at the size the header implies, and nothing may follow the image data; APNG's animation chunks
+  are dropped. A WebP keeps only its VP8/VP8L/ALPH chunks (their headers are checked, the bitstream is not decoded); EXIF, XMP
+  and ICC are dropped, and an animated WebP is refused (415). Each kind has fixed dimension rules (symbol square, 512 to
   2048 px). The browser also re-encodes every pick on a canvas before it sends it, and reads the size from the file's header before
   it decodes anything.
 - **Serving images.** `GET /api/public/brand/img/<sha256>.<png|webp>`: the name is checked before any lookup and must match the stored
   type. Answers carry `Content-Security-Policy: default-src 'none'`, `X-Content-Type-Options: nosniff` and an immutable cache
   header. Images that no saved brand uses are deleted after an hour.
 - **Writes.** `PUT /api/admin/brand` and `POST /api/admin/brand/reset` take the version the page loaded and answer 409 when it is
-  stale, so a stale tab never overwrites another admin's newer save. A save checks that each new image hash exists and was
-  uploaded for that field. The audit log records the names of the changed fields and the image kind, never values or bytes. Error
+  stale, so a stale tab never overwrites another admin's newer save. A save checks that each new image hash exists and that its
+  stored size suits the field's kind (a logo cannot become the symbol); it does not record which upload route stored it. The audit log records the names of the changed fields and the image kind, never values or bytes. Error
   logs on these routes carry the error type and code only.
 - **Stays.** Branding changes names and colours. It cannot change the native app packages, and it cannot hide the source-code link
   the AGPL requires.

@@ -230,11 +230,17 @@ html.m-still .frost-dim { transition: none; } /* calm mode / reduced motion: at 
 /* the brand's glow (html.glow-<mode>, lib/brand.ts): accentViolet (the default) is the rule above, today's look; accent: only the
    accent, its big spot in the darker fill shade; neutral: grey; off: the plain base. No mode paints a spot brighter than the orange
    peak above (AMB_PEAK in lib/glass/tone.ts, which the glass and text contrast checks measure against): the fill shade is dark enough
-   for white text by construction, the greys stay below it (lib/brand.test.ts). A browser without color-mix() keeps the rule above. */
-html.glow-accent .frost-amb { background:
-  radial-gradient(60% 55% at 78% 22%, color-mix(in srgb, var(--acc-fill) 33%, transparent), transparent 70%),
-  radial-gradient(45% 50% at 20% 85%, color-mix(in srgb, var(--acc-fill) 18%, transparent), transparent 70%),
-  radial-gradient(40% 40% at 55% 60%, color-mix(in srgb, var(--acc) 13%, transparent), transparent 70%), #0a090d; }
+   for white text by construction, the greys stay below it (lib/brand.test.ts).
+   accent without color-mix() (Chromium < 111: many Tizen and webOS TVs): a declaration with var() is not dropped at parse time, it
+   would compute to `unset` and paint no glow at all; so the plain rule paints only the accent's small spot (as the default does),
+   and the full glow comes inside @supports. */
+html.glow-accent .frost-amb { background: radial-gradient(40% 40% at 55% 60%, rgba(var(--acc-rgb), .13), transparent 70%), #0a090d; }
+@supports (color: color-mix(in srgb, red 50%, transparent)) {
+  html.glow-accent .frost-amb { background:
+    radial-gradient(60% 55% at 78% 22%, color-mix(in srgb, var(--acc-fill) 33%, transparent), transparent 70%),
+    radial-gradient(45% 50% at 20% 85%, color-mix(in srgb, var(--acc-fill) 18%, transparent), transparent 70%),
+    radial-gradient(40% 40% at 55% 60%, color-mix(in srgb, var(--acc) 13%, transparent), transparent 70%), #0a090d; }
+}
 html.glow-neutral .frost-amb { background:
   radial-gradient(60% 55% at 78% 22%, rgba(150, 150, 165, .2), transparent 70%),
   radial-gradient(45% 50% at 20% 85%, rgba(110, 110, 128, .16), transparent 70%), #0a090d; }

@@ -375,11 +375,20 @@ describe('the glow classes', () => {
 
   it('no glow mode paints a spot brighter than today\'s peak (the contrast checks of the glass and text measure against it)', () => {
     const css = readFileSync(fileURLToPath(new URL('../app.css', import.meta.url)), 'utf8');
-    const rule = (g: string) => css.slice(css.indexOf(`html.glow-${g} .frost-amb {`), css.indexOf('}', css.indexOf(`html.glow-${g} .frost-amb {`)));
+    const ruleIn = (src: string, g: string) => src.slice(src.indexOf(`html.glow-${g} .frost-amb {`), src.indexOf('}', src.indexOf(`html.glow-${g} .frost-amb {`)));
+    const rule = (g: string) => ruleIn(css, g);
+    // color-mix() with var() cannot be dropped at parse time (it would compute to `unset`, no glow at all on an old TV browser): the
+    // accent glow is guarded by @supports, and before it a plain rule paints only the accent's small spot, like the default does
+    const SUPPORTS = '@supports (color: color-mix(in srgb, red 50%, transparent)) {';
+    expect(css).toContain(SUPPORTS);
+    const mixed = css.slice(css.indexOf(SUPPORTS));
+    expect(rule('accent')).not.toContain('color-mix');
+    expect(rule('accent')).toContain('rgba(var(--acc-rgb), .13)');
+    expect(css.indexOf(`html.glow-accent .frost-amb {`)).toBeLessThan(css.indexOf(SUPPORTS));
     // the spots as app.css paints them (checked here, so the model below cannot drift from the stylesheet)
-    expect(rule('accent')).toContain('color-mix(in srgb, var(--acc-fill) 33%, transparent)');
-    expect(rule('accent')).toContain('color-mix(in srgb, var(--acc-fill) 18%, transparent)');
-    expect(rule('accent')).toContain('color-mix(in srgb, var(--acc) 13%, transparent)');
+    expect(ruleIn(mixed, 'accent')).toContain('color-mix(in srgb, var(--acc-fill) 33%, transparent)');
+    expect(ruleIn(mixed, 'accent')).toContain('color-mix(in srgb, var(--acc-fill) 18%, transparent)');
+    expect(ruleIn(mixed, 'accent')).toContain('color-mix(in srgb, var(--acc) 13%, transparent)');
     expect(rule('neutral')).toContain('rgba(150, 150, 165, .2)');
     expect(rule('neutral')).toContain('rgba(110, 110, 128, .16)');
     type Glow = { rx: number; ry: number; x: number; y: number; c: RGB; a: number };

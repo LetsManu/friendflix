@@ -30,10 +30,12 @@ not saved yet.
 Characters are counted as people count them (an emoji is one). Control characters and text-direction marks are refused in every
 field. A message under a field appears once you leave it, or when you try to save.
 
-**Contrast stays readable.** You pick one accent; the server derives every shade from it: the accent text on the dark page, the
-button fill under white text, the hover shades and the light shades used on glass. Each is lightened or darkened until it passes
-WCAG AA (4.5:1 for text and for white text on buttons, 3:1 for outlines). The page shows the three ratios and marks a shade *angepasst* when it had to move. A very dark or very
-light accent is therefore never unreadable; it just looks a little different on buttons than in the swatch.
+**Contrast stays readable.** You pick one accent; the server derives every shade from it: the accent text on the dark page and
+on cards and panels, the button fill under white text, the hover shades and the light shades used on glass. Each is lightened or
+darkened until it passes WCAG AA (4.5:1 for text and for white text on buttons, 3:1 for outlines). The page shows the three
+ratios, the text row with its lowest value over the page, card and panel colours, and marks a shade *angepasst* when it had to
+move. A very dark or very light accent is therefore never unreadable; it just looks a little different as text or on buttons
+than in the swatch. Today's coral stays exactly as it was before branding.
 
 **Saving.** Edits are staged. The save bar sends only the fields you changed, together with the version the page loaded. If another
 admin saved in the meantime, the page loads their version and keeps your edits on top, and you save again. If they made the same
@@ -67,7 +69,8 @@ last brand it saw, so a known brand shows on the first paint, also before sign-i
 
 ## Images
 
-- **Formats:** PNG, JPEG or WebP. SVG is not accepted, because an SVG can carry script.
+- **Formats:** PNG, JPEG or WebP, as a still picture. SVG is not accepted, because an SVG can carry script; an animated WebP is
+  refused too.
 - **The browser prepares every image before it is sent.** It reads the size from the file's header first and refuses a picture with
   a side longer than 12 000 pixels (or a file over 25 MB) without decoding it. Then it draws the picture on a canvas and encodes it
   again. That drops all metadata (EXIF, GPS position, camera data). The symbol is cut from the centre to 512 × 512 and refused if
