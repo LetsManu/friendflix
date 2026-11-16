@@ -321,7 +321,7 @@ describe('{app}', () => {
 
 describe('brandColors', () => {
   interface Vectors {
-    targets: Record<'accText' | 'accFill' | 'accLight' | 'accLine', { on: string; min: number }>;
+    targets: { accText: { on: string[]; min: number } } & Record<'accFill' | 'accLight' | 'accLine', { on: string; min: number }>;
     vectors: Array<{ accent: string; adjusted: { text: boolean; fill: boolean }; tokens: Omit<BrandTokens, 'adjusted'> }>;
   }
   const V = JSON.parse(readFileSync(fileURLToPath(new URL('../../../test-vectors/brand-colors.json', import.meta.url)), 'utf8')) as Vectors;
@@ -329,19 +329,30 @@ describe('brandColors', () => {
   it('brandColors matches the backend vectors', () => {
     expect(V.vectors.length).toBeGreaterThanOrEqual(10);
     expect(V.targets).toEqual({
-      accText: { on: ACC_TEXT_ON, min: 4.5 }, accFill: { on: ACC_FILL_ON, min: 4.5 }, accLight: { on: ACC_LIGHT_ON, min: 4.5 }, accLine: { on: ACC_LINE_ON, min: 3 },
+      accText: { on: [...ACC_TEXT_ON], min: 4.5 }, accFill: { on: ACC_FILL_ON, min: 4.5 }, accLight: { on: ACC_LIGHT_ON, min: 4.5 }, accLine: { on: ACC_LINE_ON, min: 3 },
     });
     for (const v of V.vectors) {
       const tk = deriveTokens(v.accent);
       expect({ ...tk, adjusted: undefined }, v.accent).toEqual({ ...v.tokens, adjusted: undefined });
       expect(tk.adjusted, v.accent).toEqual(v.adjusted);
-      expect(contrast(tk.accText, ACC_TEXT_ON)).toBeGreaterThanOrEqual(4.5);
+      // every dark surface that carries accent text (the default coral: today's table, 4.49 on --surface-2 as before branding)
+      for (const on of v.accent === '#ff4f6d' ? ACC_TEXT_ON.slice(0, 2) : ACC_TEXT_ON) expect(contrast(tk.accText, on), `${v.accent} on ${on}`).toBeGreaterThanOrEqual(4.5);
       expect(contrast('#ffffff', tk.accFill)).toBeGreaterThanOrEqual(4.5);
       expect(contrast(tk.accLight, ACC_LIGHT_ON)).toBeGreaterThanOrEqual(4.5);
       expect(contrast(tk.accLine, ACC_LINE_ON)).toBeGreaterThanOrEqual(3);
     }
     expect(deriveTokens('#FF4F6D')).toEqual(DEFAULT_TOKENS);
     expect(() => deriveTokens('red')).toThrow(TypeError);
+  });
+
+  it('accent text holds 4.5:1 on --bg, --surface and --surface-2 (the review\'s #e0405a and #1a1a40; the presets unchanged)', () => {
+    expect([...ACC_TEXT_ON]).toEqual(['#101418', '#161b21', '#242b33']);
+    for (const accent of ['#e0405a', '#1a1a40', '#8a63ff', '#3d7bff']) {
+      const tk = deriveTokens(accent);
+      for (const on of ACC_TEXT_ON) expect(contrast(tk.acc, on), `${accent} on ${on}`).toBeGreaterThanOrEqual(4.5);
+    }
+    for (const accent of ['#a37cff', '#4c9dff', '#2fc4b2', '#f2b52c', '#5ccf6a']) expect(deriveTokens(accent).acc).toBe(accent);
+    expect(TOKENS_VERSION).toBe('c2');
   });
 
   it('the line target is the toast glass over a white backdrop, and the tokens version equals the backend\'s', () => {

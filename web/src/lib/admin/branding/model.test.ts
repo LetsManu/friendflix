@@ -127,7 +127,8 @@ describe('colours', () => {
     const t = deriveTokens('#f2e94e'); // too light: the text passes, the fill is darkened
     const rows = ratioRows(t);
     expect(rows.map((r) => r.id)).toEqual(['text', 'fill', 'glass']);
-    expect(rows[0]!.ratio).toBeCloseTo(contrast(t.accText, '#101418'), 5);
+    // the text row: its lowest ratio over the dark surfaces that carry accent text (--bg, --surface, --surface-2)
+    expect(rows[0]!.ratio).toBeCloseTo(Math.min(...['#101418', '#161b21', '#242b33'].map((bg) => contrast(t.accText, bg))), 5);
     expect(rows[1]!.ratio).toBeCloseTo(contrast('#ffffff', t.accFill), 5);
     expect(rows[1]!.adjusted).toBe(true);
     for (const r of rows) expect(r.ratio).toBeGreaterThanOrEqual(4.5);

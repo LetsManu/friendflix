@@ -126,14 +126,14 @@ export interface RatioRow { id: 'text' | 'fill' | 'glass'; ratio: number; adjust
 const hexRgb = (h: string): RGB => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)) as RGB;
 
 /**
- * The contrast readout: accent text on the dark page (`--acc-text`), white on the buttons (`--acc-fill`), both from the backend's
- * derivation with its own `adjusted`; and accent text on the light glass (`--acc-glass`, a web-only shade, lib/brand.ts brandPalette),
+ * The contrast readout: accent text on the dark surfaces (`--acc-text`, its lowest ratio over --bg, --surface and --surface-2) and
+ * white on the buttons (`--acc-fill`), both from the backend's derivation with its own `adjusted`; and accent text on the light glass (`--acc-glass`, a web-only shade, lib/brand.ts brandPalette),
  * its lowest ratio over the glass backgrounds, "angepasst" when it had to be lightened beyond `--acc-light`.
  */
 export function ratioRows(t: BrandTokens): RatioRow[] {
   const glass = brandPalette(t).glassText;
   return [
-    { id: 'text', ratio: contrast(t.accText, ACC_TEXT_ON), adjusted: t.adjusted.text },
+    { id: 'text', ratio: Math.min(...ACC_TEXT_ON.map((bg) => contrast(t.accText, bg))), adjusted: t.adjusted.text },
     { id: 'fill', ratio: contrast('#ffffff', t.accFill), adjusted: t.adjusted.fill },
     { id: 'glass', ratio: Math.min(...GLASS_TEXT_ON.map((bg) => rgbContrast(hexRgb(glass), bg))), adjusted: glass !== t.accLight },
   ];

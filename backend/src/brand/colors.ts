@@ -7,7 +7,9 @@
  *
  * Every token is the accent with only its HSL lightness moved, in steps of 1 % (`L0 + k/100`, never accumulated, so both ports step
  * through the same floats), until its contrast target holds:
- * - `accText` (= `acc`): ≥ 4.5:1 on `--bg` #101418. Lightened if needed (`adjusted.text`).
+ * - `accText` (= `acc`): ≥ 4.5:1 on every dark surface that carries accent text: `--bg` #101418, `--surface` #161b21 (cards, the
+ *   sign-in card) and `--surface-2` #242b33 (chips, sheets' rows, the TV controls). Lightened if needed (`adjusted.text`). The
+ *   default coral keeps today's table: 5.8 / 5.4 / 4.49 (the last as before branding).
  * - `accFill`: white text on it ≥ 4.5:1. Darkened if needed (`adjusted.fill`).
  * - `accHover` / `accFillHover`: 6 / 5 lightness points darker than `acc` / `accFill` (darker never lowers white-on-fill contrast).
  * - `accLight`: ≥ 4.5:1 on the glass scrim colour rgb(18,16,24). Starts 12 points above `accText`.
@@ -29,7 +31,8 @@ export interface BrandTokens {
 }
 
 /** the backgrounds the targets are measured on (also in the shared vectors' `targets`) */
-export const ACC_TEXT_ON = '#101418';
+/** accent text's backgrounds: --bg, --surface, --surface-2 (app.css :root); the lightest one decides */
+export const ACC_TEXT_ON = ['#101418', '#161b21', '#242b33'] as const;
 export const ACC_FILL_ON = '#ffffff';
 export const ACC_LIGHT_ON = '#121018';
 export const ACC_LINE_ON = '#5e5c63';
@@ -41,7 +44,7 @@ const LINE_MIN = 3;
 export const DEFAULT_ACCENT = '#ff4f6d';
 
 /** bumped with any change of the derivation: part of the public route's ETag, so a new release never serves cached old tokens */
-export const TOKENS_VERSION = 'c1';
+export const TOKENS_VERSION = 'c2';
 
 /** today's tokens (web/src/app.css :root): the default accent's answer. The fill is a darker shade of the coral, so it counts as adjusted. */
 const DEFAULT_TABLE: Readonly<BrandTokens> = Object.freeze({
@@ -135,7 +138,7 @@ export function deriveTokens(accent: string): BrandTokens {
   const hex = toHex(rgb);
   if (hex === DEFAULT_ACCENT) return copy(DEFAULT_TABLE);
   const hsl = toHsl(rgb);
-  const textOk = (c: string) => contrast(c, ACC_TEXT_ON) >= TEXT_MIN;
+  const textOk = (c: string) => ACC_TEXT_ON.every((on) => contrast(c, on) >= TEXT_MIN);
   const fillOk = (c: string) => contrast(ACC_FILL_ON, c) >= FILL_MIN;
   const accText = textOk(hex) ? hex : step(hsl, hsl[2], 1, textOk);
   const accFill = fillOk(hex) ? hex : step(hsl, hsl[2], -1, fillOk);
