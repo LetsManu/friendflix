@@ -10,7 +10,8 @@ numbered list of our changes. FriendFlix talks to it exactly as to Jellyfin.
 
 **Status: trial.** Jellyfin stays the production media server until both hold:
 
-1. HDR / Dolby Vision → SDR tone mapping works with this image on the production Intel GPU (`probe.sh`, then a real title), and
+1. HDR / Dolby Vision → SDR tone mapping works with this image on the production Intel GPU (`probe.sh`, then a real title).
+   Until `probe.sh` passes there, HDR tone mapping with this image is untested on real hardware. And
 2. Ferrofin 1.6.0 is out: adopting a Jellyfin database is one-way until then, so there is no way back with the watch state
    made in between.
 
@@ -34,8 +35,8 @@ User-facing steps: [docs/mediaserver.md](../docs/mediaserver.md).
 
 | # | Change | Kind | Why | Upstream | Status |
 |---|---|---|---|---|---|
-| 0001 | [Intel OpenCL runtime](patches/0001-intel-opencl-runtime.md) | Dockerfile | Ferrofin's image has no Intel OpenCL driver, so HDR → SDR tone mapping on Intel GPUs fails (`OpenCL platforms: -1001`). Installed the way Jellyfin's image does, pinned by version and sha256. | not filed yet | in the image |
-| 0002 | [VA-API HDR tone-mapping chain](patches/0002-vaapi-hdr-tonemap-chain.md) | probably source | Placeholder: being investigated separately. | – | open |
+| 0001 | [Intel OpenCL runtime](patches/0001-intel-opencl-runtime.md) | Dockerfile | Ferrofin's image has no Intel OpenCL driver, so HDR → SDR tone mapping on Intel GPUs fails (`OpenCL platforms: -1001`). Installed the way Jellyfin's image does, pinned by version and sha256. | [draft](patches/upstream-issue-draft.md), not filed yet | in the image; untested on hardware until `probe.sh` passes |
+| 0002 | [VA-API HDR tone mapping on GPUs without a VPP tone mapper](patches/0002-vaapi-hdr-tonemap-chain.md) | source ([patch](patches/0002-vaapi-hdr-tonemap.patch)) | On Intel GPUs whose iHD driver lacks `FtrHDR`, VPP tone mapping (`tonemap_vaapi`) cannot be configured and the transcode never starts; the patch falls back to OpenCL (0001). | [draft](patches/upstream-issue-draft.md), not filed yet | proposed – not applied to the image; needs a source build and hardware confirmation |
 
 Each entry in `patches/` says why, the upstream link once filed, the status and when to drop it. New entries take the next
 number; numbers are never reused.
@@ -46,9 +47,13 @@ number; numbers are never reused.
 |---|---|
 | `Dockerfile` | the image: `FROM ghcr.io/mangoleaf/ferrofin:v1.5.1@sha256:5980…`, change 0001, labels, back to the image's user `ferrofin`, Ferrofin's entrypoint |
 | `NOTICE` | licences of what is in the image (copied to `/usr/share/doc/friendflix-mediaserver/NOTICE`) |
-| `patches/` | one file per change |
+| `patches/` | one file per change (`NNNN-*.md`), source patches next to it (`NNNN-*.patch`), and the upstream issue draft |
 | `probe.sh` | does HDR tone mapping with OpenCL work on this host's GPU? Throw-away containers only, Jellyfin is not touched |
-| `try.sh` | runs the image next to Jellyfin on a **copy** of Jellyfin's config folder, for testing behind FriendFlix |
+| `try.sh` | runs the image next to Jellyfin on a **copy** of Jellyfin's config folder, for testing behind FriendFlix; `remove` only touches a container it labelled `friendflix.trial=ferrofin` |
+
+Both scripts use `ghcr.io/letsmanu/friendflix-mediaserver:nightly` unless `IMAGE=` says otherwise, and print the image and its
+digest (try.sh pins the trial container to that digest). Every check on the host (folders, GPU, groups, inotify) runs in a
+container on the Docker engine's side, so they also work with `DOCKER_HOST`.
 
 Both scripts are self-contained (copy one file to the host and run it with `bash`). They need LF line endings: if bash
 says `$'\r': command not found`, the file was saved with Windows line endings; `sed -i 's/\r$//' try.sh` fixes it
@@ -80,7 +85,7 @@ The FriendFlix updater never pulls or recreates it (it only manages FriendFlix's
 - **Not reproducible-checked:** exempt from the `reproducible` job
   ([docs/reproducible-builds.md](../docs/reproducible-builds.md#exemption-mediaserver)).
 - **linux/amd64 only:** Ferrofin v1.5.1 publishes no other platform (the Intel runtime is amd64-only anyway).
-- **Larger image:** the Intel runtime adds several hundred MB (the debs alone are about 260 MB).
+- **Larger image:** the Intel runtime adds about 1.1 GiB installed (the seven debs are about 250 MB to download).
 - **The IGC hashes are trust-on-first-download:** Intel publishes no checksum file for those releases (the compute-runtime
   ones match Intel's `ww*.sum`).
 
@@ -91,7 +96,8 @@ The FriendFlix updater never pulls or recreates it (it only manages FriendFlix's
    `io.github.letsmanu.friendflix.mediaserver.ferrofin` label), `NOTICE`, and `UPSTREAM_IMAGE` in `try.sh` and `probe.sh`.
    The digest of the multi-arch index:
    `docker buildx imagetools inspect ghcr.io/mangoleaf/ferrofin:vX.Y.Z --format '{{.Manifest.Digest}}'`.
-   (Dependabot opens a PR for the `FROM` line; it is only the reminder for the rest.)
+   (Dependabot opens a PR for the `FROM` line; it is only the reminder for the rest. CI's `mediaserver-image` job fails
+   until the labels, NOTICE and both scripts name the same tag and digest as `FROM`.)
 3. **Go through the changes:** for each one, is it still needed? Upstream took it → drop it, mark it *upstream* in the table.
    Still needed → check it still applies (for 0001: does the new base still lack the runtime, is it still Debian trixie
    with `ocl-icd-libopencl1`?).

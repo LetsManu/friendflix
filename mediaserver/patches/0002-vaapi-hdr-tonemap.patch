@@ -1,0 +1,578 @@
+SPDX-FileCopyrightText: 2026 Manuel Weißböck
+SPDX-License-Identifier: GPL-3.0-only
+
+FriendFlix media server, change 0002 (mediaserver/patches/0002-vaapi-hdr-tonemap-chain.md).
+Status: proposed — not applied to the image; needs a source build and hardware confirmation.
+A patch to Ferrofin (GPL-3.0-only), so it carries Ferrofin's licence, not the repository's AGPL.
+Text before the first "diff --git" line is ignored by git apply and patch.
+
+Subject: [PATCH] hw: skip tonemap_vaapi when the VA driver has no HDR tone mapper
+
+Against v1.5.1. Apply with `git apply` (or `patch -p1`) from the repo root.
+
+On Linux both Intel chains (QSV over VAAPI and VAAPI) tonemap with
+`tonemap_vaapi`. intel/media-driver advertises
+VAProcFilterHighDynamicRangeToneMapping only on SKUs with FtrHDR. Skylake,
+Apollo Lake and the GT1 Kaby/Coffee/Comet Lake parts don't have it. On those
+SKUs `tonemap_vaapi` fails while ffmpeg configures its output pad ("VAAPI
+driver doesn't support HDR", then "Failed to configure output pad on
+Parsed_tonemap_vaapi_N"), so the transcode never starts. Jellyfin has the same
+gap. The generated chain is byte-identical to upstream's.
+
+- FfmpegCapabilities: new `vaapi_hdr_tonemap_missing` flag. It defaults to
+  false, which keeps upstream behaviour.
+- is_intel_vpp_tonemap_available: returns false on Linux when the flag is set.
+  The chains then fall through to the OpenCL tonemap, or to no tonemap.
+- EncoderValidator: adds VAAPI_HDR_TONEMAP_PROBE_ARGS (a one-frame
+  hwupload,tonemap_vaapi graph) and a stderr parser that matches only the
+  filter's own refusal.
+- VaapiProber: one probe per device for QSV/VAAPI jobs on Linux with VPP
+  tonemapping enabled, cached for the process's life. For QSV it opens the
+  VAAPI half of the job's own qsv_device_args.
+- Tests: the predicate; a QSV chain golden that reproduces the failing chain;
+  the fallback chains; the parser; the prober with a stub ffmpeg.
+
+diff --git a/apps/ferrofin-server/src/vaapi_probe.rs b/apps/ferrofin-server/src/vaapi_probe.rs
+index 1479d5a7..49d43a99 100644
+--- a/apps/ferrofin-server/src/vaapi_probe.rs
++++ b/apps/ferrofin-server/src/vaapi_probe.rs
+@@ -33,6 +33,9 @@ use ferrofin_mediaencoding::encoder::{
+     EncoderValidator, VULKAN_EXTERNAL_MEMORY_DMA_BUF_EXTS, VULKAN_IMAGE_DRM_FMT_MODIFIER_EXTS,
+ };
+ use ferrofin_mediaencoding::encoding_helper::hw::FfmpegCapabilities;
++use ferrofin_mediaencoding::encoding_helper::hw::device_init::{
++    RenderNode, VAAPI_ALIAS, VENDOR_ID_INTEL, VaapiDeviceSpec, vaapi_device_args,
++};
+ use ferrofin_model::configuration::EncodingOptions;
+ use ferrofin_model::entities::HardwareAccelerationType;
+ use std::sync::Mutex;
+@@ -59,6 +62,10 @@ pub struct VaapiProber {
+     /// process's life; a *different* path probes afresh, which is what makes a
+     /// dashboard change take effect without a restart.
+     cache: Mutex<HashMap<String, Probed>>,
++    /// Keyed by the `vaapi=` device the tonemap would run on: whether its VA
++    /// driver refused HDR tone mapping. Not in upstream; see
++    /// [`VaapiProber::with_hdr_tonemap_probe`].
++    hdr_tonemap_missing: Mutex<HashMap<String, bool>>,
+ }
+ 
+ /// One cached probe answer.
+@@ -123,10 +130,80 @@ impl VaapiProber {
+             ffmpeg,
+             base: Arc::new(base),
+             cache: Mutex::new(HashMap::new()),
++            hdr_tonemap_missing: Mutex::new(HashMap::new()),
++        }
++    }
++
++    /// The capabilities to plan with, given the current encoding options: the
++    /// VAAPI driver probes of [`Self::driver_capabilities`], then the VA HDR
++    /// tone-mapping probe of [`Self::with_hdr_tonemap_probe`].
++    pub async fn capabilities(&self, options: &EncodingOptions) -> Arc<FfmpegCapabilities> {
++        let caps = self.driver_capabilities(options).await;
++        self.with_hdr_tonemap_probe(caps, options).await
++    }
++
++    /// `caps`, marked when the VA driver behind this job's Intel device has
++    /// refused HDR tone mapping.
++    ///
++    /// **Not in upstream.** Jellyfin emits `tonemap_vaapi` whenever VPP
++    /// tonemapping is enabled and the filter is compiled in. iHD exposes the
++    /// VPP tone mapper per SKU, and where it has none ffmpeg fails while
++    /// configuring the graph ("VAAPI driver doesn't support HDR", "Failed to
++    /// configure output pad on Parsed_tonemap_vaapi_N") and the transcode never
++    /// starts. One spawn per device answers the question; only an explicit
++    /// refusal marks the capabilities, so a probe that cannot run changes
++    /// nothing.
++    ///
++    /// Every answer from a spawn that ran is cached for the process's life,
++    /// including "no refusal" from a device that did not open — that is the
++    /// upstream behaviour, and the driver probes already report an unopenable
++    /// device. A spawn failure is not cached.
++    async fn with_hdr_tonemap_probe(
++        &self,
++        caps: Arc<FfmpegCapabilities>,
++        options: &EncodingOptions,
++    ) -> Arc<FfmpegCapabilities> {
++        let Some(device) = hdr_tonemap_device(&caps, options) else {
++            return caps;
++        };
++        let cached = self
++            .hdr_tonemap_missing
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .get(&device)
++            .copied();
++        let missing = match cached {
++            Some(missing) => missing,
++            None => {
++                let mut args = vec!["-init_hw_device", device.as_str()];
++                args.extend(EncoderValidator::VAAPI_HDR_TONEMAP_PROBE_ARGS);
++                let Some(stderr) = stderr_of(&self.ffmpeg, &args).await else {
++                    return caps;
++                };
++                let missing = EncoderValidator::check_vaapi_hdr_tonemap_missing_internal(&stderr);
++                if missing {
++                    tracing::warn!(
++                        device = %device,
++                        "the VA driver has no HDR tone mapping on this GPU; VPP \
++                         tonemapping is disabled for it (OpenCL tonemapping is used \
++                         if enabled)"
++                    );
++                }
++                self.hdr_tonemap_missing
++                    .lock()
++                    .unwrap_or_else(std::sync::PoisonError::into_inner)
++                    .insert(device, missing);
++                missing
++            }
++        };
++        if missing {
++            Arc::new((*caps).clone().with_vaapi_hdr_tonemap_missing(true))
++        } else {
++            caps
+         }
+     }
+ 
+-    /// The capabilities to plan with, given the current encoding options.
++    /// The capabilities with the VAAPI driver probes overlaid.
+     ///
+     /// Returns the unmodified boot capabilities unless every one of upstream's
+     /// four guards passes: Linux, ffmpeg has the `vaapi` hwaccel, the
+@@ -138,7 +215,7 @@ impl VaapiProber {
+     /// An empty render-node path is refused rather than defaulted, matching
+     /// upstream: `-init_hw_device vaapi=va:` probes ffmpeg's *own* default
+     /// device, which could report a driver for hardware nobody configured.
+-    pub async fn capabilities(&self, options: &EncodingOptions) -> Arc<FfmpegCapabilities> {
++    async fn driver_capabilities(&self, options: &EncodingOptions) -> Arc<FfmpegCapabilities> {
+         let node = options.vaapi_device.as_deref().unwrap_or_default();
+         if !self.base.platform().is_linux()
+             || !self.base.supports_hwaccel("vaapi")
+@@ -201,6 +278,42 @@ impl VaapiProber {
+     }
+ }
+ 
++/// The `vaapi=…` device spec a job's `tonemap_vaapi` would run on, or `None`
++/// when no job planned with these options can reach `tonemap_vaapi`.
++///
++/// The QSV spec is the VAAPI half of the job's own `qsv_device_args` (iHD,
++/// then the render node, vendor id or kernel driver), so the probe opens the
++/// device the transcode will. A VAAPI job uses the configured node, as the
++/// driver probes do, and an empty one is refused for the same reason.
++fn hdr_tonemap_device(caps: &FfmpegCapabilities, options: &EncodingOptions) -> Option<String> {
++    if !caps.platform().is_linux()
++        || !caps.supports_hwaccel("vaapi")
++        || !caps.supports_filter("tonemap_vaapi")
++        || !options.enable_vpp_tonemapping
++    {
++        return None;
++    }
++    let args = match options.hardware_acceleration_type {
++        HardwareAccelerationType::vaapi => {
++            let node = options.vaapi_device.as_deref().filter(|n| !n.is_empty())?;
++            return Some(format!("vaapi={VAAPI_ALIAS}:{node}"));
++        }
++        HardwareAccelerationType::qsv => vaapi_device_args(
++            &VaapiDeviceSpec {
++                render_node: RenderNode::resolve(options.qsv_device.as_deref()),
++                driver: Some("iHD"),
++                kernel_driver: Some("i915"),
++                vendor_id: Some(VENDOR_ID_INTEL),
++                src_device_alias: None,
++            },
++            VAAPI_ALIAS,
++            caps.ffmpeg_version(),
++        ),
++        _ => return None,
++    };
++    args.strip_prefix(" -init_hw_device ").map(str::to_owned)
++}
++
+ /// Runs the five checks across two ffmpeg spawns and returns `base` with their
+ /// answers overlaid, plus what the VAAPI spawn found.
+ ///
+@@ -671,4 +784,74 @@ mod tests {
+         );
+         assert!(runs() > after_first, "a new path must probe afresh");
+     }
++
++    #[tokio::test]
++    async fn a_qsv_device_whose_driver_refuses_hdr_tone_mapping_loses_the_vpp_tonemap() {
++        // Not upstream. QSV on Linux tonemaps with `tonemap_vaapi` on the VAAPI
++        // device it derives from, so the probe opens that device the way the
++        // job's own `qsv_device_args` would (no usable node: the kernel driver).
++        let dir = tempfile::tempdir().unwrap();
++        let ffmpeg = fake_ffmpeg(
++            dir.path(),
++            "[AVHWDeviceContext] VAAPI driver: Intel iHD driver for Intel(R) Gen Graphics - 25.3.4.\n\
++             [Parsed_tonemap_vaapi_1] VAAPI driver doesn't support HDR\n\
++             [Parsed_tonemap_vaapi_1] Failed to configure output pad on Parsed_tonemap_vaapi_1",
++        );
++        let base = FfmpegCapabilities::builder()
++            .platform(Platform::Linux)
++            .hwaccels(["vaapi", "qsv"])
++            .filters(["tonemap_vaapi"])
++            .build();
++        let prober = VaapiProber::new(ffmpeg, base);
++        let qsv = EncodingOptions {
++            hardware_acceleration_type: HardwareAccelerationType::qsv,
++            enable_vpp_tonemapping: true,
++            ..EncodingOptions::default()
++        };
++        assert!(prober.capabilities(&qsv).await.vaapi_lacks_hdr_tonemap());
++
++        let mut expected = vec![
++            "-v",
++            "verbose",
++            "-hide_banner",
++            "-init_hw_device",
++            "vaapi=va:,kernel_driver=i915,driver=iHD",
++        ];
++        expected.extend(EncoderValidator::VAAPI_HDR_TONEMAP_PROBE_ARGS);
++        assert_eq!(recorded_argv(dir.path()), vec![expected]);
++
++        // Cached per device: a second plan does not spawn again.
++        assert!(prober.capabilities(&qsv).await.vaapi_lacks_hdr_tonemap());
++        assert_eq!(recorded_argv(dir.path()).len(), 1);
++
++        // VPP tonemapping off: nothing can reach `tonemap_vaapi`, so no probe
++        // and no mark.
++        let off = EncodingOptions {
++            enable_vpp_tonemapping: false,
++            ..qsv
++        };
++        assert!(!prober.capabilities(&off).await.vaapi_lacks_hdr_tonemap());
++    }
++
++    #[tokio::test]
++    async fn only_the_drivers_own_refusal_marks_the_capabilities() {
++        // A device that would not open says nothing about tone mapping.
++        let dir = tempfile::tempdir().unwrap();
++        let ffmpeg = fake_ffmpeg(
++            dir.path(),
++            "[AVHWDeviceContext] Failed to initialise VAAPI connection: -1 (unknown libva error).",
++        );
++        let base = FfmpegCapabilities::builder()
++            .platform(Platform::Linux)
++            .hwaccels(["vaapi", "qsv"])
++            .filters(["tonemap_vaapi"])
++            .build();
++        let prober = VaapiProber::new(ffmpeg, base);
++        let qsv = EncodingOptions {
++            hardware_acceleration_type: HardwareAccelerationType::qsv,
++            enable_vpp_tonemapping: true,
++            ..EncodingOptions::default()
++        };
++        assert!(!prober.capabilities(&qsv).await.vaapi_lacks_hdr_tonemap());
++    }
+ }
+diff --git a/crates/ferrofin-mediaencoding/src/encoder/encoder_validator.rs b/crates/ferrofin-mediaencoding/src/encoder/encoder_validator.rs
+index 8a10dda1..9a9696d5 100644
+--- a/crates/ferrofin-mediaencoding/src/encoder/encoder_validator.rs
++++ b/crates/ferrofin-mediaencoding/src/encoder/encoder_validator.rs
+@@ -502,6 +502,43 @@ impl EncoderValidator {
+         extensions.iter().all(|ext| stderr.contains(ext))
+     }
+ 
++    /// The arguments, after `-init_hw_device vaapi=va:<device>`, of the
++    /// one-frame graph that asks the VA driver whether it can tone-map HDR.
++    ///
++    /// **Not in upstream.** `tonemap_vaapi` queries the driver's HDR caps while
++    /// its output link is configured, so a single uploaded P010 frame is enough
++    /// to provoke the same failure a real transcode would hit, without a source
++    /// file. Read the stderr with [`Self::check_vaapi_hdr_tonemap_missing_internal`].
++    pub const VAAPI_HDR_TONEMAP_PROBE_ARGS: [&'static str; 13] = [
++        "-filter_hw_device",
++        "va",
++        "-f",
++        "lavfi",
++        "-i",
++        "color=c=black:s=256x144:r=1,format=p010le",
++        "-vf",
++        "hwupload,tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709",
++        "-frames:v",
++        "1",
++        "-f",
++        "null",
++        "-",
++    ];
++
++    /// Whether the VAAPI HDR tone-mapping probe's **stderr** shows the driver
++    /// refusing HDR tone mapping.
++    ///
++    /// **Not in upstream.** Matches only `tonemap_vaapi`'s own caps errors
++    /// ("VAAPI driver doesn't support HDR", "... HDR to SDR", "Failed to query
++    /// HDR caps"). Any other failure — no device, no permission, a missing
++    /// filter — answers `false`, so a probe that could not reach the question
++    /// never takes the VPP tonemap away.
++    #[must_use]
++    pub fn check_vaapi_hdr_tonemap_missing_internal(stderr: &str) -> bool {
++        stderr.contains("VAAPI driver doesn't support HDR")
++            || stderr.contains("Failed to query HDR caps")
++    }
++
+     /// Grabs the library names and `major.minor` versions from `ffmpeg -version`
+     /// output. Mirrors C# `GetFFmpegLibraryVersions`.
+     fn get_ffmpeg_library_versions(output: &str) -> HashMap<String, FfmpegVersion> {
+@@ -752,6 +789,34 @@ mod tests {
+         assert!(!EncoderValidator::check_vaapi_driver_internal(stderr, ""));
+     }
+ 
++    #[test]
++    fn vaapi_hdr_tonemap_probe_flags_only_the_drivers_own_refusal() {
++        // What jellyfin-ffmpeg prints on an iHD SKU without the VPP tone
++        // mapper.
++        let refused = "[Parsed_tonemap_vaapi_1 @ 0x5] VAAPI driver doesn't support HDR\n\
++                       [Parsed_tonemap_vaapi_1 @ 0x5] Failed to configure output pad on \
++                       Parsed_tonemap_vaapi_1\n";
++        assert!(EncoderValidator::check_vaapi_hdr_tonemap_missing_internal(
++            refused
++        ));
++        assert!(EncoderValidator::check_vaapi_hdr_tonemap_missing_internal(
++            "[Parsed_tonemap_vaapi_1 @ 0x5] VAAPI driver doesn't support HDR to SDR\n"
++        ));
++        // A probe that never reached the question says nothing about it.
++        assert!(!EncoderValidator::check_vaapi_hdr_tonemap_missing_internal(
++            "[AVHWDeviceContext @ 0x5] Failed to initialise VAAPI connection: -1 (unknown libva error).\n"
++        ));
++        assert!(!EncoderValidator::check_vaapi_hdr_tonemap_missing_internal(
++            ""
++        ));
++        // The probe uploads to the device it was handed and runs the same
++        // tonemap the chains emit, minus the procamp in front of it.
++        let argv = EncoderValidator::VAAPI_HDR_TONEMAP_PROBE_ARGS;
++        assert_eq!(argv[..2], ["-filter_hw_device", "va"]);
++        assert!(argv.contains(&"hwupload,tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709"));
++        assert_eq!(argv.last(), Some(&"-"));
++    }
++
+     #[test]
+     fn vulkan_extension_probe_requires_every_extension() {
+         let all = "Supported extensions:\n\
+diff --git a/crates/ferrofin-mediaencoding/src/encoding_helper/hw/capabilities.rs b/crates/ferrofin-mediaencoding/src/encoding_helper/hw/capabilities.rs
+index 3b517281..dad002eb 100644
+--- a/crates/ferrofin-mediaencoding/src/encoding_helper/hw/capabilities.rs
++++ b/crates/ferrofin-mediaencoding/src/encoding_helper/hw/capabilities.rs
+@@ -208,6 +208,7 @@ pub struct FfmpegCapabilities {
+     is_vaapi_device_intel_i965: bool,
+     vaapi_vulkan_drm_modifier: bool,
+     vaapi_vulkan_drm_interop: bool,
++    vaapi_hdr_tonemap_missing: bool,
+     is_videotoolbox_av1_decode: bool,
+     low_priority_hwaccel_flag: bool,
+     prober_first_video_frame: bool,
+@@ -349,6 +350,32 @@ impl FfmpegCapabilities {
+         self
+     }
+ 
++    /// Returns these capabilities with the VA HDR tone-mapping probe result
++    /// replaced. Companion to [`Self::with_vaapi_driver`].
++    ///
++    /// `missing` is set only when the driver *said* it has no HDR tone mapping;
++    /// a probe that could not run leaves it `false`, so the default keeps
++    /// upstream's behaviour.
++    #[must_use]
++    pub fn with_vaapi_hdr_tonemap_missing(mut self, missing: bool) -> Self {
++        self.vaapi_hdr_tonemap_missing = missing;
++        self
++    }
++
++    /// Whether the VA driver behind the Intel device reported that it has no
++    /// HDR tone-mapping filter (`VAProcFilterHighDynamicRangeToneMapping`).
++    ///
++    /// **Not in upstream.** Jellyfin gates `tonemap_vaapi` on the filter being
++    /// compiled into ffmpeg only. The iHD driver advertises the VPP tone
++    /// mapper per SKU (Skylake, Apollo Lake and the GT1 Kaby/Coffee/Comet Lake
++    /// parts have none), and on those `tonemap_vaapi` fails while the graph is
++    /// configured ("VAAPI driver doesn't support HDR", then "Failed to
++    /// configure output pad"), so the transcode never starts.
++    #[must_use]
++    pub fn vaapi_lacks_hdr_tonemap(&self) -> bool {
++        self.vaapi_hdr_tonemap_missing
++    }
++
+     /// Whether the configured VAAPI render node is an AMD (Mesa Gallium)
+     /// device. Port of `IMediaEncoder.IsVaapiDeviceAmd`.
+     #[must_use]
+@@ -590,6 +617,14 @@ impl FfmpegCapabilitiesBuilder {
+         self
+     }
+ 
++    /// Sets whether the VA driver reported no HDR tone mapping.
++    #[cfg(test)]
++    #[must_use]
++    pub fn vaapi_hdr_tonemap_missing(mut self, missing: bool) -> Self {
++        self.caps.vaapi_hdr_tonemap_missing = missing;
++        self
++    }
++
+     /// Sets whether this Mac can decode AV1 in hardware.
+     #[cfg(test)]
+     #[must_use]
+diff --git a/crates/ferrofin-mediaencoding/src/encoding_helper/hw/qsv.rs b/crates/ferrofin-mediaencoding/src/encoding_helper/hw/qsv.rs
+index ba9f7f3c..92820eb5 100644
+--- a/crates/ferrofin-mediaencoding/src/encoding_helper/hw/qsv.rs
++++ b/crates/ferrofin-mediaencoding/src/encoding_helper/hw/qsv.rs
+@@ -975,6 +975,95 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn a_va_driver_without_hdr_tone_mapping_never_gets_tonemap_vaapi() {
++        // Not upstream. The trial: iHD, jellyfin-ffmpeg 8.1.3, a 4K Dolby
++        // Vision 8.1 HEVC Main10 source decoded by VAAPI into h264_qsv, VPP
++        // tonemapping on and OpenCL off. ffmpeg stopped with "Failed to
++        // configure output pad on Parsed_tonemap_vaapi_3": tonemap_vaapi
++        // queries the driver's HDR tone-mapping caps while its output link is
++        // configured, and iHD reports none on some SKUs.
++        use crate::encoding_helper::hw::tonemap::is_intel_vpp_tonemap_available;
++        use crate::encoding_helper::test_streams::with_range;
++        use ferrofin_model::data::VideoRangeType;
++        use ferrofin_model::entities_media::MediaStream;
++
++        let dovi_p81 = with_range(
++            MediaStream {
++                codec: Some("hevc".to_owned()),
++                pixel_format: Some("yuv420p10le".to_owned()),
++                width: Some(3840),
++                height: Some(2160),
++                ..MediaStream::default()
++            },
++            VideoRangeType::DoviWithHdr10,
++        );
++        let vpp_only = EncodingOptions {
++            enable_tonemapping: false,
++            enable_vpp_tonemapping: true,
++            ..options()
++        };
++        let job = |caps: &FfmpegCapabilities, options: &EncodingOptions| {
++            let mut inp = input(caps, options, VAAPI_DECODER, "h264_qsv");
++            inp.video_width = Some(3840);
++            inp.video_height = Some(2160);
++            inp.requested = bounded(1920, 1080);
++            inp.color_transfer = Some("smpte2084");
++            inp.source_codec = Some("hevc");
++            inp.do_hw_tonemap = options.enable_tonemapping;
++            inp.vpp_tonemap_available =
++                is_intel_vpp_tonemap_available(caps, options, Some(&dovi_p81));
++            intel_qsv_vaapi_vid_filters_prefered(&inp).main
++        };
++
++        // Unprobed (and on hardware that has the tone mapper): the trial's
++        // chain, filter for filter.
++        let caps = caps_with(FfmpegVersion::with_build(8, 1, 3));
++        assert_eq!(
++            job(&caps, &vpp_only),
++            vec![
++                HDR_PARAMS.to_owned(),
++                "scale_vaapi=w=1920:h=1080:extra_hw_frames=24".to_owned(),
++                VAAPI_TONEMAP.replace(' ', ""),
++                "hwmap=derive_device=qsv".to_owned(),
++                "format=qsv".to_owned(),
++            ]
++        );
++
++        // The driver has said it has no HDR tone mapping. With OpenCL off the
++        // job runs untonemapped, as with every tonemap off, instead of never
++        // starting.
++        let missing = caps.with_vaapi_hdr_tonemap_missing(true);
++        let chain = job(&missing, &vpp_only);
++        assert!(!chain.iter().any(|f| f.contains("tonemap_vaapi")));
++        assert_eq!(
++            chain,
++            vec![
++                SDR_PARAMS.to_owned(),
++                "scale_vaapi=w=1920:h=1080:format=nv12:extra_hw_frames=24".to_owned(),
++                "hwmap=derive_device=qsv".to_owned(),
++                "format=qsv".to_owned(),
++            ]
++        );
++
++        // With OpenCL on as well, the job falls through to the OpenCL tonemap.
++        let both = EncodingOptions {
++            enable_tonemapping: true,
++            ..vpp_only
++        };
++        assert_eq!(
++            job(&missing, &both),
++            vec![
++                HDR_PARAMS.to_owned(),
++                "scale_vaapi=w=1920:h=1080:extra_hw_frames=24".to_owned(),
++                "hwmap=derive_device=opencl:mode=read".to_owned(),
++                OCL_TONEMAP.to_owned(),
++                "hwmap=derive_device=qsv:mode=write:reverse=1:extra_hw_frames=16".to_owned(),
++                "format=qsv".to_owned(),
++            ]
++        );
++    }
++
+     #[test]
+     fn the_reverse_map_out_of_opencl_carries_its_own_pool_size() {
+         // Without the extra frames `hevc_qsv` fails with "cannot allocate
+diff --git a/crates/ferrofin-mediaencoding/src/encoding_helper/hw/tonemap.rs b/crates/ferrofin-mediaencoding/src/encoding_helper/hw/tonemap.rs
+index adfd45c7..13196d11 100644
+--- a/crates/ferrofin-mediaencoding/src/encoding_helper/hw/tonemap.rs
++++ b/crates/ferrofin-mediaencoding/src/encoding_helper/hw/tonemap.rs
+@@ -156,6 +156,12 @@ pub fn is_vulkan_hw_tonemap_available(
+ /// The Windows/QSV version gate exists because `vpp_qsv` needs Intel's VPL
+ /// runtime, which only Gen12 (Tiger Lake) and newer have; on Linux upstream
+ /// prefers `tonemap_vaapi` so Gen9/Kaby Lake keeps working.
++///
++/// **Divergence.** On Linux both Intel chains tonemap with `tonemap_vaapi`, so
++/// a VA driver that has reported no HDR tone mapping
++/// ([`FfmpegCapabilities::vaapi_lacks_hdr_tonemap`]) answers `false` here. The
++/// chains then take the OpenCL tonemap, or none, instead of building a graph
++/// ffmpeg cannot configure. Upstream has no such probe.
+ #[must_use]
+ pub fn is_intel_vpp_tonemap_available(
+     caps: &FfmpegCapabilities,
+@@ -174,6 +180,9 @@ pub fn is_intel_vpp_tonemap_available(
+     {
+         return false;
+     }
++    if caps.platform().is_linux() && caps.vaapi_lacks_hdr_tonemap() {
++        return false;
++    }
+     stream.video_range() == VideoRange::Hdr
+         && (stream.video_range_type() == VideoRangeType::Hdr10
+             || is_hdr10_plus(Some(stream))
+@@ -662,6 +671,39 @@ mod tests {
+         ));
+     }
+ 
++    #[test]
++    fn a_va_driver_without_hdr_tone_mapping_closes_the_vpp_tonemap() {
++        // Not upstream: iHD reports no `VAProcFilterHighDynamicRangeToneMapping`
++        // on some SKUs, and `tonemap_vaapi` then fails at graph configuration.
++        // Dolby Vision profile 8.1 (HDR10 base layer) is the trial's source.
++        let options = EncodingOptions {
++            enable_vpp_tonemapping: true,
++            hardware_acceleration_type: HardwareAccelerationType::qsv,
++            ..EncodingOptions::default()
++        };
++        let s = hdr(VideoRangeType::DoviWithHdr10);
++        let version = FfmpegVersion::with_build(8, 1, 3);
++
++        let unprobed = caps(version, Platform::Linux);
++        assert!(is_intel_vpp_tonemap_available(
++            &unprobed,
++            &options,
++            Some(&s)
++        ));
++
++        let missing = unprobed.with_vaapi_hdr_tonemap_missing(true);
++        assert!(!is_intel_vpp_tonemap_available(
++            &missing,
++            &options,
++            Some(&s)
++        ));
++
++        // Windows tonemaps inside `vpp_qsv`, which the VA probe says nothing
++        // about.
++        let windows = caps(version, Platform::Windows).with_vaapi_hdr_tonemap_missing(true);
++        assert!(is_intel_vpp_tonemap_available(&windows, &options, Some(&s)));
++    }
++
+     #[rstest]
+     // VideoToolbox additionally accepts HLG...
+     #[case(VideoRangeType::Hdr10, true)]

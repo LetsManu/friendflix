@@ -7,8 +7,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 | | |
 |---|---|
 | Kind | Image-level (`mediaserver/Dockerfile`, the `intel-opencl-*` stages and the first `RUN`). No source change. |
-| Status | **Done in our image.** Upstream: not filed yet. |
-| Upstream issue / PR | – (link here once filed at https://github.com/mangoleaf/ferrofin) |
+| Status | **In our image.** Untested on hardware until `probe.sh` passes on the Intel host. |
+| Upstream issue / PR | not filed yet; draft: [upstream-issue-draft.md](upstream-issue-draft.md), problem A (link here once filed) |
 | Drop it when | a Ferrofin release image ships an Intel OpenCL runtime (check: `bash mediaserver/probe.sh` with `IMAGE=` the new upstream image passes test 1). |
 
 ## Why
@@ -48,7 +48,8 @@ Differences to Jellyfin's way, all for pinning:
   shared library (`ldd`).
 - The debs are only mounted into the `RUN`, never stored in a layer.
 
-The image grows by the size of the installed runtime (the debs are about 260 MB, mostly the two compilers).
+The image grows by the size of the installed runtime: about 1.1 GiB installed (the seven debs are about 250 MB to download,
+mostly the two compilers).
 
 ## Bumping
 
