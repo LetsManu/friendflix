@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { nextEnabled, typeahead, wantsGlassList, type ListOpt } from './listbox';
+import { nextEnabled, pageMove, typeahead, wantsGlassList, type ListOpt } from './listbox';
 import type { SelectOption } from './Select.svelte';
 
 const o = (label: string, disabled = false): ListOpt => ({ value: label.toLowerCase(), label, disabled });
@@ -32,6 +32,16 @@ describe('glass listbox (Select on desktop)', () => {
     const opts = [o('A', true), o('B', true)];
     for (const m of ['next', 'prev', 'first', 'last'] as const) expect(nextEnabled(opts, 0, m), m).toBe(-1);
     expect(nextEnabled([], -1, 'next')).toBe(-1);
+  });
+
+  it('pageMove steps a page of enabled options and stops at the ends', () => {
+    const opts = [o('A'), o('B'), o('C', true), o('D'), o('E'), o('F'), o('G')];
+    expect(pageMove(opts, 0, 'next', 3)).toBe(4); // B, D, E: the disabled C does not count
+    expect(pageMove(opts, 4, 'next', 3)).toBe(6); // clamped at the last
+    expect(pageMove(opts, 6, 'prev', 3)).toBe(3);
+    expect(pageMove(opts, 1, 'prev', 3)).toBe(0); // clamped at the first
+    expect(pageMove(opts, 0, 'next', 0)).toBe(1); // at least one row
+    expect(pageMove([o('A', true)], 0, 'next', 3)).toBe(-1);
   });
 
   it('typeahead is case- and accent-insensitive, starts after the current and wraps', () => {

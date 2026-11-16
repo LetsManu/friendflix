@@ -7,9 +7,10 @@
    * options and reports a pick (`pick`) or a dismissal (`close`); the owner unmounts it.
    * It lives on <body> (dialogs clip, cards transform), above the dialog layers, at least as wide as the select and lined up
    * with its start edge (menuPlace: inside the window, opens upward near the bottom, keeps its side while open). It takes the
-   * focus and moves `aria-activedescendant`: ArrowUp / ArrowDown / Home / End move (no wrap, disabled options skipped), Enter or
+   * focus and moves `aria-activedescendant`: ArrowUp / ArrowDown / Home / End / PageUp / PageDown move (no wrap, disabled options skipped), Enter or
    * Space picks, letters jump to the next matching option (500 ms typeahead buffer). Escape closes it and gives the focus back to
-   * the select (it never reaches a dialog around the select); Tab closes it without picking and moves on from the select. An outside
+   * the select (it never reaches a dialog around the select); Tab closes it without picking and moves on from the select (a dialog's
+   * Tab trap still applies). An outside
    * press, a scroll that moves the select and another pop-up opening (lib/ui/popups) close it.
    *   <GlassListbox anchor={sel} {options} {value} labelledby="{id}-l" on:pick={(e) => choose(e.detail)} on:close={hide} />
    */
@@ -18,7 +19,7 @@
   import { growBoth } from '#lib/glass/fx';
   import { SCRIM_MENU } from '#lib/glass/tone';
   import { uid } from './ids';
-  import { nextEnabled, typeahead, type ListOpt } from './listbox';
+  import { nextEnabled, pageMove, typeahead, type ListOpt } from './listbox';
   import { menuMove } from './menuKeys';
   import { menuPlace } from './menuPlace';
   import { openPopup, POPUP_CTX, type PopupHandle } from './popups';
@@ -34,16 +35,28 @@
   const TYPEAHEAD_MS = 500;
 
   let box: HTMLDivElement;
-  let active = startAt();
+  /** the active option, by value: it stays the same option when the options change under the open list */
+  let activeVal: string | null = startVal();
   /** the last move came from the keyboard: the active row shows the focus ring (the pointer only lights it) */
   let kb = false;
   let buffer = '', bufferT: ReturnType<typeof setTimeout> | undefined;
 
-  function startAt(): number {
-    const i = options.findIndex((o) => o.value === value);
-    return i >= 0 && !options[i]!.disabled ? i : -1;
+  /** the select's current option, if it can be picked */
+  function startVal(opts: readonly ListOpt[] = options, v: string = value): string | null {
+    const o = opts.find((x) => x.value === v);
+    return o && !o.disabled ? o.value : null;
   }
-  $: if (active >= options.length) active = startAt(); // the options changed under the open list
+  /** the active option's index: when it went away or became disabled, the current value's (or none) */
+  function indexOf(av: string | null, opts: readonly ListOpt[], v: string): number {
+    const i = av === null ? -1 : opts.findIndex((o) => o.value === av);
+    if (i >= 0 && !opts[i]!.disabled) return i;
+    const s = startVal(opts, v);
+    return s === null ? -1 : opts.findIndex((o) => o.value === s);
+  }
+  // the value changed from elsewhere while open: the active option follows it
+  let seenValue = value;
+  $: if (value !== seenValue) { seenValue = value; activeVal = startVal(options, value); }
+  $: active = indexOf(activeVal, options, value);
 
   const parentPopup = getContext<(() => PopupHandle | null) | undefined>(POPUP_CTX);
   let popup: PopupHandle | null = openPopup(() => { popup = null; dispatch('close'); }, parentPopup?.() ?? null);
@@ -74,7 +87,7 @@
   }
   function moveTo(i: number) {
     if (i < 0) return;
-    active = i;
+    activeVal = options[i]!.value;
     void reveal();
   }
 
@@ -92,11 +105,26 @@
   function onKey(e: KeyboardEvent) {
     const k = e.key;
     if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); return; }
-    if (k === 'Tab') { close(true); return; } // no preventDefault: the browser's Tab moves on from the select
+    if (k === 'Tab') {
+      // the list lives on <body>: a dialog's Tab trap (dialogKeys, on the dialog) would never see this key. Close, focus the select
+      // and send the key again from there, so the trap runs as if the select had it; when the trap moved the focus itself, the
+      // browser's own Tab must not move it again (otherwise it moves on from the select, as usual)
+      close(true);
+      const again = new KeyboardEvent('keydown', { key: 'Tab', code: 'Tab', shiftKey: e.shiftKey, bubbles: true, cancelable: true });
+      anchor.dispatchEvent(again);
+      if (again.defaultPrevented) e.preventDefault();
+      return;
+    }
     if (e.altKey && (k === 'ArrowUp' || k === 'ArrowDown')) { e.preventDefault(); if (active >= 0) pick(active); else close(true); return; }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const move = menuMove(k);
     if (move) { e.preventDefault(); kb = true; moveTo(nextEnabled(options, active, move)); return; }
+    if (k === 'PageDown' || k === 'PageUp') { // a page less one row; neither the list nor the page scrolls by itself
+      e.preventDefault();
+      kb = true;
+      moveTo(pageMove(options, active, k === 'PageDown' ? 'next' : 'prev', Math.floor(box.clientHeight / 44) - 1));
+      return;
+    }
     if (k === 'Enter' || (k === ' ' && !buffer)) { e.preventDefault(); if (active >= 0) pick(active); return; }
     if (k.length === 1 || (k === ' ' && buffer)) { e.preventDefault(); kb = true; type(k); }
   }
@@ -110,7 +138,7 @@
   }
   function hover(i: number) {
     kb = false;
-    if (!options[i]?.disabled) active = i;
+    if (options[i] && !options[i]!.disabled) activeVal = options[i]!.value;
   }
   function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
 

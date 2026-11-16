@@ -28,6 +28,21 @@ export function nextEnabled(opts: readonly ListOpt[], from: number, move: MenuMo
   return move === 'next' ? last : first; // at the end: the outermost enabled option
 }
 
+/**
+ * PageDown / PageUp: `rows` steps of `nextEnabled` (a page of the list less one row, so the last row of the old page stays in
+ * view), stopping at the ends. -1 when none is enabled.
+ */
+export function pageMove(opts: readonly ListOpt[], from: number, move: 'next' | 'prev', rows: number): number {
+  let i = from;
+  for (let k = 0; k < Math.max(1, Math.floor(rows)); k++) {
+    const j = nextEnabled(opts, i, move);
+    if (j < 0) return -1;
+    if (j === i) break;
+    i = j;
+  }
+  return i;
+}
+
 const fold = (s: string): string => s.normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase();
 
 /**

@@ -27,6 +27,8 @@
   export let id = uid('sel');
   let sel: HTMLSelectElement;
   let listOpen = false, picking = false;
+  /** this select uses the glass list (desktop pointer): it says whether the list is open (aria-expanded) */
+  let glassy = false;
   const listId = `${id}-lb`;
   $: if (disabled) listOpen = false;
 
@@ -37,15 +39,16 @@
     hover: matchMedia('(hover: hover) and (pointer: fine)').matches,
   });
   function onDown(e: MouseEvent) {
-    if (e.button !== 0 || disabled || !glass()) return;
+    if (e.button !== 0 || disabled || !(glassy = glass())) return;
     e.preventDefault(); // no system picker
     sel.focus({ preventScroll: true });
     listOpen = !listOpen;
   }
   function onKey(e: KeyboardEvent) {
-    if (disabled || listOpen || !glass()) return;
+    if (disabled || listOpen) return;
     const k = e.key, plain = !e.altKey && !e.ctrlKey && !e.metaKey;
     if ((plain && (k === ' ' || k === 'Enter' || k === 'F4')) || (e.altKey && (k === 'ArrowDown' || k === 'ArrowUp'))) {
+      if (!(glassy = glass())) return;
       e.preventDefault();
       listOpen = true;
     }
@@ -62,6 +65,7 @@
     picking = false;
   }
   onMount(() => {
+    glassy = glass();
     // a value set from elsewhere (the keyboard on the closed select, a script, a test's selectOption) closes the list
     const outside = () => { if (!picking) listOpen = false; };
     sel.addEventListener('input', outside);
@@ -75,7 +79,7 @@
   <label for={id} id="{id}-l" class:sr-only={hideLabel}>{label}</label>
   <span class="wrap">
     <select {id} bind:this={sel} bind:value {disabled} aria-describedby={describedby} aria-invalid={error ? 'true' : undefined}
-      aria-expanded={listOpen ? 'true' : undefined} aria-controls={listOpen ? listId : undefined} on:mousedown={onDown} on:keydown={onKey} on:change>
+      aria-expanded={glassy ? listOpen : undefined} aria-controls={listOpen ? listId : undefined} on:mousedown={onDown} on:keydown={onKey} on:change>
       {#each options as o (o.value)}<option value={o.value} disabled={o.disabled}>{o.label}</option>{/each}
     </select>
     <span class="chev" aria-hidden="true"><Icon name="chevron-down" size={16} /></span>

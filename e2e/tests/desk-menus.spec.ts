@@ -379,6 +379,135 @@ test.describe('Select', () => {
       await expect(dlg).toBeVisible();
       await expect(to).toBeFocused();
     });
+
+    test('Tab and Shift+Tab from the open list stay inside the dialog', async ({ page, api }) => {
+      const extra = api.admin.matrix.roles.find((r) => r.key === 'family')!;
+      api.admin.matrix.roles.splice(4, 0, { ...extra, key: 'oma', label: 'Oma', builtinLabel: false, origin: 'admin', accounts: 2, profiles: 0, kidsProfiles: 0, invites: 0, values: { ...extra.values } });
+      await page.goto('/admin/roles');
+      await omaMenu(page).click();
+      await pop(page).getByRole('button', { name: 'Löschen' }).click();
+      const dlg = page.locator('[role=alertdialog]');
+      const to = dlg.getByRole('combobox', { name: 'Neue Rolle' });
+      const inside = () => dlg.evaluate((d) => d.contains(document.activeElement));
+      await expect(to).toBeVisible();
+      // the select is the dialog's first control: Shift+Tab wraps to its last one (the trap), not out of the dialog
+      await to.click();
+      await expect(list(page)).toBeVisible();
+      await page.keyboard.press('Shift+Tab');
+      await expect(list(page)).toHaveCount(0);
+      await expect(dlg.getByRole('button', { name: 'Abbrechen' })).toBeFocused();
+      // the select as the dialog's last (and only) control: Tab and Shift+Tab keep the focus on it
+      await dlg.getByRole('button', { name: 'Abbrechen' }).evaluate((b) => { (b as HTMLButtonElement).disabled = true; });
+      for (const key of ['Tab', 'Shift+Tab']) {
+        await to.click();
+        await expect(list(page)).toBeVisible();
+        await page.keyboard.press(key);
+        await expect(list(page)).toHaveCount(0);
+        await expect(to, key).toBeFocused();
+        expect(await inside(), key).toBe(true);
+      }
+    });
+  });
+
+  /** the value of the option aria-activedescendant points at */
+  const activeValue = (page: Page) => list(page).evaluate((e) => document.getElementById(e.getAttribute('aria-activedescendant') ?? '')?.dataset.value ?? null);
+
+  test('typeahead, Space and a click pick; aria-expanded follows the list', async ({ page, api }) => {
+    await page.goto('/admin/users');
+    const sel = role(page);
+    await expect.poll(() => sel.locator('option').count()).toBeGreaterThan(3); // the roles have loaded
+    await expect(sel).toHaveAttribute('aria-expanded', 'false');
+    await sel.click();
+    await expect(list(page)).toBeVisible();
+    await expect(sel).toHaveAttribute('aria-expanded', 'true');
+    await page.keyboard.press('g');
+    await expect.poll(() => activeValue(page)).toBe('guest');
+    await page.waitForTimeout(600); // the typeahead buffer clears after 500 ms: Space picks again (within it, Space types)
+    await page.keyboard.press('Space');
+    await expect(list(page)).toHaveCount(0);
+    await expect(sel).toHaveValue('guest');
+    await expect(sel).toBeFocused();
+    await expect(sel).toHaveAttribute('aria-expanded', 'false');
+    // a word: "fr" finds Freund past Familie; Escape keeps the value
+    await page.keyboard.press('Space');
+    await expect(list(page)).toBeVisible();
+    await page.keyboard.type('fr');
+    await expect.poll(() => activeValue(page)).toBe('friend');
+    await page.keyboard.press('Escape');
+    await expect(sel).toHaveValue('guest');
+    // a click on an option picks it and the filter runs
+    await sel.click();
+    await list(page).getByRole('option', { name: 'Familie', exact: true }).click();
+    await expect(list(page)).toHaveCount(0);
+    await expect(sel).toHaveValue('family');
+    const table = page.getByRole('table', { name: 'Nutzer' });
+    const holder = api.admin.users.find((u) => u.role === 'family')!;
+    const other = api.admin.users.find((u) => u.role === 'guest')!;
+    await expect(table.getByRole('row', { name: new RegExp(holder.name) })).toBeVisible();
+    await expect(table.getByRole('row', { name: new RegExp(other.name) })).toHaveCount(0);
+  });
+
+  test('disabled options are skipped', async ({ page }) => {
+    await page.goto('/admin/users');
+    await page.getByRole('combobox', { name: 'Recht', exact: true }).selectOption({ index: 1 }); // a right filter: "Wartet auf Freigabe" is off
+    const status = page.getByRole('combobox', { name: 'Status', exact: true });
+    await status.click();
+    const lb = list(page);
+    await expect(lb.locator('[role=option][data-value="pending"]')).toHaveAttribute('aria-disabled', 'true');
+    await page.keyboard.press('End');
+    await expect.poll(() => activeValue(page)).toBe('deleting');
+    await page.keyboard.press('ArrowUp');
+    await expect.poll(() => activeValue(page)).toBe('expiring');
+    await page.keyboard.press('ArrowDown');
+    await expect.poll(() => activeValue(page)).toBe('deleting');
+    await lb.locator('[role=option][data-value="pending"]').click({ force: true }); // a press on it picks nothing (force: it is aria-disabled)
+    await expect(lb).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect(status).toHaveValue('deleting');
+  });
+
+  test('PageDown / PageUp move a page of options; neither the list nor the page scrolls on its own', async ({ page }) => {
+    await page.goto('/admin/users');
+    const right = page.getByRole('combobox', { name: 'Recht', exact: true });
+    await expect.poll(() => right.locator('option').count()).toBeGreaterThan(12); // the rights have loaded
+    const values = await right.locator('option').evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+    await right.click();
+    const lb = list(page);
+    await expect(lb).toBeVisible();
+    const rows = await lb.evaluate((e) => Math.floor(e.clientHeight / 44) - 1);
+    expect(values.length).toBeGreaterThan(rows + 1); // the list is longer than a page
+    const y = await page.evaluate(() => scrollY);
+    await page.keyboard.press('PageDown');
+    await expect.poll(() => activeValue(page)).toBe(values[rows]);
+    await page.keyboard.press('PageDown');
+    await expect.poll(() => activeValue(page)).toBe(values[Math.min(2 * rows, values.length - 1)]);
+    // the active row is inside the list's box
+    const box = (await lb.boundingBox())!;
+    const act = (await lb.locator(`[data-value="${values[Math.min(2 * rows, values.length - 1)]}"]`).boundingBox())!;
+    expect(act.y).toBeGreaterThanOrEqual(box.y - 0.5);
+    expect(act.y + act.height).toBeLessThanOrEqual(box.y + box.height + 0.5);
+    await page.keyboard.press('End');
+    await page.keyboard.press('PageUp');
+    await expect.poll(() => activeValue(page)).toBe(values[values.length - 1 - rows]);
+    await page.keyboard.press('Home');
+    await page.keyboard.press('PageUp'); // clamped at the first
+    await expect.poll(() => activeValue(page)).toBe(values[0]);
+    await expect(lb).toBeVisible();
+    expect(await page.evaluate(() => scrollY)).toBe(y);
+  });
+
+  test('a select that becomes disabled closes its list', async ({ page }) => {
+    await page.goto('/admin/users');
+    const right = page.getByRole('combobox', { name: 'Recht', exact: true });
+    await right.click();
+    await expect(list(page)).toBeVisible();
+    // "Wartet auf Freigabe" turns the right filter off; set without touching focus or the pointer
+    await page.getByRole('combobox', { name: 'Status', exact: true }).evaluate((s) => {
+      (s as HTMLSelectElement).value = 'pending';
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await expect(right).toBeDisabled();
+    await expect(list(page)).toHaveCount(0);
   });
 
   test('selectOption still works and closes an open listbox', async ({ page }) => {
