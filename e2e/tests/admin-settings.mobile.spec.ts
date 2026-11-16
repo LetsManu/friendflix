@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
+import { mailConfigured } from '../mocks/settings.js';
 
 // Admin → Einstellungen on the phone (390px).
 test.describe('admin: settings (phone)', () => {
@@ -98,6 +99,31 @@ test.describe('admin: settings (phone)', () => {
     }
     await links.first().tap();
     await expect(page.locator('[data-flash]')).toHaveCount(1);
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+  });
+
+  test('Authentik card: button and checkbox ≥ 44 px, no overflow, a result does not move the button', async ({ page, api }) => {
+    mailConfigured(api.settings);
+    api.settings.ak.logoUrl = 'https://friend.example.com/api/public/brand/img/' + 'f'.repeat(64) + '.png';
+    api.settings.ak.answers = [{ status: 200, body: { brand: { state: 'failed', code: 'permission', permission: 'authentik_brands.change_brand' }, stage: { state: 'failed', code: 'permission', permission: 'authentik_stages_email.change_emailstage' } } }];
+    await page.goto('/admin/settings?tab=notifications');
+    const ak = page.locator('section', { has: page.getByRole('heading', { level: 3, name: 'Authentik', exact: true }) });
+    const button = ak.getByRole('button', { name: 'Branding an Authentik übertragen' });
+    await button.scrollIntoViewIfNeeded();
+    expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    const label = ak.locator('label', { has: page.getByRole('checkbox') });
+    expect((await label.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+    const pageBox = () => button.evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x + scrollX, y: r.y + scrollY, w: r.width, h: r.height }; });
+    const results = () => ak.getByTestId('ak-results').evaluate((el) => el.getBoundingClientRect().height);
+    const before = await pageBox();
+    const roomBefore = await results();
+    await ak.getByRole('checkbox').tap();
+    await button.tap();
+    await expect(ak.getByTestId('ak-stage-result')).toContainText('authentik_stages_email.change_emailstage');
+    expect(await pageBox()).toEqual(before);
+    // the reserved room holds the longest lines: nothing below moves either
+    expect(await results()).toBe(roomBefore);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 });

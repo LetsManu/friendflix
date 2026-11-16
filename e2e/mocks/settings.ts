@@ -32,6 +32,23 @@ export interface SettingsMock {
   livetvInstalled: boolean;
   /** Admin → E-Mail (backend/src/mail/routes.ts): the status line and the test mail */
   mail: MailMock;
+  /** *Branding an Authentik übertragen* (backend/src/akBranding.ts) */
+  ak: AkBrandingMock;
+}
+
+/**
+ * GET / POST /api/admin/authentik/branding. The preview's sender and SMTP part follow the mail rows and the mail status (so
+ * `mailConfigured()` enables the SMTP checkbox); the real answer never carries the password.
+ */
+export interface AkBrandingMock {
+  available: boolean;
+  title: string;
+  logoUrl: string | null;
+  /** the answers of the next POSTs, in order; when none is left: both parts done */
+  answers: Array<{ status: number; body: unknown }>;
+  /** bodies of every POST, in order */
+  posts: unknown[];
+  gets: number;
 }
 
 /** GET /api/admin/mail/status and POST /api/admin/mail/test (the real answers carry codes only; extra fields here are canaries) */
@@ -221,6 +238,7 @@ export function settingsState(kind: 'jellyfin' | 'plex' = 'jellyfin'): SettingsM
       status: { configured: false, queued: 0, failed24h: 0, lastSentAt: null, lastFailure: null, transport: null },
       test: { status: 400, body: { error: 'mail_not_configured' } }, statusCalls: 0, tests: 0,
     },
+    ak: { available: true, title: 'FriendFlix', logoUrl: null, answers: [], posts: [], gets: 0 },
   };
 }
 
@@ -238,6 +256,26 @@ export function mailConfigured(st: SettingsMock): void {
 export function mailRoute(st: SettingsMock, m: string, p: string, J: Reply): Promise<void> | null {
   if (p === '/api/admin/mail/status' && m === 'GET') { st.mail.statusCalls++; return J(st.mail.status); }
   if (p === '/api/admin/mail/test' && m === 'POST') { st.mail.tests++; return J(st.mail.test.body, st.mail.test.status); }
+  return null;
+}
+
+export function akBrandingRoute(st: SettingsMock, m: string, p: string, body: unknown, J: Reply): Promise<void> | null {
+  if (p !== '/api/admin/authentik/branding') return null;
+  if (m === 'GET') {
+    st.ak.gets++;
+    const rows = st.groups.find((g) => g.id === 'mail')!.items;
+    const val = (key: string) => rows.find((i) => i.key === key)?.value ?? null;
+    const tls = val('MAIL_SMTP_TLS');
+    return J({
+      available: st.ak.available, title: st.ak.title, logoUrl: st.ak.logoUrl, from: val('MAIL_FROM'),
+      smtp: { available: st.mail.status.configured, host: val('MAIL_SMTP_HOST'), port: val('MAIL_SMTP_PORT') ?? 587, tls: tls === 'tls' || tls === 'none' ? tls : 'starttls', hasUser: val('MAIL_SMTP_USER') !== null },
+    });
+  }
+  if (m === 'POST') {
+    st.ak.posts.push(body);
+    const next = st.ak.answers.shift();
+    return next ? J(next.body, next.status) : J({ brand: { state: 'done' }, stage: { state: 'done' } });
+  }
   return null;
 }
 

@@ -23,6 +23,7 @@ import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { adminSettingsRoutes } from './routes/adminSettings.js';
 import { mailRoutes } from './mail/routes.js';
 import { mailPersonRoutes } from './mail/personRoutes.js';
+import { akBrandingRoutes } from './akBranding.js';
 import { updaterRoutes } from './routes/updater.js';
 import { livetvAdminRoutes } from './livetv/adminRoutes.js';
 import { livetvRoutes } from './livetv/routes.js';
@@ -308,6 +309,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   adminSettingsRoutes(app, ctx);
   mailRoutes(app, ctx);
   mailPersonRoutes(app, ctx);
+  akBrandingRoutes(app, ctx);
   updaterRoutes(app, ctx);
   livetvAdminRoutes(app, ctx);
   livetvRoutes(app, ctx);

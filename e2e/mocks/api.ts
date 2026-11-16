@@ -4,7 +4,7 @@ import type { BrowserContext, Route } from '@playwright/test';
 import { ME, byName, episodes, hex, items, nolan, people, seedLists, type MockItem, type MockList, MOVIE, MOVIE2, SERIES } from './fixtures.js';
 import { pngFor } from './png.js';
 import { adminRoute, adminState, type AdminState } from './admin.js';
-import { mailRoute, settingsRoute, settingsState, type SettingsMock } from './settings.js';
+import { akBrandingRoute, mailRoute, settingsRoute, settingsState, type SettingsMock } from './settings.js';
 import { setupRoute, type SetupMock } from './setup.js';
 import { startRedeploy, updaterRoute, updaterState, type UpdaterMock } from './updater.js';
 
@@ -636,6 +636,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     if (p.startsWith('/api/admin/brand')) { const r = brandAdminRoute(st, m, p, req, body, J); if (r) return r; }
     if (p.startsWith('/api/admin/mail/') && st.asAdmin) { const r = mailRoute(st.settings, m, p, J); if (r) return r; }
+    if (p === '/api/admin/authentik/branding' && st.asAdmin) { const r = akBrandingRoute(st.settings, m, p, body(), J); if (r) return r; }
     if (p.startsWith('/api/admin/settings')) { st.settings.livetvInstalled = st.admin.livetv.installed; const r = settingsRoute(st.settings, m, p, body(), J); if (r) return r; }
     if (p.startsWith('/api/admin/')) {
       // Live TV: the offer is hidden by the LIVETV_OFFER_HIDDEN setting (the "Nicht mehr anzeigen" save and the Settings switch)
