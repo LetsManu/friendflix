@@ -98,3 +98,6 @@ d621dd5eec11ab8f5215e2ed87e92b8790c67846:livetv/test/fetch-routes.test.ts:generi
 91561e8f1526fbea1176f0e809ac88ee26fb8929:backend/test/livetv-status.test.ts:generic-api-key:40
 # the test-only, self-signed SMTP test key (backend/test/fixtures/smtp/README.md)
 04257d444ceeedb57119b61e256365a670e0c820:backend/test/fixtures/smtp/key.pem:private-key:1
+# fictional unsubscribe tokens (v1.<uuid>.<type>.<mac>) in the e2e specs, not secrets
+4b865923083fdba35dfd237432b65ccdf0fe7671:e2e/tests/mail-unsubscribe.spec.ts:generic-api-key:10
+4b865923083fdba35dfd237432b65ccdf0fe7671:e2e/tests/mail-unsubscribe.mobile.spec.ts:generic-api-key:6

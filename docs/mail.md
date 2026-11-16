@@ -4,7 +4,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 # E-Mail
 
-FriendFlix can send e-mail through an SMTP server you choose: your mailbox provider, a relay service or a mail server of your own. This is the first stage; today the only mail is the test mail. Mails to people (invitations, notices, a digest) and alerts to admins come in later releases and use the same settings and the same outbox. Nothing here is needed to run FriendFlix; without a server FriendFlix sends no e-mail and the Systemcheck says so as a neutral line.
+FriendFlix can send e-mail through an SMTP server you choose: your mailbox provider, a relay service or a mail server of your own. It sends the admin's test mail, a welcome mail, mails about the things people care about (a wish that is available, their recordings, downloads about to expire; each one can be switched off, see [Which mails people get](#which-mails-people-get)) and invitations an admin sends from the invite dialog. A digest and alerts to admins come in later releases and use the same settings and the same outbox. Nothing here is needed to run FriendFlix; without a server FriendFlix sends no e-mail and the Systemcheck says so as a neutral line.
 
 **What stays with Authentik.** The "Forgot your password?" mail and the confirmation mail of an e-mail change are sent by Authentik with its own mail settings, not by FriendFlix ([authentik.md](authentik.md)). Setting up FriendFlix's mail does not change them.
 
@@ -78,7 +78,56 @@ If you run your own SMTP server:
 | *Ohne Verschlüsselung sendet … kein Passwort* | Choose *STARTTLS* or *TLS*, or empty user name and password. |
 | *Ein Passwort ist eingetragen, aber kein Benutzername* | Enter the user name or remove the password. |
 | *Eine E-Mail ging in den letzten 24 Stunden nicht raus* (warning) | See the error code below; the E-Mail card shows the last error. |
-| *E-Mails warten seit über einer Stunde* (warning) | Background jobs must run (`BACKGROUND_JOBS=true`); check the connection and send a test mail. |
+| *E-Mails sind seit über 15 Minuten fällig* (warning) | Mail has been due (or its send lease ran out) for over 15 minutes and is not going out: background jobs must run (`BACKGROUND_JOBS=true`); send a test mail. Mail waiting for a retry or a rate limit does not count. |
+
+## Which mails people get
+
+A person gets mail only when all of this holds: e-mail is set up (server and sender address), `PUBLIC_URL` is set (every mail links to the app; without it nothing is queued), the account has a valid e-mail address (the one on the account page, which comes from Authentik), the account is not disabled and its access has not ended, and the mail's switch is on. Otherwise no mail is queued at all; the in-app notice is the same either way. A mail is written in the language of the account's main profile (else the instance default, else German), fixed when it is queued.
+
+| Mail | When | Switch on the account page |
+|---|---|---|
+| Welcome | The first sign-in of a new account. Once per account, ever. | none |
+| Invitation | An admin types an address in the invite dialog ([below](#invitations)). | none (there is no account yet) |
+| *Verfügbare Wünsche* (`available`) | Something the person wished for is available. | *Verfügbare Wünsche* |
+| *Aufnahmen* (`recording`) | A recording is finished (a series episode once it is complete, so an incomplete one mails once), failed or stayed incomplete, or is about to be deleted to make room. | *Aufnahmen* |
+| *Ablaufende Downloads* (`licence`) | Downloads on the person's devices expire soon ([below](#expiring-downloads)). | *Ablaufende Downloads* |
+
+The switchable mails are the e-mail form of an in-app notice, with the same text the notices show; a notice that is raised again (a retried webhook, a second run) never mails twice. Mail is per account: **kids profiles** have no switches and get no mail of their own; a licence or a wish of a kids profile is mailed to the account's address with the same text the account's notices get.
+
+### The switches
+
+*Konto → E-Mails* (`/me/account#mail`, owner profile only) shows the address the mails go to and one switch per type, all on by default. A switch saves at once. Without an address the card says *Keine E-Mail-Adresse hinterlegt* and links to the e-mail row under *Sicherheit*; while the server sends no mail it says *Dein Server verschickt noch keine E-Mails.* In both cases the switches cannot be changed. The switches are independent of push notifications, ntfy and the weekly digest. Mail has no quiet hours; only the licence run keeps to the daytime.
+
+**Switched off means never sent.** Switching a type off (on the card or with the link in a mail) also drops that person's mails of that type that are still waiting (for a retry, the rate limit or a server outage). And the outbox checks once more right before each send and deletes a waiting person mail unsent, with one of these codes in the log (never an address):
+
+| Code | Why the mail was dropped |
+|---|---|
+| `unsubscribed` | Its type was switched off after it was queued. |
+| `address_changed` | The account's address changed, was removed or is no longer valid since the mail was queued, so it never goes to an old address. |
+| `inactive` | The account was deleted or disabled, or its access ended. |
+
+### Unsubscribing
+
+Every switchable mail has two ways out at the bottom, and both work without signing in:
+
+- **The link *Diese E-Mails abbestellen*** opens `/mail/unsubscribe?t=…`, a page that names the mail type in plain words (*Keine E-Mails mehr zu ablaufenden Downloads?*) and has one button, *Abbestellen*. Nothing changes until it is pressed: a mail scanner or a link preview that opens the page switches nothing off. Afterwards *Wieder anmelden* switches the type back on, and *E-Mail-Einstellungen* leads to the account page. The page takes the token out of the address bar at once (the browser's own history list of visited pages still has the link, as it has any link you opened), sends no `Referer`, and never shows an address. A damaged or old link (see below) says *Dieser Link ist ungültig.* and nothing else.
+- **One-click unsubscribe in the mail program.** The mail carries `List-Unsubscribe` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058), so large mailbox providers show their own *Unsubscribe* button next to the sender. It posts to `/api/public/mail/unsubscribe?t=…` and switches the type off at once. A plain `GET` of that address (a scanner, or a mail program that opens it in a browser) changes nothing and only forwards to the page. Providers show the button only when the mail's **DKIM signature covers the `List-Unsubscribe` and `List-Unsubscribe-Post` headers**: that is a setting of your mail provider or your own server's DKIM signer (most sign these headers already). Without it, the link at the bottom still works.
+
+The link carries a token for **one person and one mail type**: it can switch only that type for that person, on or off, and nothing else. It does not expire. Changing `APP_ENC_KEY` makes all earlier links invalid ([security.md](security.md#e-mail)). The welcome mail and invitations have no unsubscribe link (the welcome mail links to the settings instead; an invitation goes to someone without an account and says to ignore it if unexpected).
+
+**Your reverse proxy could log the link.** A reverse proxy in front of FriendFlix (for example Nginx Proxy Manager) writes the address of every request to its own access log, `/mail/unsubscribe?t=…` with the token included, just as it logs `/invite/<token>` links. FriendFlix's own request log hides the token (`t=[redacted]`). The shipped template `deploy/npm/portal.advanced.conf` has two exact `location` blocks, `= /mail/unsubscribe` and `= /api/public/mail/unsubscribe`, with `access_log off;` and `error_log /dev/null;` (like the cast and Live TV token paths); copy them when you update your proxy's *Advanced* tab. A proxy or log pipeline of your own should leave both paths out too, or keep its logs briefly. The risk is low either way: whoever reads the proxy log could switch that one mail type of that one person on or off, nothing more.
+
+### Welcome
+
+The welcome mail is sent at the end of the first successful sign-in of a new account (invitation, approval or the first admin), with a link to the app and to the mail settings (no unsubscribe link: it comes once). It is **once per account, ever**: the first sign-in marks the account as welcomed (`users.welcomed_at`) also when no mail can go out (no address yet, e-mail not set up), so a mail set up later never welcomes old accounts. The update that brought these mails marked every existing account as welcomed, so updating mailed nobody.
+
+### Expiring downloads
+
+Once a day, in the first background run **between 09:00 and 21:00 server time** (the backend container's time zone, `TZ`, `Europe/Vienna` in the shipped compose files), FriendFlix looks for download licences that are still active, expire within the next **48 hours** and are at least 48 hours old. Each licence is warned once, ever, and each person gets one mail for all of them (how many, and the earliest expiry), together with the in-app notice. A run that would start before 09:00 or from 21:00 on (after a restart, a deploy, or downloads switched on in the evening) waits for the next 09:00: no licence mail at night. So **a licence of 4 days or more is warned 24 to 48 hours before it expires**; a 3-day licence only within its last 24 hours (or not at all if no run falls into that day); 1- and 2-day licences never. It needs background jobs (`BACKGROUND_JOBS=true`).
+
+### Invitations
+
+When an admin creates an invitation (*Admin → Nutzer → Einladungen*), *E-Mail-Adresse (optional)* sends the new invitation link to that address right away; the dialog says *Einladung an a…@friend.example.com verschickt.*, that it waits in the outbox, or why it was not sent (copy the link and send it yourself then). The field can be used only while e-mail is set up (otherwise it is greyed out and says so), and only for an invitation for one person (*Nur für Einladungen für eine Person*: a link for several people cannot be mailed). The mail's language is chosen in the dialog (the instance language by default). An admin can send 20 invitation mails a day. The address is not kept with the invitation: it stays in the outbox, encrypted, until the mail is sent, and afterwards only in masked form there and in the audit log. A mail that waits in the outbox (a server outage, a rate limit) is withdrawn when the invitation is revoked, and dropped unsent once the invitation has expired or been used (code `invite_closed` in the log): it would only bring a dead link. If the mail cannot even be queued, the invitation still exists and the dialog shows its link with *nicht verschickt*; such a failed attempt, and an invitation that could not be created at all, does not count toward the 20. An invitation mail has no unsubscribe link (there is no account and no setting); it names who invited and says to ignore the mail if it was not expected.
 
 ## The outbox
 
@@ -119,3 +168,4 @@ A mail is not sent from the request that asks for it: it is written to a queue i
 - **The outbox stores little.** While a mail waits, its address and content are stored encrypted (`APP_ENC_KEY`), so a queued invitation link is no readable copy. When the mail is sent or has failed for good, address and content are wiped; only the kind of mail, the address in masked form (`a…@friend.example.com`), the state, the error code and the times stay, for 30 days.
 - **Logs and the audit log carry codes only**: never the password, an address, a mail's text or the server's reply. The SMTP password is stored encrypted and is never sent to the browser ([security.md](security.md#e-mail)).
 - **The test mail goes only to the signed-in admin's own address**, so the button cannot be used to mail anyone else.
+- **Person mails go only to the account's own address**, and only while the account may get them; an unsubscribe link changes one switch of one person and shows no address. The unsubscribe token can end up in a reverse proxy's access log unless the proxy leaves those paths out, as the shipped template does ([Unsubscribing](#unsubscribing)).

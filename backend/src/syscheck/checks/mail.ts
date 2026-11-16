@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHmac, randomUUID } from 'node:crypto';
 import type { Config } from '../../config.js';
+import { mailSubkey } from '../../mail/address.js';
 import { clearMailTransport, mailStatus } from '../../mail/outbox.js';
 import { mailConfigured } from '../../mail/transport.js';
 import { runProbe, type ProbeResult } from '../../settings/probes.js';
@@ -12,15 +13,16 @@ import { CHECK_TIMEOUT_MS, type CheckLine } from '../types.js';
 /**
  * E-Mail-Versand (core.mail, spec "Admin surface"): the connection probe (connect, TLS and login, never a send) cached in kv for 10
  * minutes so a Systemcheck view does not log in to the provider every minute (Jetzt prüfen probes again), then the outbox: a final
- * failure in the last 24 h, mail queued for over an hour. Codes only; the settings the probe ran against are part of the cache entry,
- * so a changed setting is never answered from an old result.
+ * failure in the last 24 h, mail overdue for more than 15 minutes (a row waiting for its backoff or a rate limit is not overdue).
+ * Codes only; the settings the probe ran against are part of the cache entry, so a changed setting is never answered from an old
+ * result.
  */
 const ID = 'core.mail';
 const PROBE_KEY = 'mail:probe';
 const PROBE_TTL_S = 600;
 const PROBE_MS = 3_500;
 const DAY_MS = 86_400_000;
-const STUCK_MS = 3_600_000;
+const STUCK_MS = 900_000;
 const HREF = '/admin/settings?tab=notifications';
 const DOCS = 'mail.md';
 
@@ -29,9 +31,9 @@ const BOOT = randomUUID();
 /**
  * What the cached probe result depends on, never the password itself: the non-secret mail settings, whether a password is set, the
  * settings revision (every saved change bumps it, a new password included) and the process (for .env changes). HMAC keyed with
- * APP_ENC_KEY so the kv value says nothing about the settings.
+ * the probe subkey of APP_ENC_KEY (mailSubkey(…, 'probe')) so the kv value says nothing about the settings.
  */
-const fingerprint = (key: Buffer, c: Config, rev: number) => createHmac('sha256', key)
+export const probeFingerprint = (key: Buffer, c: Config, rev: number) => createHmac('sha256', key)
   .update(JSON.stringify([c.MAIL_SMTP_HOST, c.MAIL_SMTP_PORT, c.MAIL_SMTP_TLS, c.MAIL_SMTP_USER, c.MAIL_FROM, Boolean(c.MAIL_SMTP_PASSWORD), rev, BOOT])).digest('hex');
 
 function parseCached(raw: string | null, fp: string, now: number): ProbeResult | null {
@@ -47,7 +49,7 @@ function parseCached(raw: string | null, fp: string, now: number): ProbeResult |
 
 async function probe(env: CheckEnv): Promise<ProbeResult> {
   const { ctx } = env;
-  const fp = fingerprint(ctx.encKey, ctx.cfg, ctx.settings.rev());
+  const fp = probeFingerprint(mailSubkey(ctx.encKey, 'probe'), ctx.cfg, ctx.settings.rev());
   if (!env.fresh) {
     const hit = parseCached(await ctx.kv.get(PROBE_KEY).catch(() => null), fp, Date.now());
     if (hit) return hit;
@@ -84,7 +86,7 @@ async function mailLine(env: CheckEnv): Promise<CheckLine> {
   if (f && Date.now() - Date.parse(f.at) < DAY_MS) {
     return bad(ID, 'warning', 'mail_last_failed', { params: { code: f.code, ...(f.smtp !== null ? { smtp: f.smtp } : {}) }, href: HREF, docs: DOCS });
   }
-  if (s.oldestQueuedAt && Date.now() - Date.parse(s.oldestQueuedAt) > STUCK_MS) return bad(ID, 'warning', 'mail_queue_stuck', { href: HREF, docs: DOCS });
+  if (s.oldestOverdueAt && Date.now() - Date.parse(s.oldestOverdueAt) > STUCK_MS) return bad(ID, 'warning', 'mail_queue_stuck', { href: HREF, docs: DOCS });
   return line(ID, 'ok');
 }
 

@@ -55,7 +55,11 @@ export interface MailStatus {
   lastFailure: { kind: string; code: string; smtp: number | null; at: string } | null;
   /** the last transport failure (cleared by the next successful send) */
   transport: { code: string; at: string } | null;
-  oldestQueuedAt: string | null;
+  /**
+   * since when the longest-overdue row waits: a queued row whose next_at has passed, or a sending row whose lease ran out. Rows
+   * waiting by design (backoff, rate limit, a transport outage) have a future next_at and never count.
+   */
+  oldestOverdueAt: string | null;
 }
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
@@ -67,7 +71,8 @@ export async function mailStatus(ctx: Pick<Ctx, 'db' | 'kv' | 'cfg'>): Promise<M
       `select count(*) filter (where state in ('queued','sending')) queued,
               count(*) filter (where state = 'failed' and finished_at > now() - interval '24 hours') failed24h,
               max(sent_at) filter (where state = 'sent') last_sent,
-              min(created_at) filter (where state in ('queued','sending')) oldest
+              min(case when state = 'queued' and next_at <= now() then next_at
+                       when state = 'sending' and lease_until < now() then lease_until end) oldest
          from mail_outbox`),
     ctx.db.query<{ kind: string; last_code: string | null; last_smtp: number | null; finished_at: Date }>(
       "select kind, last_code, last_smtp, finished_at from mail_outbox where state = 'failed' order by finished_at desc limit 1"),
@@ -82,7 +87,7 @@ export async function mailStatus(ctx: Pick<Ctx, 'db' | 'kv' | 'cfg'>): Promise<M
     lastSentAt: iso(c.last_sent),
     lastFailure: f ? { kind: f.kind, code: f.last_code ?? 'unexpected', smtp: f.last_smtp, at: f.finished_at.toISOString() } : null,
     transport: parseTransport(raw),
-    oldestQueuedAt: iso(c.oldest),
+    oldestOverdueAt: iso(c.oldest),
   };
 }
 

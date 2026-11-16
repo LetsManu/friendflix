@@ -18,6 +18,7 @@ import { DEVICE_COOKIE, registerDevice } from './devices.js';
 import { expireAccess } from './expiry.js';
 import { m } from './i18n.js';
 import { claimInvite, inviteAccessUntil, recordInviteUse, releaseInvite, type InviteRow } from './invites.js';
+import { welcomeOnce } from './mail/welcome.js';
 import { notifyAdmins } from './notify.js';
 import { freshAuth, RESET_PIN_MAX_AGE, type OidcClaims } from './oidc.js';
 import { pendingNoticeKey } from './pending.js';
@@ -177,6 +178,8 @@ export async function issueSession(ctx: Ctx, req: FastifyRequest, reply: Fastify
   // stamps session.reauthAt before the save below (the stamp's second producer, at session creation; see reauth.ts)
   if (opts.firstAdmin) await completeSetup(ctx, user.id, session, req.log);
   await saveSession(ctx, sid, session);
+  // the welcome mail, claimed once per account ever (mail/welcome.ts); a failure never fails the sign-in and is logged as a code only
+  await welcomeOnce(ctx, user.id).catch(() => req.log.warn({ code: 'welcome_failed' }, 'welcome mail failed'));
   reply.setCookie(COOKIE, sid, { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: ctx.cfg.SESSION_TTL_SECONDS });
   if (opts.firstAdmin) {
     // the setup session is gone (completeSetup): the browser forgets its cookies too

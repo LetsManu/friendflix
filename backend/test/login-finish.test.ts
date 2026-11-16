@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { Jar } from '../src/akflow.js';
 import type { Config } from '../src/config.js';
@@ -183,6 +183,36 @@ describe('finishing a sign-in', () => {
     const uses = (await env.pool.query<{ user_id: string }>('select user_id from invite_uses where invite_id=$1 order by at', [inv.id])).rows.map((r) => r.user_id);
     expect(uses).toEqual([ua.id, ub.id]);
     expect((await env.pool.query('select 1 from approval_requests where authentik_sub = any($1)', [[a.sub, b.sub]])).rowCount).toBe(0);
+  });
+
+  // Mail stage B, Task 3: every sign-in ends in issueSession, which claims the welcome once per account.
+  describe('welcome mail', () => {
+    const MAIL: Partial<Config> = { MAIL_SMTP_HOST: 'mail.example.com', MAIL_FROM: 'kino@friend.example.com' };
+    const welcomes = async (sub: string) => (await env.pool.query<{ kind: string; dedupe: string; user_id: string }>(
+      'select o.kind, o.dedupe, o.user_id from mail_outbox o join users u on u.id = o.user_id where u.authentik_sub = $1', [sub])).rows;
+    // the outer beforeEach keeps the settings it finds: mail goes off again for the tests after these
+    afterEach(() => { env.ctx.cfg = { ...env.ctx.cfg, MAIL_SMTP_HOST: undefined, MAIL_FROM: undefined }; });
+
+    it('first sign-in of an invited person queues the welcome mail', async () => {
+      env.ctx.cfg = { ...env.ctx.cfg, ...MAIL };
+      const inv = await createInvite(env.ctx, await anAdmin(), { role: 'friend', ttlHours: 1 }, { warn: () => {} });
+      const a = person();
+      expect((await appLogin(a, { invite: inv.token })).body).toEqual({ stage: 'done', next: '/' });
+      const u = (await userBySub(a.sub))!;
+      expect(await welcomes(a.sub)).toEqual([{ kind: 'welcome', dedupe: `welcome:${u.id}`, user_id: u.id }]);
+    });
+
+    it('a second sign-in queues nothing', async () => {
+      env.ctx.cfg = { ...env.ctx.cfg, ...MAIL };
+      const inv = await createInvite(env.ctx, await anAdmin(), { role: 'friend', ttlHours: 1 }, { warn: () => {} });
+      const a = person();
+      expect((await appLogin(a, { invite: inv.token })).body).toEqual({ stage: 'done', next: '/' });
+      // the outbox row is gone (sent long ago, past its retention): the account's claim still says "welcomed"
+      await env.pool.query('delete from mail_outbox');
+      useFake();
+      expect((await appLogin(a)).body).toEqual({ stage: 'done', next: '/' });
+      expect(await welcomes(a.sub)).toEqual([]);
+    });
   });
 
   it('disabled user → locked', async () => {

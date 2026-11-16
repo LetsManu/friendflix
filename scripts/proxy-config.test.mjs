@@ -26,6 +26,17 @@ test('the token locations /media/c/ (cast), /media/l/ (Live TV) and /media/r/ (r
   }
 });
 
+test('the unsubscribe token routes (/api/public/mail/unsubscribe, /mail/unsubscribe) write neither access nor error log', () => {
+  for (const [prefix, port] of [['= /api/public/mail/unsubscribe', 3081], ['= /mail/unsubscribe', 3080]]) {
+    const b = block(prefix);
+    assert.ok(b, `location ${prefix} is missing`);
+    assert.ok(b.includes('access_log off;'), `${prefix}: access_log off`);
+    assert.ok(b.includes('error_log /dev/null;'), `${prefix}: error_log /dev/null`);
+    assert.ok(b.includes(`proxy_pass http://127.0.0.1:${port};`), `${prefix}: goes to ${port}`);
+    assert.ok(b.includes('proxy_set_header X-Forwarded-Proto $scheme;'), `${prefix}: forwards the scheme`);
+  }
+});
+
 test('/media/l/ and /media/r/ proxy exactly like /media/c/ (the gateway, unbuffered, with Range and the forwarding headers)', () => {
   assert.deepEqual(block('/media/l/'), block('/media/c/'));
   assert.deepEqual(block('/media/r/'), block('/media/c/'));

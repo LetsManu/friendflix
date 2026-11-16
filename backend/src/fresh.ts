@@ -204,7 +204,7 @@ export async function badgesFor(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, user: JfUser
 
 const notVisible = (e: unknown): boolean => e instanceof MediaError && (e.status === 404 || e.status === 403);
 
-type Db = Pick<Ctx, 'db' | 'cfg' | 'fetchImpl' | 'jf' | 'kv'>;
+type Db = Pick<Ctx, 'db' | 'cfg' | 'fetchImpl' | 'jf' | 'kv' | 'encKey'>;
 let leavingBusy = false;
 
 /**

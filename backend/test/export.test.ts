@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
 import { listErrors } from '../src/errorlog.js';
 import { m } from '../src/i18n.js';
+import { readMailPrefs, setMailPref } from '../src/mail/people.js';
 import { notify, notifyAdmins } from '../src/notify.js';
 import type { ItemDto } from '../src/media/types.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
@@ -369,6 +370,16 @@ describe('GET /api/account/export', () => {
     expect(r.headers['transfer-encoding']).toBe('chunked'); // a stream, no content-length
     expect(r.headers['content-length']).toBeUndefined();
     expect(() => JSON.parse(r.body)).not.toThrow();
+  });
+
+  it('export lists the mail switches', async () => {
+    const { s, a } = await setup();
+    fakeHistory();
+    expect((await get(s)).json().notifications.mail).toEqual({ available: true, recording: true, licence: true });
+    await setMailPref(env.ctx, a, 'recording', false);
+    const doc = (await get(s)).json();
+    expect(doc.notifications.mail).toEqual(await readMailPrefs(env.ctx, a));
+    expect(doc.notifications.mail).toEqual({ available: true, recording: false, licence: true });
   });
 
   it('export is audited', async () => {

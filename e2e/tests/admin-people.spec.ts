@@ -3,6 +3,7 @@
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
 import { auid, rightsAuditSamples, type AdminState } from '../mocks/admin.js';
+import { mailConfigured } from '../mocks/settings.js';
 
 const SHOTS = process.env.B18_SHOTS;
 const toasts = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Hinweise' });
@@ -482,6 +483,131 @@ test.describe('admin people (desktop)', () => {
       await expect(table.getByRole('row', { name: /Tante Gerda/ }).getByText('Offen')).toBeVisible();
       await res.getByRole('button', { name: 'Link ausblenden' }).click();
       await expect(res).toHaveCount(0);
+    });
+
+    test('invite with e-mail shows the sent line', async ({ page, api }) => {
+      mailConfigured(api.settings);
+      await page.goto('/admin/users?tab=invites');
+      const form = page.getByRole('region', { name: 'Neue Einladung' });
+      const addr = form.getByRole('textbox', { name: 'E-Mail-Adresse (optional)' });
+      await expect(addr).toHaveAttribute('type', 'email');
+      await expect(addr).toHaveAttribute('autocomplete', 'off');
+      // the language picker waits for an address and starts on the instance language
+      const lang = form.getByRole('combobox', { name: 'Sprache der E-Mail' });
+      await expect(lang).toBeHidden();
+      await addr.fill('ben@friend.example.com');
+      await expect(lang).toBeVisible();
+      await expect(lang).toHaveValue('de');
+      await lang.selectOption('en');
+      await form.getByRole('button', { name: 'Einladung erstellen' }).click();
+      const res = page.getByRole('region', { name: 'Dein Einladungs-Link' });
+      await expect(res.getByText('Einladung an b…@friend.example.com verschickt.')).toBeVisible();
+      const post = api.log.find((l) => l.startsWith('POST /api/admin/invites '))!;
+      expect(post).toContain('"email":"ben@friend.example.com"');
+      expect(post).toContain('"lang":"en"');
+      // the full address stays in the input (cleared after sending) and nowhere else
+      await expect(addr).toHaveValue('');
+      await expect(page.locator('body')).not.toContainText('ben@friend.example.com');
+      // the link stays available to copy
+      await expect(res.getByRole('textbox', { name: 'Einladungs-Link' })).toHaveValue(/\/invite\//);
+    });
+
+    test('e-mail field greyed out when mail is not set up', async ({ page, api }) => {
+      await page.goto('/admin/users?tab=invites');
+      const form = page.getByRole('region', { name: 'Neue Einladung' });
+      await expect(form.getByRole('button', { name: 'Einladung erstellen' })).toBeVisible();
+      await expect.poll(() => api.settings.mail.statusCalls).toBeGreaterThan(0);
+      const addr = form.getByRole('textbox', { name: 'E-Mail-Adresse (optional)' });
+      await expect(addr).toBeDisabled();
+      await expect(addr).toHaveAccessibleDescription('E-Mail ist nicht eingerichtet. Das lässt sich unter Einstellungen → E-Mail erledigen.');
+      await expect(form.getByRole('combobox', { name: 'Sprache der E-Mail' })).toBeHidden();
+      await form.getByRole('button', { name: 'Einladung erstellen' }).click();
+      await expect(page.getByRole('region', { name: 'Dein Einladungs-Link' })).toBeVisible();
+      expect(api.log.find((l) => l.startsWith('POST /api/admin/invites '))!).not.toContain('"email"');
+    });
+
+    test('the e-mail field keeps its place while its answers load: nothing in the form moves', async ({ page, api }) => {
+      mailConfigured(api.settings);
+      let release!: () => void;
+      const held = new Promise<void>((f) => { release = f; });
+      await page.route('**/api/admin/mail/status', async (r) => { await held; await r.fallback(); });
+      await page.goto('/admin/users?tab=invites');
+      const form = page.getByRole('region', { name: 'Neue Einladung' });
+      const addr = form.getByRole('textbox', { name: 'E-Mail-Adresse (optional)' });
+      const note = form.getByRole('textbox', { name: 'Notiz' });
+      const create = form.getByRole('button', { name: 'Einladung erstellen' });
+      await expect(create).toBeVisible();
+      // there from the start, greyed out until the server says it can send
+      await expect(addr).toBeDisabled();
+      await expect(addr).toHaveAccessibleDescription(/Schickt den Link gleich per E-Mail/);
+      const before = [await note.boundingBox(), await create.boundingBox()];
+      release();
+      await expect(addr).toBeEnabled();
+      expect([await note.boundingBox(), await create.boundingBox()]).toEqual(before);
+      // the hint for several people takes the same room
+      await form.getByRole('spinbutton', { name: 'Max. Nutzungen' }).fill('3');
+      await expect(addr).toHaveAccessibleDescription('Nur für Einladungen für eine Person');
+      expect([await note.boundingBox(), await create.boundingBox()]).toEqual(before);
+    });
+
+    test('the sent line names the address that was sent, even when the field changes meanwhile', async ({ page, api }) => {
+      mailConfigured(api.settings);
+      let release!: () => void;
+      const held = new Promise<void>((f) => { release = f; });
+      await page.route('**/api/admin/invites', async (r) => { if (r.request().method() === 'POST') await held; await r.fallback(); });
+      await page.goto('/admin/users?tab=invites');
+      const form = page.getByRole('region', { name: 'Neue Einladung' });
+      const addr = form.getByRole('textbox', { name: 'E-Mail-Adresse (optional)' });
+      await addr.fill('ben@friend.example.com');
+      await form.getByRole('button', { name: 'Einladung erstellen' }).click();
+      await addr.fill('zora@other.example.com');
+      release();
+      const res = page.getByRole('region', { name: 'Dein Einladungs-Link' });
+      await expect(res.getByText('Einladung an b…@friend.example.com verschickt.')).toBeVisible();
+    });
+
+    test('multi-use disables the e-mail field', async ({ page, api }) => {
+      mailConfigured(api.settings);
+      await page.goto('/admin/users?tab=invites');
+      const form = page.getByRole('region', { name: 'Neue Einladung' });
+      const addr = form.getByRole('textbox', { name: 'E-Mail-Adresse (optional)' });
+      await expect(addr).toBeEnabled();
+      await form.getByRole('spinbutton', { name: 'Max. Nutzungen' }).fill('3');
+      await expect(addr).toBeDisabled();
+      await expect(form.getByText('Nur für Einladungen für eine Person')).toBeVisible();
+      await form.getByRole('button', { name: 'Einladung erstellen' }).click();
+      await expect(page.getByRole('region', { name: 'Dein Einladungs-Link' })).toBeVisible();
+      expect(api.log.find((l) => l.startsWith('POST /api/admin/invites '))!).not.toContain('"email"');
+      await form.getByRole('spinbutton', { name: 'Max. Nutzungen' }).fill('1');
+      await expect(addr).toBeEnabled();
+    });
+
+    test('a failed invite mail shows its sentence', async ({ page, api }) => {
+      mailConfigured(api.settings);
+      api.admin.inviteMail = { state: 'failed', code: 'recipient_refused', smtp: 550 };
+      await page.goto('/admin/users?tab=invites');
+      const form = page.getByRole('region', { name: 'Neue Einladung' });
+      await form.getByRole('textbox', { name: 'E-Mail-Adresse (optional)' }).fill('ben@friend.example.com');
+      await form.getByRole('button', { name: 'Einladung erstellen' }).click();
+      const res = page.getByRole('region', { name: 'Dein Einladungs-Link' });
+      await expect(res.getByText('Einladung angelegt, aber nicht verschickt: Empfängeradresse abgelehnt (SMTP 550). Kopiere den Link und schicke ihn selbst.')).toBeVisible();
+      await expect(res.getByRole('textbox', { name: 'Einladungs-Link' })).toHaveValue(/\/invite\//);
+      await expect(page.locator('body')).not.toContainText('ben@friend.example.com');
+    });
+
+    test('a queued invite mail says it waits in the outbox; a bad address blocks sending', async ({ page, api }) => {
+      mailConfigured(api.settings);
+      api.admin.inviteMail = { state: 'queued' };
+      await page.goto('/admin/users?tab=invites');
+      const form = page.getByRole('region', { name: 'Neue Einladung' });
+      const addr = form.getByRole('textbox', { name: 'E-Mail-Adresse (optional)' });
+      await addr.fill('ben@friend');
+      await expect(form.getByText('Bitte eine gültige E-Mail-Adresse eingeben.')).toBeVisible();
+      await form.getByRole('button', { name: 'Einladung erstellen' }).click();
+      expect(api.log.some((l) => l.startsWith('POST /api/admin/invites '))).toBe(false);
+      await addr.fill('ben@friend.example.com');
+      await form.getByRole('button', { name: 'Einladung erstellen' }).click();
+      await expect(page.getByRole('region', { name: 'Dein Einladungs-Link' }).getByText('Einladung wartet im Postausgang.')).toBeVisible();
     });
 
     test('"already has an account" skips enrollment; revoke asks first and is irreversible', async ({ page, api }) => {

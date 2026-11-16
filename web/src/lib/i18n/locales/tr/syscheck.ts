@@ -175,7 +175,7 @@ const dict: Translation<typeof de> = {
     mail_insecure_auth: 'Şifreleme olmadan {app} parola göndermez, bu yüzden e-posta sunucusunda oturum açmaz.',
     mail_no_user: 'Bir parola girilmiş ama kullanıcı adı yok: {app} bu şekilde oturum açmaz.',
     mail_last_failed: 'Son 24 saatte bir e-posta gönderilemedi: {reason}.',
-    mail_queue_stuck: 'E-postalar bir saatten uzun süredir gönderilmeyi bekliyor.',
+    mail_queue_stuck: 'E-postaların gönderim zamanı 15 dakikadan uzun süre önce geldi ama gönderilmiyorlar.',
   },
   fix: {
     envLocked: '{key} .env içinde: orada değiştir ve konteyneri yeniden başlat.',
@@ -288,7 +288,7 @@ const dict: Translation<typeof de> = {
     mail_insecure_auth: 'STARTTLS veya TLS seç ya da kullanıcı adı ile parolayı temizle.',
     mail_no_user: 'Kullanıcı adını (MAIL_SMTP_USER) gir ya da parolayı kaldır.',
     mail_last_failed: 'Ayarlar → E-posta altında durumu incele ve bir test e-postası gönder.',
-    mail_queue_stuck: 'Arka plan işlerinin çalıştığını (BACKGROUND_JOBS=true) kontrol et ve bir test e-postası gönder.',
+    mail_queue_stuck: 'Arka plan işlerinin çalıştığını (BACKGROUND_JOBS=true) kontrol et: kuyruğu onlar gönderir. Ardından bir test e-postası gönder.',
   },
   action: { toSetting: 'Ayara git', details: 'Ayrıntılar', docs: 'Kılavuz', hevc: 'HEVC’yi şimdi kontrol et' },
   summary: {

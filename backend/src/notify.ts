@@ -4,6 +4,7 @@ import { publicOrigin } from './config.js';
 import type { Ctx } from './ctx.js';
 import { broadcastLanguage, isMsg, renderKnown, renderNotice, userLanguage, type Language, type Rendered, type Text } from './i18n.js';
 export { renderNotice, type Rendered } from './i18n.js';
+import { mailPerson, type MailPrefType } from './mail/people.js';
 import { sendWebPush } from './push.js';
 
 export interface Notice {
@@ -22,6 +23,11 @@ export interface Notice {
   personal?: boolean;
   /** text of the personal ntfy push when it should differ from the in-app body (e.g. titles that must not sit in the inbox) */
   pushBody?: Text;
+  /**
+   * also mail the person, as this mail type (their switch decides). Only a personal notice with a dedupe key is mailed, so a retried
+   * event never mails twice; the outbox key is `n:<dedupe>`.
+   */
+  mail?: MailPrefType;
 }
 
 /** Stored next to a notification when title/body are messages: the inbox renders them in the reader's language. */
@@ -41,9 +47,10 @@ export function localizeStored<T extends { title: string; body: string | null; m
 /**
  * Creates an in-app notification and fans it out. Texts are rendered per recipient: the account's language for its inbox
  * and personal ntfy topic, the instance language for broadcasts / the global ntfy topic / Discord, and each push
- * subscription's profile language for Web Push.
+ * subscription's profile language for Web Push. Mail (`n.mail`) queues the notice's texts as messages; the worker renders them
+ * in the account's language, fixed when queued.
  */
-export async function notify(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>, n: Notice): Promise<boolean> {
+export async function notify(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl' | 'encKey'>, n: Notice): Promise<boolean> {
   const instLang = await broadcastLanguage(ctx);
   const lang = n.userId ? await userLanguage(ctx, n.userId) : instLang;
   const text = renderNotice(n, lang);
@@ -56,6 +63,9 @@ export async function notify(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>, n: Noti
   void sendWebPush(ctx, n).catch(() => undefined);
   if (n.external) await pushExternal(ctx, renderNotice(n, instLang)).catch(() => undefined);
   if (n.personal && n.userId) await pushPersonal(ctx, n.userId, { title: text.title, body: text.pushBody ?? text.body, link: n.link }).catch(() => undefined);
+  if (n.mail && n.userId && n.dedupe) {
+    await mailPerson(ctx, n.userId, n.mail, { title: n.title, body: n.body ?? null, link: n.link ?? null }, `n:${n.dedupe}`).catch(() => undefined);
+  }
   return true;
 }
 
@@ -63,7 +73,7 @@ export async function notify(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>, n: Noti
  * Sends the notice to every active admin (role admin, not disabled), each in their own language.
  * A dedupe key gets the admin's id appended. Returns how many notifications were created.
  */
-export async function notifyAdmins(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>, n: Omit<Notice, 'userId'>): Promise<number> {
+export async function notifyAdmins(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl' | 'encKey'>, n: Omit<Notice, 'userId'>): Promise<number> {
   const admins = (await ctx.db.query<{ id: string }>("select id from users where role='admin' and not disabled order by created_at, id")).rows;
   let sent = 0;
   for (const a of admins) if (await notify(ctx, { ...n, userId: a.id, ...(n.dedupe ? { dedupe: `${n.dedupe}-${a.id}` } : {}) })) sent++;

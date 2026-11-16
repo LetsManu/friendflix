@@ -207,7 +207,7 @@ A tidy admin area in dense glass with a sidebar (People, Content, Operations) an
 
 **Branding:** give the installation its own name, byline ("by …"), logo, app symbol, accent colour and background mood in *Admin → Branding*, with a live preview for desktop, phone, TV and sign-in; colours are kept readable automatically ([docs/branding.md](docs/branding.md)).
 
-**E-Mail:** an admin connects an SMTP server in *Admin → Settings → Notifications → E-Mail* (your provider or your own mail server, encrypted, the password stored encrypted), checks it with *Test* and a branded test mail, and the Systemcheck keeps watching it. Mails go through a durable outbox with retries and rate limits, with no tracking ([docs/mail.md](docs/mail.md)).
+**E-Mail:** an admin connects an SMTP server in *Admin → Settings → Notifications → E-Mail* (your provider or your own mail server, encrypted, the password stored encrypted), checks it with *Test* and a branded test mail, and the Systemcheck keeps watching it. People then get a welcome mail and mails about wishes that became available, their recordings and downloads about to expire, each switchable on the account page and unsubscribable with one click and without signing in; admins can send an invitation by mail. Mails go through a durable outbox with retries and rate limits, with no tracking ([docs/mail.md](docs/mail.md)).
 
 Also in the admin area: invitations, **brand hubs**, featured and themed lists, **leaving-soon** dates, hover-preview clips, the nightly playback check with the shared conversion limit, the weekly digest, Live TV and an audit log. **Updates** in *Admin → Update*: the updater installs the channel you pick (Stable, Nightly or a fixed version), or FriendFlix redeploys a Portainer stack (Portainer API or webhook) and follows it step by step – pulling the images, recreating the containers, health check – and says why it did not run.
 
@@ -451,7 +451,7 @@ npm run spdx:check                              # licence headers, as in CI
 | Themed lists, calm mode, sound in the player, phone shortcuts and badge | [docs/personal.md](docs/personal.md) |
 | UI kit, glass look and admin shell | [docs/ui-kit.md](docs/ui-kit.md) |
 | Branding: name, byline, logo and symbol, colours, where it shows, image rules | [docs/branding.md](docs/branding.md) |
-| E-Mail: SMTP settings, providers, your own mail server, outbox and error codes | [docs/mail.md](docs/mail.md) |
+| E-Mail: SMTP settings, providers, your own mail server, which mails people get, unsubscribing, outbox and error codes | [docs/mail.md](docs/mail.md) |
 | Languages and translations | [docs/i18n.md](docs/i18n.md) |
 | Security model, trust boundaries, updater and livetv hardening | [docs/security.md](docs/security.md) |
 | Reproducible builds: rebuild an image and compare its digest | [docs/reproducible-builds.md](docs/reproducible-builds.md) |

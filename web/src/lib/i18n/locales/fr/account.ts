@@ -405,6 +405,21 @@ const fr: Translation<typeof de> = {
       approveLink: 'Approuver dans Appareils',
       loadFailed: 'Impossible de charger les appareils.',
     },
+    /** the E-Mails card (E-mail stage B): one switch per mail type, saved at once; mail is account level (no kids profile switches) */
+    mail: {
+      title: 'E-mails',
+      to: 'Les e-mails vont à',
+      noAddress: 'Aucune adresse e-mail enregistrée',
+      notConfigured: 'Votre serveur n’envoie pas encore d’e-mails.',
+      types: {
+        available: { label: 'Demandes disponibles', hint: 'Quand quelque chose que vous avez demandé est là.' },
+        recording: { label: 'Enregistrements', hint: 'Quand un enregistrement est terminé, échoue ou est supprimé.' },
+        licence: { label: 'Téléchargements qui expirent', hint: 'Peu avant l’expiration des téléchargements sur vos appareils.' },
+      },
+      saveFailed: 'Le réglage n’a pas pu être enregistré. Veuillez réessayer.',
+      loadFailed: 'Impossible de charger les réglages des e-mails.',
+      footer: 'Chacun de ces e-mails contient en bas un lien de désabonnement. L’e-mail de bienvenue n’arrive qu’une fois.',
+    },
   },
 };
 export default fr;

@@ -65,6 +65,13 @@ export function crossOriginPath(/** @type {string} */ url) {
 }
 
 /**
+ * Pages whose address carries a secret, so they send no Referer at all (`no-referrer` instead of `same-origin`): /mail/unsubscribe?t=
+ * (E-mail stage B; the token switches one mail type of one person). The page also drops the token from the address bar and sets the
+ * same policy as a <meta>; the header covers the requests the browser makes before the app runs (the bundle, the icons).
+ */
+const NO_REFERRER = /^\/mail\/unsubscribe\/?(?:[?#]|$)/;
+
+/**
  * The headers for a response to `url` (the request path, query allowed). COOP `same-origin`: the app opens no window it talks to
  * (sign-in is a full-page redirect, links to other sites open with noopener), so nothing needs an opener across origins. No COEP:
  * `require-corp` would block the trailer frame and the Cast sender script from gstatic, and the app needs no cross-origin isolation.
@@ -73,7 +80,7 @@ export function crossOriginPath(/** @type {string} */ url) {
 export function securityHeaders(/** @type {string} */ url) {
   return {
     'x-content-type-options': 'nosniff',
-    'referrer-policy': 'same-origin',
+    'referrer-policy': NO_REFERRER.test(url) ? 'no-referrer' : 'same-origin',
     'permissions-policy': PERMISSIONS_POLICY,
     'cross-origin-resource-policy': crossOriginPath(url) ? 'cross-origin' : 'same-origin',
     'cross-origin-opener-policy': 'same-origin',

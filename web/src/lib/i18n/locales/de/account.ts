@@ -409,5 +409,20 @@ export default {
       approveLink: 'Unter Geräte freigeben',
       loadFailed: 'Die Geräte konnten nicht geladen werden.',
     },
+    /** the E-Mails card (E-mail stage B): one switch per mail type, saved at once; mail is account level (no kids profile switches) */
+    mail: {
+      title: 'E-Mails',
+      to: 'E-Mails gehen an',
+      noAddress: 'Keine E-Mail-Adresse hinterlegt',
+      notConfigured: 'Dein Server verschickt noch keine E-Mails.',
+      types: {
+        available: { label: 'Verfügbare Wünsche', hint: 'Wenn etwas, das du dir gewünscht hast, da ist.' },
+        recording: { label: 'Aufnahmen', hint: 'Wenn eine Aufnahme fertig ist, fehlschlägt oder gelöscht wird.' },
+        licence: { label: 'Ablaufende Downloads', hint: 'Kurz bevor Downloads auf deinen Geräten ablaufen.' },
+      },
+      saveFailed: 'Die Einstellung konnte nicht gespeichert werden. Versuch es noch einmal.',
+      loadFailed: 'Die E-Mail-Einstellungen konnten nicht geladen werden.',
+      footer: 'Jede dieser E-Mails hat unten einen Link zum Abbestellen. Die Willkommens-E-Mail kommt nur einmal.',
+    },
   },
 } as const;

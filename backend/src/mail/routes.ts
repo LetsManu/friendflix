@@ -22,7 +22,7 @@ export function mailRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/admin/mail/status', admin, async (_req, reply) => {
     reply.header('cache-control', 'no-store');
-    const { oldestQueuedAt: _oldest, ...status } = await mailStatus(ctx);
+    const { oldestOverdueAt: _oldest, ...status } = await mailStatus(ctx);
     return status;
   });
 

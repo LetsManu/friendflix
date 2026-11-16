@@ -176,7 +176,7 @@ export default {
     mail_insecure_auth: 'Ohne Verschlüsselung sendet {app} kein Passwort, also auch keine Anmeldung beim Mailserver.',
     mail_no_user: 'Ein Passwort ist eingetragen, aber kein Benutzername: so meldet sich {app} nicht an.',
     mail_last_failed: 'Eine E-Mail ging in den letzten 24 Stunden nicht raus: {reason}.',
-    mail_queue_stuck: 'E-Mails warten seit über einer Stunde auf den Versand.',
+    mail_queue_stuck: 'E-Mails sind seit über 15 Minuten fällig, werden aber nicht verschickt.',
   },
   fix: {
     envLocked: '{key} steht in der .env: dort ändern und den Container neu starten.',
@@ -289,7 +289,7 @@ export default {
     mail_insecure_auth: 'STARTTLS oder TLS wählen, oder Benutzername und Passwort leeren.',
     mail_no_user: 'Den Benutzernamen (MAIL_SMTP_USER) eintragen oder das Passwort entfernen.',
     mail_last_failed: 'Unter Einstellungen → E-Mail den Stand ansehen und eine Testmail senden.',
-    mail_queue_stuck: 'Prüfen, ob die Hintergrundjobs laufen (BACKGROUND_JOBS=true), und eine Testmail senden.',
+    mail_queue_stuck: 'Prüfen, ob die Hintergrundjobs laufen (BACKGROUND_JOBS=true): sie verschicken die Warteschlange. Danach eine Testmail senden.',
   },
   action: { toSetting: 'Zur Einstellung', details: 'Details', docs: 'Anleitung', hevc: 'HEVC jetzt prüfen' },
   summary: {

@@ -175,7 +175,7 @@ const dict: Translation<typeof de> = {
     mail_insecure_auth: 'Sans chiffrement, {app} n’envoie aucun mot de passe et ne se connecte donc pas au serveur de mail.',
     mail_no_user: 'Un mot de passe est saisi, mais aucun nom d’utilisateur : {app} ne se connecte pas ainsi.',
     mail_last_failed: 'Un e-mail n’est pas parti au cours des dernières 24 heures : {reason}.',
-    mail_queue_stuck: 'Des e-mails attendent d’être envoyés depuis plus d’une heure.',
+    mail_queue_stuck: 'Des e-mails sont dus depuis plus de 15 minutes mais ne partent pas.',
   },
   fix: {
     envLocked: '{key} est dans le .env : modifiez-le là et redémarrez le conteneur.',
@@ -288,7 +288,7 @@ const dict: Translation<typeof de> = {
     mail_insecure_auth: 'Choisir STARTTLS ou TLS, ou vider le nom d’utilisateur et le mot de passe.',
     mail_no_user: 'Saisir le nom d’utilisateur (MAIL_SMTP_USER) ou supprimer le mot de passe.',
     mail_last_failed: 'Regarder l’état sous Réglages → E-mail et envoyer un e-mail de test.',
-    mail_queue_stuck: 'Vérifier que les tâches de fond tournent (BACKGROUND_JOBS=true) et envoyer un e-mail de test.',
+    mail_queue_stuck: 'Vérifier que les tâches de fond tournent (BACKGROUND_JOBS=true) : ce sont elles qui envoient la file. Puis envoyer un e-mail de test.',
   },
   action: { toSetting: 'Vers le réglage', details: 'Détails', docs: 'Guide', hevc: 'Vérifier HEVC maintenant' },
   summary: {

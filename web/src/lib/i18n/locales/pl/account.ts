@@ -425,6 +425,21 @@ const pl: Translation<typeof de> = {
       approveLink: 'Zatwierdź w Urządzeniach',
       loadFailed: 'Nie udało się wczytać urządzeń.',
     },
+    /** the E-Mails card (E-mail stage B): one switch per mail type, saved at once; mail is account level (no kids profile switches) */
+    mail: {
+      title: 'E-maile',
+      to: 'E-maile trafiają na',
+      noAddress: 'Brak zapisanego adresu e-mail',
+      notConfigured: 'Twój serwer nie wysyła jeszcze e-maili.',
+      types: {
+        available: { label: 'Dostępne życzenia', hint: 'Gdy pojawi się coś, czego sobie życzysz.' },
+        recording: { label: 'Nagrania', hint: 'Gdy nagranie się zakończy, nie powiedzie się lub zostanie usunięte.' },
+        licence: { label: 'Wygasające pobrania', hint: 'Krótko przed wygaśnięciem pobrań na Twoich urządzeniach.' },
+      },
+      saveFailed: 'Nie udało się zapisać ustawienia. Spróbuj ponownie.',
+      loadFailed: 'Nie udało się wczytać ustawień e-maili.',
+      footer: 'Każdy z tych e-maili ma na dole link do wypisania się. E-mail powitalny przychodzi tylko raz.',
+    },
   },
 };
 export default pl;

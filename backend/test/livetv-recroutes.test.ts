@@ -444,6 +444,8 @@ describe('less than a whole programme (DVR follow-ups)', () => {
   });
 
   it('stop before anything was recorded removes it like a cancel: no empty "done", no notice', async () => {
+    // the recordings finished by earlier tests left their notices (a finished recording has one since mail stage B)
+    await env.pool.query("delete from notifications where kind like 'livetv.rec.%'");
     const start = Date.now() - 10_000;
     const id = await row({ state: 'recording', mode: 'passthrough', start_at: new Date(start), end_at: new Date(start + HOUR) });
     const dir = (await env.pool.query<{ dir: string }>('select dir from livetv_recordings where id = $1', [id])).rows[0]!.dir;

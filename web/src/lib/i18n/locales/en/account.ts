@@ -404,6 +404,21 @@ const en: Translation<typeof de> = {
       approveLink: 'Approve on Devices',
       loadFailed: 'Could not load the devices.',
     },
+    /** the E-Mails card (E-mail stage B): one switch per mail type, saved at once; mail is account level (no kids profile switches) */
+    mail: {
+      title: 'Emails',
+      to: 'Emails go to',
+      noAddress: 'No email address on file',
+      notConfigured: 'Your server does not send emails yet.',
+      types: {
+        available: { label: 'Available requests', hint: 'When something you asked for is here.' },
+        recording: { label: 'Recordings', hint: 'When a recording is finished, fails or is deleted.' },
+        licence: { label: 'Expiring downloads', hint: 'Shortly before downloads on your devices expire.' },
+      },
+      saveFailed: 'The setting could not be saved. Please try again.',
+      loadFailed: 'Could not load the email settings.',
+      footer: 'Each of these emails has an unsubscribe link at the bottom. The welcome email comes only once.',
+    },
   },
 };
 export default en;

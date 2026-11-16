@@ -231,8 +231,8 @@
   $: path = $page.url.pathname;
   // /setup: the wizard of a new install (no account yet); /setup/extras is not public (the first admin is signed in there)
   // /login, /reset, /confirm-email: the in-app sign-in, the recovery link and the e-mail change link (Block 23 phase 3); they never ask
-  // /api/me (a 401 there would loop back to /auth/login → /login)
-  $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending' || path === '/restore' || path === '/setup' || path === '/login' || path === '/reset' || path === '/confirm-email';
+  // /api/me (a 401 there would loop back to /auth/login → /login); /mail/unsubscribe: the link in the footer of a person's mail
+  $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending' || path === '/restore' || path === '/setup' || path === '/login' || path === '/reset' || path === '/confirm-email' || path === '/mail/unsubscribe';
   // immersive player pages: no navigation (the film player, a party, the live player of Task 39)
   // a recording plays full-screen like a film (Live TV Phase 3: /live/recordings/<id>)
   $: watchPage = path.startsWith('/watch/') || path.startsWith('/live/watch/') || /^\/live\/recordings\/[^/]+/.test(path) || /^\/party\/[^/]+/.test(path);

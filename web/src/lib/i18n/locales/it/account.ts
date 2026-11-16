@@ -405,6 +405,21 @@ const it: Translation<typeof de> = {
       approveLink: 'Approva in Dispositivi',
       loadFailed: 'Impossibile caricare i dispositivi.',
     },
+    /** the E-Mails card (E-mail stage B): one switch per mail type, saved at once; mail is account level (no kids profile switches) */
+    mail: {
+      title: 'E-mail',
+      to: 'Le e-mail vanno a',
+      noAddress: 'Nessun indirizzo e-mail registrato',
+      notConfigured: 'Il tuo server non invia ancora e-mail.',
+      types: {
+        available: { label: 'Richieste disponibili', hint: 'Quando arriva qualcosa che hai richiesto.' },
+        recording: { label: 'Registrazioni', hint: 'Quando una registrazione è finita, non riesce o viene eliminata.' },
+        licence: { label: 'Download in scadenza', hint: 'Poco prima che scadano i download sui tuoi dispositivi.' },
+      },
+      saveFailed: 'Impossibile salvare l’impostazione. Riprova.',
+      loadFailed: 'Impossibile caricare le impostazioni e-mail.',
+      footer: 'Ognuna di queste e-mail ha in fondo un link per annullare l’iscrizione. L’e-mail di benvenuto arriva una sola volta.',
+    },
   },
 };
 export default it;

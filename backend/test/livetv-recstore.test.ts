@@ -142,6 +142,19 @@ describe('space and retention (spec §15.5)', () => {
     // Behalten during the notice calls the deletion off (PATCH keep): see livetv-recordings.test.ts
   });
 
+  // Mail stage B, Task 3: the 24-h warning before a deletion for space is also a mail of type `recording`, once per recording.
+  it('recording marked for deletion mails its owner', async () => {
+    env.ctx.cfg = { ...cfg, LIVETV_RECORD_LIMIT_GB: 1, MAIL_SMTP_HOST: 'mail.example.com', MAIL_FROM: 'kino@friend.example.com' };
+    await env.pool.query('delete from mail_outbox');
+    const now = new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00.000Z').getTime();
+    const a = await row({ bytes: 0.6 * GB, start_at: new Date(now - 9 * DAY), end_at: new Date(now - 9 * DAY + HOUR), title: 'Die Leuchtturmwärter' });
+    await row({ bytes: 0.35 * GB, keep: true, start_at: new Date(now - 8 * DAY), end_at: new Date(now - 8 * DAY + HOUR) });
+    await spaceTick(env.ctx, now);
+    await spaceTick(env.ctx, now + HOUR);
+    expect(await notices('livetv.rec.deleting')).toHaveLength(1);
+    expect((await env.pool.query('select kind, user_id, dedupe from mail_outbox')).rows).toEqual([{ kind: 'recording', user_id: annaId, dedupe: `n:ltvrec-deleting-${a}` }]);
+  });
+
   it('keep protects; new recordings then fail storage_full', async () => {
     env.ctx.cfg = { ...cfg, LIVETV_RECORD_LIMIT_GB: 1 };
     const a = await row({ bytes: 0.7 * GB, keep: true });

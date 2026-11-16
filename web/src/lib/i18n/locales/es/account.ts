@@ -405,6 +405,21 @@ const es: Translation<typeof de> = {
       approveLink: 'Aprobar en Dispositivos',
       loadFailed: 'No se pudieron cargar los dispositivos.',
     },
+    /** the E-Mails card (E-mail stage B): one switch per mail type, saved at once; mail is account level (no kids profile switches) */
+    mail: {
+      title: 'Correos',
+      to: 'Los correos van a',
+      noAddress: 'No hay dirección de correo guardada',
+      notConfigured: 'Tu servidor todavía no envía correos.',
+      types: {
+        available: { label: 'Peticiones disponibles', hint: 'Cuando ya está aquí algo que pediste.' },
+        recording: { label: 'Grabaciones', hint: 'Cuando una grabación termina, falla o se elimina.' },
+        licence: { label: 'Descargas que caducan', hint: 'Poco antes de que caduquen las descargas de tus dispositivos.' },
+      },
+      saveFailed: 'No se pudo guardar el ajuste. Inténtalo de nuevo.',
+      loadFailed: 'No se pudieron cargar los ajustes de correo.',
+      footer: 'Cada uno de estos correos tiene abajo un enlace para darse de baja. El correo de bienvenida llega solo una vez.',
+    },
   },
 };
 export default es;

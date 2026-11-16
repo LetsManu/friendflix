@@ -217,6 +217,26 @@ const login: Translation<typeof de> = {
     expiredText: 'Request the change again in your account.',
     toAccount: 'Go to account',
   },
+  /** /mail/unsubscribe (E-mail stage B): the footer link of every switchable mail; public, never shows an address */
+  unsubscribe: {
+    pageTitle: 'Unsubscribe from emails',
+    title: 'Unsubscribe from emails',
+    ask: 'No more emails about {type}?',
+    askText: 'You will keep getting other emails. You can change this any time in your account.',
+    button: 'Unsubscribe',
+    doneTitle: 'Unsubscribed.',
+    doneText: 'You will no longer get emails about {type}.',
+    resubscribe: 'Subscribe again',
+    resubscribedTitle: 'Subscribed again.',
+    resubscribedText: 'You will get emails about {type} again.',
+    invalidTitle: 'This link is not valid.',
+    invalidText: 'You can set up your emails in your account.',
+    limited: 'Too many tries. Wait a minute, then try again.',
+    failed: 'That did not work just now. Please try again.',
+    settings: 'Email settings',
+    /** {type} in the texts above */
+    types: { available: 'available requests', recording: 'recordings', licence: 'expiring downloads' },
+  },
   pending: {
     title: 'Almost there',
     text: 'Your account is waiting for an admin to approve it. You will hear from us as soon as you can start.',

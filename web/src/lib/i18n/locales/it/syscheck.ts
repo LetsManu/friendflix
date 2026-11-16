@@ -175,7 +175,7 @@ const dict: Translation<typeof de> = {
     mail_insecure_auth: 'Senza crittografia {app} non invia alcuna password, quindi non accede al server di posta.',
     mail_no_user: 'C’è una password ma nessun nome utente: così {app} non accede.',
     mail_last_failed: 'Un’e-mail non è partita nelle ultime 24 ore: {reason}.',
-    mail_queue_stuck: 'Delle e-mail aspettano di essere inviate da più di un’ora.',
+    mail_queue_stuck: 'Delle e-mail sono da inviare da più di 15 minuti ma non partono.',
   },
   fix: {
     envLocked: '{key} è nel .env: modificalo lì e riavvia il container.',
@@ -288,7 +288,7 @@ const dict: Translation<typeof de> = {
     mail_insecure_auth: 'Scegli STARTTLS o TLS, oppure svuota nome utente e password.',
     mail_no_user: 'Inserisci il nome utente (MAIL_SMTP_USER) o rimuovi la password.',
     mail_last_failed: 'Guarda lo stato in Impostazioni → E-mail e invia un’e-mail di prova.',
-    mail_queue_stuck: 'Controlla che i processi in background girino (BACKGROUND_JOBS=true) e invia un’e-mail di prova.',
+    mail_queue_stuck: 'Controlla che i processi in background girino (BACKGROUND_JOBS=true): sono loro a inviare la coda. Poi invia un’e-mail di prova.',
   },
   action: { toSetting: 'Vai all’impostazione', details: 'Dettagli', docs: 'Guida', hevc: 'Controlla HEVC ora' },
   summary: {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
+import { mailConfigured } from '../mocks/settings.js';
 
 const SHOTS = process.env.B18_SHOTS;
 const logged = (api: { log: string[] }, re: RegExp) => api.log.some((l) => re.test(l));
@@ -22,6 +23,21 @@ test.describe('admin people (phone)', () => {
       }
     });
   }
+
+  test('invite dialog with the e-mail field: no overflow at phone width, 44 px targets', async ({ page, api }) => {
+    mailConfigured(api.settings);
+    await page.goto('/admin/users?tab=invites');
+    const form = page.getByRole('region', { name: 'Neue Einladung' });
+    const addr = form.getByRole('textbox', { name: 'E-Mail-Adresse (optional)' });
+    await addr.fill('ben@friend.example.com');
+    const lang = form.getByRole('combobox', { name: 'Sprache der E-Mail' });
+    await expect(lang).toBeVisible();
+    for (const el of [addr, lang]) expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+    await form.getByRole('button', { name: 'Einladung erstellen' }).click();
+    await expect(page.getByRole('region', { name: 'Dein Einladungs-Link' }).getByText('Einladung an b…@friend.example.com verschickt.')).toBeVisible();
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+  });
 
   test('users: role select and action menu work in the card layout', async ({ page, api }) => {
     await page.goto('/admin/users');

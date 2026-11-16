@@ -175,7 +175,7 @@ const dict: Translation<typeof de> = {
     mail_insecure_auth: 'Without encryption {app} sends no password, so it does not sign in to the mail server.',
     mail_no_user: 'A password is entered but no user name: {app} does not sign in like this.',
     mail_last_failed: 'An e-mail did not go out in the last 24 hours: {reason}.',
-    mail_queue_stuck: 'E-mails have been waiting to be sent for over an hour.',
+    mail_queue_stuck: 'E-mails have been due for over 15 minutes but are not being sent.',
   },
   fix: {
     envLocked: '{key} is set in the .env: change it there and restart the container.',
@@ -288,7 +288,7 @@ const dict: Translation<typeof de> = {
     mail_insecure_auth: 'Choose STARTTLS or TLS, or clear user name and password.',
     mail_no_user: 'Enter the user name (MAIL_SMTP_USER) or remove the password.',
     mail_last_failed: 'Look at the status under Settings → E-mail and send a test mail.',
-    mail_queue_stuck: 'Check that background jobs run (BACKGROUND_JOBS=true) and send a test mail.',
+    mail_queue_stuck: 'Check that background jobs run (BACKGROUND_JOBS=true): they send the queue. Then send a test mail.',
   },
   action: { toSetting: 'Go to setting', details: 'Details', docs: 'Guide', hevc: 'Check HEVC now' },
   summary: {

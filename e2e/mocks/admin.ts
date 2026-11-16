@@ -49,6 +49,8 @@ export interface AdminState {
   /** every request; the list endpoint filters by state */
   requests: AdminRequest[];
   invites: AdminInvite[];
+  /** the `mail` answer of the next invite created with an e-mail address (POST /api/admin/invites) */
+  inviteMail: { state: 'sent' | 'queued' | 'failed'; code?: string; smtp?: number };
   /** accounts made from an invite (GET /api/admin/invites/:id/uses) */
   inviteUses: Record<string, Array<{ id: string; name: string; email: string | null; role: string; disabled: boolean; at: string }>>;
   approvals: AdminApproval[];
@@ -622,6 +624,7 @@ export function adminState(): AdminState {
       { id: 105, title: 'The Bramble', mediaType: 'tv', requestedBy: 'Clara Fischer', status: 'genehmigt', createdAt: ago(50) },
       { id: 106, title: 'Quiet Mornings', mediaType: 'movie', requestedBy: 'Emma Schneider', status: 'verfügbar', createdAt: ago(90) },
     ],
+    inviteMail: { state: 'sent' },
     invites: [
       { id: auid(201), role: 'friend', note: 'Für Annas Bruder', expires_at: fut(30), used_at: null, used_by_name: null, uses: 0, max_uses: 1, access_days: null },
       { id: auid(202), role: 'guest', note: null, expires_at: ago(5), used_at: null, used_by_name: null, uses: 0, max_uses: 1, access_days: null },
@@ -1869,9 +1872,10 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   if (p === '/api/admin/invites' && m === 'POST') {
     const id = auid(300 + st.invites.length);
     const maxUses = body.maxUses ?? 1;
+    if (body.email && maxUses !== 1) return J({ error: 'invite_mail_single_use' }, 400);
     st.invites.unshift({ id, role: body.role, note: body.note ?? null, expires_at: fut(body.ttlHours ?? 48), used_at: null, used_by_name: null, uses: 0, max_uses: maxUses, access_days: body.accessDays ?? null });
     log('invite.create', id, { role: body.role, maxUses, accessDays: body.accessDays ?? null });
-    return J({ id, link: `https://portal.example.com/invite/${'t'.repeat(32)}`, authentik: 'ok', expiresAt: fut(body.ttlHours ?? 48), uses: 0, maxUses });
+    return J({ id, link: `https://portal.example.com/invite/${'t'.repeat(32)}`, authentik: 'ok', expiresAt: fut(body.ttlHours ?? 48), uses: 0, maxUses, ...(body.email ? { mail: st.inviteMail } : {}) });
   }
   if ((mm = p.match(/^\/api\/admin\/invites\/([^/]+)\/uses$/)) && m === 'GET') {
     if (!st.invites.some((i) => i.id === mm![1])) return J({ error: 'not_found' }, 404);

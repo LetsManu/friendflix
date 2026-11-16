@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Config } from '../src/config.js';
+import { mailSubkey } from '../src/mail/address.js';
 import { setMailTestCa } from '../src/mail/transport.js';
-import { mailCheck } from '../src/syscheck/checks/mail.js';
+import { mailCheck, probeFingerprint } from '../src/syscheck/checks/mail.js';
 import { buildSystemcheck, registerChecks, resetChecksForTests } from '../src/syscheck/engine.js';
 import type { CheckLine } from '../src/syscheck/types.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
@@ -13,6 +14,7 @@ import { SMTP_CERT, startSmtp, type SmtpFake, type SmtpFakeOptions } from './smt
 const FROM = 'kino@friend.example.com';
 const PASS = 'pw-geheim-77';
 const HOUR_MS = 3_600_000;
+const MIN_MS = 60_000;
 
 describe('core.mail', () => {
   let env: TestEnv;
@@ -28,10 +30,16 @@ describe('core.mail', () => {
     expect(r.lines.map((l) => l.id)).toEqual(['core.mail']);
     return r.lines[0]!;
   };
-  const insert = (state: 'queued' | 'failed', ageMs: number, code?: string, smtp?: number) => env.pool.query(
-    `insert into mail_outbox (id, kind, rcpt_enc, rcpt_mask, rcpt_key, params_enc, lang, state, last_code, last_smtp, created_at, finished_at)
-     values (gen_random_uuid(), 'test', 'x', 'a…@friend.example.com', 'k', 'x', 'de', $1, $2, $3, now() - $4 * interval '1 millisecond', $5)`,
-    [state, code ?? null, smtp ?? null, ageMs, state === 'failed' ? new Date(Date.now() - ageMs) : null]);
+  // a queued row is due from its creation unless `nextInMs` says otherwise (a negative value: overdue since then)
+  const insert = (state: 'queued' | 'failed', ageMs: number, code?: string, smtp?: number, nextInMs = -ageMs, attempts = 0) => env.pool.query(
+    `insert into mail_outbox (id, kind, rcpt_enc, rcpt_mask, rcpt_key, params_enc, lang, state, last_code, last_smtp, created_at, finished_at, next_at, attempts)
+     values (gen_random_uuid(), 'test', 'x', 'a…@friend.example.com', 'k', 'x', 'de', $1, $2, $3, now() - $4 * interval '1 millisecond', $5,
+             now() + $6 * interval '1 millisecond', $7)`,
+    [state, code ?? null, smtp ?? null, ageMs, state === 'failed' ? new Date(Date.now() - ageMs) : null, nextInMs, attempts]);
+  const insertSending = (leaseInMs: number) => env.pool.query(
+    `insert into mail_outbox (id, kind, rcpt_enc, rcpt_mask, rcpt_key, params_enc, lang, state, attempts, created_at, next_at, lease_until)
+     values (gen_random_uuid(), 'test', 'x', 'a…@friend.example.com', 'k', 'x', 'de', 'sending', 1, now() - interval '3 hours', now() - interval '3 hours',
+             now() + $1 * interval '1 millisecond')`, [leaseInMs]);
 
   beforeAll(async () => {
     setMailTestCa(SMTP_CERT);
@@ -92,6 +100,50 @@ describe('core.mail', () => {
     await useFake();
     await insert('queued', 2 * HOUR_MS);
     expect(await line()).toMatchObject({ status: 'warning', cause: 'mail_queue_stuck', href: '/admin/settings?tab=notifications', docs: 'mail.md' });
+  });
+
+  it('queue stuck ignores mail waiting for its backoff', async () => {
+    await useFake();
+    await insert('queued', 3 * HOUR_MS, 'unreachable', undefined, HOUR_MS, 3);
+    expect((await line()).status).toBe('ok');
+  });
+
+  it('queue stuck ignores mail held by the rate limit', async () => {
+    await useFake();
+    await insert('queued', 3 * HOUR_MS, undefined, undefined, 40 * MIN_MS, 0);
+    expect((await line()).status).toBe('ok');
+  });
+
+  it('queue stuck fires for a row overdue 16 minutes', async () => {
+    await useFake();
+    await insert('queued', 3 * HOUR_MS, undefined, undefined, -14 * MIN_MS);
+    expect((await line()).status).toBe('ok');
+    await env.pool.query('delete from mail_outbox');
+    await insert('queued', 3 * HOUR_MS, undefined, undefined, -16 * MIN_MS);
+    for (const k of await env.kv.keys('syscheck:')) await env.kv.del(k);
+    expect(await line()).toMatchObject({ status: 'warning', cause: 'mail_queue_stuck' });
+  });
+
+  it('queue stuck fires for a lease that ran out 16 minutes ago', async () => {
+    await useFake();
+    await insertSending(-14 * MIN_MS);
+    expect((await line()).status).toBe('ok');
+    await env.pool.query('delete from mail_outbox');
+    await insertSending(-16 * MIN_MS);
+    for (const k of await env.kv.keys('syscheck:')) await env.kv.del(k);
+    expect(await line()).toMatchObject({ status: 'warning', cause: 'mail_queue_stuck' });
+  });
+
+  it('probe cache fingerprint uses the probe subkey', async () => {
+    await useFake();
+    await line();
+    const fp = (JSON.parse((await env.kv.get('mail:probe'))!) as { fp: string }).fp;
+    const rev = env.ctx.settings.rev();
+    expect(fp).toBe(probeFingerprint(mailSubkey(env.ctx.encKey, 'probe'), env.ctx.cfg, rev));
+    expect(fp).not.toBe(probeFingerprint(env.ctx.encKey, env.ctx.cfg, rev));
+    // the subkey is its own: neither the encryption key nor another purpose's key
+    expect(mailSubkey(env.ctx.encKey, 'probe').equals(mailSubkey(env.ctx.encKey, 'unsubscribe'))).toBe(false);
+    expect(mailSubkey(env.ctx.encKey, 'probe').equals(mailSubkey(env.ctx.encKey, 'recipient'))).toBe(false);
   });
 
   it('probe result is cached', async () => {

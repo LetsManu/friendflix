@@ -145,3 +145,13 @@ export function accessPreset(p: AccessPreset, now = Date.now()): string | null {
   if (p === 'unlimited') return null;
   return new Date(now + Number(p.slice(1)) * 86_400_000).toISOString();
 }
+
+/** `anna@friend.example.com` -> `a…@friend.example.com` (the rule of the backend's `maskAddress`); anything without both parts -> `…` */
+export function maskMail(addr: string): string {
+  const at = addr.lastIndexOf('@');
+  const local = at > 0 ? addr.slice(0, at) : '', domain = at > 0 ? addr.slice(at + 1) : '';
+  return local && domain ? `${Array.from(local)[0]}…@${domain}` : '…';
+}
+
+/** the address field's check (the backend's z.email, at most 254 characters); an empty field is fine */
+export const mailAddressOk = (v: string): boolean => v === '' || (v.length <= 254 && /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(v));

@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, randomBytes } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { deriveTokens } from '../src/brand/colors.js';
 import { readBrand, resetBrand, saveBrand, storeImage } from '../src/brand/repo.js';
 import type { Brand } from '../src/brand/schema.js';
-import { msg } from '../src/i18n.js';
+import { m, msg } from '../src/i18n.js';
 import { esc, layout, safeHref } from '../src/mail/html.js';
-import { mailBrand } from '../src/mail/brand.js';
-import { renderMail } from '../src/mail/templates.js';
-import { makeEnv, type TestEnv } from './helpers.js';
+import { mailBrand, MAX_INLINE_SYMBOL_BYTES } from '../src/mail/brand.js';
+import { renderMail, type MailKind } from '../src/mail/templates.js';
+import { unsubscribeToken } from '../src/mail/unsubscribe.js';
+import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 // Mail stage A, Task 2: the branded layout, the `test` template and the logo rule (inline CID only for a PNG symbol up to 200 KB).
 
@@ -24,6 +25,7 @@ describe('mail layout and test template', () => {
   });
   afterAll(() => env.close());
   beforeEach(async () => { await resetBrand(env.ctx.db, actor, (await readBrand(env.ctx.db)).rev); });
+  afterEach(() => { env.ctx.cfg = cfg; });
 
   const setBrand = async (patch: Partial<Brand>) => { await saveBrand(env.ctx.db, actor, (await readBrand(env.ctx.db)).rev, patch); };
   /** stores an image row of `size` bytes (the signature decides the type the mail sees) and makes it the brand's symbol */
@@ -153,5 +155,204 @@ describe('mail layout and test template', () => {
     });
     expect(html).not.toContain('javascript:');
     for (const td of html.match(/<td\b[^>]*>(?=[^<]*[A-Za-z])/g) ?? []) expect(td, td).toMatch(/color:#/);
+  });
+  // Mail stage B, Task 2: a template per kind, the unsubscribe headers and links of the per-type mails.
+  const ORIGIN = 'https://friend.example.com';
+  const atFriend = () => { env.ctx.cfg = { ...cfg, PUBLIC_URL: ORIGIN }; };
+  const licenceTitle = () => m('download.expiring.title', { n: 2 });
+  const INVITE = { link: `${ORIGIN}/invite/abc123`, expiresAt: '2026-11-18T10:00:00.000Z', inviter: 'Anna Beispiel' };
+
+  it('pref kinds carry the unsubscribe headers and links', async () => {
+    atFriend();
+    const r = await renderMail(env.ctx, 'licence', 'de', { title: licenceTitle(), body: null, link: '/downloads' }, { userId: actor });
+    const tok = unsubscribeToken(env.ctx.encKey, actor, 'licence');
+    expect(r.headers['List-Unsubscribe']).toBe(`<${ORIGIN}/api/public/mail/unsubscribe?t=${tok}>`);
+    expect(r.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+    expect(r.text).toContain(`Diese E-Mails abbestellen: ${ORIGIN}/mail/unsubscribe?t=${tok}`);
+    expect(r.text).toContain(`E-Mail-Einstellungen: ${ORIGIN}/me/account#mail`);
+    expect(r.html).toContain(`href="${ORIGIN}/mail/unsubscribe?t=${tok}"`);
+    expect(r.html).toContain(`href="${ORIGIN}/me/account#mail"`);
+    // the button goes to the notice's link, made absolute
+    expect(r.html).toContain(`href="${ORIGIN}/downloads"`);
+    expect(r.text).toContain(`${msg('de', 'mail.licence.button')}: ${ORIGIN}/downloads`);
+    // no body in the notice (the licence notice always has one): a neutral line, and the kind's reason
+    expect(r.text).toContain(msg('de', 'mail.fallback.body', { app: 'FriendFlix' }));
+    expect(r.text).toContain(msg('de', 'mail.licence.reason', { app: 'FriendFlix' }));
+    // the settings link comes before the unsubscribe link, both after the brand's links
+    expect(r.text.indexOf('E-Mail-Einstellungen:')).toBeLessThan(r.text.indexOf('Diese E-Mails abbestellen:'));
+    for (const v of Object.values(r.headers)) expect(v).not.toMatch(/[\r\n]/);
+    // the only token in the mail is the recipient's own, for this type
+    const tokens = new Set([...`${r.html}\n${r.text}\n${JSON.stringify(r.headers)}`.matchAll(/v1\.[0-9a-f-]{36}\.[a-z]+\.[A-Za-z0-9_-]{43}/g)].map((x) => x[0]));
+    expect([...tokens]).toEqual([tok]);
+  });
+
+  it('each pref kind uses its own texts and its own token', async () => {
+    atFriend();
+    for (const kind of ['available', 'recording', 'licence'] as const) {
+      const r = await renderMail(env.ctx, kind, 'de', { title: 'Nordlicht', body: 'Ein Text aus der Mitteilung' }, { userId: actor });
+      expect(r.subject).toBe('Nordlicht');
+      expect(r.text).toContain('Ein Text aus der Mitteilung');
+      expect(r.text).not.toContain(msg('de', `mail.${kind}.body`, { app: 'FriendFlix' }));
+      expect(r.text).toContain(msg('de', `mail.${kind}.reason`, { app: 'FriendFlix' }));
+      // no link in the notice: the button opens the app
+      expect(r.text).toContain(`${msg('de', `mail.${kind}.button`)}: ${ORIGIN}/`);
+      expect(r.headers['List-Unsubscribe']).toContain(unsubscribeToken(env.ctx.encKey, actor, kind));
+    }
+  });
+
+  it('no body: available and recording use their own line, licence the neutral one', async () => {
+    atFriend();
+    for (const [kind, line] of [['available', 'mail.available.body'], ['recording', 'mail.recording.body'], ['licence', 'mail.fallback.body']] as const) {
+      const r = await renderMail(env.ctx, kind, 'en', { title: 'Nordlicht' }, { userId: actor });
+      expect(r.text).toContain(msg('en', line, { app: 'FriendFlix' }));
+    }
+  });
+
+  it('a message key that disappeared while the mail was queued renders a neutral text, never the key', async () => {
+    atFriend();
+    const gone = { key: 'download.gone.title', params: { n: 2 } };
+    for (const kind of ['available', 'recording', 'licence'] as const) {
+      const r = await renderMail(env.ctx, kind, 'de', { title: gone, body: { key: 'download.gone.body' } }, { userId: actor });
+      expect(r.subject).toBe(msg('de', 'mail.fallback.subject', { app: 'FriendFlix' }));
+      expect(r.text).toContain(msg('de', 'mail.fallback.subject', { app: 'FriendFlix' }));
+      expect(r.text).toContain(msg('de', kind === 'licence' ? 'mail.fallback.body' : `mail.${kind}.body`, { app: 'FriendFlix' }));
+      expect(`${r.subject}${r.html}${r.text}`).not.toContain('download.gone');
+    }
+    // a known message whose parameter refers to a key that is gone counts as gone too
+    const nested = await renderMail(env.ctx, 'available', 'de', { title: { key: 'download.expiring.title', params: { n: { key: 'gone.n' } } }, body: 'Ein Text' }, { userId: actor });
+    expect(nested.subject).toBe(msg('de', 'mail.fallback.subject', { app: 'FriendFlix' }));
+    expect(nested.text).toContain('Ein Text');
+    // a known body still shows, under the neutral subject
+    const known = await renderMail(env.ctx, 'licence', 'de', { title: gone, body: m('download.expiring.body', { n: 2, date: { date: '2026-11-18T10:00:00.000Z' } }) }, { userId: actor });
+    expect(known.text).toContain(msg('de', 'download.expiring.body', { n: 2, date: { date: '2026-11-18T10:00:00.000Z' } }));
+    expect(msg('de', 'mail.fallback.subject', { app: 'FriendFlix' })).not.toMatch(/mail\./);
+  });
+
+  it('a pref kind without its recipient or without PUBLIC_URL throws', async () => {
+    atFriend();
+    await expect(renderMail(env.ctx, 'available', 'de', { title: 'Nordlicht' })).rejects.toThrow();
+    await expect(renderMail(env.ctx, 'available', 'de', { title: 'Nordlicht' }, { userId: null })).rejects.toThrow();
+    env.ctx.cfg = { ...cfg, PUBLIC_URL: '' };
+    await expect(renderMail(env.ctx, 'available', 'de', { title: 'Nordlicht' }, { userId: actor })).rejects.toThrow();
+  });
+
+  it('an unknown kind throws', async () => {
+    atFriend();
+    await expect(renderMail(env.ctx, 'digest' as MailKind, 'de', {}, { userId: actor })).rejects.toThrow(/unknown mail kind/);
+    await expect(renderMail(env.ctx, 'toString' as MailKind, 'de', {}, { userId: actor })).rejects.toThrow(/unknown mail kind/);
+  });
+
+  it('welcome and invite have no unsubscribe header', async () => {
+    atFriend();
+    const w = await renderMail(env.ctx, 'welcome', 'de', { name: 'Anna Beispiel' }, { userId: actor });
+    expect(w.headers).toEqual({ 'Auto-Submitted': 'auto-generated', 'Content-Language': 'de' });
+    expect(w.subject).toBe(msg('de', 'mail.welcome.subject', { app: 'FriendFlix' }));
+    expect(w.text).toContain(msg('de', 'mail.welcome.heading', { name: 'Anna Beispiel' }));
+    expect(w.text).toContain(msg('de', 'mail.welcome.body', { app: 'FriendFlix' }));
+    expect(w.text).toContain(msg('de', 'mail.welcome.body2', { app: 'FriendFlix' }));
+    expect(w.text).toContain(`FriendFlix öffnen: ${ORIGIN}/`);
+    expect(w.text).toContain(`E-Mail-Einstellungen: ${ORIGIN}/me/account#mail`);
+    expect(w.text).toContain(msg('de', 'mail.welcome.reason', { app: 'FriendFlix' }));
+    expect(`${w.html}${w.text}`).not.toContain('unsubscribe');
+    const i = await renderMail(env.ctx, 'invite', 'de', INVITE, { userId: null });
+    expect(i.headers).toEqual({ 'Auto-Submitted': 'auto-generated', 'Content-Language': 'de' });
+    expect(`${i.html}${i.text}`).not.toContain('unsubscribe');
+    expect(`${i.html}${i.text}`).not.toContain('/me/account');
+    // the test mail keeps exactly its stage A headers
+    expect((await renderMail(env.ctx, 'test', 'de', {}, { userId: actor })).headers).toEqual({ 'Auto-Submitted': 'auto-generated', 'Content-Language': 'de' });
+  });
+
+  it('notice title with markup is escaped', async () => {
+    atFriend();
+    const r = await renderMail(env.ctx, 'available', 'de', { title: '<b>"Nordlicht"</b> ist jetzt verfügbar', link: '/requests' }, { userId: actor });
+    expect(r.html).toContain('&lt;b&gt;&quot;Nordlicht&quot;&lt;/b&gt;');
+    expect(r.html).not.toContain('<b>"Nordlicht"');
+    expect(r.subject).toBe('<b>"Nordlicht"</b> ist jetzt verfügbar');
+    expect(r.subject).not.toMatch(/[\r\n]/);
+    const nl = await renderMail(env.ctx, 'available', 'de', { title: 'Nordlicht\r\nBcc: ben@friend.example.com', body: '<script>x</script>' }, { userId: actor });
+    expect(nl.subject).not.toMatch(/[\r\n]/);
+    expect(nl.html).not.toContain('<script>');
+    expect(nl.html).toContain('&lt;script&gt;');
+    // a notice message is rendered in the mail's language
+    const msgTitle = await renderMail(env.ctx, 'available', 'en', { title: m('title.available', { title: '<i>Nordlicht</i>' }) }, { userId: actor });
+    expect(msgTitle.subject).toBe(msg('en', 'title.available', { title: '<i>Nordlicht</i>' }));
+    expect(msgTitle.html).toContain('&lt;i&gt;Nordlicht&lt;/i&gt;');
+    expect(msgTitle.html).not.toContain('<i>Nordlicht');
+  });
+
+  it('invite renders link, inviter and date in the stored language', async () => {
+    atFriend();
+    const r = await renderMail(env.ctx, 'invite', 'en', INVITE, { userId: null });
+    expect(r.subject).toBe(msg('en', 'mail.invite.subject', { inviter: 'Anna Beispiel', app: 'FriendFlix' }));
+    expect(r.subject).toContain('Anna Beispiel');
+    expect(r.html).toContain('lang="en"');
+    expect(r.html).toContain(`href="${INVITE.link}"`);
+    expect(r.text).toContain(`${msg('en', 'mail.invite.button')}: ${INVITE.link}`);
+    expect(r.text).toContain(msg('en', 'mail.invite.body', { inviter: 'Anna Beispiel', app: 'FriendFlix' }));
+    expect(r.text).toContain(msg('en', 'mail.invite.expires', { date: { date: INVITE.expiresAt } }));
+    expect(r.text).toContain('2026');
+    expect(r.text).toContain(msg('en', 'mail.invite.reason', { inviter: 'Anna Beispiel', app: 'FriendFlix' }));
+    const esc2 = await renderMail(env.ctx, 'invite', 'de', { ...INVITE, inviter: '<b>Anna</b>\r\nBcc: x' }, { userId: null });
+    expect(esc2.html).not.toContain('<b>Anna');
+    expect(esc2.subject).not.toMatch(/[\r\n]/);
+  });
+
+  it('a link that is not a relative path drops the button', async () => {
+    atFriend();
+    for (const link of ['javascript:alert(1)', 'https://evil.example.com/', '//evil.example.com/x', '/\\evil.example.com/x', 'downloads', ' /downloads']) {
+      const r = await renderMail(env.ctx, 'available', 'de', { title: 'Nordlicht', link }, { userId: actor });
+      expect(r.html, link).not.toContain(msg('de', 'mail.available.button'));
+      expect(r.text, link).not.toContain(msg('de', 'mail.available.button'));
+      expect(`${r.html}${r.text}`, link).not.toContain('evil.example.com');
+      expect(r.html, link).not.toContain('javascript:');
+      // the mail still renders, with its unsubscribe link
+      expect(r.text, link).toContain('Diese E-Mails abbestellen:');
+    }
+  });
+
+  it('every stage B kind stays under 100 000 bytes', async () => {
+    atFriend();
+    await setBrand({ name: 'N'.repeat(24), byline: 'B'.repeat(32), website: 'https://friend.example.com/' });
+    await setSymbol(PNG_SIG, 'image/png', MAX_INLINE_SYMBOL_BYTES);
+    const long = 'Nordlicht '.repeat(30);
+    const cases: Array<[MailKind, Record<string, unknown>]> = [
+      ['welcome', { name: long }],
+      ['invite', { ...INVITE, inviter: long }],
+      ['available', { title: long, body: long, link: '/requests' }],
+      ['recording', { title: long, body: long, link: '/live/recordings' }],
+      ['licence', { title: licenceTitle(), body: long, link: '/downloads' }],
+    ];
+    for (const [kind, params] of cases) {
+      const r = await renderMail(env.ctx, kind, 'de', params, { userId: actor });
+      expect(r.attachments, kind).toHaveLength(1);
+      expect(Buffer.byteLength(r.html), kind).toBeLessThan(100_000);
+      expect(r.html, kind).not.toMatch(/<img[^>]+src="http/);
+    }
+  });
+
+  it('bad params throw', async () => {
+    atFriend();
+    await expect(renderMail(env.ctx, 'invite', 'de', { link: 'ftp://x' })).rejects.toThrow();
+    await expect(renderMail(env.ctx, 'invite', 'de', { ...INVITE, link: 'javascript:alert(1)' })).rejects.toThrow();
+    await expect(renderMail(env.ctx, 'invite', 'de', { ...INVITE, expiresAt: 'morgen' })).rejects.toThrow();
+    await expect(renderMail(env.ctx, 'welcome', 'de', {}, { userId: actor })).rejects.toThrow();
+    await expect(renderMail(env.ctx, 'available', 'de', { body: 'x' }, { userId: actor })).rejects.toThrow();
+    await expect(renderMail(env.ctx, 'recording', 'de', { title: 7 }, { userId: actor })).rejects.toThrow();
+  });
+
+  // Mail stage B, Task 3: the invitation's button only ever leads to this instance.
+  it('invite link must be on PUBLIC_URL', async () => {
+    atFriend();
+    for (const link of [
+      'https://elsewhere.example.net/invite/abc123',
+      'http://friend.example.com/invite/abc123',
+      'https://friend.example.com:8443/invite/abc123',
+      'https://friend.example.com.elsewhere.example.net/invite/abc123',
+      'https://friend.example.com@elsewhere.example.net/invite/abc123',
+    ]) await expect(renderMail(env.ctx, 'invite', 'de', { ...INVITE, link }, { userId: null }), link).rejects.toThrow();
+    expect((await renderMail(env.ctx, 'invite', 'de', INVITE, { userId: null })).text).toContain(INVITE.link);
+    // without a public URL there is no instance an invitation could lead to
+    env.ctx.cfg = { ...cfg, PUBLIC_URL: '' };
+    await expect(renderMail(env.ctx, 'invite', 'de', INVITE, { userId: null })).rejects.toThrow();
   });
 });
