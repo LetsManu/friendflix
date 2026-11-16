@@ -55,7 +55,8 @@ ARG GIT_SHA=dev
 USER root
 # 0001: dpkg -i, not apt: every dependency (libc6, libstdc++6, libgcc-s1, zlib1g, libzstd1 and the OpenCL ICD loader
 # ocl-icd-libopencl1, which jellyfin-ffmpeg8 already pulls in) is in the pinned base image, so nothing comes from a live
-# repository and nothing is unpinned; a missing dependency fails dpkg and the build. Then every installed library must
+# repository and nothing is unpinned; a missing dependency fails dpkg and the build. Then (after an explicit ldconfig: the IGC
+# libraries live in /usr/local/lib, and the cache must not depend on a package's trigger) every installed library must
 # resolve its shared libraries (fails the build, not the first HDR transcode). Package lists, apt caches and dpkg's logs go.
 RUN --mount=type=bind,from=intel-opencl,target=/tmp/intel-opencl \
   set -eu; \
@@ -63,6 +64,7 @@ RUN --mount=type=bind,from=intel-opencl,target=/tmp/intel-opencl \
     dpkg -i /tmp/intel-opencl/*.deb; \
     test -s /etc/OpenCL/vendors/intel.icd; \
     test -s /etc/OpenCL/vendors/intel_legacy1.icd; \
+    ldconfig; \
     dpkg -L libigdgmm12 intel-igc-core-2 intel-igc-opencl-2 intel-opencl-icd intel-igc-core intel-igc-opencl intel-opencl-icd-legacy1 \
       > /tmp/intel-opencl.files; \
     grep -E '\.so(\.[0-9]+)*$' /tmp/intel-opencl.files > /tmp/intel-opencl.libs; \

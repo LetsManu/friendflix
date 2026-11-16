@@ -528,6 +528,28 @@ jobs:
       PUBLISHABLE: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Dependabot bumps only the FROM line: a bump is complete only when the labels, NOTICE and both scripts name the same
+      # Ferrofin tag and digest (mediaserver/README.md "New Ferrofin release")
+      - name: Base image pinned the same everywhere (FROM, labels, NOTICE, try.sh, probe.sh)
+        run: |
+          set -euo pipefail
+          from=$(sed -n 's|^FROM \(ghcr\.io/mangoleaf/ferrofin:[^ @]*@sha256:[0-9a-f]\{64\}\)$|\1|p' mediaserver/Dockerfile)
+          [ "$(grep -c . <<< "$from")" = 1 ] || { echo "::error file=mediaserver/Dockerfile::expected exactly one FROM ghcr.io/mangoleaf/ferrofin:<tag>@sha256:<digest>"; exit 1; }
+          ref=${from%@*} digest=${from#*@}
+          tag=${ref##*:} fail=0
+          need() { grep -qF -- "$2" "$1" || { echo "::error file=$1::does not name $2 (the Dockerfile's FROM is $from)"; fail=1; }; }
+          need mediaserver/Dockerfile "org.opencontainers.image.base.name=\"$ref\""
+          need mediaserver/Dockerfile "org.opencontainers.image.base.digest=\"$digest\""
+          need mediaserver/Dockerfile "io.github.letsmanu.friendflix.mediaserver.ferrofin=\"$tag\""
+          need mediaserver/NOTICE "$ref"
+          need mediaserver/NOTICE "$digest"
+          for s in mediaserver/try.sh mediaserver/probe.sh; do need "$s" "UPSTREAM_IMAGE=\"$from\""; done
+          # no other Ferrofin tag or digest left in those files
+          while IFS= read -r r; do
+            [ "$r" = "$ref" ] || [ "$r" = "$from" ] || { echo "::error::stale reference $r (the Dockerfile's FROM is $from)"; fail=1; }
+          done < <(grep -rhoE 'ghcr\.io/mangoleaf/ferrofin:[^ "@]+(@sha256:[0-9a-f]{64})?' mediaserver/Dockerfile mediaserver/NOTICE mediaserver/try.sh mediaserver/probe.sh)
+          [ "$fail" = 0 ] && echo "base image pinned consistently: $from"
+          exit "$fail"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
         with:
           driver-opts: image=${{ env.BUILDKIT_IMAGE }}

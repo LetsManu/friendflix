@@ -35,7 +35,17 @@ jobs:
       attestations: write # GitHub attestation store (gh attestation verify)
     strategy:
       matrix: { service: "${{ fromJSON(inputs.services) }}" }
+    env:
+      # from the `services` input (free text on a dispatch): only ever used through this variable, quoted, after the check below
+      SERVICE: ${{ matrix.service }}
     steps:
+      # the first step, before anything can push or sign: the name must be one of the six images, or the leg fails
+      - name: Check the image name
+        run: |
+          case "$SERVICE" in
+            backend|gateway|web|updater|livetv|mediaserver) echo "Publishing $SERVICE" ;;
+            *) echo "::error::unknown image name in the services input (allowed: backend gateway web updater livetv mediaserver)"; exit 1 ;;
+          esac
       # tags: decides whether this version is the highest release (only then it may move `latest`)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with: { fetch-depth: 0, persist-credentials: false }
@@ -63,7 +73,7 @@ jobs:
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - name: Image name (GHCR needs lowercase)
         id: img
-        run: repo="${GITHUB_REPOSITORY#*/}"; echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${repo,,}-${{ matrix.service }}" >> "$GITHUB_OUTPUT"   # friendflix-<svc>; forks get <repo>-<svc>
+        run: repo="${GITHUB_REPOSITORY#*/}"; echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${repo,,}-${SERVICE}" >> "$GITHUB_OUTPUT"   # friendflix-<svc>; forks get <repo>-<svc>
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
