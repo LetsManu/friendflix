@@ -52,7 +52,11 @@
   $: if (open !== wasOpen) { wasOpen = open; if (nav) void (open ? onOpened() : onClosed()); }
 
   /** the rail opens when it gets focus */
-  function onFocusin() { if (!open) open = true; }
+  function onFocusin(e: FocusEvent) {
+    if (!open) open = true;
+    const el = e.target;
+    if (el instanceof HTMLElement && el.closest('ul')) el.scrollIntoView({ block: 'nearest' }); // a short screen scrolls the list: the focused entry stays in view
+  }
   /**
    * the focus left the open rail by other means than its keys (a phone-remote command, a page that focuses itself): close it.
    * A null relatedTarget (focus going nowhere, e.g. a link being removed) or a move inside the rail keeps it open.
@@ -108,7 +112,7 @@
       <li class:cur={i === cur} style="--i:{i};--ri:{rail.length - 1 - i}"><a {href} aria-current={i === cur ? 'page' : undefined} aria-label={open ? undefined : $t(navLabel(label, $features.requests))}><span class="ic"><Icon name={icon} size={26} /></span><span class="lb">{$t(navLabel(label, $features.requests))}</span></a></li>
     {/each}
     <!-- the active page's coral dot: one element that springs to the current item when the page changes (transform only) -->
-    <li class="dot" class:on={cur >= 0} style="transform: translate3d(0, {Math.max(0, cur) * 66}px, 0)" aria-hidden="true"></li>
+    <li class="dot" class:on={cur >= 0} style="transform: translate3d(0, calc(var(--step, 66px) * {Math.max(0, cur)}), 0)" aria-hidden="true"></li>
   </ul>
   <a class="acct" href="/me" aria-current={path === '/me' || path.startsWith('/me/') ? 'page' : undefined} aria-label={open ? undefined : $t('tv.rail.account')}><span class="ic"><Icon name="user" size={26} /></span><span class="lb">{$t('tv.rail.account')}</span></a>
   <a class="who" href="/profiles" aria-label={$t('tv.rail.profile', { name: who })}><span class="ic"><span class="face" style={faceStyle}>{initial(who)}</span></span><span class="lb">{who}</span></a>
@@ -127,7 +131,7 @@
   .rail.open::before { background: linear-gradient(to right, rgba(0, 0, 0, .96) 0, rgba(0, 0, 0, .92) 72%, rgba(0, 0, 0, .5) 86%, rgba(0, 0, 0, 0)); }
   ul { list-style: none; margin: auto 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
   li { display: block; position: relative; }
-  a { position: relative; display: flex; align-items: center; height: 56px; width: 56px; overflow: hidden; border-radius: var(--tv-radius, 6px); color: rgba(255, 255, 255, .55); text-decoration: none; transform-origin: left center; transition: transform calc(var(--tv-d-spring, 420ms) * .7) var(--tv-emph-out, ease); }
+  a { position: relative; display: flex; align-items: center; flex: none; height: 56px; width: 56px; overflow: hidden; border-radius: var(--tv-radius, 6px); color: rgba(255, 255, 255, .55); text-decoration: none; transform-origin: left center; transition: transform calc(var(--tv-d-spring, 420ms) * .7) var(--tv-emph-out, ease); }
   .rail.open a { width: 280px; }
   a:hover, a:focus-visible, a[aria-current='page'] { color: #fff; }
   a:focus-visible { transform: scale(1.08); transition: transform var(--tv-d-spring, 420ms) var(--tv-spring, ease); }
@@ -144,5 +148,16 @@
   ul { position: relative; }
   .dot { position: absolute; left: -2px; top: 25px; width: 6px; height: 6px; border-radius: 50%; background: var(--acc, #ff4f6d); pointer-events: none; opacity: 0; transition: transform var(--tv-d-spring, 420ms) var(--tv-spring, ease), opacity var(--tv-d-xs, 120ms) ease; }
   .dot.on { opacity: 1; }
+  /* short screens (720p, 540p): tighter gaps and edges, the entries keep their 56 px; what still does not fit (Live TV's 8 entries at 540p)
+     scrolls inside the list while account and profile stay put. Nothing above 800 px high changes. */
+  @media (max-height: 800px) {
+    .rail { padding-top: 2vh; padding-bottom: 2vh; }
+    ul { --step: 60px; gap: 4px; min-height: 0; overflow-y: auto; scrollbar-width: none; padding: 8px 32px 8px 8px; margin: auto 0 auto -8px; }
+    ul::-webkit-scrollbar { display: none; }
+    ul { pointer-events: none; } /* the right padding (room for the focused entry's 1.08 scale) must not catch the pointer over the page */
+    ul a { pointer-events: auto; }
+    .dot { left: 6px; top: 33px; }
+    .acct { margin-bottom: 4px; }
+  }
   .face { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: 1.125rem; color: #fff; background: #444; }
 </style>
