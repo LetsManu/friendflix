@@ -72,11 +72,7 @@ const ALLOW: Record<string, string> = {
   'lib/Intro.svelte:@keyframes ff-play': 'splash play mark inside the logo SVG; no text',
   'lib/Intro.svelte:@keyframes ff-flare': 'splash flare; no text',
   'lib/Intro.svelte:@keyframes ff-ring': 'splash ring; no text',
-  // TEMPORARY, text-bearing and outside this stage: the hover / desktop preview cards zoom out of their card (stage 2), the phone
-  // carousel's side cards (stage 3), the quiet hero title (stage 6)
-  'lib/HoverPreview.svelte:el.animate': 'TEMPORARY: card-to-preview FLIP zoom of a text-bearing preview; stage 2 (desktop menus)',
-  'lib/desk/DeskPreview.svelte:grow = el.animate': 'TEMPORARY: card-to-preview FLIP zoom of a text-bearing preview; stage 2 (desktop menus)',
-  'lib/desk/DeskPreview.svelte:shrink = el.animate': 'TEMPORARY: preview-to-card FLIP shrink of a text-bearing preview; stage 2 (desktop menus)',
+  // TEMPORARY, text-bearing and outside this stage: the phone carousel's side cards (stage 3), the quiet hero title (stage 6)
   'lib/phone/Carousel.svelte:transform:translate3d': 'TEMPORARY: scroll-driven side-card depth of the home carousel, not a pop-up; stage 3 (phone)',
   'lib/Hero.svelte:.hero.quiet h1': 'TEMPORARY: the quiet hero shrinks its title (0.9 s), not a pop-up; stage 6 (audit leftovers)',
   // svelte/animate flip: it scales only an item whose own size changed between its two places; these keep their size and glide

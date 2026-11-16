@@ -55,8 +55,8 @@ const es: Translation<typeof de> = {
   account: {
     label: 'Menú de perfil',
     labelWho: 'Menú de perfil ({name})',
-    loadingProfiles: 'Cargando perfiles …',
     withPin: 'con PIN',
+    switchProfile: 'Cambiar de perfil',
     manageProfiles: 'Editar perfiles',
     logout: 'Cerrar sesión en FriendFlix',
     changeServer: 'Cambiar de servidor',

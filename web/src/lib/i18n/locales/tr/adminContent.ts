@@ -309,7 +309,7 @@ const dict: Translation<typeof de> = {
     type: 'Tür',
     allTypes: 'Tüm türler',
     types: { Movie: 'Filmler', Series: 'Diziler', Episode: 'Bölümler' },
-    search: 'Başlık veya dizi ara …',
+    search: 'Başlık veya dizi ara…',
     col: { title: 'Başlık', issues: 'Sorunlar', file: 'Dosya', size: 'Boyut', bitrate: 'Bit hızı' },
     versions: { one: '{n} sürüm', other: '{n} sürüm' },
     dupOf: 'Kopyası',

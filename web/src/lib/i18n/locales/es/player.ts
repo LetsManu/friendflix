@@ -92,7 +92,7 @@ const es: Translation<typeof de> = {
   subs: {
     title: 'Subtítulos',
     search: 'Buscar subtítulos',
-    searchMenu: 'Buscar subtítulos …',
+    searchMenu: 'Buscar subtítulos…',
     searchButton: 'Buscar',
     language: 'Idioma',
     notFound: 'No se han encontrado subtítulos.',

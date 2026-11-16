@@ -61,7 +61,7 @@ const dict: Translation<typeof de> = {
     empty: 'No title has a date right now.',
     colTitle: 'Title',
     colSetBy: 'Set by',
-    menu: 'Set removal date …',
+    menu: 'Set removal date…',
     dialogTitle: 'No longer available from',
   },
 };

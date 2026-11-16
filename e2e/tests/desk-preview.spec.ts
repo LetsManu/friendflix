@@ -5,10 +5,12 @@ import { episodes, items, MOVIE, SERIES } from '../mocks/fixtures.js';
 import { expect, test } from '../fixtures.js';
 import { boxInViewport, row } from '../helpers.js';
 import { png } from '../mocks/png.js';
+import { textScaleDuring } from '../frames.js';
 
 /**
- * Desktop hover card (spec desktop browse §2, glass spec §3): grows out of the card after a 500 ms rest; one glass card of the same
- * size on every card (16:9 picture on top, text below), always fully on screen; shrinks back on close. Poster tilt (§8.7).
+ * Desktop hover card (spec desktop browse §2, glass spec §3): fades in from its card after a 500 ms rest (sliding at most 12 px,
+ * nothing scales); one glass card of the same size on every card (16:9 picture on top, text below), always fully on screen; fades
+ * back toward the card on close. Poster tilt (§8.7).
  */
 
 const BECAUSE = 'Weil du „Inkwell“ gesehen hast';
@@ -51,7 +53,7 @@ async function calmMode(page: Page) {
   await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { calm: true } } }));
   await page.addInitScript(() => localStorage.setItem('ff_calm:p1', '1'));
 }
-/** the hover card has finished growing (no running animation) */
+/** the hover card has finished its reveal (no running animation) */
 const settled = (dpv: Locator) => expect.poll(() => dpv.evaluate((e) => e.getAnimations().length)).toBe(0);
 /** the index of the last card fully inside the window */
 const lastVisibleIn = (r: Locator) => r.evaluate((s) => {
@@ -486,31 +488,58 @@ test.describe('desktop wide hover preview', () => {
   test.describe('full motion', () => {
     test.use({ reducedMotion: 'no-preference' });
 
-    test('closing mid-grow shrinks from where it is (no jump to full size)', async ({ page }) => {
+    test('closing mid-reveal fades from where it is', async ({ page }) => {
       await fullMotion(page);
       await page.goto('/');
       const card = row(page, BECAUSE).locator('article.card').first();
       await card.scrollIntoViewIfNeeded();
-      // in the page: wait (frame by frame) until the card is a few frames into its grow, press Esc there, then sample the scale every
-      // frame through the close: it never goes back up
-      const waiting = page.evaluate(() => new Promise<number[]>((done) => {
-        const sx = (e: Element) => { const t = getComputedStyle(e).transform; return t === 'none' ? 1 : new DOMMatrix(t).a; };
+      // in the page: wait (frame by frame) until the card is a few frames into its reveal, press Esc there, then sample the opacity
+      // and the transform every frame through the close: the opacity never goes back up, and nothing ever scales
+      const waiting = page.evaluate(() => new Promise<{ o: number; a: number; d: number }[]>((done) => {
+        const at = (e: Element) => {
+          const cs = getComputedStyle(e);
+          const m = cs.transform === 'none' ? new DOMMatrix() : new DOMMatrix(cs.transform);
+          return { o: Number(cs.opacity), a: m.a, d: m.d };
+        };
         let frames = 0;
         const wait = () => {
           const e = document.querySelector<HTMLElement>('.dpv.ready');
           if (!e || !e.getAnimations().some((a) => a.playState === 'running') || ++frames < 3) { if (!e) frames = 0; requestAnimationFrame(wait); return; }
-          const out: number[] = [sx(e)];
+          const out = [at(e)];
           document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-          const tickF = () => { if (!e.isConnected) return done(out); out.push(sx(e)); requestAnimationFrame(tickF); };
+          const tickF = () => { if (!e.isConnected) return done(out); out.push(at(e)); requestAnimationFrame(tickF); };
           requestAnimationFrame(tickF);
         };
         requestAnimationFrame(wait);
       }));
       await card.locator('a.thumb').hover();
-      const scales = await waiting;
-      expect(scales[0]!).toBeLessThan(1);
-      for (let i = 1; i < scales.length; i++) expect(scales[i]!, JSON.stringify(scales)).toBeLessThanOrEqual(scales[0]! + 0.02);
+      const samples = await waiting;
+      const all = JSON.stringify(samples);
+      expect(samples[0]!.o, all).toBeLessThan(1);
+      for (let i = 1; i < samples.length; i++) expect(samples[i]!.o, all).toBeLessThanOrEqual(samples[0]!.o + 0.02);
+      for (const s of samples) expect(s.a === 1 && s.d === 1, all).toBe(true);
       await expect(page.locator('.dpv')).toHaveCount(0);
+    });
+
+    test('the hover card reveals without scaling its text and travels at most 12 px', async ({ page }) => {
+      await fullMotion(page);
+      await page.goto('/');
+      const card = row(page, BECAUSE).locator('article.card').first();
+      await card.scrollIntoViewIfNeeded();
+      // every frame of the open: the card's offset from where it settles (a pure translate)
+      await page.evaluate(() => {
+        const w = window as unknown as { __dpvMoves: number[] };
+        w.__dpvMoves = [];
+        const f = () => {
+          const e = document.querySelector('.dpv.ready');
+          if (e) { const t = getComputedStyle(e).transform; if (t !== 'none') { const m = new DOMMatrix(t); w.__dpvMoves.push(Math.hypot(m.e, m.f)); } }
+          if (w.__dpvMoves.length < 600) requestAnimationFrame(f);
+        };
+        requestAnimationFrame(f);
+      });
+      expect(await textScaleDuring(page, '.dpv', () => card.locator('a.thumb').hover(), 1200)).toBeLessThan(0.001);
+      const moves = await page.evaluate(() => (window as unknown as { __dpvMoves: number[] }).__dpvMoves);
+      expect(Math.max(0, ...moves)).toBeLessThanOrEqual(12.01);
     });
 
     test('the card is glass with tone and sheen; Play solid white', async ({ page }) => {
@@ -536,15 +565,15 @@ test.describe('desktop wide hover preview', () => {
       await expect(dpv.locator('.frost-sheen.on')).toHaveCount(1);
     });
 
-    test('closing shrinks back (full) and is instant in calm', async ({ page }) => {
+    test('closing fades back (full) and is instant in calm', async ({ page }) => {
       await fullMotion(page);
       await page.goto('/');
       const dpv = await openOn(page, row(page, BECAUSE).locator('article.card').first());
       await settled(dpv);
-      // a per-frame watcher started before the Esc (the shrink lasts 180 ms; a read after the key's round trip can miss it):
-      // did a frame show the card still attached with its shrink running?
+      // a per-frame watcher started before the Esc (the fade lasts 150 ms; a read after the key's round trip can miss it):
+      // did a frame show the card still attached with its fade running?
       await page.evaluate(() => {
-        (window as unknown as { __shrank: Promise<boolean> }).__shrank = new Promise<boolean>((res) => {
+        (window as unknown as { __faded: Promise<boolean> }).__faded = new Promise<boolean>((res) => {
           const t0 = performance.now();
           const f = () => {
             const e = document.querySelector('.dpv');
@@ -556,7 +585,7 @@ test.describe('desktop wide hover preview', () => {
         });
       });
       await page.keyboard.press('Escape');
-      expect(await page.evaluate(() => (window as unknown as { __shrank: Promise<boolean> }).__shrank)).toBe(true);
+      expect(await page.evaluate(() => (window as unknown as { __faded: Promise<boolean> }).__faded)).toBe(true);
       await expect(page.locator('.dpv')).toHaveCount(0);
     });
 

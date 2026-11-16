@@ -308,7 +308,7 @@ export default {
     type: 'Art',
     allTypes: 'Alle Arten',
     types: { Movie: 'Filme', Series: 'Serien', Episode: 'Folgen' },
-    search: 'Titel oder Serie suchen …',
+    search: 'Titel oder Serie suchen…',
     col: { title: 'Titel', issues: 'Probleme', file: 'Datei', size: 'Größe', bitrate: 'Bitrate' },
     versions: { one: '{n} Version', other: '{n} Versionen' },
     dupOf: 'Doppelt mit',

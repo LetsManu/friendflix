@@ -95,6 +95,11 @@ describe('previewActions', () => {
     expect(all[0]).toMatchObject({ label: 'home.card.favRemove', pressed: true });
     expect(all[2]).toMatchObject({ href: '/item/x' });
   });
+  it('the removal is a tail row (after the divider, white), not a destructive one', () => {
+    const rm = previewActions({ fav: false, removable: true, t, toggleFav: noop, remove: noop }).find((a) => a.id === 'remove');
+    expect(rm).toMatchObject({ tail: true });
+    expect(rm?.danger).toBeFalsy();
+  });
 });
 
 describe('artClick', () => {

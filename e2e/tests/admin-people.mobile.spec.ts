@@ -33,6 +33,14 @@ test.describe('admin people (phone)', () => {
     expect(api.log.some((l) => l.includes('"role":"guest"'))).toBe(true);
   });
 
+  test('phone keeps the native select', async ({ page }) => {
+    await page.goto('/admin/users');
+    const sel = page.getByRole('combobox', { name: 'Rolle', exact: true });
+    await sel.tap();
+    await page.waitForTimeout(300);
+    await expect(page.locator('[role=listbox]')).toHaveCount(0);
+  });
+
   test('bulk lock two users asks and calls the bulk API', async ({ page, api }) => {
     await page.goto('/admin/users');
     await page.getByRole('checkbox', { name: 'Ben Test auswählen' }).check();

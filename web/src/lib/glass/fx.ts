@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * Glass motion helpers (glass spec §8): the curves as functions, the grow-from-the-button transition for menus and sheets,
- * the sliding pill's three parts, the count-up and the press ripple. Everything moves `transform` / `opacity` only.
+ * the hover cards' reveal, the sliding pill's three parts, the count-up and the press ripple. Everything moves `transform` /
+ * `opacity` only.
  */
 import { motionAllowed } from '#lib/preview';
 import { motionLevel, watchFrames } from '#lib/tv/motion';
@@ -128,6 +129,31 @@ export function twoWay(make: (dir: Dir) => Cfg): (o?: { direction?: 'in' | 'out'
 /** growFrom as a bidirectional transition: `transition:growBoth={{ trigger }}` */
 export function growBoth(node: Element, p: { trigger?: Element | null; mode?: FxMode } = {}): (o?: { direction?: 'in' | 'out' | 'both' }) => Cfg {
   return twoWay((dir) => growFrom(node, { ...p, dir }));
+}
+
+export const REVEAL_PX = 12;
+export const REVEAL_IN_MS = 220;
+export const REVEAL_OUT_MS = 150;
+/**
+ * A hover card's start offset (HoverPreview, DeskPreview): it appears over its source card and slides from the card toward its
+ * place. The offset points from the box's centre toward the card's centre (the FLIP direction), at most REVEAL_PX long, in whole
+ * px per axis; {0, 0} when the centres meet. Nothing scales.
+ */
+export function revealShift(card: DOMRectLike, box: DOMRectLike): Shift {
+  const dx = card.left + card.width / 2 - (box.left + box.width / 2);
+  const dy = card.top + card.height / 2 - (box.top + box.height / 2);
+  const d = Math.hypot(dx, dy);
+  if (!d) return { x: 0, y: 0 };
+  const k = Math.min(REVEAL_PX, d) / d;
+  let x = Math.round(dx * k), y = Math.round(dy * k);
+  // rounding both axes up on a diagonal can reach past REVEAL_PX: toward zero then
+  if (Math.hypot(x, y) > REVEAL_PX) { x = Math.trunc(dx * k); y = Math.trunc(dy * k); }
+  return { x: x + 0, y: y + 0 }; // + 0: no "-0"
+}
+/** the reveal's two frames (translate and opacity only): in slides from `shift` to its place and fades in; out is in reversed */
+export function revealKeyframes(shift: Shift, dir: Dir): Keyframe[] {
+  const f: Keyframe[] = [{ transform: `translate(${shift.x}px, ${shift.y}px)`, opacity: 0 }, { transform: 'translate(0px, 0px)', opacity: 1 }];
+  return dir === 'out' ? f.reverse() : f;
 }
 
 export const SHEET_IN_MS = 320;
