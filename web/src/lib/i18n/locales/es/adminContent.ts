@@ -447,7 +447,7 @@ const dict: Translation<typeof de> = {
       token_invalid: 'Authentik rechaza el token de servicio (AUTHENTIK_API_TOKEN): se borró, caducó o hay otro en .env. La sección de seguridad de la cuenta, las invitaciones y las páginas de usuarios lo necesitan. Repáralo abajo.',
       permission_missing: 'A la cuenta de servicio le falta el permiso «{perm}». Repáralo abajo.',
       executor: 'El flujo de inicio de sesión no funciona desde el servidor ({cls}). Comprueba que AUTHENTIK_URL sea la dirección con la que el contenedor del backend llega a Authentik y que tu proxy inverso deje pasar la API sin cambios.',
-      optional_change_email: 'El cambio de correo no está configurado: monta deploy/authentik/templates/friendflix-email-change.html (con tu dirección de FriendFlix en el enlace) en /templates de Authentik y luego repara abajo.',
+      optional_change_email: 'El cambio de correo no está configurado: monta deploy/authentik/templates/friendflix-email-change.html y deploy/authentik/templates/friendflix-email-change.txt (ambos con tu dirección de FriendFlix en el enlace) en /templates de Authentik y luego repara abajo.',
       unreachable: 'Authentik no responde. Ahora no se pueden comprobar los flujos.',
       flow_missing: 'Falta el flujo «{flow}» en Authentik.',
       flow_unsupported: 'El flujo «{flow}» tiene pasos que FriendFlix no puede mostrar. Continúa en la página de Authentik.',

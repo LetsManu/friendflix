@@ -447,7 +447,7 @@ const dict: Translation<typeof de> = {
       token_invalid: 'Authentik hizmet token\'ını (AUTHENTIK_API_TOKEN) reddediyor: silinmiş, süresi dolmuş ya da .env içinde başka bir token var. Hesabın güvenlik bölümü, davetler ve kullanıcı sayfaları buna ihtiyaç duyar. Aşağıda onar.',
       permission_missing: 'Hizmet hesabında "{perm}" izni eksik. Aşağıda onar.',
       executor: 'Oturum açma akışı sunucudan çalışmıyor ({cls}). AUTHENTIK_URL\'nin, backend kapsayıcısının Authentik\'e ulaştığı adres olduğunu ve ters proxy\'nin API\'yi değiştirmeden geçirdiğini denetle.',
-      optional_change_email: 'E-posta değiştirme ayarlı değil: deploy/authentik/templates/friendflix-email-change.html dosyasını (bağlantıda FriendFlix adresinle) Authentik\'in /templates klasörüne bağla, sonra aşağıda onar.',
+      optional_change_email: 'E-posta değiştirme ayarlı değil: deploy/authentik/templates/friendflix-email-change.html ve deploy/authentik/templates/friendflix-email-change.txt dosyalarını (ikisinde de bağlantıda FriendFlix adresinle) Authentik\'in /templates klasörüne bağla, sonra aşağıda onar.',
       unreachable: 'Authentik yanıt vermiyor. Akışlar şu an denetlenemiyor.',
       flow_missing: '“{flow}” akışı Authentik’te yok.',
       flow_unsupported: '“{flow}” akışında FriendFlix’in gösteremediği adımlar var. Authentik’in giriş sayfasında devam eder.',

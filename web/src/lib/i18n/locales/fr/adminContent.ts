@@ -447,7 +447,7 @@ const dict: Translation<typeof de> = {
       token_invalid: 'Authentik refuse le jeton de service (AUTHENTIK_API_TOKEN) : il a été supprimé, a expiré ou un autre est défini dans .env. La section sécurité du compte, les invitations et les pages utilisateurs en ont besoin. Répare-le ci-dessous.',
       permission_missing: 'Il manque l\'autorisation « {perm} » au compte de service. Répare-le ci-dessous.',
       executor: 'Le flux de connexion ne fonctionne pas depuis le serveur ({cls}). Vérifie qu\'AUTHENTIK_URL est l\'adresse par laquelle le conteneur du backend joint Authentik, et que ton proxy inverse transmet l\'API sans la modifier.',
-      optional_change_email: 'Le changement d\'e-mail n\'est pas configuré : monte deploy/authentik/templates/friendflix-email-change.html (avec ton adresse FriendFlix dans le lien) dans /templates d\'Authentik, puis répare ci-dessous.',
+      optional_change_email: 'Le changement d\'e-mail n\'est pas configuré : monte deploy/authentik/templates/friendflix-email-change.html et deploy/authentik/templates/friendflix-email-change.txt (tous deux avec ton adresse FriendFlix dans le lien) dans /templates d\'Authentik, puis répare ci-dessous.',
       unreachable: 'Authentik ne répond pas. Les flux ne peuvent pas être vérifiés pour le moment.',
       flow_missing: 'Le flux « {flow} » est absent chez Authentik.',
       flow_unsupported: 'Le flux « {flow} » contient des étapes que FriendFlix ne peut pas afficher. Il continue sur la page d’Authentik.',
