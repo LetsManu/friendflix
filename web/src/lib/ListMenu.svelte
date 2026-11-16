@@ -1,10 +1,11 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { createEventDispatcher, onDestroy, tick } from 'svelte';
+  import { createEventDispatcher, getContext, onDestroy, tick } from 'svelte';
   import Icon from '#lib/Icon.svelte';
   import { addToList, createList, itemLists, removeFromList, type PickerList } from '#lib/lists';
-  import { placePopover, placedStyle } from '#lib/popover';
+  import { menuPlace } from '#lib/ui/menuPlace';
+  import { openPopup, POPUP_CTX, type PopupHandle } from '#lib/ui/popups';
   import { t, tr } from '#lib/i18n';
   import { growBoth } from '#lib/glass/fx';
   import { SCRIM_MENU } from '#lib/glass/tone';
@@ -21,22 +22,21 @@
   const dispatch = createEventDispatcher<{ changed: { listId: string; contains: boolean } }>();
 
   let open = false, lists: PickerList[] | null = null, err = '', creating = false, newName = '', busy = false, busyIds = new Set<string>();
-  let root: HTMLElement, btn: HTMLButtonElement, pop: HTMLDivElement | undefined, style = '';
+  let root: HTMLElement, btn: HTMLButtonElement, pop: HTMLDivElement | undefined;
+  /** one pop-up at a time; inside a ⋯ menu's slot the picker is that menu's child (the menu stays open) */
+  const parentPopup = getContext<(() => PopupHandle | null) | undefined>(POPUP_CTX);
+  let popup: PopupHandle | null = null;
 
   async function load() {
     err = '';
     try { lists = await itemLists(itemId); } catch { lists = []; err = tr('detail.lists.loadFailed'); }
   }
-  function place() {
-    if (!btn) return;
-    style = placedStyle(placePopover(btn.getBoundingClientRect(), { w: window.innerWidth, h: window.innerHeight }, { up, wide: variant === 'row' }));
-  }
   async function toggleOpen() {
-    open = !open;
-    if (open) {
-      lists = null; creating = false; newName = ''; place(); void load();
-      await tick(); pop?.focus({ preventScroll: true });
-    }
+    if (open) { close(); return; }
+    popup = openPopup(() => close(), parentPopup?.() ?? null);
+    open = true;
+    lists = null; creating = false; newName = ''; void load();
+    await tick(); pop?.focus({ preventScroll: true });
   }
   async function toggle(l: PickerList) {
     if (busyIds.has(l.id)) return;
@@ -68,7 +68,12 @@
     } catch (e: any) { err = e?.body?.error === 'too_many_lists' ? tr('detail.lists.tooMany') : tr('detail.lists.failed'); }
     busy = false;
   }
-  export function close(refocus = false) { if (!open) return; open = false; if (refocus) btn?.focus(); }
+  export function close(refocus = false) {
+    if (!open) return;
+    open = false;
+    const p = popup; popup = null; p?.release();
+    if (refocus) btn?.focus();
+  }
   const inside = (n: EventTarget | null) => !!n && (root?.contains(n as Node) || !!pop?.contains(n as Node));
   function onKey(e: KeyboardEvent) { if (open && e.key === 'Escape') { e.stopPropagation(); close(true); } }
   function onDoc(e: Event) { if (open && !inside(e.target)) close(); }
@@ -91,10 +96,9 @@
   }
   function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
   if (typeof document !== 'undefined') { document.addEventListener('pointerdown', onDoc, true); document.addEventListener('keydown', onKey, true); }
-  onDestroy(() => { if (typeof document !== 'undefined') { document.removeEventListener('pointerdown', onDoc, true); document.removeEventListener('keydown', onKey, true); } });
+  onDestroy(() => { if (typeof document !== 'undefined') { document.removeEventListener('pointerdown', onDoc, true); document.removeEventListener('keydown', onKey, true); } popup?.release(); popup = null; });
 </script>
 
-<svelte:window on:resize={() => open && place()} on:scroll|capture={() => open && place()} />
 <span class="lm" class:blk={variant === 'row'} bind:this={root} on:focusout={onFocusOut}>
   <button bind:this={btn} class={variant === 'ring' ? 'icon-btn ring' : variant === 'row' ? 'rowbtn' : 'round'} class:on={open} aria-haspopup="dialog" aria-expanded={open} style={variant === 'round' ? `width:${size}px;height:${size}px;min-height:${size}px` : undefined} aria-label={$t('detail.lists.add')} title={$t('detail.lists.add')} on:click|stopPropagation={toggleOpen}>
     <Icon name="list" size={variant === 'ring' ? 21 : 18} />{#if variant === 'row'}<span>{$t('detail.lists.addMore')}</span>{/if}
@@ -102,7 +106,7 @@
 </span>
 {#if open}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div class="pop lm-pop frost frost-menu frost-safe" class:up bind:this={pop} use:portal style={`--fr-scrim-safe:${SCRIM_MENU};${style}`} transition:growBoth={{ trigger: btn }} tabindex="-1" role="dialog" aria-label={$t('detail.lists.add')} on:keydown={popKey} on:focusout={onFocusOut} on:mouseleave={popLeave}>
+  <div class="pop lm-pop gm frost frost-menu frost-safe" class:up bind:this={pop} use:portal use:menuPlace={{ trigger: btn, up, wide: variant === 'row', onMoved: () => close() }} style={`--fr-scrim-safe:${SCRIM_MENU};`} transition:growBoth={{ trigger: btn }} tabindex="-1" role="dialog" aria-label={$t('detail.lists.add')} on:keydown={popKey} on:focusout={onFocusOut} on:mouseleave={popLeave}>
     {#if lists === null}<p class="muted">{$t('detail.lists.loading')}</p>
     {:else}
       {#if !lists.length}<p class="muted">{$t('detail.lists.none')}</p>{/if}
@@ -130,9 +134,10 @@
   .rowbtn:hover:not(:disabled), .rowbtn.on { background: rgba(255,255,255,.08); }
   .round { width: 34px; min-height: 34px; height: 34px; padding: 0; border-radius: 50%; background: rgba(42,42,42,.6); border: 2px solid rgba(255,255,255,.5); color: #fff; display: grid; place-items: center; }
   .round:hover:not(:disabled) { border-color: #fff; background: rgba(42,42,42,.9); }
-  /* position: fixed on <body> (see place()): not clipped by overflow:hidden / transformed ancestors, always inside the viewport */
-  /* a glass card (glass spec §5): .frost .frost-menu, 8 px padding, 44 px rows with 12 px corners, hover = the light pill */
-  .pop { position: fixed; z-index: 90; box-sizing: border-box; overflow: auto; overscroll-behavior: contain; outline: none; padding: 8px; text-align: left; font-size: .9rem; font-weight: 400; }
+  /* position: fixed on <body> (placed by menuPlace): not clipped by overflow:hidden / transformed ancestors, always inside the
+     viewport. The shared glass menu card (app.css .gm: 6 px padding, 220–320 px wide; as wide as a row trigger), 44 px rows with
+     12 px corners, hover = the light pill */
+  .pop { position: fixed; z-index: 90; box-sizing: border-box; outline: none; text-align: left; font-size: .9rem; font-weight: 400; }
   ul { list-style: none; margin: 0 0 6px; padding: 0 0 6px; max-height: 220px; overflow: auto; border-bottom: 1px solid rgba(255,255,255,.1); }
   ul:empty { display: none; }
   label { display: flex; gap: .55rem; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 12px; cursor: pointer; }

@@ -344,7 +344,7 @@ test.describe('glass menus', () => {
     await whiteBehind(page);
     await page.getByRole('tabpanel', { name: 'Geräte' }).getByRole('button', { name: 'Aktionen für Chrome auf Windows' }).click();
     const pop = page.locator('.ma-pop');
-    await expect(pop.locator('.mi.danger')).toHaveCount(2);
+    await expect(pop.locator('.gm-row.danger')).toHaveCount(2);
     await settled(pop);
     await page.mouse.move(2, 790);
     await textPasses(page, pop);
@@ -371,7 +371,7 @@ test.describe('glass menus', () => {
     await page.keyboard.press('Enter'); // a toggle: now pressed (the pointer stays on the card)
     await expect(pop).toHaveCount(0);
     await more.click();
-    const on = pop.locator('.mi[aria-pressed="true"]');
+    const on = pop.locator('.gm-row[aria-pressed="true"]');
     await expect(on).toHaveCount(1);
     await settled(pop);
     await page.mouse.move(2, 400); // not hovering it

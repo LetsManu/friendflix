@@ -181,7 +181,7 @@
       <button type="button" class="round" aria-label={inList ? $t('home.card.removeFromList') : $t('home.card.addToListLong')} title={$t('home.card.myList')} on:click={toggleInList}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
       {#if item.type !== 'BoxSet'}<RatingButton itemId={listId} bind:value={thumb} on:change={onThumb} on:error={flash} />{/if}
       <span class="right">
-        <MoreActions {actions} title={item.name} label={$t('home.card.moreActionsFor', { name: item.name })}>
+        <MoreActions {actions} title={item.type === 'Episode' && item.seriesName ? item.seriesName : item.name} label={$t('home.card.moreActionsFor', { name: item.name })}>
           {#if item.type !== 'BoxSet' && !$kidsMode}<ListMenu itemId={listId} variant="row" on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
         </MoreActions>
         <a class="round" href={detail} aria-label={$t('home.card.moreInfoFor', { name: item.name })} aria-haspopup={$deskActive ? undefined : 'dialog'} title={$t('home.card.moreInfo')} on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={more}><Icon name="chevron-down" size={18} /></a>

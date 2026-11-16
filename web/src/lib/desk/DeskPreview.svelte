@@ -270,7 +270,7 @@
       <button type="button" class="frost-btn round" aria-label={inList ? $t('home.card.removeFromList') : $t('home.card.addToListLong')} title={$t('home.card.myList')} on:click={toggleInList}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
       {#if item.type !== 'BoxSet'}<RatingButton itemId={listId} size={44} bind:value={thumb} on:change={onThumb} on:error={flash} />{/if}
       <span class="right">
-        <MoreActions {actions} size={44} title={item.name} label={$t('home.card.moreActionsFor', { name: item.name })}>
+        <MoreActions {actions} size={44} {title} label={$t('home.card.moreActionsFor', { name: item.name })}>
           {#if item.type !== 'BoxSet' && !$kidsMode}<ListMenu itemId={listId} variant="row" on:changed={(e) => dispatch('listchanged', e.detail)} />{/if}
         </MoreActions>
         <a class="frost-btn round dpv-more" href={detail} aria-label={$t('home.card.moreInfoFor', { name: item.name })} title={$t('home.card.moreInfo')} on:click={more}><Icon name="chevron-down" size={18} /></a>

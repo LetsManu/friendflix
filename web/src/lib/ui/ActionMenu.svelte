@@ -3,7 +3,7 @@
 <script lang="ts">
   /**
    * Row/overflow menu ("⋯") for secondary and destructive actions. Built on MoreActions (popover on desktop, bottom
-   * sheet on touch; Arrow keys, Escape, focus return). Items: { id, label, icon?, run?, href?, danger?, disabled? }.
+   * sheet on touch; Arrow keys, Home / End, Escape, focus return); its button is the title page's ⋯ (a round glass button). Items: { id, label, icon?, run?, href?, danger?, disabled? }.
    *   <ActionMenu label={$t('ui.table.actionsFor', { name: u.name })} title={u.name} busy={$busyKeys.has('user:' + u.id)}
    *     items={[{ id: 'lock', label: $t('admin.users.lock'), icon: 'lock', danger: true, run: () => lock(u) }]} />
    */
@@ -20,7 +20,7 @@
 
 <span class="am">
   {#if busy}
-    <button type="button" class="busy" aria-disabled="true" aria-busy="true" aria-label={label || $t('ui.table.actions')}><span class="spinner" aria-hidden="true"></span></button>
+    <button type="button" class="busy frost-btn round" aria-disabled="true" aria-busy="true" aria-label={label || $t('ui.table.actions')}><span class="spinner" aria-hidden="true"></span></button>
   {:else}
     <MoreActions actions={items} label={label || $t('ui.table.actions')} {title} variant="ring" />
   {/if}
@@ -28,8 +28,6 @@
 
 <style>
   .am { display: inline-flex; }
-  .am :global(.ma.ring), .busy { width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; background: transparent; border: 1px solid #46505a; color: var(--fg); display: grid; place-items: center; }
-  .am :global(.ma.ring:hover:not(:disabled)), .am :global(.ma.ring.on) { background: rgba(255,255,255,.08); border-color: #8a8a8a; }
-  .busy { cursor: progress; }
-  .busy:hover:not(:disabled) { background: transparent; }
+  /* the trigger is MoreActions' ring: the title page's round glass button. The busy one has the same look, a spinner inside */
+  .busy { width: 44px; height: 44px; min-height: 44px; padding: 0; color: #fff; display: grid; place-items: center; cursor: progress; }
 </style>
