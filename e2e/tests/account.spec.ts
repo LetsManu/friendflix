@@ -200,7 +200,7 @@ test.describe('mail card', () => {
     await page.route('**/api/account/mail', async (r) => { if (r.request().method() === 'GET') await new Promise((f) => setTimeout(f, 400)); await r.fallback(); });
     await page.goto('/me/account#mail');
     await expect(card(page).getByRole('heading', { level: 2, name: 'E-Mails' })).toBeInViewport();
-    expect(await page.evaluate(() => scrollY)).toBeGreaterThan(300);
+    await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(300);
     // nothing scrolls it away once the sessions have loaded
     await expect(page.getByRole('region', { name: 'Sitzungen & Geräte' }).getByRole('listitem')).toHaveCount(2);
     await expect(card(page).getByRole('heading', { level: 2, name: 'E-Mails' })).toBeInViewport();
