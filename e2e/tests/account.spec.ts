@@ -505,11 +505,28 @@ test('nothing below the sessions card jumps while the lists fill in (slow sessio
   const sessions = page.getByRole('region', { name: 'Sitzungen & Geräte' });
   await expect(sessions.getByRole('listitem')).toHaveCount(2);
   await expect(page.getByRole('region', { name: 'Sicherheit' }).getByText('Pixel 8')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => (window as unknown as { frames: number }).frames), { timeout: 8000 }).toBe(240);
-  const tops = await cardTopsRecorded(page);
-  for (const id of ids.filter((i) => tops[i])) {
+  const tops = await cardTopsRecorded(page, ids);
+  for (const id of ids) {
     const seen = tops[id]!;
     expect(Math.max(...seen) - Math.min(...seen), `${id} moved`).toBeLessThanOrEqual(1);
   }
-  expect(tops['acc-mail']!.length).toBeGreaterThan(5);
+});
+
+test('the sessions and security reads start right after the account answer, not after the slow mail answer', async ({ page }) => {
+  const order: string[] = [];
+  page.on('request', (r) => { const p = new URL(r.url()).pathname; if (['/api/devices', '/api/account/security'].includes(p)) order.push(p); });
+  await page.route('**/api/account/mail', async (r) => { if (r.request().method() === 'GET') await new Promise((f) => setTimeout(f, 1200)); order.push('mail answered'); await r.fallback(); });
+  await page.goto('/me/account');
+  await expect(page.getByRole('region', { name: 'Sitzungen & Geräte' })).toBeVisible();
+  expect(order.indexOf('/api/devices')).toBeGreaterThanOrEqual(0);
+  expect(order.indexOf('/api/devices')).toBeLessThan(order.indexOf('mail answered'));
+  expect(order.indexOf('/api/account/security')).toBeLessThan(order.indexOf('mail answered'));
+});
+
+test('a hanging sessions read does not hold the page: the card shows its error hint', async ({ page }) => {
+  await page.route('**/api/devices', () => new Promise(() => undefined)); // never answers
+  await page.goto('/me/account');
+  await expect(page.getByRole('status').filter({ hasText: 'Lade' }).first()).toBeAttached();
+  await expect(page.getByRole('region', { name: 'Sitzungen & Geräte' }).getByRole('alert')).toBeVisible({ timeout: 12_000 }); // after the 8 s read timeout
+  await expect(page.getByRole('region', { name: 'E-Mails' })).toBeVisible();
 });

@@ -114,11 +114,9 @@ test('nothing below the sessions card jumps while the lists fill in (slow sessio
   const sessions = page.getByRole('region', { name: 'Sitzungen & Geräte' });
   await expect(sessions.getByRole('listitem')).toHaveCount(2);
   await expect(page.getByRole('region', { name: 'Sicherheit' }).getByText('Pixel 8')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => (window as unknown as { frames: number }).frames), { timeout: 8000 }).toBe(240);
-  const tops = await cardTopsRecorded(page);
-  for (const id of ids.filter((i) => tops[i])) {
+  const tops = await cardTopsRecorded(page, ids);
+  for (const id of ids) {
     const seen = tops[id]!;
     expect(Math.max(...seen) - Math.min(...seen), `${id} moved`).toBeLessThanOrEqual(1);
   }
-  expect(tops['acc-mail']!.length).toBeGreaterThan(5);
 });

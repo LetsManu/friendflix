@@ -21,23 +21,27 @@
   /** the lists of the sessions and security cards, read with the account so those cards render whole (null = could not be read) */
   let devices: OwnDevice[] | null = null, sec: AccountSecurity | null = null, isAdmin = false;
 
+  /** ms after which a list read counts as failed, so a hanging one cannot hold the page */
+  const READ_TIMEOUT = 8000;
+
   async function load() {
     phase = 'loading';
-    // both at once; the cards appear together once both answered (nothing pops in). The switches are account level like the account:
-    // a kids profile's 403 shows only the hint, whatever the switches answered. Their failure only greys out the E-Mails card.
-    // The sessions list, the security state and the admin flag are read right after it, before the cards show, for the same reason: a card that fills in
-    // late changes its height and pushes every card below it (about 385 px on a phone). Their failure is shown by the card itself.
+    // All at once; the cards appear together once everything answered (nothing pops in). The switches are account level like the
+    // account: a kids profile's 403 shows only the hint, whatever the switches answered. Their failure only greys out the E-Mails card.
+    // The sessions list, the security state and the admin flag are read before the cards show, for the same reason: a card that fills
+    // in late changes its height and pushes every card below it (about 385 px on a phone). The lists start right after the account
+    // answered (a kids profile never asks for them), the mail answer is awaited afterwards. A read that hangs counts as failed (null)
+    // after READ_TIMEOUT, and the card shows its own error hint.
     const switches = loadMailPrefs().catch(() => null);
+    const admin = api<Me>('/api/me', { signal: AbortSignal.timeout(READ_TIMEOUT) }).then((m) => Boolean(m.isAdmin && m.profile?.isOwner)).catch(() => false);
     try {
       account = await api<Account>('/api/account');
-      mail = await switches;
-      // only after the account answered: a kids profile (403) never asks for the device list
       const lists = Promise.all([
-        api<{ devices: OwnDevice[] }>('/api/devices').then((r) => r.devices).catch(() => null),
-        api<AccountSecurity>('/api/account/security').catch(() => null),
-        api<Me>('/api/me').then((m) => Boolean(m.isAdmin && m.profile?.isOwner)).catch(() => false),
+        api<{ devices: OwnDevice[] }>('/api/devices', { signal: AbortSignal.timeout(READ_TIMEOUT) }).then((r) => r.devices).catch(() => null),
+        api<AccountSecurity>('/api/account/security', { signal: AbortSignal.timeout(READ_TIMEOUT) }).catch(() => null),
       ]);
-      [devices, sec, isAdmin] = await lists;
+      mail = await switches;
+      [[devices, sec], isAdmin] = [await lists, await admin];
       phase = 'ok';
     }
     catch (e) { phase = e instanceof ApiError && e.status === 403 ? 'owner' : 'error'; }
@@ -80,7 +84,7 @@
   <h1>{$t('account.account.title')}</h1>
   {#if reauthFailed}<p class="err banner" role="alert">{$t('account.account.reauthFailed')}</p><p class="muted hint" data-hint="reauth-failed">{$t('account.account.reauthFailedHint')}</p>{/if}
 
-  {#if phase === 'loading'}<div class="skeleton sk" aria-hidden="true"></div>
+  {#if phase === 'loading'}<div class="sk-wrap" aria-busy="true"><p class="sr-only" role="status">{$t('common.loading')}</p><div class="skeleton sk" aria-hidden="true"></div></div>
   {:else if phase === 'owner'}<p class="muted">{$t('account.account.ownerOnly')}</p>
   {:else if phase === 'error' || !account}
     <p class="err" role="alert">{$t('account.account.loadFailed')}</p>
