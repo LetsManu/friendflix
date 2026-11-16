@@ -152,8 +152,10 @@
      scrolls inside the list while account and profile stay put. Nothing above 800 px high changes. */
   @media (max-height: 800px) {
     .rail { padding-top: 2vh; padding-bottom: 2vh; }
-    ul { --step: 60px; gap: 4px; min-height: 0; overflow-y: auto; scrollbar-width: none; padding: 8px; margin: auto 0 auto -8px; }
+    ul { --step: 60px; gap: 4px; min-height: 0; overflow-y: auto; scrollbar-width: none; padding: 8px 32px 8px 8px; margin: auto 0 auto -8px; }
     ul::-webkit-scrollbar { display: none; }
+    ul { pointer-events: none; } /* the right padding (room for the focused entry's 1.08 scale) must not catch the pointer over the page */
+    ul a { pointer-events: auto; }
     .dot { left: 6px; top: 33px; }
     .acct { margin-bottom: 4px; }
   }
