@@ -112,12 +112,16 @@ describe('remote control hub', () => {
   const tvSid = async () => { const c = (await post('/api/tv/code')).json(); await post('/api/tv/pair', { code: c.code }, me); return (await post('/api/tv/claim', { code: c.code, pollToken: c.pollToken })).cookies.find((q) => q.name === 'ff_sid')!.value; };
   const wait = (ms = 120) => new Promise((r) => setTimeout(r, ms));
   const ITEM = 'a'.repeat(32);
+  // The client's 'open' fires before the server has authenticated and registered that socket, so a remote's
+  // hello can legitimately say tvOnline:false; the server then announces the TV with a 'peers' message.
+  // Wait for the TV to be registered (hello or peers), not for the first message.
+  const tvSeen = (phone: { msgs: any[] }) => vi.waitFor(() => expect(phone.msgs.some((m) => (m.t === 'hello' || m.t === 'peers') && m.tvOnline === true)).toBe(true));
 
   it('forwards cast and control from the phone to the TV of the same user and status back', async () => {
     const tv = await open(await tvSid(), 'tv');
     const phone = await open(me.cookies.ff_sid!, 'remote');
-    await vi.waitFor(() => expect(phone.msgs.find((m) => m.t === 'hello')).toBeTruthy());
-    expect(phone.msgs.find((m) => m.t === 'hello')).toMatchObject({ role: 'remote', tvOnline: true });
+    await vi.waitFor(() => expect(phone.msgs.find((m) => m.t === 'hello')).toMatchObject({ role: 'remote' }));
+    await tvSeen(phone);
     expect((await env.app.inject({ url: '/api/tv/status', cookies: me.cookies })).json()).toEqual({ tvOnline: true });
 
     phone.ws.send(JSON.stringify({ t: 'cast', itemId: ITEM, startSec: 90 }));
@@ -139,7 +143,7 @@ describe('remote control hub', () => {
   it('a recording travels as rec:<uuid> both ways (Weiter auf dem Fernseher, Live TV Phase 3); anything else after rec: is dropped', async () => {
     const REC = 'rec:0b000000-0000-4000-a000-0000000000f1';
     const tv = await open(await tvSid(), 'tv'); const phone = await open(me.cookies.ff_sid!, 'remote');
-    await vi.waitFor(() => expect(phone.msgs.find((m) => m.t === 'hello')).toMatchObject({ tvOnline: true }));
+    await tvSeen(phone);
     phone.ws.send(JSON.stringify({ t: 'cast', itemId: 'rec:../../etc' }));
     phone.ws.send(JSON.stringify({ t: 'cast', itemId: REC, startSec: 600 }));
     // a recording runs past 24 h (its cap is 28 h): such a position still travels
@@ -157,7 +161,7 @@ describe('remote control hub', () => {
 
   it('track lists travel TV -> phone and audio/sub commands phone -> TV, oversize lists are dropped', async () => {
     const tv = await open(await tvSid(), 'tv'); const phone = await open(me.cookies.ff_sid!, 'remote');
-    await vi.waitFor(() => expect(phone.msgs.find((m) => m.t === 'hello')).toBeTruthy());
+    await tvSeen(phone);
     tv.ws.send(JSON.stringify({ t: 'status', itemId: ITEM, audio: [{ i: 1, t: 'Deutsch' }, { i: 2, t: 'English' }], audioSel: 1, subs: [{ i: 3, t: 'Deutsch' }], subSel: -1 }));
     tv.ws.send(JSON.stringify({ t: 'status', itemId: ITEM, audio: Array.from({ length: 11 }, (_, i) => ({ i, t: 'x' })) })); // too many: rejected
     phone.ws.send(JSON.stringify({ t: 'ctl', action: 'audio', value: 2 }));
