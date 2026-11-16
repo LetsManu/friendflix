@@ -50,8 +50,6 @@ export function placeMenu(
   return { left: Math.round(left), top: Math.round(top), maxHeight: Math.round(maxHeight), up };
 }
 
-export const menuPlaceStyle = (p: MenuPlace): string => `left:${p.left}px;top:${p.top}px;max-height:${p.maxHeight}px;`;
-
 /** True when the anchor moved more than `tol` px on either axis (scroll, layout shift). */
 export function anchorMoved(before: { left: number; top: number }, after: { left: number; top: number }, tol = 2): boolean {
   return Math.abs(after.left - before.left) > tol || Math.abs(after.top - before.top) > tol;

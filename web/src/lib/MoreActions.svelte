@@ -197,6 +197,9 @@
   /* the title page's round glass button (.frost-btn.round: fill, edge, highlight; solid without blur); open: the lit edge */
   .ma.ring { width: 44px; height: 44px; min-height: 44px; border-radius: 50%; display: grid; place-items: center; }
   .ma.ring.on { border-color: rgba(255,255,255,.42); box-shadow: inset 0 1px 0 var(--fr-hi), inset 0 0 0 1px rgba(255,255,255,.14); }
+  /* TV keeps the grey ring with its 2 px edge in this stage (the glass button comes with the TV menus) */
+  :global(html.tv) .ma.ring { background: rgba(42,42,42,.6); border: 2px solid rgba(255,255,255,.5); box-shadow: none; }
+  :global(html.tv) .ma.ring:hover:not(:disabled), :global(html.tv) .ma.ring.on { border-color: #fff; background: rgba(42,42,42,.9); box-shadow: none; }
   .ma.labelled { flex-direction: column; gap: .3rem; background: none; border: 0; min-height: 44px; padding: .2rem .4rem; border-radius: 6px; }
   .ma.labelled .tx { font-size: .75rem; font-weight: 500; color: var(--mut); }
   .ma.labelled:hover:not(:disabled) { background: rgba(255,255,255,.08); }
@@ -213,8 +216,8 @@
   .pop .slot:first-child::before { display: none; }
   /* rows from nested pickers (ListMenu variant="row") line up with the menu's rows */
   .pop .slot :global(.rowbtn) { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; column-gap: 12px; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 12px; font-size: 15px; font-weight: 500; line-height: 1.25; }
-  .pop .slot :global(.rowbtn > svg) { justify-self: center; }
-  .pop .slot :global(.rowbtn > span) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pop .slot :global(.rowbtn > .lmk) { justify-self: center; } /* ListMenu's icon (and its spinner while the lists load) */
+  .pop .slot :global(.rowbtn > span:not(.lmk)) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pop .slot :global(.rowbtn:hover:not(:disabled)), .pop .slot :global(.rowbtn.on), .pop .slot :global(.rowbtn:focus-visible) { background: var(--fr-sel); }
   .pop .slot :global(.rowbtn:focus-visible) { outline: 2px solid #fff; outline-offset: -2px; box-shadow: none; }
   /* phone sheet rows (unchanged: 48 px, the cancel row) */

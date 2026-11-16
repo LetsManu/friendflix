@@ -207,7 +207,6 @@ const fr: Translation<typeof de> = {
   lists: {
     add: 'Ajouter à une liste',
     addMore: 'Ajouter à une liste…',
-    loading: 'Chargement …',
     none: 'Aucune liste à laquelle vous pouvez ajouter des titres.',
     newName: 'Nom de la nouvelle liste',
     create: 'Créer',

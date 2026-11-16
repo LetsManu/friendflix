@@ -135,13 +135,15 @@
   }
   type Prof = { id: string; name: string; avatar: string; hasPin: boolean; active?: boolean };
   /** the other profiles (null: not loaded); profLoading: the request runs (the menu shows placeholder rows of the final height) */
-  let others: Prof[] | null = null, profLoading = false;
+  let others: Prof[] | null = null, profLoading = false, profFailedAt = -Infinity;
+  /** after a failed load the avatar's hovers wait this long before the next request (the menu still opens, without the list) */
+  const PROF_RETRY_MS = 5000;
   /** the profile list loads on the avatar's pointerenter / focus (and on the click if not yet), so the menu opens complete */
   async function loadProfiles() {
-    if (!multi || others !== null || profLoading) return;
+    if (!multi || others !== null || profLoading || Date.now() - profFailedAt < PROF_RETRY_MS) return;
     profLoading = true;
     try { others = ((await api('/api/profiles')).profiles as Prof[]).filter((p) => !p.active && p.id !== me?.profile?.id).slice(0, 4); }
-    catch { /* the placeholder rows go; the next hover tries again */ }
+    catch { profFailedAt = Date.now(); /* the placeholder rows go; a hover after PROF_RETRY_MS tries again */ }
     profLoading = false;
   }
   /** placeholder rows while the list loads: one per other profile (at most four, as the list shows) */

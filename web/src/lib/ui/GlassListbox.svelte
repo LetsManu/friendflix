@@ -10,8 +10,8 @@
    * focus and moves `aria-activedescendant`: ArrowUp / ArrowDown / Home / End / PageUp / PageDown move (no wrap, disabled options skipped), Enter or
    * Space picks, letters jump to the next matching option (500 ms typeahead buffer). Escape closes it and gives the focus back to
    * the select (it never reaches a dialog around the select); Tab closes it without picking and moves on from the select (a dialog's
-   * Tab trap still applies). An outside
-   * press, a scroll that moves the select and another pop-up opening (lib/ui/popups) close it.
+   * Tab trap still applies). An outside press, a scroll that moves the select and another pop-up opening (lib/ui/popups) close it;
+   * the click of that outside press is swallowed, as with a native select (a press on a dialog's backdrop only closes the list).
    *   <GlassListbox anchor={sel} {options} {value} labelledby="{id}-l" on:pick={(e) => choose(e.detail)} on:close={hide} />
    */
   import { createEventDispatcher, getContext, onDestroy, onMount, tick } from 'svelte';
@@ -134,7 +134,26 @@
   }
   function onDoc(e: Event) {
     const t = e.target as Node | null;
-    if (popup && t && !box?.contains(t) && t !== anchor) close(false); // a press on the select toggles it there
+    if (popup && t && !box?.contains(t) && t !== anchor) { close(false); swallowClick(); } // a press on the select toggles it there
+  }
+  /**
+   * the press that closed the list ends only that: its click (e.g. on a dialog's backdrop) must not also act. A one-shot capture
+   * listener eats the next click; it goes away on that click, on the next press, or a moment after the release when no click
+   * follows (a drag that ended elsewhere)
+   */
+  function swallowClick() {
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const eat = (e: Event) => { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); off(); };
+    const later = () => { clearTimeout(t); t = setTimeout(off, 0); };
+    function off() {
+      clearTimeout(t);
+      document.removeEventListener('click', eat, true);
+      document.removeEventListener('pointerup', later, true);
+      document.removeEventListener('pointerdown', off, true);
+    }
+    document.addEventListener('click', eat, true);
+    document.addEventListener('pointerup', later, true);
+    setTimeout(() => document.addEventListener('pointerdown', off, true), 0);
   }
   function hover(i: number) {
     kb = false;
@@ -165,7 +184,8 @@
   style={`--fr-scrim-safe:${SCRIM_MENU};`} transition:growBoth={{ trigger: anchor }}
   on:keydown={onKey} on:focusout={onFocusOut} on:mousedown={(e) => e.preventDefault()}
 >
-  {#each options as o, i (o.value)}
+  <!-- keyed by position: a native select allows two options with the same value -->
+  {#each options as o, i (i)}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_interactive_supports_focus (options are never focused: the listbox moves aria-activedescendant) -->
     <div
       class="gm-row" class:active={i === active} id={rowId(i)} role="option" data-value={o.value}

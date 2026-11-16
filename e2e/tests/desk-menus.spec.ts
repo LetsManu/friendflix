@@ -29,6 +29,7 @@ const look = (loc: Locator) => loc.evaluate((e, keys) => {
 const color = (loc: Locator) => loc.evaluate((e) => getComputedStyle(e).color);
 const pop = (page: Page) => page.locator('.ma-pop');
 const omaMenu = (page: Page) => page.getByRole('button', { name: 'Aktionen für Oma' });
+const later = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 test.describe('desktop ⋯ menus', () => {
   test('title ⋯ and admin ⋯ look the same', async ({ page, api }) => {
@@ -159,6 +160,59 @@ test.describe('desktop ⋯ menus', () => {
     await expect(pop(page)).toBeVisible();
   });
 
+  test('the list picker never opens half-loaded: its row spins (same width) until the lists are in, then its box holds', async ({ page }) => {
+    await page.route('**/api/items/*/lists', async (r) => { await later(800); await r.fallback(); });
+    await page.goto(`/item/${MOVIE.id}`);
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+    const row = pop(page).getByRole('button', { name: /Zu Liste hinzufügen/ });
+    const w = (await row.boundingBox())!.width;
+    await row.click();
+    const lm = page.locator('.lm-pop');
+    await expect(row).toHaveAttribute('aria-busy', 'true');
+    await expect(row.locator('.spinner')).toBeVisible();
+    await expect(lm).toHaveCount(0);
+    expect(Math.abs((await row.boundingBox())!.width - w)).toBeLessThanOrEqual(0.5);
+    await expect(lm).toBeVisible();
+    await expect(row).not.toHaveAttribute('aria-busy', /.*/);
+    await expect(lm.getByRole('checkbox')).not.toHaveCount(0);
+    const box = await lm.boundingBox();
+    await later(400);
+    expect(await lm.boundingBox()).toEqual(box);
+    // the lists are kept a while: closed and opened again, the picker is there at once
+    await page.keyboard.press('Escape');
+    await expect(lm).toHaveCount(0);
+    await row.click();
+    await expect(lm).toBeVisible();
+    await expect(row).not.toHaveAttribute('aria-busy', /.*/);
+  });
+
+  test('Escape cancels a list picker that waits for its lists (its ⋯ menu stays)', async ({ page }) => {
+    await page.route('**/api/items/*/lists', async (r) => { await later(800); await r.fallback(); });
+    await page.goto(`/item/${MOVIE.id}`);
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+    const row = pop(page).getByRole('button', { name: /Zu Liste hinzufügen/ });
+    await row.click();
+    await expect(row).toHaveAttribute('aria-busy', 'true');
+    await page.keyboard.press('Escape');
+    await expect(row).not.toHaveAttribute('aria-busy', /.*/);
+    await later(1000);
+    await expect(page.locator('.lm-pop')).toHaveCount(0);
+    await expect(pop(page)).toBeVisible();
+  });
+
+  test.describe('a failed list load', () => {
+    test.use({ allowedConsole: /status of 500/ });
+    test('opens the list picker with its error row', async ({ page }) => {
+      await page.route('**/api/items/*/lists', (r) => r.fulfill({ status: 500, json: { error: 'boom' } }));
+      await page.goto(`/item/${MOVIE.id}`);
+      await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+      await pop(page).getByRole('button', { name: /Zu Liste hinzufügen/ }).click();
+      const lm = page.locator('.lm-pop');
+      await expect(lm).toBeVisible();
+      await expect(lm.getByRole('alert')).toHaveText('Listen konnten nicht geladen werden.');
+    });
+  });
+
   test('a route change closes the menu', async ({ page }) => {
     // in-app navigation (the page component can stay mounted from one title to the next): title → title, then Back
     await page.goto(`/item/${SERIES.id}`);
@@ -178,7 +232,6 @@ test.describe('header menus', () => {
   const acctBtn = (page: Page) => bar(page).getByRole('button', { name: /Profilmenü/ });
   const acct = (page: Page) => page.getByRole('menu', { name: 'Profilmenü' });
   const multiMe = { ...ME, profileCount: 3, profileChosen: true };
-  const later = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   test('account menu: the person in the header, 44 px rows with a 24 px icon column; Abmelden last, with its icon, left-aligned like the rest', async ({ page }) => {
     await page.goto('/watchlist');
@@ -207,6 +260,28 @@ test.describe('header menus', () => {
     const menu = acct(page);
     await expect(menu).toBeVisible();
     await menu.getByRole('menuitemradio', { name: 'Tester' }).click();
+    await expect(menu).toBeHidden();
+    await expect(acctBtn(page)).toBeFocused();
+  });
+
+  test('account menu by keyboard: End, Home and the arrows move (wrapping), Escape gives the focus back to the avatar', async ({ page }) => {
+    await page.goto('/watchlist');
+    await acctBtn(page).focus();
+    await page.keyboard.press('Enter');
+    const menu = acct(page);
+    await expect(menu).toBeVisible();
+    const items = menu.locator('[role^=menuitem]');
+    await page.keyboard.press('Home');
+    await expect(items.first()).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(items.nth(1)).toBeFocused();
+    await page.keyboard.press('End');
+    await expect(items.last()).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(items.first()).toBeFocused();
+    await page.keyboard.press('ArrowUp');
+    await expect(items.last()).toBeFocused();
+    await page.keyboard.press('Escape');
     await expect(menu).toBeHidden();
     await expect(acctBtn(page)).toBeFocused();
   });
@@ -390,6 +465,24 @@ test.describe('Select', () => {
       await expect(list(page)).toHaveCount(0);
       await expect(dlg).toBeVisible();
       await expect(to).toBeFocused();
+    });
+
+    test('a press on the backdrop with the list open closes only the list; the next press closes the dialog', async ({ page, api }) => {
+      const extra = api.admin.matrix.roles.find((r) => r.key === 'family')!;
+      api.admin.matrix.roles.splice(4, 0, { ...extra, key: 'oma', label: 'Oma', builtinLabel: false, origin: 'admin', accounts: 2, profiles: 0, kidsProfiles: 0, invites: 0, values: { ...extra.values } });
+      await page.goto('/admin/roles');
+      await omaMenu(page).click();
+      await pop(page).getByRole('button', { name: 'Löschen' }).click();
+      const dlg = page.locator('[role=alertdialog]');
+      const to = dlg.getByRole('combobox', { name: 'Neue Rolle' });
+      await expect(to).toBeVisible();
+      await to.click();
+      await expect(list(page)).toBeVisible();
+      await page.mouse.click(6, 450);
+      await expect(list(page)).toHaveCount(0);
+      await expect(dlg).toBeVisible();
+      await page.mouse.click(6, 450);
+      await expect(dlg).toHaveCount(0);
     });
 
     test('Tab and Shift+Tab from the open list stay inside the dialog', async ({ page, api }) => {

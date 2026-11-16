@@ -207,7 +207,6 @@ const tr: Translation<typeof de> = {
   lists: {
     add: 'Listeye ekle',
     addMore: 'Listeye ekle…',
-    loading: 'Yükleniyor …',
     none: 'Henüz içine ekleme yapabileceğin bir liste yok.',
     newName: 'Yeni listenin adı',
     create: 'Oluştur',

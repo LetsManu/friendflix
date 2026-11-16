@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { anchorMoved, menuPlaceStyle, placeMenu, placePopover } from './popover';
+import { anchorMoved, placeMenu, placePopover } from './popover';
 
 const box = (left: number, top: number, w = 44, h = 44) => ({ left, top, right: left + w, bottom: top + h, width: w });
 const vp = { w: 375, h: 812 };
@@ -70,7 +70,6 @@ describe('placeMenu', () => {
   it('whole pixels', () => {
     const p = placeMenu({ left: 100.4, right: 144.6, top: 50.3, bottom: 94.7, width: 44.2 }, size, big);
     for (const v of [p.left, p.top, p.maxHeight]) expect(Number.isInteger(v)).toBe(true);
-    expect(menuPlaceStyle(p)).toBe(`left:${p.left}px;top:${p.top}px;max-height:${p.maxHeight}px;`);
   });
 });
 
