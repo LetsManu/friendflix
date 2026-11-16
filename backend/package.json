@@ -19,7 +19,7 @@
     "@fastify/websocket": "^11.3.7",
     "fastify": "^5.12.8",
     "ioredis": "^6.0.0",
-    "nodemailer": "^10.3.1",
+    "nodemailer": "^10.4.0",
     "openid-client": "^6.8.9",
     "pg": "^8.13.1",
     "prom-client": "^15.1.3",
