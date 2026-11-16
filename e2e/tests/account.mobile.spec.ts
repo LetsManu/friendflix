@@ -55,8 +55,8 @@ test('phone: the mail switches are ≥ 44 px and the card fits', async ({ page }
   await page.goto('/me/account');
   const mail = page.getByRole('region', { name: 'E-Mails' });
   const sws = mail.getByRole('switch');
-  await expect(sws).toHaveCount(3);
-  for (let i = 0; i < 3; i++) {
+  await expect(sws).toHaveCount(4);
+  for (let i = 0; i < 4; i++) {
     await sws.nth(i).scrollIntoViewIfNeeded();
     const b = (await sws.nth(i).boundingBox())!;
     expect(b.height).toBeGreaterThanOrEqual(44);
@@ -65,4 +65,26 @@ test('phone: the mail switches are ≥ 44 px and the card fits', async ({ page }
   await sws.nth(1).tap();
   await expect(sws.nth(1)).toHaveAttribute('aria-checked', 'false');
   expect(await noHorizontalOverflow(page)).toBe(true);
+});
+
+test('phone: with the admin block every switch is ≥ 44 px, nothing overflows and the card does not move', async ({ page, api }) => {
+  api.accountMail = { ...api.accountMail, admin: true };
+  await page.goto('/me/account');
+  const mail = page.getByRole('region', { name: 'E-Mails' });
+  const sws = mail.getByRole('switch');
+  await expect(sws).toHaveCount(8);
+  await expect(mail.getByRole('heading', { level: 3, name: 'Für Admins' })).toBeVisible();
+  for (let i = 0; i < 8; i++) {
+    await sws.nth(i).scrollIntoViewIfNeeded();
+    const b = (await sws.nth(i).boundingBox())!;
+    expect(b.height, `switch ${i}`).toBeGreaterThanOrEqual(44);
+    expect(b.width, `switch ${i}`).toBeGreaterThanOrEqual(44);
+  }
+  expect(await noHorizontalOverflow(page)).toBe(true);
+  // first paint vs. one second later: the card's box (page coordinates) stays put
+  const box = () => mail.evaluate((el) => { const r = el.getBoundingClientRect(); return { top: Math.round(r.top + scrollY), height: Math.round(r.height), width: Math.round(r.width) }; });
+  await page.evaluate(() => scrollTo(0, 0));
+  const first = await box();
+  await page.waitForTimeout(1000);
+  expect(await box()).toEqual(first);
 });

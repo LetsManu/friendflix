@@ -9,6 +9,8 @@ import { expect, test } from '../fixtures.js';
  */
 const TOKEN = 'v1.0b6f2c1e-5d4a-4c3b-9a8f-7e6d5c4b3a21.licence.' + 'A'.repeat(21) + '_-' + 'z9'.repeat(10);
 const MAC = TOKEN.split('.')[3]!;
+/** a token of another type, built from short pieces at run time (gitleaks) */
+const tokenOf = (type: string) => ['v1', '0b6f2c1e-5d4a-4c3b-9a8f-7e6d5c4b3a21', type, MAC].join('.');
 
 test.describe('/mail/unsubscribe', () => {
   test('unsubscribe page names the type and sends nothing until pressed', async ({ page, api }) => {
@@ -26,6 +28,19 @@ test.describe('/mail/unsubscribe', () => {
     await page.getByRole('button', { name: 'Abbestellen' }).click();
     await expect(page.getByText('Abbestellt.')).toBeVisible();
     expect(api.unsubscribe.posts).toEqual([{ t: TOKEN, on: false }]);
+  });
+
+  test('a digest token names the recap', async ({ page, api }) => {
+    await page.goto(`/mail/unsubscribe?t=${tokenOf('digest')}`);
+    await expect(page.getByText('Keine E-Mails mehr zu deinem Wochenrückblick?')).toBeVisible();
+    await page.getByRole('button', { name: 'Abbestellen' }).click();
+    await expect(page.getByText('Abbestellt.')).toBeVisible();
+    expect(api.unsubscribe.posts).toEqual([{ t: tokenOf('digest'), on: false }]);
+  });
+
+  test('an admin type token names it', async ({ page }) => {
+    await page.goto(`/mail/unsubscribe?t=${tokenOf('storage')}`);
+    await expect(page.getByText('Keine E-Mails mehr zu knappem Speicherplatz?')).toBeVisible();
   });
 
   test('pressing Abbestellen then Wieder anmelden', async ({ page, api }) => {

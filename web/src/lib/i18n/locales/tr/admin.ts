@@ -105,6 +105,7 @@ const tr: Translation<typeof de> = {
     loadFailed: 'Yüklenemedi.',
     saved: 'Kaydedildi.',
     sent: 'Test gönderildi. Bildirimlere ve /digest sayfasına bak.',
+    sentMailed: 'Test gönderildi. Bir e-posta kuyrukta.',
     duplicate: 'Gönderilmedi (tekrar).',
     nothing: 'Bildirilecek bir şey yok: son 7 günde yeni bir şey olmadı.',
     sendFailed: 'Gönderilemedi.',

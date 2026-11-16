@@ -235,7 +235,7 @@ const login: Translation<typeof de> = {
     failed: 'Şu anda olmadı. Lütfen tekrar dene.',
     settings: 'E-posta ayarları',
     /** {type} in the texts above */
-    types: { available: 'kullanılabilir hale gelen istekler', recording: 'kayıtların', licence: 'süresi dolmak üzere olan indirmeler' },
+    types: { available: 'kullanılabilir hale gelen istekler', recording: 'kayıtların', licence: 'süresi dolmak üzere olan indirmeler', digest: 'haftalık özetlerin', update: 'yeni sürümlerin', updatefailed: 'başarısız güncellemelerin', syscheck: 'sistem kontrolü sorunlarının', storage: 'az kalan depolama alanının' },
   },
   pending: {
     title: 'Neredeyse tamam',

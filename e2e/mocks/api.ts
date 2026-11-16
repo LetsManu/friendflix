@@ -7,6 +7,10 @@ import { adminRoute, adminState, type AdminState } from './admin.js';
 import { mailRoute, settingsRoute, settingsState, type SettingsMock } from './settings.js';
 import { setupRoute, type SetupMock } from './setup.js';
 import { startRedeploy, updaterRoute, updaterState, type UpdaterMock } from './updater.js';
+
+const PERSON_MAIL_TYPES = ['available', 'recording', 'licence', 'digest'] as const;
+const ADMIN_MAIL_TYPES = ['update', 'updatefailed', 'syscheck', 'storage'] as const;
+type MailType = (typeof PERSON_MAIL_TYPES)[number] | (typeof ADMIN_MAIL_TYPES)[number];
 import { syscheckDrip, syscheckRoute, syscheckSocket, syscheckState, syscheckUpload, type SyscheckMock } from './syscheck.js';
 import { livetvMedia, livetvRoute, livetvState, type LivetvMock } from './livetv.js';
 import { brandAdminRoute, brandAdminState, type BrandAdminMock } from './brand.js';
@@ -133,7 +137,7 @@ export interface MockState {
   usernamePuts: string[];
   usernameError: string | null;
   /** E-mail stage B: GET /api/account/mail answers this; PUT changes `prefs` (`failPut` answers 500); the PUT bodies land in `log` */
-  accountMail: { configured: boolean; hasAddress: boolean; prefs: Record<'available' | 'recording' | 'licence', boolean>; failPut: boolean };
+  accountMail: { configured: boolean; hasAddress: boolean; admin: boolean; prefs: Record<MailType, boolean>; failPut: boolean };
   /** POST /api/public/mail/unsubscribe (the public page): the JSON bodies sent, and the status to answer (400 = invalid_token) */
   unsubscribe: { posts: Array<Record<string, unknown>>; status: number };
 }
@@ -213,7 +217,7 @@ export function freshState(): MockState {
     securityDeleted: [],
     usernamePuts: [],
     usernameError: null,
-    accountMail: { configured: true, hasAddress: true, prefs: { available: true, recording: true, licence: true }, failPut: false },
+    accountMail: { configured: true, hasAddress: true, admin: false, prefs: { available: true, recording: true, licence: true, digest: false, update: true, updatefailed: true, syscheck: true, storage: true }, failPut: false },
     unsubscribe: { posts: [], status: 200 },
   };
 }
@@ -317,10 +321,15 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       return J(st.account);
     }
     // E-mail stage B: the account's mail switches, and the public unsubscribe page's POST (no session; the token in the JSON body)
-    if (p === '/api/account/mail' && m === 'GET') return J(st.accountMail);
+    // like the backend: the admin switches only for an admin, and a non-admin's PUT of one is 403 admin_only
+    if (p === '/api/account/mail' && m === 'GET') {
+      const { failPut: _f, prefs, ...rest } = st.accountMail;
+      return J({ ...rest, prefs: Object.fromEntries(Object.entries(prefs).filter(([k]) => rest.admin || (PERSON_MAIL_TYPES as readonly string[]).includes(k))) });
+    }
     if (p === '/api/account/mail' && m === 'PUT') {
       if (st.accountMail.failPut) return J({ error: 'internal' }, 500);
-      const b = body() as { type: 'available' | 'recording' | 'licence'; on: boolean };
+      const b = body() as { type: MailType; on: boolean };
+      if (!st.accountMail.admin && (ADMIN_MAIL_TYPES as readonly string[]).includes(b.type)) return J({ error: 'admin_only' }, 403);
       st.accountMail = { ...st.accountMail, prefs: { ...st.accountMail.prefs, [b.type]: b.on } };
       return J({ prefs: st.accountMail.prefs });
     }

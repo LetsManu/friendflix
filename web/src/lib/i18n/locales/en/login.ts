@@ -235,7 +235,7 @@ const login: Translation<typeof de> = {
     failed: 'That did not work just now. Please try again.',
     settings: 'Email settings',
     /** {type} in the texts above */
-    types: { available: 'available requests', recording: 'recordings', licence: 'expiring downloads' },
+    types: { available: 'available requests', recording: 'recordings', licence: 'expiring downloads', digest: 'your weekly recap', update: 'new versions', updatefailed: 'failed updates', syscheck: 'system check problems', storage: 'low storage space' },
   },
   pending: {
     title: 'Almost there',

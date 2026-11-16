@@ -104,6 +104,7 @@ export default {
     loadFailed: 'Laden fehlgeschlagen.',
     saved: 'Gespeichert.',
     sent: 'Test gesendet. Siehe Benachrichtigungen und /digest.',
+    sentMailed: 'Test gesendet. Eine E-Mail steht in der Warteschlange.',
     duplicate: 'Nicht gesendet (doppelt).',
     nothing: 'Nichts zu berichten: In den letzten 7 Tagen ist nichts Neues passiert.',
     sendFailed: 'Senden fehlgeschlagen.',

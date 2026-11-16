@@ -183,15 +183,59 @@ test.describe('mail card', () => {
     await expect(mail.getByText('Wenn eine Aufnahme fertig ist, fehlschlägt oder gelöscht wird.')).toBeVisible();
     await expect(mail.getByText('Kurz bevor Downloads auf deinen Geräten ablaufen.')).toBeVisible();
     await expect(mail.getByText('Dein Server verschickt noch keine E-Mails.')).toHaveCount(0);
+    await expect(mail.getByRole('switch')).toHaveCount(4); // no admin switches for a non-admin
     await sw('Aufnahmen').click();
     await expect(sw('Aufnahmen')).toHaveAttribute('aria-checked', 'false');
     await expect.poll(() => api.log).toContain('PUT /api/account/mail {"type":"recording","on":false} -> 200');
-    expect(api.accountMail.prefs).toEqual({ available: true, recording: false, licence: true });
+    expect(api.accountMail.prefs).toMatchObject({ available: true, recording: false, licence: true, digest: false });
     await expect(sw('Verfügbare Wünsche')).toHaveAttribute('aria-checked', 'true');
     // the card sits between the sessions and "Deine Daten", and the settings link of the mails finds it
     await expect(page.locator('section#mail')).toBeAttached();
     // the address is changed under "Sicherheit", as on the profile card
     await expect(mail.getByRole('link', { name: 'Zur E-Mail-Adresse' })).toHaveAttribute('href', '#sec-email');
+  });
+
+  test('mail card shows the recap switch off by default', async ({ page, api }) => {
+    api.account = { ...api.account, email: 'anna@friend.example.com' };
+    await page.goto('/me/account');
+    const mail = card(page);
+    const recap = mail.getByRole('switch', { name: 'Wochenrückblick' });
+    await expect(recap).toHaveAttribute('aria-checked', 'false');
+    await expect(recap).toBeEnabled();
+    await expect(mail.getByText('Jede Woche eine E-Mail mit neuen Filmen und Folgen, deinen Wünschen und Empfehlungen.')).toBeVisible();
+    await recap.click();
+    await expect(recap).toHaveAttribute('aria-checked', 'true');
+    await expect.poll(() => api.log).toContain('PUT /api/account/mail {"type":"digest","on":true} -> 200');
+  });
+
+  test('an admin sees the admin switches and saves one', async ({ page, api }) => {
+    api.account = { ...api.account, email: 'anna@friend.example.com' };
+    api.accountMail = { ...api.accountMail, admin: true };
+    await page.goto('/me/account');
+    const mail = card(page);
+    await expect(mail.getByRole('heading', { level: 3, name: 'Für Admins' })).toBeVisible();
+    await expect(mail.getByRole('switch')).toHaveCount(8);
+    for (const name of ['Neue Versionen', 'Fehlgeschlagene Updates', 'Probleme im Systemcheck', 'Speicherplatz']) {
+      await expect(mail.getByRole('switch', { name })).toHaveAttribute('aria-checked', 'true');
+      await expect(mail.getByRole('switch', { name })).toBeEnabled();
+    }
+    await expect(mail.getByText('Wenn eine neue Version bereitsteht, einmal pro Version.')).toBeVisible();
+    await expect(mail.getByText('Wenn ein Update nicht geklappt hat.')).toBeVisible();
+    await expect(mail.getByText('Wenn eine Zeile im Systemcheck zum Problem wird, höchstens einmal am Tag.')).toBeVisible();
+    await expect(mail.getByText('Wenn der Speicher für Downloads, Vorschauen oder Aufnahmen fast voll ist, einmal am Tag.')).toBeVisible();
+    await mail.getByRole('switch', { name: 'Probleme im Systemcheck' }).click();
+    await expect(mail.getByRole('switch', { name: 'Probleme im Systemcheck' })).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(() => api.log).toContain('PUT /api/account/mail {"type":"syscheck","on":false} -> 200');
+  });
+
+  test('a non-admin sees no admin switches', async ({ page, api }) => {
+    api.account = { ...api.account, email: 'anna@friend.example.com' };
+    await page.goto('/me/account');
+    const mail = card(page);
+    await expect(mail.getByRole('switch', { name: 'Aufnahmen' })).toBeVisible();
+    await expect(mail.getByRole('heading', { name: 'Für Admins' })).toHaveCount(0);
+    await expect(mail.getByRole('switch')).toHaveCount(4);
+    await expect(mail.getByRole('switch', { name: 'Neue Versionen' })).toHaveCount(0);
   });
 
   test('/me/account#mail scrolls to the E-Mails card once it is there', async ({ page }) => {
@@ -276,7 +320,7 @@ test.describe('mail card', () => {
     const mail = card(page);
     await expect(mail.getByText('Keine E-Mail-Adresse hinterlegt')).toBeVisible();
     await expect(mail.getByRole('link', { name: 'Zur E-Mail-Adresse' })).toHaveAttribute('href', '#sec-email');
-    for (const name of ['Verfügbare Wünsche', 'Aufnahmen', 'Ablaufende Downloads']) await expect(mail.getByRole('switch', { name })).toBeDisabled();
+    for (const name of ['Verfügbare Wünsche', 'Aufnahmen', 'Ablaufende Downloads', 'Wochenrückblick']) await expect(mail.getByRole('switch', { name })).toBeDisabled();
   });
 
   test('mail card when mail is not set up shows the note', async ({ page, api }) => {
@@ -285,7 +329,7 @@ test.describe('mail card', () => {
     await page.goto('/me/account');
     const mail = card(page);
     await expect(mail.getByText('Dein Server verschickt noch keine E-Mails.')).toBeVisible();
-    for (const name of ['Verfügbare Wünsche', 'Aufnahmen', 'Ablaufende Downloads']) await expect(mail.getByRole('switch', { name })).toBeDisabled();
+    for (const name of ['Verfügbare Wünsche', 'Aufnahmen', 'Ablaufende Downloads', 'Wochenrückblick']) await expect(mail.getByRole('switch', { name })).toBeDisabled();
     expect(api.log.filter((l) => l.startsWith('PUT /api/account/mail'))).toEqual([]);
   });
 });

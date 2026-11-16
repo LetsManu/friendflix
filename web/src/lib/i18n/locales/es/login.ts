@@ -235,7 +235,7 @@ const login: Translation<typeof de> = {
     failed: 'Ahora mismo no ha funcionado. Inténtalo de nuevo.',
     settings: 'Ajustes de correo',
     /** {type} in the texts above */
-    types: { available: 'peticiones disponibles', recording: 'grabaciones', licence: 'descargas que caducan' },
+    types: { available: 'peticiones disponibles', recording: 'grabaciones', licence: 'descargas que caducan', digest: 'tu resumen semanal', update: 'las versiones nuevas', updatefailed: 'las actualizaciones fallidas', syscheck: 'los problemas de la comprobación del sistema', storage: 'el poco espacio de almacenamiento' },
   },
   pending: {
     title: 'Casi listo',

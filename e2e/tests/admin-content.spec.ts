@@ -370,6 +370,7 @@ test.describe('admin content pages (desktop)', () => {
       expect(api.log.some((l) => l.startsWith('PUT /api/admin/digest') && l.includes('"hour":20'))).toBe(true);
       await page.getByRole('button', { name: 'Test an mich senden' }).click();
       await expect(toasts(page).getByText('Test gesendet.', { exact: false })).toBeVisible();
+      await expect(toasts(page).getByText('Eine E-Mail steht in der Warteschlange.', { exact: false })).toBeVisible(); // the answer's mailed: true
     });
   });
 

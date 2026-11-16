@@ -2066,7 +2066,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     if (m === 'PUT') return J({ enabled: body.enabled, day: body.day, hour: body.hour, source: 'admin', lastRun: null });
     return J({ enabled: true, day: 5, hour: 18, source: 'admin', lastRun: { week: '2026-W40', sentAt: ago(100), count: 9 } });
   }
-  if (p === '/api/admin/digest/test' && m === 'POST') return J({ sent: 1 });
+  if (p === '/api/admin/digest/test' && m === 'POST') return J({ sent: 1, mailed: true });
   if (p === '/api/admin/sources' && m === 'GET') return J({ sources: st.sources });
   if ((mm = p.match(/^\/api\/admin\/sources\/(tmdb|omdb)(\/test)?$/))) {
     const src = st.sources.find((x) => x.name === mm![1])!;

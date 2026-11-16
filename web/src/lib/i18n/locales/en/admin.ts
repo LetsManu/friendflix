@@ -105,6 +105,7 @@ const en: Translation<typeof de> = {
     loadFailed: 'Loading failed.',
     saved: 'Saved.',
     sent: 'Test sent. See notifications and /digest.',
+    sentMailed: 'Test sent. An e-mail is queued.',
     duplicate: 'Not sent (duplicate).',
     nothing: 'Nothing to report: nothing new happened in the last 7 days.',
     sendFailed: 'Sending failed.',

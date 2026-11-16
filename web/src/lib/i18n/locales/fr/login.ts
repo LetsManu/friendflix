@@ -235,7 +235,7 @@ const login: Translation<typeof de> = {
     failed: 'Cela n’a pas fonctionné. Veuillez réessayer.',
     settings: 'Paramètres des e-mails',
     /** {type} in the texts above */
-    types: { available: 'les demandes disponibles', recording: 'vos enregistrements', licence: 'les téléchargements qui expirent' },
+    types: { available: 'les demandes disponibles', recording: 'vos enregistrements', licence: 'les téléchargements qui expirent', digest: 'votre récap hebdomadaire', update: 'les nouvelles versions', updatefailed: 'les mises à jour échouées', syscheck: 'les problèmes du contrôle système', storage: 'le manque d’espace de stockage' },
   },
   pending: {
     title: 'Presque fini',

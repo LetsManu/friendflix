@@ -234,7 +234,7 @@ const login = {
     failed: 'Das hat gerade nicht geklappt. Versuch es noch einmal.',
     settings: 'E-Mail-Einstellungen',
     /** {type} in the texts above */
-    types: { available: 'verfügbaren Wünschen', recording: 'Aufnahmen', licence: 'ablaufenden Downloads' },
+    types: { available: 'verfügbaren Wünschen', recording: 'Aufnahmen', licence: 'ablaufenden Downloads', digest: 'deinem Wochenrückblick', update: 'neuen Versionen', updatefailed: 'fehlgeschlagenen Updates', syscheck: 'Problemen im Systemcheck', storage: 'knappem Speicherplatz' },
   },
   /** /pending (screen 5 of the mockup) */
   pending: {

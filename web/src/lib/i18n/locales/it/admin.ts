@@ -105,6 +105,7 @@ const it: Translation<typeof de> = {
     loadFailed: 'Caricamento non riuscito.',
     saved: 'Salvato.',
     sent: 'Test inviato. Vedi le notifiche e /digest.',
+    sentMailed: 'Test inviato. Un’e-mail è in coda.',
     duplicate: 'Non inviato (duplicato).',
     nothing: 'Niente da segnalare: negli ultimi 7 giorni non è successo nulla di nuovo.',
     sendFailed: 'Invio non riuscito.',
