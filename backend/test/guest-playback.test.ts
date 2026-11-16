@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { forgetAuth } from '../src/routes/internal.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
+import { sessionHash } from '../src/session.js';
 
 const ID = 'a'.repeat(32);
 type Sess = { cookies: Record<string, string>; csrf: string };
@@ -119,12 +120,12 @@ describe('guest playback', () => {
   it('authz reports canDownload so the gateway can refuse direct streams', async () => {
     const authz = async (s: Sess) => (await env.app.inject({ method: 'POST', url: '/internal/authz', headers: { 'x-internal-secret': cfg.INTERNAL_SECRET }, payload: { sid: s.cookies.ff_sid } })).json();
     expect(await authz(admin)).toMatchObject({ canDownload: true });
-    forgetAuth(guest.cookies.ff_sid!);
+    forgetAuth(sessionHash(guest.cookies.ff_sid!));
     expect(await authz(guest)).toMatchObject({ canDownload: true }); // guests may not download, but by default that alone keeps direct play (a height cap blocks it)
     const prev = env.ctx.cfg;
     env.ctx.cfg = { ...prev, DIRECT_PLAY_REQUIRES_DOWNLOAD: 'true' };
     try {
-      forgetAuth(guest.cookies.ff_sid!); // drop the 5 s authz memo
+      forgetAuth(sessionHash(guest.cookies.ff_sid!)); // drop the 5 s authz memo
       expect(await authz(guest)).toMatchObject({ canDownload: false });
     } finally {
       env.ctx.cfg = prev;

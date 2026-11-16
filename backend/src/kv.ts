@@ -33,8 +33,20 @@ export interface KV {
   indexRemove(key: string, member: string): Promise<void>;
   /** The members that have not expired (expired ones are dropped on the way). */
   indexMembers(key: string): Promise<string[]>;
+  /**
+   * Atomically moves `from` to `to` with its remaining ttl (a legacy session key to its hashed name). When `to` already exists it
+   * is kept and `from` is deleted. True if `from` was moved.
+   */
+  move(from: string, to: string): Promise<boolean>;
   ping(): Promise<boolean>;
+  /**
+   * The store's append-only file (Redis INFO persistence, never CONFIG): ok (`aof_enabled:1`, last write ok), off (`aof_enabled:0`:
+   * memory only), write_error (on, but `aof_last_write_status:err`: disk full, volume not writable); null = not known.
+   */
+  aofStatus(): Promise<AofStatus | null>;
 }
+
+export type AofStatus = 'ok' | 'off' | 'write_error';
 
 export class RedisKV implements KV {
   constructor(private readonly redis: Redis) {}
@@ -100,8 +112,21 @@ export class RedisKV implements KV {
     const lua = "redis.call('zremrangebyscore', KEYS[1], '-inf', ARGV[1]) return redis.call('zrange', KEYS[1], 0, -1)";
     return (await this.redis.eval(lua, 1, key, String(Date.now()))) as string[];
   }
+  async move(from: string, to: string) {
+    // RENAMENX keeps the ttl; a hashed key written meanwhile wins and the old one goes
+    const lua = "if redis.call('exists', KEYS[1]) == 0 then return 0 end if redis.call('renamenx', KEYS[1], KEYS[2]) == 1 then return 1 end redis.call('del', KEYS[1]) return 0";
+    return (await this.redis.eval(lua, 2, from, to)) === 1;
+  }
   async ping() {
     return (await this.redis.ping()) === 'PONG';
+  }
+  async aofStatus(): Promise<AofStatus | null> {
+    // INFO only (never CONFIG): `aof_enabled` and `aof_last_write_status` of the persistence section
+    const info = await this.redis.info('persistence');
+    const on = /^aof_enabled:(\d)/m.exec(info);
+    if (!on) return null;
+    if (on[1] !== '1') return 'off';
+    return /^aof_last_write_status:err/m.test(info) ? 'write_error' : 'ok';
   }
 }
 
@@ -197,7 +222,20 @@ export class MemoryKV implements KV {
     const now = Date.now();
     return Object.entries(this.index(key)).filter(([, e]) => e > now).map(([m]) => m);
   }
+  async move(from: string, to: string) {
+    const e = this.live(from) === null ? undefined : this.m.get(from);
+    if (!e) return false;
+    this.m.delete(from);
+    if (this.live(to) !== null) return false;
+    this.m.set(to, e);
+    return true;
+  }
+  /** what aofStatus() answers (tests set it; an in-memory store has no file) */
+  aof: AofStatus | null = null;
   async ping() {
     return true;
+  }
+  async aofStatus() {
+    return this.aof;
   }
 }

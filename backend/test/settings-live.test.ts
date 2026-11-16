@@ -8,6 +8,7 @@ import { createLazyOidc, type OidcProvider } from '../src/oidc.js';
 import { previews, previewWarmTick } from '../src/previews.js';
 import { SeerrClient } from '../src/seerr/client.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 describe('live settings in the context', () => {
   let env: TestEnv;
@@ -80,7 +81,7 @@ describe('live settings in the context', () => {
 
   it('a TMDB key saved in the database reports from: db, and the admin route publishes a revision', async () => {
     const admin = await env.login();
-    const sk = `sess:${admin.cookies.ff_sid}`; // replacing a source key needs a recent re-authentication
+    const sk = sessionKey(admin.cookies.ff_sid!); // replacing a source key needs a recent re-authentication
     await env.kv.set(sk, JSON.stringify({ ...JSON.parse((await env.kv.get(sk))!), reauthAt: Date.now() }), 600);
     await env.ctx.settings.save({ TMDB_API_KEY: 'saved-in-db-1234' }, null);
     const st = await env.app.inject({ url: '/api/admin/sources/tmdb', cookies: admin.cookies });

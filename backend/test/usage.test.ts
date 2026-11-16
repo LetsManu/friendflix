@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
 import { setLive } from '../src/live.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 // Block 22 Task 7: aggregated per-account usage (no titles).
 type Sess = { cookies: Record<string, string>; csrf: string };
@@ -142,8 +143,8 @@ describe('usage API', () => {
     const s = await env.login(ADMIN);
     const pid = randomUUID();
     await env.pool.query('insert into profiles(id, user_id, name, is_owner, kids, jellyfin_user_id) values ($1, $2, $3, false, false, $4)', [pid, adminId, 'Gast', 'f'.repeat(32)]);
-    const raw = JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!);
-    await env.kv.set(`sess:${s.cookies.ff_sid}`, JSON.stringify({ ...raw, profileId: pid }), 600);
+    const raw = JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!);
+    await env.kv.set(sessionKey(s.cookies.ff_sid!), JSON.stringify({ ...raw, profileId: pid }), 600);
     for (const u of ['/api/admin/usage?days=30', `/api/admin/usage/${fritzId}?days=30`]) {
       expect((await as(fritz, 'GET', u)).statusCode, `friend ${u}`).toBe(403);
       expect((await as(s, 'GET', u)).statusCode, `non-owner ${u}`).toBe(403);

@@ -80,14 +80,18 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    # requirepass comes from the bootstrap volume; runs as the image's redis user plus the secrets group (reads redis.conf)
-    command: ["redis-server", "/run/friendflix/redis.conf", "--save", "", "--appendonly", "no"]
+    # requirepass comes from the bootstrap volume; runs as the image's redis user plus the secrets group (reads redis.conf).
+    # Persistent: sign-ins (sess:*), TV pairings and the update record survive a restart of redis and a reboot of the host.
+    # Append-only file in the redis-data volume, written once a second (at most the last second is lost); no RDB snapshots on
+    # top (--save ""): the AOF alone restores everything, and a NAS disk is not written twice. Every key carries its own expiry.
+    command: ["redis-server", "/run/friendflix/redis.conf", "--save", "", "--appendonly", "yes", "--appendfsync", "everysec", "--dir", "/data"]
     user: "999:999"
     group_add: ["10001"]
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    volumes: [bootstrap:/run/friendflix:ro]
+    # redis-data: a new named volume takes over the image's /data (owned by uid 999), so the read-only container can write it
+    volumes: [bootstrap:/run/friendflix:ro, redis-data:/data]
     depends_on:
       bootstrap: { condition: service_completed_successfully }
     networks: [db]
@@ -427,6 +431,7 @@ volumes:
   bootstrap-gateway:
   bootstrap-livetv: # livetv_key only (written by the bootstrap service on every start; no backup needed)
   pgdata:
+  redis-data: # Redis' append-only file: sessions and short-lived state (no backup needed; without it everyone signs in again)
   previews:
   downloads:
   livetv-cache: # DVR segments and previews of the livetv service (disposable)

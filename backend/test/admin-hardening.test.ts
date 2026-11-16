@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 // Admin people/devices hardening: unapprove really takes access away, an admin cannot revoke the device they sit at,
 // preview clip actions are audited, and the admin endpoints refuse non-admins, non-owner/kids profiles and requests without CSRF.
@@ -15,7 +16,7 @@ const DORA = { sub: 'sub-dora', email: 'dora@example.com', name: 'Dora', groups:
 
 const as = (s: Sess, method: string, url: string, payload?: unknown, csrf = true) =>
   env.app.inject({ method: method as 'GET', url, cookies: s.cookies, headers: csrf ? { 'x-csrf-token': s.csrf } : {}, payload: payload as object });
-const sessionOf = async (s: Sess) => JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!) as { userId: string; deviceId: string; profileId?: string };
+const sessionOf = async (s: Sess) => JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!) as { userId: string; deviceId: string; profileId?: string };
 
 beforeAll(async () => {
   env = await makeEnv();
@@ -41,10 +42,10 @@ describe('device unapprove / remove', () => {
     // the waiting screen only polls /api/me: it sees the admin approval without another request first
     expect((await as(dora, 'GET', '/api/me')).json().deviceApproved).toBe(true);
     expect((await as(dora, 'GET', '/api/prefs')).statusCode).toBe(200);
-    expect(JSON.parse((await env.kv.get(`sess:${dora.cookies.ff_sid}`))!).deviceApproved).toBe(true);
+    expect(JSON.parse((await env.kv.get(sessionKey(dora.cookies.ff_sid!)))!).deviceApproved).toBe(true);
     // Undo of the approval
     expect((await as(admin, 'POST', '/api/admin/devices/unapprove', { userId, deviceId })).statusCode).toBe(200);
-    expect(await env.kv.get(`sess:${dora.cookies.ff_sid}`)).toBeNull();
+    expect(await env.kv.get(sessionKey(dora.cookies.ff_sid!))).toBeNull();
     expect((await as(dora, 'GET', '/api/prefs')).statusCode).toBe(401);
     // logging in again on that device: waiting for approval, not let in
     dora = await env.login(DORA);
@@ -96,8 +97,8 @@ describe('admin endpoints: who may call them', () => {
       const s = await env.login(ADMIN);
       const pid = randomUUID();
       await env.pool.query('insert into profiles(id, user_id, name, is_owner, kids, jellyfin_user_id) values ($1, $2, $3, false, $4, $5)', [pid, adminId, kids ? 'Kind' : 'Gast', kids, 'f'.repeat(32)]);
-      const raw = JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!);
-      await env.kv.set(`sess:${s.cookies.ff_sid}`, JSON.stringify({ ...raw, profileId: pid }), 600);
+      const raw = JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!);
+      await env.kv.set(sessionKey(s.cookies.ff_sid!), JSON.stringify({ ...raw, profileId: pid }), 600);
       try {
         for (const url of GETS) expect((await as(s, 'GET', url)).statusCode, url).toBe(403);
         expect((await as(s, 'POST', '/api/admin/devices/unapprove', body)).statusCode).toBe(403);

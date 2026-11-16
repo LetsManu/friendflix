@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { publicOrigin } from '../config.js';
 import type { Ctx } from '../ctx.js';
-import { authenticate, requireAdmin } from '../session.js';
+import { authenticate, requireAdmin, sessionHash } from '../session.js';
 import { requestLines } from '../syscheck/checks/proxy.js';
 import { bounded } from '../health.js';
 import { cleanLine, countLines, getSystemcheck, sortLines } from '../syscheck/engine.js';
@@ -24,7 +24,7 @@ export function systemcheckRoutes(app: FastifyInstance, ctx: Ctx) {
     const refresh = q.refresh === '1' || q.refresh === 'true';
     // without kv (Redis down or hanging) the limit cannot be counted: the run itself is still single flight
     if (refresh) {
-      const n = await bounded(() => ctx.kv.incr(`syscheck:refresh:${req.sid}`, 60), KV_MS);
+      const n = await bounded(() => ctx.kv.incr(`syscheck:refresh:${sessionHash(req.sid!)}`, 60), KV_MS);
       if (n.ok && n.v > REFRESH_PER_MIN) return reply.code(429).send({ error: 'rate_limited' });
     }
     const r = await getSystemcheck(ctx, { refresh });

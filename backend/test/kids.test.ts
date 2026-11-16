@@ -7,6 +7,7 @@ import { MIGRATIONS } from '../src/db.js';
 import { kidsPolicy } from '../src/profiles.js';
 import { reapplyRole } from '../src/users.js';
 import { TEST_DB, makeEnv, type Handler, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 let env: TestEnv;
@@ -321,16 +322,16 @@ describe('kids profiles', () => {
     expect(claim.statusCode).toBe(200);
     const tv: Sess = { cookies: { ff_sid: claim.cookies.find((x) => x.name === 'ff_sid')!.value }, csrf: '' };
     const sid = tv.cookies.ff_sid!;
-    tv.csrf = JSON.parse((await env.kv.get(`sess:${sid}`))!).csrf;
+    tv.csrf = JSON.parse((await env.kv.get(sessionKey(sid)))!).csrf;
     expect((await call(tv, 'GET', '/api/me')).json()).toMatchObject({ kids: true, tv: true, profile: { id: kid.id } });
     expect((await env.pool.query("select kids_profile_id from devices where device_id like 'tv-%'")).rows).toEqual([{ kids_profile_id: kid.id }]);
     // social stays closed on the TV, leaving the kids profile needs the owner PIN
     expect((await call(tv, 'GET', '/api/lists')).json().error).toBe('kids_profile');
     expect((await select(tv, ownerId)).json().error).toBe('pin_required');
     // a session without a chosen profile (e.g. a dropped profileId) still resolves to the kids profile via the device lock
-    const raw = JSON.parse((await env.kv.get(`sess:${sid}`))!);
+    const raw = JSON.parse((await env.kv.get(sessionKey(sid)))!);
     delete raw.profileId;
-    await env.kv.set(`sess:${sid}`, JSON.stringify(raw), 3600);
+    await env.kv.set(sessionKey(sid), JSON.stringify(raw), 3600);
     expect((await call(tv, 'GET', '/api/me')).json()).toMatchObject({ kids: true, profile: { id: kid.id } });
 
     // pairing from a grown-up profile gives a normal TV

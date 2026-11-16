@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey as hashedSessionKey } from '../src/session.js';
 
 const A = 'a'.repeat(32);
 let env: TestEnv;
@@ -18,7 +19,7 @@ beforeAll(async () => {
 afterAll(() => env.close());
 const call = (method: string, url: string, cookies = admin.cookies, csrf = admin.csrf, body?: unknown) =>
   env.app.inject({ method: method as 'GET', url, cookies, headers: { 'x-csrf-token': csrf }, payload: body as object });
-const sessionKey = async (sid: string) => `sess:${sid}`;
+const sessionKey = async (sid: string) => hashedSessionKey(sid);
 
 describe('session lifetime', () => {
   it('slides the idle timeout (touch at most once a minute)', async () => {

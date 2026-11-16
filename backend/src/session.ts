@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomBytes } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { sha256 } from './crypto.js';
 import type { Ctx } from './ctx.js';
+import type { KV } from './kv.js';
 import { getUserById } from './users.js';
 import { jfUserFor, resolveProfile } from './profiles.js';
 import type { JfUser, ProfileRow, UserRow } from './types.js';
@@ -28,6 +30,57 @@ export interface Session {
 export const COOKIE = 'ff_sid';
 export const rand = () => randomBytes(32).toString('base64url');
 
+/**
+ * Sessions at rest: Redis writes its append-only file to disk (redis-data volume), so a session is stored under the SHA-256 of its
+ * id (`sess:<64 hex>`), never under the cookie value: a copied volume holds no usable session id. The cookie is unchanged. Keys of
+ * older builds (`sess:<raw id>`) are moved to the hashed name on their first use (loadSession) and removed by every revoke.
+ */
+export const SESSION_PREFIX = 'sess:';
+const HASH_RE = /^[0-9a-f]{64}$/;
+/** the id a session is known by at rest and in memory (gateway memo, socket sets): sha256 hex of the cookie value */
+export const sessionHash = (sid: string) => sha256(sid);
+export const sessionKey = (sid: string) => `${SESSION_PREFIX}${sessionHash(sid)}`;
+/** a key listed by keys('sess:') -> its session hash (a legacy key still carries the raw id: hashed here) */
+export function hashOfSessionKey(key: string): string {
+  const rest = key.slice(SESSION_PREFIX.length);
+  return HASH_RE.test(rest) ? rest : sha256(rest);
+}
+/**
+ * the key an older build stored the session under; none for a cookie that looks like a hash (it would name a hashed key).
+ * TODO(2027-03): remove the legacy fallback (this, the move in loadSession and the legacy branch of scanSessions) once 90 days (the
+ * longest session lifetime, SESSION_TTL_SECONDS / a TV's) have passed since the first release with hashed session keys: by then no
+ * legacy key can still be alive, and an unknown cookie no longer costs a second read.
+ */
+const legacyKey = (sid: string) => (HASH_RE.test(sid) ? null : `${SESSION_PREFIX}${sid}`);
+/** one stored session found by a scan: `key` it was read under, `listed` the key the scan named (a legacy one may have moved since) */
+export interface ScannedSession { key: string; listed: string; hash: string; s: Session }
+/**
+ * Every stored session, once each. A legacy key whose session was moved to its hashed name between the listing and the read (its first
+ * use raced the scan) is read under the hashed name, so a revoke never misses it; a session listed under both names is yielded once.
+ */
+export async function* scanSessions(kv: Pick<KV, 'keys' | 'get'>): AsyncGenerator<ScannedSession> {
+  const seen = new Set<string>();
+  for (const listed of await kv.keys(SESSION_PREFIX)) {
+    const hash = hashOfSessionKey(listed);
+    if (seen.has(hash)) continue;
+    const hashed = `${SESSION_PREFIX}${hash}`;
+    let key = listed;
+    let raw = await kv.get(listed);
+    if (!raw && listed !== hashed) { key = hashed; raw = await kv.get(hashed); }
+    if (!raw) continue;
+    seen.add(hash);
+    yield { key, listed, hash, s: JSON.parse(raw) as Session };
+  }
+}
+/** the kv ttl of a session (idle, capped by the absolute lifetime) */
+export const sessionTtl = (ctx: Pick<Ctx, 'cfg'>, s: Session) => Math.min(s.idle ?? ctx.cfg.SESSION_IDLE_SECONDS, s.ttl ?? ctx.cfg.SESSION_TTL_SECONDS);
+/** Ends a session: its hashed key and a legacy raw one. */
+export async function deleteSession(ctx: Pick<Ctx, 'kv'>, sid: string): Promise<void> {
+  await ctx.kv.del(sessionKey(sid));
+  const legacy = legacyKey(sid);
+  if (legacy) await ctx.kv.del(legacy);
+}
+
 declare module 'fastify' {
   interface FastifyRequest {
     user?: UserRow;
@@ -42,9 +95,9 @@ declare module 'fastify' {
 
 /** Stores a session with the idle ttl (it is refreshed on use, see `touch`). */
 export async function saveSession(ctx: Ctx, sid: string, s: Session, onlyIfExists = false): Promise<boolean> {
-  const ttl = Math.min(s.idle ?? ctx.cfg.SESSION_IDLE_SECONDS, s.ttl ?? ctx.cfg.SESSION_TTL_SECONDS);
-  if (onlyIfExists) return ctx.kv.replace(`sess:${sid}`, JSON.stringify(s), ttl); // never resurrects a session revoked meanwhile
-  await ctx.kv.set(`sess:${sid}`, JSON.stringify(s), ttl);
+  const ttl = sessionTtl(ctx, s);
+  if (onlyIfExists) return ctx.kv.replace(sessionKey(sid), JSON.stringify(s), ttl); // never resurrects a session revoked meanwhile
+  await ctx.kv.set(sessionKey(sid), JSON.stringify(s), ttl);
   return true;
 }
 
@@ -55,12 +108,19 @@ export function newSession(s: Omit<Session, 'createdAt' | 'touchedAt'>): Session
 
 export async function loadSession(ctx: Ctx, sid: string | undefined): Promise<Session | null> {
   if (!sid) return null;
-  const raw = await ctx.kv.get(`sess:${sid}`);
+  const key = sessionKey(sid);
+  let raw = await ctx.kv.get(key);
+  const legacy = raw ? null : legacyKey(sid);
+  if (legacy) {
+    // a session from before the hashed keys: moved once with its remaining ttl (atomic; a concurrent request reads the moved one)
+    await ctx.kv.move(legacy, key);
+    raw = await ctx.kv.get(key);
+  }
   if (!raw) return null;
   const s = JSON.parse(raw) as Session;
   // absolute lifetime, independent of activity
   if (s.createdAt && Date.now() - s.createdAt > (s.ttl ?? ctx.cfg.SESSION_TTL_SECONDS) * 1000) {
-    await ctx.kv.del(`sess:${sid}`);
+    await deleteSession(ctx, sid);
     return null;
   }
   return s;

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanDeviceName } from '../src/deviceName.js';
 import { makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 let env: TestEnv;
@@ -15,7 +16,7 @@ const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/device-names
 const call = (s: Sess, method: string, url: string, body?: unknown) =>
   env.app.inject({ method: method as 'GET', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: body as object });
 const rename = (s: Sess, id: string, name: unknown) => call(s, 'PATCH', `/api/devices/${id}`, { name });
-const sessOf = async (s: Sess) => JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!) as { userId: string; deviceId: string };
+const sessOf = async (s: Sess) => JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!) as { userId: string; deviceId: string };
 
 describe('cleanDeviceName (shared vectors)', () => {
   it('matches every vector', () => {

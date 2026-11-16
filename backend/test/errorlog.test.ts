@@ -6,6 +6,7 @@ import { encrypt } from '../src/crypto.js';
 import { migrate } from '../src/db.js';
 import { cleanRelease, errorLogSizesForTests, jobFailed, listErrors, recentCount, recordError, resetErrorLogForTests } from '../src/errorlog.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 // Block 22 Task 1: migration 35, the aggregated error log (server 5xx + job failures in Redis, client + playback reports in
 // process memory only) and GET /api/admin/errors.
@@ -259,8 +260,8 @@ describe('GET /api/admin/errors', () => {
     const s = await env.login(ADMIN);
     const pid = randomUUID();
     await env.pool.query('insert into profiles(id, user_id, name, is_owner, kids, jellyfin_user_id) values ($1, $2, $3, false, false, $4)', [pid, adminId, 'Gast', 'f'.repeat(32)]);
-    const raw = JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!);
-    await env.kv.set(`sess:${s.cookies.ff_sid}`, JSON.stringify({ ...raw, profileId: pid }), 600);
+    const raw = JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!);
+    await env.kv.set(sessionKey(s.cookies.ff_sid!), JSON.stringify({ ...raw, profileId: pid }), 600);
     expect((await as(s, 'GET', '/api/admin/errors')).statusCode).toBe(403);
     await env.pool.query('delete from profiles where id=$1', [pid]);
     expect((await env.app.inject({ url: '/api/admin/errors' })).statusCode).toBe(401);
