@@ -103,7 +103,7 @@
 </script>
 
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-<nav class="rail" class:open data-scope={open ? '' : undefined} data-nav-skip={open ? undefined : ''} bind:this={nav} aria-label={$t('tv.rail.label')}
+<nav class="rail" class:open class:long={rail.length > 7} data-scope={open ? '' : undefined} data-nav-skip={open ? undefined : ''} bind:this={nav} aria-label={$t('tv.rail.label')}
   on:keydown={onKeydown} on:focusin={onFocusin} on:focusout={onFocusout} on:click={onClick} on:pointermove={onPointerMove} on:pointerleave={onPointerLeave}>
   <!-- the brand at the top: its symbol in the icon column, the name fading in with the labels (decorative: nothing to focus) -->
   <div class="brand" aria-hidden="true"><span class="ic"><Logo size={36} label="" /></span><span class="lb bn">{$brand.name}</span></div>
@@ -143,8 +143,10 @@
   .brand { flex: none; margin-bottom: 10px; display: flex; align-items: center; height: 56px; width: 56px; overflow: hidden; pointer-events: none; }
   .rail.open .brand { width: 280px; }
   .bn { --i: 0; --ri: 8; font-weight: 800; color: #fff; max-width: 216px; overflow: hidden; text-overflow: ellipsis; }
-  /* short screens (960x540): no room for the brand above 7 items, the rail keeps its items where they are */
+  /* short screens (960x540): no room for the brand above 7 items, the rail keeps its items where they are; with 8 items (Live TV and
+     Aufnahmen) it needs about 790 px: below that the brand gives its room to the account and profile entries */
   @media (max-height: 620px) { .brand { display: none; } }
+  @media (max-height: 799px) { .rail.long .brand { display: none; } }
   .acct { margin-bottom: 10px; }
   .acct .lb { --i: 6; --ri: 1; }
   .who .lb { --i: 7; --ri: 0; }

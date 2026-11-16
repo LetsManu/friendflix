@@ -143,26 +143,31 @@ test.describe('the brand on every surface', () => {
     expect(b.y + b.h).toBeLessThanOrEqual(first.y);
   });
 
-  test('TV rail: the brand never overlaps an item (7 items with Live TV), everything stays in the viewport', async ({ page, api }) => {
+  test('TV rail: the brand never overlaps an item or squeezes the rail (8 items with Live TV and Aufnahmen)', async ({ page, api }) => {
     api.brand = brandAnswer();
     await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, tv: true, features: { requests: true, postplay: true, surround: false, livetv: true } } }));
     await page.routeWebSocket(/\/ws\/remote/, () => {});
-    for (const [w, h] of [[960, 540], [1280, 720]] as const) {
+    for (const [w, h] of [[960, 540], [1280, 720], [1920, 1080]] as const) {
       await page.setViewportSize({ width: w, height: h });
       await page.goto('/');
       await expect(page.locator('html.tv')).toHaveCount(1);
       const items = page.locator('nav.rail ul a');
-      await expect(items).toHaveCount(7);
+      await expect(items).toHaveCount(8);
       const first = await box(items.first());
       const brand = page.locator('nav.rail .brand');
-      if (await brand.isVisible()) {
+      // the brand shows only where the eight items, the account and the profile keep their full 56 px below it
+      if (h >= 800) {
+        await expect(brand).toBeVisible();
         const b = await box(brand);
         expect(b.y + b.h, `${w}x${h}`).toBeLessThanOrEqual(first.y);
-      } else expect(h).toBeLessThanOrEqual(620); // hidden only on short screens
-      for (const a of await items.all()) {
+      } else await expect(brand).toBeHidden();
+      // 960 x 540 cannot hold ten 56 px entries at all (main's rail, with or without a brand): the positions are checked from 720 up
+      if (h < 720) continue;
+      for (const a of [...await items.all(), page.locator('nav.rail a.acct'), page.locator('nav.rail a.who')]) {
         const r = await box(a);
         expect(r.y).toBeGreaterThanOrEqual(0);
         expect(r.y + r.h).toBeLessThanOrEqual(h);
+        if (h >= 800) expect(r.h, `${w}x${h}`).toBe(56);
       }
     }
   });
