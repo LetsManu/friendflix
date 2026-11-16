@@ -9,6 +9,7 @@ import { setupRoute, type SetupMock } from './setup.js';
 import { startRedeploy, updaterRoute, updaterState, type UpdaterMock } from './updater.js';
 import { syscheckDrip, syscheckRoute, syscheckSocket, syscheckState, syscheckUpload, type SyscheckMock } from './syscheck.js';
 import { livetvMedia, livetvRoute, livetvState, type LivetvMock } from './livetv.js';
+import { brandAdminRoute, brandAdminState, type BrandAdminMock } from './brand.js';
 
 /** Item whose reactions are locked (viewer has not seen it) / unlocked and contain an XSS probe. */
 export const LOCKED_ID = MOVIE.id;
@@ -121,6 +122,8 @@ export interface MockState {
   loginArt: { status: number; images: string[] };
   /** GET /api/public/brand (branding): the answer; the default is the shipped brand (today's look) */
   brand: Record<string, unknown>;
+  /** Admin → Branding (mocks/brand.ts): what the page sent, and a forced conflict / invalid field */
+  brandAdmin: BrandAdminMock;
   /** Block 23 phase 3 Task 11: GET /api/account/security; DELETE .../devices/:type/:id answers 401 reauth_required while `securityStale` */
   security: MockSecurity;
   securityStale: boolean;
@@ -196,6 +199,7 @@ export function freshState(): MockState {
     revokedOthers: 2,
     loginArt: { status: 200, images: [] },
     brand: structuredClone(DEFAULT_BRAND_ANSWER), // a copy per test: a spec may change it
+    brandAdmin: brandAdminState(),
     security: {
       mfa: { totp: true, webauthn: false, static: true },
       devices: [{ id: '11', type: 'totp', name: 'Pixel 8', lastUsed: null }, { id: '21', type: 'static', name: 'Recovery', lastUsed: null }],
@@ -601,6 +605,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       startRedeploy(st.updater, ch === 'nightly' ? 'nightly' : 'latest', false);
       return J({ ok: true, mode: 'webhook' }, 202);
     }
+    if (p.startsWith('/api/admin/brand')) { const r = brandAdminRoute(st, m, p, req, body, J); if (r) return r; }
     if (p.startsWith('/api/admin/settings')) { st.settings.livetvInstalled = st.admin.livetv.installed; const r = settingsRoute(st.settings, m, p, body(), J); if (r) return r; }
     if (p.startsWith('/api/admin/')) {
       // Live TV: the offer is hidden by the LIVETV_OFFER_HIDDEN setting (the "Nicht mehr anzeigen" save and the Settings switch)

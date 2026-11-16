@@ -646,7 +646,7 @@ const dict: Translation<typeof de> = {
     areas: {
       user: 'Usuarios', device: 'Dispositivos', invite: 'Invitaciones', request: 'Peticiones', poll: 'Votaciones', list: 'Listas', hub: 'Mosaicos de marca',
       role: 'Roles', profile: 'Perfiles', download: 'Descargas', digest: 'Resumen semanal', settings: 'Ajustes', system: 'Sistema',
-      session: 'Sesiones', tv: 'Televisores', party: 'Watch party', subtitle: 'Subtítulos', login: 'Inicios de sesión', leaving: 'Se va pronto', preview: 'Vistas previas',
+      session: 'Sesiones', tv: 'Televisores', party: 'Watch party', subtitle: 'Subtítulos', login: 'Inicios de sesión', leaving: 'Se va pronto', preview: 'Vistas previas', brand: 'Branding',
     },
     keys: {
       role: 'Rol', from: 'Antes', to: 'Después', requestsPerMonth: 'Peticiones al mes', transcoding: 'Transcodificación permitida', maxHeight: 'Resolución máx.',

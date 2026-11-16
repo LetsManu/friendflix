@@ -646,7 +646,7 @@ const dict: Translation<typeof de> = {
     areas: {
       user: 'Users', device: 'Devices', invite: 'Invitations', request: 'Requests', poll: 'Polls', list: 'Lists', hub: 'Brand tiles',
       role: 'Roles', profile: 'Profiles', download: 'Downloads', digest: 'Weekly recap', settings: 'Settings', system: 'System',
-      session: 'Sessions', tv: 'TVs', party: 'Watch party', subtitle: 'Subtitles', login: 'Sign-ins', leaving: 'Leaving soon', preview: 'Previews',
+      session: 'Sessions', tv: 'TVs', party: 'Watch party', subtitle: 'Subtitles', login: 'Sign-ins', leaving: 'Leaving soon', preview: 'Previews', brand: 'Branding',
     },
     keys: {
       role: 'Role', from: 'Before', to: 'After', requestsPerMonth: 'Requests per month', transcoding: 'Transcoding allowed', maxHeight: 'Max. resolution',

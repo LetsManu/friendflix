@@ -648,7 +648,7 @@ export default {
     areas: {
       user: 'Nutzer', device: 'Geräte', invite: 'Einladungen', request: 'Wünsche', poll: 'Abstimmungen', list: 'Listen', hub: 'Marken-Kacheln',
       role: 'Rollen', profile: 'Profile', download: 'Downloads', digest: 'Wochenrückblick', settings: 'Einstellungen', system: 'System',
-      session: 'Sitzungen', tv: 'Fernseher', party: 'Watch-Party', subtitle: 'Untertitel', login: 'Anmeldungen', leaving: 'Bald weg', preview: 'Vorschauen',
+      session: 'Sitzungen', tv: 'Fernseher', party: 'Watch-Party', subtitle: 'Untertitel', login: 'Anmeldungen', leaving: 'Bald weg', preview: 'Vorschauen', brand: 'Branding',
     },
     keys: {
       role: 'Rolle', from: 'Vorher', to: 'Nachher', requestsPerMonth: 'Wünsche pro Monat', transcoding: 'Umwandeln erlaubt', maxHeight: 'Max. Auflösung',

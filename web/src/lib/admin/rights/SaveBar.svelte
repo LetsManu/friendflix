@@ -11,6 +11,7 @@
    * `--savebar-h` on <html> before it rises in (`barRise`), so pages that pad their end by it never move, and clears it once it
    * has gone. A named region ("Ungespeicherte Änderungen"); the count, the progress and an error are announced politely.
    *   <SaveBar count={c.changes} text={saveBarText(c)} {busy} {progress} {error} on:discard on:review on:retry />
+   * `saveLabel` names the primary button when it saves without a review (it still dispatches `review`).
    */
   import { createEventDispatcher, onDestroy } from 'svelte';
   import { BAR_OUT_MS, barRise } from '#lib/glass/fx';
@@ -30,6 +31,8 @@
   export let progress: string | null;
   /** what went wrong; the bar offers *Erneut anwenden* */
   export let error: string | null;
+  /** the primary button's label (default: the roles' *Überprüfen …*, which opens a review; Admin → Branding saves at once) */
+  export let saveLabel: string | null = null;
 
   const dispatch = createEventDispatcher<{ discard: void; review: void; retry: void }>();
   let box: HTMLDivElement | undefined;
@@ -71,7 +74,7 @@
             <Button variant="ghost" on:click={() => dispatch('discard')}>{$t('common.close')}</Button>
           {/if}
           {#if error !== null}<Button variant={count > 0 ? 'secondary' : 'primary'} icon="refresh" on:click={() => dispatch('retry')}>{$t('adminPeople.roles.applyAgain')}</Button>{/if}
-          {#if count > 0}<Button on:click={() => dispatch('review')}>{$t('adminPeople.roles.review')}</Button>{/if}
+          {#if count > 0}<Button on:click={() => dispatch('review')}>{saveLabel ?? $t('adminPeople.roles.review')}</Button>{/if}
         </div>
       {/if}
     </div>

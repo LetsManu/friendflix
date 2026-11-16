@@ -9,7 +9,7 @@
  * its name there, since a letter tile does not name it). The name never grows past its box (ellipsis), so a long name moves
    * nothing beside it; an uploaded logo sits in a fixed 4:1 box (Admin → Branding fits it into 2048×512), so it cannot jump on load.
    */
-  import { brand, brandInitial, builtInMark, headerParts } from '#lib/brand';
+  import { brand, brandInitial, builtInMark, headerParts, type LoadedBrand } from '#lib/brand';
   export let size = 32;
   export let wordmark = false;
   /** a header bar: the brand's header style decides what shows (lib/brand.ts headerParts) */
@@ -20,9 +20,11 @@
   export let label: string | undefined = undefined;
   /** soft drop shadow (header over video); off by default: a filter per instance costs a paint layer (cards, rows) */
   export let shadow = false;
+  /** a brand to draw instead of the page's (Admin → Branding's preview of the staged values) */
+  export let value: LoadedBrand | null = null;
   const uid = 'ffl' + Math.random().toString(36).slice(2, 7);
 
-  $: b = $brand;
+  $: b = value ?? $brand;
   $: lbl = label ?? b.name;
   $: parts = header ? headerParts(b) : { mark: true, name: wordmark, logo: null };
   $: by = byline && parts.name ? b.brand.byline.trim() : '';
