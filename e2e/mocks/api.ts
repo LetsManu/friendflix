@@ -132,6 +132,10 @@ export interface MockState {
   /** PUT /api/account/security/username: the names sent; `usernameError` answers that code (409, or 401 for reauth_required) */
   usernamePuts: string[];
   usernameError: string | null;
+  /** E-mail stage B: GET /api/account/mail answers this; PUT changes `prefs` (`failPut` answers 500); the PUT bodies land in `log` */
+  accountMail: { configured: boolean; hasAddress: boolean; prefs: Record<'available' | 'recording' | 'licence', boolean>; failPut: boolean };
+  /** POST /api/public/mail/unsubscribe (the public page): the JSON bodies sent, and the status to answer (400 = invalid_token) */
+  unsubscribe: { posts: Array<Record<string, unknown>>; status: number };
 }
 export interface MockAccount {
   name: string; email: string | null; avatar: string;
@@ -209,6 +213,8 @@ export function freshState(): MockState {
     securityDeleted: [],
     usernamePuts: [],
     usernameError: null,
+    accountMail: { configured: true, hasAddress: true, prefs: { available: true, recording: true, licence: true }, failPut: false },
+    unsubscribe: { posts: [], status: 200 },
   };
 }
 
@@ -309,6 +315,20 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       st.account = { ...st.account, ...(b.name !== undefined ? { name: b.name } : {}), ...(b.avatar !== undefined ? { avatar: b.avatar } : {}) };
       st.accountSaved = { name: st.account.name, avatar: st.account.avatar };
       return J(st.account);
+    }
+    // E-mail stage B: the account's mail switches, and the public unsubscribe page's POST (no session; the token in the JSON body)
+    if (p === '/api/account/mail' && m === 'GET') return J(st.accountMail);
+    if (p === '/api/account/mail' && m === 'PUT') {
+      if (st.accountMail.failPut) return J({ error: 'internal' }, 500);
+      const b = body() as { type: 'available' | 'recording' | 'licence'; on: boolean };
+      st.accountMail = { ...st.accountMail, prefs: { ...st.accountMail.prefs, [b.type]: b.on } };
+      return J({ prefs: st.accountMail.prefs });
+    }
+    if (p === '/api/public/mail/unsubscribe' && m === 'POST') {
+      const b = body() as { t?: string; on?: boolean };
+      st.unsubscribe.posts.push(b);
+      if (st.unsubscribe.status !== 200) return J({ error: st.unsubscribe.status === 400 ? 'invalid_token' : st.unsubscribe.status === 429 ? 'rate_limited' : 'internal' }, st.unsubscribe.status);
+      return J({ ok: true, type: String(b.t ?? '').split('.')[2], on: b.on ?? false });
     }
     // deleting the account needs a recent sign-in (reauthUntil); the backend then ends the session
     if (p === '/api/account/security' && m === 'GET') return J(st.security);

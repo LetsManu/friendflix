@@ -217,6 +217,26 @@ const login: Translation<typeof de> = {
     expiredText: 'Değişikliği hesabından yeniden iste.',
     toAccount: 'Hesaba git',
   },
+  /** /mail/unsubscribe (E-mail stage B): the footer link of every switchable mail; public, never shows an address */
+  unsubscribe: {
+    pageTitle: 'E-posta aboneliğinden çık',
+    title: 'E-posta aboneliğinden çık',
+    ask: 'Artık {type} hakkında e-posta istemiyor musun?',
+    askText: 'Diğer e-postaları almaya devam edersin. Bunu istediğin zaman hesabından değiştirebilirsin.',
+    button: 'Abonelikten çık',
+    doneTitle: 'Abonelikten çıkıldı.',
+    doneText: 'Artık {type} hakkında e-posta almayacaksın.',
+    resubscribe: 'Yeniden abone ol',
+    resubscribedTitle: 'Yeniden abone olundu.',
+    resubscribedText: 'Yeniden {type} hakkında e-posta alıyorsun.',
+    invalidTitle: 'Bu bağlantı geçerli değil.',
+    invalidText: 'E-postalarını hesabından ayarlarsın.',
+    limited: 'Çok fazla deneme. Bir dakika bekle, sonra tekrar dene.',
+    failed: 'Şu anda olmadı. Lütfen tekrar dene.',
+    settings: 'E-posta ayarları',
+    /** {type} in the texts above */
+    types: { available: 'kullanılabilir hale gelen istekler', recording: 'kayıtların', licence: 'süresi dolmak üzere olan indirmeler' },
+  },
   pending: {
     title: 'Neredeyse tamam',
     text: 'Hesabın bir yöneticinin onayını bekliyor. Başlayabileceğin anda sana haber vereceğiz.',

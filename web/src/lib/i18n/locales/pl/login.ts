@@ -217,6 +217,26 @@ const login: Translation<typeof de> = {
     expiredText: 'Poproś o zmianę ponownie w swoim koncie.',
     toAccount: 'Do konta',
   },
+  /** /mail/unsubscribe (E-mail stage B): the footer link of every switchable mail; public, never shows an address */
+  unsubscribe: {
+    pageTitle: 'Wypisz się z e-maili',
+    title: 'Wypisz się z e-maili',
+    ask: 'Bez e-maili o {type}?',
+    askText: 'Inne e-maile nadal będziesz dostawać. Możesz to zmienić w każdej chwili na swoim koncie.',
+    button: 'Wypisz się',
+    doneTitle: 'Wypisano.',
+    doneText: 'Nie będziesz już dostawać e-maili o {type}.',
+    resubscribe: 'Zapisz się ponownie',
+    resubscribedTitle: 'Zapisano ponownie.',
+    resubscribedText: 'Znowu dostajesz e-maile o {type}.',
+    invalidTitle: 'Ten link jest nieprawidłowy.',
+    invalidText: 'E-maile ustawisz na swoim koncie.',
+    limited: 'Za dużo prób. Odczekaj minutę i spróbuj ponownie.',
+    failed: 'Tym razem się nie udało. Spróbuj ponownie.',
+    settings: 'Ustawienia e-maili',
+    /** {type} in the texts above */
+    types: { available: 'dostępnych życzeniach', recording: 'nagraniach', licence: 'wygasających pobraniach' },
+  },
   pending: {
     title: 'Prawie gotowe',
     text: 'Twoje konto czeka na zatwierdzenie przez administratora. Damy ci znać, gdy tylko będzie można zaczynać.',

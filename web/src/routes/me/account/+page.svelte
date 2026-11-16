@@ -1,24 +1,31 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  /** /me/account (owner profile only): profile, security (2FA state), sessions & devices, your data (export), delete the account, and the privacy note. */
+  /** /me/account (owner profile only): profile, security (2FA state), sessions & devices, e-mails, your data (export), delete the account, and the privacy note. */
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { api, ApiError, type Account } from '#lib/api';
   import DataCard from '#lib/account/DataCard.svelte';
   import { clearPending } from '#lib/admin/settings/form';
   import DeleteCard from '#lib/account/DeleteCard.svelte';
+  import MailCard from '#lib/account/MailCard.svelte';
+  import { loadMailPrefs, type MailState } from '#lib/account/mail';
   import ProfileCard from '#lib/account/ProfileCard.svelte';
   import SecurityCard from '#lib/account/SecurityCard.svelte';
   import SessionsCard from '#lib/account/SessionsCard.svelte';
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
 
-  let account: Account | null = null, phase: 'loading' | 'ok' | 'owner' | 'error' = 'loading', reauthFailed = false;
+  let account: Account | null = null, mail: MailState | null = null, phase: 'loading' | 'ok' | 'owner' | 'error' = 'loading', reauthFailed = false;
 
   async function load() {
     phase = 'loading';
-    try { account = await api<Account>('/api/account'); phase = 'ok'; }
+    try {
+      account = await api<Account>('/api/account');
+      // after the account (a kids profile's 403 asks nothing more); a failure here only greys out the E-Mails card
+      mail = await loadMailPrefs().catch(() => null);
+      phase = 'ok';
+    }
     catch (e) { phase = e instanceof ApiError && e.status === 403 ? 'owner' : 'error'; }
   }
   /** re-reads the account without the loading state (the security section stays mounted) */
@@ -57,6 +64,7 @@
       <ProfileCard {account} on:saved={(e) => saved(e.detail)} />
       <SecurityCard {account} on:changed={refresh} />
       <div class="wide"><SessionsCard /></div>
+      <MailCard {account} {mail} />
       <DataCard />
       <DeleteCard {account} />
     </div>

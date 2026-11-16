@@ -537,7 +537,7 @@ const dict: Translation<typeof de> = {
     authOff: 'Authentik davetleri yapılandırılmadı: bağlantı yalnızca mevcut bir Authentik hesabıyla çalışır.',
     closeLink: 'Bağlantıyı gizle',
     mailAddress: 'E-posta adresi (isteğe bağlı)',
-    mailAddressHint: 'Bağlantıyı hemen e-postayla gönderir. Adres kaydedilmez.',
+    mailAddressHint: 'Bağlantıyı hemen e-postayla gönderir. Adres yalnızca e-posta gönderilene kadar şifreli olarak saklanır.',
     mailSingleOnly: 'Yalnızca tek kişilik davetler için',
     mailLang: 'E-postanın dili',
     errMailAddress: 'Geçerli bir e-posta adresi gir.',

@@ -537,7 +537,7 @@ const dict: Translation<typeof de> = {
     authOff: 'Authentik invitations are not configured: the link only works with an existing Authentik account.',
     closeLink: 'Hide link',
     mailAddress: 'Email address (optional)',
-    mailAddressHint: 'Sends the link by email right away. The address is not stored.',
+    mailAddressHint: 'Sends the link by email right away. The address is only kept, encrypted, until the email has been sent.',
     mailSingleOnly: 'Only for single-person invitations',
     mailLang: 'Language of the email',
     errMailAddress: 'Please enter a valid email address.',

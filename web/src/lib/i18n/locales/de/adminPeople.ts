@@ -539,7 +539,7 @@ export default {
     authOff: 'Authentik-Einladungen sind nicht konfiguriert: Der Link funktioniert nur mit bestehendem Authentik-Konto.',
     closeLink: 'Link ausblenden',
     mailAddress: 'E-Mail-Adresse (optional)',
-    mailAddressHint: 'Schickt den Link gleich per E-Mail. Die Adresse wird nicht gespeichert.',
+    mailAddressHint: 'Schickt den Link gleich per E-Mail. Die Adresse wird nur verschlüsselt aufbewahrt, bis die E-Mail verschickt ist.',
     mailSingleOnly: 'Nur für Einladungen für eine Person',
     mailLang: 'Sprache der E-Mail',
     errMailAddress: 'Bitte eine gültige E-Mail-Adresse eingeben.',

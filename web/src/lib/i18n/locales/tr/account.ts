@@ -405,6 +405,21 @@ const tr: Translation<typeof de> = {
       approveLink: 'Cihazlar’da onayla',
       loadFailed: 'Cihazlar yüklenemedi.',
     },
+    /** the E-Mails card (E-mail stage B): one switch per mail type, saved at once; mail is account level (no kids profile switches) */
+    mail: {
+      title: 'E-postalar',
+      to: 'E-postaların gittiği adres',
+      noAddress: 'Kayıtlı e-posta adresi yok',
+      notConfigured: 'Sunucun henüz e-posta göndermiyor.',
+      types: {
+        available: { label: 'Kullanılabilir istekler', hint: 'İstediğin bir şey geldiğinde.' },
+        recording: { label: 'Kayıtlar', hint: 'Bir kayıt bittiğinde, başarısız olduğunda veya silindiğinde.' },
+        licence: { label: 'Süresi dolan indirmeler', hint: 'Cihazlarındaki indirmelerin süresi dolmadan iki gün önce.' },
+      },
+      saveFailed: 'Ayar kaydedilemedi. Lütfen tekrar dene.',
+      loadFailed: 'E-posta ayarları yüklenemedi.',
+      footer: 'Bu e-postaların her birinin altında abonelikten çıkma bağlantısı var. Hoş geldin e-postası yalnızca bir kez gelir.',
+    },
   },
 };
 export default tr;

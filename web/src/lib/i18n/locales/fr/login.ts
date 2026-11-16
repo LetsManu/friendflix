@@ -217,6 +217,26 @@ const login: Translation<typeof de> = {
     expiredText: 'Demande à nouveau le changement dans ton compte.',
     toAccount: 'Aller au compte',
   },
+  /** /mail/unsubscribe (E-mail stage B): the footer link of every switchable mail; public, never shows an address */
+  unsubscribe: {
+    pageTitle: 'Se désabonner des e-mails',
+    title: 'Se désabonner des e-mails',
+    ask: 'Ne plus recevoir d’e-mails sur {type} ?',
+    askText: 'Vous continuerez à recevoir les autres e-mails. Vous pouvez changer cela à tout moment dans votre compte.',
+    button: 'Se désabonner',
+    doneTitle: 'Désabonné.',
+    doneText: 'Vous ne recevrez plus d’e-mails sur {type}.',
+    resubscribe: 'Se réabonner',
+    resubscribedTitle: 'Réabonné.',
+    resubscribedText: 'Vous recevez de nouveau des e-mails sur {type}.',
+    invalidTitle: 'Ce lien n’est pas valide.',
+    invalidText: 'Vos e-mails se règlent dans votre compte.',
+    limited: 'Trop de tentatives. Attendez une minute, puis réessayez.',
+    failed: 'Cela n’a pas fonctionné. Veuillez réessayer.',
+    settings: 'Paramètres des e-mails',
+    /** {type} in the texts above */
+    types: { available: 'les demandes disponibles', recording: 'vos enregistrements', licence: 'les téléchargements qui expirent' },
+  },
   pending: {
     title: 'Presque fini',
     text: 'Ton compte attend la validation d’un administrateur. Tu seras prévenu dès que tu pourras commencer.',

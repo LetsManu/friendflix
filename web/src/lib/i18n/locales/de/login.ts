@@ -216,6 +216,26 @@ const login = {
     expiredText: 'Fordere die Änderung in deinem Konto noch einmal an.',
     toAccount: 'Zum Konto',
   },
+  /** /mail/unsubscribe (E-mail stage B): the footer link of every switchable mail; public, never shows an address */
+  unsubscribe: {
+    pageTitle: 'E-Mails abbestellen',
+    title: 'E-Mails abbestellen',
+    ask: 'Keine E-Mails mehr zu {type}?',
+    askText: 'Andere E-Mails bekommst du weiter. Ändern kannst du das jederzeit in deinem Konto.',
+    button: 'Abbestellen',
+    doneTitle: 'Abbestellt.',
+    doneText: 'Du bekommst keine E-Mails mehr zu {type}.',
+    resubscribe: 'Wieder anmelden',
+    resubscribedTitle: 'Wieder angemeldet.',
+    resubscribedText: 'Du bekommst wieder E-Mails zu {type}.',
+    invalidTitle: 'Dieser Link ist ungültig.',
+    invalidText: 'Deine E-Mails stellst du in deinem Konto ein.',
+    limited: 'Zu viele Versuche. Warte eine Minute und versuch es dann noch einmal.',
+    failed: 'Das hat gerade nicht geklappt. Versuch es noch einmal.',
+    settings: 'E-Mail-Einstellungen',
+    /** {type} in the texts above */
+    types: { available: 'verfügbaren Wünschen', recording: 'Aufnahmen', licence: 'ablaufenden Downloads' },
+  },
   /** /pending (screen 5 of the mockup) */
   pending: {
     title: 'Fast geschafft',

@@ -217,6 +217,26 @@ const login: Translation<typeof de> = {
     expiredText: 'Richiedi di nuovo la modifica nel tuo account.',
     toAccount: 'Vai all’account',
   },
+  /** /mail/unsubscribe (E-mail stage B): the footer link of every switchable mail; public, never shows an address */
+  unsubscribe: {
+    pageTitle: 'Annulla l’iscrizione alle e-mail',
+    title: 'Annulla l’iscrizione alle e-mail',
+    ask: 'Niente più e-mail su {type}?',
+    askText: 'Le altre e-mail continuerai a riceverle. Puoi cambiarlo quando vuoi nel tuo account.',
+    button: 'Annulla l’iscrizione',
+    doneTitle: 'Iscrizione annullata.',
+    doneText: 'Non riceverai più e-mail su {type}.',
+    resubscribe: 'Iscriviti di nuovo',
+    resubscribedTitle: 'Di nuovo iscritto.',
+    resubscribedText: 'Ricevi di nuovo e-mail su {type}.',
+    invalidTitle: 'Questo link non è valido.',
+    invalidText: 'Le tue e-mail si impostano nel tuo account.',
+    limited: 'Troppi tentativi. Aspetta un minuto e riprova.',
+    failed: 'Non ha funzionato. Riprova.',
+    settings: 'Impostazioni e-mail',
+    /** {type} in the texts above */
+    types: { available: 'richieste disponibili', recording: 'registrazioni', licence: 'download in scadenza' },
+  },
   pending: {
     title: 'Ci siamo quasi',
     text: 'Il tuo account è in attesa dell’approvazione di un amministratore. Ti avviseremo appena potrai iniziare.',

@@ -537,7 +537,7 @@ const dict: Translation<typeof de> = {
     authOff: 'Zaproszenia Authentik nie są skonfigurowane: link działa tylko z istniejącym kontem Authentik.',
     closeLink: 'Ukryj link',
     mailAddress: 'Adres e-mail (opcjonalnie)',
-    mailAddressHint: 'Od razu wysyła link e-mailem. Adres nie jest zapisywany.',
+    mailAddressHint: 'Od razu wysyła link e-mailem. Adres jest przechowywany, zaszyfrowany, tylko do wysłania e-maila.',
     mailSingleOnly: 'Tylko dla zaproszeń dla jednej osoby',
     mailLang: 'Język e-maila',
     errMailAddress: 'Wpisz poprawny adres e-mail.',

@@ -164,6 +164,69 @@ test.describe('account page (/me/account)', () => {
   });
 });
 
+/** E-mail stage B: the E-Mails card (one switch per mail type, saved at once) */
+test.describe('mail card', () => {
+  const card = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'E-Mails' });
+
+  test('mail card shows the switches and saves one', async ({ page, api }) => {
+    api.account = { ...api.account, email: 'anna@friend.example.com' };
+    await page.goto('/me/account');
+    const mail = card(page);
+    await expect(mail.getByRole('heading', { level: 2, name: 'E-Mails' })).toBeVisible();
+    await expect(mail.getByText('anna@friend.example.com')).toBeVisible();
+    const sw = (name: string) => mail.getByRole('switch', { name });
+    for (const name of ['Verfügbare Wünsche', 'Aufnahmen', 'Ablaufende Downloads']) {
+      await expect(sw(name)).toHaveAttribute('aria-checked', 'true');
+      await expect(sw(name)).toBeEnabled();
+    }
+    await expect(mail.getByText('Wenn etwas, das du dir gewünscht hast, da ist.')).toBeVisible();
+    await expect(mail.getByText('Wenn eine Aufnahme fertig ist, fehlschlägt oder gelöscht wird.')).toBeVisible();
+    await expect(mail.getByText('Zwei Tage bevor Downloads auf deinen Geräten ablaufen.')).toBeVisible();
+    await expect(mail.getByText('Dein Server verschickt noch keine E-Mails.')).toHaveCount(0);
+    await sw('Aufnahmen').click();
+    await expect(sw('Aufnahmen')).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(() => api.log).toContain('PUT /api/account/mail {"type":"recording","on":false} -> 200');
+    expect(api.accountMail.prefs).toEqual({ available: true, recording: false, licence: true });
+    await expect(sw('Verfügbare Wünsche')).toHaveAttribute('aria-checked', 'true');
+    // the card sits between the sessions and "Deine Daten", and the settings link of the mails finds it
+    await expect(page.locator('section#mail')).toBeAttached();
+  });
+
+  test.describe('saving fails', () => {
+    test.use({ allowedConsole: /status of 500/ });
+    test('mail card reverts a switch when saving fails', async ({ page, api }) => {
+      api.accountMail.failPut = true;
+      await page.goto('/me/account');
+      const lic = card(page).getByRole('switch', { name: 'Ablaufende Downloads' });
+      await expect(lic).toHaveAttribute('aria-checked', 'true');
+      await lic.click();
+      await expect(card(page).getByRole('alert')).toHaveText('Die Einstellung konnte nicht gespeichert werden. Versuch es noch einmal.');
+      await expect(lic).toHaveAttribute('aria-checked', 'true');
+      expect(api.accountMail.prefs.licence).toBe(true);
+    });
+  });
+
+  test('mail card without address disables the switches and links to the e-mail section', async ({ page, api }) => {
+    api.account = { ...api.account, email: null };
+    api.accountMail = { ...api.accountMail, hasAddress: false };
+    await page.goto('/me/account');
+    const mail = card(page);
+    await expect(mail.getByText('Keine E-Mail-Adresse hinterlegt')).toBeVisible();
+    await expect(mail.getByRole('link', { name: 'Zur E-Mail-Adresse' })).toHaveAttribute('href', '#sec-email');
+    for (const name of ['Verfügbare Wünsche', 'Aufnahmen', 'Ablaufende Downloads']) await expect(mail.getByRole('switch', { name })).toBeDisabled();
+  });
+
+  test('mail card when mail is not set up shows the note', async ({ page, api }) => {
+    api.account = { ...api.account, email: 'anna@friend.example.com' };
+    api.accountMail = { ...api.accountMail, configured: false };
+    await page.goto('/me/account');
+    const mail = card(page);
+    await expect(mail.getByText('Dein Server verschickt noch keine E-Mails.')).toBeVisible();
+    for (const name of ['Verfügbare Wünsche', 'Aufnahmen', 'Ablaufende Downloads']) await expect(mail.getByRole('switch', { name })).toBeDisabled();
+    expect(api.log.filter((l) => l.startsWith('PUT /api/account/mail'))).toEqual([]);
+  });
+});
+
 test.describe('owner profile only', () => {
   const KID = { ...ME, profile: { id: 'p2', name: 'Anna', avatar: 'a2', isOwner: false } };
   test('/me has no Account row on another profile', async ({ page }) => {
@@ -175,14 +238,15 @@ test.describe('owner profile only', () => {
   test.describe('refused', () => {
     test.use({ allowedConsole: /status of 403/ });
     test('/me/account answering 403 shows the hint, no cards and no device list', async ({ page }) => {
-      let devices = 0;
-      page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/devices') devices++; });
+      let devices = 0, mail = 0;
+      page.on('request', (r) => { const p = new URL(r.url()).pathname; if (p === '/api/devices') devices++; if (p === '/api/account/mail') mail++; });
       await page.route('**/api/me', (r) => r.fulfill({ json: KID }));
       await page.route('**/api/account', (r) => r.fulfill({ status: 403, json: { error: 'owner_required' } }));
       await page.goto('/me/account');
       await expect(page.getByText('Dein Konto verwaltest du im Hauptprofil.')).toBeVisible();
       await expect(page.locator('main').getByRole('region')).toHaveCount(0);
       expect(devices).toBe(0);
+      expect(mail).toBe(0); // a kids profile has no mail switches: mail is account level
     });
   });
 });

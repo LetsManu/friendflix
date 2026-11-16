@@ -50,3 +50,19 @@ test('phone: delete dialog fits the screen', async ({ page }) => {
   // the last control can be reached on the phone
   await expect(dlg.getByRole('button', { name: 'Mein Konto löschen' })).toBeInViewport();
 });
+
+test('phone: the mail switches are ≥ 44 px and the card fits', async ({ page }) => {
+  await page.goto('/me/account');
+  const mail = page.getByRole('region', { name: 'E-Mails' });
+  const sws = mail.getByRole('switch');
+  await expect(sws).toHaveCount(3);
+  for (let i = 0; i < 3; i++) {
+    await sws.nth(i).scrollIntoViewIfNeeded();
+    const b = (await sws.nth(i).boundingBox())!;
+    expect(b.height).toBeGreaterThanOrEqual(44);
+    expect(b.width).toBeGreaterThanOrEqual(44);
+  }
+  await sws.nth(1).tap();
+  await expect(sws.nth(1)).toHaveAttribute('aria-checked', 'false');
+  expect(await noHorizontalOverflow(page)).toBe(true);
+});

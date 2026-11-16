@@ -17,6 +17,11 @@ describe('securityHeaders', () => {
     });
   });
 
+  it('the unsubscribe page sends no Referer at all: its address carries the token', () => {
+    for (const u of ['/mail/unsubscribe', '/mail/unsubscribe?t=v1.x', '/mail/unsubscribe/']) expect(securityHeaders(u)['referrer-policy'], u).toBe('no-referrer');
+    for (const u of ['/mail/unsubscribex', '/mail', '/browse?u=/mail/unsubscribe']) expect(securityHeaders(u)['referrer-policy'], u).toBe('same-origin');
+  });
+
   it('opens only the Cast receiver and the cast test clip to other origins', () => {
     for (const u of ['/cast-receiver/', '/cast-receiver', '/cast-receiver/receiver.js', '/cast-test/clip.mp4', '/cast-test/clip.mp4?x=1']) {
       expect(crossOriginPath(u), u).toBe(true);

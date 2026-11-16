@@ -217,6 +217,26 @@ const login: Translation<typeof de> = {
     expiredText: 'Solicita el cambio de nuevo en tu cuenta.',
     toAccount: 'Ir a la cuenta',
   },
+  /** /mail/unsubscribe (E-mail stage B): the footer link of every switchable mail; public, never shows an address */
+  unsubscribe: {
+    pageTitle: 'Darse de baja de correos',
+    title: 'Darse de baja de correos',
+    ask: '¿No quieres más correos sobre {type}?',
+    askText: 'Seguirás recibiendo los demás correos. Puedes cambiarlo cuando quieras en tu cuenta.',
+    button: 'Darse de baja',
+    doneTitle: 'Baja hecha.',
+    doneText: 'Ya no recibirás correos sobre {type}.',
+    resubscribe: 'Volver a suscribirse',
+    resubscribedTitle: 'Suscripción reactivada.',
+    resubscribedText: 'Vuelves a recibir correos sobre {type}.',
+    invalidTitle: 'Este enlace no es válido.',
+    invalidText: 'Tus correos se ajustan en tu cuenta.',
+    limited: 'Demasiados intentos. Espera un minuto y vuelve a intentarlo.',
+    failed: 'Ahora mismo no ha funcionado. Inténtalo de nuevo.',
+    settings: 'Ajustes de correo',
+    /** {type} in the texts above */
+    types: { available: 'peticiones disponibles', recording: 'grabaciones', licence: 'descargas que caducan' },
+  },
   pending: {
     title: 'Casi listo',
     text: 'Tu cuenta está esperando la aprobación de un administrador. Te avisaremos en cuanto puedas empezar.',
