@@ -29,7 +29,7 @@ const text: z.ZodType<Text> = z.lazy(() => z.union([
   z.object({ key: z.string(), params: z.record(z.string(), param).optional() }),
   z.object({ join: z.array(text), sep: z.string().optional() }),
 ])) as unknown as z.ZodType<Text>;
-const param: z.ZodType<Param> = z.lazy(() => z.union([z.number(), z.object({ date: z.string() }), text])) as unknown as z.ZodType<Param>;
+const param: z.ZodType<Param> = z.lazy(() => z.union([z.number(), z.object({ date: z.string(), only: z.literal('day').optional() }), text])) as unknown as z.ZodType<Param>;
 
 /** the params of each kind, checked at render time (a row queued by an older or broken caller fails instead of rendering half a mail) */
 const PARAMS = {
@@ -203,7 +203,8 @@ function digestMail(c: Common, encKey: Buffer, raw: Record<string, unknown>, use
   return {
     subject: title,
     heading: title,
-    paragraphs: [msg(lang, 'mail.digest.range', { app, from: { date: p.since }, to: { date: p.until } })],
+    // days only: the until is the moment the tick ran, its time of day means nothing to the reader
+    paragraphs: [msg(lang, 'mail.digest.range', { app, from: { date: p.since, only: 'day' }, to: { date: p.until, only: 'day' } })],
     sections,
     button: { label: msg(lang, 'mail.digest.button'), url: `${origin}/digest` },
     reason: msg(lang, 'mail.digest.reason', { app }),

@@ -377,6 +377,27 @@ describe('digest mail', () => {
     expect(await sendDigest(env.ctx, await userRow(friendId), window())).toMatchObject({ sent: true, mailed: false });
   });
 
+  it('a failing enqueue keeps the in-app digest and logs a code only', async () => {
+    await setPrefs(adminId, { mail: { digest: true } });
+    // the outbox insert fails (the database refuses it), everything else is the real database
+    const real = env.ctx.db;
+    const db = { query: ((sql: string, params?: unknown[]) => (sql.includes('insert into mail_outbox')
+      ? Promise.reject(Object.assign(new Error('boom admin@example.com Neuer Film'), { code: '53100' }))
+      : real.query(sql, params))) as typeof real.query };
+    const ctx = Object.create(env.ctx, { db: { value: db } }) as typeof env.ctx;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(await sendDigest(ctx, await userRow(adminId), window())).toMatchObject({ sent: true, mailed: false });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]).toEqual(['digest mail failed', JSON.stringify({ user: adminId, code: '53100' })]);
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/admin@|Neuer Film|boom/);
+    } finally {
+      warn.mockRestore();
+    }
+    expect(await digestMails()).toEqual([]);
+    expect(await digestNotes(adminId)).toHaveLength(1);
+  });
+
   it('digestMailParams caps and cuts', () => {
     const long = (s: string) => `${s} ${'Nordlicht '.repeat(30)}`; // 300+ characters
     const d: DigestData = {
@@ -406,6 +427,18 @@ describe('digest mail', () => {
     const short = digestMailParams({ ...d, newMovies: [{ id: 'x', name: 'Nordlicht' }, { id: 'y', name: `${'a'.repeat(118)}🎬🎬` }], newMovieCount: 2 });
     expect(short.movies.names[0]).toBe('Nordlicht');
     expect(short.movies.names[1]).toBe(`${'a'.repeat(118)}…`);
+    // a line break in a title never splits the mail's "- item" line: all whitespace collapses to one space
+    const nl = digestMailParams({
+      ...d,
+      newMovies: [{ id: 'x', name: ' Nord\nlicht\r\n\t TV ' }],
+      newEpisodes: [{ seriesId: 's', seriesName: 'Polar\u2028nacht', count: 1, followed: false, episodes: [] }],
+      available: [{ title: '„Nordlicht“\nist da', link: null, itemId: null }],
+      recommendations: [{ itemId: 'r', name: 'Polarnacht', from: 'Anna\nBeispiel', note: null, kind: 'recommended' }],
+    });
+    expect(nl.movies.names).toEqual(['Nord licht TV']);
+    expect(nl.series[0]!.name).toBe('Polar nacht');
+    expect(nl.wishes).toEqual(['„Nordlicht“ ist da']);
+    expect(nl.recs).toEqual([{ name: 'Polarnacht', from: 'Anna Beispiel' }]);
   });
 });
 

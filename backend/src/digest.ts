@@ -4,6 +4,7 @@ import type { Ctx } from './ctx.js';
 import type { ItemDto } from './media/types.js';
 import { m, userLanguage, type Text } from './i18n.js';
 import { mailPerson } from './mail/people.js';
+import { HttpError } from './users.js';
 import { localizeStored, notify } from './notify.js';
 import type { UserRow } from './types.js';
 
@@ -195,8 +196,12 @@ export interface DigestMailParams {
 const MAIL_NAME_MAX = 120;
 const MAIL_WISHES = 20;
 
-/** a name cut to MAIL_NAME_MAX UTF-16 units, "…" included; never in the middle of a surrogate pair */
-function cutName(s: string): string {
+/**
+ * a name on one line (any run of whitespace or line breaks becomes one space, so it never splits the text part's "- item" line), cut
+ * to MAIL_NAME_MAX UTF-16 units, "…" included; never in the middle of a surrogate pair
+ */
+function cutName(raw: string): string {
+  const s = raw.replace(/[\s\p{Cc}]+/gu, ' ').trim();
   if (s.length <= MAIL_NAME_MAX) return s;
   const head = s.slice(0, MAIL_NAME_MAX - 1);
   return `${/[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head}…`;
@@ -220,6 +225,13 @@ export function digestMailParams(d: DigestData): DigestMailParams {
 }
 
 export interface DigestWindow { key: string; since: Date; until: Date }
+
+/** a loggable code for an enqueue error: an HttpError's code or a database error's SQLSTATE, never the message (it may hold data) */
+function errorCode(e: unknown): string {
+  if (e instanceof HttpError) return e.message;
+  const code = (e as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && /^[\w.-]{1,40}$/.test(code) ? code : 'unexpected';
+}
 
 /** the account's in-app weekly digest switch (user_prefs.weeklyDigest, default on) */
 async function weeklyDigestOn(ctx: Pick<Ctx, 'db'>, userId: string): Promise<boolean> {
@@ -249,9 +261,12 @@ export async function sendDigest(ctx: Ctx, user: UserRow, w: DigestWindow, test 
       personal: true, // own ntfy topic only, never the global channels
     });
   }
-  // like a notice's mail (notify.ts): a failing enqueue never fails the in-app digest
+  // a failing enqueue never fails the in-app digest; the log line carries a code only (never an address or a title)
   const queued = await mailPerson(ctx, user.id, 'digest', { ...digestMailParams(data) },
-    test ? `digest-test:${user.id}:${Date.now()}` : `digest:${user.id}:${w.key}`).catch(() => null);
+    test ? `digest-test:${user.id}:${Date.now()}` : `digest:${user.id}:${w.key}`).catch((e: unknown) => {
+    console.warn('digest mail failed', JSON.stringify({ user: user.id, code: errorCode(e) }));
+    return null;
+  });
   return { sent, mailed: queued !== null, data };
 }
 

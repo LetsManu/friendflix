@@ -70,10 +70,10 @@ export const LANGUAGE_TAGS: Record<Language, string> = { de: 'de-DE', en: 'en-GB
  * - a plain string is shown as is (names, titles, notes written by people)
  * - `{ key, params }` is a message of backend/src/messages.ts; params may be texts themselves (e.g. an achievement name)
  * - `{ join, sep }` joins several texts (default separator: newline)
- * - `{ date }` (only as a param) is an ISO timestamp formatted as date + time
+ * - `{ date }` (only as a param) is an ISO timestamp formatted as date + time; `{ date, only: 'day' }` as the date alone
  */
 export type Text = string | { key: MsgKey; params?: Record<string, Param> } | { join: Text[]; sep?: string };
-export type Param = Text | number | { date: string };
+export type Param = Text | number | { date: string; only?: 'day' };
 
 /** Shorthand for a message reference. */
 export const m = (key: MsgKey, params?: Record<string, Param>): Text => (params ? { key, params } : { key });
@@ -81,6 +81,7 @@ export const m = (key: MsgKey, params?: Record<string, Param>): Text => (params 
 const pluralCache = new Map<Language, Intl.PluralRules>();
 const numberCache = new Map<Language, Intl.NumberFormat>();
 const dateCache = new Map<Language, Intl.DateTimeFormat>();
+const dayCache = new Map<Language, Intl.DateTimeFormat>();
 const cached = <T>(map: Map<Language, T>, lang: Language, make: () => T): T => {
   let v = map.get(lang);
   if (!v) { v = make(); map.set(lang, v); }
@@ -99,7 +100,10 @@ function renderParam(lang: Language, p: Param): string {
   if (typeof p === 'number') return cached(numberCache, lang, () => new Intl.NumberFormat(LANGUAGE_TAGS[lang])).format(p);
   if (p && typeof p === 'object' && 'date' in p) {
     const d = new Date(p.date);
-    return Number.isNaN(d.getTime()) ? '' : cached(dateCache, lang, () => new Intl.DateTimeFormat(LANGUAGE_TAGS[lang], { dateStyle: 'medium', timeStyle: 'short' })).format(d);
+    if (Number.isNaN(d.getTime())) return '';
+    return p.only === 'day'
+      ? cached(dayCache, lang, () => new Intl.DateTimeFormat(LANGUAGE_TAGS[lang], { dateStyle: 'medium' })).format(d)
+      : cached(dateCache, lang, () => new Intl.DateTimeFormat(LANGUAGE_TAGS[lang], { dateStyle: 'medium', timeStyle: 'short' })).format(d);
   }
   return render(lang, p);
 }

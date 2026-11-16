@@ -375,7 +375,7 @@ describe('mail layout and test template', () => {
   // Mail stage C, Task 2: the weekly recap as a mail, titles as text lists in sections.
   const DIGEST = {
     headline: m('digest.titleWith', { parts: { join: [m('digest.movies', { n: 14 }), m('digest.episodes', { n: 3 })], sep: ', ' } }),
-    since: '2026-11-08T17:00:00.000Z', until: '2026-11-15T17:30:00.000Z',
+    since: '2026-11-08T12:00:00.000Z', until: '2026-11-15T12:10:00.000Z',
     movies: { names: ['Nordlicht', 'Polarnacht'], total: 14 },
     series: [{ name: 'Nordlicht TV', count: 3, followed: true }],
     wishes: ['„Nordlicht“ ist jetzt verfügbar'],
@@ -389,7 +389,12 @@ describe('mail layout and test template', () => {
     const r = await renderMail(env.ctx, 'digest', 'de', DIGEST, { userId: actor });
     expect(r.subject).toBe('Dein Wochenrückblick: 14 neue Filme, 3 neue Folgen');
     expect(r.text).toContain('Dein Wochenrückblick: 14 neue Filme, 3 neue Folgen');
-    expect(r.text).toContain(msg('de', 'mail.digest.range', { app: 'FriendFlix', from: { date: DIGEST.since }, to: { date: DIGEST.until } }));
+    // the range is two days, no time of day (the until is the moment the tick sent it)
+    expect(r.text).toContain('Neu in FriendFlix vom 08.11.2026 bis 15.11.2026.\n');
+    expect(msg('en', 'mail.digest.range', { app: 'FriendFlix', from: { date: DIGEST.since, only: 'day' }, to: { date: DIGEST.until, only: 'day' } }))
+      .toBe('New in FriendFlix from 8 Nov 2026 to 15 Nov 2026.');
+    // the date-and-time form is unchanged
+    expect(msg('en', 'mail.invite.expires', { date: { date: DIGEST.until } })).toMatch(/15 Nov 2026, \d\d:10/);
     expect(r.text).toContain('Neue Filme\n- Nordlicht\n- Polarnacht\n- … und 12 weitere\n\n');
     expect(r.text).toContain('Neue Folgen\n- Nordlicht TV (3 neue Folgen)\n');
     expect(r.text).toContain('Deine Wünsche sind da\n- „Nordlicht“ ist jetzt verfügbar\n');
