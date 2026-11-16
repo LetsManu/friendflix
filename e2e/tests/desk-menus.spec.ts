@@ -199,6 +199,18 @@ test.describe('header menus', () => {
     expect(Math.abs((await x('Von FriendFlix abmelden')) - (await x('Mein Bereich')))).toBeLessThanOrEqual(1);
   });
 
+  test('activating the checked profile row closes the menu and returns the focus to the avatar', async ({ page }) => {
+    await page.route('**/api/me', (r) => r.fulfill({ json: multiMe }));
+    await page.addInitScript(() => sessionStorage.setItem('ff-profile-picked', '1'));
+    await page.goto('/watchlist');
+    await acctBtn(page).click();
+    const menu = acct(page);
+    await expect(menu).toBeVisible();
+    await menu.getByRole('menuitemradio', { name: 'Tester' }).click();
+    await expect(menu).toBeHidden();
+    await expect(acctBtn(page)).toBeFocused();
+  });
+
   test('the profile rows hold their place while they load', async ({ page }) => {
     await page.route('**/api/me', (r) => r.fulfill({ json: multiMe }));
     await page.route('**/api/profiles', async (r) => { await later(600); await r.fulfill({ json: { profiles: PROFILES, max: 5, activeId: 'p1' } }); });

@@ -162,6 +162,8 @@
     shut();
     try { void goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { void goto('/browse/movies'); }
   }
+  /** the checked profile row: nothing to switch, the menu closes and the focus goes back to the avatar */
+  function closeToAvatar() { shut(); acctBtn?.focus({ preventScroll: true }); }
   function openHelp() { shut(); onHelp(); }
 
   let root: HTMLElement;
@@ -514,7 +516,7 @@
           {#if multi}
             <div role="group" aria-labelledby="ff-acct-sw">
               <p class="gm-head" id="ff-acct-sw" role="none">{$t('shell.account.switchProfile')}</p>
-              {#if me.profile}<button type="button" class="gm-row" role="menuitemradio" aria-checked="true" tabindex="-1" on:click={shut}><span class="gm-ic"><span class="face xs" style={faceStyle} aria-hidden="true">{initial(me.profile.name)}</span></span><span class="gm-lbl">{me.profile.name}</span><span class="gm-val"><Icon name="check" size={20} /></span></button>{/if}
+              {#if me.profile}<button type="button" class="gm-row" role="menuitemradio" aria-checked="true" tabindex="-1" on:click={closeToAvatar}><span class="gm-ic"><span class="face xs" style={faceStyle} aria-hidden="true">{initial(me.profile.name)}</span></span><span class="gm-lbl">{me.profile.name}</span><span class="gm-val"><Icon name="check" size={20} /></span></button>{/if}
               {#each others ?? [] as p (p.id)}<a class="gm-row" href={switchHref(p.id)} role="menuitemradio" aria-checked="false" tabindex="-1" data-sveltekit-reload><span class="gm-ic"><span class="face xs" style="background:{avatarBg(p.avatar)}" aria-hidden="true">{initial(p.name)}</span></span><span class="gm-lbl">{p.name}</span><span class="gm-val">{#if p.hasPin}<Icon name="lock" size={16} label={$t('shell.account.withPin')} />{/if}</span></a>{/each}
               {#each { length: skelRows } as _, i (i)}<div class="gm-row skel" aria-hidden="true"><span class="gm-ic"><i class="sk-face"></i></span><span class="gm-lbl"><i class="sk-bar"></i></span></div>{/each}
             </div>
@@ -696,7 +698,7 @@
   .skel .sk-bar { width: 96px; height: 12px; border-radius: 6px; }
   @keyframes sk-pulse { from { opacity: 1; } to { opacity: .45; } }
   :global(html.m-still) .skel i { animation: none; }
-  /* the notifications: a region, not a menu; long titles wrap (the row grows from 44 px); unread rows carry a coral dot */
+  /* the notifications: a region, not a menu; long titles wrap (the row grows from 44 px); unread rows carry the accent dot (--acc-fill) */
   .drop.wide { width: 320px; max-width: calc(100vw - 16px); }
   .drop .note { padding-block: 8px; }
   .note .gm-lbl { white-space: normal; overflow-wrap: anywhere; }

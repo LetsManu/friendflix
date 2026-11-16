@@ -82,6 +82,14 @@ describe('menuKeys action', () => {
     press('ArrowUp');
     expect(c.focus).toHaveBeenCalledTimes(3);
   });
+  it('a focused text field inside the menu keeps its arrow / Home / End keys', () => {
+    const a = el(), field = { ...el(), tagName: 'INPUT', type: 'text' };
+    const { node, press } = menu([a, field as unknown as ReturnType<typeof el>]);
+    menuKeys(node, { close: vi.fn() });
+    (globalThis as { document?: unknown }).document = { activeElement: field };
+    for (const k of ['ArrowDown', 'ArrowUp', 'Home', 'End']) expect(press(k).preventDefault).not.toHaveBeenCalled();
+    expect(a.focus).not.toHaveBeenCalled();
+  });
   it('Tab closes the menu, makes it inert and hands the focus to its button (the browser moves on from there)', () => {
     const a = el(), trigger = el();
     const close = vi.fn();

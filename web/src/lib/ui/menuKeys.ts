@@ -65,7 +65,7 @@ export function menuKeys(node: HTMLElement, opts: MenuKeysOpts) {
       return;
     }
     const move = menuMove(e.key);
-    if (!move) return;
+    if (!move || ownsArrowKeys(document.activeElement)) return;
     const items = menuItems(node);
     const j = moveIndex(move, items.indexOf(document.activeElement as HTMLElement), items.length);
     if (j < 0) return;
