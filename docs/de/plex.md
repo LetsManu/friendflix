@@ -227,7 +227,7 @@ FriendFlix spiegelt deine Plex-Bibliotheken (Sections) und lässt dich **pro Rol
 - Gib Bibliotheken klare, stabile Namen. Mit diesen Namen wählst du sie im Admin-Bereich.
 - Lege Inhalte, die nur manche sehen sollen (Kinder, Erwachsene, Familienvideos), in eigene Bibliotheken, statt dich nur auf Altersfreigaben zu verlassen.
 - Eine für die Rolle nicht erlaubte Bibliothek ist unsichtbar – auch in Suche, Empfehlungen, bei direkten Links und im Medien-Gateway.
-- Der Zugriff hängt am **Namen** der Bibliothek (Groß-/Kleinschreibung egal). **Benennst du eine Bibliothek in Plex um, verschwindet sie für Rollen, die sie über den Namen freigeben**, bis du die Rolleneinstellungen anpasst.
+- Der Zugriff hängt am **Namen** der Bibliothek: Der Name in der Rolle gibt die Bibliothek mit genau diesem Namen frei; eine andere Groß-/Kleinschreibung (`filme` für `Filme`) klappt weiter, aber nur, solange genau eine Bibliothek dazu passt. Unterscheiden sich zwei Bibliotheken nur darin (`Filme` und `filme`) und die Rolle schreibt keine von beiden genau so (`FILME`), gibt sie **keine** frei, und der Rollen-Editor markiert den Namen; trag den genauen ein. **Benennst du eine Bibliothek in Plex um, verschwindet sie für Rollen, die sie über den Namen freigeben**, bis du die Rolleneinstellungen anpasst.
 
 ## 5. Altersfreigaben
 

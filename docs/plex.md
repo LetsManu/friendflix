@@ -227,7 +227,7 @@ FriendFlix mirrors your Plex libraries (sections) and lets you decide **per role
 - Give libraries clear, stable names. The names are what you pick in the admin area.
 - Prefer separate libraries for content that only some people should see (kids, adult, family videos) instead of relying on ratings alone.
 - A library that is not allowed for a role is invisible to it, including search, recommendations, direct links and the media gateway.
-- Access is bound to the library **name** (compared case-insensitively). **Renaming a library in Plex removes it from roles that list it by name** until you update the role settings.
+- Access is bound to the library **name**: a role's name unlocks the library of exactly that name; another spelling in a different letter case (`filme` for `Filme`) still works, but only while exactly one library matches it. If two libraries differ only in case (`Filme` and `filme`) and the role's spelling is neither (`FILME`), it unlocks **neither**, and the role editor marks the name; enter the exact one. **Renaming a library in Plex removes it from roles that list it by name** until you update the role settings.
 
 ## 5. Age ratings
 
