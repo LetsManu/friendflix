@@ -32,7 +32,17 @@ const consoleLog: MailLog = { warn: (o, msg) => console.warn(msg ?? 'mail', JSON
 export interface TickResult { sent: number; failed: number; deferred: number }
 export interface DeliverResult { state: 'sent' | 'queued' | 'failed'; code?: string; smtp?: number }
 
+/** the monotonic clock (ms) that measures how much of a claim's lease is left; tests replace it */
+const monotonic = () => performance.now();
+let clock: () => number = monotonic;
+/** Tests only: a monotonic clock in ms (null restores performance.now). */
+export function setMailClockForTests(fn: (() => number) | null): void {
+  clock = fn ?? monotonic;
+}
+
 const LEASE_MS = 2 * 60_000;
+/** the lease one more send may need (more than one 30 s socket timeout): with less left, the batch stops and gives back the rest */
+const SEND_BUDGET_MS = 45_000;
 const BATCH = 20;
 const TRANSPORT_FAILS_TTL_S = 86_400;
 const TRANSPORT_TTL_S = 7 * 86_400;
@@ -104,21 +114,42 @@ const markFailed = (db: Db, r: Claimed, lease: Date, now: Date, code: string, sm
 const markRetry = (db: Db, r: Claimed, lease: Date, next: Date, code: string, smtp: number | null) => db.query(
   `update mail_outbox set state = 'queued', last_code = $4, last_smtp = $5, next_at = $3, lease_until = null where ${OWNED}`,
   [r.id, lease, next, code, smtp]);
-/** back to the queue without an attempt counted (a rate limit, a transport failure) */
-const giveBack = (db: Db, ids: string[], lease: Date, next: Date) => db.query(
-  `update mail_outbox set state = 'queued', attempts = greatest(attempts - 1, 0), next_at = $3, lease_until = null
+/** back to the queue without an attempt counted (a rate limit, a transport failure, the lease running short); next null keeps next_at */
+const giveBack = (db: Db, ids: string[], lease: Date, next: Date | null) => db.query(
+  `update mail_outbox set state = 'queued', attempts = greatest(attempts - 1, 0), next_at = coalesce($3, next_at), lease_until = null
     where id = any($1) and state = 'sending' and lease_until = $2`, [ids, lease, next]);
 
 const withSmtp = (o: Outcome, smtp: number | null): Outcome => (smtp === null ? o : { ...o, smtp });
 
-/** sends the claimed rows over one connection; the outcome of every row it got to */
-async function sendClaimed(ctx: Ctx, rows: Claimed[], transport: Transporter, now: Date, lease: Date, log: MailLog): Promise<Map<string, Outcome>> {
+/** the claim's lease: its value (the fence of every update) and when it ends on the monotonic clock */
+interface Lease { until: Date; endsAt: number }
+
+/**
+ * Sends the claimed rows over one connection; the outcome of every row it got to. Before each send it checks the lease: a send may take
+ * longer than one socket timeout, and once the lease has run out another instance may claim and send the same row, so with less than
+ * SEND_BUDGET_MS left the rest of the batch goes back unchanged (still due) and the tick stops.
+ */
+async function sendClaimed(ctx: Ctx, rows: Claimed[], transport: Transporter, now: Date, l: Lease, log: MailLog): Promise<Map<string, Outcome>> {
   const out = new Map<string, Outcome>();
   const { db } = ctx;
+  const lease = l.until;
   const from = { name: (await mailBrand(ctx)).name, address: ctx.cfg.MAIL_FROM! };
   let cleared = false;
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i]!;
+    if (l.endsAt - clock() < SEND_BUDGET_MS) {
+      const rest = rows.slice(i).map((x) => x.id);
+      await giveBack(db, rest, lease, null);
+      for (const id of rest) out.set(id, { state: 'queued' });
+      break;
+    }
+    if (r.attempts > MAX_ATTEMPTS) {
+      // claimed again after its last attempt (a worker died while sending it, more than once): no further try
+      await markFailed(db, r, lease, now, 'unexpected', null);
+      log.warn({ mail: r.id, code: 'unexpected' }, 'mail failed');
+      out.set(r.id, { state: 'failed', code: 'unexpected' });
+      continue;
+    }
     const wait = await rateWait(db, r.rcpt_key, now);
     if (wait) {
       await giveBack(db, [r.id], lease, wait);
@@ -137,21 +168,24 @@ async function sendClaimed(ctx: Ctx, rows: Claimed[], transport: Transporter, no
       out.set(r.id, { state: 'failed', code: 'unreadable' });
       continue;
     }
-    let f: MailFailure;
+    let f: MailFailure | null = null;
     try {
       const m = await renderMail(ctx, r.kind as MailKind, isLanguage(r.lang) ? r.lang : 'de', params);
       // `from` as an address object: nodemailer quotes or encodes the brand name, so it can never add a header or a recipient
       await transport.sendMail({ from, to, subject: m.subject, html: m.html, text: m.text, attachments: m.attachments, headers: m.headers });
+    } catch (e) {
+      f = classifyMailError(e);
+    }
+    if (!f) {
+      // outside the classifying try: a store error after the send must never turn a sent mail into a retry
       await markSent(db, r, lease, now);
       out.set(r.id, { state: 'sent' });
       if (!cleared) {
         cleared = true;
-        await ctx.kv.del('mail:transport');
-        await ctx.kv.del('mail:transport:fails');
+        // best effort: the status shows the old transport failure until the next send clears it
+        await Promise.all([ctx.kv.del('mail:transport'), ctx.kv.del('mail:transport:fails')]).catch(() => undefined);
       }
       continue;
-    } catch (e) {
-      f = classifyMailError(e);
     }
     if (f.scope === 'transport' && f.code !== 'unexpected') {
       // nothing is wrong with the messages: this one and the rest go back without using an attempt, and the tick stops
@@ -192,8 +226,9 @@ async function run(ctx: Ctx, now: Date | undefined, log: MailLog, id?: string): 
     return { outcomes: new Map(), blocked: code };
   }
   try {
-    const lease = new Date(at.getTime() + LEASE_MS);
-    const rows = await claim(ctx.db, at, lease, id);
+    // the monotonic start is taken before the claim, so the budget never counts on more lease than the rows have
+    const lease: Lease = { until: new Date(at.getTime() + LEASE_MS), endsAt: clock() + LEASE_MS };
+    const rows = await claim(ctx.db, at, lease.until, id);
     return { outcomes: rows.length ? await sendClaimed(ctx, rows, transport, at, lease, log) : new Map() };
   } finally {
     transport.close();

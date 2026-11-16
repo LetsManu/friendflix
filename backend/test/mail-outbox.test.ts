@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readBrand, resetBrand, saveBrand } from '../src/brand/repo.js';
 import type { Config } from '../src/config.js';
 import { HttpError } from '../src/users.js';
 import { BACKOFF_S, enqueueMail, LIMITS, MAX_ATTEMPTS, mailStatus } from '../src/mail/outbox.js';
 import { setMailTestCa } from '../src/mail/transport.js';
-import { deliverNow, mailTick } from '../src/mail/worker.js';
+import { deliverNow, mailTick, setMailClockForTests } from '../src/mail/worker.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 import { SMTP_CERT, startSmtp, type SmtpFake, type SmtpFakeOptions } from './smtpfake.js';
 
@@ -49,6 +49,8 @@ describe('mail outbox and worker', () => {
     await fake?.close();
     fake = undefined;
     env.ctx.cfg = cfg;
+    setMailClockForTests(null);
+    vi.restoreAllMocks();
   });
 
   /** starts the fake server (login kino / pw-1 over STARTTLS) and points the settings at it */
@@ -246,6 +248,79 @@ describe('mail outbox and worker', () => {
     expect((await row(other)).state).toBe('sending');
   });
 
+  it('a batch stops before its lease runs out', async () => {
+    // a monotonic clock the fake server moves on: every recipient it accepts costs 40 s of the 2-minute lease
+    let mono = 1_000;
+    let step = 40_000;
+    setMailClockForTests(() => mono);
+    const f = await useFake({ rcpt: () => { mono += step; return null; } });
+    for (let i = 0; i < 5; i++) await enqueue({ to: `gast${i}@friend.example.com`, userId: null });
+    const before = new Map((await rows()).map((r) => [r.id, r.next_at.getTime()]));
+    // 0 s and 40 s used: sent; 80 s used leaves 40 s, less than the 45 s one more send may take: the rest goes back
+    expect(await mailTick(env.ctx, await dbNow())).toEqual({ sent: 2, failed: 0, deferred: 3 });
+    expect(f.messages).toHaveLength(2);
+    const back = (await rows()).filter((r) => r.state !== 'sent');
+    expect(back).toHaveLength(3);
+    for (const r of back) {
+      expect(r.state).toBe('queued');
+      expect(r.attempts).toBe(0);
+      expect(r.lease_until).toBeNull();
+      expect(r.last_code).toBeNull();
+      expect(r.next_at.getTime()).toBe(before.get(r.id));
+    }
+    // still due: the next tick sends them
+    step = 0;
+    expect(await mailTick(env.ctx, await dbNow())).toEqual({ sent: 3, failed: 0, deferred: 0 });
+    expect(new Set(f.messages.flatMap((m) => m.to)).size).toBe(5);
+  });
+
+  it('a reclaimed row past its last attempt fails without sending', async () => {
+    const f = await useFake();
+    const id = (await enqueue())!;
+    const now = await dbNow();
+    await env.pool.query("update mail_outbox set state='sending', attempts=$2, lease_until=$3 where id=$1", [id, MAX_ATTEMPTS, new Date(now.getTime() - SEC)]);
+    expect(await mailTick(env.ctx, now, log)).toEqual({ sent: 0, failed: 1, deferred: 0 });
+    const r = await row(id);
+    expect(r.state).toBe('failed');
+    expect(r.last_code).toBe('unexpected');
+    expect(r.attempts).toBe(MAX_ATTEMPTS + 1);
+    expect(r.rcpt_enc).toBeNull();
+    expect(f.messages).toHaveLength(0);
+  });
+
+  it('a sent mail stays sent when clearing the transport failure fails', async () => {
+    await useFake();
+    await env.kv.set('mail:transport', JSON.stringify({ code: 'auth', at: new Date().toISOString() }), 3600);
+    vi.spyOn(env.kv, 'del').mockRejectedValueOnce(new Error('kv down'));
+    const id = (await enqueue())!;
+    expect(await deliverNow(env.ctx, id, { log })).toEqual({ state: 'sent' });
+    expect((await row(id)).state).toBe('sent');
+    expect(logs).toEqual([]);
+  });
+
+  it('per-day and instance limits defer', async () => {
+    const f = await useFake();
+    const id = (await enqueue())!;
+    const now = await dbNow();
+    const key = (await row(id)).rcpt_key;
+    // 50 mails to Anna in the last day, the oldest 23 h ago (none in the last hour)
+    await env.pool.query(`insert into mail_outbox (id, kind, rcpt_mask, rcpt_key, lang, state, sent_at, finished_at)
+      select gen_random_uuid(), 'test', 'a…@friend.example.com', $1, 'de', 'sent', t, t
+        from generate_series(0, 49) i, lateral (select $2::timestamptz - interval '23 hours' + i * interval '20 minutes' t) x`, [key, now]);
+    expect(await mailTick(env.ctx, now)).toEqual({ sent: 0, failed: 0, deferred: 1 });
+    expect((await row(id)).next_at.getTime()).toBe(now.getTime() - 23 * 3600 * SEC + 24 * 3600 * SEC);
+    await env.pool.query("delete from mail_outbox where state = 'sent'");
+    // 200 mails to others in the last hour, the oldest 50 min ago
+    await env.pool.query(`insert into mail_outbox (id, kind, rcpt_mask, rcpt_key, lang, state, sent_at, finished_at)
+      select gen_random_uuid(), 'test', 'g…@friend.example.com', md5(i::text), 'de', 'sent', $1::timestamptz - interval '50 minutes', $1
+        from generate_series(1, 200) i`, [now]);
+    await env.pool.query('update mail_outbox set next_at = $2 where id = $1', [id, now]); // due again
+    expect(await mailTick(env.ctx, now)).toEqual({ sent: 0, failed: 0, deferred: 1 });
+    expect((await row(id)).next_at.getTime()).toBe(now.getTime() + 10 * 60 * SEC);
+    expect(f.messages).toHaveLength(0);
+    expect((await row(id)).attempts).toBe(0);
+  });
+
   it('per-recipient limit defers instead of dropping', async () => {
     const f = await useFake();
     for (let i = 0; i < 12; i++) await enqueue();
@@ -298,6 +373,14 @@ describe('mail outbox and worker', () => {
     const keep = await enqueue();
     await env.pool.query('delete from users where id=$1', [ben]);
     expect((await rows()).map((r) => r.id)).toEqual([keep]);
+  });
+
+  it('mail expires also while mail is not set up', async () => {
+    const id = (await enqueue())!;
+    const now = await dbNow();
+    await env.pool.query('update mail_outbox set created_at=$2 where id=$1', [id, new Date(now.getTime() - 73 * 3600 * SEC)]);
+    await mailTick(env.ctx, now);
+    expect(await row(id)).toMatchObject({ state: 'failed', last_code: 'expired', rcpt_enc: null, params_enc: null });
   });
 
   it('unconfigured tick does nothing', async () => {
