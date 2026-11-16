@@ -1196,20 +1196,15 @@ export class JellyfinService implements MediaServer {
         await res.body?.cancel().catch(() => undefined);
         if (!res.ok) throw new JellyfinError(res.status, `Jellyfin POST refresh -> ${res.status}`);
       },
-      libraryFolders: async () => {
-        const list = await client.adminJson<Array<{ ItemId?: unknown; Name?: unknown; Locations?: unknown }>>('/Library/VirtualFolders');
-        return (Array.isArray(list) ? list : []).flatMap((f) => (typeof f.ItemId === 'string' && typeof f.Name === 'string'
-          ? [{ id: f.ItemId, name: f.Name.slice(0, 200), paths: Array.isArray(f.Locations) ? f.Locations.filter((x): x is string => typeof x === 'string').slice(0, 50) : [] }]
-          : []));
-      },
+      // a library whose id stays unknown (see client.libraryFolders: Jellyfin 12.4 answers ItemId null after a restart) is left out
+      libraryFolders: async () => (await client.libraryFolders()).flatMap((f) => (f.id ? [{ id: f.id, name: f.name.slice(0, 200), paths: f.paths.slice(0, 50) }] : [])),
       createLibrary: async (name, path, kind) => {
         const q = new URLSearchParams({ name, collectionType: kind, paths: path, refreshLibrary: 'true' });
         const res = await client.adminFetch(`/Library/VirtualFolders?${q}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ LibraryOptions: {} }) });
         await res.body?.cancel().catch(() => undefined);
         if (!res.ok) throw new JellyfinError(res.status, `Jellyfin POST VirtualFolders -> ${res.status}`);
         client.forgetLibraryLocations();
-        const lib = (await client.adminJson<Array<{ ItemId?: unknown; Name?: unknown }>>('/Library/VirtualFolders')).find((f) => f.Name === name);
-        return { id: typeof lib?.ItemId === 'string' ? lib.ItemId : null };
+        return { id: (await client.libraryFolders()).find((f) => f.name === name)?.id ?? null };
       },
       itemByPath: async (libraryId, path) => {
         // TODO(A-M14): Jellyfin's /Items has no path filter, so this lists at most 2 000 items of the library and an item beyond them

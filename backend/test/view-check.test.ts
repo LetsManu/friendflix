@@ -490,6 +490,10 @@ describe('the library of an item from its Path (Jellyfin answers no CollectionFo
     expect(libraryOfPath('/mnt/usb/serien/Dunmoor', libs)).toBe('Serien');
     expect(libraryOfPath('/media/serien', libs)).toBe('Serien');
     expect(libraryOfPath('D:\\Medien\\Filme\\Nordlicht\\Nordlicht.mkv', libs)).toBe('Win');
+    // a Windows path ignores case (as the file system does); a POSIX one does not
+    expect(libraryOfPath('d:\\medien\\FILME\\Nordlicht.mkv', libs)).toBe('Win');
+    expect(libraryOfPath('\\\\NAS\\Serien\\Dunmoor', [{ name: 'Unc', paths: ['\\\\nas\\serien'] }])).toBe('Unc');
+    expect(libraryOfPath('/Media/Filme/Wrenfield.mp4', libs)).toBeNull();
     expect(libraryOfPath('/media/serien2/Dunmoor', libs)).toBeNull();
     expect(libraryOfPath('/media/filmeX/a.mkv', libs)).toBeNull();
     expect([libraryOfPath(undefined, libs), libraryOfPath('', libs), libraryOfPath(42, libs)]).toEqual([null, null, null]);

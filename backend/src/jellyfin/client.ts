@@ -56,19 +56,24 @@ export type LibraryLocations = Array<{ name: string; paths: string[] }>;
 export const LIBRARY_LOCATIONS_TTL_MS = 5 * 60_000;
 
 /** The library whose folder holds `path` (an item's Path, file or folder); with nested folders the deepest wins. null when none does.
- * A folder matches itself and what lies below it ('/' or '\\' after it), never a sibling that only shares the prefix. */
+ * A folder matches itself and what lies below it ('/' or '\\' after it), never a sibling that only shares the prefix. A Windows folder
+ * (drive letter or \\server) matches without regard to case, as its file system does; a POSIX one exactly. */
 export function libraryOfPath(path: unknown, libs: LibraryLocations): string | null {
   if (typeof path !== 'string' || !path) return null;
   let best: { name: string; len: number } | null = null;
   for (const lib of libs) {
     for (const raw of lib.paths) {
-      const dir = raw.replace(/[\\/]+$/, '');
-      if (!raw || (path !== dir && !(path.startsWith(dir) && (path[dir.length] === '/' || path[dir.length] === '\\')))) continue;
+      const win = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(raw);
+      const dir = (win ? raw.toLowerCase() : raw).replace(/[\\/]+$/, '');
+      const p = win ? path.toLowerCase() : path;
+      if (!raw || (p !== dir && !(p.startsWith(dir) && (p[dir.length] === '/' || p[dir.length] === '\\')))) continue;
       if (!best || dir.length > best.len) best = { name: lib.name, len: dir.length };
     }
   }
   return best?.name ?? null;
 }
+
+export type LibraryFolder = { id: string | null; name: string; paths: string[] };
 
 /** Low-level Jellyfin client: admin-key calls plus raw user-token calls. Never used by browsers. */
 export class JellyfinClient {
@@ -212,6 +217,31 @@ export class JellyfinClient {
     this.locations = entry;
     p.catch(() => { if (this.locations === entry) this.locations = null; });
     return p;
+  }
+
+  /**
+   * `/Library/VirtualFolders` with each library's id. ItemId as the server answers it, except where a real Jellyfin 12.4 gets it wrong:
+   * null after a restart (for every library that was there before), and for two libraries whose names differ only in case ("Filme",
+   * "filme") the id of the other one. Those take the id of the one CollectionFolder of exactly that name in `/Library/MediaFolders` (asked
+   * only then; it also lists the ManualPlaylistsFolder "Playlists", which is no library). None, several or a failed read: id null.
+   */
+  async libraryFolders(): Promise<LibraryFolder[]> {
+    const list = await this.adminJson<unknown>('/Library/VirtualFolders');
+    const vfs = (Array.isArray(list) ? list : []).flatMap((f: { Name?: unknown; ItemId?: unknown; Locations?: unknown }) => (f && typeof f.Name === 'string'
+      ? [{ name: f.Name, itemId: typeof f.ItemId === 'string' && f.ItemId ? f.ItemId : null, paths: Array.isArray(f.Locations) ? f.Locations.filter((x): x is string => typeof x === 'string') : [] }]
+      : []));
+    const folded = new Map<string, number>();
+    for (const v of vfs) folded.set(v.name.toLowerCase(), (folded.get(v.name.toLowerCase()) ?? 0) + 1);
+    const byName = (v: { name: string; itemId: string | null }) => !v.itemId || folded.get(v.name.toLowerCase())! > 1;
+    const ids = new Map<string, string | null>();
+    if (vfs.some(byName)) {
+      const r = await this.adminJson<{ Items?: unknown }>('/Library/MediaFolders').catch(() => null);
+      for (const m of (Array.isArray(r?.Items) ? r.Items : []) as Array<{ Name?: unknown; Id?: unknown; Type?: unknown }>) {
+        if (!m || typeof m.Name !== 'string' || typeof m.Id !== 'string' || !m.Id || (m.Type !== undefined && m.Type !== 'CollectionFolder')) continue;
+        ids.set(m.Name, ids.has(m.Name) ? null : m.Id);
+      }
+    }
+    return vfs.map((v) => ({ id: byName(v) ? (ids.get(v.name) ?? null) : v.itemId, name: v.name, paths: v.paths }));
   }
 
   /** a library was added or changed: the next libraryLocations() reads them afresh */
