@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Ctx } from './ctx.js';
 import { accountsWithout } from './rights.js';
+import { sessionHash } from './session.js';
 
 /**
  * open party sockets per account (session id, close as revoked, close as refused), so a revoked session/device or a switched-off
@@ -12,8 +13,9 @@ export const sockets = new Map<string, Set<{ sid: string; close: () => void; for
  * Closes the party sockets of these sessions: `revoked` (4401; revokeSessions: device removed/unapproved, account locked, sign-out
  * elsewhere) or `forbidden` (4403 'party_forbidden'; their profile became a kids profile).
  */
-export function dropPartyPeers(userId: string, sids: Set<string>, mode: 'revoked' | 'forbidden' = 'revoked') {
-  for (const p of [...(sockets.get(userId) ?? [])]) if (sids.has(p.sid)) {
+export function dropPartyPeers(userId: string, hashes: Set<string>, mode: 'revoked' | 'forbidden' = 'revoked') {
+  // `hashes`: the sessions by their hash (session.ts sessionHash; a revoke only lists the hashed keys)
+  for (const p of [...(sockets.get(userId) ?? [])]) if (hashes.has(sessionHash(p.sid))) {
     if (mode === 'forbidden') p.forbid();
     else p.close();
   }

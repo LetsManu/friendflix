@@ -9,6 +9,7 @@ import { issueSetupCode } from '../src/setup/code.js';
 import { isSetupComplete } from '../src/setup/state.js';
 import { AK_URL, type AkCall, type FakeAuthentik, fakeAuthentik, type FakeStage, fixture } from './akflow-fake.js';
 import { makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 // Block 23 phase 3, Task 3: the /auth/flow routes (CSRF, single-use steps, rate limits, errors) and the LOGIN_UI switch on /auth/login.
 
@@ -544,7 +545,7 @@ describe('/auth/flow', () => {
 
   it('a jar of a signed-in person also needs that session and its x-csrf-token', async () => {
     const { cookies, csrf } = await env.login();
-    const sess = JSON.parse((await env.kv.get(`sess:${cookies.ff_sid}`))!) as { userId: string };
+    const sess = JSON.parse((await env.kv.get(sessionKey(cookies.ff_sid!)))!) as { userId: string };
     const { b, step } = await started(browser(env, cookies));
     // bind the jar to the session (as Task 10's reauth start will)
     const { loadJar, saveJar } = await import('../src/akflow.js');
@@ -832,11 +833,11 @@ describe('/auth/flow recovery (Task 5)', () => {
     env.ctx.fetchImpl = ak.fetch;
     const { b, step } = await resumed();
     // the reset is not done yet: nothing is revoked
-    expect(await env.kv.get(`sess:${a.cookies.ff_sid}`)).toBeTruthy();
+    expect(await env.kv.get(sessionKey(a.cookies.ff_sid!))).toBeTruthy();
     const r = await b.post('answer', { step: step.step, stage: 'prompt', password: NEW_PW, password_repeat: NEW_PW });
     expect(r.json()).toEqual({ stage: 'done', next: '/login?reset=1' });
-    expect(await env.kv.get(`sess:${a.cookies.ff_sid}`)).toBeNull();
-    expect(await env.kv.get(`sess:${c.cookies.ff_sid}`)).toBeNull();
+    expect(await env.kv.get(sessionKey(a.cookies.ff_sid!))).toBeNull();
+    expect(await env.kv.get(sessionKey(c.cookies.ff_sid!))).toBeNull();
     const userId = (await env.pool.query("select id from users where authentik_sub = 'sub-admin'")).rows[0].id;
     expect((await env.pool.query("select actor, target, meta from audit_log where action = 'session.revoke_others'")).rows)
       .toEqual([{ actor: userId, target: userId, meta: { sessions: 2, reason: 'password_reset' } }]);
@@ -851,7 +852,7 @@ describe('/auth/flow recovery (Task 5)', () => {
     const { b, step } = await resumed();
     const r = await b.post('answer', { step: step.step, stage: 'prompt', password: NEW_PW, password_repeat: NEW_PW });
     expect(r.json()).toEqual({ stage: 'done', next: '/login?reset=1' });
-    expect(await env.kv.get(`sess:${a.cookies.ff_sid}`)).toBeTruthy();
+    expect(await env.kv.get(sessionKey(a.cookies.ff_sid!))).toBeTruthy();
     await env.pool.query("delete from audit_log where action = 'login'");
   });
 

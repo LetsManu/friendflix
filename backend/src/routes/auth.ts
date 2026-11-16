@@ -6,7 +6,7 @@ import { dropRemotePeers } from './tv.js';
 import { loginUi } from '../akflow.js';
 import { publicOrigin, secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
-import { authenticate, COOKIE, loadSession, requireUser } from '../session.js';
+import { authenticate, COOKIE, deleteSession, loadSession, requireUser, sessionHash } from '../session.js';
 import { revokeCasts } from '../cast.js';
 import { revokeLiveTokens } from '../livetv/tokens.js';
 import { roleAllowsDownloads } from '../downloads.js';
@@ -380,8 +380,8 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     const sent = Buffer.from(String(req.headers['x-csrf-token'] ?? ''));
     const want = Buffer.from(s.csrf);
     if (sent.length !== want.length || !timingSafeEqual(sent, want)) return reply.code(403).send({ error: 'csrf' });
-    await ctx.kv.del(`sess:${sid}`);
-    dropRemotePeers(s.userId, new Set([sid]));
+    await deleteSession(ctx, sid);
+    dropRemotePeers(s.userId, new Set([sessionHash(sid)]));
     // this device's push subscriptions, cast and live tokens must not outlive its login (unless another live session still uses the device)
     if (s.deviceId && !(await deviceHasSession(ctx, s.userId, s.deviceId))) {
       await revokeCasts(ctx, s.userId, s.deviceId);

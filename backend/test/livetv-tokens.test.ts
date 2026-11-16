@@ -23,6 +23,7 @@ import { lockUser } from '../src/users.js';
 import { detectLivetv } from '../src/livetv/detect.js';
 import { invalidateLiveConversions, streamBitrateFor, streamKeyFor } from '../src/livetv/streams.js';
 import { cfg, ENC_KEY, fakeHttp, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 vi.mock('../src/livetv/detect.js', async (orig) => ({
   ...(await orig<typeof import('../src/livetv/detect.js')>()),
@@ -103,7 +104,7 @@ beforeAll(async () => {
   env = await makeEnv({}, { logger: { stream: { write: (l: string) => { logLines.push(l); } }, level: 'trace' } });
   admin = await env.login();
   adminId = (await env.pool.query<{ id: string }>("select id from users where authentik_sub = 'sub-admin'")).rows[0]!.id;
-  adminDevice = (JSON.parse((await env.kv.get(`sess:${admin.cookies.ff_sid}`))!) as { deviceId: string }).deviceId;
+  adminDevice = (JSON.parse((await env.kv.get(sessionKey(admin.cookies.ff_sid!)))!) as { deviceId: string }).deviceId;
   await account(ANNA, 'family', 'Anna Beispiel', '1'.repeat(32));
   await account(CARLA, 'admin', 'Carla Probe', '2'.repeat(32));
   for (const [u, d] of [[ANNA, 'dev-anna-1'], [ANNA, 'dev-anna-2'], [ANNA, 'dev-anna-3'], [ANNA, 'dev-anna-4'], [ANNA, 'dev-anna-5'], [ANNA, 'dev-anna-6'], [CARLA, 'dev-carla-1']]) {
@@ -371,7 +372,7 @@ describe('live tokens', () => {
     await revokeSessions(env.ctx, adminId);
     const s = await env.login();
     admin = s;
-    const dev = (JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!) as { deviceId: string }).deviceId;
+    const dev = (JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!) as { deviceId: string }).deviceId;
     const t = (await mint({ userId: adminId, profileId: adminId, deviceId: dev })).token;
     expect(await status(t)).toBe(200);
     const out = await env.app.inject({ method: 'POST', url: '/auth/logout', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf } });
@@ -627,7 +628,7 @@ describe('recording tokens (Phase 3)', () => {
       for (const k of await env.kv.keys('ltv:watchip:')) await env.kv.del(k);
     }
     // a profile switch of this session lands while the token is minted: the token is taken back, the answer is 409
-    const sessKey = `sess:${adm.cookies.ff_sid}`;
+    const sessKey = sessionKey(adm.cookies.ff_sid!);
     const other = randomUUID(); // the session now names another profile (the check compares ids only)
     const set = env.kv.set.bind(env.kv);
     let switched = false;

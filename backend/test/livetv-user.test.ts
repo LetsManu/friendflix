@@ -14,6 +14,7 @@ import type { IngestState, StreamView } from '../src/livetv/wire.js';
 import { invalidateRights } from '../src/rights.js';
 import { invalidateRoles } from '../src/roles.js';
 import { cfg, ENC_KEY, fakeHttp, makeEnv, type Call, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 const key = keyFromBase64(ENC_KEY);
@@ -473,7 +474,7 @@ describe('TV start', () => {
     const old = await deviceOf(carlaId);
     const sid = carla.cookies.ff_sid!;
     await env.pool.query('update devices set device_id = $3 where user_id = $1 and device_id = $2', [carlaId, old, tv]);
-    await env.kv.replace(`sess:${sid}`, JSON.stringify({ ...JSON.parse((await env.kv.get(`sess:${sid}`))!), deviceId: tv }), 3600);
+    await env.kv.replace(sessionKey(sid), JSON.stringify({ ...JSON.parse((await env.kv.get(sessionKey(sid)))!), deviceId: tv }), 3600);
     expect((await me(carla))).toMatchObject({ tv: true, startLive: false, features: { livetv: true } });
 
     // only an admin may set it; the answer and the audit carry no device id

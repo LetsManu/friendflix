@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { previews } from '../src/previews.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 const MOVIE = 'a'.repeat(32); // 90 min -> clip starts at 1800 s = segment 600
 const BAD = 'b'.repeat(32); // Jellyfin answers segments with 500
@@ -59,7 +60,7 @@ beforeAll(async () => {
     `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(), 'lea', 'l@x.de', 'Lea', 'guest', $1, 'lea', $2) returning id`,
     [LEA_JF, encrypt(keyFromBase64(ENC_KEY), 'pw')],
   )).rows[0].id;
-  await env.kv.set(`sess:lea-session-${'x'.repeat(30)}`, JSON.stringify({ userId: id, csrf: 'leacsrf', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
+  await env.kv.set(sessionKey(`lea-session-${'x'.repeat(30)}`), JSON.stringify({ userId: id, csrf: 'leacsrf', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
   lea = { cookies: { ff_sid: `lea-session-${'x'.repeat(30)}` }, csrf: 'leacsrf' };
 });
 afterAll(() => env.close());

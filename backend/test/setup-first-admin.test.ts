@@ -10,6 +10,7 @@ import { createSettingsStore } from '../src/settings/store.js';
 import { issueSetupCode } from '../src/setup/code.js';
 import { claimSetup, completeSetup, isSetupComplete } from '../src/setup/state.js';
 import { cfg, ENC_KEY, makeEnv, TEST_DB, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 // Block 25 Task 14 (spec Parts E2 and F step 5): the first sign-in during setup becomes admin and completes setup.
 type SetupSess = { cookies: Record<string, string>; csrf: string; code: string };
@@ -79,7 +80,7 @@ describe('the first admin', () => {
     expect(await audits(env, 'setup.completed')).toEqual([{ actor: u!.id, target: null, meta: {} }]);
     // signed in, with the re-authentication stamp of the session's creation
     adminSid = cb.cookies.find((c) => c.name === 'ff_sid')!.value;
-    const sess = JSON.parse((await env.kv.get(`sess:${adminSid}`))!);
+    const sess = JSON.parse((await env.kv.get(sessionKey(adminSid)))!);
     expect(Math.abs(Date.now() - sess.reauthAt)).toBeLessThan(10_000);
     // the browser forgets the setup cookies
     expect(cb.cookies.find((c) => c.name === 'ff_setup')?.value).toBe('');

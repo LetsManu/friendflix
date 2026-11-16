@@ -12,7 +12,7 @@ import { hashPin, verifyPin } from '../crypto.js';
 import { MAX_PROFILES, ProfileError, createProfile, deleteProfile, getProfile, listProfiles, lockProfileKids, onConnection, publicProfile, setDeviceKids, type KidsRating } from '../profiles.js';
 import { dropPartyPeers } from '../partySockets.js';
 import { invalidateRights } from '../rights.js';
-import { COOKIE, rand, requireUser, saveSession, type Session } from '../session.js';
+import { COOKIE, rand, requireUser, saveSession, scanSessions, sessionHash, sessionKey, sessionTtl } from '../session.js';
 import type { ProfileRow } from '../types.js';
 import { policyChanged } from '../hooks.js';
 import { accountSerial, applyRole } from '../users.js';
@@ -32,14 +32,11 @@ const uuid = z.guid();
 /** parental cap of a kids profile (KIDS_RATINGS) */
 const maxRating = z.union([z.literal(0), z.literal(6), z.literal(12)]);
 
-/** The ids of the account's sessions that sit on this profile. */
+/** The account's sessions that sit on this profile, by their hash (session.ts sessionHash: what sockets and the gateway memo match). */
 export async function profileSids(ctx: Pick<Ctx, 'kv'>, userId: string, profileId: string): Promise<Set<string>> {
   const out = new Set<string>();
-  for (const k of await ctx.kv.keys('sess:')) {
-    const raw = await ctx.kv.get(k);
-    if (!raw) continue;
-    const sess = JSON.parse(raw) as Session;
-    if (sess.userId === userId && sess.profileId === profileId) out.add(k.slice('sess:'.length));
+  for await (const { hash, s } of scanSessions(ctx.kv)) {
+    if (s.userId === userId && s.profileId === profileId) out.add(hash);
   }
   return out;
 }
@@ -49,16 +46,13 @@ export async function profileSids(ctx: Pick<Ctx, 'kv'>, userId: string, profileI
  * next request; the gateway forgets their memoised identity.
  */
 export async function dropProfileSessions(ctx: Ctx, userId: string, profileId: string, exceptSid?: string): Promise<void> {
-  for (const k of await ctx.kv.keys('sess:')) {
-    const sid = k.slice('sess:'.length);
-    if (sid === exceptSid) continue;
-    const raw = await ctx.kv.get(k);
-    if (!raw) continue;
-    const sess = JSON.parse(raw) as Session;
+  const keep = exceptSid ? sessionHash(exceptSid) : null;
+  for await (const { key, hash: h, s: sess } of scanSessions(ctx.kv)) {
+    if (h === keep) continue;
     if (sess.userId !== userId || sess.profileId !== profileId) continue;
     delete sess.profileId;
-    await saveSession(ctx, sid, sess, true);
-    forgetAuth(sid);
+    await ctx.kv.replace(key, JSON.stringify(sess), sessionTtl(ctx, sess)); // under the key it has (a legacy one moves on its next use)
+    forgetAuth(h);
   }
 }
 
@@ -267,7 +261,7 @@ export function profileRoutes(app: FastifyInstance, ctx: Ctx) {
     const s = { ...req.session!, profileId: p.id, touchedAt: Date.now() };
     await saveSession(ctx, newSid, s);
     // in-flight requests of the tab still carry the old sid: keep it alive for a few seconds, already acting as the new profile (never beyond that)
-    await ctx.kv.replace(`sess:${oldSid}`, JSON.stringify(s), OLD_SID_GRACE);
+    await ctx.kv.replace(sessionKey(oldSid), JSON.stringify(s), OLD_SID_GRACE);
     // a cast belongs to one profile: leaving it ends this device's cast tokens, server-side, so it holds with no page open. Runs after the
     // sessions above carry the new profile: a mint in flight either sees it (and takes its token back) or exists by now (and is revoked here)
     if (switching) {
@@ -278,7 +272,7 @@ export function profileRoutes(app: FastifyInstance, ctx: Ctx) {
       try { await revokeLiveTokens(ctx, req.user!.id, req.session!.deviceId!); }
       catch { req.log.warn({ userId: req.user!.id }, 'profile select: revoking the device live tokens failed'); } // no token / key in the log
     }
-    forgetAuth(oldSid);
+    forgetAuth(sessionHash(oldSid));
     renamePeerSid(req.user!.id, oldSid, newSid);
     const maxAge = Math.max(60, Math.floor(((s.createdAt ?? Date.now()) + (s.ttl ?? ctx.cfg.SESSION_TTL_SECONDS) * 1000 - Date.now()) / 1000));
     reply.setCookie(COOKIE, newSid, { httpOnly: true, secure: secureCookies(ctx.cfg), sameSite: 'lax', path: '/', maxAge });

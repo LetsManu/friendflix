@@ -42,6 +42,15 @@ Startet einen Wegwerf-Postgres ohne Port-Mapping, spielt den neuesten Dump ein u
 - **Volume `bootstrap` sichern!** (getrennt vom Dump). Ohne den `APP_ENC_KEY` darin sind die gespeicherten Jellyfin-Passwörter der Nutzer und die geheimen Einstellungen unlesbar.
 - Nicht im Dump: Daten von Jellyfin, Wunsch-Dienst und Authentik (eigene Backups dieser Dienste; Authentik: [de/authentik.md §2.6](de/authentik.md#26-backups-und-updates)).
 
+### Redis-Volume (`redis-data`)
+Redis schreibt seine Daten in eine Append-only-Datei im Volume `redis-data` (einmal pro Sekunde): Anmeldungen (auch die gekoppelter Fernseher und der Apps), laufende Kopplungen und der Stand eines Updates über Portainer überstehen einen Neustart von Redis und des Hosts. Ein Backup braucht das Volume nicht; fehlt es, muss sich nur jede Person neu anmelden. Sitzungen liegen dort nur als SHA-256 ihrer ID (`sess:<hash>`), nie als Cookie-Wert: Eine Kopie des Volumes meldet niemanden an; trotzdem nicht weitergeben (Konto, Gerät und CSRF-Token stehen darin). Alle Sitzungen auf einmal beenden: `docker compose rm -sf redis`, `docker volume rm <projekt>_redis-data`, `docker compose up -d`. Jeder Schlüssel hat seine eigene Ablaufzeit, auch nach einem Neustart läuft nichts für immer weiter.
+
+**Ältere Installationen** (Compose-Datei oder Portainer-Stack von vor diesem Update) halten Redis noch nur im Arbeitsspeicher: *Admin → Status → Systemcheck* meldet dann bei *Grundlagen* „Anmeldungen überleben keinen Neustart“. Beheben, **in dieser Reihenfolge**: zuerst *Update now* (bzw. ohne Updater das Portainer-Redeploy, das dieses Release holt), damit das Backend läuft, das Sitzungen nur noch als Hash ablegt; erst dann die Compose-Änderung. Umgekehrt schriebe das alte Backend rohe Sitzungs-IDs in die neue Datei auf der Platte, wo sie bis zum nächsten Zusammenfassen durch Redis liegen bleiben (aufräumen: `docker compose exec redis sh -c 'REDISCLI_AUTH="$(cat /run/friendflix/redis_password)" redis-cli BGREWRITEAOF'`). Dann im Dienst `redis` der Compose-Datei (bzw. im Portainer-Stack) diese beiden Zeilen übernehmen und unter dem obersten `volumes:` den Eintrag `redis-data:` ergänzen, dann `docker compose -f compose.prod.yaml up -d` (Portainer: *Update the stack*). Das meldet ein letztes Mal alle ab.
+```yaml
+    command: ["redis-server", "/run/friendflix/redis.conf", "--save", "", "--appendonly", "yes", "--appendfsync", "everysec", "--dir", "/data"]
+    volumes: [bootstrap:/run/friendflix:ro, redis-data:/data]
+```
+
 ## TMDB-/OMDb-Schlüssel wechseln
 Die optionalen Schlüssel für die Detailseite lassen sich ohne Neustart tauschen:
 - **Über das Portal:** *Admin → Datenquellen*, neuen Schlüssel eintragen, *Testen*, *Speichern*. Die Sperre nach einem abgelehnten Schlüssel (401, 1 Stunde) und die zwischengespeicherten Fehlantworten fallen sofort weg.

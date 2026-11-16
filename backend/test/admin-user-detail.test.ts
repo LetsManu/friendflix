@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { encrypt, hashPin, keyFromBase64 } from '../src/crypto.js';
 import { effectiveLimits, getUserLimits } from '../src/limits.js';
 import { ENC_KEY, fakeHttp, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 let env: TestEnv;
 let admin: { cookies: Record<string, string>; csrf: string };
@@ -21,7 +22,7 @@ const as = (method: 'GET' | 'POST' | 'PATCH' | 'PUT', url: string, payload?: unk
   env.app.inject({ method, url, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, ...(payload === undefined ? {} : { payload: payload as object }) });
 const audits = async (action: string, target: string) => (await env.pool.query('select actor, meta from audit_log where action=$1 and target=$2 order by id', [action, target])).rows;
 const session = (sid: string, deviceId: string, profileId?: string, touchedAt = Date.now()) =>
-  env.kv.set(`sess:${sid}`, JSON.stringify({ userId: anna, csrf: 'c', deviceId, deviceApproved: true, createdAt: touchedAt, touchedAt, ...(profileId ? { profileId } : {}) }), 600);
+  env.kv.set(sessionKey(sid), JSON.stringify({ userId: anna, csrf: 'c', deviceId, deviceApproved: true, createdAt: touchedAt, touchedAt, ...(profileId ? { profileId } : {}) }), 600);
 
 const played = (id: string, name: string, at: string) => ({ Id: id, Name: name, Type: 'Movie', UserData: { Played: true, LastPlayedDate: at } });
 
@@ -180,7 +181,7 @@ describe('limits', () => {
     const policies = env.jfCalls.filter((c) => c.method === 'POST' && c.path.endsWith('/Policy'));
     expect(policies.map((c) => c.path).sort()).toEqual([ANNA_JF, KID_JF, BROKEN_JF].map((j) => `/Users/${j}/Policy`).sort());
     expect(policies.every((c) => c.body.MaxActiveSessions === 4)).toBe(true);
-    expect(await env.kv.get('sess:s-lim')).not.toBeNull(); // sessions stay
+    expect(await env.kv.get(sessionKey('s-lim'))).not.toBeNull(); // sessions stay
     // the alias writes through /rights: audited user.rights with the changed effective values only
     expect((await audits('user.rights', anna)).at(-1)).toEqual({
       actor: adminId,
@@ -200,7 +201,7 @@ describe('limits', () => {
     expect((await authz()).maxBitrate).toBe(8_000_000); // remote cap of the role, now memoised for 5 s
     expect((await as('PUT', `/api/admin/users/${anna}/limits`, { remoteBitrate: 2_000_000 })).statusCode).toBe(200);
     expect((await authz()).maxBitrate).toBe(2_000_000); // not the memoised answer
-    expect(await env.kv.get(`sess:${sid}`)).not.toBeNull();
+    expect(await env.kv.get(sessionKey(sid))).not.toBeNull();
   });
 
   it('PUT validates the bounds of the role schema', async () => {
@@ -229,9 +230,9 @@ describe('repair, sessions, Authentik, profiles', () => {
     await session('s-b1', 'dev-b');
     const r = await as('POST', `/api/admin/users/${anna}/sessions/dev-a/revoke`);
     expect(r.json()).toEqual({ revoked: 2 });
-    expect(await env.kv.get('sess:s-a1')).toBeNull();
-    expect(await env.kv.get('sess:s-a2')).toBeNull();
-    expect(await env.kv.get('sess:s-b1')).not.toBeNull();
+    expect(await env.kv.get(sessionKey('s-a1'))).toBeNull();
+    expect(await env.kv.get(sessionKey('s-a2'))).toBeNull();
+    expect(await env.kv.get(sessionKey('s-b1'))).not.toBeNull();
     expect((await audits('user.revoke_device', anna)).at(-1)).toEqual({ actor: adminId, meta: { deviceId: 'dev-a', sessions: 2 } });
     const unknown = '00000000-0000-4000-8000-000000000000';
     expect((await as('POST', `/api/admin/users/${unknown}/sessions/dev-a/revoke`)).statusCode).toBe(404);

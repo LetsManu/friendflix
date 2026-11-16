@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { audit } from '../src/audit.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 let env: TestEnv;
 let admin: { cookies: Record<string, string>; csrf: string };
@@ -90,11 +91,11 @@ describe('admin devices', () => {
   });
   it('remove signs out the sessions of that device only', async () => {
     const sess = (id: string, device: string) => JSON.stringify({ userId: id, csrf: 'c', deviceId: device, deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() });
-    await env.kv.set('sess:keep-0000000000000000000000000000', sess(ids.clara!, 'other-device-00001'), 600);
-    await env.kv.set('sess:gone-0000000000000000000000000000', sess(ids.clara!, 'device-clara-000000001'), 600);
+    await env.kv.set(sessionKey('keep-0000000000000000000000000000'), sess(ids.clara!, 'other-device-00001'), 600);
+    await env.kv.set(sessionKey('gone-0000000000000000000000000000'), sess(ids.clara!, 'device-clara-000000001'), 600);
     expect((await post('/api/admin/devices/remove', { userId: ids.clara, deviceId: 'device-clara-000000001' })).statusCode).toBe(200);
-    expect(await env.kv.get('sess:gone-0000000000000000000000000000')).toBeNull();
-    expect(await env.kv.get('sess:keep-0000000000000000000000000000')).not.toBeNull();
+    expect(await env.kv.get(sessionKey('gone-0000000000000000000000000000'))).toBeNull();
+    expect(await env.kv.get(sessionKey('keep-0000000000000000000000000000'))).not.toBeNull();
   });
   it('rejects non-admins', async () => {
     expect((await env.app.inject({ method: 'POST', url: '/api/admin/devices/remove', payload: { userId: ids.clara, deviceId: 'device-clara-000000001' } })).statusCode).toBeGreaterThanOrEqual(401);

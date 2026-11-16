@@ -17,7 +17,7 @@ import { resolveLiveToken, resolveRecToken } from '../livetv/tokens.js';
 import { jfUserFor, resolveProfile } from '../profiles.js';
 import { isHomeAddress } from '../netaddr.js';
 import { effectiveRole, remoteBitrateCap } from '../roles.js';
-import { loadSession } from '../session.js';
+import { loadSession, sessionHash } from '../session.js';
 import { upstreamUri } from '../mediapath.js';
 import { authzNginx } from '../metrics.js';
 import { getUserById } from '../users.js';
@@ -47,14 +47,18 @@ interface MediaAuth {
 }
 
 /** Session -> Jellyfin credentials for media requests. Short memo (5 s) keeps per-segment auth cheap. */
+/** keyed by the session's hash (session.ts sessionHash), like every in-memory set of sessions */
 const memo = new Map<string, { exp: number; v: MediaAuth | null }>();
 /** Single flight: concurrent lookups of one session (a burst of image requests after the memo expired) share one DB/Redis pass. */
 const inflight = new Map<string, Promise<MediaAuth | null>>();
-/** Drops the memoised credentials of a session (profile switch / revoke) so the gateway never serves the previous profile's token. */
-export const forgetAuth = (sid: string) => {
-  memo.delete(sid);
-  inflight.delete(sid); // a lookup still running for the old profile must neither be joined nor stored
-  for (const k of [...itemMemo.keys()]) if (k.startsWith(`${sid}|`)) itemMemo.delete(k);
+/**
+ * Drops the memoised credentials of a session (profile switch / revoke) so the gateway never serves the previous profile's token.
+ * `h`: the session's hash (session.ts sessionHash; the memos are keyed by it, so a revoke that only lists keys can name them).
+ */
+export const forgetAuth = (h: string) => {
+  memo.delete(h);
+  inflight.delete(h); // a lookup still running for the old profile must neither be joined nor stored
+  for (const k of [...itemMemo.keys()]) if (k.startsWith(`${h}|`)) itemMemo.delete(k);
 };
 
 /** Answer for the gateway: remoteMaxBitrate is internal; for a remote caller it lowers maxBitrate. */
@@ -95,20 +99,21 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /** Errors (DB/Redis/Jellyfin down) propagate and are never memoised: the next request retries. */
   async function mediaAuth(sid: string): Promise<MediaAuth | null> {
-    const hit = memo.get(sid);
+    const h = sessionHash(sid);
+    const hit = memo.get(h);
     if (hit && hit.exp > Date.now()) return hit.v;
-    const running = inflight.get(sid);
+    const running = inflight.get(h);
     if (running) return running;
     const p: Promise<MediaAuth | null> = lookup(sid).then((v) => {
-      if (inflight.get(sid) === p) { // not forgotten (profile switch / logout) meanwhile
-        memo.set(sid, { exp: Date.now() + (v ? 5_000 : 2_000), v });
+      if (inflight.get(h) === p) { // not forgotten (profile switch / logout) meanwhile
+        memo.set(h, { exp: Date.now() + (v ? 5_000 : 2_000), v });
         if (memo.size > 5000) memo.clear();
       }
       return v;
     }).finally(() => {
-      if (inflight.get(sid) === p) inflight.delete(sid);
+      if (inflight.get(h) === p) inflight.delete(h);
     });
-    inflight.set(sid, p);
+    inflight.set(h, p);
     return p;
   }
 
@@ -260,7 +265,7 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
       kind: z.enum(['media', 'image', 'subtitle']).default('media'),
     }).strict().safeParse(req.body);
     if (!b.success) return reply.code(400).send({ error: 'bad_request' });
-    const key = `${b.data.sid}|${b.data.itemId}`; // visibility does not depend on the kind
+    const key = `${sessionHash(b.data.sid)}|${b.data.itemId}`; // visibility does not depend on the kind; keyed by the session's hash (forgetAuth)
     const hit = itemMemo.get(key);
     if (hit && hit.exp > Date.now()) return { allow: hit.v };
     const id = await sessionIdentity(b.data.sid);

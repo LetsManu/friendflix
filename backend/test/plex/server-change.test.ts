@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PlexMediaServer } from '../../src/plex/service.js';
 import { ADMIN, makeEnv, type TestEnv } from '../helpers.js';
 import { fixture, PLEX_TOKEN, PLEX_URL, PlexFake } from '../plexfake.js';
+import { sessionKey } from '../../src/session.js';
 
 /**
  * a PLEX_URL saved through PUT /api/admin/settings for another Plex server, end to end on the real live ctx:
@@ -36,7 +37,7 @@ describe('PLEX_URL saved for another Plex server (re-auth, live rebuild, mirror 
   const put = (values: Record<string, unknown>) =>
     env.app.inject({ method: 'PUT', url: '/api/admin/settings', cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: { values } });
   const stamp = async (at: number) => {
-    const key = `sess:${admin.cookies.ff_sid}`;
+    const key = sessionKey(admin.cookies.ff_sid!);
     await env.kv.set(key, JSON.stringify({ ...JSON.parse((await env.kv.get(key))!), reauthAt: at }), 600);
   };
   const ids = async () => (await env.pool.query("select v #>> '{}' id from plex_sync_state where k = 'machine_identifier'")).rows[0]?.id;

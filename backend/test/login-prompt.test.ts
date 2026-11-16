@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAuthentikProvider, AUTH_SKEW_S, RESET_PIN_MAX_AGE, SIGNIN_MAX_AGE, signedInAfter } from '../src/oidc.js';
 import { REAUTH_MAX_AGE } from '../src/reauth.js';
 import { makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 let env: TestEnv;
 afterEach(async () => { vi.unstubAllGlobals(); const e = env; env = undefined as unknown as TestEnv; await e?.close(); });
@@ -99,7 +100,7 @@ describe('interactive sign-in through the identity provider', () => {
       env.claims.current = { ...env.claims.current, authTime: saved.startedAt / 1000 + offsetS } as typeof env.claims.current;
       return env.app.inject({ url: `/auth/callback?state=${st}&code=c`, cookies: { ...sess.cookies, ff_oidc: st } });
     };
-    const stamp = async () => JSON.parse((await env.kv.get(`sess:${sess.cookies.ff_sid}`))!).reauthAt;
+    const stamp = async () => JSON.parse((await env.kv.get(sessionKey(sess.cookies.ff_sid!)))!).reauthAt;
     for (const off of [-100, -31]) {
       const cb = await run(off);
       expect([cb.statusCode, cb.headers.location], String(off)).toEqual([302, '/me/account?reauth=failed']);
