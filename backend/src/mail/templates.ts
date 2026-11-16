@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { publicOrigin } from '../config.js';
 import type { Ctx } from '../ctx.js';
-import { msg, render, type Language, type Param, type Text } from '../i18n.js';
+import { msg, renderKnown, type Language, type MsgKey, type Param, type Text } from '../i18n.js';
 import { mailBrand, type MailBrand } from './brand.js';
 import { layout, safeHref, type LayoutInput } from './html.js';
 import type { MailPrefType } from './people.js';
@@ -122,10 +122,15 @@ function inviteMail(c: Common, raw: Record<string, unknown>): Parts {
   };
 }
 
+/** the paragraph of a per-type mail whose notice has no body: the kind's own line, or a neutral one (the licence notice always has a body) */
+const KIND_LINE: Record<MailPrefType, MsgKey> = { available: 'mail.available.body', recording: 'mail.recording.body', licence: 'mail.fallback.body' };
+
 /**
  * A notice mailed through a switch (notify(), `Notice.mail`): the notice's title is subject and heading, its body (else the kind's
  * own line) the paragraph, its link the button. It carries the unsubscribe link and the RFC 8058 headers with the token of exactly
- * this recipient and type; without a recipient or a public URL there is no such link, so it is not rendered at all.
+ * this recipient and type; without a recipient or a public URL there is no such link, so it is not rendered at all. A text that
+ * refers to a message key removed while the mail waited (a release in between) never shows the raw key: the title becomes a neutral
+ * subject, the body the kind's line.
  */
 function prefMail(c: Common, encKey: Buffer, kind: MailPrefType, raw: Record<string, unknown>, userId: string | null): Parts {
   const { lang, app } = c;
@@ -133,13 +138,13 @@ function prefMail(c: Common, encKey: Buffer, kind: MailPrefType, raw: Record<str
   if (!c.origin) throw new Error('mail_no_public_url');
   if (!userId) throw new Error('mail_no_recipient');
   const urls = unsubscribeUrls(c.origin, unsubscribeToken(encKey, userId, kind));
-  const title = render(lang, p.title);
-  const body = p.body == null ? '' : render(lang, p.body);
+  const title = renderKnown(lang, p.title) || msg(lang, 'mail.fallback.subject', { app });
+  const body = p.body == null ? '' : renderKnown(lang, p.body) ?? '';
   const target = p.link == null ? `${c.origin}/` : appLink(c.origin, p.link);
   return {
     subject: title,
     heading: title,
-    paragraphs: [body || msg(lang, `mail.${kind}.body`, { app })],
+    paragraphs: [body || msg(lang, KIND_LINE[kind], { app })],
     ...(target ? { button: { label: msg(lang, `mail.${kind}.button`), url: target } } : {}),
     reason: msg(lang, `mail.${kind}.reason`, { app }),
     footerLinks: [...c.brandLinks, settingsLink(c, c.origin), { label: msg(lang, 'mail.footer.unsubscribe'), url: urls.page }],

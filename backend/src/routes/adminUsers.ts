@@ -796,20 +796,34 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       lang: z.enum(LANGUAGES).optional(),
     }).parse(req.body);
     if (!(await invitableRoles(ctx)).includes(b.role)) throw new HttpError(400, 'role_not_invitable');
+    const dayKey = `mail:invite:${req.user!.id}`;
     if (b.email) {
       // everything that can refuse comes before the invite exists
       if (b.maxUses !== 1) throw new HttpError(400, 'invite_mail_single_use');
       if (!mailConfigured(ctx.cfg) || !publicOrigin(ctx.cfg)) throw new HttpError(400, 'mail_not_configured');
-      if ((await ctx.kv.incr(`mail:invite:${req.user!.id}`, 86400)) > 20) throw new HttpError(429, 'rate_limited');
+      if ((await ctx.kv.incr(dayKey, 86400)) > 20) throw new HttpError(429, 'rate_limited');
     }
-    const inv = await createInvite(ctx, req.user!.id, b, req.log);
+    let inv: Awaited<ReturnType<typeof createInvite>>;
+    try {
+      inv = await createInvite(ctx, req.user!.id, b, req.log);
+    } catch (e) {
+      // no invite, no mail: the day's count of invitation mails gets its place back
+      if (b.email) await ctx.kv.decr(dayKey).catch(() => undefined);
+      throw e;
+    }
     let mail: DeliverResult | undefined;
     if (b.email) {
-      const id = await enqueueMail(ctx, {
-        kind: 'invite', to: b.email, userId: null, lang: b.lang ?? (await broadcastLanguage(ctx)),
-        params: { link: inv.link, expiresAt: inv.expiresAt.toISOString(), inviter: req.user!.name }, dedupe: `invite:${inv.id}`,
-      });
-      mail = id ? await deliverNow(ctx, id, { log: req.log }) : { state: 'failed', code: 'unexpected' };
+      // the invite exists: whatever happens to its mail, the admin gets the link (to pass on by hand) and the audit row
+      try {
+        const id = await enqueueMail(ctx, {
+          kind: 'invite', to: b.email, userId: null, lang: b.lang ?? (await broadcastLanguage(ctx)),
+          params: { link: inv.link, expiresAt: inv.expiresAt.toISOString(), inviter: req.user!.name }, dedupe: `invite:${inv.id}`,
+        });
+        mail = id ? await deliverNow(ctx, id, { log: req.log }) : { state: 'failed', code: 'unexpected' };
+      } catch (e) {
+        req.log.warn({ code: 'invite_mail_failed', err: { type: (e as Error)?.name } }, 'invite mail failed');
+        mail = { state: 'failed', code: 'unexpected' };
+      }
     }
     await audit(ctx, req.user!.id, 'invite.create', inv.id, {
       role: b.role, authentik: inv.authentik, maxUses: b.maxUses, accessDays: b.accessDays,
@@ -858,6 +872,8 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
             c as (update invites n set max_uses = n.uses from invites o where n.id=$1 and o.id = n.id and n.uses > 0 and n.uses < n.max_uses
                   returning n.authentik_invite, n.uses, o.max_uses)
        select * from d union all select * from c`, [id]);
+    // its invitation mail, if one still waits in the outbox, would only bring a dead link
+    await ctx.db.query("delete from mail_outbox where dedupe = 'invite:' || $1 and state = 'queued'", [id]);
     const row = r.rows[0];
     if (row) {
       await deleteAuthentikInvitation(ctx, row.authentik_invite, req.log);

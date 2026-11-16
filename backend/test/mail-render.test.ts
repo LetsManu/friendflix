@@ -175,8 +175,8 @@ describe('mail layout and test template', () => {
     // the button goes to the notice's link, made absolute
     expect(r.html).toContain(`href="${ORIGIN}/downloads"`);
     expect(r.text).toContain(`${msg('de', 'mail.licence.button')}: ${ORIGIN}/downloads`);
-    // no body in the notice: the kind's own paragraph and reason
-    expect(r.text).toContain(msg('de', 'mail.licence.body', { app: 'FriendFlix' }));
+    // no body in the notice (the licence notice always has one): a neutral line, and the kind's reason
+    expect(r.text).toContain(msg('de', 'mail.fallback.body', { app: 'FriendFlix' }));
     expect(r.text).toContain(msg('de', 'mail.licence.reason', { app: 'FriendFlix' }));
     // the settings link comes before the unsubscribe link, both after the brand's links
     expect(r.text.indexOf('E-Mail-Einstellungen:')).toBeLessThan(r.text.indexOf('Diese E-Mails abbestellen:'));
@@ -198,6 +198,34 @@ describe('mail layout and test template', () => {
       expect(r.text).toContain(`${msg('de', `mail.${kind}.button`)}: ${ORIGIN}/`);
       expect(r.headers['List-Unsubscribe']).toContain(unsubscribeToken(env.ctx.encKey, actor, kind));
     }
+  });
+
+  it('no body: available and recording use their own line, licence the neutral one', async () => {
+    atFriend();
+    for (const [kind, line] of [['available', 'mail.available.body'], ['recording', 'mail.recording.body'], ['licence', 'mail.fallback.body']] as const) {
+      const r = await renderMail(env.ctx, kind, 'en', { title: 'Nordlicht' }, { userId: actor });
+      expect(r.text).toContain(msg('en', line, { app: 'FriendFlix' }));
+    }
+  });
+
+  it('a message key that disappeared while the mail was queued renders a neutral text, never the key', async () => {
+    atFriend();
+    const gone = { key: 'download.gone.title', params: { n: 2 } };
+    for (const kind of ['available', 'recording', 'licence'] as const) {
+      const r = await renderMail(env.ctx, kind, 'de', { title: gone, body: { key: 'download.gone.body' } }, { userId: actor });
+      expect(r.subject).toBe(msg('de', 'mail.fallback.subject', { app: 'FriendFlix' }));
+      expect(r.text).toContain(msg('de', 'mail.fallback.subject', { app: 'FriendFlix' }));
+      expect(r.text).toContain(msg('de', kind === 'licence' ? 'mail.fallback.body' : `mail.${kind}.body`, { app: 'FriendFlix' }));
+      expect(`${r.subject}${r.html}${r.text}`).not.toContain('download.gone');
+    }
+    // a known message whose parameter refers to a key that is gone counts as gone too
+    const nested = await renderMail(env.ctx, 'available', 'de', { title: { key: 'download.expiring.title', params: { n: { key: 'gone.n' } } }, body: 'Ein Text' }, { userId: actor });
+    expect(nested.subject).toBe(msg('de', 'mail.fallback.subject', { app: 'FriendFlix' }));
+    expect(nested.text).toContain('Ein Text');
+    // a known body still shows, under the neutral subject
+    const known = await renderMail(env.ctx, 'licence', 'de', { title: gone, body: m('download.expiring.body', { n: 2, date: { date: '2026-11-18T10:00:00.000Z' } }) }, { userId: actor });
+    expect(known.text).toContain(msg('de', 'download.expiring.body', { n: 2, date: { date: '2026-11-18T10:00:00.000Z' } }));
+    expect(msg('de', 'mail.fallback.subject', { app: 'FriendFlix' })).not.toMatch(/mail\./);
   });
 
   it('a pref kind without its recipient or without PUBLIC_URL throws', async () => {

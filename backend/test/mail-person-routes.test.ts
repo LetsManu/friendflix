@@ -224,6 +224,26 @@ describe('mail person routes', () => {
     expect(all).not.toMatch(/[?&]t=v1/);
   });
 
+  it('reqSerializer matches the decoded parameter name', async () => {
+    // Fastify decodes `%74` to `t`: the route reads the token, so the log must not show it either
+    expect(reqSerializer({ url: '/api/public/mail/unsubscribe?%74=v1.abc&x=1' }).url).toBe('/api/public/mail/unsubscribe?%74=[redacted]&x=1');
+    expect(reqSerializer({ url: '/x?a=1&%73%69%67=abc' }).url).toBe('/x?a=1&%73%69%67=[redacted]');
+    expect(reqSerializer({ url: '/x?%54=1&ts=2' }).url).toBe('/x?%54=1&ts=2'); // `T` is another name
+    // a name that cannot be decoded is redacted (better too much than a token)
+    expect(reqSerializer({ url: '/x?%E0%A4%A=1&y=2' }).url).toBe('/x?%E0%A4%A=[redacted]&y=2');
+    // no query, an empty one, a name without a value
+    expect(reqSerializer({ url: '/x' }).url).toBe('/x');
+    expect(reqSerializer({ url: '/x?' }).url).toBe('/x?');
+    expect(reqSerializer({ url: '/x?t&b=1' }).url).toBe('/x?t&b=1');
+    expect(reqSerializer({}).url).toBeUndefined();
+    const t = tok(anna);
+    logs.length = 0;
+    await env.app.inject({ method: 'GET', url: `${URL_}?%74=${t}`, remoteAddress: ip() });
+    const all = logs.join('\n');
+    expect(all).toContain('/api/public/mail/unsubscribe?%74=[redacted]');
+    expect(all).not.toContain(t.split('.')[3]!);
+  });
+
   it('account mail GET and PUT', async () => {
     const g = await as(annaS, 'GET', '/api/account/mail');
     expect(g.statusCode).toBe(200);

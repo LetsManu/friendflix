@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { Config } from '../src/config.js';
 import { setInstanceLanguage } from '../src/i18n.js';
 import { setMailTestCa } from '../src/mail/transport.js';
+import { mailTick } from '../src/mail/worker.js';
 import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
 import { SMTP_CERT, startSmtp, type SmtpFake, type SmtpFakeOptions } from './smtpfake.js';
 
@@ -19,6 +20,8 @@ describe('invitation mail', () => {
   let adminId: string;
   let fake: SmtpFake | undefined;
   let n = 0;
+  const logs: string[] = [];
+  const quiet = { warn: () => undefined };
 
   const post = (body: Record<string, unknown>) =>
     env.app.inject({ method: 'POST', url: '/api/admin/invites', cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, remoteAddress: `192.0.2.${(n = (n % 200) + 1)}`, payload: body });
@@ -33,7 +36,7 @@ describe('invitation mail', () => {
 
   beforeAll(async () => {
     setMailTestCa(SMTP_CERT);
-    env = await makeEnv();
+    env = await makeEnv({}, { logger: { stream: { write: (m: string) => { logs.push(m); } }, level: 'trace' } });
     admin = await env.login(ADMIN);
     adminId = (await env.pool.query<{ id: string }>("select id from users where authentik_sub = 'sub-admin'")).rows[0]!.id;
   });
@@ -118,6 +121,91 @@ describe('invitation mail', () => {
     expect(r.json().mail).toEqual({ state: 'failed', code: 'recipient_refused', smtp: 550 });
     expect(r.json().link).toContain('/invite/');
     expect(await invites()).toHaveLength(1);
+    const audit = (await env.pool.query<{ meta: { mail: unknown } }>("select meta from audit_log where action = 'invite.create'")).rows;
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.meta.mail).toEqual({ to: 'b…@friend.example.com', state: 'failed' });
+  });
+
+  it('without PUBLIC_URL answers mail_not_configured and creates no invite', async () => {
+    await useFake({}, { PUBLIC_URL: '' });
+    const r = await post({ role: 'friend', email: BEN });
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toEqual({ error: 'mail_not_configured' });
+    expect(await invites()).toHaveLength(0);
+    expect(await outbox()).toHaveLength(0);
+    expect(await env.kv.get(`mail:invite:${adminId}`)).toBeNull();
+  });
+
+  /** runs `fn` while a trigger makes every insert into `table` fail */
+  async function failing<T>(table: 'mail_outbox' | 'invites', fn: () => Promise<T>): Promise<T> {
+    await env.pool.query("create or replace function ff_test_refuse() returns trigger language plpgsql as $$ begin raise exception 'store refused for test'; end $$");
+    await env.pool.query(`create trigger ff_test_refuse before insert on ${table} for each row execute function ff_test_refuse()`);
+    try {
+      return await fn();
+    } finally {
+      await env.pool.query(`drop trigger ff_test_refuse on ${table}`);
+    }
+  }
+
+  it('a mail step that throws keeps the invite and its link and answers failed', async () => {
+    await useFake();
+    const r = await failing('mail_outbox', () => post({ role: 'friend', email: BEN }));
+    expect(r.statusCode).toBe(200);
+    const b = r.json<{ id: string; link: string; mail: unknown }>();
+    expect(b.mail).toEqual({ state: 'failed', code: 'unexpected' });
+    expect(b.link).toContain('/invite/');
+    expect(await invites()).toHaveLength(1);
+    expect(await outbox()).toHaveLength(0);
+    const audit = (await env.pool.query<{ meta: { mail: unknown } }>("select meta from audit_log where action = 'invite.create'")).rows;
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.meta.mail).toEqual({ to: 'b…@friend.example.com', state: 'failed' });
+  });
+
+  it('a failed invite gives back its share of the daily invite mails and logs no request text', async () => {
+    await useFake();
+    logs.length = 0;
+    const r = await failing('invites', () => post({ role: 'friend', email: BEN, note: 'Tante Gerda' }));
+    expect(r.statusCode).toBe(500);
+    expect(await invites()).toHaveLength(0);
+    expect(Number(await env.kv.get(`mail:invite:${adminId}`) ?? 0)).toBe(0);
+    // the route is one of the sensitive ones: the error is logged by its type and code, never with its text or the request's
+    const text = logs.join('\n');
+    expect(text).toContain('unhandled error');
+    expect(text).not.toContain('store refused for test');
+    expect(text).not.toContain(BEN);
+    expect(text).not.toContain('Tante Gerda');
+    // the next one still counts from zero
+    expect((await post({ role: 'friend', email: BEN })).statusCode).toBe(200);
+    expect(await env.kv.get(`mail:invite:${adminId}`)).toBe('1');
+  });
+
+  it('revoking an invite withdraws its queued mail', async () => {
+    await (await useFake()).close(); // the server is gone: the mail waits in the outbox
+    fake = undefined;
+    const r = await post({ role: 'friend', email: BEN });
+    expect(r.json().mail.state).toBe('queued');
+    const id = r.json<{ id: string }>().id;
+    expect(await outbox()).toHaveLength(1);
+    const d = await env.app.inject({ method: 'DELETE', url: `/api/admin/invites/${id}`, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf } });
+    expect(d.statusCode).toBe(200);
+    expect(await outbox()).toHaveLength(0);
+  });
+
+  it('a queued mail of an invite that expired or was used up is dropped unsent', async () => {
+    await (await useFake()).close();
+    fake = undefined;
+    const a = (await post({ role: 'friend', email: BEN })).json<{ id: string }>().id;
+    const b = (await post({ role: 'friend', email: 'cleo@friend.example.com' })).json<{ id: string }>().id;
+    const c = (await post({ role: 'friend', email: 'dana@friend.example.com' })).json<{ id: string }>().id;
+    expect(await outbox()).toHaveLength(3);
+    await env.pool.query("update invites set expires_at = now() - interval '1 minute' where id = $1", [a]);
+    await env.pool.query('update invites set uses = max_uses where id = $1', [b]);
+    await useFake();
+    await env.pool.query("update mail_outbox set next_at = now() - interval '1 second'");
+    const res = await mailTick(env.ctx, undefined, quiet);
+    expect(res.sent).toBe(1);
+    expect(fake!.messages.map((m) => m.to)).toEqual([['dana@friend.example.com']]);
+    expect((await outbox()).map((o) => o.dedupe)).toEqual([`invite:${c}`]);
   });
 
   it('invite without email is unchanged', async () => {

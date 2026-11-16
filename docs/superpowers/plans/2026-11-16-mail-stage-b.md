@@ -60,7 +60,7 @@
 
 ## Review Focus
 
-1. **The deploy of stage B** on an instance with accounts and active downloads: nobody gets a welcome mail, and licences mail only from the next 09:00 run. Task 3 test `migration 58 marks existing accounts as welcomed`.
+1. **The deploy of stage B** on an instance with accounts and active downloads: nobody gets a welcome mail, and the licence run happens at the first tick between 09:00 and 21:00 server time (Controller's call 5: a deploy at 14:00 warns about licences expiring within 48 h at about 14:10; a deploy before 09:00 or from 21:00 on waits for the next 09:00). These are real warnings, not a backlog. Task 3 test `migration 58 marks existing accounts as welcomed`.
 2. **A person switches a type off while a mail of that type waits** (backoff, outage, rate limit): it is never sent. Task 1 test `switching a type off drops its queued mail`.
 3. **A forged, altered or old unsubscribe token** (another user id, another type, a cut MAC, signed with an older `APP_ENC_KEY`): 400 `invalid_token`, no switch changes, nothing logged but the code. Task 1 test `verify rejects tampered tokens`; Task 4 test `invalid token answers 400 and changes nothing`.
 4. **Unsubscribing in a browser where the person is signed in** (the CSRF hook would demand a token), and a mail scanner fetching the header URL: the POST works without `x-csrf-token`; the GET changes nothing. Task 4 tests `one-click POST works next to a session cookie without csrf header` and `GET only redirects`.

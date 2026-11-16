@@ -190,7 +190,7 @@ describe('unsubscribe token', () => {
     const upper = anna.toUpperCase();
     const macUpper = createHmac('sha256', mailSubkey(k, 'unsubscribe')).update(`v1|${upper}|licence`).digest('base64url');
     expect(verifyUnsubscribeToken(k, `v1.${upper}.licence.${macUpper}`)).toBeNull();
-    // a padded mac, and another encoding of the same 32 bytes (the last character carries 4 unused bits)
+    // a padded mac, and another encoding of the same 32 bytes (the last character carries 2 unused bits)
     expect(verifyUnsubscribeToken(k, `${t}=`)).toBeNull();
     const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
     const last = B64.indexOf(mac.at(-1)!);

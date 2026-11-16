@@ -24,7 +24,7 @@ import { classifyMailError, createMailTransport, mailConfigured, type MailFailur
  * - A row over a rate limit goes back without an attempt counted, due when the oldest counted mail leaves the window.
  * - A person mail (welcome or a per-type mail, with its user) is checked once more right before the send: an account disabled or
  *   expired since it was queued, an address changed or removed since, or a type switched off since, deletes the row unsent (see
- *   `dropUnwanted`).
+ *   `dropUnwanted`). An invitation mail whose invite is revoked, expired or used up is deleted unsent too (`housekeeping`).
  *
  * Times come from the database clock (or the caller's `now`), so next_at and created_at compare on one clock. Log lines carry the row
  * id and a code only; never an address, a text or the server's reply.
@@ -66,8 +66,16 @@ const later = (now: Date, s: number) => new Date(now.getTime() + s * 1000);
 /** the wait after the n-th failure in a row (1-based), the last step repeating */
 const backoff = (n: number) => BACKOFF_S[Math.min(Math.max(n, 1), BACKOFF_S.length) - 1]!;
 
-/** expiry (72 h queued) and retention (30 days after the end) */
+/**
+ * expiry (72 h queued), retention (30 days after the end), and invitation mails whose invite closed while they waited (revoked, expired
+ * or used up: the link in it is dead). Those are deleted unsent, like a person mail nobody wants any more (see `dropUnwanted`).
+ */
 async function housekeeping(db: Db, now: Date, log: MailLog): Promise<void> {
+  const closed = await db.query<{ id: string }>(
+    `delete from mail_outbox o where o.kind = 'invite' and o.state = 'queued'
+        and not exists (select 1 from invites i where o.dedupe = 'invite:' || i.id and i.uses < i.max_uses and i.expires_at > $1)
+      returning id`, [now]);
+  for (const r of closed.rows) log.warn({ mail: r.id, code: 'invite_closed' }, 'mail dropped');
   const expired = await db.query<{ id: string }>(
     `update mail_outbox set state = 'failed', last_code = 'expired', last_smtp = null, finished_at = $1, lease_until = null,
             rcpt_enc = null, params_enc = null

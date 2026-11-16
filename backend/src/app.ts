@@ -84,9 +84,9 @@ export interface Extra {
 /**
  * routes whose bodies hold secrets or one-time credentials (spec Part E3; the in-app sign-in's passwords and codes; Live TV provider
  * URLs, F13; the brand's image bytes and admin ids, branding plan Task 1; the unsubscribe token and the mail switches, mail stage B
- * Task 4): never logged with an error
+ * Task 4; an invitation's address, mail stage B Task 5): never logged with an error
  */
-const SENSITIVE_BODY = /^\/(api\/(setup\/|admin\/settings|admin\/mail|admin\/authentik\/|admin\/livetv\/(sources|channels)|admin\/brand|public\/mail\/|account\/mail)|auth\/flow\/)/;
+const SENSITIVE_BODY = /^\/(api\/(setup\/|admin\/settings|admin\/mail|admin\/invites|admin\/authentik\/|admin\/livetv\/(sources|channels)|admin\/brand|public\/mail\/|account\/mail)|auth\/flow\/)/;
 
 /**
  * What answers while setup is incomplete (spec Part E1, rulings D23): matched by the route pattern, so an unknown or encoded path is
@@ -117,14 +117,42 @@ const MUTATING: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH', 'DELETE']
 /** requests slower than this are logged (info) with their jf/db/kv breakdown */
 const SLOW_REQUEST_MS = 500;
 
+/** query parameters that carry a credential (see reqSerializer) */
+const SECRET_PARAMS: ReadonlySet<string> = new Set(['sig', 't']);
+
+/** a query parameter's name as the router reads it (`%74` and `t` are one name); null when it cannot be decoded */
+function paramName(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw.replace(/\+/g, ' '));
+  } catch {
+    return null;
+  }
+}
+
+/** `url` with the value of every credential parameter (and of every parameter whose name cannot be decoded) replaced */
+function redactQuery(url: string): string {
+  const q = url.indexOf('?');
+  if (q < 0) return url;
+  const hash = url.indexOf('#', q);
+  const end = hash < 0 ? url.length : hash;
+  const pairs = url.slice(q + 1, end).split('&').map((pair) => {
+    const eq = pair.indexOf('=');
+    if (eq < 0) return pair;
+    const name = paramName(pair.slice(0, eq));
+    return name === null || SECRET_PARAMS.has(name) ? `${pair.slice(0, eq)}=[redacted]` : pair;
+  });
+  return `${url.slice(0, q + 1)}${pairs.join('&')}${url.slice(end)}`;
+}
+
 /**
  * The request log's `req` (Fastify's default fields) with the credentials in query strings redacted: the signed logo `sig` (the cast
  * logo URL `/api/livetv/logos/<hash>?exp=..&sig=..`) and the unsubscribe token `t` (`/api/public/mail/unsubscribe?t=..`, mail stage B).
+ * Matched by the decoded name, the one the route reads: `?%74=` is `t`.
  */
 export function reqSerializer(req: { method?: string; url?: string; host?: string; ip?: string; socket?: { remotePort?: number } }) {
   return {
     method: req.method,
-    url: req.url?.replace(/([?&](?:sig|t)=)[^&#]*/g, '$1[redacted]'),
+    url: req.url === undefined ? undefined : redactQuery(req.url),
     host: req.host,
     remoteAddress: req.ip,
     remotePort: req.socket?.remotePort,
