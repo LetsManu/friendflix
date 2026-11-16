@@ -249,13 +249,14 @@ describe('admin alerts', () => {
   it('a rolled-back update job reported through updaterView alerts the admins', async () => {
     await env.kv.set(`updater:pending:${JOB_ID}`, JSON.stringify({ actor: null, action: 'update', from: 'sha-aaaaaaa', to: 'latest', auto: true }), 600);
     fake.jobState = 'rolled_back';
+    for (const k of await env.kv.keys('update:')) await env.kv.del(k); // no release cached: the stable tag gives no version
     await updaterView(env.ctx);
     await updaterView(env.ctx); // the result is taken once: no second alert, no second audit
     const ids = await admins();
     expect(ids.length).toBeGreaterThan(0);
     const n = await failedNotices();
     expect(n.map((x) => x.user_id).sort()).toEqual([...ids].sort());
-    expect(n[0]).toMatchObject({ title: 'Update auf latest fehlgeschlagen', dedupe: `update-failed-${JOB_ID}-${n[0]!.user_id}` });
+    expect(n[0]).toMatchObject({ title: 'Update fehlgeschlagen', dedupe: `update-failed-${JOB_ID}-${n[0]!.user_id}` });
     expect((await audits('system.updater_result')).at(-1)).toEqual({ actor: null, meta: { action: 'update', from: 'sha-aaaaaaa', to: 'latest', result: 'rolled_back', error: null, auto: true } });
     expect((await audits('system.updater_result')).filter((a) => a.meta.result === 'rolled_back')).toHaveLength(1);
   });

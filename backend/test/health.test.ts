@@ -536,12 +536,15 @@ describe('snapshot cache', () => {
     await healthTick(env.ctx, deps()); // a minute later: nothing new
     expect((await env.pool.query("select 1 from notifications where kind = 'disk_low'")).rowCount).toBe(admins.length);
     // a throwing disk alert leaves the snapshot stored and the tick quiet
-    vi.spyOn(adminAlerts, 'diskAlerts').mockRejectedValue(new Error('database down'));
-    await env.kv.del('health:snap');
-    await expect(healthTick(env.ctx, deps())).resolves.toBeUndefined();
-    expect(adminAlerts.diskAlerts).toHaveBeenCalledTimes(1);
-    expect(JSON.parse((await env.kv.get('health:snap'))!).disks.find((d: { id: string }) => d.id === 'previews')).toMatchObject({ level: 'err', usedPct: 96 });
-    vi.restoreAllMocks();
+    const spy = vi.spyOn(adminAlerts, 'diskAlerts').mockRejectedValue(new Error('database down'));
+    try {
+      await env.kv.del('health:snap');
+      await expect(healthTick(env.ctx, deps())).resolves.toBeUndefined();
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(JSON.parse((await env.kv.get('health:snap'))!).disks.find((d: { id: string }) => d.id === 'previews')).toMatchObject({ level: 'err', usedPct: 96 });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('healthTick prunes dismissals older than 30 days', async () => {

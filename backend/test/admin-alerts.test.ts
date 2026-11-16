@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  dayKey, diskAlerts, isoWeek, portainerFailedAlert, syscheckAlertTick, updateAlertTick, updateFailedAlert,
+  dayKey, diskAlerts, isoWeek, portainerFailedAlert, updateAlertTick, updateFailedAlert,
 } from '../src/adminAlerts.js';
 import type { Config } from '../src/config.js';
 import { encrypt } from '../src/crypto.js';
@@ -11,7 +11,9 @@ import type { DiskHealth, HealthSnapshot } from '../src/health.js';
 import * as notify from '../src/notify.js';
 import { line, registerChecks, resetChecksForTests, type GroupCheck } from '../src/syscheck/engine.js';
 import type { CheckId, CheckLine, CheckStatus } from '../src/syscheck/types.js';
+import { syscheckAlertTick } from '../src/syscheckAlerts.js';
 import type { UpdaterJob } from '../src/updater.js';
+import { updateInfo } from '../src/updates.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 // Mail stage C, Task 3: the four admin alerts (update available, update failed, Systemcheck problem, full storage). Each is an admin
@@ -188,7 +190,21 @@ describe('update failed', () => {
     expect(await updateFailedAlert(env.ctx, job({ id: 'job-11', action: 'self-update', state: 'failed' }))).toBe(2);
     expect(await updateFailedAlert(env.ctx, job({ id: 'job-12', action: 'rollback', state: 'failed', to: '3.4.0' }))).toBe(2);
     expect((await mails('updatefailed')).length).toBe(6);
-    expect(await notices('update_failed')).toHaveLength(6);
+    expect((await notices('update_failed')).map((x) => x.title)).toEqual([
+      ...Array(4).fill('Update auf 3.6.0 fehlgeschlagen'), ...Array(2).fill('Zurück zur vorherigen Version fehlgeschlagen')]);
+  });
+
+  it('a tag that is no version names the cached release, else no version', async () => {
+    // nothing cached: the stable tag says nothing an admin can use
+    expect(await updateFailedAlert(env.ctx, job({ id: 'job-20', to: 'latest' }))).toBe(2);
+    expect(gh.calls).toBe(0); // no GitHub request for a title
+    await updateInfo(env.ctx); // Admin -> Update was opened: the newest release (3.6.0) is cached
+    expect(await updateFailedAlert(env.ctx, job({ id: 'job-21', to: 'latest' }))).toBe(2);
+    // a nightly or sha tag is not the release: no version
+    expect(await updateFailedAlert(env.ctx, job({ id: 'job-22', to: 'nightly' }))).toBe(2);
+    expect(await updateFailedAlert(env.ctx, job({ id: 'job-23', to: 'sha-abcdef1' }))).toBe(2);
+    expect((await notices('update_failed')).filter((x) => x.user_id === anna).map((x) => x.title)).toEqual([
+      'Update fehlgeschlagen', 'Update auf 3.6.0 fehlgeschlagen', 'Update fehlgeschlagen', 'Update fehlgeschlagen']);
   });
 
   it('a failed Portainer redeploy alerts once per target and day', async () => {
@@ -337,6 +353,21 @@ describe('disk and recordings storage', () => {
     expect(await diskAlerts(env.ctx, snap([dl('err', 96)]), at(17, 10))).toEqual(['downloads']);
     expect(await notices('disk_low')).toHaveLength(6);
     expect(await mails('storage')).toHaveLength(6);
+  });
+
+  it('an err alert also covers the almost-full level of that day', async () => {
+    expect(await diskAlerts(env.ctx, snap([dl('err', 96)]), at(16, 10))).toEqual(['downloads']);
+    // freed a little the same day: no "almost full" after "full"
+    expect(await diskAlerts(env.ctx, snap([dl('warn', 88)]), at(16, 12))).toEqual([]);
+    expect(await notices('disk_low')).toHaveLength(2);
+    // the next day it is still almost full: told again
+    expect(await diskAlerts(env.ctx, snap([dl('warn', 88)]), at(17, 10))).toEqual(['downloads']);
+    expect(await notices('disk_low')).toHaveLength(4);
+  });
+
+  it('free space under 1 GB is told in MB', async () => {
+    expect(await diskAlerts(env.ctx, snap([dl('err', 99, { totalBytes: 100 * GB, freeBytes: 0.4 * GB })]), at(16))).toEqual(['downloads']);
+    expect((await notices('disk_low'))[0]).toMatchObject({ body: 'Noch 400 MB frei.' });
   });
 
   it('low free space alerts; the cap, the database and an unreadable disk do not', async () => {
