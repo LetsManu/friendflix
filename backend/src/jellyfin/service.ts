@@ -13,7 +13,7 @@ import { bestTraits, isTextSubtitle, maxWidthFor, toDownloadSource, toItemDto, t
 import { toChapters, toCredits, toItemAbout, toProviderIds } from './dto.js'; // Block 17 P1, Block 21
 import { toHygieneFacts, toServerSession } from './dto.js'; // Block 22
 import { toItemFeatures } from './dto.js'; // R1
-import { librariesNamed, MediaError } from '../media/types.js';
+import { MediaError, pickLibraries } from '../media/types.js';
 import { applyGate, boxHeightFor, jellyfinRanges, planStream, type HevcGate, type StreamPlan } from '../media/streamplan.js';
 import type { ClientCaps } from '../media/clientCaps.js';
 import type { ChapterDto, ItemAboutDto, ItemCreditsDto, MediaCollection } from '../media/types.js'; // Block 17 P1, Block 21
@@ -1131,7 +1131,7 @@ export class JellyfinService implements MediaServer {
         if (t.libraries !== 'all' && !t.libraries.length) ids = []; // no library: nothing to look up
         else if (t.libraries !== 'all') {
           const folders = await client.mediaFolders();
-          const picked = new Set(t.libraries.flatMap((n) => librariesNamed(n, folders, (f) => f.Name)));
+          const picked = pickLibraries(t.libraries, folders, (f) => f.Name);
           ids = folders.filter((f) => picked.has(f)).map((f) => f.Id);
         }
         const parental = p.parental
@@ -1174,19 +1174,21 @@ export class JellyfinService implements MediaServer {
       // Not the item's ancestors: asked with the admin key and no userId, Jellyfin names only the physical folder and "root" there.
       findItems: async (q, limit) => {
         const n = Math.max(1, Math.min(Math.trunc(limit) || 1, FIND_MAX));
+        const locations = client.libraryLocations().catch(() => []); // alongside the search: on a cache miss no extra round trip after it
         const found = (await client.searchItems(q, n))
           .filter((i) => typeof i?.Id === 'string' && /^[0-9a-f]{32}$/.test(nid(i.Id)) && (i.Type === 'Movie' || i.Type === 'Series') && typeof i.Name === 'string')
           .slice(0, n);
-        const libs = found.length ? await client.libraryLocations().catch(() => []) : [];
+        const libs = found.length ? await locations : [];
         return found.map((i) => foundItem(i, libraryOfPath(i.Path, libs) ?? ''));
       },
       // the title check by id: the same facts for one item (admin key); another kind of item (episode, folder …) is no hit
       findItem: async (id) => {
         const want = nid(id);
         if (!/^[0-9a-f]{32}$/.test(want)) return null;
+        const locations = client.libraryLocations().catch(() => []); // alongside the lookup, as in findItems
         const i = await client.itemById(want);
         if (!i || typeof i.Id !== 'string' || nid(i.Id) !== want || (i.Type !== 'Movie' && i.Type !== 'Series') || typeof i.Name !== 'string') return null;
-        return foundItem(i, libraryOfPath(i.Path, await client.libraryLocations().catch(() => [])) ?? '');
+        return foundItem(i, libraryOfPath(i.Path, await locations) ?? '');
       },
       ping: () => client.ping(),
       // Live TV recordings in a library (spec §15.3): scan it, list the libraries with their folders, create one, find an item by its file

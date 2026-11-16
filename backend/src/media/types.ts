@@ -50,6 +50,30 @@ export function librariesNamed<T>(name: string, libs: readonly T[], nameOf: (l: 
   return loose.length === 1 ? loose : [];
 }
 
+/** names already warned about by pickLibraries (bounded: a process warns about at most this many) */
+const unpicked = new Set<string>();
+const UNPICKED_MAX = 200;
+/**
+ * The libraries a role's (or an override's) library names pick (librariesNamed per name), for the policy written to the media server.
+ * A name that picks none, e.g. after a library of the same name in another case was added, silently costs that access; so it is logged,
+ * once per name and reason, as a code only (`library_ambiguous`: several libraries match in another case; `library_missing`: none does).
+ * No library, role or user name reaches the log; the role editor names it (missingLibraries).
+ */
+export function pickLibraries<T>(names: readonly string[], libs: readonly T[], nameOf: (l: T) => string): Set<T> {
+  const picked = new Set<T>();
+  for (const n of names) {
+    const hit = librariesNamed(n, libs, nameOf);
+    for (const l of hit) picked.add(l);
+    if (hit.length || !libs.length) continue; // an empty list (server still starting) says nothing about the name
+    const code = libs.some((l) => nameOf(l).trim().toLowerCase() === n.trim().toLowerCase()) ? 'library_ambiguous' : 'library_missing';
+    const key = `${code}\0${n}`;
+    if (unpicked.has(key) || unpicked.size >= UNPICKED_MAX) continue;
+    unpicked.add(key);
+    console.warn('role library name picks no library', { code });
+  }
+  return picked;
+}
+
 export const SEGMENT_TYPES: readonly SegmentType[] = ['intro', 'outro', 'recap', 'preview'];
 
 /** What the configured server can do. The web hides UI for anything unsupported (Jellyfin: everything supported). */

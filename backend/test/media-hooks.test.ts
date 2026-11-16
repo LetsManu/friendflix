@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { bus } from '../src/bus.js';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { JellyfinClient, policyFromTemplate } from '../src/jellyfin/client.js';
@@ -153,6 +153,20 @@ describe('Jellyfin applyPolicy: a role\'s library names -> EnabledFolders (acces
     expect(await enabledFor(['serien'])).toEqual(['id-serien']);
     expect(await enabledFor(['FILME'])).toEqual([]);
     expect(await enabledFor(['FILME', 'SERIEN'])).toEqual(['id-serien']);
+  });
+  it('a stored name that picks no library is logged once per name, as a code only (no library or user name)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await enabledFor(['fIlMe']);
+      await enabledFor(['fIlMe']);
+      await enabledFor(['Nirgendwo', 'Serien']);
+      expect(warn.mock.calls).toEqual([
+        ['role library name picks no library', { code: 'library_ambiguous' }],
+        ['role library name picks no library', { code: 'library_missing' }],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

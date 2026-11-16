@@ -57,15 +57,17 @@ export const LIBRARY_LOCATIONS_TTL_MS = 5 * 60_000;
 
 /** The library whose folder holds `path` (an item's Path, file or folder); with nested folders the deepest wins. null when none does.
  * A folder matches itself and what lies below it ('/' or '\\' after it), never a sibling that only shares the prefix. A Windows folder
- * (drive letter or \\server) matches without regard to case, as its file system does; a POSIX one exactly. */
+ * (drive letter or \\server) matches without regard to case or the kind of slash, as its file system does; a POSIX one exactly. */
 export function libraryOfPath(path: unknown, libs: LibraryLocations): string | null {
   if (typeof path !== 'string' || !path) return null;
   let best: { name: string; len: number } | null = null;
   for (const lib of libs) {
     for (const raw of lib.paths) {
       const win = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(raw);
-      const dir = (win ? raw.toLowerCase() : raw).replace(/[\\/]+$/, '');
-      const p = win ? path.toLowerCase() : path;
+      // a Windows folder may be entered with / while Jellyfin's item paths use \ (or the other way): both sides to \ and lower case
+      const norm = (x: string) => (win ? x.toLowerCase().replace(/\//g, '\\') : x);
+      const dir = norm(raw).replace(/[\\/]+$/, '');
+      const p = norm(path);
       if (!raw || (p !== dir && !(p.startsWith(dir) && (p[dir.length] === '/' || p[dir.length] === '\\')))) continue;
       if (!best || dir.length > best.len) best = { name: lib.name, len: dir.length };
     }

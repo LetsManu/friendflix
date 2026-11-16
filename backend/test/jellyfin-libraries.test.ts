@@ -89,3 +89,28 @@ describe('Jellyfin libraryFolders / createLibrary: the library ids', () => {
     expect(await svc.admin.libraryFolders!()).toEqual([]);
   });
 });
+
+describe('findItems / findItem: the library folders are read alongside the search, not after it', () => {
+  /** a server whose search (or by-id lookup) answers only once the library folders have been asked for */
+  function searchWaitsForFolders() {
+    let asked!: () => void;
+    const folders = new Promise<void>((r) => { asked = r; });
+    const base = fakeHttp({
+      'GET /Library/VirtualFolders': () => { asked(); return { json: [{ Name: 'Filme', Locations: ['/media/filme'], ItemId: null }] }; },
+      'GET /Items': () => ({ json: { Items: [{ Id: hex('a'), Name: 'Wrenfield Pier', Type: 'Movie', Path: '/media/filme/Wrenfield Pier.mkv' }] } }),
+    });
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(String(input)).pathname === '/Items') {
+        await Promise.race([folders, new Promise((_, reject) => setTimeout(() => reject(new Error('the search waited for nothing: folders not asked')), 1000))]);
+      }
+      return base(input, init);
+    }) as typeof fetch;
+    return new JellyfinService(new JellyfinClient('http://jf.test:8096', 'adminkey', fetchImpl), new MemoryKV(), keyFromBase64(ENC_KEY));
+  }
+  it('findItems', async () => {
+    expect(await searchWaitsForFolders().admin.findItems!('wren', 5)).toMatchObject([{ id: hex('a'), library: 'Filme' }]);
+  });
+  it('findItem', async () => {
+    expect(await searchWaitsForFolders().admin.findItem!(hex('a'))).toMatchObject({ id: hex('a'), library: 'Filme' });
+  });
+});

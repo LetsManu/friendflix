@@ -7,6 +7,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { JellyfinClient, libraryOfPath } from '../src/jellyfin/client.js';
+import { forgetLibraries } from '../src/libraries.js';
 import type { MediaAdmin } from '../src/media/types.js';
 import { DEFAULT_ROLES } from '../src/roles.js';
 import { ageOf, mapLimit } from '../src/viewcheck.js';
@@ -42,6 +43,10 @@ const jfId = (s: string) => s.padEnd(32, '0');
 /** a second guest (FSK 12) whose server hides the unrated film; a friend (no cap) likewise; a drifted identity whose library counts
  * answer 404; an identity whose item probe fails with 500 */
 const GUEST2_JF = jfId('guest2'), FRIEND2_JF = jfId('friend2'), DRIFT_JF = jfId('drift'), PROBE500_JF = jfId('probe500');
+/** the case-twin roles' identities: like real Jellyfin, each sees only what its policy (librariesNamed) grants */
+const KLEIN_JF = jfId('cafe1'), LAUT_JF = jfId('cafe2');
+/** the case-twin library "filme" next to "Filme" and its one film; added only for the "case-twin library" describe */
+const TWIN_LIB = hex('8').slice(0, 31) + '1', TWIN = 'fedcba9876543210'.repeat(2);
 const SEES = new Map<string, Set<string>>([
   [GUEST_JF, new Set([SALT, WREN])], // guest: FSK 12, all libraries
   [KINO_JF, new Set([DUN, SALT])], // role kino: Kinder + Serien
@@ -50,6 +55,8 @@ const SEES = new Map<string, Set<string>>([
   [OTHER_JF, new Set([])],
   [GUEST2_JF, new Set([SALT, WREN])], // like real Jellyfin: a grown-up's cap never hides unrated titles
   [FRIEND2_JF, new Set([DUN, SALT])],
+  [KLEIN_JF, new Set([TWIN])],
+  [LAUT_JF, new Set([])],
 ]);
 const sees = (uid: string | null, id: string) => !uid || !SEES.has(uid.toLowerCase()) || SEES.get(uid.toLowerCase())!.has(id);
 const BROKEN_TERM = 'Kaputtfilm';
@@ -60,7 +67,7 @@ const HTML_TERM = 'Htmlfilm';
 /** an item id the fake does not know, and one whose admin lookup fails */
 const UNKNOWN_ID = hex('d'), BROKEN_ID = hex('e').slice(0, 31) + '1';
 
-let guest = '', kino = '', anna = '', fa = '', other = '', guest2 = '', friend2 = '', drift = '', probe500 = '';
+let guest = '', kino = '', anna = '', fa = '', other = '', guest2 = '', friend2 = '', drift = '', probe500 = '', klein = '', laut = '';
 const KIDS = '11111111-2222-4333-8444-555555555555';
 const OTHER_KIDS = '11111111-2222-4333-8444-666666666666';
 
@@ -133,6 +140,9 @@ beforeAll(async () => {
         ...c.roles,
         kino: { ...DEFAULT_ROLES.friend!, label: 'Kino', libraries: ['Kinder', 'Serien'] },
         filmabend: { ...DEFAULT_ROLES.friend!, label: 'Filmabend', libraries: ['Filme', 'Kinder'] },
+        // case twins (see the "case-twin library" describe): "filme" is the twin library, "FILME" names both and so neither
+        klein: { ...DEFAULT_ROLES.friend!, label: 'Klein', libraries: ['filme'] },
+        laut: { ...DEFAULT_ROLES.friend!, label: 'Laut', libraries: ['FILME'] },
       };
     },
     logger: { stream: { write: (l: string) => void logs.push(l) }, level: 'info' },
@@ -147,6 +157,8 @@ beforeAll(async () => {
   friend2 = await account('friend', FRIEND2_JF, 'Carla Drei');
   drift = await account('friend', DRIFT_JF, 'Ben Drei');
   probe500 = await account('friend', PROBE500_JF, 'Anna Drei');
+  klein = await account('klein', KLEIN_JF, 'Dora Klein');
+  laut = await account('laut', LAUT_JF, 'Dora Laut');
   await env.pool.query(
     `insert into profiles(id, user_id, name, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, kids, kids_max_rating)
      values ($1, $2, 'Kiddo', $3, 'anna-kiddo', $4, true, 12), ($5, $6, 'Kleiner', $7, 'ben-kleiner', $4, true, 6)`,
@@ -458,6 +470,38 @@ describe('GET /api/admin/users/:id/check?profile= (library counts)', () => {
   });
 });
 
+describe('a case-twin library ("Filme" and "filme"): the check agrees with what the policy grants (librariesNamed)', () => {
+  const twinLib = { Id: TWIN_LIB, Name: 'filme' };
+  const twinItem = { Id: TWIN, Name: 'Kleiner Film', Type: 'Movie', ProductionYear: 2020, lib: TWIN_LIB, Path: '/media/klein/Kleiner Film.mkv' };
+  beforeAll(() => {
+    LIBS.push(twinLib);
+    LOCATIONS[TWIN_LIB] = ['/media/klein'];
+    ITEMS.push(twinItem);
+    forgetLibraries(env.ctx);
+  });
+  afterAll(() => {
+    LIBS.splice(LIBS.indexOf(twinLib), 1);
+    delete LOCATIONS[TWIN_LIB];
+    ITEMS.splice(ITEMS.indexOf(twinItem), 1);
+    forgetLibraries(env.ctx);
+  });
+
+  it('a role with "filme" is denied a title in "Filme" for its library, and only "filme" counts as shared', async () => {
+    expect(hit((await check(klein, klein, 'Wrenfield')).json().hits, WREN)).toMatchObject({ visible: false, why: 'library', library: 'Filme' });
+    const r = await libs(klein, klein);
+    expect(r.statusCode).toBe(200);
+    const by = (name: string) => r.json().libraries.find((l: { name: string }) => l.name === name);
+    expect(by('Filme')).toMatchObject({ visible: false, seen: null });
+    expect(by('filme')).toMatchObject({ visible: true, seen: 1 });
+  });
+
+  it('a role with "FILME" (both libraries match in another case) shares neither', async () => {
+    expect(hit((await check(laut, laut, 'Wrenfield')).json().hits, WREN)).toMatchObject({ visible: false, why: 'library' });
+    const r = await libs(laut, laut);
+    expect(r.json().libraries.filter((l: { visible: boolean }) => l.visible)).toEqual([]);
+  });
+});
+
 describe('mapLimit (counts run at most n at a time)', () => {
   it('keeps the order and never runs more than the limit at once', async () => {
     let running = 0, peak = 0;
@@ -494,6 +538,22 @@ describe('the library of an item from its Path (Jellyfin answers no CollectionFo
     expect(libraryOfPath('d:\\medien\\FILME\\Nordlicht.mkv', libs)).toBe('Win');
     expect(libraryOfPath('\\\\NAS\\Serien\\Dunmoor', [{ name: 'Unc', paths: ['\\\\nas\\serien'] }])).toBe('Unc');
     expect(libraryOfPath('/Media/Filme/Wrenfield.mp4', libs)).toBeNull();
+  });
+
+  it('a root folder holds everything below it; a deeper library still wins', () => {
+    const root = [{ name: 'Alles', paths: ['/'] }, { name: 'Filme', paths: ['/media/filme'] }];
+    expect(libraryOfPath('/srv/a.mkv', root)).toBe('Alles');
+    expect(libraryOfPath('/media/filme/a.mkv', root)).toBe('Filme');
+    expect(libraryOfPath('C:\\Filme\\a.mkv', [{ name: 'Laufwerk', paths: ['C:\\'] }])).toBe('Laufwerk');
+    expect(libraryOfPath('D:\\Filme\\a.mkv', [{ name: 'Laufwerk', paths: ['C:\\'] }])).toBeNull();
+  });
+
+  it('Windows folders: a UNC share with a trailing separator, and / and \\ mixed between folder and item path', () => {
+    expect(libraryOfPath('\\\\nas\\medien\\Filme\\a.mkv', [{ name: 'Nas', paths: ['\\\\NAS\\Medien\\'] }])).toBe('Nas');
+    expect(libraryOfPath('\\\\nas\\medien2\\a.mkv', [{ name: 'Nas', paths: ['\\\\nas\\medien\\'] }])).toBeNull();
+    expect(libraryOfPath('D:\\Medien\\Filme\\a.mkv', [{ name: 'Slash', paths: ['D:/Medien/Filme'] }])).toBe('Slash');
+    expect(libraryOfPath('D:/Medien/Filme/a.mkv', [{ name: 'Back', paths: ['D:\\Medien\\Filme\\'] }])).toBe('Back');
+    expect(libraryOfPath('D:\\Medien\\Filme2\\a.mkv', [{ name: 'Slash', paths: ['D:/Medien/Filme'] }])).toBeNull();
     expect(libraryOfPath('/media/serien2/Dunmoor', libs)).toBeNull();
     expect(libraryOfPath('/media/filmeX/a.mkv', libs)).toBeNull();
     expect([libraryOfPath(undefined, libs), libraryOfPath('', libs), libraryOfPath(42, libs)]).toEqual([null, null, null]);
