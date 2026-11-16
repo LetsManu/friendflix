@@ -207,7 +207,8 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     const title = named ?? m('title.fallback');
     const dedupeTitle = named ?? 'Titel';
     if (type === 'MEDIA_AVAILABLE') {
-      for (const r of rows) await notify(ctx, { userId: r.user_id, kind: 'available', title: m('title.available', { title: r.title }), link: '/requests', dedupe: `avail-${r.seerr_request_id}` });
+      // the requester's own notice is also a mail (type `available`); the broadcast below is never mailed
+      for (const r of rows) await notify(ctx, { userId: r.user_id, kind: 'available', title: m('title.available', { title: r.title }), link: '/requests', dedupe: `avail-${r.seerr_request_id}`, mail: 'available' });
       await notify(ctx, { userId: null, kind: 'available_all', title: m('title.availableAll', { title }), link: '/', dedupe: `availall-${mt}-${tmdbId ?? dedupeTitle}`, external: true });
       if (tmdbId && mt) await seerrHooks.run(ctx, { type: 'available', tmdbId, mediaType: mt });
     } else if (type === 'MEDIA_PENDING') {

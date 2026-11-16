@@ -1349,6 +1349,15 @@ export const MIGRATIONS: string[] = [
   create index if not exists mail_outbox_rcpt on mail_outbox(rcpt_key, sent_at) where state = 'sent';
   create index if not exists mail_outbox_sent on mail_outbox(sent_at) where state = 'sent';
   `,
+  // 58: Mail stage B (mail/welcome.ts, downloadExpiry.ts; docs/superpowers/plans/2026-11-16-mail-stage-b.md, Controller's calls 4 and 5):
+  // users.welcomed_at claims the welcome mail once per account ever (the outbox forgets its rows after 30 days); every account that
+  // exists at the deploy counts as welcomed, so the deploy mails nobody. downloads.expiry_warned_at: a licence is warned of its expiry
+  // once. Rerunnable.
+  `
+  alter table users add column if not exists welcomed_at timestamptz;
+  update users set welcomed_at = created_at where welcomed_at is null;
+  alter table downloads add column if not exists expiry_warned_at timestamptz;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

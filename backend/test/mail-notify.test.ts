@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../src/config.js';
 import { decrypt, encrypt } from '../src/crypto.js';
 import { m } from '../src/i18n.js';
 import * as outbox from '../src/mail/outbox.js';
-import { setMailPref } from '../src/mail/people.js';
+import { mailRecipient, setMailPref } from '../src/mail/people.js';
 import { notify, type Notice } from '../src/notify.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
@@ -86,11 +88,71 @@ describe('notify mails a notice', () => {
     expect(await mails()).toEqual([]);
   });
 
+  // Mail stage B, Task 3 (Controller's call 7): mail is account level. An event of a kids profile is notified to the account, so it
+  // mails the account's address in the account's language; a kids profile's own prefs are no mail switches, and a profile id is no
+  // account that could be mailed.
+  it('a notice of a kids profile mails the account address; the kids profile has no switches of its own', async () => {
+    const kids = randomUUID();
+    await env.pool.query("insert into profiles(id, user_id, name, is_owner, kids, jellyfin_user_id) values ($1, $2, 'Mika', false, true, 'kids-jf-0001')", [kids, anna]);
+    await env.pool.query(`insert into profile_prefs(profile_id, data) values ($1, '{"language": "fr", "mail": {"available": false}}')`, [kids]);
+    try {
+      expect(await notify(env.ctx, notice({ dedupe: 'avail-kids' }))).toBe(true);
+      const rows = (await env.pool.query<{ kind: string; user_id: string; lang: string; rcpt_mask: string; rcpt_enc: string }>(
+        'select kind, user_id, lang, rcpt_mask, rcpt_enc from mail_outbox')).rows;
+      expect(rows.map(({ rcpt_enc: _, ...r }) => r)).toEqual([{ kind: 'available', user_id: anna, lang: 'en', rcpt_mask: 'a…@friend.example.com' }]);
+      expect(decrypt(env.ctx.encKey, rows[0]!.rcpt_enc)).toBe(ANNA);
+      expect(await mailRecipient(env.ctx, kids, 'available')).toBeNull();
+    } finally {
+      await env.pool.query('delete from profiles where id = $1', [kids]);
+    }
+  });
+
   it('a mail failure never fails notify', async () => {
     vi.spyOn(outbox, 'enqueueMail').mockRejectedValue(new Error('outbox down'));
     expect(await notify(env.ctx, notice())).toBe(true);
     expect(outbox.enqueueMail).toHaveBeenCalledTimes(1);
     expect(await notices()).toEqual([{ kind: 'available', dedupe: 'avail-7' }]);
     expect(await mails()).toEqual([]);
+  });
+});
+
+/**
+ * The notice objects handed to notify() / notifyAdmins() in backend/src, each with its top-level text (nested objects, arrays and
+ * calls cut out), so a key of the notice itself can be told from a key deeper inside it.
+ */
+function noticeLiterals(): Array<{ file: string; top: string }> {
+  const out: Array<{ file: string; top: string }> = [];
+  const src = join(__dirname, '../src');
+  const files = (readdirSync(src, { recursive: true }) as string[]).filter((f) => f.endsWith('.ts'));
+  for (const file of files) {
+    const text = readFileSync(join(src, file), 'utf8');
+    for (const m of text.matchAll(/\bnotify(?:Admins)?\(ctx,\s*\{/g)) {
+      let depth = 0;
+      let top = '';
+      for (let i = m.index + m[0].length - 1; i < text.length; i++) {
+        const ch = text[i]!;
+        if ('{[('.includes(ch)) depth++;
+        else if ('}])'.includes(ch)) depth--;
+        else if (depth === 1) top += ch;
+        if (depth === 0) break;
+      }
+      out.push({ file, top });
+    }
+  }
+  return out;
+}
+
+describe('every mailed notice has a dedupe key', () => {
+  // notify() mails only a notice with a dedupe key (Controller's call 3): a notice that sets `mail` without one would silently never
+  // mail. This scan keeps every mailing call site honest.
+  it('each notify() call that sets mail also sets dedupe', () => {
+    const all = noticeLiterals();
+    expect(all.length).toBeGreaterThan(20);
+    const mailing = all.filter((n) => /(^|[\s,])mail:/.test(n.top));
+    // wish available, recording failed/partial, series episode, recording done, recording to be deleted, licences expiring
+    expect(mailing.map((n) => n.file).sort()).toEqual([
+      'downloadExpiry.ts', 'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recstore.ts', 'routes/seerr.ts',
+    ]);
+    for (const n of mailing) expect(n.top, n.file).toMatch(/(^|[\s,])dedupe:/);
   });
 });

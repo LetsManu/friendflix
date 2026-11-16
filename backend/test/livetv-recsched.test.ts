@@ -749,3 +749,60 @@ describe('the tick', () => {
     expect(JSON.stringify(await listEvents(env.ctx))).not.toMatch(/Sternstunde|iptv/);
   });
 });
+
+// Mail stage B, Task 3 (Controller's call 9): the owner's recording notices are also mails of type `recording`, once per recording.
+describe('recording mails', () => {
+  const mails = async () => (await env.pool.query('select kind, user_id, dedupe from mail_outbox order by created_at, dedupe')).rows;
+  const links = async (kind: string) => (await env.pool.query('select link from notifications where kind = $1', [kind])).rows.map((r) => r.link);
+  /** a recording that runs now and whose recorder has just ended as `o` says */
+  const finished = async (o: Partial<RecorderView>, row: Record<string, unknown> = {}) => {
+    const id = await recording({ state: 'recording', mode: 'passthrough', start_at: new Date(Date.now() - 10 * MIN), end_at: new Date(Date.now() + HOUR), ...row });
+    streams.set(nordlicht, view(nordlicht));
+    recorders.set(id, rec(id, nordlicht, { state: 'done', bytes: 1000, durationS: 600, ...o }));
+    await tick();
+    await tick();
+    return id;
+  };
+  beforeEach(async () => {
+    env.ctx.cfg = { ...cfg, MAIL_SMTP_HOST: 'mail.example.com', MAIL_FROM: 'kino@friend.example.com' };
+    await env.pool.query('delete from mail_outbox');
+  });
+
+  it('failed recording mails the owner', async () => {
+    const id = await recording({ state: 'recording', mode: 'passthrough', start_at: new Date(Date.now() - 2 * HOUR), end_at: new Date(Date.now() - HOUR), pad_after_s: 60 });
+    await tick();
+    await tick();
+    expect((await getRecording(env.ctx, id))!.state).toBe('failed');
+    expect(await notices('livetv.rec.failed')).toHaveLength(1);
+    expect(await mails()).toEqual([{ kind: 'recording', user_id: ANNA, dedupe: `n:ltvrec-failed-${id}` }]);
+  });
+
+  it('done one-off recording creates the done notice and mail', async () => {
+    const id = await finished({});
+    expect((await getRecording(env.ctx, id))!.state).toBe('done');
+    expect(await notices('livetv.rec.done')).toEqual([{ user_id: ANNA, title: '„Sternstunde Physik“ ist aufgenommen' }]);
+    expect(await links('livetv.rec.done')).toEqual([`/live/recordings/${id}`]);
+    expect(await notices('livetv.rec.failed')).toEqual([]);
+    expect(await mails()).toEqual([{ kind: 'recording', user_id: ANNA, dedupe: `n:ltvrec-done-${id}` }]);
+  });
+
+  it('done series episode mails via the episode notice only', async () => {
+    const rid = await rule({ channel_id: nordlicht, series_key: 'sternstunde physik', title: 'Sternstunde Physik' });
+    const id = await finished({}, { rule_id: rid, subtitle: 'Das Polarlicht' });
+    expect((await getRecording(env.ctx, id))!.state).toBe('done');
+    expect(await notices('livetv.rec.episode')).toEqual([{ user_id: ANNA, title: 'Neue Folge aufgenommen: Sternstunde Physik – Das Polarlicht' }]);
+    expect(await notices('livetv.rec.done')).toEqual([]);
+    expect(await mails()).toEqual([{ kind: 'recording', user_id: ANNA, dedupe: `n:ltvrec-episode-${id}` }]);
+  });
+
+  it('partial series episode mails once', async () => {
+    const rid = await rule({ channel_id: nordlicht, series_key: 'sternstunde physik', title: 'Sternstunde Physik' });
+    const id = await finished({ gaps: [{ from: Date.now() - 5 * MIN, to: Date.now() - 4 * MIN }] }, { rule_id: rid });
+    expect((await getRecording(env.ctx, id))!.state).toBe('partial');
+    // both notices in the inbox, one mail: the one about the gap
+    expect(await notices('livetv.rec.failed')).toHaveLength(1);
+    expect(await notices('livetv.rec.episode')).toHaveLength(1);
+    expect(await notices('livetv.rec.done')).toEqual([]);
+    expect(await mails()).toEqual([{ kind: 'recording', user_id: ANNA, dedupe: `n:ltvrec-failed-${id}` }]);
+  });
+});

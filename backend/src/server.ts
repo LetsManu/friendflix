@@ -33,6 +33,7 @@ import { reapplyPoliciesOnce } from './users.js';
 import { pushEnabled } from './push.js';
 import { previewWarmTick } from './previews.js';
 import { gcDownloads, startPreparerTick } from './downloadprep.js';
+import { licenceExpiryTick } from './downloadExpiry.js';
 import { gcLicenses } from './downloads.js';
 import { pollJellyfinSessions } from './routes/internal.js';
 import { parties } from './routes/party.js';
@@ -204,6 +205,10 @@ if (cfg.BACKGROUND_JOBS === 'true') {
   }, 15_000));
   timers.push(setInterval(() => {
     if (downloadsOn()) void gcDownloads(ctx).then(() => gcLicenses(ctx)).catch(jobFailed(ctx, app.log, 'download-gc', 'download gc failed'));
+  }, 600_000));
+  // licences about to expire: one notice (and mail) per person, once a day from 09:00 (downloadExpiry.ts; kv day key across instances)
+  timers.push(setInterval(() => {
+    if (downloadsOn()) void licenceExpiryTick(ctx).catch(jobFailed(ctx, app.log, 'licence-expiry', 'licence expiry tick failed'));
   }, 600_000));
   if (downloadsOn()) void startPreparerTick(ctx).catch(jobFailed(ctx, app.log, 'download-prep', 'download prep start failed'));
   timers.push(setInterval(() => { if (op()) void healthTick(ctx); }, 60_000)); // admin health snapshot (kv health:snap); never throws

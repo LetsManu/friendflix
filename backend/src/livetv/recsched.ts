@@ -366,7 +366,10 @@ async function noticeFailed(ctx: Ctx, r: RecRow, state: RecState, error: string 
   const title = error || state === 'failed'
     ? m('livetv.rec.failed.title', { title: r.title, reason: m(reasonKey(error ?? 'stream_gone')) })
     : m('livetv.rec.partial.title', { title: r.title, n: gaps });
-  await notify(ctx, { userId: r.user_id, kind: 'livetv.rec.failed', title, link: state === 'partial' ? `/live/recordings/${r.id}` : '/live/recordings', dedupe: `ltvrec-failed-${r.id}`, personal: true }).catch(() => undefined);
+  await notify(ctx, {
+    userId: r.user_id, kind: 'livetv.rec.failed', title, link: state === 'partial' ? `/live/recordings/${r.id}` : '/live/recordings', dedupe: `ltvrec-failed-${r.id}`, personal: true,
+    mail: 'recording',
+  }).catch(() => undefined);
 }
 /** owner and admins once per recording when the recordings storage is full */
 async function noticeStorageFull(ctx: Ctx, r: RecRow): Promise<void> {
@@ -470,14 +473,21 @@ async function collect(ctx: Ctx, r: RecRow, e: RecorderView): Promise<void> {
   await event(ctx, { level: state === 'done' ? 'info' : state === 'partial' ? 'warn' : 'error', code: state === 'done' ? 'rec_done' : state === 'partial' ? 'rec_partial' : 'rec_failed', ...ch, recordingId: r.id, ...(error ? { reason: error } : {}), ...(gaps.length ? { n: gaps.length } : {}) });
   if (state !== 'done') await noticeFailed(ctx, row, state, error, gaps.length);
   if (error === 'storage_full') await noticeStorageFull(ctx, row);
-  if (state !== 'failed' && row.rule_id) {
-    const rule = (await ctx.db.query<{ kind: string; title: string }>('select kind, title from livetv_recording_rules where id = $1', [row.rule_id])).rows[0];
-    if (rule?.kind === 'series') {
-      await notify(ctx, {
-        userId: row.user_id, kind: 'livetv.rec.episode', title: m('livetv.rec.episode.title', { series: rule.title, episode: row.subtitle || row.episode || row.title }),
-        link: `/live/recordings/${row.id}`, dedupe: `ltvrec-episode-${row.id}`, personal: true,
-      }).catch(() => undefined);
-    }
+  // one mail per recording (type `recording`): a partial one already mailed its notice above, so a series episode mails only when it
+  // is complete; a finished recording that is no series episode gets its own notice (Controller's call 9)
+  const rule = state !== 'failed' && row.rule_id
+    ? (await ctx.db.query<{ kind: string; title: string }>('select kind, title from livetv_recording_rules where id = $1', [row.rule_id])).rows[0]
+    : undefined;
+  if (rule?.kind === 'series') {
+    await notify(ctx, {
+      userId: row.user_id, kind: 'livetv.rec.episode', title: m('livetv.rec.episode.title', { series: rule.title, episode: row.subtitle || row.episode || row.title }),
+      link: `/live/recordings/${row.id}`, dedupe: `ltvrec-episode-${row.id}`, personal: true, mail: state === 'done' ? 'recording' : undefined,
+    }).catch(() => undefined);
+  } else if (state === 'done') {
+    await notify(ctx, {
+      userId: row.user_id, kind: 'livetv.rec.done', title: m('livetv.rec.done.title', { title: row.title }),
+      link: `/live/recordings/${row.id}`, dedupe: `ltvrec-done-${row.id}`, personal: true, mail: 'recording',
+    }).catch(() => undefined);
   }
   await finishHooks.finished?.(ctx, row).catch(() => undefined);
 }

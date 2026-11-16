@@ -124,6 +124,23 @@ describe('seerr integration', () => {
     await call('POST', '/api/notifications/read');
     expect((await call('GET', '/api/notifications')).json().notifications.filter((x: any) => x.kind === 'available')[0].read).toBe(true);
   });
+  // Mail stage B, Task 3: the requester's own "available" notice is also a mail (type `available`); the broadcast is not.
+  it('available webhook mails the requester once', async () => {
+    const requester = (await env.pool.query<{ id: string }>("select id from users where authentik_sub = 'sub-admin'")).rows[0]!.id;
+    await env.pool.query("insert into seerr_requests(seerr_request_id, user_id, media_type, tmdb_id, title) values (43, $1, 'movie', 900002, 'Nordlicht')", [requester]);
+    await env.pool.query('delete from mail_outbox');
+    env.ctx.cfg = { ...env.ctx.cfg, MAIL_SMTP_HOST: 'mail.example.com', MAIL_FROM: 'kino@friend.example.com' };
+    try {
+      const payload = { notification_type: 'MEDIA_AVAILABLE', subject: 'Nordlicht (2024)', media: { media_type: 'movie', tmdbId: '900002' }, request: { request_id: '43' } };
+      for (let i = 0; i < 2; i++) {
+        expect((await env.app.inject({ method: 'POST', url: '/internal/webhook/requests', headers: { 'x-webhook-secret': cfg.WEBHOOK_SECRET }, payload })).statusCode).toBe(200);
+      }
+      expect((await env.pool.query('select kind, user_id, dedupe from mail_outbox')).rows).toEqual([{ kind: 'available', user_id: requester, dedupe: 'n:avail-43' }]);
+      expect((await env.pool.query("select 1 from notifications where kind = 'available_all' and dedupe = 'availall-movie-900002'")).rowCount).toBe(1);
+    } finally {
+      env.ctx.cfg = { ...env.ctx.cfg, MAIL_SMTP_HOST: undefined, MAIL_FROM: undefined };
+    }
+  });
 });
 
 describe('trailer', () => {

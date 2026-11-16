@@ -509,7 +509,7 @@ describe('mail outbox and worker', () => {
     env.ctx.db = Object.assign(Object.create(real) as typeof real, {
       query: async (sql: unknown, ...rest: unknown[]) => {
         const res = await (real.query as (...a: unknown[]) => Promise<unknown>).call(real, sql, ...rest);
-        if (typeof sql === 'string' && sql.startsWith('update mail_outbox set state = \'sending\'')) await setMailPref({ db: real }, anna, 'licence', false);
+        if (typeof sql === 'string' && sql.includes('update mail_outbox set state = \'sending\'')) await setMailPref({ db: real }, anna, 'licence', false);
         return res;
       },
     });
@@ -540,5 +540,31 @@ describe('mail outbox and worker', () => {
     await enqueue();
     expect(await mailTick(env.ctx, await dbNow())).toMatchObject({ sent: 1 });
     await resetAnna();
+  });
+
+  // Mail stage B, Task 3: a person mail never goes to an address the person no longer has.
+  it('person mail whose address changed or was removed after queueing is dropped', async () => {
+    await resetAnna();
+    const f = await useFake({}, FRIEND);
+    try {
+      const changed = (await enqueuePerson('available'))!;
+      const welcome = (await enqueuePerson('welcome'))!;
+      await env.pool.query("update users set email = 'anna.neu@friend.example.com' where id = $1", [anna]);
+      expect(await mailTick(env.ctx, await dbNow(), log)).toEqual({ sent: 0, failed: 0, deferred: 0 });
+      await env.pool.query('update users set email = null where id = $1', [anna]);
+      const removed = (await enqueueMail(env.ctx, { kind: 'recording', to: ANNA, userId: anna, lang: 'de', params: { title: 'Nordlicht' } }))!;
+      await mailTick(env.ctx, await dbNow(), log);
+      expect(f.messages).toHaveLength(0);
+      expect(await rows()).toEqual([]);
+      expect(logs).toEqual([{ mail: changed, code: 'address_changed' }, { mail: welcome, code: 'address_changed' }, { mail: removed, code: 'address_changed' }]);
+      expect(JSON.stringify(logs)).not.toContain('@');
+      // the same address in another case is the same recipient: it goes out
+      await env.pool.query('update users set email = $2 where id = $1', [anna, ANNA.toUpperCase()]);
+      await enqueuePerson('licence');
+      expect(await mailTick(env.ctx, await dbNow(), log)).toEqual({ sent: 1, failed: 0, deferred: 0 });
+      expect(f.messages[0]!.to).toEqual([ANNA]);
+    } finally {
+      await env.pool.query('update users set email = $2 where id = $1', [anna, ANNA]);
+    }
   });
 });

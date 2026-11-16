@@ -3,7 +3,7 @@
 import { publicOrigin } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { userLanguage, type Language } from '../i18n.js';
-import { isMailAddress } from './address.js';
+import { isMailAddress, recipientKey } from './address.js';
 import { enqueueMail } from './outbox.js';
 import { mailConfigured } from './transport.js';
 
@@ -56,27 +56,41 @@ export async function setMailPref(ctx: Pick<Ctx, 'db'>, userId: string, type: Ma
 
 export interface MailRecipient { to: string; lang: Language; name: string }
 
+/**
+ * The one SQL condition for "this account may get person mail" (on `users u`): not disabled and its access not ended. The enqueue
+ * (mailRecipient) and the worker's last check before the send (personMailBlock) both use it, so they can never disagree.
+ */
+const ACTIVE_ACCOUNT = 'not u.disabled and (u.access_until is null or u.access_until > now())';
+
 /** Where and in which language a person mail of `kind` goes, or null when none may be queued (see the module comment). */
 export async function mailRecipient(ctx: Pick<Ctx, 'db' | 'cfg'>, userId: string, kind: PersonMailKind): Promise<MailRecipient | null> {
   // without PUBLIC_URL a mail has no link to the app (and no unsubscribe link)
   if (!mailConfigured(ctx.cfg) || !publicOrigin(ctx.cfg)) return null;
   const u = (await ctx.db.query<{ email: string | null; name: string }>(
-    'select email, name from users where id = $1 and not disabled and (access_until is null or access_until > now())', [userId])).rows[0];
+    `select u.email, u.name from users u where u.id = $1 and ${ACTIVE_ACCOUNT}`, [userId])).rows[0];
   if (!u?.email || !isMailAddress(u.email)) return null;
   if (isMailPrefType(kind) && !(await readMailPrefs(ctx, userId))[kind]) return null;
   return { to: u.email, lang: await userLanguage(ctx, userId), name: u.name };
 }
 
+/** why the worker drops a queued person mail unsent (see personMailBlock) */
+export type PersonMailBlock = 'inactive' | 'address_changed' | 'unsubscribed';
+
 /**
  * Why a queued person mail of `kind` must not go out now, or null when it may: `inactive` (the account is gone, disabled or its
- * access ended) or `unsubscribed` (the type is switched off). The worker asks right before each send, so a switch turned off or an
- * account locked after the row was queued (the enqueue read the old state) still stops the mail. One query.
+ * access ended), `address_changed` (the account's address is no longer the one the row was queued for: changed, removed or no
+ * longer valid; compared by the keyed hash `rcptKey`, so a mail never goes to an old address) or `unsubscribed` (the type is
+ * switched off). The worker asks right before each send, so a switch turned off, an address changed or an account locked after the
+ * row was queued (the enqueue read the old state) still stops the mail. One query.
  */
-export async function personMailBlock(ctx: Pick<Ctx, 'db'>, userId: string, kind: PersonMailKind): Promise<'inactive' | 'unsubscribed' | null> {
-  const r = (await ctx.db.query<{ mail: unknown }>(
-    `select p.data->'mail' mail from users u left join user_prefs p on p.user_id = u.id
-      where u.id = $1 and not u.disabled and (u.access_until is null or u.access_until > now())`, [userId])).rows[0];
+export async function personMailBlock(
+  ctx: Pick<Ctx, 'db' | 'encKey'>, userId: string, kind: PersonMailKind, rcptKey: string,
+): Promise<PersonMailBlock | null> {
+  const r = (await ctx.db.query<{ email: string | null; mail: unknown }>(
+    `select u.email, p.data->'mail' mail from users u left join user_prefs p on p.user_id = u.id
+      where u.id = $1 and ${ACTIVE_ACCOUNT}`, [userId])).rows[0];
   if (!r) return 'inactive';
+  if (!r.email || !isMailAddress(r.email) || recipientKey(ctx.encKey, r.email) !== rcptKey) return 'address_changed';
   return isMailPrefType(kind) && !toPrefs(r.mail)[kind] ? 'unsubscribed' : null;
 }
 

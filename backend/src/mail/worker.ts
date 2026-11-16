@@ -23,7 +23,8 @@ import { classifyMailError, createMailTransport, mailConfigured, type MailFailur
  *   (attempts − 1), waits by the backoff of consecutive transport failures (kv `mail:transport:fails`) and stops.
  * - A row over a rate limit goes back without an attempt counted, due when the oldest counted mail leaves the window.
  * - A person mail (welcome or a per-type mail, with its user) is checked once more right before the send: an account disabled or
- *   expired since it was queued, or a type switched off since, deletes the row unsent (see `dropUnwanted`).
+ *   expired since it was queued, an address changed or removed since, or a type switched off since, deletes the row unsent (see
+ *   `dropUnwanted`).
  *
  * Times come from the database clock (or the caller's `now`), so next_at and created_at compare on one clock. Log lines carry the row
  * id and a code only; never an address, a text or the server's reply.
@@ -76,15 +77,20 @@ async function housekeeping(db: Db, now: Date, log: MailLog): Promise<void> {
   await db.query("delete from mail_outbox where state in ('sent','failed') and finished_at < $1::timestamptz - interval '30 days'", [now]);
 }
 
-/** claims due rows (or the one row `id`, due or not) under a lease ending at `lease` */
+/**
+ * claims due rows (or the one row `id`, due or not) under a lease ending at `lease`, oldest due first (an update's `returning` has
+ * no order of its own: it follows where the rows happen to lie in the table)
+ */
 async function claim(db: Db, now: Date, lease: Date, id?: string): Promise<Claimed[]> {
   const due = id === undefined
     ? "((state = 'queued' and next_at <= $1) or (state = 'sending' and lease_until < $1))"
     : "id = $3 and (state = 'queued' or (state = 'sending' and lease_until < $1))";
   const r = await db.query<Claimed>(
-    `update mail_outbox set state = 'sending', lease_until = $2, attempts = attempts + 1
-      where id in (select id from mail_outbox where ${due} order by next_at limit ${BATCH} for update skip locked)
-      returning id, kind, user_id, rcpt_enc, rcpt_key, params_enc, lang, attempts`,
+    `with c as (
+       update mail_outbox set state = 'sending', lease_until = $2, attempts = attempts + 1
+        where id in (select id from mail_outbox where ${due} order by next_at limit ${BATCH} for update skip locked)
+        returning id, kind, user_id, rcpt_enc, rcpt_key, params_enc, lang, attempts, next_at, created_at)
+     select id, kind, user_id, rcpt_enc, rcpt_key, params_enc, lang, attempts from c order by next_at, created_at, id`,
     id === undefined ? [now, lease] : [now, lease, id]);
   return r.rows;
 }
@@ -127,15 +133,17 @@ const giveBack = (db: Db, ids: string[], lease: Date, next: Date | null) => db.q
 const withSmtp = (o: Outcome, smtp: number | null): Outcome => (smtp === null ? o : { ...o, smtp });
 
 /**
- * The last check of a person mail before it goes out: a code when its person no longer wants or may get it, and then the row is
- * deleted (still under this tick's lease). It closes the race with the enqueue (which read the switch before the person turned it
- * off; setMailPref only deletes rows that are queued by then) and with a switch turned off while the row waited. Deleted, not
+ * The last check of a person mail before it goes out: a code when its person no longer wants or may get it, or no longer has the
+ * address it was queued for, and then the row is deleted (still under this tick's lease). It closes the race with the enqueue (which
+ * read the switch before the person turned it off; setMailPref only deletes rows that are queued by then), with a switch turned off
+ * while the row waited, and with an address changed while it waited (the old address must never get it). Deleted, not
  * `failed`: nothing went wrong with the mail system, so it must not count as a failure in the status or the Systemcheck, and the
  * end state is the one setMailPref gives a row it reaches in time. The admin's test mail and the invitation are not person mails.
  */
-async function dropUnwanted(db: Db, r: Claimed, lease: Date): Promise<string | null> {
+async function dropUnwanted(ctx: Pick<Ctx, 'db' | 'encKey'>, r: Claimed, lease: Date): Promise<string | null> {
   if (!r.user_id || (r.kind !== 'welcome' && !isMailPrefType(r.kind))) return null;
-  const code = await personMailBlock({ db }, r.user_id, r.kind);
+  const { db } = ctx;
+  const code = await personMailBlock(ctx, r.user_id, r.kind, r.rcpt_key);
   if (code) await db.query(`delete from mail_outbox where ${OWNED}`, [r.id, lease]);
   return code;
 }
@@ -175,7 +183,7 @@ async function sendClaimed(ctx: Ctx, rows: Claimed[], transport: Transporter, no
       out.set(r.id, { state: 'queued', code: 'rate_limited' });
       continue;
     }
-    const dropped = await dropUnwanted(db, r, lease);
+    const dropped = await dropUnwanted(ctx, r, lease);
     if (dropped) {
       log.warn({ mail: r.id, code: dropped }, 'mail dropped');
       continue;

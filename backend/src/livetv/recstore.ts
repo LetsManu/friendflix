@@ -176,6 +176,7 @@ export async function spaceTick(ctx: Ctx, now: number = Date.now()): Promise<voi
       forecast -= Number(c.bytes);
       await notify(ctx, {
         userId: c.user_id, kind: 'livetv.rec.deleting', title: m('livetv.rec.deleting.title', { title: c.title }), link: '/live/recordings', dedupe: `ltvrec-deleting-${c.id}`, personal: true,
+        mail: 'recording',
       }).catch(() => undefined);
     }
     const day = new Date(now).toISOString().slice(0, 10);

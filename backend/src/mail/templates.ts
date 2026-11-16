@@ -92,10 +92,25 @@ function welcomeMail(c: Common, raw: Record<string, unknown>): Parts {
   };
 }
 
-/** to a typed address without an account: no settings and no unsubscribe link (nothing to switch), the reason says to ignore it */
+/** an absolute URL on this instance's PUBLIC_URL origin (scheme, host and port), or null */
+function onOrigin(origin: string | null, url: string): string | null {
+  if (!origin || safeHref(url) === null) return null;
+  try {
+    const u = new URL(url);
+    return u.origin === origin && !u.username && !u.password ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * to a typed address without an account: no settings and no unsubscribe link (nothing to switch), the reason says to ignore it. The
+ * button leads to this instance only (the link's origin is PUBLIC_URL's): an invitation mail never points anywhere else.
+ */
 function inviteMail(c: Common, raw: Record<string, unknown>): Parts {
   const { lang, app } = c;
   const p = PARAMS.invite.parse(raw);
+  if (!onOrigin(c.origin, p.link)) throw new Error('mail_invite_link_off_origin');
   const inviter = p.inviter;
   return {
     subject: msg(lang, 'mail.invite.subject', { inviter, app }),

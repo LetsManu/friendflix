@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { deriveTokens } from '../src/brand/colors.js';
 import { readBrand, resetBrand, saveBrand, storeImage } from '../src/brand/repo.js';
 import type { Brand } from '../src/brand/schema.js';
-import { m, msg, type MsgKey } from '../src/i18n.js';
+import { m, msg } from '../src/i18n.js';
 import { esc, layout, safeHref } from '../src/mail/html.js';
 import { mailBrand, MAX_INLINE_SYMBOL_BYTES } from '../src/mail/brand.js';
 import { renderMail, type MailKind } from '../src/mail/templates.js';
@@ -159,8 +159,7 @@ describe('mail layout and test template', () => {
   // Mail stage B, Task 2: a template per kind, the unsubscribe headers and links of the per-type mails.
   const ORIGIN = 'https://friend.example.com';
   const atFriend = () => { env.ctx.cfg = { ...cfg, PUBLIC_URL: ORIGIN }; };
-  // download.expiring.title arrives with stage B Task 3 (the licence notice); until then a missing key renders as itself
-  const licenceTitle = () => m('download.expiring.title' as MsgKey, { n: 2 });
+  const licenceTitle = () => m('download.expiring.title', { n: 2 });
   const INVITE = { link: `${ORIGIN}/invite/abc123`, expiresAt: '2026-11-18T10:00:00.000Z', inviter: 'Anna Beispiel' };
 
   it('pref kinds carry the unsubscribe headers and links', async () => {
@@ -311,5 +310,21 @@ describe('mail layout and test template', () => {
     await expect(renderMail(env.ctx, 'welcome', 'de', {}, { userId: actor })).rejects.toThrow();
     await expect(renderMail(env.ctx, 'available', 'de', { body: 'x' }, { userId: actor })).rejects.toThrow();
     await expect(renderMail(env.ctx, 'recording', 'de', { title: 7 }, { userId: actor })).rejects.toThrow();
+  });
+
+  // Mail stage B, Task 3: the invitation's button only ever leads to this instance.
+  it('invite link must be on PUBLIC_URL', async () => {
+    atFriend();
+    for (const link of [
+      'https://elsewhere.example.net/invite/abc123',
+      'http://friend.example.com/invite/abc123',
+      'https://friend.example.com:8443/invite/abc123',
+      'https://friend.example.com.elsewhere.example.net/invite/abc123',
+      'https://friend.example.com@elsewhere.example.net/invite/abc123',
+    ]) await expect(renderMail(env.ctx, 'invite', 'de', { ...INVITE, link }, { userId: null }), link).rejects.toThrow();
+    expect((await renderMail(env.ctx, 'invite', 'de', INVITE, { userId: null })).text).toContain(INVITE.link);
+    // without a public URL there is no instance an invitation could lead to
+    env.ctx.cfg = { ...cfg, PUBLIC_URL: '' };
+    await expect(renderMail(env.ctx, 'invite', 'de', INVITE, { userId: null })).rejects.toThrow();
   });
 });
