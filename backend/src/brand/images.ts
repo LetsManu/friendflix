@@ -9,6 +9,8 @@ import { inflateSync } from 'node:zlib';
  * against the buffer, refuses anything structurally off (bad CRC, truncation, bytes after the end, an unknown critical chunk, a header
  * that lies about its length) and rebuilds the file from an allow-list of chunks, so metadata (text, EXIF, XMP, ICC profiles) never
  * reaches the public route. PNG pixel data is inflated once (bounded by the size the header implies) to prove it is what it claims.
+ * Animations are refused as a type the brand does not take (APNG's chunks are dropped, leaving the still default image; an animated
+ * WebP answers `type`). WebP bitstreams are checked by their headers, not decoded.
  * No image library: the backend has none and the plan adds none.
  */
 
@@ -42,7 +44,7 @@ export function dimensionsOk(kind: BrandImageKind, w: number, h: number): boolea
 
 const corrupt = () => new BrandImageError('corrupt');
 
-/** the sanitized image, or a BrandImageError (`size` before anything is parsed, `type` for anything but PNG / WebP) */
+/** the sanitized image, or a BrandImageError (`size` before anything is parsed, `type` for anything but PNG / still WebP) */
 export function sanitizeImage(buf: Buffer, kind: BrandImageKind): SanitizedImage {
   if (buf.length > BRAND_IMAGE_MAX_BYTES) throw new BrandImageError('size');
   let out: Omit<SanitizedImage, 'hash'>;
@@ -265,11 +267,15 @@ function sanitizeWebp(buf: Buffer, kind: BrandImageKind): Omit<SanitizedImage, '
   const chunks = riffChunks(buf, 12);
   const first = chunks[0];
   if (!first) throw corrupt();
+  // an animation (the VP8X flag, or an ANIM / ANMF chunk anywhere) is a type the brand does not take: the admin page sends a still
+  // PNG or WebP only, and frames would reach every visitor's image decoder for nothing
+  const animated = chunks.some((c) => c.fourcc === 'ANIM' || c.fourcc === 'ANMF') || (first.fourcc === 'VP8X' && first.data.length > 0 && (first.data[0]! & VP8X_ANIM) !== 0);
+  if (animated) throw new BrandImageError('type');
   let kept: RiffChunk[];
   let width: number, height: number;
   if (isBitstream(first)) {
     // the simple format: one bitstream chunk (anything else in such a file is dropped; a second image chunk is refused)
-    if (chunks.some((c) => c !== first && (isBitstream(c) || c.fourcc === 'ALPH' || c.fourcc === 'VP8X' || c.fourcc === 'ANIM' || c.fourcc === 'ANMF'))) throw corrupt();
+    if (chunks.some((c) => c !== first && (isBitstream(c) || c.fourcc === 'ALPH' || c.fourcc === 'VP8X'))) throw corrupt();
     [width, height] = bitstreamSize(first);
     kept = [first];
   } else if (first.fourcc === 'VP8X') {
@@ -279,23 +285,13 @@ function sanitizeWebp(buf: Buffer, kind: BrandImageKind): Omit<SanitizedImage, '
     height = first.data.readUIntLE(7, 3) + 1;
     const rest = chunks.slice(1);
     if (rest.some((c) => c.fourcc === 'VP8X')) throw corrupt();
-    let body: RiffChunk[];
-    if (flags & VP8X_ANIM) {
-      if (rest.some((c) => isBitstream(c) || c.fourcc === 'ALPH')) throw corrupt();
-      const anim = rest.filter((c) => c.fourcc === 'ANIM');
-      const frames = rest.filter((c) => c.fourcc === 'ANMF');
-      if (anim.length !== 1 || anim[0]!.data.length !== 6 || !frames.length || rest.indexOf(anim[0]!) > rest.indexOf(frames[0]!)) throw corrupt();
-      body = [anim[0]!, ...frames.map((f) => frame(f, width, height))];
-    } else {
-      if (rest.some((c) => c.fourcc === 'ANIM' || c.fourcc === 'ANMF')) throw corrupt();
-      const still = stillImage(rest);
-      if (still.size[0] !== width || still.size[1] !== height) throw corrupt();
-      body = still.kept;
-    }
-    // the flags of the dropped chunks (ICC, EXIF, XMP) and the reserved bits are cleared; alpha and animation stay
+    const still = stillImage(rest);
+    if (still.size[0] !== width || still.size[1] !== height) throw corrupt();
+    const body = still.kept;
+    // the flags of the dropped chunks (ICC, EXIF, XMP) and the reserved bits are cleared; alpha stays
     const vp8x = Buffer.alloc(10);
     first.data.copy(vp8x, 4, 4, 10);
-    vp8x[0] = flags & ~(VP8X_ICC | VP8X_EXIF | VP8X_XMP) & (VP8X_ALPHA | VP8X_ANIM);
+    vp8x[0] = flags & ~(VP8X_ICC | VP8X_EXIF | VP8X_XMP) & VP8X_ALPHA;
     kept = [{ fourcc: 'VP8X', data: vp8x }, ...body];
   } else {
     throw corrupt();
@@ -306,16 +302,4 @@ function sanitizeWebp(buf: Buffer, kind: BrandImageKind): Omit<SanitizedImage, '
   head.write('RIFF', 0, 'latin1');
   head.writeUInt32LE(body.length, 4);
   return { bytes: Buffer.concat([head, body]), mime: 'image/webp', width, height };
-}
-
-/** an animation frame: its 16-byte header (inside the canvas) and its image sub-chunks only (anything else in it is dropped) */
-function frame(f: RiffChunk, cw: number, ch: number): RiffChunk {
-  const d = f.data;
-  if (d.length < 16) throw corrupt();
-  const x = d.readUIntLE(0, 3) * 2, y = d.readUIntLE(3, 3) * 2;
-  const fw = d.readUIntLE(6, 3) + 1, fh = d.readUIntLE(9, 3) + 1;
-  if (x + fw > cw || y + fh > ch) throw corrupt();
-  const still = stillImage(riffChunks(d, 16));
-  if (still.size[0] !== fw || still.size[1] !== fh) throw corrupt();
-  return { fourcc: 'ANMF', data: Buffer.concat([d.subarray(0, 16), ...still.kept.map(riffChunk)]) };
 }

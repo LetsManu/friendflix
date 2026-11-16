@@ -286,29 +286,20 @@ describe('WebP', () => {
     expect(refused(riff([vp8x(0x10, 640, 640), alph, alph, vp8(640, 640)]), 'symbol')).toBe('corrupt');
   });
 
-  it('an animated WebP keeps ANIM and its frames, rebuilt from their image sub-chunks only; frames must lie inside the canvas', () => {
+  it('an animated WebP is refused as a type the brand does not take (an ANIM or ANMF chunk, with or without the VP8X flag)', () => {
     const anim = riffChunk('ANIM', Buffer.alloc(6));
-    /** an ANMF frame at (x, y) of the 1×1 lossless image, plus `extra` sub-chunks */
-    const anmf = (x: number, y: number, extra: Buffer[] = []) => {
+    /** an ANMF frame at (0, 0) of the 1×1 lossless image */
+    const anmf = () => {
       const h = Buffer.alloc(16);
-      h.writeUIntLE(x / 2, 0, 3);
-      h.writeUIntLE(y / 2, 3, 3);
-      h.writeUIntLE(0, 6, 3); // width - 1
-      h.writeUIntLE(0, 9, 3); // height - 1
       h.writeUIntLE(100, 12, 3); // duration
-      return riffChunk('ANMF', Buffer.concat([h, VP8L_1X1, ...extra]));
+      return riffChunk('ANMF', Buffer.concat([h, VP8L_1X1]));
     };
-    const exif = riffChunk('EXIF', Buffer.from('GPS-SECRET'));
-    const out = sanitizeImage(riff([vp8x(0x02 | 0x08, 4, 4), anim, anmf(0, 0, [exif]), anmf(2, 2), exif]), 'logo');
-    expect(webpChunks(out.bytes)).toEqual(['VP8X', 'ANIM', 'ANMF', 'ANMF']);
-    expect(out.bytes[20]).toBe(0x02); // animation stays, EXIF goes
-    expect(out.bytes.includes(Buffer.from('GPS-SECRET'))).toBe(false);
-    expect([out.width, out.height]).toEqual([4, 4]);
-    expect(sanitizeImage(out.bytes, 'logo').bytes).toEqual(out.bytes);
-    expect(refused(riff([vp8x(0x02, 4, 4), anim, anmf(4, 0)]))).toBe('corrupt'); // outside the canvas
-    expect(refused(riff([vp8x(0x02, 4, 4), anmf(0, 0), anim]))).toBe('corrupt'); // ANIM after the frames
-    expect(refused(riff([vp8x(0x02, 4, 4), anim]))).toBe('corrupt'); // no frame
-    expect(refused(riff([vp8x(0x02, 4, 4), anim, anmf(0, 0), VP8L_1X1]))).toBe('corrupt'); // a still image beside the frames
+    // the admin page only ever sends a still PNG or WebP; frames would reach every visitor's decoder for nothing
+    expect(refused(riff([vp8x(0x02, 4, 4), anim, anmf(), anmf()]))).toBe('type');
+    expect(refused(riff([vp8x(0x02, 4, 4), anim]))).toBe('type');
+    expect(refused(riff([vp8x(0x00, 1, 1), anim, anmf()]))).toBe('type'); // frames without the flag
+    expect(refused(riff([vp8x(0x00, 1, 1), VP8L_1X1, anmf()]))).toBe('type'); // a still image with a stray frame
+    expect(refused(riff([VP8L_1X1, anim]))).toBe('type'); // the simple format with an animation chunk
   });
 
   it('structural lies are corrupt: RIFF size, chunk length past the end, no image, trailing bytes, a broken VP8L header', () => {

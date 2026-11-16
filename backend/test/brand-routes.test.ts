@@ -229,6 +229,43 @@ describe('brand routes', () => {
     expect((await env.app.inject({ method: 'PUT', url: '/api/admin/brand/image/logo', cookies: admin.cookies, headers: { 'content-type': 'image/png' }, payload: png(4, 2) })).statusCode).toBe(403);
   });
 
+  it('an animated WebP upload is refused like any other type the brand does not take (415)', async () => {
+    const frame = Buffer.alloc(16);
+    frame.writeUIntLE(100, 12, 3);
+    const lossless = Buffer.from([0x2f, 0, 0, 0, 0]); // a 1 × 1 VP8L header
+    const sub = Buffer.concat([Buffer.from('VP8L', 'latin1'), Buffer.from([lossless.length, 0, 0, 0]), lossless, Buffer.alloc(1)]);
+    const anmfData = Buffer.concat([frame, sub]);
+    const vp8x = Buffer.alloc(10);
+    vp8x[0] = 0x02;
+    const chunks = Buffer.concat([
+      Buffer.from('VP8X', 'latin1'), Buffer.from([10, 0, 0, 0]), vp8x,
+      Buffer.from('ANIM', 'latin1'), Buffer.from([6, 0, 0, 0]), Buffer.alloc(6),
+      Buffer.from('ANMF', 'latin1'), Buffer.from([anmfData.length, 0, 0, 0]), anmfData,
+    ]);
+    const body = Buffer.concat([Buffer.from('WEBP', 'latin1'), chunks]);
+    const file = Buffer.concat([Buffer.from('RIFF', 'latin1'), Buffer.from([body.length, 0, 0, 0]), body]);
+    const r = await upload(admin, 'logo', file, 'image/webp');
+    expect([r.statusCode, r.json()]).toEqual([415, { error: 'unsupported_type' }]);
+  });
+
+  it('the brand writes need the CSRF token: PUT, reset and the image upload answer 403 without it and change nothing', async () => {
+    const before = await current();
+    const bare = (method: 'PUT' | 'POST', url: string, payload: object | Buffer, headers: Record<string, string> = {}) =>
+      env.app.inject({ method, url, cookies: admin.cookies, headers, payload });
+    const put = await bare('PUT', '/api/admin/brand', { rev: before.rev, brand: { name: 'Hafenkino' } });
+    expect([put.statusCode, put.json()]).toEqual([403, { error: 'csrf' }]);
+    const reset = await bare('POST', '/api/admin/brand/reset', { rev: before.rev });
+    expect([reset.statusCode, reset.json()]).toEqual([403, { error: 'csrf' }]);
+    const img = await bare('PUT', '/api/admin/brand/image/symbol', png(512, 512, 7), { 'content-type': 'image/png' });
+    expect([img.statusCode, img.json()]).toEqual([403, { error: 'csrf' }]);
+    // a wrong token is no better than none
+    const wrong = await bare('PUT', '/api/admin/brand', { rev: before.rev, brand: { name: 'Hafenkino' } }, { 'x-csrf-token': 'x'.repeat(43) });
+    expect(wrong.statusCode).toBe(403);
+    expect(await current()).toEqual(before);
+    const stored = await env.pool.query('select 1 from brand_images where hash = $1', [sha(png(512, 512, 7))]);
+    expect(stored.rowCount).toBe(0);
+  });
+
   it('a WebP upload is stored and served as WebP', async () => {
     const r = await upload(admin, 'symbol', webp(640, 640), 'image/webp');
     expect(r.statusCode).toBe(200);
