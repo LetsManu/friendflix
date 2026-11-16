@@ -330,20 +330,40 @@ export async function autoUpdateTick(ctx: Ctx, now = new Date(), log?: TickLog):
         await portainerFailedAlert(ctx, target, now).catch(() => log?.warn({ code: 'alert_failed' }, 'update failed alert not sent'));
         return 'failed';
       }
-      await ctx.kv.set(doneKey, '1', 90 * 86_400);
+      // Portainer has the redeploy from here on: a store failure noting it is logged, never "could not start" (it only means the
+      // next night may redeploy the same version again)
+      await ctx.kv.set(doneKey, '1', 90 * 86_400).catch(() => log?.warn({ code: 'done_not_saved' }, 'automatic update through Portainer: the redeployed version was not noted'));
       return 'started';
     }
+    // startJob throws only before the updater accepted the job (after the 202 it catches its own store / audit failures)
     const r = await startJob(ctx, 'update', null);
     if (r.ok) return 'started';
     // busy: another job (one an admin started) came first, not a failure of the window. Anything else: nothing was started tonight;
     // the admins are told when a newer version waits (a job that started and fails later is reconcileAudit's alert)
-    if (r.error !== 'busy') {
-      log?.warn({ code: r.error }, 'automatic update could not start');
-      await startFailed(ctx, r.error === 'not_available' ? 'unreachable' : 'refused', now, log);
+    if (r.error === 'busy') return 'failed';
+    let reason: StartFailReason = r.error === 'not_available' ? 'unreachable' : 'refused';
+    if (r.error === 'not_available') {
+      // no answer to the start (the status read just before worked): the updater may have accepted the job and only its answer got
+      // lost (timeout). Its status tells: a running update job is tonight's start; an updater that answers but runs nothing had
+      // an error while starting; one that does not answer any more is unreachable
+      const after = await updaterView(ctx);
+      const j = 'status' in after && after.status.busy ? after.status.job : null;
+      if (j?.action === 'update' && j.state === 'running') {
+        log?.warn({ code: 'start_answer_lost' }, 'automatic update started, its answer was lost');
+        // recorded as startJob would have (an admin's own start that came first keeps its entry): audited, its result reconciled
+        const meta = { action: j.action, from: j.from, to: j.to, auto: true };
+        if (await ctx.kv.setnx(`${PENDING}${j.id}`, JSON.stringify({ actor: null, ...meta }), 7 * 86_400).catch(() => false)) {
+          await audit(ctx, null, 'system.updater_start', undefined, meta);
+        }
+        return 'started';
+      }
+      if (after.present) reason = 'error';
     }
+    log?.warn({ code: r.error }, 'automatic update could not start');
+    await startFailed(ctx, reason, now, log);
     return 'failed';
   } catch (e) {
-    // the caller logs the error itself
+    // a throw before the updater or Portainer accepted anything (the caller logs the error itself)
     await startFailed(ctx, 'error', now, log);
     throw e;
   }

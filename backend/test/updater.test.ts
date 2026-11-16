@@ -30,9 +30,11 @@ const fake = {
   services: null as unknown[] | null,
   /** the updater refuses POST /v1/update with this error (null: it starts the job) */
   refuse: null as string | null,
+  /** runs when POST /v1/update arrives, before the answer (it throws: the answer is lost, e.g. a timeout) */
+  onStart: null as (() => void) | null,
   calls: [] as Array<{ method: string; path: string; body: string; sigOk: boolean }>,
   portainer: [] as Array<{ method: string; url: string }>,
-  reset() { Object.assign(this, { up: true, busy: false, previous: 'sha-aaaaaaa', status: 200, jobState: 'running', answer: null, stack: undefined, release: 'v2.0.0', portainerStatus: 204, services: null, refuse: null, calls: [], portainer: [] }); },
+  reset() { Object.assign(this, { up: true, busy: false, previous: 'sha-aaaaaaa', status: 200, jobState: 'running', answer: null, stack: undefined, release: 'v2.0.0', portainerStatus: 204, services: null, refuse: null, onStart: null, calls: [], portainer: [] }); },
 };
 const HOOK = 'https://portainer.example.com/api/stacks/webhooks/0e1d2c3b-hook';
 const job = () => ({ id: JOB_ID, action: 'update', state: fake.jobState, step: fake.jobState === 'running' ? 'pull' : null, from: 'sha-aaaaaaa', to: 'latest',
@@ -66,6 +68,7 @@ const updaterFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
   if (u.pathname === '/v1/channel') return fake.busy ? j({ error: 'busy' }, 409) : j({ ...JSON.parse(body), targetTag: 'latest' });
   if (fake.busy) return j({ error: 'busy' }, 409);
   if (u.pathname === '/v1/update' && fake.refuse) return j({ error: fake.refuse }, 409);
+  if (u.pathname === '/v1/update') fake.onStart?.();
   if (u.pathname === '/v1/rollback' && !fake.previous) return j({ error: 'no_previous' }, 400);
   return j({ job: { ...job(), action: u.pathname.slice(4) } }, 202);
 };
@@ -361,20 +364,68 @@ describe('admin alerts', () => {
       expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
     });
 
-    it('the start throws: alerts, and the error still reaches the caller', async () => {
+    /** env.ctx with one store call failing (rejecting, like the real store) for keys starting with `prefix` */
+    const failingKv = (method: 'get' | 'set', prefix: string) => new Proxy(env.ctx.kv, {
+      get(t, p) {
+        const v = Reflect.get(t, p) as unknown;
+        if (typeof v !== 'function') return v;
+        const f = (v as (...a: unknown[]) => unknown).bind(t);
+        return p === method ? (k: string, ...rest: unknown[]) => (k.startsWith(prefix) ? Promise.reject(new Error('store down')) : f(k, ...rest)) : f;
+      },
+    });
+
+    it('the start throws before the updater or Portainer accepted it: alerts, and the error still reaches the caller', async () => {
+      setCfg({ PORTAINER_WEBHOOK_URL: HOOK });
+      fake.stack = 'foreign';
       fake.release = 'v99.6.1';
-      // the store fails right where the start is recorded (synchronously, so nothing on the way catches it)
-      const kv = new Proxy(env.ctx.kv, {
-        get(t, p) {
-          if (p === 'set') return (k: string, ...rest: [string, number]) => { if (k.startsWith('updater:pending:')) throw new Error('store down'); return t.set(k, ...rest); };
-          const v = Reflect.get(t, p) as unknown;
-          return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
-        },
-      });
-      await expect(autoUpdateTick({ ...env.ctx, kv }, at(2, 1, 10))).rejects.toThrow('store down');
+      // the store fails where the tick looks up whether this version was already redeployed: nothing was sent yet
+      await expect(autoUpdateTick({ ...env.ctx, kv: failingKv('get', 'updater:portainer:') }, at(2, 1, 10))).rejects.toThrow('store down');
+      expect(fake.portainer).toEqual([]);
       const n = await startNotices();
       expect(n).toHaveLength((await admins()).length);
       expect(n[0]!.body).toBe(body('99.6.1', 'beim Start ist ein Fehler aufgetreten'));
+    });
+
+    it('a throw after the start was accepted never says "could not start" (Portainer redeploying, updater job running)', async () => {
+      const warns: Array<[object, string]> = [];
+      const log = { warn: (o: object, m: string) => { warns.push([o, m]); } };
+      setCfg({ PORTAINER_WEBHOOK_URL: HOOK });
+      fake.stack = 'foreign';
+      fake.release = 'v99.6.2';
+      // Portainer got the redeploy, then the store fails to note the version as done: started, logged by code only
+      expect(await autoUpdateTick({ ...env.ctx, kv: failingKv('set', 'updater:portainer:') }, at(2, 1, 14), log)).toBe('started');
+      expect(fake.portainer).toHaveLength(1);
+      expect(warns).toEqual([[{ code: 'done_not_saved' }, 'automatic update through Portainer: the redeployed version was not noted']]);
+      // the updater accepted the job, then the store fails to note it as pending
+      setCfg({ PORTAINER_WEBHOOK_URL: undefined });
+      fake.stack = undefined;
+      expect(await autoUpdateTick({ ...env.ctx, kv: failingKv('set', 'updater:pending:') }, at(2, 1, 15), log)).toBe('started');
+      expect(fake.calls.filter((c) => c.method === 'POST' && c.path === '/v1/update')).toHaveLength(1);
+      expect(await startNotices()).toEqual([]);
+    });
+
+    it('the answer to the start is lost: the updater\'s status tells a running job (quiet) from one that did not start (error) or a gone updater (unreachable)', async () => {
+      const timeout = () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); };
+      const ids = await admins();
+      // accepted (the job runs), only the 202 got lost: started, nobody is told it was not installed
+      fake.release = 'v99.6.3';
+      fake.onStart = () => { fake.busy = true; timeout(); };
+      expect(await autoUpdateTick({ ...env.ctx }, at(2, 1, 16))).toBe('started');
+      expect(await startNotices()).toEqual([]);
+      // recorded like any automatic start: audited, and its result (a later failure alerts) is reconciled
+      const meta = { action: 'update', from: 'sha-aaaaaaa', to: 'latest', auto: true };
+      expect(JSON.parse((await env.kv.get(`updater:pending:${JOB_ID}`))!)).toEqual({ actor: null, ...meta });
+      expect((await audits('system.updater_start')).at(-1)).toEqual({ actor: null, meta });
+      await env.kv.del(`updater:pending:${JOB_ID}`);
+      // the updater still answers but runs nothing: an error while starting, not "unreachable"
+      fake.busy = false;
+      fake.onStart = timeout;
+      expect(await autoUpdateTick({ ...env.ctx }, at(2, 1, 17))).toBe('failed');
+      expect((await startNotices()).map((x) => x.body)).toEqual(ids.map(() => body('99.6.3', 'beim Start ist ein Fehler aufgetreten')));
+      // the updater went away with the request: unreachable
+      fake.onStart = () => { fake.up = false; timeout(); };
+      expect(await autoUpdateTick({ ...env.ctx }, at(2, 1, 18))).toBe('failed');
+      expect((await startNotices()).slice(ids.length).map((x) => x.body)).toEqual(ids.map(() => body('99.6.3', 'der Updater ist nicht erreichbar')));
     });
 
     it('never for nothing to install, outside the window, a busy updater or a job that started', async () => {
