@@ -5,7 +5,7 @@ import { setLocale } from '#lib/i18n';
 import { DEFAULT_BRAND, type PublicBrand } from '#lib/brand';
 import { contrast, deriveTokens } from '#lib/brandColors';
 import {
-  BRAND_TABS, FIELD_TAB, LIMITS, PRESETS, charCount, dirtyTabs, fieldError, glowBackground, isDirty, normalizeAccent, previewBrand, ratioRows, ratioText,
+  BRAND_TABS, FIELD_TAB, LIMITS, PRESETS, charCount, dirtyTabs, fieldError, glowBackground, isDirty, normalizeAccent, previewBrand, previewVars, ratioRows, ratioText,
   serverFieldError, stagedDiff, uploadErrorText, validate,
 } from './model';
 
@@ -162,6 +162,12 @@ describe('preview brand', () => {
     const imgs = previewBrand(base({ symbol: 'c'.repeat(64) }), { symbol: '/api/public/brand/img/x.png', logo: '/l.png' });
     expect(imgs.images).toEqual({ symbol: '/api/public/brand/img/x.png' }); // only images the staged brand refers to
   });
+  it('previewVars: only derived colour values, as custom properties', () => {
+    const v = previewVars(previewBrand(base({ accent: '#4c9dff' }), {}));
+    expect(v).toContain('--acc-fill:#006ff4');
+    expect(v).toMatch(/--acc-rgb:\d{1,3}, \d{1,3}, \d{1,3}/);
+    for (const part of v.split(';')) expect(part).toMatch(/^--[a-z-]+:(#[0-9a-f]{6}|\d{1,3}, \d{1,3}, \d{1,3})$/);
+  });
 });
 
 describe('server answers', () => {
@@ -177,5 +183,12 @@ describe('server answers', () => {
     expect(uploadErrorText('dimensions')).toBe('Die Bildgröße passt nicht.');
     expect(uploadErrorText('corrupt')).toBe('Das Bild ist beschädigt.');
     expect(uploadErrorText('whatever')).toBe('Das Bild konnte nicht hochgeladen werden.');
+    // the browser's own refusals
+    expect(uploadErrorText('tooLarge')).toBe('Das Bild ist auch verkleinert noch größer als 2 MB.');
+    expect(uploadErrorText('type')).toBe(uploadErrorText('unsupported_type'));
+    expect(uploadErrorText('read')).toBe('Das Bild ließ sich nicht lesen.');
+    expect(uploadErrorText('large')).toBe('Das Bild ist zu groß. Bitte eins mit höchstens 25 MB und 12.000 Pixeln Kantenlänge wählen.');
+    expect(uploadErrorText('small', { width: 400, height: 300 })).toBe('Das Symbol muss mindestens 512 × 512 Pixel groß sein (dieses: 400 × 300).');
+    expect(uploadErrorText('small')).toContain('(dieses: 0 × 0)');
   });
 });

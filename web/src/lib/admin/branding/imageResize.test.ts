@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, expect, it } from 'vitest';
-import { IMAGE_BOX, MAX_UPLOAD_BYTES, SYMBOL_SIZE, coverCrop, encodeFitting, fitWithin, plan, shrink, type DrawPlan, type Encoder } from './imageResize';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { IMAGE_BOX, MAX_UPLOAD_BYTES, SYMBOL_SIZE, coverCrop, encodeFitting, fitWithin, plan, prepareImage, shrink, type DrawPlan, type Encoder } from './imageResize';
 
 describe('symbol: cover-crop to 512 × 512', () => {
   it('1000 × 600: the centred 600 × 600 square, drawn at 512', () => {
@@ -102,5 +102,93 @@ describe('encodeFitting: PNG, then WebP, then a fifth smaller (a fake encoder: b
     expect(tiny.calls.filter((c) => c.type === 'image/png')).toHaveLength(1);
     const none: Encoder = async () => null;
     expect(await encodeFitting(logo, 'logo', none)).toBeNull();
+  });
+});
+
+describe('prepareImage (browser doubles: createImageBitmap, a canvas that records its draws)', () => {
+  const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  /** a PNG file that is only its header: enough for the size check, decoded by the double below */
+  function pngFile(w: number, h: number, type = 'image/png', pad = 0): File {
+    const b = new Uint8Array(33 + pad);
+    b.set(PNG_SIG, 0);
+    const v = new DataView(b.buffer);
+    v.setUint32(8, 13); b.set([73, 72, 68, 82], 12); v.setUint32(16, w); v.setUint32(20, h);
+    return new File([b], 'x.png', { type });
+  }
+  /** a JPEG whose frame header lies past the first 64 KB (a large EXIF block before it) */
+  function jpegFile(w: number, h: number): File {
+    const app: number[] = [];
+    for (let i = 0; i < 2; i++) app.push(0xff, 0xe1, 0xff, 0xff, ...new Array(0xfffd).fill(0));
+    const sof = [0xff, 0xc0, 0, 17, 8, h >> 8, h & 255, w >> 8, w & 255, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1];
+    return new File([new Uint8Array([0xff, 0xd8, ...app, ...sof])], 'x.jpg', { type: 'image/jpeg' });
+  }
+  let decoded = 0, closed = 0;
+  const draws: Array<{ w: number; h: number; sx: number; sy: number; sw: number; sh: number }> = [];
+  /** stubs the browser: the bitmap has the header's size (or `bitmap`), the canvas encodes `bytesPerPixel` per type */
+  function browser(opts: { bitmap?: { width: number; height: number }; bytesPerPixel?: { png: number; webp?: number }; fail?: boolean } = {}) {
+    decoded = 0; closed = 0; draws.length = 0;
+    vi.stubGlobal('createImageBitmap', async (f: File) => {
+      decoded++;
+      if (opts.fail) throw new Error('decode');
+      const v = new DataView(await f.slice(0, 24).arrayBuffer());
+      const size = opts.bitmap ?? { width: v.getUint32(16), height: v.getUint32(20) };
+      return { ...size, close: () => { closed++; } };
+    });
+    const bpp = opts.bytesPerPixel ?? { png: 0.1 };
+    vi.stubGlobal('document', {
+      createElement: () => {
+        const c = {
+          width: 0, height: 0,
+          getContext: () => ({ imageSmoothingEnabled: false, imageSmoothingQuality: 'low', drawImage: (_s: unknown, sx: number, sy: number, sw: number, sh: number) => { draws.push({ w: c.width, h: c.height, sx, sy, sw, sh }); } }),
+          toBlob: (cb: (b: Blob | null) => void, type: string) => {
+            const real = type === 'image/webp' && bpp.webp !== undefined ? 'image/webp' : 'image/png';
+            cb({ size: Math.round(c.width * c.height * (real === 'image/webp' ? bpp.webp! : bpp.png)), type: real } as Blob);
+          },
+        };
+        return c;
+      },
+    });
+  }
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('the symbol: a 1000 × 600 pick is decoded, cropped from the centre and sent as a 512 × 512 PNG', async () => {
+    browser();
+    const r = await prepareImage(pngFile(1000, 600), 'symbol');
+    expect(r).toMatchObject({ ok: true, width: 512, height: 512, blob: { type: 'image/png' } });
+    expect(draws).toEqual([{ w: 512, h: 512, sx: 200, sy: 0, sw: 600, sh: 600 }]);
+    expect(closed).toBe(1);
+  });
+  it('a side over 12 000 px in the header is refused before anything is decoded', async () => {
+    browser();
+    expect(await prepareImage(pngFile(13_000, 100), 'logo')).toEqual({ ok: false, error: 'large', width: 13_000, height: 100 });
+    expect(await prepareImage(jpegFile(100, 12_001), 'signIn')).toEqual({ ok: false, error: 'large', width: 100, height: 12_001 });
+    expect(decoded).toBe(0);
+  });
+  it('a file the header cannot be read from, a refused type or a source over 25 MB is not decoded either', async () => {
+    browser();
+    expect(await prepareImage(new File([new Uint8Array([1, 2, 3])], 'x.png', { type: 'image/png' }), 'logo')).toEqual({ ok: false, error: 'read' });
+    expect(await prepareImage(pngFile(10, 10, 'image/svg+xml'), 'logo')).toEqual({ ok: false, error: 'type' });
+    const huge = { type: 'image/png', size: 26 * 1024 * 1024 } as File;
+    expect(await prepareImage(huge, 'logo')).toEqual({ ok: false, error: 'large' });
+    expect(decoded).toBe(0);
+  });
+  it('a decoder that fails, a bitmap bigger than its header said, a symbol under 512: refused (the bitmap is closed)', async () => {
+    browser({ fail: true });
+    expect(await prepareImage(pngFile(800, 200), 'logo')).toEqual({ ok: false, error: 'read' });
+    browser({ bitmap: { width: 20_000, height: 10 } });
+    expect(await prepareImage(pngFile(800, 200), 'logo')).toEqual({ ok: false, error: 'large', width: 20_000, height: 10 });
+    browser({ bitmap: { width: 400, height: 400 } });
+    expect(await prepareImage(jpegFile(400, 400), 'symbol')).toEqual({ ok: false, error: 'small', width: 400, height: 400 });
+    expect(closed).toBe(1);
+  });
+  it('a photo over 2 MB as PNG goes as WebP; one canvas per size serves the PNG and both WebP tries', async () => {
+    browser({ bytesPerPixel: { png: 3, webp: 0.3 } });
+    const r = await prepareImage(pngFile(2560, 1600), 'signIn');
+    expect(r).toMatchObject({ ok: true, width: 2560, height: 1600, blob: { type: 'image/webp' } });
+    expect(draws).toHaveLength(1);
+  });
+  it('nothing fits: tooLarge', async () => {
+    browser({ bytesPerPixel: { png: 1e6 } });
+    expect(await prepareImage(pngFile(600, 600), 'symbol')).toEqual({ ok: false, error: 'tooLarge' });
   });
 });

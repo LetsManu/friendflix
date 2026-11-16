@@ -205,6 +205,8 @@ A tidy admin area in dense glass with a sidebar (People, Content, Operations) an
 
 **Setup in the browser:** a new install starts with a setup wizard that is unlocked by a one-time code from the server log; it connects Jellyfin (or Plex) and sets up Authentik automatically. Afterwards every setting lives in *Admin → Settings*, tested before it is saved: tabs (General, Sign-in, Media, Playback, Updates, Notifications), a search that finds any setting by name, key or help text, and links that open one exact setting and highlight it.
 
+**Branding:** give the installation its own name, byline ("by …"), logo, app symbol, accent colour and background mood in *Admin → Branding*, with a live preview for desktop, phone, TV and sign-in; colours are kept readable automatically ([docs/branding.md](docs/branding.md)).
+
 Also in the admin area: invitations, **brand hubs**, featured and themed lists, **leaving-soon** dates, hover-preview clips, the nightly playback check with the shared conversion limit, the weekly digest, Live TV and an audit log. **Updates** in *Admin → Update*: the updater installs the channel you pick (Stable, Nightly or a fixed version), or FriendFlix redeploys a Portainer stack (Portainer API or webhook) and follows it step by step – pulling the images, recreating the containers, health check – and says why it did not run.
 
 **People and rights:** one list of every account with filters (role, status, last activity, rights) and bulk actions (role, a right, lock, access until, sign out everywhere), a *Waiting for approval* tab for people who signed in without an invite, and invites with several uses and access days. *Roles & rights* is a table of every role and every right – libraries, age limit, streams, bitrate, downloads, wishes, Chromecast and AirPlay, watch party – where you duplicate, rename, order and delete roles and see who is affected before you save. A page per person shows usage, rights with their own exceptions (and which layer decides each one), profiles (switch one to kids, set its age limit, reset its PIN), devices, downloads, viewing history and the audit log; *Check view* tells you what one profile sees and why a title is hidden. Access can end on a date: FriendFlix reminds three days ahead and locks the account on the day. Looking at someone's viewing history is itself written to the audit log.
@@ -446,6 +448,7 @@ npm run spdx:check                              # licence headers, as in CI
 | Search and discovery API, labels, leaving soon, quality, kids rules | [docs/discovery.md](docs/discovery.md) |
 | Themed lists, calm mode, sound in the player, phone shortcuts and badge | [docs/personal.md](docs/personal.md) |
 | UI kit, glass look and admin shell | [docs/ui-kit.md](docs/ui-kit.md) |
+| Branding: name, byline, logo and symbol, colours, where it shows, image rules | [docs/branding.md](docs/branding.md) |
 | Languages and translations | [docs/i18n.md](docs/i18n.md) |
 | Security model, trust boundaries, updater and livetv hardening | [docs/security.md](docs/security.md) |
 | Reproducible builds: rebuild an image and compare its digest | [docs/reproducible-builds.md](docs/reproducible-builds.md) |
