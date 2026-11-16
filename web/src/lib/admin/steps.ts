@@ -128,3 +128,94 @@ export function redeployFlow(r: Redeploy, o: FlowOpts = {}): StepFlow {
 
 /** a state's badge text (the job states' words: waiting = pending) */
 export const stateLabel = (s: RowState): string => trDynamic(`${U}.state.${s === 'waiting' ? 'pending' : s}`);
+
+/**
+ * How long a step the list catches up on stays "running" before it shows done. The page only samples the server (a poll every
+ * 2 s, 3–10 s while the backend restarts) and the backend, the web container and on a self-update the updater are recreated in
+ * the middle of a job: two polls in a row often differ by several steps (verify finished between two polls, restart and health
+ * while the backend was away). The list then plays what happened in between, step by step, instead of flipping them together.
+ */
+export const STEP_DWELL_MS = 450;
+
+const RANK: Record<RowState, number> = { waiting: 0, running: 1, ok: 2, failed: 2, skipped: 2 };
+const ended = (s: RowState) => RANK[s] === 2;
+
+/**
+ * The frames (each row's state, in the order of `next`) from what the list shows to what the server reports now: every step that
+ * went from waiting to done (or failed) between two polls shows running once, then its end, one after the other in list order;
+ * the last frame is the server's state. Nothing shown yet (a page load), or a row that would go back (another job), is no replay.
+ * A step still "waiting" before one that already ran (or runs) counts as done: a job runs its steps in order. The rollback row
+ * comes after the four and never makes an earlier one done.
+ */
+export function catchUp(shown: readonly Pick<StepRow, 'key' | 'state'>[] | null, next: readonly Pick<StepRow, 'key' | 'state'>[]): RowState[][] {
+  const target = next.map((r) => r.state);
+  const reached = next.reduce((at, r, i) => (r.key !== 'rollback' && r.state !== 'waiting' ? i : at), -1);
+  for (let i = 0; i < reached; i++) if (target[i] === 'waiting' && next[i]!.key !== 'rollback') target[i] = 'ok';
+  if (!shown) return [target];
+  const before = new Map(shown.map((r) => [r.key, r.state]));
+  const cur = next.map((r) => before.get(r.key) ?? 'waiting');
+  if (cur.some((s, i) => RANK[target[i]!] < RANK[s] || (ended(s) && target[i] !== s))) return [target];
+  const frames: RowState[][] = [];
+  for (let i = 0; i < target.length; i++) {
+    if (cur[i] === target[i]) continue;
+    // done or failed without ever being seen running: it ran, show that first (together with the end of the step before it)
+    if (cur[i] === 'waiting' && (target[i] === 'ok' || target[i] === 'failed')) { cur[i] = 'running'; frames.push([...cur]); }
+    cur[i] = target[i]!;
+  }
+  frames.push(target);
+  return frames;
+}
+
+/** a frame of a catch-up that has not reached the server's state yet: still running (no outcome, no note), bar and count from its rows */
+export function heldFlow<F extends Pick<StepFlow, 'rows'> & Partial<StepFlow>>(flow: F, rows: StepRow[]): F {
+  return { ...flow, rows, outcome: 'running', note: null, ...frame(rows.filter((r) => r.key !== 'rollback'), 'running') };
+}
+
+export interface StepPlayerOpts {
+  dwellMs?: number;
+  /** true: show the server's state at once (reduced motion, calm mode) */
+  instant?: () => boolean;
+}
+
+/**
+ * Plays the flows the page pushes (one per poll) into what StepList shows: a step the server finished between two polls passes
+ * through running → done, one step every `dwellMs`, and the outcome (note, bar colour, "Finished") lands only once every row
+ * got there. A push with the same row states (the clock, a language switch, reconnecting) only refreshes the texts of what is
+ * shown; a push with new states starts from what is on screen right now. stop() drops what is queued.
+ */
+export function stepPlayer<F extends Pick<StepFlow, 'rows'> & Partial<StepFlow>>(show: (flow: F) => void, o: StepPlayerOpts = {}) {
+  const dwell = o.dwellMs ?? STEP_DWELL_MS;
+  let on: StepRow[] | null = null;
+  let latest: F | null = null;
+  let target = '';
+  let queue: RowState[][] = [];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const sig = (rows: readonly Pick<StepRow, 'key' | 'state'>[]) => rows.map((r) => `${r.key}:${r.state}`).join(' ');
+  const stop = () => { clearTimeout(timer); timer = undefined; queue = []; };
+  const render = (states: RowState[]) => {
+    const f = latest!;
+    on = f.rows.map((r, i) => (r.state === states[i] ? r : { ...r, state: states[i]! }));
+    show(timer !== undefined || queue.length ? heldFlow(f, on) : { ...f, rows: on });
+  };
+  const next = () => {
+    const states = queue.shift()!;
+    timer = queue.length ? setTimeout(next, dwell) : undefined;
+    render(states);
+  };
+  return {
+    push(flow: F) {
+      latest = flow;
+      const s = sig(flow.rows);
+      if (s === target && on) {
+        // the same server state: keep the catch-up going, refresh the texts of the frame on screen
+        render(on.map((r) => r.state));
+        return;
+      }
+      target = s;
+      stop();
+      queue = o.instant?.() ? [catchUp(null, flow.rows).at(-1)!] : catchUp(on, flow.rows);
+      next();
+    },
+    stop,
+  };
+}

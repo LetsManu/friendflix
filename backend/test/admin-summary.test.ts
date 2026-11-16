@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { audit } from '../src/audit.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 let env: TestEnv;
 let admin: { cookies: Record<string, string>; csrf: string };
@@ -76,7 +77,7 @@ describe('GET /api/admin/summary', () => {
   });
 
   it('is admin only', async () => {
-    await env.kv.set(`sess:bob-session-${'x'.repeat(30)}`, JSON.stringify({ userId: bobId, csrf: 'c', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
+    await env.kv.set(sessionKey(`bob-session-${'x'.repeat(30)}`), JSON.stringify({ userId: bobId, csrf: 'c', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
     await env.pool.query('update users set disabled=false where id=$1', [bobId]);
     const r = await env.app.inject({ url: '/api/admin/summary', cookies: { ff_sid: `bob-session-${'x'.repeat(30)}` } });
     expect(r.statusCode).toBe(403);

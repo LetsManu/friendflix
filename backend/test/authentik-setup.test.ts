@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AK_BLUEPRINT_DIR, AK_EXTRA_BLUEPRINTS, applyAuthentik, applyLockTtlS, IMPORT_TIMEOUT_MS, importBlueprint, planAuthentik, repairAuthentik, type AkStep } from '../src/setup/authentikSetup.js';
 import { issueSetupCode } from '../src/setup/code.js';
 import { makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 // Block 25 Task 13 (spec Part G "Authentik automation"): groups, provider, service account, flows and brand from a one-time admin token.
 const ADMIN_TOKEN = 'ak-admin-placeholder-Tq39'; // a test placeholder, never a real credential
@@ -777,7 +778,7 @@ describe('POST /api/admin/authentik/repair', () => {
   });
   afterAll(() => env.close());
   const stamp = async (at: number) => {
-    const key = `sess:${admin.cookies.ff_sid}`;
+    const key = sessionKey(admin.cookies.ff_sid!);
     await env.kv.set(key, JSON.stringify({ ...JSON.parse((await env.kv.get(key))!), reauthAt: at }), 600);
   };
   let ip = 0;

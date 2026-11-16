@@ -11,6 +11,7 @@ import { CREDENTIAL_DESTINATIONS, generateVapidPair, generateWebhookSecret, NO_D
 import { SETTINGS, settingDef } from '../src/settings/registry.js';
 import { ADMIN, cfg, ENC_KEY, fakeHttp, makeEnv, type Handler, type TestEnv } from './helpers.js';
 import { PLEX_TOKEN, PLEX_URL, PlexFake } from './plexfake.js';
+import { sessionKey } from '../src/session.js';
 
 // Admin -> Settings API (Block 25, spec Part I): write-only secrets, locked env keys, validation, probes against the candidate config,
 // re-authentication for sensitive keys, env import, generated secrets, audit with key names only, and no secret in any log line.
@@ -37,7 +38,7 @@ function harness(opts: { settingsEnv?: NodeJS.ProcessEnv; logs?: string[] } = {}
       h.env.app.inject({ method: method as 'GET', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: payload as object }),
     /** stamps a re-authentication on the admin session (phase 2's reauthAt) */
     reauth: async (s: Sess, at = Date.now()) => {
-      const key = `sess:${s.cookies.ff_sid}`;
+      const key = sessionKey(s.cookies.ff_sid!);
       await h.env.kv.set(key, JSON.stringify({ ...JSON.parse((await h.env.kv.get(key))!), reauthAt: at }), 600);
     },
     put: (values: Record<string, unknown>, force?: boolean) => h.as(h.admin, 'PUT', '/api/admin/settings', { values, ...(force === undefined ? {} : { force }) }),
@@ -589,7 +590,7 @@ describe('a typed dummy for an env-pinned PLEX_TOKEN does not unlock a new PLEX_
 
   it('stale session: 401 reauth_required on Test and PUT, nothing sent to the new host', async () => {
     expect(env.ctx.settings.sources().PLEX_TOKEN).toBe('env');
-    const key = `sess:${admin.cookies.ff_sid}`;
+    const key = sessionKey(admin.cookies.ff_sid!);
     await env.kv.set(key, JSON.stringify({ ...JSON.parse((await env.kv.get(key))!), reauthAt: Date.now() - 20 * 60_000 }), 600);
     const values = { PLEX_URL: 'http://evil.example.com:32400', PLEX_TOKEN: 'dummy' };
     const as = (method: string, url: string, payload: unknown) => env.app.inject({ method: method as 'PUT', url, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: payload as object });
@@ -629,7 +630,7 @@ describe('the media probe on Plex', () => {
   afterAll(() => env.close());
   const as = (method: string, url: string, payload?: unknown) => env.app.inject({ method: method as 'GET', url, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: payload as object });
   const reauth = async () => {
-    const key = `sess:${admin.cookies.ff_sid}`;
+    const key = sessionKey(admin.cookies.ff_sid!);
     await env.kv.set(key, JSON.stringify({ ...JSON.parse((await env.kv.get(key))!), reauthAt: Date.now() }), 600);
   };
   const test = (values?: Record<string, unknown>) => as('POST', '/api/admin/settings/test', { group: 'media', ...(values ? { values } : {}) });
@@ -712,7 +713,7 @@ describe('the media probe on Plex', () => {
   });
 
   it('a saved PLEX_TOKEN never goes to a new PLEX_URL without re-authentication (route)', async () => {
-    const key = `sess:${admin.cookies.ff_sid}`;
+    const key = sessionKey(admin.cookies.ff_sid!);
     await env.kv.set(key, JSON.stringify({ ...JSON.parse((await env.kv.get(key))!), reauthAt: Date.now() - 20 * 60_000 }), 600);
     seen.length = 0;
     expect((await put({ PLEX_URL: 'http://evil.example.com:32400' })).statusCode).toBe(401);

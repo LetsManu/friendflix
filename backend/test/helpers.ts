@@ -217,6 +217,7 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
   trackDb(pool);
   if (extra.setupComplete !== false) await updateMeta(pool, { setupCompletedAt: new Date() });
   const kv = new MemoryKV();
+  kv.aof = 'ok'; // a healthy instance: Redis writes its append-only file (the Systemcheck's core.redisPersistence)
   const jfCalls: Call[] = [];
   const seerrCalls: Call[] = [];
   const claims = { current: ADMIN };

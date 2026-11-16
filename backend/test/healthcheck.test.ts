@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 const GOOD = 'a'.repeat(32);
 const BAD = 'b'.repeat(32);
@@ -40,7 +41,7 @@ describe('playback check', () => {
       `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(), 'bob', 'b@x.de', 'Bob', 'guest', $1, 'bob', $2) returning id`,
       ['1'.repeat(32), encrypt(keyFromBase64(ENC_KEY), 'pw')],
     )).rows[0].id;
-    await env.kv.set(`sess:bob-session-${'x'.repeat(30)}`, JSON.stringify({ userId: id, csrf: 'bobcsrf', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
+    await env.kv.set(sessionKey(`bob-session-${'x'.repeat(30)}`), JSON.stringify({ userId: id, csrf: 'bobcsrf', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
     const bob = { cookies: { ff_sid: `bob-session-${'x'.repeat(30)}` }, csrf: 'bobcsrf' };
     expect((await env.app.inject({ url: '/api/admin/playback-check', cookies: bob.cookies })).statusCode).toBe(403);
     expect((await env.app.inject({ method: 'POST', url: '/api/admin/playback-check', cookies: bob.cookies, headers: { 'x-csrf-token': bob.csrf } })).statusCode).toBe(403);

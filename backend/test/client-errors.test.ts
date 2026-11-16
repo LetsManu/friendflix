@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { pathOnly, scrub, toLogEntry } from '../src/clientErrors.js';
 import { registry } from '../src/metrics.js';
 import { makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 let env: TestEnv;
 const logged: Array<{ obj: any; msg: string }> = [];
@@ -135,7 +136,7 @@ describe('POST /api/client-errors', () => {
 
   it('counts the hourly budget per user, not per address, for signed-in browsers', async () => {
     const me = await env.login();
-    const uid = JSON.parse((await env.kv.get(`sess:${me.cookies.ff_sid}`))!).userId as string;
+    const uid = JSON.parse((await env.kv.get(sessionKey(me.cookies.ff_sid!)))!).userId as string;
     await env.ctx.kv.set(`clienterr:h:u:${uid}`, '200', 3600);
     expect((await beacon(body(), { cookies: me.cookies })).statusCode).toBe(429);
     expect((await beacon(body())).statusCode).toBe(204); // anonymous visitor from elsewhere

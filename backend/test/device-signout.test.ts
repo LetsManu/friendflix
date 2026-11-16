@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
 import { makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 let env: TestEnv;
@@ -10,7 +11,7 @@ afterEach(async () => { const e = env; env = undefined as unknown as TestEnv; aw
 const OTHER = 'dev-other-0000000000001';
 const call = (s: Sess, method: string, url: string, body?: unknown) =>
   env.app.inject({ method: method as 'GET', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: body as object });
-const sessOf = async (s: Sess) => JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!) as { userId: string; deviceId: string };
+const sessOf = async (s: Sess) => JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!) as { userId: string; deviceId: string };
 
 /** two sessions of the test account; the second one moved to a second, approved device */
 async function twoDevices() {
@@ -18,7 +19,7 @@ async function twoDevices() {
   const here = await env.login();
   const there = await env.login();
   const s = await sessOf(there);
-  await env.kv.set(`sess:${there.cookies.ff_sid}`, JSON.stringify({ ...s, deviceId: OTHER }), 300);
+  await env.kv.set(sessionKey(there.cookies.ff_sid!), JSON.stringify({ ...s, deviceId: OTHER }), 300);
   await env.pool.query('insert into devices (user_id, device_id, label, approved) values ($1, $2, $3, true)', [s.userId, OTHER, 'Telefon']);
   return { here, there, userId: s.userId };
 }

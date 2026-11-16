@@ -7,6 +7,7 @@ import { setLive } from '../src/live.js';
 import { methodOf, resetStreamsMemoForTests } from '../src/playstats.js';
 import { pollJellyfinSessions } from '../src/routes/internal.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 // Block 22 Task 4: streams/transcodes per user, day and device (play_daily) and the admin's active streams.
 type Sess = { cookies: Record<string, string>; csrf: string };
@@ -31,7 +32,7 @@ const info = (s: Sess, itemId: string) => as(s, 'POST', '/api/playback/info', { 
 const report = (s: Sess, kind: 'start' | 'progress' | 'stop', itemId: string, playSessionId: string, playMethod: string) =>
   as(s, 'POST', `/api/playback/${kind}`, { itemId, playSessionId, mediaSourceId: 'ms1', positionTicks: 1000, isPaused: false, playMethod });
 const daily = async (userId: string) => (await env.pool.query('select device_id, streams, transcodes, reasons from play_daily where user_id=$1 and day=current_date order by device_id', [userId])).rows;
-const sessionOf = async (s: Sess) => JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!) as { userId: string; deviceId: string };
+const sessionOf = async (s: Sess) => JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!) as { userId: string; deviceId: string };
 
 beforeAll(async () => {
   env = await makeEnv({
@@ -226,8 +227,8 @@ describe('GET /api/admin/streams', () => {
     const s = await env.login(ADMIN);
     const pid = '00000000-0000-4000-8000-0000000000ab';
     await env.pool.query('insert into profiles(id, user_id, name, is_owner, kids, jellyfin_user_id) values ($1, $2, $3, false, false, $4)', [pid, adminId, 'Gast', '8'.repeat(32)]);
-    const raw = JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!);
-    await env.kv.set(`sess:${s.cookies.ff_sid}`, JSON.stringify({ ...raw, profileId: pid }), 600);
+    const raw = JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!);
+    await env.kv.set(sessionKey(s.cookies.ff_sid!), JSON.stringify({ ...raw, profileId: pid }), 600);
     expect((await as(s, 'GET', '/api/admin/streams')).statusCode).toBe(403);
     await env.pool.query('delete from profiles where id=$1', [pid]);
     expect((await env.app.inject({ url: '/api/admin/streams' })).statusCode).toBe(401);

@@ -9,6 +9,7 @@ import { migrate, MIGRATIONS } from '../src/db.js';
 import { ENC_KEY, makeEnv, resetDb, type TestEnv } from './helpers.js';
 import { keyFromBase64 } from '../src/crypto.js';
 import { readRows, writeRows } from '../src/settings/repo.js';
+import { sessionKey } from '../src/session.js';
 
 const DAYS_90 = 90 * 86400;
 
@@ -93,6 +94,6 @@ describe('the session cookie and the stored session follow the effective setting
     expect(cb.statusCode).toBe(302);
     const sid = cb.cookies.find((x) => x.name === 'ff_sid')!;
     expect(sid.maxAge).toBe(DAYS_90);
-    expect(ttls.find(([k]) => k === `sess:${sid.value}`)?.[1]).toBe(5 * 86400);
+    expect(ttls.find(([k]) => k === sessionKey(sid.value))?.[1]).toBe(5 * 86400);
   });
 });

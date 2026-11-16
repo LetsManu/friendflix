@@ -7,6 +7,7 @@ import { REAUTH_MAX_AGE, recentlyAuthenticated, requireRecentAuth } from '../src
 import { SIGNIN_MAX_AGE } from '../src/oidc.js';
 import type { Session } from '../src/session.js';
 import { makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 let env: TestEnv;
@@ -20,7 +21,7 @@ async function mk(): Promise<Sess> {
   env = await makeEnv({}, { register: [guarded] });
   return env.login();
 }
-const sessionOf = async (s: Sess) => JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!) as Session;
+const sessionOf = async (s: Sess) => JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!) as Session;
 /** runs /auth/reauth and the IdP round trip back to /auth/callback with the session cookie */
 async function reauth(s: Sess, next = '/me/account') {
   const r = await env.app.inject({ url: `/auth/reauth?next=${encodeURIComponent(next)}`, cookies: s.cookies });
@@ -53,7 +54,7 @@ describe('re-authentication guard', () => {
     expect((await env.app.inject({ url: '/api/test/recent' })).json()).toEqual({ error: 'unauthenticated' });
     // a fresh stamp passes
     const sess = await sessionOf(s);
-    await env.kv.set(`sess:${s.cookies.ff_sid}`, JSON.stringify({ ...sess, reauthAt: Date.now() }), 300);
+    await env.kv.set(sessionKey(s.cookies.ff_sid!), JSON.stringify({ ...sess, reauthAt: Date.now() }), 300);
     const ok = await env.app.inject({ url: '/api/test/recent', cookies: s.cookies });
     expect(ok.statusCode).toBe(200);
     expect(ok.json()).toEqual({ ok: true });

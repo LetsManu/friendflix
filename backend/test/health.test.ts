@@ -7,6 +7,7 @@ import { recordError, resetErrorLogForTests } from '../src/errorlog.js';
 import { buildSnapshot, forgetOidcProbe, getSnapshot, healthSettled, healthTick, issueFp, type DiskDeps, type HealthSnapshot } from '../src/health.js';
 import { INVALID_KEY, OMDB_COUNT_KEY, PAUSE_KEY, setSourceKey } from '../src/sources/keys.js';
 import { ADMIN, cfg, fakeHttp, makeEnv, type Call, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 // Block 22 Task 3: health snapshot (traffic lights, disks, error levels, issues) and the banner API.
 type Sess = { cookies: Record<string, string>; csrf: string };
@@ -582,8 +583,8 @@ describe('routes', () => {
     const s = await env.login(ADMIN);
     const pid = randomUUID();
     await env.pool.query('insert into profiles(id, user_id, name, is_owner, kids, jellyfin_user_id) values ($1, $2, $3, false, false, $4)', [pid, adminId, 'Gast', 'f'.repeat(32)]);
-    const raw = JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!);
-    await env.kv.set(`sess:${s.cookies.ff_sid}`, JSON.stringify({ ...raw, profileId: pid }), 600);
+    const raw = JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!);
+    await env.kv.set(sessionKey(s.cookies.ff_sid!), JSON.stringify({ ...raw, profileId: pid }), 600);
     const calls: Array<[string, string, unknown?]> = [['GET', '/api/admin/health'], ['GET', '/api/admin/health/banner'], ['POST', '/api/admin/health/dismiss', { id: 'svc:media', fp: 'aaaaaaaaaaaa' }]];
     for (const [m, u, b] of calls) {
       expect((await as(fritz, m, u, b)).statusCode, `friend ${u}`).toBe(403);

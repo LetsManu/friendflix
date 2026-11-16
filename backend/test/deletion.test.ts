@@ -8,6 +8,7 @@ import type { OidcClaims } from '../src/oidc.js';
 import type { Session } from '../src/session.js';
 import { provisionUser, setAccessUntil } from '../src/users.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 let env: TestEnv;
@@ -23,7 +24,7 @@ const call = (s: Sess, method: string, url: string, body?: unknown) =>
   env.app.inject({ method: method as 'POST', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: body as object });
 /** marks the session as re-authenticated just now (what /auth/reauth's callback does) */
 async function stamp(s: Sess, at = Date.now()) {
-  const key = `sess:${s.cookies.ff_sid}`;
+  const key = sessionKey(s.cookies.ff_sid!);
   const sess = JSON.parse((await env.kv.get(key))!) as Session;
   await env.kv.set(key, JSON.stringify({ ...sess, reauthAt: at }), 300);
 }
@@ -107,7 +108,7 @@ describe('POST /api/account/delete', () => {
       const created = await call(s, 'POST', '/api/profiles', body);
       expect(created.statusCode, body.name).toBe(201);
       // the session switched to that profile (what /api/profiles/:id/select stores), recently authenticated: only the profile is wrong
-      const key = `sess:${s.cookies.ff_sid}`;
+      const key = sessionKey(s.cookies.ff_sid!);
       const sess = JSON.parse((await env.kv.get(key))!) as Session;
       await env.kv.set(key, JSON.stringify({ ...sess, profileId: created.json().profile.id, reauthAt: Date.now() }), 300);
       const r = await call(s, 'POST', '/api/account/delete', { confirm: true });
