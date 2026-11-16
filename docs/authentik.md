@@ -21,6 +21,7 @@ The full FriendFlix installation (Jellyfin, request service, Nginx Proxy Manager
 9. [FriendFlix `.env` values](#9-friendflix-env-values)
 10. [Password recovery by e-mail](#10-password-recovery-by-e-mail)
     - 10a. [In-app sign-in](#10a-in-app-sign-in)
+    - 10b. [E-mails in the FriendFlix look](#10b-e-mails-in-the-friendflix-look)
 11. [Passkey sign-in on the FriendFlix screen](#11-passkey-sign-in-on-the-friendflix-screen)
 12. [Optional: branding](#12-optional-branding)
 13. [Sessions and logout](#13-sessions-and-logout)
@@ -475,6 +476,18 @@ The codenames above are checked against the Authentik 2026.8.3 source (the `comp
 
 (The blueprint sets all of these via the user's `permissions` field; Authentik puts them into a managed role for that user.)
 
+#### Optional: for “Branding an Authentik übertragen”
+
+The action *Admin → Einstellungen → Benachrichtigungen → Branding an Authentik übertragen* ([§10b](#10b-e-mails-in-the-friendflix-look)) changes things in Authentik, so its three permissions are **not** in the blueprint. Assign them to the same role only if you use the action; without them the action says which one is missing and the rest of FriendFlix is unaffected:
+
+| Permission (UI) | Codename | Used for |
+|---|---|---|
+| Can view Brand | `authentik_brands.view_brand` | `GET /api/v3/core/brands/` (finds the brand that fits the issuer's host) |
+| Can change Brand | `authentik_brands.change_brand` | `PATCH /api/v3/core/brands/<uuid>/` (title and logo) |
+| Can change Email Stage | `authentik_stages_email.change_emailstage` | `PATCH /api/v3/stages/email/<pk>/` (sender and, with consent, the SMTP settings) |
+
+Reading the recovery flow's e-mail stage uses *Can view Flow*, *Can view Flow Stage Binding* and *Can view Email Stage* from the table above. Like *Can change User*, these change permissions are global: a leaked token could change any brand or e-mail stage.
+
 ### 8.3 Copy the token
 
 *Directory → Tokens and App passwords → Create*:
@@ -551,7 +564,7 @@ One recovery flow serves two things: *Forgot username or password?* on the Authe
 
    > **Warning:** variant B logs the person in right after the new password, without asking for the second factor. Whoever takes over someone's mailbox then gets a full session and bypasses the mandatory MFA. Use B only if you accept that the mailbox alone is enough to take over an account.
 2. *System → Brands* → the brand of your Authentik host (e.g. `auth.example.com`, or the default brand) → *Edit* → *Default flows* → **Recovery flow**: `default-recovery-flow`. Without it Authentik answers "No recovery flow set" and the admin page shows *no recovery flow set up*.
-3. SMTP in the e-mail stage: *Flows and Stages → Stages* → `default-recovery-email` → *Edit* → switch **Use global connection settings** off and fill in host, port, username, password, *Use TLS* / *Use SSL* and the *From address* (e.g. `FriendFlix <authentik@example.com>`). Alternatively leave the switch on and use the global settings from [§2.5](#25-e-mail-smtp).
+3. SMTP in the e-mail stage: *Flows and Stages → Stages* → `default-recovery-email` → *Edit* → switch **Use global connection settings** off and fill in host, port, username, password, *Use TLS* / *Use SSL* and the *From address* (e.g. `authentik@example.com`: Authentik takes a bare address here, no display name). Alternatively leave the switch on and use the global settings from [§2.5](#25-e-mail-smtp). The *Branding an Authentik übertragen* card can fill this stage in for you ([§10b](#10b-e-mails-in-the-friendflix-look)). To give the mail FriendFlix's look, also select a template here ([§10b](#10b-e-mails-in-the-friendflix-look)).
 4. *Flows and Stages → Stages* → `default-authentication-identification` → *Edit* → **Recovery flow**: `default-recovery-flow`. The login page now shows *Forgot username or password?*.
 5. Give the service account the password-link permissions from [§8.2](#82-role-with-exactly-these-global-permissions) (re-importing the blueprint does it).
 6. Test both ways with a test user that has an e-mail address: *Forgot username or password?* in a private browser window, and *Send password link* on that user's admin page. The link in the e-mail leads to `https://auth.example.com/if/flow/default-recovery-flow/?flow_token=…`: Authentik takes host and brand from the request, which is one reason `AUTHENTIK_URL` is the public Authentik address (never an internal one such as `http://192.0.2.10:9000`).
@@ -620,6 +633,51 @@ By default FriendFlix shows its own sign-in screens over a wall of covers (`/log
 
 **MFA mandatory and removing the last factor.** The account page refuses to remove a person's last confirmed second factor ("last factor") only when the login flow's authenticator validation stage has *Not configured action* **Deny** (read from the stage itself, which needs *Can view Authenticator Validation Stage*, [§8.2](#82-role-with-exactly-these-global-permissions)). With **Force the user to configure an authenticator** ([§6](#6-authentication-flow-with-mandatory-mfa)) the removal is allowed, and the next sign-in makes the person set up a new factor. When the login flow cannot be read, removal is allowed. The login flow is read through the same 10-minute cache as the status card, so a change in Authentik shows after up to 10 minutes.
 
+## 10b. E-mails in the FriendFlix look
+
+Authentik sends two kinds of mail on its own: the password reset link and, in the enrollment flow, the confirmation of a new address. Out of the box they look like Authentik. [`deploy/authentik/templates/`](../deploy/authentik/templates/) has four template files that give them the FriendFlix look (a light card, a letter tile "F", the name and one button). Each file is **standalone** (copying one file is enough), shows no remote image and no tracking, and has English texts that Authentik translates for the recipient where it can.
+
+| File | Use it for | Its link |
+|---|---|---|
+| `friendflix-recovery.html` | The recovery flow's e-mail stage **with the in-app sign-in** ([§10a](#10a-in-app-sign-in), step 4). | `https://friend.example.com/reset?token={{ token }}` (replace the host, see below) |
+| `friendflix-reset.html` | The recovery flow's e-mail stage **without** the in-app sign-in: the button opens Authentik's own recovery page. | Authentik's own (`{{ url }}`), nothing to edit |
+| `friendflix-confirm.html` | The e-mail stage of the **enrollment flow** ([§7](#7-enrollment-flow-for-invitations)): the button confirms the address on Authentik's page. | Authentik's own (`{{ url }}`), nothing to edit |
+| `friendflix-email-change.html` | The e-mail change flow ([§10a](#10a-in-app-sign-in), step 7). Unchanged in use; only its look is new. | `https://friend.example.com/confirm-email?token={{ token }}` (replace the host) |
+
+An existing install keeps working without doing anything: the two older files keep their names, their single link and their first line, so a template you already set keeps pointing to the right place and only looks different once you copy the new file over it.
+
+1. **Mount the folder** (the one from [§10a](#10a-in-app-sign-in), step 4, or any folder of yours) at `/templates` on the Authentik **server and worker**, and recreate both. A template Authentik does not list is not selectable.
+2. **Select the template per stage:** *Flows and Stages → Stages* → the recovery flow's e-mail stage (`default-recovery-email`) → *Edit* → **Template**: `friendflix-reset.html` (or `friendflix-recovery.html`); the enrollment flow's e-mail stage → **Template**: `friendflix-confirm.html`. Set a **Subject** on each stage too (for example `Reset your FriendFlix password` and `Confirm your e-mail address`), because the template only changes the body.
+3. **The two lines you may edit.** Authentik cannot read FriendFlix's branding, so the files carry the default look: the name `FriendFlix` and the accent colour `#d6325a`. Each is marked with a `{# ff:brand: … #}` comment line right above it: change the name there, and replace the colour (it appears three times in the file) with your accent. Keep everything else: the part between the `ff:head` and `ff:foot` markers is the same in all four files. In `friendflix-recovery.html` and `friendflix-email-change.html` also replace `friend.example.com` in the link (their first line names it).
+4. **Test** with a test user: *Forgot username or password?* on Authentik's sign-in page, or *Send password link* on the user's admin page.
+
+### Branding an Authentik übertragen
+
+*Admin → Einstellungen → Benachrichtigungen*, below the E-Mail card, has the card **Branding an Authentik übertragen** (only when the Authentik API is set up). It copies what FriendFlix already knows into Authentik, so the sign-in page and the reset mail carry your name and sender:
+
+- **Brand.** The title (your *Branding* name) and, when there is one, the logo (the brand's logo, else its symbol, as an address on `PUBLIC_URL`; without `PUBLIC_URL` no logo is sent). The brand is chosen the way Authentik chooses it for a request: the host of `OIDC_ISSUER` (with its port) is matched against the brands' domains, an exact match or a parent domain (`auth.example.com` fits a brand for `example.com`), the longest match wins, and without a match the default brand is used.
+- **Sender.** The recovery flow's first e-mail stage (`AUTHENTIK_RECOVERY_FLOW`, default `default-recovery-flow`) gets FriendFlix's sender address as its *From address*. It is the **bare address** (`MAIL_FROM`, for example `kino@friend.example.com`): Authentik's field takes an address only, not `Name <address>`, so mails from Authentik show no display name. When that stage uses Authentik's **global settings** (*Use global connection settings*, the default), the sender is not changed: the card says *skipped: global settings*.
+- **SMTP settings, only with the checkbox.** *Also copy the SMTP settings* is off by default. Only when it is ticked **and** you signed in within the last 10 minutes (the card asks for it in place) does FriendFlix also switch the stage to its own connection settings (server, port, *Use TLS* for STARTTLS or *Use SSL* for TLS, user and password, timeout 10 s). With *Keine* encryption it sends no user and no password, like FriendFlix itself. The password goes only in that one request to Authentik: it is not shown, not stored anywhere new, and not in the audit log. It needs mail set up in FriendFlix first.
+
+Each part reports on its own, so a refusal of one does not stop the other. Results and what they mean:
+
+| Result | Meaning |
+|---|---|
+| *Name and logo copied* / *Sender copied* / *Sender and SMTP settings copied* | Done. |
+| *No sender address entered* | `MAIL_FROM` is empty; the stage stays as it is. |
+| *Authentik uses its global e-mail settings – sender not changed* | The stage has *Use global connection settings* on and no consent was given for SMTP; set the sender in Authentik's global settings or tick the SMTP box. |
+| *The Authentik token lacks the permission “…”* | The service account's role misses the named permission: see the table in [§8.2](#82-role-with-exactly-these-global-permissions). |
+| *Authentik rejects the API token* | The token is wrong or revoked ([§8.3](#83-copy-the-token)). |
+| *Not found in Authentik* | No brand to change (none matches and there is no default brand). |
+| *The reset flow has no e-mail stage* | The recovery flow has no e-mail stage bound ([§10](#10-password-recovery-by-e-mail)). |
+| *Authentik cannot be reached* | Authentik is down or not reachable from the backend. |
+| *Authentik did not accept the change* | Any other refusal; the backend log has the code. |
+| *Sign in again to copy the SMTP settings* | The sign-in is older than 10 minutes; confirm and the transfer runs again. |
+| *Enter the server and the sender address first, then save* | The SMTP box needs a saved mail setup. |
+| *Too many attempts* | At most 6 transfers a minute. |
+
+The transfer needs **three permissions that the blueprint does not grant** (least privilege: this is an optional action). Add them to the service account's role only if you want to use it: [§8.2](#82-role-with-exactly-these-global-permissions), second table.
+
 ## 11. Passkey sign-in on the FriendFlix screen
 
 *Sign in with a passkey* on FriendFlix's sign-in screen, and *Confirm with a passkey instead* in the re-authentication dialog, need Authentik to send a passkey challenge on the login flow's identification stage. It does that only when the stage has a **WebAuthn Authenticator Validation Stage** set; Authentik's stock `default-authentication-identification` has none. Without it FriendFlix shows no passkey button (never one that leaves for Authentik), and the status card says *Passkey sign-in: Not offered (stage missing)*.
@@ -643,7 +701,7 @@ Authentik's other option, a separate *Passwordless flow* linked in the identific
 | Default flow background | optional, your own image |
 | Default flows | Authentication `default-authentication-flow`, Invalidation `default-invalidation-flow`, Recovery `default-recovery-flow`, User settings `default-user-settings-flow` |
 
-Use your own name and artwork. Do not copy logos, colours or wording of commercial streaming services. The texts of the enrollment flow (flow title, prompt labels) can be changed freely; the blueprint uses German labels.
+The title and logo can be copied from FriendFlix's *Branding* with one button, and the reset and confirmation mails can look like FriendFlix: [§10b](#10b-e-mails-in-the-friendflix-look). Use your own name and artwork. Do not copy logos, colours or wording of commercial streaming services. The texts of the enrollment flow (flow title, prompt labels) can be changed freely; the blueprint uses German labels.
 
 ## 13. Sessions and logout
 
