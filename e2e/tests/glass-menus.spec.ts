@@ -56,7 +56,7 @@ const whiteBehind = (page: Page) => page.evaluate(() => {
 const lum = (c: number[]) => { const f = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]!) + 0.7152 * f(c[1]!) + 0.0722 * f(c[2]!); };
 const ratio = (a: number[], b: number[]) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
 /**
- * Every text inside `root` (an element with its own text) passes AA where it is drawn: its ink (alpha-blended) against the
+ * Every text inside `root` (an element with its own text; not an avatar's initial) passes AA where it is drawn: its ink (alpha-blended) against the
  * brightest pixel under its text with the text hidden (the white layer, blur, scrim, milk, grain and any light pill drawn).
  */
 async function textPasses(page: Page, root: Locator) {
@@ -64,7 +64,8 @@ async function textPasses(page: Page, root: Locator) {
     document.querySelectorAll<HTMLElement>('[data-ink]').forEach((e) => delete e.dataset.ink);
     let i = 0;
     for (const e of [r, ...r.querySelectorAll<HTMLElement>('*')]) {
-      if (![...e.childNodes].some((c) => c.nodeType === 3 && c.textContent!.trim()) || !e.getClientRects().length || e.closest('.sr-only')) continue;
+      // (a profile avatar's initial is part of its artwork, aria-hidden, the profile's own colour key: not menu text)
+      if (![...e.childNodes].some((c) => c.nodeType === 3 && c.textContent!.trim()) || !e.getClientRects().length || e.closest('.sr-only, .face[aria-hidden="true"]')) continue;
       e.dataset.ink = String(i++);
     }
     return i;

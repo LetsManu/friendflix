@@ -7,7 +7,8 @@
  * keys, Home and End. 1440×900, the suite's default (reduced) motion.
  */
 import type { Locator, Page } from '@playwright/test';
-import { MOVIE, SERIES } from '../mocks/fixtures.js';
+import { ME, MOVIE, SERIES } from '../mocks/fixtures.js';
+import { PROFILES } from '../mocks/api.js';
 import { expect, test, type MockState } from '../fixtures.js';
 import { boxInViewport, openPopout, row } from '../helpers.js';
 
@@ -168,6 +169,124 @@ test.describe('desktop ⋯ menus', () => {
     await expect(pop(page)).toBeVisible();
     await page.goBack();
     await expect(page).toHaveURL(new RegExp(`/item/${SERIES.id}$`));
+    await expect(pop(page)).toHaveCount(0);
+  });
+});
+
+test.describe('header menus', () => {
+  const bar = (page: Page) => page.locator('[data-desk-bar]');
+  const acctBtn = (page: Page) => bar(page).getByRole('button', { name: /Profilmenü/ });
+  const acct = (page: Page) => page.getByRole('menu', { name: 'Profilmenü' });
+  const multiMe = { ...ME, profileCount: 3, profileChosen: true };
+  const later = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  test('account menu: the person in the header, 44 px rows with a 24 px icon column; Abmelden last, with its icon, left-aligned like the rest', async ({ page }) => {
+    await page.goto('/watchlist');
+    await acctBtn(page).click();
+    const menu = acct(page);
+    await expect(menu).toBeVisible();
+    const head = menu.locator('.acct-who');
+    await expect(head).toContainText(ME.profile.name);
+    await expect(head).toContainText(`${ME.name} · ${ME.roleLabel}`);
+    const rows = menu.locator('.gm-row');
+    expect(await rows.count()).toBeGreaterThan(4);
+    for (const r of await rows.all()) expect(Math.abs((await r.boundingBox())!.height - 44)).toBeLessThanOrEqual(0.5);
+    for (const ic of await menu.locator('.gm-ic').all()) expect(Math.abs((await ic.boundingBox())!.width - 24)).toBeLessThanOrEqual(0.5);
+    const out = menu.getByRole('menuitem', { name: 'Von FriendFlix abmelden' });
+    await expect(rows.last()).toHaveText('Von FriendFlix abmelden');
+    await expect(out.locator('.gm-ic svg')).toHaveCount(1);
+    const x = async (name: string) => (await menu.getByRole('menuitem', { name }).locator('.gm-lbl').boundingBox())!.x;
+    expect(Math.abs((await x('Von FriendFlix abmelden')) - (await x('Mein Bereich')))).toBeLessThanOrEqual(1);
+  });
+
+  test('the profile rows hold their place while they load', async ({ page }) => {
+    await page.route('**/api/me', (r) => r.fulfill({ json: multiMe }));
+    await page.route('**/api/profiles', async (r) => { await later(600); await r.fulfill({ json: { profiles: PROFILES, max: 5, activeId: 'p1' } }); });
+    await page.addInitScript(() => sessionStorage.setItem('ff-profile-picked', '1'));
+    await page.goto('/watchlist');
+    await expect(acctBtn(page)).toBeEnabled();
+    await acctBtn(page).click();
+    const menu = acct(page);
+    await expect(menu).toBeVisible();
+    const h = () => menu.evaluate((e) => (e as HTMLElement).offsetHeight);
+    const before = await h();
+    await expect(menu.locator('.skel')).toHaveCount(2);
+    await expect(menu.getByRole('menuitemradio', { name: 'Anna' })).toBeVisible();
+    await expect(menu.getByRole('menuitemradio', { name: 'Ben' })).toHaveAttribute('aria-checked', 'false');
+    await expect(menu.getByRole('menuitemradio', { name: 'Tester' })).toHaveAttribute('aria-checked', 'true');
+    await expect(menu.locator('.skel')).toHaveCount(0);
+    expect(Math.abs((await h()) - before)).toBeLessThanOrEqual(1);
+    await expect(menu.locator('.gm-head')).toHaveText('Profil wechseln');
+  });
+
+  test.describe('a failed profile list', () => {
+    test.use({ allowedConsole: /status of 500/ });
+    test('still opens the menu', async ({ page }) => {
+      await page.route('**/api/me', (r) => r.fulfill({ json: multiMe }));
+      await page.route('**/api/profiles', (r) => r.fulfill({ status: 500, json: { error: 'boom' } }));
+      await page.addInitScript(() => sessionStorage.setItem('ff-profile-picked', '1'));
+      await page.goto('/watchlist');
+      await acctBtn(page).click();
+      await expect(acct(page)).toBeVisible();
+      await expect(acct(page).locator('.skel')).toHaveCount(0);
+      await expect(acctBtn(page)).not.toHaveAttribute('aria-busy', /.*/);
+      await expect(acct(page).getByRole('menuitem', { name: 'Mein Bereich' })).toBeVisible();
+    });
+  });
+
+  test('notifications: a header line, unread rows marked, rows 44 px', async ({ page }) => {
+    await page.goto('/watchlist');
+    const bell = bar(page).getByRole('button', { name: /Benachrichtigungen/ });
+    await expect(bell.locator('.dot')).toHaveText('1');
+    await bell.click();
+    const notes = page.locator('#ff-notes');
+    await expect(notes).toBeVisible();
+    await expect(notes.locator('.gm-head')).toHaveText('Benachrichtigungen');
+    const rows = notes.locator('.gm-row');
+    expect(await rows.count()).toBeGreaterThan(0);
+    for (const r of await rows.all()) expect((await r.boundingBox())!.height).toBeGreaterThanOrEqual(43.5);
+    const unread = notes.locator('.gm-row.unread');
+    expect(await unread.count()).toBeGreaterThan(0);
+    for (const r of await unread.all()) {
+      const dot = (await r.locator('.gm-ic .ndot').boundingBox())!;
+      expect(Math.abs(dot.width - 8)).toBeLessThanOrEqual(0.5);
+    }
+  });
+
+  test('Categories never opens half-loaded', async ({ page }) => {
+    await page.route('**/api/library/genres', async (r) => { await later(500); await r.fulfill({ json: { genres: ['Action', 'Drama'] } }); });
+    await page.goto('/watchlist');
+    const btn = bar(page).locator('.pill').getByRole('button', { name: 'Kategorien' });
+    await btn.click();
+    await expect(btn).toHaveAttribute('aria-busy', 'true');
+    await expect(page.locator('#ff-cats')).toHaveCount(0);
+    const cats = page.locator('#ff-cats');
+    await expect(cats).toBeVisible();
+    await expect(cats.getByRole('link', { name: 'Drama' })).toBeVisible();
+    await expect(cats.locator('[role=status]')).toHaveCount(0);
+    await expect(btn).not.toHaveAttribute('aria-busy', /.*/);
+  });
+
+  test('Categories stays inside the window at 1100 and 900 px', async ({ page }) => {
+    for (const width of [1100, 900]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto('/watchlist');
+      await bar(page).locator('.pill').getByRole('button', { name: 'Kategorien' }).click();
+      const cats = page.locator('#ff-cats');
+      await expect(cats.getByRole('link', { name: 'Drama' })).toBeVisible();
+      await expect.poll(async () => JSON.stringify(await boxInViewport(page, cats))).toContain('"ok":true');
+    }
+  });
+
+  test('one pop-up at a time across the bar', async ({ page }) => {
+    await page.goto(`/item/${MOVIE.id}`);
+    await bar(page).getByRole('button', { name: /Benachrichtigungen/ }).click();
+    await expect(page.locator('#ff-notes')).toBeVisible();
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+    await expect(pop(page)).toBeVisible();
+    await expect(page.locator('#ff-notes')).toHaveCount(0);
+    await acctBtn(page).click();
+    await expect(acct(page)).toBeVisible();
     await expect(pop(page)).toHaveCount(0);
   });
 });
