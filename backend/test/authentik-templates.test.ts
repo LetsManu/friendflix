@@ -102,11 +102,14 @@ describe('Authentik plain-text twins', () => {
 
   it.each(FILES)('%s twin: its trans strings are the HTML ones', (f) => {
     const htmlStrings = transStrings(read(f));
-    const own = transStrings(read(f.replace(/\.html$/, '.txt')));
-    expect(own.length).toBeGreaterThanOrEqual(2);
-    for (const x of own) expect(htmlStrings).toContain(x);
+    const txt = read(f.replace(/\.html$/, '.txt'));
+    const own = transStrings(txt);
+    expect(own).toHaveLength(2);
     expect(own[0]).toBe(htmlStrings[0]);
-    expect(own[1]).toBe(htmlStrings[1]);
+    // a text mail has no button: the sentence says "link" instead
+    expect(htmlStrings[1]).toContain('button');
+    expect(own[1]).toBe(htmlStrings[1]!.replace('the button below', 'the link below'));
+    expect(txt.toLowerCase()).not.toContain('button');
   });
 
   it('ships exactly four twins', () => {
