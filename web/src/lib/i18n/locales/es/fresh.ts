@@ -61,7 +61,7 @@ const dict: Translation<typeof de> = {
     empty: 'Ahora mismo ningún título tiene fecha.',
     colTitle: 'Título',
     colSetBy: 'Fijada por',
-    menu: 'Fijar fecha de retirada …',
+    menu: 'Fijar fecha de retirada…',
     dialogTitle: 'Ya no disponible desde el',
   },
 };

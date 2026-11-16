@@ -55,8 +55,8 @@ const tr: Translation<typeof de> = {
   account: {
     label: 'Profil menüsü',
     labelWho: 'Profil menüsü ({name})',
-    loadingProfiles: 'Profiller yükleniyor …',
     withPin: 'PIN korumalı',
+    switchProfile: 'Profil değiştir',
     manageProfiles: 'Profilleri düzenle',
     logout: '{app} oturumunu kapat',
     changeServer: 'Sunucuyu değiştir',

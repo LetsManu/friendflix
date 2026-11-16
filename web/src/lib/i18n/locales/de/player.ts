@@ -92,7 +92,7 @@ export default {
   subs: {
     title: 'Untertitel',
     search: 'Untertitel suchen',
-    searchMenu: 'Untertitel suchen …',
+    searchMenu: 'Untertitel suchen…',
     searchButton: 'Suchen',
     language: 'Sprache',
     notFound: 'Keine Untertitel gefunden.',

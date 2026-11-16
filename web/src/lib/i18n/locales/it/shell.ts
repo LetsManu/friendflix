@@ -55,8 +55,8 @@ const it: Translation<typeof de> = {
   account: {
     label: 'Menu del profilo',
     labelWho: 'Menu del profilo ({name})',
-    loadingProfiles: 'Caricamento profili…',
     withPin: 'con PIN',
+    switchProfile: 'Cambia profilo',
     manageProfiles: 'Modifica profili',
     logout: 'Esci da {app}',
     changeServer: 'Cambia server',

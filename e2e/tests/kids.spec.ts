@@ -4,6 +4,7 @@ import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { ME } from '../mocks/fixtures.js';
 import { LOCKED_ID, PROFILES } from '../mocks/api.js';
+import { textScaleDuring } from '../frames.js';
 
 /** Block 15 K1: kids profiles (kids home, route guard, PIN-gated switch) and the /welcome onboarding. */
 const KID = { ...ME, profileCount: 3, kids: true, onboarded: true, profile: { id: 'p3', name: 'Mia', avatar: 'pink', isOwner: false, kids: true, maxRating: 6 } };
@@ -185,5 +186,23 @@ test.describe('onboarding (/welcome)', () => {
     await page.getByRole('button', { name: "Los geht's" }).click();
     await expect(page).toHaveURL(/\/kids$/);
     expect(api.log.some((l) => l.includes('/favorite'))).toBe(false);
+  });
+});
+
+test.describe('kids pop-out (fine pointer, full motion)', () => {
+  test.use({ reducedMotion: 'no-preference' });
+
+  test('the pop-out reveals without scaling', async ({ page }) => {
+    await asKid(page);
+    await page.addInitScript(() => { (window as unknown as { __ffDeskGuard: unknown }).__ffDeskGuard = { slowMs: 1000, frames: 8 }; });
+    await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+    // kids search with library hits: title cards, which open the HoverPreview pop-out (no desktop hover card on kids profiles)
+    await page.goto('/search?q=ink');
+    const card = page.locator('article.card').first();
+    await expect(card).toBeVisible();
+    await page.mouse.move(2, 2);
+    expect(await textScaleDuring(page, '.hp', () => card.locator('a.thumb').hover(), 700)).toBeLessThan(0.001);
+    await expect(page.locator('.hp.ready')).toBeVisible();
+    await expect(page.locator('.dpv')).toHaveCount(0);
   });
 });

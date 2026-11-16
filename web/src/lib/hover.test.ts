@@ -17,7 +17,6 @@ describe('previewRect', () => {
   it('grows from the left edge of the first visible card (no shift past it)', () => {
     const r = previewRect(card(58), vp);
     expect(r.left).toBe(58);
-    expect(r.from.dx).toBe(0);
     expect(previewRect(card(20), vp).left).toBe(20);
     expect(previewRect(card(-60), vp).left).toBe(12); // partly scrolled out: viewport margin
   });
@@ -37,11 +36,6 @@ describe('previewRect', () => {
     expect(r.left).toBeGreaterThanOrEqual(12);
     expect(r.left + r.width).toBeLessThanOrEqual(280 - 12);
     expect(r.top).toBe(12);
-  });
-  it('starts as the card (scale = card width / width)', () => {
-    const r = previewRect(card(600, 300, 240), vp);
-    expect(r.from.scale).toBeCloseTo(240 / r.width);
-    expect(r.top + r.from.dy).toBe(300);
   });
 });
 

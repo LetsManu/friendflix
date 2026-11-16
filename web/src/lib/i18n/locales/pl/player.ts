@@ -107,7 +107,7 @@ const pl: Translation<typeof de> = {
   subs: {
     title: 'Napisy',
     search: 'Szukaj napisów',
-    searchMenu: 'Szukaj napisów …',
+    searchMenu: 'Szukaj napisów…',
     searchButton: 'Szukaj',
     language: 'Język',
     notFound: 'Nie znaleziono napisów.',

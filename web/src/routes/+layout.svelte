@@ -45,6 +45,7 @@
   import { railKey } from '#lib/tv/rail';
   import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
   import { dialogKeys } from '#lib/actions';
+  import { closeAllPopups } from '#lib/ui/popups';
   import { areaRedirect, canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintLibrary, hintOf, hintPerms, homePath, kidsHomeOf, kidsRedirect, needsProfileGate, needsWelcome, readActive, readHint, readPicked, readReloading, welcomeHref, writeActive, writeHint } from '#lib/gate';
   import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
   import TabBar from '#lib/phone/TabBar.svelte';
@@ -704,6 +705,7 @@
       void t.finished.catch(() => undefined).finally(() => vtEnd(my, named));
     });
   }
+  afterNavigate(() => closeAllPopups()); // a route change closes every open menu (menus glass spec: never left over another page)
   afterNavigate(() => {
     if (!pageFadeIn) return;
     pageFadeIn = false;

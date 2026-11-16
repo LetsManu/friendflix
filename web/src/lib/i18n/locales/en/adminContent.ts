@@ -309,7 +309,7 @@ const dict: Translation<typeof de> = {
     type: 'Type',
     allTypes: 'All types',
     types: { Movie: 'Movies', Series: 'Series', Episode: 'Episodes' },
-    search: 'Search title or series …',
+    search: 'Search title or series…',
     col: { title: 'Title', issues: 'Problems', file: 'File', size: 'Size', bitrate: 'Bitrate' },
     versions: { one: '{n} version', other: '{n} versions' },
     dupOf: 'Duplicate of',

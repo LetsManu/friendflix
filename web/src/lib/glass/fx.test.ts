@@ -9,7 +9,7 @@ vi.mock('#lib/tv/motion', () => ({ motionLevel: () => m.level, watchFrames: () =
 import {
   COUNT_MS, countAt, cubicBezier, fxMode, grow, growBoth, growFrom, GROW_IN_MS, GROW_OUT_MS, growShift, emphOut, inEase, outEase, PILL_MID, pillParts,
   REDUCED_MS, rippleBox, scrimFade, twoWay, SHEET_IN_MS, SHEET_OUT_MS, sheetSlide, TOAST_IN_MS, TOAST_OUT_MS, toastRise, barRise, BAR_IN_MS, BAR_OUT_MS,
-  dialogRise, dialogBoth, DIALOG_IN_MS, DIALOG_OUT_MS,
+  dialogRise, dialogBoth, DIALOG_IN_MS, DIALOG_OUT_MS, REVEAL_IN_MS, REVEAL_OUT_MS, REVEAL_PX, revealKeyframes, revealShift,
 } from './fx';
 
 type Cfg = ReturnType<typeof grow>;
@@ -414,5 +414,55 @@ describe('dialogRise (ModalShell)', () => {
     expect(b({ direction: 'out' }).easing).toBe(inEase);
     expect(b().duration).toBe(220);
     expect(dialogBoth(node, { mode: 'still' })({ direction: 'out' }).duration).toBe(0);
+  });
+});
+
+describe('reveal (hover cards)', () => {
+  const rect = (cx: number, cy: number, width: number, height: number) => ({ left: cx - width / 2, top: cy - height / 2, width, height });
+
+  it('the timings', () => {
+    expect([REVEAL_PX, REVEAL_IN_MS, REVEAL_OUT_MS]).toEqual([12, 220, 150]);
+  });
+
+  it('revealShift points from the preview toward its card, at most 12 px', () => {
+    // the card's centre lies 100 px left of the box centre, level with it: the preview starts 12 px toward the card
+    expect(revealShift(rect(400, 300, 200, 112), rect(500, 300, 560, 480))).toEqual({ x: -12, y: 0 });
+    // the card above the box centre (the picture sits on top of the text): it starts 12 px up
+    expect(revealShift(rect(500, 200, 200, 112), rect(500, 300, 560, 480))).toEqual({ x: 0, y: -12 });
+    // closer than 12 px: the whole distance, in whole px
+    expect(revealShift(rect(505, 297, 200, 112), rect(500, 300, 560, 480))).toEqual({ x: 5, y: -3 });
+  });
+
+  it('revealShift is zero when centred', () => {
+    const s = revealShift(rect(500, 300, 200, 112), rect(500, 300, 560, 480));
+    expect(s).toEqual({ x: 0, y: 0 });
+    expect(Object.is(s.x, -0) || Object.is(s.y, -0)).toBe(false);
+  });
+
+  it('revealShift whole px on a diagonal', () => {
+    for (let a = 0; a < 360; a += 7) {
+      const r = (a * Math.PI) / 180;
+      for (const d of [5.5, 11.7, 12.3, 40, 300]) {
+        const s = revealShift(rect(500 + d * Math.cos(r), 300 + d * Math.sin(r), 200, 112), rect(500, 300, 560, 480));
+        expect(Number.isInteger(s.x) && Number.isInteger(s.y), JSON.stringify({ a, d, s })).toBe(true);
+        expect(Math.hypot(s.x, s.y), JSON.stringify({ a, d, s })).toBeLessThanOrEqual(REVEAL_PX);
+        // the FLIP direction is kept: never away from the card
+        expect(s.x * Math.cos(r) + s.y * Math.sin(r), JSON.stringify({ a, d, s })).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('revealKeyframes never scale and land at no offset', () => {
+    const fin = revealKeyframes({ x: -12, y: 4 }, 'in');
+    expect(fin).toEqual([{ transform: 'translate(-12px, 4px)', opacity: 0 }, { transform: 'translate(0px, 0px)', opacity: 1 }]);
+    for (const dir of ['in', 'out'] as const) {
+      for (const f of revealKeyframes({ x: 7, y: -9 }, dir)) expect(String(f.transform)).not.toMatch(/scale|matrix/);
+    }
+    expect(fin.at(-1)).toEqual({ transform: 'translate(0px, 0px)', opacity: 1 });
+  });
+
+  it('out mirrors in', () => {
+    const sh = { x: 3, y: -11 };
+    expect(revealKeyframes(sh, 'out')).toEqual([...revealKeyframes(sh, 'in')].reverse());
   });
 });

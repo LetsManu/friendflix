@@ -25,8 +25,8 @@ export function hoverWidth(vpW: number): number {
   return Math.min(clamp(Math.round(vpW * HOVER_W_FRAC), HOVER_W_MIN, HOVER_W_MAX), vpW - 2 * HOVER_MARGIN);
 }
 
-/** placed hover card: its box, the 16:9 picture height and the transform origin (the card centre inside the box) */
-export type HoverBox = { left: number; top: number; width: number; picH: number; height: number; ox: number; oy: number };
+/** placed hover card: its box and the 16:9 picture height */
+export type HoverBox = { left: number; top: number; width: number; picH: number; height: number };
 
 /**
  * Hover card box (glass spec §3): the same width on every card, a 16:9 picture centred on the card and the text (`bodyH`) below,
@@ -40,7 +40,7 @@ export function hoverBox(card: DOMRectLike, vp: { w: number; h: number }, bodyH:
   const cx = card.left + card.width / 2, cy = card.top + card.height / 2;
   const left = clamp(cx - width / 2, margin, vp.w - margin - width);
   const top = clamp(cy - picH / 2, margin, Math.max(margin, vp.h - margin - height));
-  return { left, top, width, picH, height, ox: clamp(cx - left, 0, width), oy: clamp(cy - top, 0, height) };
+  return { left, top, width, picH, height };
 }
 
 /**

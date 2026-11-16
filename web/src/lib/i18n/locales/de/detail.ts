@@ -213,8 +213,7 @@ export default {
   /** ListMenu + list roles (lib/lists.ts) */
   lists: {
     add: 'Zu Liste hinzufügen',
-    addMore: 'Zu Liste hinzufügen …',
-    loading: 'Lade …',
+    addMore: 'Zu Liste hinzufügen…',
     none: 'Noch keine Liste, in die du etwas legen darfst.',
     newName: 'Name der neuen Liste',
     create: 'Anlegen',

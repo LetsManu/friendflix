@@ -14,8 +14,6 @@ export interface PreviewBox {
   left: number; top: number; width: number; height: number;
   /** height of the 16:9 media area on top of the info panel */
   mediaH: number;
-  /** start transform (translate + scale) that makes the pop-out grow out of the card */
-  from: { dx: number; dy: number; scale: number };
 }
 
 export const HOVER_MARGIN = 12;
@@ -40,7 +38,7 @@ export function previewRect(card: Rect, vp: { w: number; h: number }, infoH = 17
   const idealTop = card.top + card.height / 2 - mediaH / 2;
   const maxTop = vp.h - margin - height;
   const top = Math.round(maxTop < margin ? margin : Math.max(margin, Math.min(idealTop, maxTop)));
-  return { left, top, width, height, mediaH, from: { dx: Math.round(card.left - left), dy: Math.round(card.top - top), scale: card.width / width } };
+  return { left, top, width, height, mediaH };
 }
 
 export const fmtRuntime = (ticks?: number): string => {

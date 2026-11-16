@@ -60,8 +60,8 @@ const pl: Translation<typeof de> = {
   account: {
     label: 'Menu profilu',
     labelWho: 'Menu profilu ({name})',
-    loadingProfiles: 'Ładowanie profili …',
     withPin: 'z kodem PIN',
+    switchProfile: 'Zmień profil',
     manageProfiles: 'Edytuj profile',
     logout: 'Wyloguj z {app}',
     changeServer: 'Zmień serwer',

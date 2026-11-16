@@ -268,6 +268,25 @@ html:not(.m-glass) .frost-flat::before, html.tv .frost-flat::before, html.kids .
 html:not(.m-glass) .panel::before, html.tv .panel::before, html.kids .panel::before,
 html:not(.m-glass) .frost-btn::before, html.tv .frost-btn::before, html.kids .frost-btn::before { display: none; }
 html.m-still .frost-sheen, html.m-still .frost-tint, html.tv .frost-sheen, html.kids .frost-sheen { display: none; }
+/* ---- Desktop menus (menus glass spec, one anatomy; the "Menus & pop-ups" mockup's .menu / .mh / .mi / .sep): a glass card
+   (.gm with .frost .frost-menu .frost-safe) with a header line (.gm-head: the title or the person), 44 px rows (.gm-row: a 24 px
+   icon column .gm-ic, the label .gm-lbl, a trailing value / check / chevron .gm-val) and dividers between groups (.gm-sep; the
+   removals and destructive rows last, lib/ui/menuGroups.ts). Hover, keyboard focus and a pressed / checked row are the light
+   pill; focus is one white ring inside the row. A destructive row keeps a white label (the light red is only 3.3:1 on the glass
+   over white): the red is on its icon. Rows are buttons or links: the global button and button.danger looks are reset. ---- */
+.gm { padding: 6px; width: max-content; min-width: 220px; max-width: min(320px, calc(100vw - 16px)); overflow-y: auto; overscroll-behavior: contain; }
+.gm-head { margin: 0; padding: 10px 12px 8px; font-size: 13px; line-height: 1.2; font-weight: 700; color: rgba(255, 255, 255, .9); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gm-row, .gm-row.danger { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; column-gap: 12px; align-items: center; justify-content: stretch; width: 100%; box-sizing: border-box;
+  min-height: 44px; padding: 0 12px; border: 0; border-radius: 12px; background: transparent; box-shadow: none; color: #fff;
+  font-family: inherit; font-size: 15px; font-weight: 500; line-height: 1.25; text-align: left; text-decoration: none; cursor: pointer; }
+.gm-row:hover:not(:disabled), .gm-row.danger:hover:not(:disabled), .gm-row:focus-visible, .gm-row[aria-pressed='true'], .gm-row[aria-checked='true'] { background: var(--fr-sel); color: #fff; }
+.gm-row:focus-visible, .gm-row.danger:focus-visible { outline: 2px solid #fff; outline-offset: -2px; box-shadow: none; }
+.gm-ic { display: grid; place-items: center; width: 24px; height: 24px; }
+.gm-lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gm-val { display: flex; align-items: center; gap: 6px; color: rgba(255, 255, 255, .9); font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gm-sep { height: 1px; margin: 6px 8px; padding: 0; background: rgba(255, 255, 255, .12); border: 0; list-style: none; }
+.gm-row.danger .gm-ic { color: var(--err-mark); }
+.gm-row.danger .gm-ic .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--err-mark); }
 /* ---- Dialogs (lib/ui/ModalShell.svelte, the owner-approved dialog mockup): one title, body, status line and button row. The row
    is [secondary, primary] in the DOM, the primary on the right; under 420 px it stacks, full width, the primary on top. Every
    button is a 44 px pill: the secondary the glass pill (.frost-btn), the primary coral (--acc-fill), a danger primary solid red.

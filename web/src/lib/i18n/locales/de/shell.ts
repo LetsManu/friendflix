@@ -55,8 +55,8 @@ export default {
   account: {
     label: 'Profilmenü',
     labelWho: 'Profilmenü ({name})',
-    loadingProfiles: 'Lade Profile …',
     withPin: 'mit PIN',
+    switchProfile: 'Profil wechseln',
     manageProfiles: 'Profile bearbeiten',
     logout: 'Von {app} abmelden',
     changeServer: 'Server wechseln',

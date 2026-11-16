@@ -32,6 +32,7 @@
   import SearchSheet from './SearchSheet.svelte';
   import { nextId } from './searchSheet';
   import { menuKeys } from '#lib/ui/menuKeys';
+  import { openPopup, type PopupHandle } from '#lib/ui/popups';
 
   /** the header tabs: Live-TV and Aufnahmen after Filme while the feature is on; without the Mediathek only those (roles redesign §6) */
   $: tabs = liveTabs(libraryTabs(HEADER_TABS, $areas.library), LIVE_HEADERS, $features.livetv);
@@ -77,62 +78,102 @@
   const fullMotion = (_calm: unknown, _tripped: boolean) => motionLevel() === 'full'; // re-read when the prefs (calm mode) arrive or the frame guard trips
   $: still = !fullMotion($prefs, $motionTripped); // calm mode / reduced motion: the field's fades are off too (the springs check motionLevel themselves)
 
-  // ---- dropdowns: categories, notifications, account ----
+  // ---- dropdowns: categories, notifications, account (menus glass spec: one pop-up at a time, none opens half-loaded) ----
   let menu = false, bell = false, cats = false;
   let catBtn: HTMLButtonElement, bellBtn: HTMLButtonElement, acctBtn: HTMLButtonElement;
+  /** Categories was clicked while its lists load: the button spins, the drop opens once both have settled */
+  let catBusy = false, catGen = 0;
+  /** closes every dropdown here (and drops a Categories open that waits for its lists) */
+  function shut() { menu = bell = cats = false; catBusy = false; catGen++; }
+  /** the open dropdown's place in the one-pop-up-at-a-time registry (lib/ui/popups): opening a ⋯ menu or a Select closes it */
+  let popup: PopupHandle | null = null;
+  function claim() {
+    popup?.release();
+    popup = openPopup(() => { popup = null; shut(); });
+  }
+  $: if (!menu && !bell && !cats && !catBusy && popup) { popup.release(); popup = null; }
   /** an opened dropdown takes the focus (its first link or button, else itself); Esc gives it back to its button */
   async function focusInto(sel: string) {
     await tick();
     const d = root?.querySelector<HTMLElement>(sel);
     (d?.querySelector<HTMLElement>('a[href], button:not([disabled])') ?? d)?.focus({ preventScroll: true });
   }
-  $: if (path) { menu = false; bell = false; cats = false; }
+  $: if (path) shut();
   let catKind: Kind = 'movies', catGenres: string[] | null = null, catLangs: string[] | null = null;
+  let catLoad: Promise<unknown> | null = null;
+  /** genres and languages, loaded once: on the button's pointerenter / focus, or the click (a failure: the "none" texts) */
+  function loadCats() {
+    return (catLoad ??= Promise.all([
+      catGenres ?? api('/api/library/genres').then((r) => (catGenres = (r.genres as string[]) ?? []), () => (catGenres = [])),
+      catLangs ?? api('/api/library/languages').then((r) => (catLangs = ((r.audio ?? []) as Array<{ code: string }>).map((l) => l.code).slice(0, 12)), () => (catLangs = [])),
+    ]));
+  }
   async function toggleCats() {
-    cats = !cats; menu = false; bell = false;
-    if (!cats) return;
-    void focusInto('.catdrop');
+    if (cats || catBusy) { shut(); return; }
+    shut(); claim();
+    if (catGenres === null || catLangs === null) {
+      const gen = catGen;
+      catBusy = true;
+      await loadCats();
+      if (gen !== catGen) return; // closed meanwhile (Esc, another pop-up, a click elsewhere, a new page)
+      catBusy = false;
+    }
     catKind = kindFromPath(path);
-    if (!catGenres) { try { catGenres = ((await api('/api/library/genres')).genres as string[]) ?? []; } catch { catGenres = []; } }
-    if (!catLangs) { try { catLangs = (((await api('/api/library/languages')).audio ?? []) as Array<{ code: string }>).map((l) => l.code).slice(0, 12); } catch { catLangs = []; } }
+    cats = true;
+    void focusInto('.catdrop');
   }
   let notesTimer: ReturnType<typeof setTimeout> | undefined;
   async function toggleBell() {
-    bell = !bell; menu = false; cats = false;
-    if (bell) void focusInto('.drop.wide');
-    if (bell && unread) {
+    if (bell) { shut(); return; }
+    shut(); claim(); bell = true;
+    void focusInto('.drop.wide');
+    if (unread) {
       await api('/api/notifications/read', { method: 'POST' });
       clearTimeout(notesTimer);
       notesTimer = setTimeout(() => window.dispatchEvent(new Event('ff-notes')), 1500); // the layout reloads the list (shared with the phone header)
     }
   }
-  let others: Array<{ id: string; name: string; avatar: string; hasPin: boolean }> | null = null;
-  async function toggleMenu() {
-    menu = !menu; bell = false; cats = false;
-    if (menu) void focusInto('.drop.acct');
-    if (menu && multi && others === null) {
-      try { others = ((await api('/api/profiles')).profiles as Array<{ id: string; name: string; avatar: string; hasPin: boolean; active: boolean }>).filter((p) => !p.active && p.id !== me?.profile?.id).slice(0, 4); }
-      catch { others = []; }
-    }
+  type Prof = { id: string; name: string; avatar: string; hasPin: boolean; active?: boolean };
+  /** the other profiles (null: not loaded); profLoading: the request runs (the menu shows placeholder rows of the final height) */
+  let others: Prof[] | null = null, profLoading = false, profFailedAt = -Infinity;
+  /** after a failed load the avatar's hovers wait this long before the next request (the menu still opens, without the list) */
+  const PROF_RETRY_MS = 5000;
+  /** the profile list loads on the avatar's pointerenter / focus (and on the click if not yet), so the menu opens complete */
+  async function loadProfiles() {
+    if (!multi || others !== null || profLoading || Date.now() - profFailedAt < PROF_RETRY_MS) return;
+    profLoading = true;
+    try { others = ((await api('/api/profiles')).profiles as Prof[]).filter((p) => !p.active && p.id !== me?.profile?.id).slice(0, 4); }
+    catch { profFailedAt = Date.now(); /* the placeholder rows go; a hover after PROF_RETRY_MS tries again */ }
+    profLoading = false;
+  }
+  /** placeholder rows while the list loads: one per other profile (at most four, as the list shows) */
+  $: skelRows = profLoading && others === null ? Math.min(4, Math.max(0, (me?.profileCount ?? 1) - 1)) : 0;
+  function toggleMenu() {
+    if (menu) { shut(); return; }
+    shut(); claim(); menu = true;
+    void loadProfiles();
+    void focusInto('.drop.acct');
   }
   const switchHref = (id: string) => `/profiles?pick=${encodeURIComponent(id)}&next=${encodeURIComponent(here)}`;
   const logout = () => doLogout(me?.tv);
   function changeServer() {
-    menu = false;
+    shut();
     changeServerViaHome(() => toast.info($t('shell.account.changeServerBlue'))); // the hint when the start page cannot be reached
   }
   async function surprise() {
-    menu = false;
+    shut();
     try { void goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { void goto('/browse/movies'); }
   }
-  function openHelp() { menu = false; onHelp(); }
+  /** the checked profile row: nothing to switch, the menu closes and the focus goes back to the avatar */
+  function closeToAvatar() { shut(); acctBtn?.focus({ preventScroll: true }); }
+  function openHelp() { shut(); onHelp(); }
 
   let root: HTMLElement;
   function onWindowKey(e: KeyboardEvent) {
-    if (e.key !== 'Escape' || !(menu || bell || cats)) return;
+    if (e.key !== 'Escape' || !(menu || bell || cats || catBusy)) return;
     // the focus was inside the open dropdown: back to the button that opened it
     const anchor = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('.pop-anchor');
-    menu = bell = cats = false;
+    shut();
     if (anchor && root?.contains(anchor)) anchor.querySelector<HTMLElement>(':scope > button')?.focus();
   }
   /**
@@ -142,11 +183,11 @@
   function onAnchorOut(e: FocusEvent) {
     const to = e.relatedTarget as Node | null;
     if (!to || (e.currentTarget as HTMLElement).contains(to)) return;
-    menu = bell = cats = false;
+    shut();
   }
   function onWindowClick(e: MouseEvent) {
     const el = e.target as HTMLElement | null;
-    if (!el?.closest?.('.pop-anchor')) { menu = false; bell = false; cats = false; }
+    if (!el?.closest?.('.pop-anchor') && (menu || bell || cats || catBusy)) shut();
     // the search sheet: a click outside the pill and the sheet closes it (and the field)
     if (sheetOpen && el?.isConnected && !inSearch(el)) leaveField(false);
   }
@@ -239,7 +280,7 @@
   /** opens the field and puts the cursor in it (the magnifier, "/" and Ctrl/Cmd+K via the layout) */
   export function openSearch() {
     if (!library) return; // the search looks through the library
-    searchOpen = true; focused = true; menu = bell = cats = false;
+    searchOpen = true; focused = true; shut();
     sync();
     searchEl?.focus();
   }
@@ -419,7 +460,7 @@
       {#each tabs as [href, label] (href)}<a {href} class="tab" class:active={href === act} class:gone={collapse && href !== act} aria-current={href === act ? 'page' : undefined}>{$t(navLabel(label, $features.requests))}</a>{/each}
       {#if library}<div class="pop-anchor" class:gone={collapse} on:focusout={onAnchorOut}>
         <!-- a disclosure (links and filters in a region), not a menu: no aria-haspopup -->
-        <button type="button" class="tab cbtn" aria-expanded={cats} aria-controls={cats ? 'ff-cats' : undefined} bind:this={catBtn} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>
+        <button type="button" class="tab cbtn" aria-expanded={cats} aria-controls={cats ? 'ff-cats' : undefined} aria-busy={catBusy || undefined} bind:this={catBtn} on:click={toggleCats} on:pointerenter={loadCats} on:focus={loadCats}>{$t('shell.nav.categories')}<span class="cmark" aria-hidden="true"><i class="caret" class:up={cats} class:hide={catBusy}></i>{#if catBusy}<span class="spinner"></span>{/if}</span></button>
         {#if cats}
           <div class="drop catdrop frost frost-menu frost-safe" id="ff-cats" role="region" aria-label={$t('shell.cats.title')} tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: catBtn }}>
             <div class="cseg">
@@ -431,12 +472,11 @@
             </div>
             <div class="ccols">
               <section aria-labelledby="cg-h"><h2 id="cg-h" class="ch">{$t('shell.cats.genres')}</h2>
-                {#if catGenres === null}<p class="muted pad" role="status">{$t('common.loading')}</p>
+                {#if !catGenres?.length}<p class="muted pad">{$t('shell.cats.none')}</p>
                 {:else}<ul class="glist">{#each catGenres as g (g)}<li><a href={categoryHref(catKind, g)}>{g}</a></li>{/each}</ul>{/if}
               </section>
               <section aria-labelledby="cl-h"><h2 id="cl-h" class="ch">{$t('shell.cats.byLanguage')}</h2>
-                {#if catLangs === null}<p class="muted pad" role="status">{$t('common.loading')}</p>
-                {:else if !catLangs.length}<p class="muted pad">{$t('shell.cats.none')}</p>
+                {#if !catLangs?.length}<p class="muted pad">{$t('shell.cats.none')}</p>
                 {:else}<ul class="glist">{#each catLangs as c (c)}<li><a href="/browse/{catKind}?audio={encodeURIComponent(c)}">{langLabel(c)}</a></li>{/each}</ul>{/if}
               </section>
             </div>
@@ -459,31 +499,44 @@
         <span class="sclip" aria-hidden="true"></span><Icon name="bell" size={20} />{#if unread}<span class="dot">{unread}</span>{/if}
       </button>
       {#if bell}
-        <div class="drop wide frost frost-menu frost-safe" id="ff-notes" role="region" aria-label={$t('shell.bell.label')} tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: bellBtn }}>
-          {#each notes as n}{#if n.link}<a href={n.link} class:muted={n.read}>{n.title}</a>{:else}<span class="note" class:muted={n.read}>{n.title}</span>{/if}{:else}<span class="muted pad">{$t('shell.bell.empty')}</span>{/each}
+        <div class="drop wide gm frost frost-menu frost-safe" id="ff-notes" role="region" aria-label={$t('shell.bell.label')} tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: bellBtn }}>
+          <p class="gm-head" aria-hidden="true">{$t('shell.bell.label')}</p>
+          {#each notes as n (n.id)}
+            {#if n.link}<a class="gm-row note" class:unread={!n.read} class:read={n.read} href={n.link}><span class="gm-ic">{#if !n.read}<i class="ndot"></i>{/if}</span><span class="gm-lbl">{n.title}</span></a>
+            {:else}<div class="gm-row note still" class:unread={!n.read} class:read={n.read}><span class="gm-ic">{#if !n.read}<i class="ndot"></i>{/if}</span><span class="gm-lbl">{n.title}</span></div>{/if}
+          {:else}<div class="gm-row note still read"><span class="gm-ic"></span><span class="gm-lbl">{$t('shell.bell.empty')}</span></div>{/each}
         </div>
       {/if}
     </div>
     <div class="pop-anchor" on:focusout={onAnchorOut}>
-      <button type="button" class="avatar" aria-label={who ? $t('shell.account.labelWho', { name: who }) : $t('shell.account.label')} aria-haspopup="menu" aria-expanded={menu} disabled={!me} bind:this={acctBtn} on:click={toggleMenu}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span></button>
+      <button type="button" class="avatar" aria-label={who ? $t('shell.account.labelWho', { name: who }) : $t('shell.account.label')} aria-haspopup="menu" aria-expanded={menu} disabled={!me} bind:this={acctBtn} on:click={toggleMenu} on:pointerenter={loadProfiles} on:focus={loadProfiles}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span></button>
       {#if menu && me}
-        <div class="drop acct frost frost-menu frost-safe" role="menu" aria-label={$t('shell.account.label')} tabindex="-1" use:menuKeys={{ close: () => (menu = false), trigger: acctBtn }} style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: acctBtn }}>
+        <div class="drop acct gm frost frost-menu frost-safe" role="menu" aria-label={$t('shell.account.label')} tabindex="-1" use:menuKeys={{ close: () => (menu = false), trigger: acctBtn }} style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: acctBtn }}>
+          <!-- the person: who is watching, and whose account this is -->
+          <div class="acct-who" role="none"><span class="face lg" style={faceStyle} aria-hidden="true">{initial(who)}</span><span class="who-t"><b>{who}</b><span>{me.name} · {me.roleLabel}</span></span></div>
+          <hr class="gm-sep" />
           {#if multi}
-            {#if others === null}<span class="muted pad" role="status">{$t('shell.account.loadingProfiles')}</span>{/if}
-            {#each others ?? [] as p (p.id)}<a class="prof" href={switchHref(p.id)} role="menuitem" tabindex="-1" data-sveltekit-reload><span class="face xs" style="background:{avatarBg(p.avatar)}" aria-hidden="true">{initial(p.name)}</span>{p.name}{#if p.hasPin}<Icon name="lock" size={14} label={$t('shell.account.withPin')} />{/if}</a>{/each}
+            <div role="group" aria-labelledby="ff-acct-sw">
+              <p class="gm-head" id="ff-acct-sw" role="none">{$t('shell.account.switchProfile')}</p>
+              {#if me.profile}<button type="button" class="gm-row" role="menuitemradio" aria-checked="true" tabindex="-1" on:click={closeToAvatar}><span class="gm-ic"><span class="face xs" style={faceStyle} aria-hidden="true">{initial(me.profile.name)}</span></span><span class="gm-lbl">{me.profile.name}</span><span class="gm-val"><Icon name="check" size={20} /></span></button>{/if}
+              {#each others ?? [] as p (p.id)}<a class="gm-row" href={switchHref(p.id)} role="menuitemradio" aria-checked="false" tabindex="-1" data-sveltekit-reload><span class="gm-ic"><span class="face xs" style="background:{avatarBg(p.avatar)}" aria-hidden="true">{initial(p.name)}</span></span><span class="gm-lbl">{p.name}</span><span class="gm-val">{#if p.hasPin}<Icon name="lock" size={16} label={$t('shell.account.withPin')} />{/if}</span></a>{/each}
+              {#each { length: skelRows } as _, i (i)}<div class="gm-row skel" aria-hidden="true"><span class="gm-ic"><i class="sk-face"></i></span><span class="gm-lbl"><i class="sk-bar"></i></span></div>{/each}
+            </div>
+            <a class="gm-row" href="/profiles?manage=1" role="menuitem" tabindex="-1"><span class="gm-ic"><Icon name="users" size={20} /></span><span class="gm-lbl">{$t('shell.account.manageProfiles')}</span></a>
+            <hr class="gm-sep" />
+          {:else}
+            <a class="gm-row" href="/profiles?manage=1" role="menuitem" tabindex="-1"><span class="gm-ic"><Icon name="users" size={20} /></span><span class="gm-lbl">{$t('shell.account.manageProfiles')}</span></a>
           {/if}
-          <a href="/profiles?manage=1" role="menuitem" tabindex="-1"><Icon name="users" size={18} />{$t('shell.account.manageProfiles')}</a>
-          <hr />
-          <a href="/me" role="menuitem" tabindex="-1"><Icon name="user" size={18} />{$t('shell.menu.me')}</a>
-          <a href="/settings" role="menuitem" tabindex="-1"><Icon name="settings" size={18} />{$t('shell.menu.accountSettings')}</a>
-          <a href="/devices" role="menuitem" tabindex="-1"><Icon name="monitor" size={18} />{$t('shell.menu.devices')}</a>
-          {#if canDownload}<a href="/downloads" role="menuitem" tabindex="-1"><Icon name="download" size={18} />{$t('shell.menu.downloads')}</a>{/if}
-          {#if library}<button class="plain" role="menuitem" tabindex="-1" on:click={surprise}><Icon name="shuffle" size={18} />{$t('shell.menu.surprise')}</button>{/if}
-          <button class="plain" role="menuitem" tabindex="-1" on:click={openHelp}><Icon name="info" size={18} />{$t('shell.menu.help')}</button>
-          {#if admin}<a href="/admin" role="menuitem" tabindex="-1"><Icon name="shield" size={18} />{$t('shell.menu.admin')}</a>{/if}
-          <hr />
-          {#if lgApp}<button class="plain" role="menuitem" tabindex="-1" on:click={changeServer}>{$t('shell.account.changeServer')}</button>{/if}
-          <button class="plain out" role="menuitem" tabindex="-1" on:click={logout}>{$t('shell.account.logout')}</button>
+          <a class="gm-row" href="/me" role="menuitem" tabindex="-1"><span class="gm-ic"><Icon name="user" size={20} /></span><span class="gm-lbl">{$t('shell.menu.me')}</span></a>
+          <a class="gm-row" href="/settings" role="menuitem" tabindex="-1"><span class="gm-ic"><Icon name="settings" size={20} /></span><span class="gm-lbl">{$t('shell.menu.accountSettings')}</span></a>
+          <a class="gm-row" href="/devices" role="menuitem" tabindex="-1"><span class="gm-ic"><Icon name="monitor" size={20} /></span><span class="gm-lbl">{$t('shell.menu.devices')}</span></a>
+          {#if canDownload}<a class="gm-row" href="/downloads" role="menuitem" tabindex="-1"><span class="gm-ic"><Icon name="download" size={20} /></span><span class="gm-lbl">{$t('shell.menu.downloads')}</span></a>{/if}
+          {#if library}<button type="button" class="gm-row" role="menuitem" tabindex="-1" on:click={surprise}><span class="gm-ic"><Icon name="shuffle" size={20} /></span><span class="gm-lbl">{$t('shell.menu.surprise')}</span></button>{/if}
+          <button type="button" class="gm-row" role="menuitem" tabindex="-1" on:click={openHelp}><span class="gm-ic"><Icon name="info" size={20} /></span><span class="gm-lbl">{$t('shell.menu.help')}</span></button>
+          {#if admin}<a class="gm-row" href="/admin" role="menuitem" tabindex="-1"><span class="gm-ic"><Icon name="shield" size={20} /></span><span class="gm-lbl">{$t('shell.menu.admin')}</span></a>{/if}
+          <hr class="gm-sep" />
+          {#if lgApp}<button type="button" class="gm-row" role="menuitem" tabindex="-1" on:click={changeServer}><span class="gm-ic"><Icon name="refresh" size={20} /></span><span class="gm-lbl">{$t('shell.account.changeServer')}</span></button>{/if}
+          <button type="button" class="gm-row" role="menuitem" tabindex="-1" on:click={logout}><span class="gm-ic"><Icon name="log-out" size={20} /></span><span class="gm-lbl">{$t('shell.account.logout')}</span></button>
         </div>
       {/if}
     </div>
@@ -628,20 +681,39 @@
   .pop-anchor { position: relative; }
   .drop { position: absolute; right: 0; top: calc(100% + 10px); min-width: 220px; padding: 8px; box-sizing: border-box; display: flex; flex-direction: column; outline: none;
     max-height: calc(100vh - var(--nav-total) - 16px); max-height: calc(100dvh - var(--nav-total) - 16px); overflow-y: auto; overscroll-behavior: contain; }
-  .drop hr { border: 0; border-top: 1px solid rgba(255, 255, 255, .1); margin: 6px 8px; width: auto; align-self: stretch; }
-  .drop.wide { width: min(340px, 90vw); }
-  .drop .note { display: block; padding: 8px 14px; font-size: .9rem; color: #fff; }
-  .drop .muted, .drop .note.muted { color: rgba(255, 255, 255, .9); }
-  .drop a, .drop .plain { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-radius: 12px; font-size: .9rem; font-weight: 600; color: #fff; min-height: 44px; box-sizing: border-box; }
-  .drop a.muted { color: rgba(255, 255, 255, .9); font-weight: 500; } /* a read notification */
-  .drop a:hover, .drop .plain:hover:not(:disabled) { background: var(--fr-sel); color: #fff; text-decoration: none; }
-  .drop a:focus-visible, .drop .plain:focus-visible { outline: 2px solid #fff; outline-offset: -2px; box-shadow: inset 0 0 0 4px var(--ring-dark), 0 0 0 2px var(--ring-dark); }
-  .plain { background: transparent; border-radius: 0; justify-content: flex-start; font-weight: 400; width: 100%; }
+  .drop .muted { color: rgba(255, 255, 255, .9); }
+  .catdrop a { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-radius: 12px; font-size: .9rem; font-weight: 600; color: #fff; min-height: 44px; box-sizing: border-box; }
+  .catdrop a:hover { background: var(--fr-sel); color: #fff; text-decoration: none; }
+  .catdrop a:focus-visible { outline: 2px solid #fff; outline-offset: -2px; box-shadow: inset 0 0 0 4px var(--ring-dark), 0 0 0 2px var(--ring-dark); }
   .pad { padding: 12px 16px; }
-  .acct { min-width: 248px; }
-  .acct .prof { font-weight: 500; }
-  .face.xs { width: 28px; height: 28px; border-radius: 8px; font-size: .8rem; flex: none; }
-  .acct .out { justify-content: center; }
+  /* the account menu and the notifications: the shared menu anatomy (app.css .gm*: header line, 44 px rows, 24 px icon column) */
+  .drop.gm { padding: 6px; }
+  .acct { min-width: 280px; }
+  .acct-who { display: flex; align-items: center; gap: 12px; padding: 12px 12px 10px; min-width: 0; }
+  .face.lg { width: 44px; height: 44px; border-radius: 12px; font-size: 18px; flex: none; }
+  .who-t { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .who-t > b { font-size: 16px; line-height: 1.2; font-weight: 700; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .who-t > span { font-size: 13px; line-height: 1.2; font-weight: 500; color: rgba(255, 255, 255, .9); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .face.xs { width: 24px; height: 24px; border-radius: 7px; font-size: 11px; flex: none; box-shadow: none; }
+  /* placeholder rows while the profiles load: exactly a row's height; an opacity shimmer only (none in calm mode) */
+  .gm-row.skel, .gm-row.skel:hover { cursor: default; background: transparent; }
+  .skel i { display: block; border-radius: 7px; background: rgba(255, 255, 255, .16); animation: sk-pulse 1.2s ease-in-out infinite alternate; }
+  .skel .sk-face { width: 24px; height: 24px; }
+  .skel .sk-bar { width: 96px; height: 12px; border-radius: 6px; }
+  @keyframes sk-pulse { from { opacity: 1; } to { opacity: .45; } }
+  :global(html.m-still) .skel i { animation: none; }
+  /* the notifications: a region, not a menu; long titles wrap (the row grows from 44 px); unread rows carry the accent dot (--acc-fill) */
+  .drop.wide { width: 320px; max-width: calc(100vw - 16px); }
+  .drop .note { padding-block: 8px; }
+  .note .gm-lbl { white-space: normal; overflow-wrap: anywhere; }
+  .note.read { color: rgba(255, 255, 255, .9); }
+  .drop .note.still { cursor: default; }
+  .drop .note.still:hover { background: transparent; }
+  .ndot { display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--acc-fill); }
+  /* Categories while its lists load: a spinner in the caret's place (the button keeps its width) */
+  .cmark { position: relative; display: inline-grid; place-items: center; }
+  .caret.hide { visibility: hidden; }
+  .cmark > .spinner { position: absolute; width: 12px; height: 12px; border-width: 2px; }
   .catdrop { left: 50%; right: auto; margin-left: calc(min(560px, 80vw) / -2); width: min(560px, 80vw); }
   .catdrop > .cseg, .catdrop > .ccols { padding: 8px 12px; }
   .cseg { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
