@@ -20,6 +20,9 @@ afterEach(async () => { vi.unstubAllGlobals(); await setLocale('de'); });
 describe('partText', () => {
   it('done: name and logo; the sender, with or without the SMTP settings', () => {
     expect(partText('brand', { state: 'done' }, false, tr)).toEqual({ tone: 'ok', text: 'Name und Logo übertragen.' });
+    expect(partText('brand', { state: 'done', logo: true }, false, tr)).toEqual({ tone: 'ok', text: 'Name und Logo übertragen.' });
+    // no logo went along (none set, or no PUBLIC_URL): the line says so
+    expect(partText('brand', { state: 'done', logo: false }, false, tr)).toEqual({ tone: 'ok', text: 'Name übertragen.' });
     expect(partText('stage', { state: 'done' }, false, tr)).toEqual({ tone: 'ok', text: 'Absender übertragen.' });
     expect(partText('stage', { state: 'done' }, true, tr)).toEqual({ tone: 'ok', text: 'Absender und SMTP-Einstellungen übertragen.' });
   });
@@ -28,6 +31,11 @@ describe('partText', () => {
     const r = partText('stage', { state: 'skipped', code: 'nothing_to_send' }, false, tr);
     expect(r.tone).toBe('warn');
     expect(r.text).toBe(tr('settings.mail.authentik.stageSkipped'));
+  });
+
+  it('a stage on Authentik\'s global settings says the sender was not changed', () => {
+    const r = partText('stage', { state: 'skipped', code: 'global_settings' }, false, tr);
+    expect(r).toEqual({ tone: 'warn', text: 'Authentik nutzt seine globalen E-Mail-Einstellungen – Absender nicht geändert.' });
   });
 
   it('a refusal names the part and the missing permission', () => {
@@ -70,6 +78,9 @@ describe('syncErrorText', () => {
     expect(syncErrorText(new ApiError(503, { error: 'authentik_unavailable' }), tr).text).toBe(tr('settings.mail.authentik.error.authentik_unavailable'));
     expect(syncErrorText(new ApiError(429, null), tr).text).toBe(tr('settings.mail.authentik.error.rate_limited'));
     expect(syncErrorText(new ApiError(403, { error: 'forbidden' }), tr).text).toBe(tr('settings.mail.authentik.error.forbidden'));
+    // an expired tab token is no question of rights: the generic "try again"
+    expect(syncErrorText(new ApiError(403, { error: 'csrf' }), tr)).toEqual({ tone: 'err', text: tr('settings.mail.authentik.error.failed') });
+    expect(syncErrorText(new ApiError(403, null), tr).text).toBe(tr('settings.mail.authentik.error.failed'));
     expect(syncErrorText(new ApiError(500, { error: 'internal' }), tr)).toEqual({ tone: 'err', text: tr('settings.mail.authentik.error.failed') });
     expect(syncErrorText(new Error('offline'), tr).text).toBe(tr('settings.mail.authentik.error.failed'));
   });

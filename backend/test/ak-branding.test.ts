@@ -38,6 +38,13 @@ interface AkWorld {
   brandList?: { status: number; detail?: string };
   brandPatch?: { status: number; detail?: string };
   stagePatch?: { status: number; detail?: string };
+  stageGet?: { status: number; detail?: string };
+  /** the bindings read (status), undefined = 200 */
+  bindingsList?: { status: number; detail?: string };
+  /** the stage uses Authentik's global e-mail settings (its own from_address is then ignored) */
+  stageGlobal: boolean;
+  /** stage pks that answer 404 (deleted in Authentik) */
+  goneStages: string[];
   /** the recovery flow's bindings */
   bindings: Array<{ order: number; stage: string; stage_obj: { meta_model_name: string } }>;
   /** every call answers 403 "Token invalid/expired" */
@@ -51,7 +58,7 @@ const world = (): AkWorld => ({
     { order: 10, stage: 'ident-1', stage_obj: { meta_model_name: 'authentik_stages_identification.identificationstage' } },
     { order: 20, stage: 's-1', stage_obj: { meta_model_name: 'authentik_stages_email.emailstage' } },
   ],
-  tokenBad: false, down: false,
+  stageGlobal: false, goneStages: [], tokenBad: false, down: false,
 });
 
 describe('Branding an Authentik übertragen', () => {
@@ -75,8 +82,11 @@ describe('Branding an Authentik übertragen', () => {
     if (method === 'GET' && p === '/api/v3/core/brands/') return answer(ak.brandList, { pagination: { next: 0 }, results: ak.brands });
     if (method === 'PATCH' && /^\/api\/v3\/core\/brands\/[^/]+\/$/.test(p)) return answer(ak.brandPatch, {});
     if (method === 'GET' && p === '/api/v3/flows/instances/default-recovery-flow/') return json(200, { pk: 'flow-1', slug: 'default-recovery-flow' });
-    if (method === 'GET' && p === '/api/v3/flows/bindings/') return json(200, { pagination: { next: 0 }, results: url.searchParams.get('target') === 'flow-1' ? ak.bindings : [] });
-    if (method === 'PATCH' && /^\/api\/v3\/stages\/email\/[^/]+\/$/.test(p)) return answer(ak.stagePatch, {});
+    if (method === 'GET' && p === '/api/v3/flows/bindings/') return answer(ak.bindingsList, { pagination: { next: 0 }, results: url.searchParams.get('target') === 'flow-1' ? ak.bindings : [] });
+    const stage = /^\/api\/v3\/stages\/email\/([^/]+)\/$/.exec(p)?.[1];
+    if (stage && ak.goneStages.includes(stage)) return json(404, { detail: 'Not found.' });
+    if (method === 'GET' && stage) return answer(ak.stageGet, { pk: stage, name: 'default-recovery-email', use_global_settings: ak.stageGlobal });
+    if (method === 'PATCH' && stage) return answer(ak.stagePatch, { pk: stage, use_global_settings: false });
     return json(404, { detail: 'Not found.' });
   }) as typeof fetch;
 
@@ -130,7 +140,7 @@ describe('Branding an Authentik übertragen', () => {
   it('without consent no request carries a password', async () => {
     const r = await post(false);
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toEqual({ brand: { state: 'done' }, stage: { state: 'done' } });
+    expect(r.json()).toEqual({ brand: { state: 'done', logo: true }, stage: { state: 'done' } });
     const brand = patches(/\/core\/brands\//);
     expect(brand.map((c) => c.path)).toEqual(['/api/v3/core/brands/b-1/']);
     expect(bodyOf(brand[0])).toEqual({ branding_title: 'Nordlicht TV', branding_logo: LOGO_URL });
@@ -148,7 +158,7 @@ describe('Branding an Authentik übertragen', () => {
   it('with consent only the stage PATCH carries it', async () => {
     const r = await post(true);
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toEqual({ brand: { state: 'done' }, stage: { state: 'done' } });
+    expect(r.json()).toEqual({ brand: { state: 'done', logo: true }, stage: { state: 'done' } });
     const stage = patches(/\/stages\/email\//);
     expect(bodyOf(stage[0])).toEqual({
       from_address: FROM, use_global_settings: false, host: 'mail.example.com', port: 587, username: 'kino', password: PASS, use_tls: true, use_ssl: false, timeout: 10,
@@ -168,7 +178,7 @@ describe('Branding an Authentik übertragen', () => {
   it('a refused stage PATCH with consent keeps the password out of kv, logs and the answer', async () => {
     ak.stagePatch = { status: 400, detail: 'invalid' };
     const r = await post(true);
-    expect(r.json()).toEqual({ brand: { state: 'done' }, stage: { state: 'failed', code: 'error' } });
+    expect(r.json()).toEqual({ brand: { state: 'done', logo: true }, stage: { state: 'failed', code: 'error' } });
     expect(r.body).not.toContain(PASS);
     expect(await env.kv.get('akdiag:last:api')).not.toBeNull();
     const kv = (env.kv as unknown as { m: Map<string, { v: string }> }).m;
@@ -233,7 +243,7 @@ describe('Branding an Authentik übertragen', () => {
   it('stage refused names change_emailstage', async () => {
     ak.stagePatch = { status: 403 };
     const r = await post(false);
-    expect(r.json()).toEqual({ brand: { state: 'done' }, stage: { state: 'failed', code: 'permission', permission: 'authentik_stages_email.change_emailstage' } });
+    expect(r.json()).toEqual({ brand: { state: 'done', logo: true }, stage: { state: 'failed', code: 'permission', permission: 'authentik_stages_email.change_emailstage' } });
   });
 
   it('a rejected token answers token_invalid for both', async () => {
@@ -246,7 +256,7 @@ describe('Branding an Authentik übertragen', () => {
   it('a flow without e-mail stage answers no_email_stage', async () => {
     ak.bindings = ak.bindings.filter((b) => b.stage !== 's-1');
     const r = await post(false);
-    expect(r.json()).toEqual({ brand: { state: 'done' }, stage: { state: 'failed', code: 'no_email_stage' } });
+    expect(r.json()).toEqual({ brand: { state: 'done', logo: true }, stage: { state: 'failed', code: 'no_email_stage' } });
     expect(patches(/\/stages\/email\//)).toHaveLength(0);
   });
 
@@ -283,22 +293,89 @@ describe('Branding an Authentik übertragen', () => {
 
   it('no logo and no symbol sends no branding_logo', async () => {
     await setBrand({ logo: null });
-    await post(false);
+    expect((await post(false)).json()).toMatchObject({ brand: { state: 'done', logo: false } });
     expect(bodyOf(patches(/\/core\/brands\//)[0])).toEqual({ branding_title: 'Nordlicht TV' });
   });
 
   it('no PUBLIC_URL sends the title only', async () => {
     env.ctx.cfg = { ...env.ctx.cfg, PUBLIC_URL: '' };
-    await post(false);
+    expect((await post(false)).json()).toMatchObject({ brand: { state: 'done', logo: false } });
     expect(bodyOf(patches(/\/core\/brands\//)[0])).toEqual({ branding_title: 'Nordlicht TV' });
   });
 
   it('without a sender and without consent the stage is skipped and not called', async () => {
     env.ctx.cfg = { ...env.ctx.cfg, MAIL_FROM: undefined };
     const r = await post(false);
-    expect(r.json()).toEqual({ brand: { state: 'done' }, stage: { state: 'skipped', code: 'nothing_to_send' } });
+    expect(r.json()).toEqual({ brand: { state: 'done', logo: true }, stage: { state: 'skipped', code: 'nothing_to_send' } });
     expect(calls.filter((c) => /flows|stages/.test(c.path))).toEqual([]);
     expect(await auditRows()).toEqual([{ smtp: false, brand: 'done', stage: 'skipped:nothing_to_send' }]);
+  });
+
+  it('a stage on Authentik\'s global settings is not patched without consent: skipped, not done', async () => {
+    ak.stageGlobal = true;
+    const r = await post(false);
+    expect(r.json()).toEqual({ brand: { state: 'done', logo: true }, stage: { state: 'skipped', code: 'global_settings' } });
+    expect(calls.filter((c) => c.path === '/api/v3/stages/email/s-1/').map((c) => c.method)).toEqual(['GET']);
+    expect(await auditRows()).toEqual([{ smtp: false, brand: 'done', stage: 'skipped:global_settings' }]);
+  });
+
+  it('with consent a stage on global settings gets its own settings (no read needed)', async () => {
+    ak.stageGlobal = true;
+    const r = await post(true);
+    expect(r.json()).toMatchObject({ stage: { state: 'done' } });
+    expect(calls.filter((c) => c.path === '/api/v3/stages/email/s-1/').map((c) => c.method)).toEqual(['PATCH']);
+    expect(bodyOf(patches(/\/stages\/email\//)[0])).toMatchObject({ use_global_settings: false, from_address: FROM });
+  });
+
+  it('a stage read the token may not do names view_emailstage', async () => {
+    ak.stageGet = { status: 403 };
+    expect((await post(false)).json()).toMatchObject({ stage: { state: 'failed', code: 'permission', permission: 'authentik_stages_email.view_emailstage' } });
+    expect(patches(/\/stages\/email\//)).toHaveLength(0);
+  });
+
+  it('a refused flow read names its permission', async () => {
+    ak.bindingsList = { status: 403 };
+    expect((await post(false)).json()).toMatchObject({ stage: { state: 'failed', code: 'permission', permission: 'authentik_flows.view_flowstagebinding' } });
+  });
+
+  it('a stale cached stage id is dropped and the stage looked up once more', async () => {
+    // a cached flow read that still names a deleted stage
+    await env.kv.set(akFlowCacheKey(env.ctx.cfg, 'default-recovery-flow'),
+      JSON.stringify({ exists: true, failed: false, stages: [{ pk: 's-old', model: 'authentik_stages_email.emailstage' }] }), 600);
+    ak.goneStages = ['s-old'];
+    const r = await post(false);
+    expect(r.json()).toMatchObject({ stage: { state: 'done' } });
+    expect(calls.filter((c) => c.path.startsWith('/api/v3/stages/email/')).map((c) => `${c.method} ${c.path}`))
+      .toEqual(['GET /api/v3/stages/email/s-old/', 'GET /api/v3/stages/email/s-1/', 'PATCH /api/v3/stages/email/s-1/']);
+  });
+
+  it('a stage that stays gone answers not_found after one retry', async () => {
+    ak.goneStages = ['s-1'];
+    expect((await post(false)).json()).toMatchObject({ stage: { state: 'failed', code: 'not_found' } });
+    expect(calls.filter((c) => c.path === '/api/v3/flows/bindings/')).toHaveLength(2);
+    expect(calls.filter((c) => c.path.startsWith('/api/v3/stages/email/'))).toHaveLength(2);
+  });
+
+  it('a parent-domain brand is the one Authentik shows, and the longest domain wins', async () => {
+    ak.brands = [{ brand_uuid: 'b-default', domain: 'authentik-default', default: true }, { brand_uuid: 'b-parent', domain: 'Example.COM', default: false }];
+    await post(false);
+    expect(patches(/\/core\/brands\//).map((c) => c.path)).toEqual(['/api/v3/core/brands/b-parent/']);
+    calls.length = 0;
+    ak.brands = [...ak.brands, { brand_uuid: 'b-1', domain: 'auth.example.com', default: false }, { brand_uuid: 'b-x', domain: 'xample.com', default: false }];
+    await post(false);
+    expect(patches(/\/core\/brands\//).map((c) => c.path)).toEqual(['/api/v3/core/brands/b-1/']);
+  });
+
+  it('an issuer port is part of the match', async () => {
+    env.ctx.cfg = { ...env.ctx.cfg, OIDC_ISSUER: 'https://auth.example.com:9443/application/o/friendflix/' };
+    ak.brands = [...ak.brands, { brand_uuid: 'b-port', domain: 'auth.example.com:9443', default: false }];
+    await post(false);
+    expect(patches(/\/core\/brands\//).map((c) => c.path)).toEqual(['/api/v3/core/brands/b-port/']);
+    calls.length = 0;
+    // a port-less brand does not match a host with a port: Authentik shows its default brand there
+    ak.brands = ak.brands.filter((b) => b.brand_uuid !== 'b-port');
+    await post(false);
+    expect(patches(/\/core\/brands\//).map((c) => c.path)).toEqual(['/api/v3/core/brands/b-default/']);
   });
 
   it('preview never carries the password', async () => {

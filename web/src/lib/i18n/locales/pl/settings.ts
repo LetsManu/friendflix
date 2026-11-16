@@ -266,9 +266,11 @@ const settings: Translation<typeof de> = {
       smtpUnavailable: 'Możliwe, gdy serwer i adres nadawcy powyżej są wpisane i zapisane.',
       run: 'Przenieś branding do Authentik',
       brandDone: 'Przeniesiono nazwę i logo.',
+      brandDoneName: 'Przeniesiono nazwę.',
       stageDone: 'Przeniesiono nadawcę.',
       stageSmtpDone: 'Przeniesiono nadawcę i ustawienia SMTP.',
       stageSkipped: 'Brak adresu nadawcy: etap e-mail zostaje bez zmian.',
+      stageSkippedGlobal: 'Authentik używa swoich globalnych ustawień e-mail – nadawca bez zmian.',
       failed: '{part}: {reason}',
       part: { brand: 'Nazwa i logo', stage: 'Etap e-mail' },
       code: {

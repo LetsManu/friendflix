@@ -264,9 +264,11 @@ const settings: Translation<typeof de> = {
       smtpUnavailable: 'Yukarıdaki sunucu ve gönderen adresi girilip kaydedildiğinde kullanılabilir.',
       run: 'Markalamayı Authentik’e aktar',
       brandDone: 'Ad ve logo aktarıldı.',
+      brandDoneName: 'Ad aktarıldı.',
       stageDone: 'Gönderen aktarıldı.',
       stageSmtpDone: 'Gönderen ve SMTP ayarları aktarıldı.',
       stageSkipped: 'Gönderen adresi girilmemiş: e-posta aşaması olduğu gibi kalıyor.',
+      stageSkippedGlobal: 'Authentik genel e-posta ayarlarını kullanıyor – gönderen değiştirilmedi.',
       failed: '{part}: {reason}',
       part: { brand: 'Ad ve logo', stage: 'E-posta aşaması' },
       code: {

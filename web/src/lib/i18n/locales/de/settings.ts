@@ -262,9 +262,11 @@ export default {
       smtpUnavailable: 'Geht, sobald Server und Absenderadresse oben eingetragen und gespeichert sind.',
       run: 'Branding an Authentik übertragen',
       brandDone: 'Name und Logo übertragen.',
+      brandDoneName: 'Name übertragen.',
       stageDone: 'Absender übertragen.',
       stageSmtpDone: 'Absender und SMTP-Einstellungen übertragen.',
       stageSkipped: 'Keine Absenderadresse eingetragen: die E-Mail-Stufe bleibt, wie sie ist.',
+      stageSkippedGlobal: 'Authentik nutzt seine globalen E-Mail-Einstellungen – Absender nicht geändert.',
       failed: '{part}: {reason}',
       part: { brand: 'Name und Logo', stage: 'E-Mail-Stufe' },
       code: {

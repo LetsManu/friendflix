@@ -265,9 +265,11 @@ const settings: Translation<typeof de> = {
       smtpUnavailable: 'Possibile non appena server e indirizzo del mittente qui sopra sono inseriti e salvati.',
       run: 'Copia il branding in Authentik',
       brandDone: 'Nome e logo copiati.',
+      brandDoneName: 'Nome copiato.',
       stageDone: 'Mittente copiato.',
       stageSmtpDone: 'Mittente e impostazioni SMTP copiati.',
       stageSkipped: 'Nessun indirizzo del mittente: la fase e-mail resta com’è.',
+      stageSkippedGlobal: 'Authentik usa le sue impostazioni e-mail globali – mittente non modificato.',
       failed: '{part}: {reason}',
       part: { brand: 'Nome e logo', stage: 'Fase e-mail' },
       code: {

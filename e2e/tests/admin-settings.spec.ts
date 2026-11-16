@@ -780,6 +780,40 @@ test.describe('admin: settings, Authentik branding', () => {
     await expect(ak(page).getByTestId('ak-stage-result').getByRole('link')).toHaveCount(0);
   });
 
+  test('a stage on Authentik\'s global settings and a brand without logo say what really happened', async ({ page, api }) => {
+    mailConfigured(api.settings);
+    api.settings.ak.answers = [{ status: 200, body: { brand: { state: 'done', logo: false }, stage: { state: 'skipped', code: 'global_settings' } } }];
+    await page.goto('/admin/settings?tab=notifications');
+    await run(page).click();
+    await expect(ak(page).getByTestId('ak-brand-result')).toHaveText('Name übertragen.');
+    await expect(ak(page).getByTestId('ak-stage-result')).toHaveText('Authentik nutzt seine globalen E-Mail-Einstellungen – Absender nicht geändert.');
+  });
+
+  test('an expired tab token is no question of rights', async ({ page, api }) => {
+    api.settings.ak.answers = [{ status: 403, body: { error: 'csrf' } }];
+    await page.goto('/admin/settings?tab=notifications');
+    await run(page).click();
+    await expect(ak(page).getByTestId('ak-brand-result')).toHaveText('Die Übertragung ließ sich nicht starten. Versuch es gleich noch einmal.');
+  });
+
+  // just above the phone layout the card is narrowest: the longest results still fit their reserved room, in every locale
+  for (const loc of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
+    test(`760 px, ${loc}: the longest results fit their reserved room`, async ({ page, api }) => {
+      await page.addInitScript((l) => { try { localStorage.setItem('ff-locale', l); } catch { /* blocked storage */ } }, loc);
+      await page.setViewportSize({ width: 760, height: 900 });
+      api.settings.ak.answers = [{ status: 200, body: { brand: { state: 'failed', code: 'permission', permission: 'authentik_brands.change_brand' }, stage: { state: 'failed', code: 'permission', permission: 'authentik_stages_email.change_emailstage' } } }];
+      await page.goto('/admin/settings?tab=notifications');
+      const sec = page.locator('section[aria-labelledby="ak-sync-h"]');
+      const results = sec.getByTestId('ak-results');
+      await results.scrollIntoViewIfNeeded();
+      const h0 = await results.evaluate((el) => el.getBoundingClientRect().height);
+      await sec.locator('.act button').click();
+      await expect(sec.getByTestId('ak-stage-result').getByRole('link')).toBeVisible();
+      expect(await results.evaluate((el) => el.getBoundingClientRect().height)).toBe(h0);
+      for (const line of await results.locator('p').all()) expect(await line.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(0);
+    });
+  }
+
   test('a 401 asks for the sign-in and repeats the transfer', async ({ page, api }) => {
     mailConfigured(api.settings);
     api.settings.ak.answers = [{ status: 401, body: { error: 'reauth_required' } }];

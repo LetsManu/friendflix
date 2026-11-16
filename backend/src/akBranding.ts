@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { AkUpstreamError } from './akdiag.js';
 import { audit } from './audit.js';
-import { akBrandFor, akPatchBrand, akPatchEmailStage, akRecoveryEmailStage } from './authentik.js';
+import { akBrandFor, akEmailStage, akForgetRecoveryEmailStage, akPatchBrand, akPatchEmailStage, akRecoveryEmailStage } from './authentik.js';
 import { readBrand } from './brand/repo.js';
 import { imageUrls } from './brand/routes.js';
 import { publicOrigin, type Config } from './config.js';
@@ -22,23 +22,34 @@ import { HttpError } from './users.js';
  * The permissions are not in the service account's blueprint (an optional action, least privilege); a refusal names the missing one.
  */
 export type AkPartCode = 'permission' | 'token_invalid' | 'not_found' | 'no_email_stage' | 'unreachable' | 'error';
-export type AkPart = { state: 'done' } | { state: 'skipped'; code: 'nothing_to_send' } | { state: 'failed'; code: AkPartCode; permission?: string };
+/**
+ * `done` of the brand says whether a logo went along (`logo`); `skipped`/`global_settings`: the stage sends with Authentik's global mail
+ * settings, so its own sender would be ignored (only the SMTP transfer, with consent, switches it to its own settings).
+ */
+export type AkPart = { state: 'done'; logo?: boolean } | { state: 'skipped'; code: 'nothing_to_send' | 'global_settings' }
+  | { state: 'failed'; code: AkPartCode; permission?: string };
 
-/** the codenames of the three calls (Django's default permissions of the app labels `authentik_brands` and `authentik_stages_email`) */
+/**
+ * the codenames of the calls (Django's default permissions of the app labels `authentik_brands`, `authentik_stages_email` and
+ * `authentik_flows`); the last three reads are in the service account's blueprint already
+ */
 export const AK_BRANDING_PERMS = {
   brandList: 'authentik_brands.view_brand',
   brandPatch: 'authentik_brands.change_brand',
   stagePatch: 'authentik_stages_email.change_emailstage',
+  stageRead: 'authentik_stages_email.view_emailstage',
+  flowRead: 'authentik_flows.view_flow',
+  bindingsRead: 'authentik_flows.view_flowstagebinding',
 } as const;
 
 const SMTP_TIMEOUT_S = 10;
 
 const configured = (cfg: Config) => Boolean(cfg.AUTHENTIK_URL && cfg.AUTHENTIK_API_TOKEN);
 
-/** the host of OIDC_ISSUER (where Authentik shows its sign-in page), null for an unusable issuer */
+/** the Host a browser sends to OIDC_ISSUER (a non-default port included; Authentik picks its brand by it), null for an unusable issuer */
 function issuerHost(cfg: Config): string | null {
   try {
-    return new URL(cfg.OIDC_ISSUER).hostname || null;
+    return new URL(cfg.OIDC_ISSUER).host.toLowerCase() || null;
   } catch {
     return null;
   }
@@ -99,7 +110,7 @@ async function syncBrand(ctx: Ctx): Promise<AkPart> {
   } catch (e) {
     return failedPart(e, AK_BRANDING_PERMS.brandPatch);
   }
-  return { state: 'done' };
+  return { state: 'done', logo: Boolean(logoUrl) };
 }
 
 /**
@@ -126,21 +137,43 @@ function stageBody(cfg: Config, smtp: boolean): Record<string, unknown> {
   return body;
 }
 
+/** the permission of the flow read that failed (its endpoint), none for anything else */
+function flowReadPerm(e: unknown): string | undefined {
+  const ep = e instanceof AkUpstreamError ? e.failure.endpoint : '';
+  return ep.startsWith('api/v3/flows/bindings/') ? AK_BRANDING_PERMS.bindingsRead : ep.startsWith('api/v3/flows/instances/') ? AK_BRANDING_PERMS.flowRead : undefined;
+}
+
+const notFound = (e: unknown) => e instanceof AkUpstreamError && e.failure.cls === 'not_found';
+
+/**
+ * Without consent the stage is read first: on Authentik's global settings its own sender would be ignored, so nothing is written and the
+ * part says so. A stage pk Authentik answers 404 for (a cached flow read naming a deleted stage) drops the cache, and the stage is
+ * looked up once more.
+ */
 async function syncStage(ctx: Ctx, smtp: boolean): Promise<AkPart> {
   const body = stageBody(ctx.cfg, smtp);
   if (!Object.keys(body).length) return { state: 'skipped', code: 'nothing_to_send' };
-  let pk: string;
-  try {
-    pk = await akRecoveryEmailStage(ctx);
-  } catch (e) {
-    return failedPart(e);
+  for (let attempt = 0; ; attempt++) {
+    let pk: string;
+    try {
+      pk = await akRecoveryEmailStage(ctx);
+    } catch (e) {
+      return failedPart(e, flowReadPerm(e));
+    }
+    let perm: string = AK_BRANDING_PERMS.stageRead;
+    try {
+      if (!smtp && (await akEmailStage(ctx, pk)).useGlobalSettings) return { state: 'skipped', code: 'global_settings' };
+      perm = AK_BRANDING_PERMS.stagePatch;
+      await akPatchEmailStage(ctx, pk, body);
+      return { state: 'done' };
+    } catch (e) {
+      if (attempt === 0 && notFound(e)) {
+        await akForgetRecoveryEmailStage(ctx);
+        continue;
+      }
+      return failedPart(e, perm);
+    }
   }
-  try {
-    await akPatchEmailStage(ctx, pk, body);
-  } catch (e) {
-    return failedPart(e, AK_BRANDING_PERMS.stagePatch);
-  }
-  return { state: 'done' };
 }
 
 /** the brand first, then the stage; each part reports on its own */

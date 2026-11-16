@@ -126,4 +126,23 @@ test.describe('admin: settings (phone)', () => {
     expect(await results()).toBe(roomBefore);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
+
+  // the reserved room holds the longest result lines (both parts refused, the longest codename, the guide link) in every locale
+  for (const loc of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
+    test(`Authentik card, ${loc}: the longest results fit their reserved room`, async ({ page, api }) => {
+      await page.addInitScript((l) => { try { localStorage.setItem('ff-locale', l); } catch { /* blocked storage */ } }, loc);
+      mailConfigured(api.settings);
+      api.settings.ak.answers = [{ status: 200, body: { brand: { state: 'failed', code: 'permission', permission: 'authentik_brands.change_brand' }, stage: { state: 'failed', code: 'permission', permission: 'authentik_stages_email.change_emailstage' } } }];
+      await page.goto('/admin/settings?tab=notifications');
+      const ak = page.locator('section[aria-labelledby="ak-sync-h"]');
+      const results = ak.getByTestId('ak-results');
+      await results.scrollIntoViewIfNeeded();
+      const h0 = await results.evaluate((el) => el.getBoundingClientRect().height);
+      await ak.locator('.act button').tap();
+      await expect(ak.getByTestId('ak-stage-result').getByRole('link')).toBeVisible();
+      expect(await results.evaluate((el) => el.getBoundingClientRect().height)).toBe(h0);
+      for (const line of await results.locator('p').all()) expect(await line.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(0);
+      await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+    });
+  }
 });

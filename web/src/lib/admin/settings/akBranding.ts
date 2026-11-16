@@ -13,7 +13,9 @@ import { docsHref } from '../syscheck';
 import type { ResultTone, Translate } from './mail';
 
 export type AkPartCode = 'permission' | 'token_invalid' | 'not_found' | 'no_email_stage' | 'unreachable' | 'error';
-export type AkPart = { state: 'done' } | { state: 'skipped'; code: 'nothing_to_send' } | { state: 'failed'; code: AkPartCode; permission?: string };
+/** the brand's `done` says whether a logo went along; `global_settings`: the stage sends with Authentik's global mail settings */
+export type AkPart = { state: 'done'; logo?: boolean } | { state: 'skipped'; code: 'nothing_to_send' | 'global_settings' }
+  | { state: 'failed'; code: AkPartCode; permission?: string };
 export interface AkSyncResult { brand: AkPart; stage: AkPart }
 export interface AkBranding {
   /** the Authentik API is configured (else the card stays hidden) */
@@ -52,8 +54,11 @@ const codeKey = (code: string) => (CODE.test(code) && code !== 'permission' && h
 
 /** one result line: done (ok), skipped (warn), failed (err, the part's name, the reason and a refused call's permission) */
 export function partText(part: 'brand' | 'stage', r: AkPart, smtp: boolean, tr: Translate): { tone: ResultTone; text: string } {
-  if (r.state === 'done') return { tone: 'ok', text: tr(part === 'brand' ? `${K}.brandDone` : smtp ? `${K}.stageSmtpDone` : `${K}.stageDone`) };
-  if (r.state === 'skipped') return { tone: 'warn', text: tr(`${K}.stageSkipped`) };
+  if (r.state === 'done') {
+    const key = part === 'brand' ? (r.logo === false ? 'brandDoneName' : 'brandDone') : smtp ? 'stageSmtpDone' : 'stageDone';
+    return { tone: 'ok', text: tr(`${K}.${key}`) };
+  }
+  if (r.state === 'skipped') return { tone: 'warn', text: tr(r.code === 'global_settings' ? `${K}.stageSkippedGlobal` : `${K}.stageSkipped`) };
   const reason = r.code === 'permission'
     ? r.permission && PERM.test(r.permission) ? tr(`${K}.code.permission`, { permission: r.permission }) : tr(`${K}.code.permissionAny`)
     : tr(codeKey(r.code));
@@ -62,12 +67,15 @@ export function partText(part: 'brand' | 'stage', r: AkPart, smtp: boolean, tr: 
 
 const ROUTE_ERRORS: Record<string, ResultTone> = { reauth_required: 'warn', mail_not_configured: 'warn', authentik_unavailable: 'warn', rate_limited: 'warn', forbidden: 'err' };
 
-/** the line for a transfer that did not run (refused by the route, a sign-in given up, offline) */
+/**
+ * the line for a transfer that did not run (refused by the route, a sign-in given up, offline); only the `forbidden` code reads as a
+ * question of rights: another 403 (an expired tab token, `csrf`) is the generic "try again"
+ */
 export function syncErrorText(e: unknown, tr: Translate): { tone: ResultTone; text: string } {
   let code = 'failed';
   if (e instanceof ApiError) {
     const c = (e.body as { error?: unknown } | null)?.error;
-    code = typeof c === 'string' && Object.prototype.hasOwnProperty.call(ROUTE_ERRORS, c) ? c : e.status === 429 ? 'rate_limited' : e.status === 403 ? 'forbidden' : 'failed';
+    code = typeof c === 'string' && Object.prototype.hasOwnProperty.call(ROUTE_ERRORS, c) ? c : e.status === 429 ? 'rate_limited' : 'failed';
   }
   return { tone: ROUTE_ERRORS[code] ?? 'err', text: tr(`${K}.error.${code}`) };
 }

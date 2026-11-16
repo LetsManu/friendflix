@@ -97,7 +97,7 @@
   .act { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem; min-width: 0; }
   .results { display: grid; gap: .4rem; min-width: 0; }
   /* border-box (app.css): the padding is inside the reserved height, so a tone never changes it */
-  .line { margin: 0; min-height: calc(2.9em + .9rem); padding: .45rem .6rem; line-height: 1.45; font-size: .92rem; overflow-wrap: anywhere; border-radius: 6px; }
+  .line { margin: 0; min-height: calc(4.35em + .9rem); padding: .45rem .6rem; line-height: 1.45; font-size: .92rem; overflow-wrap: anywhere; border-radius: 6px; }
   .line.ok { background: var(--wash-ok); color: var(--ok); }
   .line.warn { background: var(--wash-warn); color: var(--fg); }
   .line.err { background: var(--wash-err); color: var(--fg); }
