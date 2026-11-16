@@ -60,6 +60,13 @@ describe('placeMenu', () => {
   it('a menu wider than the window sits at the margin', () => {
     expect(placeMenu(t(10, 10), { w: 500, h: 100 }, { w: 400, h: 800 }).left).toBe(8);
   });
+  it('a kept side never flips: a grown menu near the bottom stays below, capped, and an up menu keeps its bottom edge', () => {
+    const down = placeMenu(t(1300, 600), { w: 264, h: 400 }, big, { side: 'down' });
+    expect(down).toMatchObject({ up: false, top: 650, maxHeight: 242 });
+    const up = placeMenu(t(1300, 100), { w: 264, h: 600 }, big, { side: 'up' });
+    expect(up).toMatchObject({ up: true, top: 8, maxHeight: 86 });
+    expect(placeMenu(t(1300, 800), size, big, { side: 'up' })).toEqual(placeMenu(t(1300, 800), size, big));
+  });
   it('whole pixels', () => {
     const p = placeMenu({ left: 100.4, right: 144.6, top: 50.3, bottom: 94.7, width: 44.2 }, size, big);
     for (const v of [p.left, p.top, p.maxHeight]) expect(Number.isInteger(v)).toBe(true);

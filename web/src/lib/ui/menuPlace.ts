@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { anchorMoved, MENU_MARGIN, menuPlaceStyle, placeMenu } from '#lib/popover';
+import { anchorMoved, MENU_MARGIN, placeMenu } from '#lib/popover';
 
 export interface MenuPlaceOpts {
   /** the menu's button; null / undefined: the action does nothing (e.g. the same element as a phone sheet) */
@@ -16,7 +16,8 @@ export interface MenuPlaceOpts {
 /**
  * Svelte action for a `position: fixed` desktop menu: on mount it measures the menu's own size and places it next to its button
  * inside the window (`placeMenu`), synchronously, before the intro transition reads the box; it places again when the window
- * resizes or the menu's size changes (content loaded). A scroll outside the menu that moves the button more than 2 px calls
+ * resizes or the menu's size changes (content loaded), on the side it opened on (it never flips while open: the height is capped
+ * and the box shifts instead). A scroll outside the menu that moves the button more than 2 px calls
  * `onMoved` (the menu does not follow its button through the page).
  *   <div class="pop gm frost frost-menu" use:menuPlace={{ trigger: btn, up, onMoved: () => close(false) }}>
  */
@@ -24,6 +25,7 @@ export function menuPlace(node: HTMLElement, opts: MenuPlaceOpts) {
   let o = opts;
   let anchor: { left: number; top: number } | null = null;
   let vw = 0, vh = 0;
+  let side: 'up' | 'down' | undefined; // the side chosen at open: a later re-placement keeps it (no flip under the pointer)
 
   function place() {
     const t = o.trigger;
@@ -32,9 +34,12 @@ export function menuPlace(node: HTMLElement, opts: MenuPlaceOpts) {
     anchor = { left: r.left, top: r.top };
     vw = window.innerWidth; vh = window.innerHeight;
     if (o.wide) node.style.minWidth = `${Math.round(Math.min(r.width, vw - 2 * MENU_MARGIN))}px`;
-    node.style.maxHeight = ''; // its natural height
-    const p = placeMenu(r, { w: node.offsetWidth, h: node.offsetHeight }, { w: vw, h: vh }, { up: o.up });
-    node.style.cssText += menuPlaceStyle(p);
+    node.style.removeProperty('max-height'); // its natural height
+    const p = placeMenu(r, { w: node.offsetWidth, h: node.offsetHeight }, { w: vw, h: vh }, { up: o.up, side });
+    side = p.up ? 'up' : 'down';
+    node.style.setProperty('left', `${p.left}px`);
+    node.style.setProperty('top', `${p.top}px`);
+    node.style.setProperty('max-height', `${p.maxHeight}px`);
   }
   function onScroll(e: Event) {
     if (!anchor || !o.trigger) return;

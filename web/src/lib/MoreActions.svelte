@@ -26,7 +26,7 @@
   import { createEventDispatcher, getContext, onDestroy, setContext, tick } from 'svelte';
   import Icon from '#lib/Icon.svelte';
   import { menuGroups } from '#lib/ui/menuGroups';
-  import { menuMove, moveIndex } from '#lib/ui/menuKeys';
+  import { menuMove, moveIndex, ownsArrowKeys } from '#lib/ui/menuKeys';
   import { menuPlace } from '#lib/ui/menuPlace';
   import { openPopup, POPUP_CTX, type PopupHandle } from '#lib/ui/popups';
   import { holdBillboard } from '#lib/preview';
@@ -124,13 +124,11 @@
     } else {
       // Arrow keys, Home and End move through the rows (wrapping); a text field keeps them for its caret
       const move = menuMove(e.key);
-      if (!move || e.altKey || e.ctrlKey || e.metaKey || typing(document.activeElement)) return;
+      if (!move || e.altKey || e.ctrlKey || e.metaKey || ownsArrowKeys(document.activeElement)) return;
       e.preventDefault();
       items[moveIndex(move, i, items.length)]!.focus();
     }
   }
-  const typing = (el: Element | null): boolean =>
-    el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file'].includes(el.type));
   function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
   if (typeof document !== 'undefined') document.addEventListener('pointerdown', onDoc, true);
   onDestroy(() => { if (typeof document !== 'undefined') document.removeEventListener('pointerdown', onDoc, true); release?.(); popup?.release(); popup = null; });

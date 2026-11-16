@@ -28,12 +28,15 @@ export const MENU_MARGIN = 8;
 export const MENU_GAP = 6;
 export interface MenuPlace { left: number; top: number; maxHeight: number; up: boolean }
 
-/** Placement for a desktop menu next to its trigger: inside the window, flipping above when below is too tight. */
+/**
+ * Placement for a desktop menu next to its trigger: inside the window, flipping above when below is too tight. `side` keeps the
+ * side an open menu already has (a re-placement after its content or the window changed size): no flip, the height is capped.
+ */
 export function placeMenu(
   trigger: Box,
   size: { w: number; h: number },
   vp: { w: number; h: number },
-  o: { up?: boolean; align?: 'start' | 'end' } = {},
+  o: { up?: boolean; align?: 'start' | 'end'; side?: 'up' | 'down' } = {},
 ): MenuPlace {
   const align = o.align ?? ((trigger.left + trigger.right) / 2 > vp.w / 2 ? 'end' : 'start');
   let left = align === 'end' ? trigger.right - size.w : trigger.left;
@@ -41,7 +44,7 @@ export function placeMenu(
   left = size.w > vp.w - 2 * MENU_MARGIN ? MENU_MARGIN : Math.max(MENU_MARGIN, Math.min(left, max));
   const below = vp.h - trigger.bottom - MENU_GAP - MENU_MARGIN;
   const above = trigger.top - MENU_GAP - MENU_MARGIN;
-  const up = o.up ? above >= size.h || above >= below : below < size.h && above > below;
+  const up = o.side ? o.side === 'up' : o.up ? above >= size.h || above >= below : below < size.h && above > below;
   const top = up ? trigger.top - MENU_GAP - Math.min(size.h, above) : trigger.bottom + MENU_GAP;
   const maxHeight = up ? above : below;
   return { left: Math.round(left), top: Math.round(top), maxHeight: Math.round(maxHeight), up };
