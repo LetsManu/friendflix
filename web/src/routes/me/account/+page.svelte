@@ -4,7 +4,7 @@
   /** /me/account (owner profile only): profile, security (2FA state), sessions & devices, e-mails, your data (export), delete the account, and the privacy note. */
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api, ApiError, type Account } from '#lib/api';
+  import { api, ApiError, type Account, type AccountSecurity, type Me, type OwnDevice } from '#lib/api';
   import DataCard from '#lib/account/DataCard.svelte';
   import { clearPending } from '#lib/admin/settings/form';
   import DeleteCard from '#lib/account/DeleteCard.svelte';
@@ -18,15 +18,26 @@
   import { reducedMotion } from '#lib/ui/motion';
 
   let account: Account | null = null, mail: MailState | null = null, phase: 'loading' | 'ok' | 'owner' | 'error' = 'loading', reauthFailed = false;
+  /** the lists of the sessions and security cards, read with the account so those cards render whole (null = could not be read) */
+  let devices: OwnDevice[] | null = null, sec: AccountSecurity | null = null, isAdmin = false;
 
   async function load() {
     phase = 'loading';
     // both at once; the cards appear together once both answered (nothing pops in). The switches are account level like the account:
     // a kids profile's 403 shows only the hint, whatever the switches answered. Their failure only greys out the E-Mails card.
+    // The sessions list, the security state and the admin flag are read right after it, before the cards show, for the same reason: a card that fills in
+    // late changes its height and pushes every card below it (about 385 px on a phone). Their failure is shown by the card itself.
     const switches = loadMailPrefs().catch(() => null);
     try {
       account = await api<Account>('/api/account');
       mail = await switches;
+      // only after the account answered: a kids profile (403) never asks for the device list
+      const lists = Promise.all([
+        api<{ devices: OwnDevice[] }>('/api/devices').then((r) => r.devices).catch(() => null),
+        api<AccountSecurity>('/api/account/security').catch(() => null),
+        api<Me>('/api/me').then((m) => Boolean(m.isAdmin && m.profile?.isOwner)).catch(() => false),
+      ]);
+      [devices, sec, isAdmin] = await lists;
       phase = 'ok';
     }
     catch (e) { phase = e instanceof ApiError && e.status === 403 ? 'owner' : 'error'; }
@@ -77,8 +88,8 @@
   {:else}
     <div class="grid">
       <ProfileCard {account} on:saved={(e) => saved(e.detail)} />
-      <SecurityCard {account} on:changed={refresh} />
-      <div class="wide"><SessionsCard /></div>
+      <SecurityCard {account} initial={sec} {isAdmin} on:changed={refresh} />
+      <div class="wide"><SessionsCard initial={devices} /></div>
       <MailCard {account} {mail} />
       <DataCard />
       <DeleteCard {account} />

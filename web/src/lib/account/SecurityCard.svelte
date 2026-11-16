@@ -7,8 +7,8 @@
    * flow); removing a device or changing the username asks the backend first and, on 401 `reauth_required`, asks for the sign-in in
    * place (lib/account/reauth.ts `reauthenticate`, the classic redirect only without the in-app sign-in), then repeats it once.
    */
-  import { onMount, tick } from 'svelte';
-  import { api, ApiError, type Account, type AccountSecurity, type Me } from '#lib/api';
+  import { tick } from 'svelte';
+  import { api, ApiError, type Account, type AccountSecurity } from '#lib/api';
   import { isReauthError, reauthenticate } from './reauth';
   import EmailChange from './EmailChange.svelte';
   import ReauthDialog from '#lib/auth/ReauthDialog.svelte';
@@ -22,11 +22,14 @@
   import { createEventDispatcher } from 'svelte';
 
   export let account: Account;
+  /** the security state and the admin flag as the page read them with the account (null = not readable): no row fills in late and moves the cards below */
+  export let initial: AccountSecurity | null;
+  export let isAdmin: boolean;
 
   type Device = AccountSecurity['devices'][number];
   const dispatch = createEventDispatcher<{ changed: void }>();
-  let sec: AccountSecurity | null = null;
-  let failed = false, isAdmin = false, err = '';
+  let sec: AccountSecurity | null = initial;
+  let failed = initial === null, err = '';
   let dialog: { then?: ThenKind; opener?: HTMLElement } | null = null;
   /** where the classic re-authentication comes back to */
   const NEXT = '/me/account';
@@ -52,10 +55,6 @@
     try { sec = await api<AccountSecurity>('/api/account/security'); failed = false; }
     catch { failed = true; }
   }
-  onMount(() => {
-    void load();
-    api<Me>('/api/me').then((m) => { isAdmin = Boolean(m.isAdmin && m.profile?.isOwner); }).catch(() => undefined);
-  });
 
   function open(then: ThenKind | undefined, e?: Event) {
     err = '';

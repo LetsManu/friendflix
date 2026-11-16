@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
-import { noHorizontalOverflow } from '../helpers.js';
+import { cardTopsRecorded, noHorizontalOverflow, recordCardTops } from '../helpers.js';
 import { ME } from '../mocks/fixtures.js';
 import { done, installLogin, loginState, password } from '../mocks/login.js';
 
@@ -493,4 +493,23 @@ test.describe('account deletion refused', () => {
     await expect(page).toHaveURL(/\/me\/account$/);
     expect(reauth).toBe(0);
   });
+});
+
+test('nothing below the sessions card jumps while the lists fill in (slow sessions and security answers)', async ({ page }) => {
+  const slow = (glob: string) => page.route(glob, async (r) => { if (r.request().method() === 'GET') await new Promise((f) => setTimeout(f, 700)); await r.fallback(); });
+  await slow('**/api/devices');
+  await slow('**/api/account/security');
+  const ids = ['acc-profile', 'acc-security', 'acc-sessions', 'acc-mail', 'acc-data', 'acc-delete'];
+  await recordCardTops(page, ids);
+  await page.goto('/me/account');
+  const sessions = page.getByRole('region', { name: 'Sitzungen & Geräte' });
+  await expect(sessions.getByRole('listitem')).toHaveCount(2);
+  await expect(page.getByRole('region', { name: 'Sicherheit' }).getByText('Pixel 8')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { frames: number }).frames), { timeout: 8000 }).toBe(240);
+  const tops = await cardTopsRecorded(page);
+  for (const id of ids.filter((i) => tops[i])) {
+    const seen = tops[id]!;
+    expect(Math.max(...seen) - Math.min(...seen), `${id} moved`).toBeLessThanOrEqual(1);
+  }
+  expect(tops['acc-mail']!.length).toBeGreaterThan(5);
 });

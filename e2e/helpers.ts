@@ -215,3 +215,25 @@ export async function dialogActs(dlg: Locator): Promise<{
   }
   return { names, row: (await acts.boundingBox())!, btns: boxes };
 }
+
+/**
+ * Layout-jump probe for /me/account: from the first frame a card heading exists, every animation frame records the top of each
+ * card heading (page coordinates). Call before `goto`; read with `cardTopsRecorded`. Nothing may move once a card is on screen.
+ */
+export async function recordCardTops(page: import('@playwright/test').Page, ids: string[]): Promise<void> {
+  await page.addInitScript((list) => {
+    const w = window as unknown as { cardTops: Record<string, number[]>; frames: number };
+    w.cardTops = {}; w.frames = 0;
+    const tick = () => {
+      for (const id of list) {
+        const el = document.getElementById(id);
+        if (el) (w.cardTops[id] ??= []).push(Math.round((el.getBoundingClientRect().top + scrollY) * 10) / 10);
+      }
+      w.frames++;
+      if (w.frames < 240) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, ids);
+}
+export const cardTopsRecorded = (page: import('@playwright/test').Page) =>
+  page.evaluate(() => (window as unknown as { cardTops: Record<string, number[]> }).cardTops);
