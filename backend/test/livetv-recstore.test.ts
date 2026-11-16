@@ -13,6 +13,7 @@ import { effectiveStorage, getRecording } from '../src/livetv/recordings.js';
 import { insertScheduled, livetvRecordTick } from '../src/livetv/recsched.js';
 import { exportToLibrary, livetvStoreTick, spaceTick, stamp, usage } from '../src/livetv/recstore.js';
 import { invalidateLivetvRights } from '../src/livetv/rights.js';
+import { setMailPref } from '../src/mail/people.js';
 import { resolveRecToken } from '../src/livetv/tokens.js';
 import { invalidateLiveConversions, invalidateRecordingUses } from '../src/livetv/streams.js';
 import type { MediaAdmin } from '../src/media/types.js';
@@ -152,7 +153,30 @@ describe('space and retention (spec §15.5)', () => {
     await spaceTick(env.ctx, now);
     await spaceTick(env.ctx, now + HOUR);
     expect(await notices('livetv.rec.deleting')).toHaveLength(1);
-    expect((await env.pool.query('select kind, user_id, dedupe from mail_outbox')).rows).toEqual([{ kind: 'recording', user_id: annaId, dedupe: `n:ltvrec-deleting-${a}` }]);
+    expect((await env.pool.query("select kind, user_id, dedupe from mail_outbox where kind <> 'storage'")).rows).toEqual([{ kind: 'recording', user_id: annaId, dedupe: `n:ltvrec-deleting-${a}` }]);
+  });
+
+  // Mail stage C, Task 3: the admins' storage notice is also a mail of the admin type `storage`, for each admin with the switch on.
+  it('storage notice mails the admins with the switch on', async () => {
+    env.ctx.cfg = { ...cfg, LIVETV_RECORD_LIMIT_GB: 1, MAIL_SMTP_HOST: 'mail.example.com', MAIL_FROM: 'kino@friend.example.com' };
+    await env.pool.query('delete from mail_outbox');
+    const carla = randomUUID();
+    await env.pool.query(
+      `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values ($1, 'carla', 'carla@friend.example.com', 'Carla Muster', 'admin', $2, 'carla', $3)`,
+      [carla, 'c'.repeat(32), encrypt(key, 'pw')]);
+    try {
+      await setMailPref(env.ctx, carla, 'storage', false);
+      const now = new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00.000Z').getTime();
+      await row({ bytes: 0.6 * GB, start_at: new Date(now - 9 * DAY), end_at: new Date(now - 9 * DAY + HOUR) });
+      await row({ bytes: 0.35 * GB, keep: true, start_at: new Date(now - 8 * DAY), end_at: new Date(now - 8 * DAY + HOUR) });
+      await spaceTick(env.ctx, now);
+      await spaceTick(env.ctx, now + HOUR);
+      expect((await notices('livetv.rec.storage')).map((n) => n.user_id).sort()).toEqual([adminId, carla].sort());
+      const day = new Date(now).toISOString().slice(0, 10);
+      expect((await env.pool.query("select kind, user_id, dedupe from mail_outbox where kind = 'storage'")).rows).toEqual([{ kind: 'storage', user_id: adminId, dedupe: `n:ltvrec-storage-${day}-${adminId}` }]);
+    } finally {
+      await env.pool.query('delete from users where id = $1', [carla]);
+    }
   });
 
   it('keep protects; new recordings then fail storage_full', async () => {

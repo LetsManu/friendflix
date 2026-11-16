@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash } from 'node:crypto';
 import { stat as fsStat, statfs as fsStatfs } from 'node:fs/promises';
+import { diskAlerts } from './adminAlerts.js';
 import { REMOVED_ENV } from './config.js';
 import type { Ctx } from './ctx.js';
 import { probeQuery } from './db.js';
@@ -389,13 +390,18 @@ export async function getSnapshot(ctx: Ctx, opts: { refresh?: boolean } = {}, de
   return s;
 }
 
-/** Background job (every 60 s): rebuild + store; prunes banner dismissals (30 days) and player timings (14 days) once per hour. Never throws. */
+/**
+ * Background job (every 60 s): rebuild + store, then the disk alerts on the new snapshot (adminAlerts.ts); prunes banner dismissals
+ * (30 days) and player timings (14 days) once per hour. Never throws.
+ */
 export async function healthTick(ctx: Ctx, deps?: HealthDeps): Promise<void> {
+  let snap: HealthSnapshot | null = null;
   try {
-    await rebuild(ctx, deps);
+    snap = await rebuild(ctx, deps);
   } catch {
     // a failing build keeps the last snapshot
   }
+  if (snap) await diskAlerts(ctx, snap).catch(() => undefined); // claims given back on failure: the next tick tries again
   try {
     if (await ctx.kv.setnx('health:prune', '1', 3600)) {
       await ctx.db.query("delete from health_dismissals where at < now() - interval '30 days'");

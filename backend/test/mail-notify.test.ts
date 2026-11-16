@@ -185,9 +185,11 @@ describe('every mailed notice has a dedupe key', () => {
     const all = noticeLiterals();
     expect(all.length).toBeGreaterThan(20);
     const mailing = all.filter((n) => /(^|[\s,])mail:/.test(n.top));
-    // wish available, recording failed/partial, series episode, recording done, recording to be deleted, licences expiring
+    // wish available, recording failed/partial, series episode, recording done, recording to be deleted, licences expiring; the admin
+    // alerts (update available, update failed, Portainer redeploy failed, Systemcheck problem, disk full) and both recordings-storage notices
     expect(mailing.map((n) => n.file).sort()).toEqual([
-      'downloadExpiry.ts', 'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recstore.ts', 'routes/seerr.ts',
+      'adminAlerts.ts', 'adminAlerts.ts', 'adminAlerts.ts', 'adminAlerts.ts', 'adminAlerts.ts', 'downloadExpiry.ts',
+      'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recstore.ts', 'livetv/recstore.ts', 'routes/seerr.ts',
     ]);
     for (const n of mailing) expect(n.top, n.file).toMatch(/(^|[\s,])dedupe:/);
   });

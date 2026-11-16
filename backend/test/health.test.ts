@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as adminAlerts from '../src/adminAlerts.js';
 import { encrypt } from '../src/crypto.js';
 import { recordError, resetErrorLogForTests } from '../src/errorlog.js';
 import { buildSnapshot, forgetOidcProbe, getSnapshot, healthSettled, healthTick, issueFp, type DiskDeps, type HealthSnapshot } from '../src/health.js';
@@ -520,6 +521,27 @@ describe('snapshot cache', () => {
     env.ctx.jf.admin.ping = async () => { throw new Error('x'); };
     await expect(healthTick(env.ctx, deps())).resolves.toBeUndefined();
     expect(JSON.parse((await env.kv.get('health:snap'))!).services[0].level).toBe('err');
+  });
+
+  // Mail stage C, Task 3: each snapshot healthTick builds goes to the disk alerts (admin notice + mail `storage`); their failure is no failed tick
+  it('healthTick hands its snapshot to the disk alerts', async () => {
+    for (const k of await env.kv.keys('alerts:')) await env.kv.del(k);
+    await env.pool.query("delete from notifications where kind = 'disk_low'");
+    vols[cfg.PREVIEW_DIR] = { usedPct: 96 };
+    await healthTick(env.ctx, deps());
+    const admins = (await env.pool.query<{ id: string }>("select id from users where role = 'admin' and not disabled")).rows.map((r) => r.id);
+    const n = (await env.pool.query<{ user_id: string; title: string }>("select user_id, title from notifications where kind = 'disk_low'")).rows;
+    expect(n.map((x) => x.user_id).sort()).toEqual([...admins].sort());
+    expect(n[0]!.title).toBe('Speicher voll: Vorschauen zu 96 % belegt');
+    await healthTick(env.ctx, deps()); // a minute later: nothing new
+    expect((await env.pool.query("select 1 from notifications where kind = 'disk_low'")).rowCount).toBe(admins.length);
+    // a throwing disk alert leaves the snapshot stored and the tick quiet
+    vi.spyOn(adminAlerts, 'diskAlerts').mockRejectedValue(new Error('database down'));
+    await env.kv.del('health:snap');
+    await expect(healthTick(env.ctx, deps())).resolves.toBeUndefined();
+    expect(adminAlerts.diskAlerts).toHaveBeenCalledTimes(1);
+    expect(JSON.parse((await env.kv.get('health:snap'))!).disks.find((d: { id: string }) => d.id === 'previews')).toMatchObject({ level: 'err', usedPct: 96 });
+    vi.restoreAllMocks();
   });
 
   it('healthTick prunes dismissals older than 30 days', async () => {

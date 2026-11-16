@@ -180,7 +180,7 @@ export async function spaceTick(ctx: Ctx, now: number = Date.now()): Promise<voi
       }).catch(() => undefined);
     }
     const day = new Date(now).toISOString().slice(0, 10);
-    await notifyAdmins(ctx, { kind: 'livetv.rec.storage', title: m('livetv.rec.storage.title', { used: gb(used), limit: gb(s.limitBytes) }), link: '/admin/livetv', dedupe: `ltvrec-storage-${day}` }).catch(() => 0);
+    await notifyAdmins(ctx, { kind: 'livetv.rec.storage', title: m('livetv.rec.storage.title', { used: gb(used), limit: gb(s.limitBytes) }), link: '/admin/livetv', dedupe: `ltvrec-storage-${day}`, mail: 'storage' }).catch(() => 0);
   }
   // library items the scan has found since their export
   for (const r of (await ctx.db.query<Pick<RecRow, 'id' | 'library_path'>>(
