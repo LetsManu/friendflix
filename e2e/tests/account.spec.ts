@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
-import { noHorizontalOverflow } from '../helpers.js';
+import { cardTopsRecorded, noHorizontalOverflow, recordCardTops } from '../helpers.js';
 import { ME } from '../mocks/fixtures.js';
 import { done, installLogin, loginState, password } from '../mocks/login.js';
 
@@ -493,4 +493,40 @@ test.describe('account deletion refused', () => {
     await expect(page).toHaveURL(/\/me\/account$/);
     expect(reauth).toBe(0);
   });
+});
+
+test('nothing below the sessions card jumps while the lists fill in (slow sessions and security answers)', async ({ page }) => {
+  const slow = (glob: string) => page.route(glob, async (r) => { if (r.request().method() === 'GET') await new Promise((f) => setTimeout(f, 700)); await r.fallback(); });
+  await slow('**/api/devices');
+  await slow('**/api/account/security');
+  const ids = ['acc-profile', 'acc-security', 'acc-sessions', 'acc-mail', 'acc-data', 'acc-delete'];
+  await recordCardTops(page, ids);
+  await page.goto('/me/account');
+  const sessions = page.getByRole('region', { name: 'Sitzungen & Geräte' });
+  await expect(sessions.getByRole('listitem')).toHaveCount(2);
+  await expect(page.getByRole('region', { name: 'Sicherheit' }).getByText('Pixel 8')).toBeVisible();
+  const tops = await cardTopsRecorded(page, ids);
+  for (const id of ids) {
+    const seen = tops[id]!;
+    expect(Math.max(...seen) - Math.min(...seen), `${id} moved`).toBeLessThanOrEqual(1);
+  }
+});
+
+test('the sessions and security reads start right after the account answer, not after the slow mail answer', async ({ page }) => {
+  const order: string[] = [];
+  page.on('request', (r) => { const p = new URL(r.url()).pathname; if (['/api/devices', '/api/account/security'].includes(p)) order.push(p); });
+  await page.route('**/api/account/mail', async (r) => { if (r.request().method() === 'GET') await new Promise((f) => setTimeout(f, 1200)); order.push('mail answered'); await r.fallback(); });
+  await page.goto('/me/account');
+  await expect(page.getByRole('region', { name: 'Sitzungen & Geräte' })).toBeVisible();
+  expect(order.indexOf('/api/devices')).toBeGreaterThanOrEqual(0);
+  expect(order.indexOf('/api/devices')).toBeLessThan(order.indexOf('mail answered'));
+  expect(order.indexOf('/api/account/security')).toBeLessThan(order.indexOf('mail answered'));
+});
+
+test('a hanging sessions read does not hold the page: the card shows its error hint', async ({ page }) => {
+  await page.route('**/api/devices', () => new Promise(() => undefined)); // never answers
+  await page.goto('/me/account');
+  await expect(page.getByRole('status').filter({ hasText: 'Lade' }).first()).toBeAttached();
+  await expect(page.getByRole('region', { name: 'Sitzungen & Geräte' }).getByRole('alert')).toBeVisible({ timeout: 12_000 }); // after the 8 s read timeout
+  await expect(page.getByRole('region', { name: 'E-Mails' })).toBeVisible();
 });

@@ -67,3 +67,73 @@ describe('Authentik mail templates', () => {
     expect(s).toContain('{# ff:brand: the accent colour');
   });
 });
+
+const TXT = FILES.map((f) => f.replace(/\.html$/, '.txt'));
+const transStrings = (s: string) => [...code(s).matchAll(/\{% trans "([^"]*)" %\}/g)].map((m) => m[1]!);
+const blocktrans = (s: string) => [...code(s).matchAll(/\{% blocktrans[^%]*%\}([\s\S]*?)\{% endblocktrans %\}/g)].map((m) => m[1]!.trim());
+
+describe('Authentik plain-text twins', () => {
+  // Authentik renders template_name.replace("html", "txt") for the text part (stages/email/utils.py)
+  it.each(FILES)('%s has a .txt twin with the same name', (f) => {
+    expect(() => read(f.replace(/\.html$/, '.txt'))).not.toThrow();
+  });
+
+  it.each(FILES)('%s twin: balanced blocks, same link and expiry as the HTML, plain text', (f) => {
+    const html = read(f);
+    const txt = read(f.replace(/\.html$/, '.txt'));
+    const t = code(txt);
+    expect(txt).toContain('{% load i18n %}');
+    expect(txt).toContain('{% autoescape off %}');
+    expect(txt.trimEnd().endsWith('{% endautoescape %}')).toBe(true);
+    for (const tag of ['autoescape', 'blocktrans']) {
+      const open = (t.match(new RegExp(`\\{% ${tag}\\b`, 'g')) ?? []).length;
+      const close = (t.match(new RegExp(`\\{% end${tag} %\\}`, 'g')) ?? []).length;
+      expect(open, tag).toBe(close);
+    }
+    const link = HREFS[f][0]!;
+    expect(t.split('\n').map((l) => l.trim())).toContain(link);
+    expect(code(html)).toContain(link);
+    expect(t).toContain('{% blocktrans with expires=expires|timeuntil %}');
+    expect(blocktrans(txt)).toEqual(blocktrans(html));
+    expect(t).not.toMatch(/<[a-z!/]/i);
+    expect(t).not.toContain('&nbsp;');
+    expect(t.trimEnd().replace(/\{% endautoescape %\}$/, '').trimEnd().endsWith('FriendFlix')).toBe(true);
+  });
+
+  it.each(FILES)('%s twin: its trans strings are the HTML ones', (f) => {
+    const htmlStrings = transStrings(read(f));
+    const txt = read(f.replace(/\.html$/, '.txt'));
+    const own = transStrings(txt);
+    expect(own).toHaveLength(2);
+    expect(own[0]).toBe(htmlStrings[0]);
+    // a text mail has no button: the sentence says "link" instead
+    expect(htmlStrings[1]).toContain('button');
+    expect(own[1]).toBe(htmlStrings[1]!.replace('the button below', 'the link below'));
+    expect(txt.toLowerCase()).not.toContain('button');
+  });
+
+  // the address an admin edits in the HTML is in the twin too (else its text part links to the placeholder host)
+  it.each(FILES)('%s twin: first line is the HTML\'s edit marker, and its link is the HTML\'s link', (f) => {
+    const html = read(f);
+    const txt = read(f.replace(/\.html$/, '.txt'));
+    const first = html.split('\n')[0]!;
+    expect(txt.startsWith(first)).toBe(true);
+    const href = [...code(html).matchAll(/href="([^"]*)"/g)].map((x) => x[1]!);
+    expect(href).toHaveLength(1);
+    expect(first).toContain(href[0]!);
+    const links = code(txt).split('\n').map((l) => l.trim()).filter((l) => /^https?:\/\//.test(l) || l.startsWith('{{ url'));
+    expect(links).toEqual(href);
+  });
+
+  it.each(FILES)('%s twin: the name line is marked ff:brand, as in the HTML', (f) => {
+    const marker = '{# ff:brand: the name #}';
+    const htmlLines = read(f).split('\n');
+    expect(htmlLines[htmlLines.indexOf(marker) + 1]).toContain('>FriendFlix<');
+    const lines = read(f.replace(/\.html$/, '.txt')).split('\n');
+    expect(lines[lines.indexOf('FriendFlix') - 1]).toBe(marker);
+  });
+
+  it('ships exactly four twins', () => {
+    expect(TXT).toHaveLength(4);
+  });
+});

@@ -51,6 +51,32 @@ export function policyFromTemplate(t: RoleTemplate, folderIds: string[] | null):
   };
 }
 
+export type LibraryLocations = Array<{ name: string; paths: string[] }>;
+/** how long libraryLocations() keeps the library folders (a new library is also picked up by forgetLibraryLocations()) */
+export const LIBRARY_LOCATIONS_TTL_MS = 5 * 60_000;
+
+/** The library whose folder holds `path` (an item's Path, file or folder); with nested folders the deepest wins. null when none does.
+ * A folder matches itself and what lies below it ('/' or '\\' after it), never a sibling that only shares the prefix. A Windows folder
+ * (drive letter or \\server) matches without regard to case or the kind of slash, as its file system does; a POSIX one exactly. */
+export function libraryOfPath(path: unknown, libs: LibraryLocations): string | null {
+  if (typeof path !== 'string' || !path) return null;
+  let best: { name: string; len: number } | null = null;
+  for (const lib of libs) {
+    for (const raw of lib.paths) {
+      const win = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(raw);
+      // a Windows folder may be entered with / while Jellyfin's item paths use \ (or the other way): both sides to \ and lower case
+      const norm = (x: string) => (win ? x.toLowerCase().replace(/\//g, '\\') : x);
+      const dir = norm(raw).replace(/[\\/]+$/, '');
+      const p = norm(path);
+      if (!raw || (p !== dir && !(p.startsWith(dir) && (p[dir.length] === '/' || p[dir.length] === '\\')))) continue;
+      if (!best || dir.length > best.len) best = { name: lib.name, len: dir.length };
+    }
+  }
+  return best?.name ?? null;
+}
+
+export type LibraryFolder = { id: string | null; name: string; paths: string[] };
+
 /** Low-level Jellyfin client: admin-key calls plus raw user-token calls. Never used by browsers. */
 export class JellyfinClient {
   constructor(
@@ -148,7 +174,7 @@ export class JellyfinClient {
    */
   async searchItems(term: string, limit: number): Promise<Array<Record<string, any>>> {
     const p = new URLSearchParams({
-      searchTerm: term, Recursive: 'true', IncludeItemTypes: 'Movie,Series', Limit: String(limit), Fields: 'OfficialRating,ProductionYear',
+      searchTerm: term, Recursive: 'true', IncludeItemTypes: 'Movie,Series', Limit: String(limit), Fields: 'OfficialRating,ProductionYear,Path',
       EnableImages: 'false', EnableUserData: 'false', EnableTotalRecordCount: 'false',
     });
     const res = await this.adminFetch(`/Items?${p}`);
@@ -162,7 +188,7 @@ export class JellyfinClient {
   /** One item by id in any library (admin key, no user), for the admin's title check; null when the server does not know it. */
   async itemById(id: string): Promise<Record<string, any> | null> {
     const p = new URLSearchParams({
-      ids: id, Recursive: 'true', Fields: 'OfficialRating,ProductionYear', EnableImages: 'false', EnableUserData: 'false', EnableTotalRecordCount: 'false', Limit: '1',
+      ids: id, Recursive: 'true', Fields: 'OfficialRating,ProductionYear,Path', EnableImages: 'false', EnableUserData: 'false', EnableTotalRecordCount: 'false', Limit: '1',
     });
     const res = await this.adminFetch(`/Items?${p}`);
     if (!res.ok) {
@@ -179,19 +205,53 @@ export class JellyfinClient {
     return r.Items as Array<Record<string, any>>;
   }
 
-  /** The library (CollectionFolder) an item lives in, from its ancestors (admin key); null when there is none or it cannot be read. */
-  async libraryOf(id: string): Promise<string | null> {
-    if (!/^[0-9a-f]{32}$/.test(id)) return null;
-    const res = await this.adminFetch(`/Items/${id}/Ancestors`);
-    if (!res.ok) {
-      await res.body?.cancel().catch(() => undefined);
-      return null;
-    }
-    const list = (await res.json().catch(() => null)) as unknown;
-    if (!Array.isArray(list)) return null;
-    const lib = list.find((a) => a && typeof a === 'object' && (a as { Type?: unknown }).Type === 'CollectionFolder') as { Name?: unknown } | undefined;
-    return typeof lib?.Name === 'string' ? lib.Name : null;
+  /** `/Library/VirtualFolders` as each library's name and folders, kept LIBRARY_LOCATIONS_TTL_MS (a failed read is not kept). For the admin's
+   * title check: Jellyfin names no library among an item's ancestors when asked with the admin key and no userId (12.4, 10.x and Ferrofin
+   * answer the physical folder and the AggregateFolder "root"), so the item's Path is matched against these folders instead. */
+  libraryLocations(): Promise<LibraryLocations> {
+    const now = Date.now();
+    if (this.locations && this.locations.exp > now) return this.locations.p;
+    const p = this.adminJson<unknown>('/Library/VirtualFolders').then((list) => (Array.isArray(list) ? list : []).flatMap((f: { Name?: unknown; Locations?: unknown }) => (
+      f && typeof f.Name === 'string'
+        ? [{ name: f.Name, paths: Array.isArray(f.Locations) ? f.Locations.filter((x): x is string => typeof x === 'string') : [] }]
+        : [])));
+    const entry = { exp: now + LIBRARY_LOCATIONS_TTL_MS, p };
+    this.locations = entry;
+    p.catch(() => { if (this.locations === entry) this.locations = null; });
+    return p;
   }
+
+  /**
+   * `/Library/VirtualFolders` with each library's id. ItemId as the server answers it, except where a real Jellyfin 12.4 gets it wrong:
+   * null after a restart (for every library that was there before), and for two libraries whose names differ only in case ("Filme",
+   * "filme") the id of the other one. Those take the id of the one CollectionFolder of exactly that name in `/Library/MediaFolders` (asked
+   * only then; it also lists the ManualPlaylistsFolder "Playlists", which is no library). None, several or a failed read: id null.
+   */
+  async libraryFolders(): Promise<LibraryFolder[]> {
+    const list = await this.adminJson<unknown>('/Library/VirtualFolders');
+    const vfs = (Array.isArray(list) ? list : []).flatMap((f: { Name?: unknown; ItemId?: unknown; Locations?: unknown }) => (f && typeof f.Name === 'string'
+      ? [{ name: f.Name, itemId: typeof f.ItemId === 'string' && f.ItemId ? f.ItemId : null, paths: Array.isArray(f.Locations) ? f.Locations.filter((x): x is string => typeof x === 'string') : [] }]
+      : []));
+    const folded = new Map<string, number>();
+    for (const v of vfs) folded.set(v.name.toLowerCase(), (folded.get(v.name.toLowerCase()) ?? 0) + 1);
+    const byName = (v: { name: string; itemId: string | null }) => !v.itemId || folded.get(v.name.toLowerCase())! > 1;
+    const ids = new Map<string, string | null>();
+    if (vfs.some(byName)) {
+      const r = await this.adminJson<{ Items?: unknown }>('/Library/MediaFolders').catch(() => null);
+      for (const m of (Array.isArray(r?.Items) ? r.Items : []) as Array<{ Name?: unknown; Id?: unknown; Type?: unknown }>) {
+        if (!m || typeof m.Name !== 'string' || typeof m.Id !== 'string' || !m.Id || (m.Type !== undefined && m.Type !== 'CollectionFolder')) continue;
+        ids.set(m.Name, ids.has(m.Name) ? null : m.Id);
+      }
+    }
+    return vfs.map((v) => ({ id: byName(v) ? (ids.get(v.name) ?? null) : v.itemId, name: v.name, paths: v.paths }));
+  }
+
+  /** a library was added or changed: the next libraryLocations() reads them afresh */
+  forgetLibraryLocations() {
+    this.locations = null;
+  }
+
+  private locations: { exp: number; p: Promise<LibraryLocations> } | null = null;
 
   sessions() {
     return this.adminJson<Array<Record<string, any>>>('/Sessions?activeWithinSeconds=15');

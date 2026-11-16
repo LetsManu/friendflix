@@ -1,0 +1,10 @@
+{# FriendFlix: the link is Authentik's own ({{ url }}); edit the name and colour lines marked ff:brand if you like #}{# FriendFlix: plain-text twin of friendflix-reset.html. Authentik renders the file with the same name and a .txt ending as the text part of the mail; mount both files. #}{# SPDX-FileCopyrightText: 2026 Manuel Weißböck #}{# SPDX-License-Identifier: AGPL-3.0-or-later #}{% load i18n %}{% autoescape off %}{% trans "Reset your password" %}
+
+{% trans "Use the link below to choose a new password for your FriendFlix account." %}
+
+{{ url }}
+
+{% blocktrans with expires=expires|timeuntil %}If you did not ask for this, ignore this e-mail. The link is valid for {{ expires }}.{% endblocktrans %}
+{# ff:brand: the name #}
+FriendFlix
+{% endautoescape %}

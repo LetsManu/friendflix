@@ -56,6 +56,20 @@ export function isOperational(ctx: Pick<Ctx, 'db' | 'settings' | 'cfg'>): boolea
   return Boolean(c?.complete) && missingRunRequired(ctx.cfg).length === 0;
 }
 
+/**
+ * Edge trigger for the jobs that run "once after start" and then on a long interval (language and quality index): the returned check runs
+ * `fn` when `isOp` turns true (also on the first check when it already is), never twice in a row. server.ts calls it at start and every
+ * 5 s, so completing setup (or restoring a run-required setting) starts those jobs within seconds instead of on their next 30 min tick.
+ */
+export function onOperational(isOp: () => boolean, fn: () => void): () => void {
+  let was = false;
+  return () => {
+    const now = isOp();
+    if (now && !was) fn();
+    was = now;
+  };
+}
+
 /** where a sign-in during setup goes when its setup session is gone: the wizard's code step with the "session expired" note */
 export const SETUP_EXPIRED = '/setup?expired=1';
 /** the first admin's sign-in was refused as stale (the IdP did not ask for the login again); the setup session is still valid */

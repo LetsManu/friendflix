@@ -7,13 +7,13 @@ import type {
   MediaEvent, PersonDto, PlaybackDto, PlaybackReport, SegmentType, TrackList,
 } from '../media/types.js';
 import type { JfUser } from '../types.js';
-import { JellyfinClient, JellyfinError, mediaBrowserHeader, policyFromTemplate } from './client.js';
+import { JellyfinClient, JellyfinError, libraryOfPath, mediaBrowserHeader, policyFromTemplate } from './client.js';
 import { jellyfinWebhookEvents } from './webhook.js';
 import { bestTraits, isTextSubtitle, maxWidthFor, toDownloadSource, toItemDto, toMediaTraits, sourceFacts, toPlaybackDto, toTrickplayDto, type DownloadQuality, type DownloadSourceDto } from './dto.js';
 import { toChapters, toCredits, toItemAbout, toProviderIds } from './dto.js'; // Block 17 P1, Block 21
 import { toHygieneFacts, toServerSession } from './dto.js'; // Block 22
 import { toItemFeatures } from './dto.js'; // R1
-import { MediaError } from '../media/types.js';
+import { MediaError, pickLibraries } from '../media/types.js';
 import { applyGate, boxHeightFor, jellyfinRanges, planStream, type HevcGate, type StreamPlan } from '../media/streamplan.js';
 import type { ClientCaps } from '../media/clientCaps.js';
 import type { ChapterDto, ItemAboutDto, ItemCreditsDto, MediaCollection } from '../media/types.js'; // Block 17 P1, Block 21
@@ -45,9 +45,8 @@ export const ITEM_MEMO_TTL_MS = 10_000;
 export const ITEM_MEMO_MAX = 2000;
 const normId = (s: string) => s.replace(/-/g, '').toLowerCase();
 const cloneItem = (i: ItemDto): ItemDto => ({ ...i, genres: [...i.genres], ...(i.imageTags ? { imageTags: { ...i.imageTags } } : {}) });
-/** the admin's title check (MediaAdmin.findItems): hits per search and ancestor lookups for their library */
+/** the admin's title check (MediaAdmin.findItems): hits per search */
 const FIND_MAX = 50;
-const FIND_LIBRARY_LOOKUPS = 8;
 const FIELDS = 'Overview,Genres,OfficialRating,CommunityRating,PremiereDate,DateCreated,ProductionYear,ChildCount,RunTimeTicks,DateLastMediaAdded';
 
 export type { ItemQuery };
@@ -1132,8 +1131,8 @@ export class JellyfinService implements MediaServer {
         if (t.libraries !== 'all' && !t.libraries.length) ids = []; // no library: nothing to look up
         else if (t.libraries !== 'all') {
           const folders = await client.mediaFolders();
-          const want = new Set(t.libraries.map((n) => n.toLowerCase()));
-          ids = folders.filter((f) => want.has(f.Name.toLowerCase())).map((f) => f.Id);
+          const picked = pickLibraries(t.libraries, folders, (f) => f.Name);
+          ids = folders.filter((f) => picked.has(f)).map((f) => f.Id);
         }
         const parental = p.parental
           ? { ...(p.parental.maxRating !== undefined ? { MaxParentalRating: p.parental.maxRating } : {}), BlockUnratedItems: p.parental.blockUnrated }
@@ -1171,22 +1170,25 @@ export class JellyfinService implements MediaServer {
       },
       libraries: async () => (await client.mediaFolders()).map((f) => ({ id: f.Id, name: f.Name })),
       // Users & permissions: the admin's title check. Admin key and no userId: every library, no parental cap. The library of each hit
-      // comes from its ancestors (at most FIND_LIBRARY_LOOKUPS calls; a failed one leaves the library unknown, '').
+      // is the one whose folder holds its Path (the library folders are read once and kept; a failed read leaves the library unknown, '').
+      // Not the item's ancestors: asked with the admin key and no userId, Jellyfin names only the physical folder and "root" there.
       findItems: async (q, limit) => {
         const n = Math.max(1, Math.min(Math.trunc(limit) || 1, FIND_MAX));
+        const locations = client.libraryLocations().catch(() => []); // alongside the search: on a cache miss no extra round trip after it
         const found = (await client.searchItems(q, n))
           .filter((i) => typeof i?.Id === 'string' && /^[0-9a-f]{32}$/.test(nid(i.Id)) && (i.Type === 'Movie' || i.Type === 'Series') && typeof i.Name === 'string')
           .slice(0, n);
-        const libs = await Promise.all(found.map((i, k) => (k < FIND_LIBRARY_LOOKUPS ? client.libraryOf(nid(i.Id)).catch(() => null) : Promise.resolve(null))));
-        return found.map((i, k) => foundItem(i, libs[k] ?? ''));
+        const libs = found.length ? await locations : [];
+        return found.map((i) => foundItem(i, libraryOfPath(i.Path, libs) ?? ''));
       },
       // the title check by id: the same facts for one item (admin key); another kind of item (episode, folder …) is no hit
       findItem: async (id) => {
         const want = nid(id);
         if (!/^[0-9a-f]{32}$/.test(want)) return null;
+        const locations = client.libraryLocations().catch(() => []); // alongside the lookup, as in findItems
         const i = await client.itemById(want);
         if (!i || typeof i.Id !== 'string' || nid(i.Id) !== want || (i.Type !== 'Movie' && i.Type !== 'Series') || typeof i.Name !== 'string') return null;
-        return foundItem(i, (await client.libraryOf(want).catch(() => null)) ?? '');
+        return foundItem(i, libraryOfPath(i.Path, await locations) ?? '');
       },
       ping: () => client.ping(),
       // Live TV recordings in a library (spec §15.3): scan it, list the libraries with their folders, create one, find an item by its file
@@ -1196,19 +1198,15 @@ export class JellyfinService implements MediaServer {
         await res.body?.cancel().catch(() => undefined);
         if (!res.ok) throw new JellyfinError(res.status, `Jellyfin POST refresh -> ${res.status}`);
       },
-      libraryFolders: async () => {
-        const list = await client.adminJson<Array<{ ItemId?: unknown; Name?: unknown; Locations?: unknown }>>('/Library/VirtualFolders');
-        return (Array.isArray(list) ? list : []).flatMap((f) => (typeof f.ItemId === 'string' && typeof f.Name === 'string'
-          ? [{ id: f.ItemId, name: f.Name.slice(0, 200), paths: Array.isArray(f.Locations) ? f.Locations.filter((x): x is string => typeof x === 'string').slice(0, 50) : [] }]
-          : []));
-      },
+      // a library whose id stays unknown (see client.libraryFolders: Jellyfin 12.4 answers ItemId null after a restart) is left out
+      libraryFolders: async () => (await client.libraryFolders()).flatMap((f) => (f.id ? [{ id: f.id, name: f.name.slice(0, 200), paths: f.paths.slice(0, 50) }] : [])),
       createLibrary: async (name, path, kind) => {
         const q = new URLSearchParams({ name, collectionType: kind, paths: path, refreshLibrary: 'true' });
         const res = await client.adminFetch(`/Library/VirtualFolders?${q}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ LibraryOptions: {} }) });
         await res.body?.cancel().catch(() => undefined);
         if (!res.ok) throw new JellyfinError(res.status, `Jellyfin POST VirtualFolders -> ${res.status}`);
-        const lib = (await client.adminJson<Array<{ ItemId?: unknown; Name?: unknown }>>('/Library/VirtualFolders')).find((f) => f.Name === name);
-        return { id: typeof lib?.ItemId === 'string' ? lib.ItemId : null };
+        client.forgetLibraryLocations();
+        return { id: (await client.libraryFolders()).find((f) => f.name === name)?.id ?? null };
       },
       itemByPath: async (libraryId, path) => {
         // TODO(A-M14): Jellyfin's /Items has no path filter, so this lists at most 2 000 items of the library and an item beyond them

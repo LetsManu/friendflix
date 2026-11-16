@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, createHmac, randomBytes } from 'node:crypto';
-import { portainerFailedAlert, updateFailedAlert } from './adminAlerts.js';
+import { portainerFailedAlert, updateFailedAlert, updateStartFailedAlert, type StartFailReason } from './adminAlerts.js';
 import { audit } from './audit.js';
 import type { Ctx } from './ctx.js';
 import { portainerMode, portainerSetup, redeployViaPortainer, updateInfo, type UpdateInfo } from './updates.js';
@@ -269,19 +269,30 @@ export async function reconcileAudit(ctx: Ctx, s: UpdaterStatus): Promise<void> 
 const hhmm = (d: Date) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 const minutes = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
 const WINDOW_MIN = 30;
+/** an updater that does not answer is told from this minute of the window on (it may only be restarting at the window's start) */
+const ABSENT_ALERT_MIN = 10;
 
-/**
- * AUTO_UPDATE=nightly-window: once a day in the 30 minutes from AUTO_UPDATE_TIME, the same update job as the button (actor
- * null). One start per day across all backend instances (kv lock). Also finishes the result audit of earlier jobs. A foreign
- * (Portainer) stack is never handed to the updater: with Portainer set up, a newer version is redeployed through it once.
- */
+type TickLog = { warn(o: object, m: string): void };
+
+/** the window could not start a newer version: alert the admins (adminAlerts.ts; once per version and day, nothing when up to date) */
+async function startFailed(ctx: Ctx, reason: StartFailReason, now: Date, log?: TickLog): Promise<void> {
+  await updateStartFailedAlert(ctx, reason, now).catch(() => log?.warn({ code: 'alert_failed' }, 'update start failed alert not sent'));
+}
+
 /** what a Portainer redeploy would bring on the selected channel (one automatic attempt per target) */
 function portainerTarget(i: UpdateInfo): string | null {
   const t = i.channel.selected === 'nightly' ? i.latest?.sha : i.channel.selected === 'pinned' ? i.channel.version : i.release?.version;
   return t ? `${i.channel.selected}:${t}` : null;
 }
 
-export async function autoUpdateTick(ctx: Ctx, now = new Date(), log?: { warn(o: object, m: string): void }): Promise<'off' | 'outside' | 'done' | 'absent' | 'busy' | 'started' | 'failed' | 'foreign' | 'current'> {
+/**
+ * AUTO_UPDATE=nightly-window: once a day in the 30 minutes from AUTO_UPDATE_TIME, the same update job as the button (actor
+ * null). One start per day across all backend instances (kv lock). Also finishes the result audit of earlier jobs. A foreign
+ * (Portainer) stack is never handed to the updater: with Portainer set up, a newer version is redeployed through it once.
+ * When a newer version waits but cannot be started (the updater unreachable or refusing, a Portainer stack without Portainer
+ * set up, the start throwing), the admins get the failed-update alert, once per version and day.
+ */
+export async function autoUpdateTick(ctx: Ctx, now = new Date(), log?: TickLog): Promise<'off' | 'outside' | 'done' | 'absent' | 'busy' | 'started' | 'failed' | 'foreign' | 'current'> {
   if ((await ctx.kv.keys(PENDING).catch(() => [])).length) await updaterView(ctx).catch(() => undefined);
   if (ctx.cfg.AUTO_UPDATE !== 'nightly-window' || !ctx.cfg.UPDATER_URL) return 'off';
   const diff = (minutes(hhmm(now)) - minutes(ctx.cfg.AUTO_UPDATE_TIME) + 1440) % 1440;
@@ -289,30 +300,71 @@ export async function autoUpdateTick(ctx: Ctx, now = new Date(), log?: { warn(o:
   const day = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
   if (await ctx.kv.get(`updater:auto:${day}`)) return 'done';
   const v = await updaterView(ctx);
-  if (!v.present || !('status' in v)) return 'absent';
+  if (!v.present || !('status' in v)) {
+    // tried again every tick of the window; a tick from its 10th minute on that still finds no usable updater tells the admins
+    if (diff >= ABSENT_ALERT_MIN) await startFailed(ctx, !v.present ? 'unreachable' : v.error === 'unauthorized' ? 'refused' : 'error', now, log);
+    return 'absent';
+  }
   if (v.status.busy) return 'busy';
   if (!(await ctx.kv.setnx(`updater:auto:${day}`, '1', 2 * 86_400))) return 'done';
-  if (portainerStack(ctx, v.status)) {
-    // Portainer's stack: without Portainer set up there is nothing to do (Admin -> Update says so); with it, a newer version on
-    // the selected channel is redeployed through Portainer (one attempt per night through the day lock above; a version that
-    // was redeployed is not redeployed again, a failed attempt is logged, audited and tried again the next night)
-    const mode = portainerMode(ctx);
-    if (!mode) return 'foreign';
-    const info = await updateInfo(ctx, true);
-    const target = info.updateAvailable === true ? portainerTarget(info) : null;
-    if (!target) return 'current';
-    const doneKey = `updater:portainer:${target}`;
-    if (await ctx.kv.get(doneKey)) return 'done';
-    const r = await redeployViaPortainer(ctx, null, mode, info, { updater: v.status.services.length > 0 });
-    if (!r.ok && (r.error === 'busy' || r.error === 'unavailable')) return 'busy';
-    if (!r.ok) {
-      log?.warn({ mode, step: r.step, status: r.status, ...(r.code ? { code: r.code } : {}) }, 'automatic update through Portainer failed');
-      await portainerFailedAlert(ctx, target, now).catch(() => log?.warn({ code: 'alert_failed' }, 'update failed alert not sent'));
-      return 'failed';
+  try {
+    if (portainerStack(ctx, v.status)) {
+      // Portainer's stack: without Portainer set up nothing can install it (Admin -> Update says so, the admins are told once a day
+      // while a newer version waits); with it, a newer version on the selected channel is redeployed through Portainer (one attempt
+      // per night through the day lock above; a version that was redeployed is not redeployed again, a failed attempt is logged,
+      // audited and tried again the next night)
+      const mode = portainerMode(ctx);
+      if (!mode) {
+        await startFailed(ctx, 'portainer', now, log);
+        return 'foreign';
+      }
+      const info = await updateInfo(ctx, true);
+      const target = info.updateAvailable === true ? portainerTarget(info) : null;
+      if (!target) return 'current';
+      const doneKey = `updater:portainer:${target}`;
+      if (await ctx.kv.get(doneKey)) return 'done';
+      const r = await redeployViaPortainer(ctx, null, mode, info, { updater: v.status.services.length > 0 });
+      if (!r.ok && (r.error === 'busy' || r.error === 'unavailable')) return 'busy';
+      if (!r.ok) {
+        log?.warn({ mode, step: r.step, status: r.status, ...(r.code ? { code: r.code } : {}) }, 'automatic update through Portainer failed');
+        await portainerFailedAlert(ctx, target, now).catch(() => log?.warn({ code: 'alert_failed' }, 'update failed alert not sent'));
+        return 'failed';
+      }
+      // Portainer has the redeploy from here on: a store failure noting it is logged, never "could not start" (it only means the
+      // next night may redeploy the same version again)
+      await ctx.kv.set(doneKey, '1', 90 * 86_400).catch(() => log?.warn({ code: 'done_not_saved' }, 'automatic update through Portainer: the redeployed version was not noted'));
+      return 'started';
     }
-    await ctx.kv.set(doneKey, '1', 90 * 86_400);
-    return 'started';
+    // startJob throws only before the updater accepted the job (after the 202 it catches its own store / audit failures)
+    const r = await startJob(ctx, 'update', null);
+    if (r.ok) return 'started';
+    // busy: another job (one an admin started) came first, not a failure of the window. Anything else: nothing was started tonight;
+    // the admins are told when a newer version waits (a job that started and fails later is reconcileAudit's alert)
+    if (r.error === 'busy') return 'failed';
+    let reason: StartFailReason = r.error === 'not_available' ? 'unreachable' : 'refused';
+    if (r.error === 'not_available') {
+      // no answer to the start (the status read just before worked): the updater may have accepted the job and only its answer got
+      // lost (timeout). Its status tells: a running update job is tonight's start; an updater that answers but runs nothing had
+      // an error while starting; one that does not answer any more is unreachable
+      const after = await updaterView(ctx);
+      const j = 'status' in after && after.status.busy ? after.status.job : null;
+      if (j?.action === 'update' && j.state === 'running') {
+        log?.warn({ code: 'start_answer_lost' }, 'automatic update started, its answer was lost');
+        // recorded as startJob would have (an admin's own start that came first keeps its entry): audited, its result reconciled
+        const meta = { action: j.action, from: j.from, to: j.to, auto: true };
+        if (await ctx.kv.setnx(`${PENDING}${j.id}`, JSON.stringify({ actor: null, ...meta }), 7 * 86_400).catch(() => false)) {
+          await audit(ctx, null, 'system.updater_start', undefined, meta);
+        }
+        return 'started';
+      }
+      if (after.present) reason = 'error';
+    }
+    log?.warn({ code: r.error }, 'automatic update could not start');
+    await startFailed(ctx, reason, now, log);
+    return 'failed';
+  } catch (e) {
+    // a throw before the updater or Portainer accepted anything (the caller logs the error itself)
+    await startFailed(ctx, 'error', now, log);
+    throw e;
   }
-  const r = await startJob(ctx, 'update', null);
-  return r.ok ? 'started' : 'failed';
 }

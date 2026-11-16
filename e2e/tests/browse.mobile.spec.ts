@@ -30,4 +30,21 @@ test.describe('browse (phone)', () => {
     await expect(page).not.toHaveURL(/genre=/);
     await expect(page.getByRole('list', { name: 'Aktive Filter' })).toHaveCount(0);
   });
+
+  test('an empty language and genre index is a final answer: asked once per visit, never in a loop (phone)', async ({ page }) => {
+    // regression: the browse page re-requested /api/library/languages ~50 times a second while the index was empty, which filled the
+    // per-address rate limit so /api/me and /api/playback/info got 429 and playback failed
+    const hits = { languages: 0, genres: 0 };
+    await page.route('**/api/library/languages', (r) => { hits.languages++; return r.fulfill({ json: { audio: [], subs: [] } }); });
+    await page.route('**/api/library/genres', (r) => { hits.genres++; return r.fulfill({ json: { genres: [] } }); });
+    for (const [path, title] of [['/browse/movies', 'Filme'], ['/browse/series', 'Serien']] as const) {
+      hits.languages = 0; hits.genres = 0;
+      await page.goto(path);
+      await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+      await page.waitForTimeout(3000);
+      expect(hits.languages, `${path}: /api/library/languages requests`).toBeLessThanOrEqual(2);
+      expect(hits.genres, `${path}: /api/library/genres requests`).toBeLessThanOrEqual(2);
+      expect(hits.languages, `${path}: languages asked at all`).toBeGreaterThanOrEqual(1);
+    }
+  });
 });

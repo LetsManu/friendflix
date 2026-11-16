@@ -7,6 +7,7 @@
  * row sees nothing, a disabled one sees nothing, and for a capped identity an unrated OR unknown rating is blocked.
  */
 import type { Db } from '../db.js';
+import { pickLibraries } from '../media/types.js';
 
 // ---------------------------------------------------------------- content rating -> age
 
@@ -128,7 +129,7 @@ export async function refreshAges(db: Db, log?: { warn(o: unknown, msg?: string)
 /** What plex_media_policies holds for one identity (see admin.applyPolicy). */
 export interface PlexPolicy {
   identity: string;
-  /** role library names (matched case-insensitively against Plex section titles); null = all */
+  /** role library names (matched against Plex section titles by librariesNamed: exact, else one of another case); null = all */
   libraries: string[] | null;
   /** null = no age cap */
   maxAge: number | null;
@@ -156,8 +157,8 @@ export function resolveAccess(p: PlexPolicy | null, sections: Array<{ id: number
   if (!p || p.disabled) return { identity, sections: [], maxAge: 0, blockTypes: [] };
   let ids: number[] | null = null;
   if (p.libraries) {
-    const want = new Set(p.libraries.map((n) => n.trim().toLowerCase()));
-    ids = sections.filter((s) => want.has(s.title.trim().toLowerCase())).map((s) => s.id);
+    const picked = pickLibraries(p.libraries, sections, (s) => s.title);
+    ids = sections.filter((s) => picked.has(s)).map((s) => s.id);
   }
   const blockTypes = [...new Set(p.blockUnrated.flatMap((t) => BLOCK_TYPES[t.toLowerCase()] ?? []))];
   return { identity, sections: ids, maxAge: p.maxAge, blockTypes };

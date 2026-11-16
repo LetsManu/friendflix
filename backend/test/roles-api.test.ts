@@ -3,7 +3,7 @@
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Ctx } from '../src/ctx.js';
-import { forgetLibraries } from '../src/libraries.js';
+import { forgetLibraries, knownLibraries, missingLibraries } from '../src/libraries.js';
 import { DEFAULT_PERMS, MATRIX_FIELDS } from '../src/perms.js';
 import { roleLimitFor } from '../src/requestlimit.js';
 import { accountsWithout } from '../src/rights.js';
@@ -889,5 +889,18 @@ describe('catalogue writes', () => {
     expect(await n()).toBe(before); // same positions: no entry
     expect((await order([keys[0], ...keys])).statusCode).toBe(400); // duplicate table key
     expect((await order(keys.slice(1))).statusCode).toBe(400); // missing table key
+  });
+});
+
+describe('library names a role may store (two libraries whose names differ only in case)', () => {
+  const libs = [{ id: 'a', name: 'Filme' }, { id: 'b', name: 'filme' }, { id: 'c', name: 'Serien' }];
+  const ctx = () => ({ jf: { admin: { libraries: async () => libs } } }) as unknown as Pick<Ctx, 'jf'>;
+  it('knownLibraries keeps the exact spelling, takes the server\'s for a unique other case, refuses an ambiguous one', async () => {
+    expect(await knownLibraries(ctx(), ['filme'])).toEqual(['filme']);
+    expect(await knownLibraries(ctx(), ['Filme', 'serien'])).toEqual(['Filme', 'Serien']);
+    await expect(knownLibraries(ctx(), ['FILME'])).rejects.toMatchObject({ statusCode: 400, message: 'unknown_library' });
+  });
+  it('missingLibraries names a stored name that no longer picks exactly one library', () => {
+    expect(missingLibraries(['Filme', 'serien', 'FILME', 'Weg'], libs)).toEqual(['FILME', 'Weg']);
   });
 });

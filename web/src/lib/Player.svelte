@@ -52,6 +52,7 @@
   import { hasPeople, loadCastInfo, type CastInfoData } from '#lib/player/castinfo';
   import { chapterIndexAt, chapterLabel, chapterMarks, normalizeChapters, trickFrame, usefulChapters, type Chapter } from '#lib/player/chapters';
   import { applyRate, reapplyRate } from '#lib/player/rate';
+  import { resumeAfterSwitch } from '#lib/player/switchresume';
   import { AudioFxEngine, fxActive, fxBlocked, fxFromPref, fxToPref, loadFx, plainPathDue, saveFx, type AudioFx } from '#lib/player/audiofx';
   import { frameShown, snapshotFrame, swapAllowed } from '#lib/player/freshvideo';
   import { fmtDuration, getLocale, t, tr, type TFn, type TKey } from '#lib/i18n';
@@ -205,7 +206,7 @@
   function mediaPlay() { if (!castBusy && video?.paused) togglePlay(); }
   $: mediaActions = {
     play: mediaPlay,
-    pause: () => { if (video && !video.paused) togglePlay(); },
+    pause: () => { if (video && (!video.paused || (wantAutoplay && !paused))) togglePlay(); }, // also a start pending on a new stream (cancelPendingStart)
     seekTo: (t: number) => seekTo(t),
     seekBy: (d: number) => seekBy(d, true),
     next: hasNext ? () => { if (allowed()) void goNext(); } : null,
@@ -1193,19 +1194,41 @@
     if (!air && !airProbe && !remote) void (srcRec ? initRecAirPlay() : initAirPlay());
   }
 
-  const doPause = () => { if (remote) { if (!paused) castEngine.playPause(); } else video?.pause(); };
+  const doPause = () => { if (remote) { if (!paused) castEngine.playPause(); } else if (!cancelPendingStart()) video?.pause(); };
 
   async function changeAudio(i: number) {
     const lang = audioOpts.find((a) => a.index === i)?.language;
     if (lang && lang !== 'und') rememberLang({ audio: lang });
     if (remote) { audioIndex = i; await castEngine.refresh({ audioIndex: i }); return; } // a new token with that track on the TV
     if (airInfo) { audioIndex = i; await air?.refresh(); return; } // AirPlay: a new token stream with that track
-    const pos = video?.currentTime ?? 0, prevAudio = audioIndex;
+    const pos = video?.currentTime ?? 0, prevAudio = audioIndex, intent = playIntent();
     await send('stop');
     audioIndex = i;
     trackSwitching = true; // the next timing session exists because of this switch
     let r; try { r = await load(pos, { undo: () => { audioIndex = prevAudio; }, toast: tr('player.error.serverBusyTrack') }); } finally { trackSwitching = false; }
-    if (r !== 'busy') video?.play().catch(() => undefined);
+    resumeOnReady(intent, r);
+  }
+  /** what a switch (track, quality, surround, a downloaded subtitle) remembers before it stops the old stream */
+  const playIntent = () => ({ wasPlaying: !(video?.paused ?? true), pending: wantAutoplay, pauses: pauseSeq });
+  /**
+   * after the switch's load(): the new stream starts through the start path (its `canplay` -> playSafe, muted or the play button when
+   * the browser refuses), never a play() right after load() that races the attach (lib/player/switchresume.ts). load() has replaced
+   * the old stream by now, so no late `canplay` of the old one takes this intent. A pause of the viewer in between, or a load()
+   * that ended in an error (no new stream), leaves nothing pending.
+   */
+  function resumeOnReady(intent: { wasPlaying: boolean; pending: boolean; pauses: number }, result: 'busy' | undefined) {
+    wantAutoplay = resumeAfterSwitch({ wasPlaying: intent.wasPlaying, pending: intent.pending, result, pausedSince: pauseSeq !== intent.pauses, failed: Boolean(error) });
+  }
+  /** pause events and cancelled pending starts so far: a switch on its way compares it with its snapshot (a pause in between wins) */
+  let pauseSeq = 0;
+  /**
+   * the viewer's pause while a start is pending on a new stream (a switch, a fallback): the element is empty, so pause() does nothing
+   * and fires no event, while the bar still shows Pause; the pending start is dropped and the bar shows Play
+   */
+  function cancelPendingStart(): boolean {
+    if (!wantAutoplay || paused || !video?.paused) return false;
+    wantAutoplay = false; paused = true; pauseSeq++;
+    return true;
   }
   /** the last subtitle track that was on (-1 = none yet): the LG red key turns this one back on */
   let lastSubIndex = -1;
@@ -1288,7 +1311,7 @@
   function announce(t: string) { live = t + (liveN++ % 2 ? '\u200b' : ''); }
   function flash(t: string, ms = 1100) { toast = t; announce(t); clearTimeout(toastTimer); toastTimer = setTimeout(() => (toast = ''), ms); }
   function allowed(): boolean { if (canControl) return true; flash(denyHint, 1800); return false; }
-  function togglePlay() { if (remote) { if (allowed()) castEngine.playPause(); return; } if (!video || !allowed()) return; if (video.paused) video.play().catch(() => undefined); else video.pause(); }
+  function togglePlay() { if (remote) { if (allowed()) castEngine.playPause(); return; } if (!video || !allowed() || cancelPendingStart()) return; if (video.paused) video.play().catch(() => undefined); else video.pause(); }
   function seekTo(t: number) {
     if (sp.active) { clearTimeout(spT); sp = seekCancel(); } // a direct seek (±10 s, wheel, FF/REW, phone) replaces a pending preview
     if (remote) { if (!allowed()) return; castEngine.seek(t); return; } // the engine clamps, reports and mirrors the position
@@ -1333,17 +1356,15 @@
     }
     shownQ = quality ? (abr?.current ?? quality) : 0;
     resetStall();
-    const pos = video?.currentTime ?? 0, wasPlaying = !(video?.paused ?? true);
+    const pos = video?.currentTime ?? 0, intent = playIntent();
     try {
       await send('stop');
       let kept = false;
       // only the viewer's own pick puts the old rung back on a refusal: an ABR step-down left a rung that stalled, so a refusal there
       // shows the honest busy state instead of reloading the stalling stream
       const r = await load(pos, how === 'manual' ? { undo: () => { kept = true; quality = prev.quality; reqHint = prev.reqHint; abr = prev.abr; shownQ = prev.shownQ; }, toast: tr('player.error.serverBusyQuality', { q: rungLabel(prev.bps) }) } : undefined);
-      if (r !== 'busy') {
-        if (wasPlaying) video?.play().catch(() => undefined);
-        if (!kept) flash(msg || qualityToast(bps), ms); // a refused switch already said that the quality stays
-      }
+      resumeOnReady(intent, r);
+      if (r !== 'busy' && !kept) flash(msg || qualityToast(bps), ms); // a refused switch already said that the quality stays
     } finally { switching = false; }
     const next = queuedPick; queuedPick = null;
     if (next !== null) void changeQuality(next);
@@ -1460,13 +1481,13 @@
     // turning on cannot change a stream whose track is stereo, or when this device gave surround up after a failed start
     if (!stereo && (info.delivery?.why.includes('stereo_source') || avoidedUntil().surround)) return;
     // like an audio track change: a new stream at the current position
-    const pos = video?.currentTime ?? 0;
+    const pos = video?.currentTime ?? 0, intent = playIntent();
     await send('stop');
     trackSwitching = true;
     // refused: the switch goes back (turning surround on keeps it off, turning it off keeps it on) and says so in its own words
     const kept = tr(stereo ? 'player.error.serverBusySurroundOn' : 'player.error.serverBusySurroundOff');
     let r; try { r = await load(pos, { undo: () => { stereo = !stereo; setStereoOnly(stereo); }, toast: kept }); } finally { trackSwitching = false; }
-    if (r !== 'busy') video?.play().catch(() => undefined);
+    resumeOnReady(intent, r);
   }
   /** a remembered mode needs a running AudioContext: the first key / tap after an autoplayed start switches it on */
   function fxGesture() { if (fxNote === 'suspended' && fxActive(fx)) void applyFx(true); }
@@ -1526,8 +1547,8 @@
     try {
       await api(`/api/items/${itemId}/subtitles/download`, { method: 'POST', body: { subtitleId: id } });
       if (remote) { subDlg = false; await castEngine.refresh(); flash(tr('player.subs.added'), 2500); subBusy = false; return; }
-      const pos = video?.currentTime ?? 0, was = !(video?.paused ?? true);
-      subDlg = false; await send('stop'); await load(pos); if (was) video?.play().catch(() => undefined);
+      const pos = video?.currentTime ?? 0, intent = playIntent();
+      subDlg = false; await send('stop'); resumeOnReady(intent, await load(pos));
       flash(tr('player.subs.added'), 2500);
     } catch { subMsg = tr('player.subs.downloadFailed'); }
     subBusy = false;
@@ -2001,7 +2022,7 @@
   {#key videoGen}
   <video bind:this={video} playsinline crossorigin="use-credentials" poster={swapShot || undefined} style:filter={brightness < 1 ? `brightness(${brightness})` : null}
     on:error={onVideoError}
-    on:play={onPlay} on:pause={() => { postFireTv('keepAwake:0'); if (handedOff || swapping) return; paused = true; resetStall(); restorePlainSoon(); const quiet = hiddenPause; hiddenPause = false; if (!castBusy && !stopped && !quiet) send('progress'); }} on:seeked={() => { if (swapping) return; timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
+    on:play={onPlay} on:pause={() => { postFireTv('keepAwake:0'); if (handedOff || swapping) return; paused = true; pauseSeq++; resetStall(); restorePlainSoon(); const quiet = hiddenPause; hiddenPause = false; if (!castBusy && !stopped && !quiet) send('progress'); }} on:seeked={() => { if (swapping) return; timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
     on:ended={() => { postFireTv('keepAwake:0'); if (handedOff) return; stopped = true; paused = true; if (srcRec) recEnded(srcRec); else send('stop'); }}
     on:timeupdate={() => { syncTime(); reportTick(); }} on:progress={syncTime} on:loadedmetadata={() => { reapplyRate(video, rate, partyMode); syncTime(); }}
     on:waiting={onWaiting} on:seeking={() => { if (swapping) return; resetStall(); timing.seeking(); }} on:playing={onPlaying} on:loadeddata={firstFrame} on:canplay={() => { if (handedOff) return; waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}

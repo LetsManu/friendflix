@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MediaUser } from '../../src/media/types.js';
 import { paramList, ratingAge, resolveAccess, UNKNOWN_AGE, visibleSql } from '../../src/plex/access.js';
 import { DEFAULT_ROLES } from '../../src/roles.js';
@@ -34,6 +34,27 @@ describe('resolveAccess', () => {
     expect(resolveAccess({ identity: 'x', libraries: null, maxAge: null, blockUnrated: [], disabled: true }, secs, 'x').sections).toEqual([]);
     expect(resolveAccess({ identity: 'x', libraries: ['movies', 'Nope'], maxAge: 12, blockUnrated: ['Movie', 'Series'], disabled: false }, secs, 'x'))
       .toEqual({ identity: 'x', sections: [1], maxAge: 12, blockTypes: ['movie', 'show', 'season', 'episode'] });
+  });
+  it('two sections whose titles differ only in case: the exact title wins; another case matches only a unique title', () => {
+    const two = [{ id: 1, title: 'Movies' }, { id: 2, title: 'movies' }, { id: 3, title: 'TV' }];
+    const sectionsFor = (libraries: string[]) => resolveAccess({ identity: 'x', libraries, maxAge: null, blockUnrated: [], disabled: false }, two, 'x').sections;
+    expect(sectionsFor(['Movies'])).toEqual([1]);
+    expect(sectionsFor(['movies'])).toEqual([2]);
+    expect(sectionsFor(['MOVIES'])).toEqual([]);
+    expect(sectionsFor(['tv', 'MOVIES'])).toEqual([3]);
+  });
+  it('a stored title that picks no section is logged once per title, as a code only', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const two = [{ id: 1, title: 'Movies' }, { id: 2, title: 'movies' }];
+      for (let i = 0; i < 3; i++) resolveAccess({ identity: 'x', libraries: ['mOvIeS', 'Gone'], maxAge: null, blockUnrated: [], disabled: false }, two, 'x');
+      expect(warn.mock.calls).toEqual([
+        ['role library name picks no library', { code: 'library_ambiguous' }],
+        ['role library name picks no library', { code: 'library_missing' }],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
   it('resolveAccess({ libraries: [] }) → sections [] and the SQL predicate matches no item', () => {
     const acc = resolveAccess({ identity: 'x', libraries: [], maxAge: null, blockUnrated: [], disabled: false }, secs, 'x');

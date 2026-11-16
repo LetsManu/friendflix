@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
 import { episodes, items, ME, MOVIE } from '../mocks/fixtures.js';
-import { mockPlayer, videoReady } from '../mocks/scenes.js';
+import { mockHlsStream, mockPlayer, videoReady } from '../mocks/scenes.js';
 import { boxes, forceIosVolume, forceSafeArea, LAND_L, LAND_R, openPhoneEpisode, overlap, PORTRAIT, runSettled, setSafeArea, showControls, type Box, type Insets } from '../mocks/phone.js';
 
 /**
@@ -869,5 +869,45 @@ test.describe('phone pause screen, portrait', () => {
     await expect(page.locator('.stage.ppause')).toHaveCount(0);
     await expect(page.locator('.pps')).toHaveCount(0);
     await expect(page.locator('.dps')).toHaveCount(0);
+  });
+});
+
+test.describe('phone player: audio track switch', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test.beforeEach(({ api }) => { api.features = { requests: true, postplay: false }; });
+
+  test('a playing film keeps playing at the same position on the new track (hls.js, new stream)', async ({ page, api: _api }) => {
+    await mockPlayer(page);
+    await mockHlsStream(page);
+    const asked: Array<{ audioIndex?: number; startTicks?: number }> = [];
+    await page.route('**/api/playback/info', (r) => {
+      const b = r.request().postDataJSON() as { audioIndex?: number; startTicks?: number };
+      asked.push(b);
+      return r.fulfill({ json: { resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: `ps${asked.length}`, roleMaxBitrate: 20_000_000, maxBitrate: 4_000_000, transcodeReason: 'network', subtitles: [],
+        hlsUrl: '/media/hls/4000000/out.m3u8', ...(b.audioIndex !== undefined ? { audioIndex: b.audioIndex } : {}),
+        audioTracks: [{ index: 1, title: 'Deutsch', language: 'ger', isDefault: true }, { index: 2, title: 'English', language: 'eng', isDefault: false }] } });
+    });
+    await page.goto('/watch/' + MOVIE.id);
+    await page.waitForFunction(() => (document.querySelector('video')?.duration ?? 0) > 20);
+    await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
+    await page.waitForFunction(() => (document.querySelector('video')?.currentTime ?? 0) > 1.5);
+    const before = await page.evaluate(() => document.querySelector('video')!.currentTime);
+    // a play() before the new stream is attached is refused (see player-abr.spec.ts): the switch must not depend on winning that race
+    await page.evaluate(() => {
+      const play = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+        return this.readyState === 0 ? Promise.reject(new DOMException('interrupted by a new load request', 'AbortError')) : play.call(this);
+      };
+    });
+    await showControls(page);
+    await tool(page, 'Audio und Untertitel').tap();
+    await page.getByRole('dialog', { name: 'Audio und Untertitel' }).getByRole('button', { name: 'English' }).tap();
+    await expect.poll(() => asked.at(-1)?.audioIndex).toBe(2);
+    expect(asked.at(-1)!.startTicks! / 1e7).toBeGreaterThanOrEqual(before - 0.5);
+    await page.waitForFunction(() => (document.querySelector('video')?.duration ?? 0) > 20);
+    await expect.poll(() => page.evaluate(() => document.querySelector('video')!.paused), { timeout: 5000 }).toBe(false);
+    const after = await page.evaluate(() => document.querySelector('video')!.currentTime);
+    expect(after).toBeGreaterThanOrEqual(before - 0.5);
+    await expect.poll(() => page.evaluate(() => document.querySelector('video')!.currentTime), { timeout: 5000 }).toBeGreaterThan(after + 0.3);
   });
 });

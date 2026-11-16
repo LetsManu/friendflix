@@ -215,3 +215,31 @@ export async function dialogActs(dlg: Locator): Promise<{
   }
   return { names, row: (await acts.boundingBox())!, btns: boxes };
 }
+
+/**
+ * Layout-jump probe for /me/account: once the fonts are ready, every animation frame records the top of each card heading
+ * (page coordinates) for `budgetMs` of wall-clock time (not a frame count, so a throttled rAF does not stall it). Call before `goto`;
+ * read with `cardTopsRecorded`, which also fails when an expected card never appeared.
+ */
+export async function recordCardTops(page: Page, ids: string[], budgetMs = 3000): Promise<void> {
+  await page.addInitScript(([list, budget]) => {
+    const w = window as unknown as { cardTops: Record<string, number[]>; recorded: boolean };
+    w.cardTops = {}; w.recorded = false;
+    const t0 = performance.now();
+    const tick = () => {
+      for (const id of list as string[]) {
+        const el = document.getElementById(id);
+        if (el) (w.cardTops[id] ??= []).push(Math.round((el.getBoundingClientRect().top + scrollY) * 10) / 10);
+      }
+      if (performance.now() - t0 < (budget as number)) requestAnimationFrame(tick); else w.recorded = true;
+    };
+    void document.fonts.ready.then(() => requestAnimationFrame(tick));
+  }, [ids, budgetMs] as const);
+}
+/** waits for the end of the recording, then returns the tops; every expected id must have been seen */
+export async function cardTopsRecorded(page: Page, ids: string[]): Promise<Record<string, number[]>> {
+  await page.waitForFunction(() => (window as unknown as { recorded: boolean }).recorded, undefined, { timeout: 15_000 });
+  const tops = await page.evaluate(() => (window as unknown as { cardTops: Record<string, number[]> }).cardTops);
+  for (const id of ids) if (!tops[id]?.length) throw new Error(`card heading #${id} never appeared`);
+  return tops;
+}

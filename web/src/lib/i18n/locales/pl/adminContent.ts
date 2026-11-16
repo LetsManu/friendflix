@@ -452,7 +452,7 @@ const dict: Translation<typeof de> = {
       token_invalid: 'Authentik odrzuca token usługi (AUTHENTIK_API_TOKEN): został usunięty, wygasł albo w .env jest inny. Potrzebuje go sekcja bezpieczeństwa konta, zaproszenia i strony użytkowników. Napraw to poniżej.',
       permission_missing: 'Kontu usługi brakuje uprawnienia „{perm}”. Napraw to poniżej.',
       executor: 'Przepływ logowania nie działa z serwera ({cls}). Sprawdź, czy AUTHENTIK_URL to adres, pod którym kontener backendu łączy się z Authentik, i czy reverse proxy przepuszcza API bez zmian.',
-      optional_change_email: 'Zmiana e-maila nie jest skonfigurowana: zamontuj deploy/authentik/templates/friendflix-email-change.html (z adresem FriendFlix w linku) w /templates w Authentik, a potem napraw poniżej.',
+      optional_change_email: 'Zmiana e-maila nie jest skonfigurowana: zamontuj deploy/authentik/templates/friendflix-email-change.html i deploy/authentik/templates/friendflix-email-change.txt (oba z adresem FriendFlix w linku) w /templates w Authentik, a potem napraw poniżej.',
       unreachable: 'Authentik nie odpowiada. Przepływów nie można teraz sprawdzić.',
       flow_missing: 'Brakuje przepływu „{flow}” w Authentik.',
       flow_unsupported: 'Przepływ „{flow}” ma kroki, których FriendFlix nie potrafi pokazać. Ciąg dalszy na stronie logowania Authentik.',

@@ -19,8 +19,8 @@
  * Every media server failure becomes 502 media_unavailable: no error, log line or answer ever carries the search query or the item id.
  */
 import type { Ctx } from './ctx.js';
-import { fetchLibraries } from './libraries.js';
-import { MediaError, type FoundItem, type ItemDto, type MediaServer } from './media/types.js';
+import { fetchLibraries, type Library } from './libraries.js';
+import { librariesNamed, MediaError, type FoundItem, type ItemDto, type MediaServer } from './media/types.js';
 import { serviceUser } from './previews.js';
 import { jfUserFor } from './profiles.js';
 import { ratingAge } from './reco/score.js';
@@ -47,7 +47,6 @@ export const COUNT_PARALLEL = 4;
 export const viewcntKey = (profileId: string) => `viewcnt:${profileId}`;
 
 const unavailable = () => new HttpError(502, 'media_unavailable');
-const lc = (s: string) => s.toLowerCase();
 /** the server says this identity may not see the item / folder */
 const denied = (e: unknown) => e instanceof MediaError && (e.status === 404 || e.status === 403);
 
@@ -82,13 +81,21 @@ export function ageOf(rating: string | null): number | null {
   return ratingAge(rating) ?? ratingAge(/^[a-z]{2}\/(.+)$/.exec(rating?.trim() ?? '')?.[1]);
 }
 
-/** whether the rights' library list includes `name` (matched case-insensitively, like the policy) */
-const sharedLibrary = (rights: Rights, name: string) => rights.template.libraries === 'all' || rights.template.libraries.some((n) => lc(n) === lc(name));
+/**
+ * whether the rights share the library `name`, decided as the policy decides it (librariesNamed against the server's libraries: the exact
+ * name, else the one library of another case; "FILME" with "Filme" and "filme" on the server shares neither). Without the server's list,
+ * or when it lacks `name` (a stale cache), `name` is matched as if it were the only library: exact or in another case.
+ */
+function sharedLibrary(rights: Rights, name: string, libs: readonly Library[] | undefined): boolean {
+  if (rights.template.libraries === 'all') return true;
+  const known = libs?.some((l) => l.name === name) ? libs : [{ id: '', name }];
+  return rights.template.libraries.some((n) => librariesNamed(n, known, (l) => l.name).some((l) => l.name === name));
+}
 
 /** why a hidden hit is hidden, from the admin-key facts and the profile's effective rights (kids overlay included); null = cannot tell */
-function whyHidden(hit: Pick<FoundItem, 'library' | 'rating' | 'age'>, rights: Rights | undefined, profile: Pick<ProfileRow, 'kids'>): CheckWhy | null {
+function whyHidden(hit: Pick<FoundItem, 'library' | 'rating' | 'age'>, rights: Rights | undefined, profile: Pick<ProfileRow, 'kids'>, libs: readonly Library[] | undefined): CheckWhy | null {
   if (!rights) return null;
-  if (hit.library && !sharedLibrary(rights, hit.library)) return 'library';
+  if (hit.library && !sharedLibrary(rights, hit.library, libs)) return 'library';
   const age = hit.age !== undefined ? hit.age : ageOf(hit.rating);
   const cap = rights.template.maxParentalRating;
   if (age !== null && cap !== null && age > cap) return 'rating';
@@ -121,10 +128,14 @@ async function svcUser(ctx: Pick<Ctx, 'db'>): Promise<UserRow> {
 async function answer(ctx: CheckCtx, jf: MediaServer, user: UserRow, profile: ProfileRow, found: FoundItem[]): Promise<CheckHit[]> {
   const who = jfUserFor(user, profile);
   const hits = found.slice(0, CHECK_HITS);
-  const [visible, rights] = await Promise.all([Promise.all(hits.map((h) => canOpen(jf, who, h.id))), hits.length ? effectiveRights(ctx, user, profile) : undefined]);
+  // the server's libraries (cached 5 min; undefined while it cannot list them) decide a case-ambiguous library name like the policy does
+  const [visible, rights, libs] = await Promise.all([
+    Promise.all(hits.map((h) => canOpen(jf, who, h.id))), hits.length ? effectiveRights(ctx, user, profile) : undefined,
+    hits.some((h) => h.library) ? fetchLibraries(ctx) : undefined,
+  ]);
   return hits.map((h, i) => ({
     id: h.id, name: h.name, ...(h.year !== undefined ? { year: h.year } : {}), type: h.type,
-    visible: visible[i]!, why: visible[i] ? null : whyHidden(h, rights, profile), rating: h.rating, library: h.library,
+    visible: visible[i]!, why: visible[i] ? null : whyHidden(h, rights, profile, libs), rating: h.rating, library: h.library,
   }));
 }
 
@@ -200,7 +211,7 @@ export async function libraryCounts(ctx: CheckCtx, user: UserRow, profile: Profi
     }
   };
   const jobs = libs.flatMap((l) => {
-    const visible = rights !== undefined && sharedLibrary(rights, l.name);
+    const visible = rights !== undefined && sharedLibrary(rights, l.name, libs);
     return [{ l, visible, as: 'total' as const }, ...(visible ? [{ l, visible, as: 'seen' as const }] : [])];
   });
   const answers = await mapLimit(jobs, COUNT_PARALLEL, (j) => (j.as === 'total' ? count(svc, j.l.id, false) : count(who, j.l.id, true)));

@@ -8,7 +8,7 @@ import type { UpdaterJob } from './updater.js';
 import { cachedReleaseVersion, updateInfo, type UpdateInfo } from './updates.js';
 
 /**
- * Admin alerts (mail stage C): a new version, a failed update, a Systemcheck line turning into a problem (syscheckAlerts.ts, apart so this
+ * Admin alerts (mail stage C): a new version, a failed update (or one the nightly window could not start), a Systemcheck line turning into a problem (syscheckAlerts.ts, apart so this
  * module, which health.ts and updater.ts import, never reaches the Systemcheck engine), a disk running full. Each is an
  * admin notice (in-app for every admin) with a mail type, so the mail is the notice's channel and the notice dedupe the durable "once".
  * This module only detects the events; short kv keys (`alerts:*`) keep the frequent ticks from re-running notify() and two instances from
@@ -40,17 +40,20 @@ export function isoWeek(d: Date): string {
   return `${t.getUTCFullYear()}-W${pad(week)}`;
 }
 
-/** what is new on the selected channel: the dedupe target and the version the title names; null when nothing is */
-function available(i: UpdateInfo, now: Date): { channel: string; target: string; version: string } | null {
+/**
+ * what is new on the selected channel: the dedupe target of the "available" alert, the build (version or commit) and the version the
+ * title names; null when nothing is
+ */
+function available(i: UpdateInfo, now: Date): { channel: string; target: string; build: string; version: string } | null {
   if (i.updateAvailable !== true) return null;
   const channel = i.channel.selected;
   if (channel === 'nightly') {
     // a nightly build appears almost daily: at most one alert a week
     const sha = i.latest?.sha;
-    return sha ? { channel, target: isoWeek(now), version: `nightly · ${sha.slice(0, 7)}` } : null;
+    return sha ? { channel, target: isoWeek(now), build: sha, version: `nightly · ${sha.slice(0, 7)}` } : null;
   }
   const v = channel === 'pinned' ? i.channel.version : i.release?.version;
-  return v ? { channel, target: v, version: v } : null;
+  return v ? { channel, target: v, build: v, version: v } : null;
 }
 
 /**
@@ -98,6 +101,35 @@ export async function portainerFailedAlert(ctx: AlertCtx, target: string, now: D
     kind: 'update_failed', title: m('notify.update.portainerFailed.title'), body: m('notify.update.failed.body'),
     link: '/admin/update', dedupe: `update-failed-portainer-${target}-${dayKey(now)}`, mail: 'updatefailed',
   });
+}
+
+/**
+ * Why the nightly window could not start an update: the updater does not answer (or its answer is unusable), it refuses (a signature it
+ * does not accept, or the job itself), the stack is Portainer's but Portainer is not set up, or the start threw.
+ */
+export type StartFailReason = 'unreachable' | 'refused' | 'portainer' | 'error';
+
+/**
+ * The nightly window wanted to install a newer version but could not start it (autoUpdateTick): the same alert as a failed update, once
+ * per version (nightly: commit) and server-local day. Nothing when nothing newer is known (the cached GitHub answer decides: up to date,
+ * or GitHub down). A later failure of a job that did start is reconcileAudit's alert.
+ */
+export async function updateStartFailedAlert(ctx: Ctx, reason: StartFailReason, now: Date = new Date()): Promise<number> {
+  const a = available(await updateInfo(ctx), now);
+  if (!a) return 0;
+  const day = dayKey(now);
+  const claim = `alerts:update:start:${a.channel}:${a.build}:${day}`;
+  if (!(await ctx.kv.setnx(claim, '1', DAY_CLAIM_TTL_S))) return 0;
+  try {
+    return await notifyAdmins(ctx, {
+      kind: 'update_failed', title: m('notify.update.startFailed.title'),
+      body: m('notify.update.startFailed.body', { version: a.version, reason: m(`notify.update.startFailed.${reason}`) }),
+      link: '/admin/update', dedupe: `update-start-${a.channel}-${a.build}-${day}`, mail: 'updatefailed',
+    });
+  } catch (e) {
+    await ctx.kv.del(claim).catch(() => undefined);
+    throw e;
+  }
 }
 
 /** free space as the notice says it: whole GB (10^9 bytes, like the recordings storage notice), under 1 GB whole MB */

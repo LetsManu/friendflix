@@ -6,7 +6,6 @@
    * sessions of another device and keeps its approval; "Remove" forgets the device (approved again on its next sign-in);
    * or every other session at once. Approving stays on /devices.
    */
-  import { onMount } from 'svelte';
   import { api, type OwnDevice } from '#lib/api';
   import { fmtDateTime, fmtRelative, t, tr } from '#lib/i18n';
   import { deviceName } from '#lib/handoff/deviceName';
@@ -15,14 +14,15 @@
   import { confirm } from '#lib/ui/confirm';
   import StatusPill from '#lib/ui/StatusPill.svelte';
 
-  let devices: OwnDevice[] | null = null, loadErr = false;
+  /** the list as the page read it together with the account (null = it could not be read), so the card is whole from its first frame */
+  export let initial: OwnDevice[] | null;
+  let devices: OwnDevice[] | null = initial, loadErr = initial === null;
   const OTHERS = 'account:revoke-others';
   const key = (d: OwnDevice) => `account:device:${d.id}`;
 
   async function load() {
     try { devices = (await api<{ devices: OwnDevice[] }>('/api/devices')).devices; loadErr = false; } catch { loadErr = devices === null; }
   }
-  onMount(() => { void load(); });
   // the current device first, then the most recently seen
   $: sorted = devices ? [...devices].sort((a, b) => Number(b.current) - Number(a.current) || Date.parse(b.last_seen) - Date.parse(a.last_seen)) : [];
   $: waiting = devices ? devices.filter((d) => !d.approved && !d.current).length : 0;
@@ -56,7 +56,6 @@
     <p class="wait"><StatusPill tone="warn" label={$t('account.account.sessions.waiting', { n: waiting })} /> <a href="/devices">{$t('account.account.sessions.approveLink')}</a></p>
   {/if}
   {#if loadErr}<p class="err" role="alert">{$t('account.account.sessions.loadFailed')}</p>
-  {:else if devices === null}<div class="skeleton sk" aria-hidden="true"></div>
   {:else}
     <ul class="devs">
       {#each sorted as d (d.id)}
@@ -95,7 +94,6 @@
   .name { font-weight: 600; overflow-wrap: anywhere; }
   .seen { flex-basis: 100%; font-size: .88rem; }
   .row-acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; }
-  .sk { height: 96px; border-radius: 8px; }
   .acts { display: flex; }
   @media (max-width: 600px) { .acts :global(button) { width: 100%; } .devs :global(button) { min-height: 44px; } .devs li { flex-wrap: wrap; } .row-acts { width: 100%; justify-content: flex-start; } }
 </style>

@@ -1,0 +1,10 @@
+{# FriendFlix: the one value to replace is the app address in the link below: https://friend.example.com/confirm-email?token={{ token }} #}{# FriendFlix: plain-text twin of friendflix-email-change.html. Authentik renders the file with the same name and a .txt ending as the text part of the mail; mount both files. #}{# SPDX-FileCopyrightText: 2026 Manuel Weißböck #}{# SPDX-License-Identifier: AGPL-3.0-or-later #}{% load i18n %}{% autoescape off %}{% trans "Confirm your new e-mail address" %}
+
+{% trans "Use the link below to confirm this e-mail address for your FriendFlix account." %}
+
+https://friend.example.com/confirm-email?token={{ token }}
+
+{% blocktrans with expires=expires|timeuntil %}If you did not ask for this, ignore this e-mail. The link is valid for {{ expires }}.{% endblocktrans %}
+{# ff:brand: the name #}
+FriendFlix
+{% endautoescape %}

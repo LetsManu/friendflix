@@ -148,6 +148,83 @@ test.describe('player: adaptive quality', () => {
     await expect.poll(() => calls.at(-1)?.maxBitrate).toBe(8_000_000);
   });
 
+  test('switching the audio track while playing keeps playing at the same position (hls.js, new stream)', async ({ page, api: _api }) => {
+    // regression: changeAudio called video.play() right after load(), before hls.js had attached the new stream; the play was
+    // rejected (swallowed) and the video stayed paused at readyState 4
+    const calls = await mockAbr(page, { tracks: true });
+    await page.goto('/watch/' + MOVIE.id);
+    await playing(page);
+    await page.waitForFunction(() => (document.querySelector('video')?.currentTime ?? 0) > 1.5); // a position the new stream starts at (> 1 s)
+    const before = await page.evaluate(() => document.querySelector('video')!.currentTime);
+    // a play() before the new stream is attached is refused, as the next source attach does to a pending play (the load algorithm
+    // rejects it with AbortError and sets paused); with the local mocks hls.js usually attaches first, so the race is made certain here
+    await page.evaluate(() => {
+      const play = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+        return this.readyState === 0 ? Promise.reject(new DOMException('interrupted by a new load request', 'AbortError')) : play.call(this);
+      };
+    });
+    await page.getByRole('button', { name: 'Audio und Untertitel' }).click();
+    await page.getByRole('dialog', { name: 'Audio und Untertitel' }).getByRole('button', { name: 'English' }).click();
+    await expect.poll(() => calls.at(-1)?.audioIndex).toBe(2);
+    expect(calls.at(-1)!.startTicks! / 1e7).toBeGreaterThanOrEqual(before - 0.5); // asked at the position
+    await page.waitForFunction(() => (document.querySelector('video')?.duration ?? 0) > 20); // the new stream is attached
+    const after = await page.evaluate(() => document.querySelector('video')!.currentTime);
+    expect(after).toBeGreaterThanOrEqual(before - 0.5); // resumed where it was, not at 0
+    await expect.poll(() => page.evaluate(() => document.querySelector('video')!.paused), { timeout: 5000 }).toBe(false);
+    await expect.poll(() => page.evaluate(() => document.querySelector('video')!.currentTime), { timeout: 5000 }).toBeGreaterThan(after + 0.3);
+  });
+
+  test('switching the audio track while paused stays paused', async ({ page, api: _api }) => {
+    const calls = await mockAbr(page, { tracks: true });
+    await page.goto('/watch/' + MOVIE.id);
+    await playing(page);
+    await page.evaluate(() => document.querySelector('video')!.pause());
+    await page.getByRole('button', { name: 'Audio und Untertitel' }).click();
+    await page.getByRole('dialog', { name: 'Audio und Untertitel' }).getByRole('button', { name: 'English' }).click();
+    await expect.poll(() => calls.at(-1)?.audioIndex).toBe(2);
+    await page.waitForFunction(() => (document.querySelector('video')?.readyState ?? 0) >= 3);
+    await page.waitForTimeout(1500);
+    expect(await page.evaluate(() => document.querySelector('video')!.paused)).toBe(true);
+  });
+
+  for (const hold of ['info', 'manifest'] as const) {
+    test(`a pause while the audio switch is on its way (${hold === 'info' ? 'before the new stream is given' : 'new stream attached, before it can play'}) stays paused`, async ({ page, api: _api }) => {
+      // the viewer pauses inside the switch: during /playback/info the old stream still plays; after the attach the element is
+      // empty and the bar still shows Pause. Either way the new stream must not start on its canplay.
+      const calls = await mockAbr(page, { tracks: true });
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      let held = false;
+      if (hold === 'info') {
+        await page.route('**/api/playback/info', async (r) => {
+          if ((r.request().postDataJSON() as InfoCall).audioIndex === 2) { held = true; await gate; }
+          return r.fallback();
+        });
+      } else {
+        let manifests = 0;
+        await page.route('**/media/hls/**/out.m3u8', async (r) => {
+          if (++manifests > 1) { held = true; await gate; }
+          return r.fallback();
+        });
+      }
+      await page.goto('/watch/' + MOVIE.id);
+      await playing(page);
+      await page.getByRole('button', { name: 'Audio und Untertitel' }).click();
+      const dlg = page.getByRole('dialog', { name: 'Audio und Untertitel' });
+      await dlg.getByRole('button', { name: 'English' }).click();
+      await expect.poll(() => held).toBe(true);
+      if (await dlg.count()) { await page.keyboard.press('Escape'); await expect(dlg).toHaveCount(0); }
+      await page.keyboard.press('k'); // the viewer's pause (same as the Pause button)
+      await expect(page.getByRole('button', { name: 'Abspielen', exact: true }).first()).toBeVisible();
+      release();
+      await expect.poll(() => calls.at(-1)?.audioIndex).toBe(2);
+      await page.waitForFunction(() => (document.querySelector('video')?.readyState ?? 0) >= 3); // the new stream could play
+      await page.waitForTimeout(1500);
+      expect(await page.evaluate(() => document.querySelector('video')!.paused)).toBe(true);
+    });
+  }
+
   test('pause, then switch quality → still paused, same audio track', async ({ page, api: _api }) => {
     const calls = await mockAbr(page, { tracks: true });
     await page.goto('/watch/' + MOVIE.id);

@@ -8,7 +8,7 @@
   import Card from '#lib/Card.svelte';
   import { activeChips, applyDraft, browseQuery, draftOf, filterCount, parseBrowse, type FilterDraft } from '#lib/discovery';
   import { dialogKeys } from '#lib/actions';
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { scrollLockToggle } from '#lib/ui/scrollLock';
   import { langLabel } from '#lib/langs';
   import LazyRow from '#lib/LazyRow.svelte';
@@ -65,9 +65,13 @@
     try { personName[id] = (await api(`/api/people/${id}`)).person?.name ?? ''; } catch { /* keep fallback */ }
     personName = personName;
   }
-  $: if (!genres.length) api('/api/library/genres').then((r) => (genres = r.genres)).catch(() => undefined);
-
-  $: if (!langs.audio.length && !langs.subs.length) api('/api/library/languages').then((r) => (langs = { audio: r.audio ?? [], subs: r.subs ?? [] })).catch(() => undefined);
+  // genres and the language index load once per visit (the component stays mounted between /browse/movies and /browse/series):
+  // an empty answer is final. Never in a reactive block that assigns its own condition, an empty index then looped ~50 req/s
+  // into the per-address rate limit.
+  onMount(() => {
+    api('/api/library/genres').then((r) => (genres = r.genres ?? [])).catch(() => undefined);
+    api('/api/library/languages').then((r) => (langs = { audio: r.audio ?? [], subs: r.subs ?? [] })).catch(() => undefined);
+  });
   $: audioCodes = withCurrent(langs.audio.map((l) => l.code), s.audio);
   $: subCodes = withCurrent(langs.subs.map((l) => l.code), s.subs);
   const withCurrent = (codes: string[], cur: string | null) => (cur && !codes.includes(cur) ? [...codes, cur] : codes);

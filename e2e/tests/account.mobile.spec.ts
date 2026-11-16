@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
-import { noHorizontalOverflow } from '../helpers.js';
+import { cardTopsRecorded, noHorizontalOverflow, recordCardTops } from '../helpers.js';
 
 test('phone: cards stack and buttons are ≥ 44 px', async ({ page }) => {
   await page.goto('/me/account');
@@ -102,4 +102,21 @@ test('phone: with the admin block every switch is ≥ 44 px, nothing overflows a
     expect(b.width, `switch ${i}`).toBeGreaterThanOrEqual(44);
   }
   expect(await noHorizontalOverflow(page)).toBe(true);
+});
+
+test('nothing below the sessions card jumps while the lists fill in (slow sessions and security answers)', async ({ page }) => {
+  const slow = (glob: string) => page.route(glob, async (r) => { if (r.request().method() === 'GET') await new Promise((f) => setTimeout(f, 700)); await r.fallback(); });
+  await slow('**/api/devices');
+  await slow('**/api/account/security');
+  const ids = ['acc-profile', 'acc-security', 'acc-sessions', 'acc-mail', 'acc-data', 'acc-delete'];
+  await recordCardTops(page, ids);
+  await page.goto('/me/account');
+  const sessions = page.getByRole('region', { name: 'Sitzungen & Geräte' });
+  await expect(sessions.getByRole('listitem')).toHaveCount(2);
+  await expect(page.getByRole('region', { name: 'Sicherheit' }).getByText('Pixel 8')).toBeVisible();
+  const tops = await cardTopsRecorded(page, ids);
+  for (const id of ids) {
+    const seen = tops[id]!;
+    expect(Math.max(...seen) - Math.min(...seen), `${id} moved`).toBeLessThanOrEqual(1);
+  }
 });

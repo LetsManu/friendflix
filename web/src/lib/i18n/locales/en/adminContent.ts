@@ -447,7 +447,7 @@ const dict: Translation<typeof de> = {
       token_invalid: 'Authentik refuses the service token (AUTHENTIK_API_TOKEN): it was deleted, has expired, or another token is set in .env. The account\'s security section, invitations and the user pages need it. Repair it below.',
       permission_missing: 'The service account lacks the "{perm}" permission. Repair it below.',
       executor: 'The sign-in flow does not work from the server ({cls}). Check that AUTHENTIK_URL is the address at which the backend container reaches Authentik, and that your reverse proxy passes the API through unchanged.',
-      optional_change_email: 'E-mail change is not set up: mount deploy/authentik/templates/friendflix-email-change.html (with your FriendFlix address in its link) in Authentik\'s /templates, then repair below.',
+      optional_change_email: 'E-mail change is not set up: mount deploy/authentik/templates/friendflix-email-change.html and deploy/authentik/templates/friendflix-email-change.txt (each with your FriendFlix address in its link) in Authentik\'s /templates, then repair below.',
       unreachable: 'Authentik is not answering. The flows cannot be checked right now.',
       flow_missing: 'The flow "{flow}" is missing at Authentik.',
       flow_unsupported: 'The flow "{flow}" has steps FriendFlix cannot show. It continues on Authentik\'s sign-in page.',

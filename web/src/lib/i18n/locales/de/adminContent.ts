@@ -446,7 +446,7 @@ export default {
       token_invalid: 'Authentik lehnt das Dienst-Token (AUTHENTIK_API_TOKEN) ab: Es wurde gelöscht, ist abgelaufen, oder in der .env steht ein anderes. Der Bereich Sicherheit im Konto, Einladungen und die Nutzerseiten brauchen es. Unten reparieren.',
       permission_missing: 'Dem Dienstkonto fehlt die Berechtigung „{perm}“. Unten reparieren.',
       executor: 'Der Anmelde-Flow funktioniert vom Server aus nicht ({cls}). Prüf, ob AUTHENTIK_URL die Adresse ist, unter der der Backend-Container Authentik erreicht, und ob dein Reverse Proxy die API unverändert durchreicht.',
-      optional_change_email: 'Das Ändern der E-Mail-Adresse ist nicht eingerichtet: Binde deploy/authentik/templates/friendflix-email-change.html (mit deiner FriendFlix-Adresse im Link) unter /templates in Authentik ein und repariere dann unten.',
+      optional_change_email: 'Das Ändern der E-Mail-Adresse ist nicht eingerichtet: Binde deploy/authentik/templates/friendflix-email-change.html und deploy/authentik/templates/friendflix-email-change.txt (jeweils mit deiner FriendFlix-Adresse im Link) unter /templates in Authentik ein und repariere dann unten.',
       unreachable: 'Authentik antwortet nicht. Die Flows lassen sich gerade nicht prüfen.',
       flow_missing: 'Der Ablauf „{flow}“ fehlt bei Authentik.',
       flow_unsupported: 'Der Ablauf „{flow}“ enthält Schritte, die FriendFlix nicht zeigen kann. Dort geht es auf der Anmeldeseite von Authentik weiter.',
