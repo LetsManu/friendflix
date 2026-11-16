@@ -31,9 +31,9 @@ export interface SyscheckMock {
   probes: { dripDelayMs: number; drips: number; uploadStatus: number; uploads: number; sockets: number; hold: Promise<void> | null };
 }
 
-/** the server lines of Stage 1 in catalogue order */
+/** the server lines of Stage 1 in catalogue order (plus core.mail, mail stage A) */
 export const SERVER_IDS = [
-  'core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env',
+  'core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env', 'core.mail',
   'signin.oidc', 'signin.authentik', 'signin.flows', 'signin.issuerHost', 'signin.passkeys', 'signin.mail',
   'media.server', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder',
 ];

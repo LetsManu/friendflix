@@ -4,6 +4,9 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Admin
+- **E-Mail: SMTP settings and a branded test mail.** *Admin → Settings → Notifications → E-Mail* takes an SMTP server, port, encryption (*STARTTLS*, *TLS* or *Keine*), user, password and sender address; the password is stored encrypted, never shown again, and saving a change of the server, port or encryption needs a fresh sign-in too. Certificates are always verified (TLS 1.2 or newer, also for your own mail server: it needs a valid certificate matching the host name); *Keine* never logs in. *Testen* checks the connection without sending, *Testmail senden* sends a branded mail to your own address only (3 per 10 minutes), and the card shows the last send, the last error and what waits. The Systemcheck has a new line *E-Mail-Versand* (the connection check is kept for 10 minutes, *Jetzt prüfen* checks again; every warning links to the docs). Mails go through a durable outbox: retries after 1 min, 5 min, 30 min, 2 h and 6 h, a broken connection does not use up a mail's attempts, a mail still queued after 72 hours fails, limits of 10 an hour and 50 a day per recipient and 200 an hour in all, and history is deleted after 30 days. No tracking pixels, no remote images. In all seven languages. Setup for common providers, a self-hosted mail server, the outbox and the error codes: [docs/mail.md](docs/mail.md).
+
 ## [3.5.0] – Churros – 2026-11-16
 
 ### Upgrade notes

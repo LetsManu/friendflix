@@ -34,6 +34,7 @@
   import StatusPill from '#lib/ui/StatusPill.svelte';
   import { toast } from '#lib/ui/toast';
   import { refreshSummary } from '#lib/admin/summary';
+  import MailStatus from '#lib/admin/settings/MailStatus.svelte';
   import SettingRow from '#lib/admin/settings/SettingRow.svelte';
   import { highlightSetting } from '#lib/admin/settings/highlight';
   import { SEARCH_MIN, searchSettings, type SettingHit } from '#lib/admin/settings/search';
@@ -65,6 +66,8 @@
   /** a generated webhook secret, shown once (in memory only) */
   let generated: Record<string, string> = {};
   let resumeNotice: 'resumed' | 'dropped' | 'failed' | null = null;
+  /** saves and good tests of the mail group: the E-Mail card's status line reads the new state after each */
+  let mailSaves = 0;
   /** the action repeated after a re-authentication runs: another reauth_required is an error, not a new round trip */
   let resuming = false;
 
@@ -235,6 +238,7 @@
     const res = await runAction({ key: `set:save:${group}`, run: () => saveSettings(values, force), success: tr('settings.saved'), error: false });
     if (res.ok) {
       markSaved(group);
+      if (group === 'mail') mailSaves++;
       // the admin menu shows the optional Live-TV entry by this switch: no waiting for the next summary refresh
       if ('LIVETV_OFFER_HIDDEN' in values) void refreshSummary();
       for (const k of Object.keys(values)) delete edits[k];
@@ -257,7 +261,12 @@
     if (refuseRedacted(group)) return;
     const values = changesOf(group);
     const res = await runAction({ key: `set:test:${group}`, run: () => testGroup(group, values), error: false });
-    if (res.ok && res.value) { probes = { ...probes, [group]: { result: res.value, save: false } }; return; }
+    if (res.ok && res.value) {
+      probes = { ...probes, [group]: { result: res.value, save: false } };
+      // a good connection check clears the mail card's "connection trouble" on the server: the status line reads it again
+      if (group === 'mail' && res.value.ok) mailSaves++;
+      return;
+    }
     if (isReauthError(res.error)) return reauth({ action: 'test', group }, () => test(group));
     const fe = fieldErrors(res.error);
     if (fe) errors = { ...errors, ...fe };
@@ -372,10 +381,10 @@
           {/each}
           {#if probe}
             {#if probe.result.ok}
-              <p class="probe ok" role="status">{probeText(probe.result)}</p>
+              <p class="probe ok" role="status">{probeText(probe.result, g.id)}</p>
             {:else}
               <div class="probe err" role="alert">
-                <p>{probe.save ? $t('settings.probeFailed', { reason: probeText(probe.result) }) : probeText(probe.result)}</p>
+                <p>{probe.save ? $t('settings.probeFailed', { reason: probeText(probe.result, g.id) }) : probeText(probe.result, g.id)}</p>
                 {#if probe.save && SOFT_PROBE_CODES.has(probe.result.code)}
                   <p class="muted">{$t('settings.probeSoft')}</p>
                   <Button variant="secondary" size="sm" pending={$busyKeys.has(`set:save:${g.id}`)} on:click={() => save(g.id, true)}>{$t('settings.saveAnyway')}</Button>
@@ -383,6 +392,7 @@
               </div>
             {/if}
           {/if}
+          {#if g.id === 'mail'}<MailStatus reload={mailSaves} />{/if}
           <div class="foot">
             {#if dirty}<StatusPill tone="warn" icon="clock" label={$t('settings.unsaved')} />{/if}
             <Button type="submit" icon="check" pending={$busyKeys.has(`set:save:${g.id}`)} disabled={!dirty && savedGroup !== g.id} done={savedGroup === g.id && !dirty}>{$t('settings.save')}</Button>

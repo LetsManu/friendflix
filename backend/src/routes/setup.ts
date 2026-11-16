@@ -117,7 +117,8 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
     const r = await testGroup(ctx, b.group as SettingGroup, b.values ?? {}, { allowedKeys: wizardKeys(ctx) });
     if ('noProbe' in r) return reply.code(400).send({ error: 'no_probe' });
     if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors });
-    return r;
+    const { saved: _saved, ...answer } = r; // `saved` steers the admin route's clearing of a stale mail failure; not part of the answer
+    return answer;
   });
 
   // spec Part G "Jellyfin automation": the provider signs in with the administrator's username and password (in this request only:

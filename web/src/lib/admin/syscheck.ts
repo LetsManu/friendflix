@@ -9,6 +9,7 @@ import { api } from '#lib/api';
 import { fmtTime, hasKey, tr, trDynamic, type TKey, type TParams } from '#lib/i18n';
 import type { Tone } from '#lib/ui/StatusPill.svelte';
 import { failClassText } from './health';
+import { mailCodeText } from './settings/mail';
 import { rememberSystemcheck } from './syscheckStore';
 
 export const CHECK_STATUSES = ['ok', 'warning', 'problem', 'not_set_up', 'unknown'] as const;
@@ -18,7 +19,7 @@ export const CHECK_GROUPS = ['core', 'signin', 'media', 'livetv', 'updates', 'pr
 export type CheckGroup = (typeof CHECK_GROUPS)[number];
 /** the full catalogue in display order (same list as the backend; a unit test compares both) */
 export const CHECK_IDS = [
-  'core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env',
+  'core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env', 'core.mail',
   'signin.oidc', 'signin.authentik', 'signin.flows', 'signin.issuerHost', 'signin.passkeys', 'signin.mail',
   'media.server', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder',
   'livetv.container', 'livetv.encoder', 'livetv.sources', 'livetv.guides',
@@ -86,6 +87,8 @@ function textParams(l: CheckLine): TParams {
     n: num(p.n), pct: num(p.pct), ms: num(l.ms),
     flow: flowName(str(p.flow)), cls: str(p.cls) ? failClassText(str(p.cls)) : '', perms: str(p.perms).split(',').filter(Boolean).join(', '),
     keys: str(p.keys).split(',').filter(Boolean).join(', '), key: l.settingKey ?? '',
+    // the mail line's last failure: the code's sentence with its SMTP status (an unknown code reads as the generic one)
+    reason: l.id === 'core.mail' ? mailCodeText(str(p.code), num(p.smtp) || null) : '',
   };
 }
 const codeText = (kind: 'cause' | 'fix', code: string | undefined, params: TParams): string => {

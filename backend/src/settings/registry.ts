@@ -12,9 +12,9 @@ export { publicUrlSchema };
  * can be read, build keys are baked into the image. A setting parses with the config.ts field of the same key, so Config keeps its types.
  */
 export type SettingKind = 'string' | 'url' | 'secret' | 'int' | 'number' | 'bool' | 'enum' | 'cidrList' | 'json';
-export type SettingGroup = 'general' | 'signin' | 'media' | 'requests' | 'notifications' | 'push' | 'sources'
+export type SettingGroup = 'general' | 'signin' | 'media' | 'requests' | 'notifications' | 'push' | 'mail' | 'sources'
   | 'downloads' | 'playback' | 'livetv' | 'recommendations' | 'updates' | 'health' | 'sessions';
-export type ProbeId = 'publicUrl' | 'media' | 'oidc' | 'authentik' | 'requests' | 'tmdb' | 'omdb' | 'portainer' | 'github';
+export type ProbeId = 'publicUrl' | 'media' | 'oidc' | 'authentik' | 'requests' | 'tmdb' | 'omdb' | 'portainer' | 'github' | 'mail';
 
 export interface SettingDef {
   /** the env name, e.g. 'JELLYFIN_URL' */
@@ -87,6 +87,7 @@ function setting(key: Key, meta: Meta): SettingDef {
 const oidc = { group: 'signin', probe: 'oidc', runRequired: true } as const;
 const authentik = { group: 'signin', probe: 'authentik' } as const;
 const portainer = { group: 'updates', probe: 'portainer' } as const;
+const mail = { group: 'mail', probe: 'mail' } as const;
 
 export const SETTINGS: readonly SettingDef[] = [
   // general
@@ -117,6 +118,13 @@ export const SETTINGS: readonly SettingDef[] = [
   setting('VAPID_PUBLIC_KEY', { kind: 'string', group: 'push', generate: 'vapidPair' }),
   setting('VAPID_PRIVATE_KEY', { kind: 'secret', group: 'push', generate: 'vapidPair' }),
   setting('VAPID_SUBJECT', { kind: 'string', group: 'push' }),
+  // e-mail: read per send and per probe from the live config (mail/transport.ts)
+  setting('MAIL_SMTP_HOST', { kind: 'string', ...mail }),
+  setting('MAIL_SMTP_PORT', { kind: 'int', ...mail }),
+  setting('MAIL_SMTP_TLS', { kind: 'enum', ...mail }),
+  setting('MAIL_SMTP_USER', { kind: 'string', ...mail }),
+  setting('MAIL_SMTP_PASSWORD', { kind: 'secret', ...mail }), // a password: no last4 hint
+  setting('MAIL_FROM', { kind: 'string', ...mail }),
   // data sources
   setting('TMDB_API_KEY', { kind: 'secret', group: 'sources', hint: 'last4', probe: 'tmdb' }),
   setting('OMDB_API_KEY', { kind: 'secret', group: 'sources', hint: 'last4', probe: 'omdb' }),

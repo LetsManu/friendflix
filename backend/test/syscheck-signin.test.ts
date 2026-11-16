@@ -123,7 +123,8 @@ describe('a hung Authentik', () => {
     expect(performance.now() - t0).toBeLessThan(8_500);
     expect(r.lines.filter((l) => l.group === 'signin').map((l) => [l.id, l.status, l.cause])).toEqual(signinCheck.ids.map((id: CheckId) => [id, 'unknown', 'check_timeout']));
     const others = r.lines.filter((l) => l.group === 'core' || l.group === 'media'); // Live TV and updates have lines of their own (Stage 3)
-    expect(others.length).toBe(15); // 9 core lines (with core.redisPersistence) + 6 media lines
-    expect(others.filter((l) => l.status !== 'ok')).toEqual([]);
+    expect(others.length).toBe(16); // 10 core lines (with core.redisPersistence and core.mail) + 6 media lines
+    // e-mail is optional and not set up here: neutral, not a problem
+    expect(others.filter((l) => l.status !== 'ok').map((l) => [l.id, l.status])).toEqual([['core.mail', 'not_set_up']]);
   }, 15_000);
 });

@@ -575,6 +575,17 @@ keep that safe (`backend/src/brand/`):
 - **Stays.** Branding changes names and colours. It cannot change the native app packages, and it cannot hide the source-code link
   the AGPL requires.
 
+## E-mail
+
+*Admin → Einstellungen → E-Mail* ([mail.md](mail.md)) lets an admin choose an SMTP server FriendFlix sends from (`backend/src/mail/`). The rules that keep that safe:
+
+- **The password.** `MAIL_SMTP_PASSWORD` is a secret setting: stored encrypted with `APP_ENC_KEY`, never returned by any API, with no hint of its last characters. Saving it needs a sign-in at most 10 minutes old. So does saving `MAIL_SMTP_HOST`, `MAIL_SMTP_PORT` or `MAIL_SMTP_TLS` (the places a password goes), and *Testen* when it would send the saved password to a changed one ([Re-authentication](#re-authentication)), so it cannot be redirected to another host with an old session.
+- **TLS.** Certificates are always verified (TLS 1.2 or newer); there is no option to skip it. *STARTTLS* requires the upgrade and fails before any login if the server does not offer it; *TLS* is encrypted from the first byte. *Keine* never logs in and ignores STARTTLS: a user name or password with it is refused, and so is a password without a user name.
+- **Never logged.** Nodemailer's own logging and debug output (which carries the base64 login exchange) are off. Logs, audit rows (`mail.test`), error texts and API answers carry codes and the 3-digit SMTP status only: never the password, an address, a mail's text or the server's reply, which may quote an address. An address appears at most masked (`a…@friend.example.com`).
+- **The outbox.** A queued mail keeps its address and parameters encrypted (an invitation or unsubscribe link carries a token); once final, both are wiped and the row is deleted after 30 days. A mail is built from strings only: no file path and no URL is ever read for it.
+- **The test mail** goes only to the signed-in admin's own address, at most 3 per 10 minutes, and the route is rate-limited as well.
+- **No tracking.** No remote images, pixels or link redirects in any mail.
+
 ## Hardening
 
 What the shipped [compose.yaml](../compose.yaml) and images do:

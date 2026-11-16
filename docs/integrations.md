@@ -59,6 +59,9 @@ Moved to [authentik.md §7–§9](authentik.md#7-enrollment-flow-for-invitations
 ## ntfy / Discord
 `NTFY_URL=https://ntfy.example.com/friendflix` and/or `DISCORD_WEBHOOK_URL=...` for "now available", pending wishes, voting events; in `.env` or *Admin → Settings → Notifications*. The Discord URL is a secret there (write-only); an ntfy `auth` token in the URL is shown redacted.
 
+## E-Mail (SMTP)
+FriendFlix can send e-mail through an SMTP server of your choice (*Admin → Settings → Notifications → E-Mail*: server, port, encryption, user, password, sender address). Today it sends a branded test mail; mails to people and admin alerts follow. Providers, your own mail server, the outbox and the error codes: [mail.md](mail.md). Password-reset mails stay with Authentik.
+
 ## Web Push (browser notifications)
 Set `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` (both required; `VAPID_SUBJECT` optional, default `PUBLIC_URL`) to enable per-device browser push. The simplest way is *Admin → Settings → Push notifications → Generate key pair* (the private key is saved encrypted and never shown). For `.env`, generate a pair with `node scripts/gen-vapid.mjs` (prints ready-to-paste env lines) or `npx web-push generate-vapid-keys`. The private key can be supplied as a Docker secret (`VAPID_PRIVATE_KEY_FILE`, see `compose.secrets.yaml`: `secrets/vapid_private_key` must exist; an empty file counts as unset and leaves push disabled). An invalid key pair is detected at startup, logged as a warning and also disables push. Keep the pair stable: changing it invalidates all existing subscriptions.
 

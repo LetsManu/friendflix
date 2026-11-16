@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import type { Config } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { akBase } from '../invites.js';
+import { probeMail } from '../mail/transport.js';
 import { mediaSettings } from '../media/index.js';
 import { MEDIA_SETUP } from '../media/setup.js';
 import { SeerrClient, SeerrError } from '../seerr/client.js';
@@ -42,6 +43,8 @@ export function probeConfigured(id: ProbeId, cfg: Config): boolean {
     case 'omdb': return any('OMDB_API_KEY');
     case 'portainer': return any('PORTAINER_WEBHOOK_URL', 'PORTAINER_URL', 'PORTAINER_API_KEY');
     case 'github': return any('GITHUB_TOKEN');
+    // configured is host and sender (mailConfigured): a half-filled group saves unprobed, and emptying the sender turns mail off
+    case 'mail': return Boolean(c.MAIL_SMTP_HOST && c.MAIL_FROM);
   }
 }
 
@@ -192,7 +195,7 @@ async function github(f: typeof fetch, cfg: Config): Promise<ProbeResult> {
 
 /** Runs one probe against `cfg` (the candidate: the current config merged with the submitted values). Never throws. */
 export async function runProbe(ctx: Ctx, id: ProbeId, cfg: Config, opts: { timeoutMs?: number; fetchImpl?: typeof fetch } = {}): Promise<ProbeResult> {
-  if (!probeConfigured(id, cfg)) return fail('invalid', 'not_set');
+  if (!probeConfigured(id, cfg)) return fail('invalid', id === 'mail' && cfg.MAIL_SMTP_HOST ? 'incomplete' : 'not_set');
   const r = runner(opts.fetchImpl ?? ctx.fetchImpl, opts.timeoutMs ?? PROBE_TIMEOUT_MS);
   if (id === 'publicUrl') {
     // unreachable or slow through the public URL: a warning, never a blocker
@@ -209,6 +212,9 @@ export async function runProbe(ctx: Ctx, id: ProbeId, cfg: Config, opts: { timeo
       case 'omdb': return source(ctx, r.fetch, 'omdb', cfg.OMDB_API_KEY);
       case 'portainer': return portainer(r.fetch, cfg);
       case 'github': return github(r.fetch, cfg);
+      // connect, TLS and login only, never a send; each nodemailer timeout is at most the runner's deadline, but EHLO and login may
+      // run on in the background after the runner answered `timeout` (probeMail closes the transport when they end)
+      case 'mail': return probeMail(cfg, { timeoutMs: opts.timeoutMs ?? PROBE_TIMEOUT_MS });
     }
   });
 }

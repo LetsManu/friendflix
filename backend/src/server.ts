@@ -41,6 +41,7 @@ import { resolveRequestedPolls } from './polls.js';
 import { reminderTick } from './reminders.js';
 import { leavingTick, qualityIndexTick } from './fresh.js';
 import { langIndexTick } from './langindex.js';
+import { mailTick } from './mail/worker.js';
 import { createLiveCtx } from './ctx.js';
 import { RedisSettingsBus } from './settings/bus.js';
 import { createSettingsStore } from './settings/store.js';
@@ -188,6 +189,13 @@ if (cfg.BACKGROUND_JOBS === 'true') {
     if (livetvStoreBusy || !op()) return;
     livetvStoreBusy = true;
     void livetvStoreTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-store', 'livetv recordings store job failed')).finally(() => { livetvStoreBusy = false; });
+  }, 30_000));
+  // the mail outbox (mail/worker.ts): due rows claimed under a lease (several instances never send a mail twice), one SMTP connection per tick
+  let mailBusy = false;
+  timers.push(setInterval(() => {
+    if (mailBusy || !op()) return;
+    mailBusy = true;
+    void mailTick(ctx, undefined, app.log).catch(jobFailed(ctx, app.log, 'mail', 'mail tick failed')).finally(() => { mailBusy = false; });
   }, 30_000));
   // always scheduled: DOWNLOADS_ENABLED applies live, each tick checks it
   const downloadsOn = () => op() && ctx.cfg.DOWNLOADS_ENABLED === 'true';

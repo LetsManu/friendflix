@@ -176,6 +176,20 @@ describe('settings probes', () => {
     expect(await runProbe(throwing(Object.assign(new Error('t'), { name: 'TimeoutError' })), 'publicUrl', cfg)).toEqual({ ok: true, code: 'warning', detail: 'timeout' });
   });
 
+  it('mail probe is not run when the host is empty', () => {
+    expect(probeConfigured('mail', cfg)).toBe(false);
+    expect(probeConfigured('mail', withCfg({ MAIL_FROM: 'kino@friend.example.com' }))).toBe(false);
+    // configured is host and sender: a half-filled group saves unprobed (and so does emptying only the sender to turn mail off)
+    expect(probeConfigured('mail', withCfg({ MAIL_SMTP_HOST: 'mail.example.com' }))).toBe(false);
+    expect(probeConfigured('mail', withCfg({ MAIL_SMTP_HOST: 'mail.example.com', MAIL_FROM: 'kino@friend.example.com' }))).toBe(true);
+  });
+
+  it('mail probe: a server without a sender is incomplete, nothing entered is not set', async () => {
+    const ctx = world({}).ctx;
+    expect(await runProbe(ctx, 'mail', withCfg({ MAIL_SMTP_HOST: 'mail.example.com' }))).toEqual({ ok: false, code: 'invalid', detail: 'incomplete' });
+    expect(await runProbe(ctx, 'mail', cfg)).toEqual({ ok: false, code: 'invalid', detail: 'not_set' });
+  });
+
   it('probeConfigured and probeBlocks', () => {
     expect(probeConfigured('authentik', cfg)).toBe(false);
     expect(probeConfigured('media', cfg)).toBe(true);
