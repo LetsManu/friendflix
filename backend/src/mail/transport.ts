@@ -37,6 +37,9 @@ export function mailConfigured(cfg: Config): boolean {
   return Boolean(cfg.MAIL_SMTP_HOST && cfg.MAIL_FROM);
 }
 
+/** A password is set but no user: nodemailer would log in without it, so the setup counts as incomplete (probe `invalid`/`no_user`). */
+const passwordWithoutUser = (cfg: Config) => Boolean(cfg.MAIL_SMTP_PASSWORD && !cfg.MAIL_SMTP_USER);
+
 const failure = (code: MailErrorCode, smtp: number | null = null, scope: MailFailure['scope'] = 'transport', permanent = false): MailFailure =>
   ({ code, smtp, scope, permanent });
 
@@ -60,9 +63,11 @@ export function transportOptions(cfg: Config, o: { probe?: boolean; timeoutMs?: 
   const login = Boolean(cfg.MAIL_SMTP_USER || cfg.MAIL_SMTP_PASSWORD);
   // never a password in clear: a plain relay is used without login only
   if (mode === 'none' && login) throw new MailError(failure('insecure_auth'));
+  if (passwordWithoutUser(cfg)) throw new MailError(failure('not_configured'));
   const t = o.probe ? Math.min(PROBE_TIMEOUT_MS, o.timeoutMs ?? PROBE_TIMEOUT_MS) : undefined;
   return {
-    host: cfg.MAIL_SMTP_HOST,
+    // hostSchema keeps an IPv6 literal bracketed (`[2001:db8::1]`); nodemailer needs it bare, else it looks the brackets up in DNS
+    host: cfg.MAIL_SMTP_HOST!.replace(/^\[(.*)\]$/, '$1'),
     port: cfg.MAIL_SMTP_PORT,
     secure: mode === 'tls',
     requireTLS: mode === 'starttls',
@@ -114,7 +119,9 @@ export function classifyMailError(e: unknown): MailFailure {
     case 'EMESSAGE': return message('message_refused');
     case 'ESOCKET': case 'ECONNECTION': case 'EDNS': {
       const original = typeof err.originalCode === 'string' ? err.originalCode : '';
-      if (TLS_CODE.test(original) || (typeof err.message === 'string' && TLS_TEXT.test(err.message))) return failure('tls', status);
+      // the text only of a socket error: a DNS or connection error quotes the host name, which may contain "tls" or "ssl"
+      const text = code === 'ESOCKET' && typeof err.message === 'string' ? err.message : '';
+      if (TLS_CODE.test(original) || TLS_TEXT.test(text)) return failure('tls', status);
       return failure('unreachable', status);
     }
     default: return failure('unexpected', status);
@@ -131,7 +138,7 @@ export async function probeMail(cfg: Config, o: { timeoutMs?: number } = {}): Pr
   } catch (e) {
     const { code } = classifyMailError(e);
     switch (code) {
-      case 'not_configured': return fail('invalid', 'not_set');
+      case 'not_configured': return fail('invalid', mailConfigured(cfg) && passwordWithoutUser(cfg) ? 'no_user' : 'not_set');
       case 'insecure_auth': return fail('invalid', 'insecure_auth');
       case 'auth': return fail('unauthorized');
       case 'tls': return fail('invalid', 'tls');

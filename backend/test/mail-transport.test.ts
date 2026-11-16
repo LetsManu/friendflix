@@ -6,6 +6,7 @@ import nodemailer from 'nodemailer';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../src/config.js';
 import { isMailAddress, mailSubkey, maskAddress, recipientKey } from '../src/mail/address.js';
+import { parseSettingValue, settingDef } from '../src/settings/registry.js';
 import { classifyMailError, createMailTransport, MailError, mailConfigured, probeMail, setMailTestCa, transportOptions } from '../src/mail/transport.js';
 import { cfg, ENC_KEY } from './helpers.js';
 import { SMTP_CERT, startSmtp, type SmtpFake } from './smtpfake.js';
@@ -82,6 +83,24 @@ describe('transport options', () => {
     expect(await probeMail(plain)).toEqual({ ok: false, code: 'invalid', detail: 'insecure_auth' });
     // a password alone is a credential too
     expect(() => transportOptions(mailCfg(25, { MAIL_SMTP_TLS: 'none', MAIL_SMTP_USER: undefined }))).toThrow('insecure_auth');
+  });
+
+  it('a password without a user is not silently dropped', async () => {
+    for (const mode of ['starttls', 'tls'] as const) {
+      const noUser = mailCfg(587, { MAIL_SMTP_TLS: mode, MAIL_SMTP_USER: undefined });
+      expect(() => transportOptions(noUser), mode).toThrow('not_configured');
+      expect(await probeMail(noUser), mode).toEqual({ ok: false, code: 'invalid', detail: 'no_user' });
+    }
+  });
+
+  it('an IPv6 host is passed to nodemailer without brackets', () => {
+    // the setting stores an IPv6 literal bracketed (hostSchema); nodemailer would look `[2001:db8::1]` up in DNS
+    const stored = parseSettingValue(settingDef('MAIL_SMTP_HOST')!, '2001:db8::1');
+    expect(stored).toEqual({ ok: true, value: '[2001:db8::1]' });
+    expect(transportOptions(mailCfg(587, { MAIL_SMTP_HOST: '[2001:db8::1]' })).host).toBe('2001:db8::1');
+    expect(transportOptions(mailCfg(587, { MAIL_SMTP_HOST: '[::ffff:192.0.2.10]' })).host).toBe('::ffff:192.0.2.10');
+    expect(transportOptions(mailCfg(587, { MAIL_SMTP_HOST: 'mail.example.com' })).host).toBe('mail.example.com');
+    expect(transportOptions(mailCfg(587, { MAIL_SMTP_HOST: '192.0.2.10' })).host).toBe('192.0.2.10');
   });
 });
 
@@ -191,6 +210,12 @@ describe('sending and error classes', () => {
     expect(classifyMailError(e('EMESSAGE', { responseCode: 451, command: 'DATA' }))).toEqual({ code: 'message_refused', smtp: 451, scope: 'message', permanent: false });
     expect(classifyMailError(e('ETIMEDOUT'))).toEqual({ code: 'timeout', smtp: null, scope: 'transport', permanent: false });
     expect(classifyMailError(e('ECONNECTION'))).toEqual({ code: 'unreachable', smtp: null, scope: 'transport', permanent: false });
+    // a host name that mentions TLS or SSL in a DNS or connection error is no TLS failure
+    const dns = Object.assign(new Error('getaddrinfo ENOTFOUND smtp.ssl.example.com'), { code: 'EDNS', originalCode: 'ENOTFOUND' });
+    expect(classifyMailError(dns).code).toBe('unreachable');
+    expect(classifyMailError(Object.assign(new Error('Connection closed by tls.example.com'), { code: 'ECONNECTION' })).code).toBe('unreachable');
+    expect(classifyMailError(Object.assign(new Error('self-signed certificate'), { code: 'ESOCKET', originalCode: 'DEPTH_ZERO_SELF_SIGNED_CERT' })).code).toBe('tls');
+    expect(classifyMailError(Object.assign(new Error('Client network socket disconnected before secure TLS connection was established'), { code: 'ESOCKET', originalCode: 'ECONNRESET' })).code).toBe('tls');
     expect(classifyMailError(e('ETLS'))).toEqual({ code: 'tls', smtp: null, scope: 'transport', permanent: false });
     expect(classifyMailError('x')).toEqual({ code: 'unexpected', smtp: null, scope: 'transport', permanent: false });
     expect(classifyMailError(e('EWHAT', { responseCode: 'no' }))).toEqual({ code: 'unexpected', smtp: null, scope: 'transport', permanent: false });
@@ -203,11 +228,13 @@ describe('nothing secret is printed', () => {
     const seen: string[] = [];
     const record = (...args: unknown[]) => void seen.push(args.map((a) => (typeof a === 'string' ? a : a instanceof Uint8Array ? Buffer.from(a).toString('utf8') : JSON.stringify(a) ?? String(a))).join(' '));
     for (const m of ['log', 'info', 'warn', 'error', 'debug'] as const) vi.spyOn(console, m).mockImplementation(record);
-    const write = process.stdout.write.bind(process.stdout);
-    vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown, ...rest: unknown[]) => {
-      record(chunk);
-      return (write as (...a: unknown[]) => boolean)(chunk, ...rest);
-    }) as typeof process.stdout.write);
+    for (const stream of [process.stdout, process.stderr]) {
+      const write = stream.write.bind(stream);
+      vi.spyOn(stream, 'write').mockImplementation(((chunk: unknown, ...rest: unknown[]) => {
+        record(chunk);
+        return (write as (...a: unknown[]) => boolean)(chunk, ...rest);
+      }) as typeof stream.write);
+    }
     return seen;
   }
   const leaks = (seen: string[]) => seen.filter((line) => SECRETS.some((s) => line.includes(s)));

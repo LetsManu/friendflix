@@ -211,7 +211,8 @@ export async function runProbe(ctx: Ctx, id: ProbeId, cfg: Config, opts: { timeo
       case 'omdb': return source(ctx, r.fetch, 'omdb', cfg.OMDB_API_KEY);
       case 'portainer': return portainer(r.fetch, cfg);
       case 'github': return github(r.fetch, cfg);
-      // connect, TLS and login only, never a send; nodemailer's own timeouts stay inside the runner's deadline
+      // connect, TLS and login only, never a send; each nodemailer timeout is at most the runner's deadline, but EHLO and login may
+      // run on in the background after the runner answered `timeout` (probeMail closes the transport when they end)
       case 'mail': return probeMail(cfg, { timeoutMs: opts.timeoutMs ?? PROBE_TIMEOUT_MS });
     }
   });

@@ -25,6 +25,8 @@ export interface SmtpFake {
   messages: Array<{ from: string; to: string[]; raw: string }>;
   /** AUTH attempts the server saw (successful or not) */
   auths: number;
+  /** connections the server accepted */
+  connections: number;
   close(): Promise<void>;
 }
 
@@ -34,7 +36,7 @@ const refuse = (status: number, text: string) => Object.assign(new Error(text), 
 export async function startSmtp(o: SmtpFakeOptions): Promise<SmtpFake> {
   const login = Boolean(o.user);
   const plain = o.mode === 'none' || o.noStarttls === true;
-  const fake: SmtpFake = { port: 0, messages: [], auths: 0, close: async () => undefined };
+  const fake: SmtpFake = { port: 0, messages: [], auths: 0, connections: 0, close: async () => undefined };
   const options: SMTPServerOptions = {
     secure: o.mode === 'tls',
     key: SMTP_KEY,
@@ -44,6 +46,10 @@ export async function startSmtp(o: SmtpFakeOptions): Promise<SmtpFake> {
     // a server without TLS takes a login in clear, so a client that wrongly tries is seen in `auths`
     allowInsecureAuth: plain,
     ...(plain ? { disabledCommands: ['STARTTLS'] } : {}),
+    onConnect(_session, cb) {
+      fake.connections++;
+      cb();
+    },
     onAuth(auth, _session, cb) {
       fake.auths++;
       if (login && auth.username === o.user && auth.password === o.pass) cb(null, { user: auth.username });

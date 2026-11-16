@@ -11,6 +11,7 @@ import { CREDENTIAL_DESTINATIONS, generateVapidPair, generateWebhookSecret, NO_D
 import { SETTINGS, settingDef } from '../src/settings/registry.js';
 import { ADMIN, cfg, ENC_KEY, fakeHttp, makeEnv, type Handler, type TestEnv } from './helpers.js';
 import { PLEX_TOKEN, PLEX_URL, PlexFake } from './plexfake.js';
+import { startSmtp } from './smtpfake.js';
 import { sessionKey } from '../src/session.js';
 
 // Admin -> Settings API (Block 25, spec Part I): write-only secrets, locked env keys, validation, probes against the candidate config,
@@ -444,13 +445,29 @@ describe('saved credentials never go to a new host without re-authentication', (
     h.hosts.length = 0;
     h.probe = { 'GET .*': () => ({ json: {} }) };
     const group = settingDef(dest)!.group;
-    // a new value of the destination's own kind: a URL, or the SMTP server's host, port or TLS mode (MAIL_FROM is unset: no connection)
-    const url = ({ MAIL_SMTP_HOST: EVIL, MAIL_SMTP_PORT: 2525, MAIL_SMTP_TLS: 'tls' } as Record<string, unknown>)[dest] ?? `https://${EVIL}`;
-    expect((await h.put({ [dest]: url })).statusCode).toBe(401);
-    expect((await test(group, { [dest]: url })).statusCode).toBe(401);
-    expect(h.hosts).not.toContain(EVIL);
-    // the admin typed the credential for the new host themselves: a Test needs no re-authentication
-    if (h.env.ctx.settings.sources()[cred] !== 'env') expect((await test(group, { [dest]: url, [cred]: 'typed-credential' })).statusCode).toBe(200);
+    // the SMTP password: a complete mail setup whose changed destination is a real SMTP server, so a probe would be seen connecting
+    const smtp = cred === 'MAIL_SMTP_PASSWORD' ? await startSmtp({ mode: 'starttls' }) : undefined;
+    try {
+      let url: unknown = `https://${EVIL}`;
+      if (smtp) {
+        const saved = { MAIL_SMTP_HOST: '127.0.0.1', MAIL_SMTP_PORT: smtp.port, MAIL_SMTP_TLS: 'starttls', MAIL_SMTP_USER: 'anna', MAIL_FROM: 'kino@friend.example.com' };
+        // the saved value of the changing destination points elsewhere; the new one at the fake server
+        const before: Record<string, unknown> = { MAIL_SMTP_HOST: 'mail.example.com', MAIL_SMTP_PORT: smtp.port === 2525 ? 2526 : 2525, MAIL_SMTP_TLS: 'tls' };
+        url = saved[dest as keyof typeof saved];
+        await h.env.ctx.settings.save({ ...saved, [dest]: before[dest] }, null);
+        await stale();
+      }
+      expect((await h.put({ [dest]: url })).statusCode).toBe(401);
+      expect((await test(group, { [dest]: url })).statusCode).toBe(401);
+      expect(h.hosts).not.toContain(EVIL);
+      expect(smtp?.connections ?? 0, 'no SMTP connection before the re-authentication').toBe(0);
+      // the admin typed the credential for the new host themselves: a Test needs no re-authentication
+      if (h.env.ctx.settings.sources()[cred] !== 'env') expect((await test(group, { [dest]: url, [cred]: 'typed-credential' })).statusCode).toBe(200);
+      // ... and that Test does reach the server: the check above would have seen a connection
+      if (smtp) expect(smtp.connections).toBeGreaterThan(0);
+    } finally {
+      await smtp?.close();
+    }
   });
 });
 
