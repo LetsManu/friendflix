@@ -91,12 +91,14 @@ A person gets mail only when all of this holds: e-mail is set up (server and sen
 | *Verfügbare Wünsche* (`available`) | Something the person wished for is available. | *Verfügbare Wünsche* |
 | *Aufnahmen* (`recording`) | A recording is finished (a series episode once it is complete, so an incomplete one mails once), failed or stayed incomplete, or is about to be deleted to make room. | *Aufnahmen* |
 | *Ablaufende Downloads* (`licence`) | Downloads on the person's devices expire soon ([below](#expiring-downloads)). | *Ablaufende Downloads* |
+| *Wochenrückblick* (`digest`) | Once a week ([below](#weekly-recap)). **Off until the person switches it on.** | *Wochenrückblick* |
+| Admin alerts (`update`, `updatefailed`, `syscheck`, `storage`) | Admins only ([below](#mails-for-admins)). | *Für Admins* section |
 
 The switchable mails are the e-mail form of an in-app notice, with the same text the notices show; a notice that is raised again (a retried webhook, a second run) never mails twice. Mail is per account: **kids profiles** have no switches and get no mail of their own; a licence or a wish of a kids profile is mailed to the account's address with the same text the account's notices get.
 
 ### The switches
 
-*Konto → E-Mails* (`/me/account#mail`, owner profile only) shows the address the mails go to and one switch per type, all on by default. A switch saves at once. Without an address the card says *Keine E-Mail-Adresse hinterlegt* and links to the e-mail row under *Sicherheit*; while the server sends no mail it says *Dein Server verschickt noch keine E-Mails.* In both cases the switches cannot be changed. The switches are independent of push notifications, ntfy and the weekly digest. Mail has no quiet hours; only the licence run keeps to the daytime.
+*Konto → E-Mails* (`/me/account#mail`, owner profile only) shows the address the mails go to and one switch per type, all on by default. A switch saves at once. Without an address the card says *Keine E-Mail-Adresse hinterlegt* and links to the e-mail row under *Sicherheit*; while the server sends no mail it says *Dein Server verschickt noch keine E-Mails.* In both cases the switches cannot be changed. The switches are independent of push notifications, ntfy and the in-app weekly recap (each channel has its own switch). Admins also see a section *Für Admins* with the four admin switches ([below](#mails-for-admins)); other accounts do not see them and cannot set them. Mail has no quiet hours; only the licence run keeps to the daytime.
 
 **Switched off means never sent.** Switching a type off (on the card or with the link in a mail) also drops that person's mails of that type that are still waiting (for a retry, the rate limit or a server outage). And the outbox checks once more right before each send and deletes a waiting person mail unsent, with one of these codes in the log (never an address):
 
@@ -105,6 +107,7 @@ The switchable mails are the e-mail form of an in-app notice, with the same text
 | `unsubscribed` | Its type was switched off after it was queued. |
 | `address_changed` | The account's address changed, was removed or is no longer valid since the mail was queued, so it never goes to an old address. |
 | `inactive` | The account was deleted or disabled, or its access ended. |
+| `not_admin` | An admin alert whose recipient is no longer an admin (demoted after the mail was queued). |
 
 ### Unsubscribing
 
@@ -121,6 +124,17 @@ The link carries a token for **one person and one mail type**: it can switch onl
 
 The welcome mail is sent at the end of the first successful sign-in of a new account (invitation, approval or the first admin), with a link to the app and to the mail settings (no unsubscribe link: it comes once). It is **once per account, ever**: the first sign-in marks the account as welcomed (`users.welcomed_at`) also when no mail can go out (no address yet, e-mail not set up), so a mail set up later never welcomes old accounts. The update that brought these mails marked every existing account as welcomed, so updating mailed nobody.
 
+### Weekly recap
+
+*Wochenrückblick* is the e-mail form of the weekly recap and is **opt-in**: it is off for everyone until a person switches it on under *Konto → E-Mails*, so updating mails nobody a recap. It is independent of the in-app recap (the *Wochenrückblick* notice and the `/digest` page): either can be on without the other. The mail has the same headline and range as the notice and lists titles as plain text, with no images and no links per title:
+
+- *Neue Filme* (up to 12 names, then "… und n weitere"),
+- *Neue Folgen* (up to 20 series with new episodes, the ones the person follows first, "Name (n neue Folgen)"),
+- *Deine Wünsche sind da* (up to 20),
+- *Empfehlungen für dich* (up to 5, "Name – von Anna").
+
+Each name is cut to 120 characters, and one button opens `/digest`, where the titles are links. It has the usual *Diese E-Mails abbestellen* link and one-click unsubscribe. An admin's *Testdigest* mails the admin too when that admin's switch is on. It goes out in the same weekly run as the in-app recap and needs background jobs (`BACKGROUND_JOBS=true`).
+
 ### Expiring downloads
 
 Once a day, in the first background run **between 09:00 and 21:00 server time** (the backend container's time zone, `TZ`, `Europe/Vienna` in the shipped compose files), FriendFlix looks for download licences that are still active, expire within the next **48 hours** and are at least 48 hours old. Each licence is warned once, ever, and each person gets one mail for all of them (how many, and the earliest expiry), together with the in-app notice. A run that would start before 09:00 or from 21:00 on (after a restart, a deploy, or downloads switched on in the evening) waits for the next 09:00: no licence mail at night. So **a licence of 4 days or more is warned 24 to 48 hours before it expires**; a 3-day licence only within its last 24 hours (or not at all if no run falls into that day); 1- and 2-day licences never. It needs background jobs (`BACKGROUND_JOBS=true`).
@@ -128,6 +142,27 @@ Once a day, in the first background run **between 09:00 and 21:00 server time** 
 ### Invitations
 
 When an admin creates an invitation (*Admin → Nutzer → Einladungen*), *E-Mail-Adresse (optional)* sends the new invitation link to that address right away; the dialog says *Einladung an a…@friend.example.com verschickt.*, that it waits in the outbox, or why it was not sent (copy the link and send it yourself then). The field can be used only while e-mail is set up (otherwise it is greyed out and says so), and only for an invitation for one person (*Nur für Einladungen für eine Person*: a link for several people cannot be mailed). The mail's language is chosen in the dialog (the instance language by default). An admin can send 20 invitation mails a day. The address is not kept with the invitation: it stays in the outbox, encrypted, until the mail is sent, and afterwards only in masked form there and in the audit log. A mail that waits in the outbox (a server outage, a rate limit) is withdrawn when the invitation is revoked, and dropped unsent once the invitation has expired or been used (code `invite_closed` in the log): it would only bring a dead link. If the mail cannot even be queued, the invitation still exists and the dialog shows its link with *nicht verschickt*; such a failed attempt, and an invitation that could not be created at all, does not count toward the 20. An invitation mail has no unsubscribe link (there is no account and no setting); it names who invited and says to ignore the mail if it was not expected.
+
+## Mails for admins
+
+Four mails go to **active admins that have an address**, and only to them. Each is also an in-app notice for every admin (the mail is the e-mail form of that notice, with the same text and a link into the admin area), and each has its own switch under *Konto → E-Mails → Für Admins*, **on by default**. They are not a "once forever": the notice's own key decides when a repeat is possible.
+
+| Switch (type) | When | Once per |
+|---|---|---|
+| *Neue Versionen* (`update`) | A newer version is available on the channel that is selected. Checked every hour, but the update check itself runs at most every 6 hours. Link: *Admin → Update*. | Stable: each release. Pinned version: each pinned target. Nightly: at most one per calendar week (a nightly build appears almost daily). |
+| *Fehlgeschlagene Updates* (`updatefailed`) | An update, a self-update or a rollback through the updater failed, or the new version did not come up and was rolled back; also the automatic redeploy through Portainer failing. Livetv jobs never mail, and a manual Portainer redeploy shows its error on the screen instead. Link: *Admin → Update*. | Each updater job (once, however often the page is opened); the Portainer redeploy once per target and day. |
+| *Probleme im Systemcheck* (`syscheck`) | A server-side line of the Systemcheck turns into a **problem**. Checked every 15 minutes. All lines that turn in one run make **one** mail naming their groups (a database or Authentik outage flips several at once). A problem that stays does not repeat (also when its check did not answer in between), and a line that flaps alerts at most once a day. The downloads and previews disk lines are left out: *Speicherplatz* tells them. After an update, lines that are already in problem at the first run alert once. Link: *Admin → Status*. | One mail per run; each line at most once per day. |
+| *Speicherplatz* (`storage`) | The downloads or previews disk is almost full or short of free space (not the download size cap), checked after every health check; and the two Live TV recordings storage notices (full, so a recording was stopped, or almost full). Links: *Admin → Status* and *Admin → Live-TV*. | Each disk, level (*fast voll*, *voll*) and day, so a disk that stays full mails daily, and *voll* after *fast voll* on the same day mails again. The recordings notices are once a day. |
+
+Known limits:
+
+- **While automatic updates in the nightly window are on** (`AUTO_UPDATE` set to the nightly window with an updater configured), **no "new version" mail is sent**: the update installs itself overnight. **If that window cannot install** (for example the updater is unreachable), admins get **no update mail either**, because nothing started that could fail. *Admin → Update* and the Systemcheck still show it.
+- Nothing is mailed while mail is not set up; the in-app notices are the same either way.
+- A demoted admin gets no further admin mail: a queued one is dropped unsent (`not_admin`).
+
+## Authentik's own mails
+
+Password reset and the confirmation of a new address in the enrollment flow are sent by Authentik, not by FriendFlix, so they do not go through this outbox. The templates that give them the FriendFlix look, and the action that copies your name, logo and sender into Authentik, are in [authentik.md §10b](authentik.md#10b-e-mails-in-the-friendflix-look). Because Authentik's sender field takes a bare address, those mails show no display name.
 
 ## The outbox
 

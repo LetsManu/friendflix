@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { portainerFailedAlert, updateFailedAlert } from './adminAlerts.js';
 import { audit } from './audit.js';
 import type { Ctx } from './ctx.js';
 import { portainerMode, portainerSetup, redeployViaPortainer, updateInfo, type UpdateInfo } from './updates.js';
@@ -250,7 +251,10 @@ export async function startLivetvJob(ctx: Ctx, op: LivetvOp, actor: string, view
   return job;
 }
 
-/** the result audit of a finished job, exactly once (the pending entry is taken atomically) */
+/**
+ * the result audit of a finished job, exactly once (the pending entry is taken atomically); a failed or rolled-back update also alerts the
+ * admins (adminAlerts.ts; its failure never undoes the audit)
+ */
 export async function reconcileAudit(ctx: Ctx, s: UpdaterStatus): Promise<void> {
   const j = s.job;
   if (!j || j.state === 'running') return;
@@ -258,6 +262,7 @@ export async function reconcileAudit(ctx: Ctx, s: UpdaterStatus): Promise<void> 
   if (!raw) return;
   const p = JSON.parse(raw) as { actor: string | null; action: UpdaterAction; auto?: true };
   await audit(ctx, p.actor, 'system.updater_result', undefined, { action: j.action, from: j.from, to: j.to, result: j.state, error: j.error, ...(p.auto ? { auto: true } : {}) });
+  await updateFailedAlert(ctx, j).catch(() => 0);
 }
 
 /** HH:MM of `now` in the server's time zone (TZ) */
@@ -302,6 +307,7 @@ export async function autoUpdateTick(ctx: Ctx, now = new Date(), log?: { warn(o:
     if (!r.ok && (r.error === 'busy' || r.error === 'unavailable')) return 'busy';
     if (!r.ok) {
       log?.warn({ mode, step: r.step, status: r.status, ...(r.code ? { code: r.code } : {}) }, 'automatic update through Portainer failed');
+      await portainerFailedAlert(ctx, target, now).catch(() => log?.warn({ code: 'alert_failed' }, 'update failed alert not sent'));
       return 'failed';
     }
     await ctx.kv.set(doneKey, '1', 90 * 86_400);

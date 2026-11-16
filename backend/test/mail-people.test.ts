@@ -4,8 +4,11 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Config } from '../src/config.js';
 import { encrypt } from '../src/crypto.js';
-import { mailSubkey } from '../src/mail/address.js';
-import { MAIL_PREF_TYPES, isMailPrefType, mailPerson, mailRecipient, readMailPrefs, setMailPref } from '../src/mail/people.js';
+import { mailSubkey, recipientKey } from '../src/mail/address.js';
+import {
+  ADMIN_MAIL_TYPES, MAIL_PREF_DEFAULTS, MAIL_PREF_TYPES, PERSON_MAIL_TYPES, isAdminMailType, isMailPrefType, mailPerson, mailRecipient, personMailBlock,
+  readMailPrefs, setMailPref,
+} from '../src/mail/people.js';
 import { unsubscribeToken, unsubscribeUrls, verifyUnsubscribeToken } from '../src/mail/unsubscribe.js';
 import { prefsSchema } from '../src/routes/prefs.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
@@ -14,6 +17,7 @@ import { cfg, makeEnv, type TestEnv } from './helpers.js';
 const ANNA = 'anna@friend.example.com';
 const BEN = 'ben@friend.example.com';
 const MAIL_CFG: Partial<Config> = { MAIL_SMTP_HOST: 'mail.example.com', MAIL_FROM: 'kino@friend.example.com', PUBLIC_URL: 'https://friend.example.com' };
+const DEFAULTS = { available: true, recording: true, licence: true, digest: false, update: true, updatefailed: true, syscheck: true, storage: true };
 
 describe('mail preferences and recipients', () => {
   let env: TestEnv;
@@ -47,7 +51,7 @@ describe('mail preferences and recipients', () => {
     env.ctx.cfg = { ...cfg, ...MAIL_CFG };
     await env.pool.query('delete from mail_outbox');
     await env.pool.query('delete from user_prefs where user_id = any($1)', [[anna, ben]]);
-    await env.pool.query("update users set email = case when id = $1 then $2 else $3 end, disabled = false, access_until = null where id = any($4)", [anna, ANNA, BEN, [anna, ben]]);
+    await env.pool.query("update users set email = case when id = $1 then $2 else $3 end, disabled = false, access_until = null, role = 'friend' where id = any($4)", [anna, ANNA, BEN, [anna, ben]]);
     await env.pool.query('delete from profile_prefs where profile_id = any($1)', [[anna, ben]]);
   });
   afterEach(() => {
@@ -55,30 +59,44 @@ describe('mail preferences and recipients', () => {
   });
 
   it('types', () => {
-    expect(MAIL_PREF_TYPES).toEqual(['available', 'recording', 'licence']);
+    expect(PERSON_MAIL_TYPES).toEqual(['available', 'recording', 'licence', 'digest']);
+    expect(ADMIN_MAIL_TYPES).toEqual(['update', 'updatefailed', 'syscheck', 'storage']);
+    expect(MAIL_PREF_TYPES).toEqual([...PERSON_MAIL_TYPES, ...ADMIN_MAIL_TYPES]);
+    expect(MAIL_PREF_DEFAULTS).toEqual(DEFAULTS);
+    expect(Object.isFrozen(MAIL_PREF_DEFAULTS)).toBe(true);
+    // letters only: the unsubscribe token's type field is [a-z]{1,20}
+    for (const t of MAIL_PREF_TYPES) expect(t).toMatch(/^[a-z]{1,20}$/);
     expect(isMailPrefType('licence')).toBe(true);
+    expect(isMailPrefType('digest')).toBe(true);
+    expect(isMailPrefType('storage')).toBe(true);
     expect(isMailPrefType('welcome')).toBe(false);
     expect(isMailPrefType(7)).toBe(false);
+    for (const t of ADMIN_MAIL_TYPES) expect(isAdminMailType(t)).toBe(true);
+    for (const t of [...PERSON_MAIL_TYPES, 'welcome', 'admin', 7, null]) expect(isAdminMailType(t)).toBe(false);
   });
 
-  it('prefs default to on', async () => {
-    expect(await readMailPrefs(env.ctx, anna)).toEqual({ available: true, recording: true, licence: true });
-    // non-boolean values and unknown keys are ignored
-    await env.pool.query('insert into user_prefs(user_id, data) values ($1, $2)', [anna, JSON.stringify({ mail: { available: 'no', digest: false, licence: false } })]);
-    expect(await readMailPrefs(env.ctx, anna)).toEqual({ available: true, recording: true, licence: false });
+  it('prefs default: digest off, everything else on', async () => {
+    expect(await readMailPrefs(env.ctx, anna)).toEqual({
+      available: true, recording: true, licence: true, digest: false, update: true, updatefailed: true, syscheck: true, storage: true,
+    });
+    // non-boolean values and unknown keys are ignored (the default stays)
+    await env.pool.query('insert into user_prefs(user_id, data) values ($1, $2)', [anna, JSON.stringify({ mail: { available: 'no', digest: 'yes', weekly: false, licence: false, storage: false } })]);
+    expect(await readMailPrefs(env.ctx, anna)).toEqual({ ...DEFAULTS, licence: false, storage: false });
+    await setMailPref(env.ctx, anna, 'digest', true);
+    expect((await readMailPrefs(env.ctx, anna)).digest).toBe(true);
   });
 
   it('setMailPref merges and keeps other user_prefs keys', async () => {
     await env.pool.query('insert into user_prefs(user_id, data) values ($1, $2)', [anna, JSON.stringify({ weeklyDigest: false, ntfyTopic: 'anna-kino' })]);
-    expect(await setMailPref(env.ctx, anna, 'recording', false)).toEqual({ available: true, recording: false, licence: true });
-    expect(await setMailPref(env.ctx, anna, 'licence', false)).toEqual({ available: true, recording: false, licence: false });
+    expect(await setMailPref(env.ctx, anna, 'recording', false)).toEqual({ ...DEFAULTS, recording: false });
+    expect(await setMailPref(env.ctx, anna, 'licence', false)).toEqual({ ...DEFAULTS, recording: false, licence: false });
     const data = (await userPrefs(anna))!;
     expect(data.weeklyDigest).toBe(false);
     expect(data.ntfyTopic).toBe('anna-kino');
     expect((data.mail as Record<string, boolean>).recording).toBe(false);
     expect((data.mail as Record<string, boolean>).licence).toBe(false);
     // no row yet: one is inserted
-    expect(await setMailPref(env.ctx, ben, 'available', false)).toEqual({ available: false, recording: true, licence: true });
+    expect(await setMailPref(env.ctx, ben, 'available', false)).toEqual({ ...DEFAULTS, available: false });
     expect(await userPrefs(ben)).toEqual({ mail: { available: false } });
   });
 
@@ -140,6 +158,43 @@ describe('mail preferences and recipients', () => {
     expect((await mailRecipient(env.ctx, ben, 'recording'))!.lang).toBe('de');
   });
 
+  it('admin types never reach a non-admin', async () => {
+    // Ben is a friend whose stored admin switch says on (stored while he was admin, or written by hand): still no admin mail
+    await env.pool.query('insert into user_prefs(user_id, data) values ($1, $2)', [ben, JSON.stringify({ mail: { update: true } })]);
+    for (const t of ADMIN_MAIL_TYPES) expect(await mailRecipient(env.ctx, ben, t)).toBeNull();
+    // his person mails are unaffected
+    expect(await mailRecipient(env.ctx, ben, 'available')).toEqual({ to: BEN, lang: 'de', name: 'Ben Muster' });
+    expect(await mailPerson(env.ctx, ben, 'update', { title: 'x' }, 'n:update-ben')).toBeNull();
+    // Anna is an admin
+    await env.pool.query("update users set role = 'admin' where id = $1", [anna]);
+    expect(await mailRecipient(env.ctx, anna, 'update')).toEqual({ to: ANNA, lang: 'de', name: 'Anna Beispiel' });
+    for (const t of ADMIN_MAIL_TYPES) expect(await mailRecipient(env.ctx, anna, t)).not.toBeNull();
+    // her switch decides
+    await setMailPref(env.ctx, anna, 'syscheck', false);
+    expect(await mailRecipient(env.ctx, anna, 'syscheck')).toBeNull();
+    // a disabled admin, an admin whose access ended
+    await env.pool.query('update users set disabled = true where id = $1', [anna]);
+    expect(await mailRecipient(env.ctx, anna, 'update')).toBeNull();
+    await env.pool.query("update users set disabled = false, access_until = now() - interval '1 minute' where id = $1", [anna]);
+    expect(await mailRecipient(env.ctx, anna, 'update')).toBeNull();
+    expect((await env.pool.query('select 1 from mail_outbox')).rowCount).toBe(0);
+  });
+
+  it('personMailBlock answers not_admin after a demotion', async () => {
+    await env.pool.query("update users set role = 'admin' where id = $1", [anna]);
+    expect(await mailPerson(env.ctx, anna, 'update', { title: 'x' }, 'n:update-anna')).toEqual(expect.any(String));
+    const key = recipientKey(env.ctx.encKey, ANNA);
+    expect(await personMailBlock(env.ctx, anna, 'update', key)).toBeNull();
+    await env.pool.query("update users set role = 'friend' where id = $1", [anna]);
+    for (const t of ADMIN_MAIL_TYPES) expect(await personMailBlock(env.ctx, anna, t, key)).toBe('not_admin');
+    // person mails of the demoted account still go out
+    expect(await personMailBlock(env.ctx, anna, 'available', key)).toBeNull();
+    expect(await personMailBlock(env.ctx, anna, 'welcome', key)).toBeNull();
+    // an inactive account stays `inactive`
+    await env.pool.query('update users set disabled = true where id = $1', [anna]);
+    expect(await personMailBlock(env.ctx, anna, 'update', key)).toBe('inactive');
+  });
+
   it('mailPerson queues once per dedupe key', async () => {
     const params = { title: { key: 'notify.available.title', params: { title: 'Nordlicht TV' } } };
     const id = await mailPerson(env.ctx, anna, 'available', params, 'n:avail-7');
@@ -172,6 +227,12 @@ describe('unsubscribe token', () => {
     for (const type of MAIL_PREF_TYPES) expect(verifyUnsubscribeToken(k, unsubscribeToken(k, ben, type))).toEqual({ userId: ben, type });
   });
 
+  it('token round-trip for the new types', () => {
+    expect(verifyUnsubscribeToken(k, unsubscribeToken(k, anna, 'updatefailed'))).toEqual({ userId: anna, type: 'updatefailed' });
+    expect(verifyUnsubscribeToken(k, unsubscribeToken(k, anna, 'digest'))).toEqual({ userId: anna, type: 'digest' });
+    for (const type of ADMIN_MAIL_TYPES) expect(unsubscribeToken(k, ben, type)).toMatch(new RegExp(`^v1\\.[0-9a-f-]{36}\\.${type}\\.[A-Za-z0-9_-]{43}$`));
+  });
+
   it('verify rejects tampered tokens', () => {
     const t = unsubscribeToken(k, anna, 'licence');
     const mac = t.split('.')[3]!;
@@ -181,6 +242,7 @@ describe('unsubscribe token', () => {
     expect(verifyUnsubscribeToken(k, unsubscribeToken(Buffer.alloc(32, 8), anna, 'licence'))).toBeNull();
     expect(verifyUnsubscribeToken(k, `v2.${t.slice(3)}`)).toBeNull();
     expect(verifyUnsubscribeToken(k, `v1.${anna}.digest.${mac}`)).toBeNull();
+    expect(verifyUnsubscribeToken(k, `v1.${anna}.storage.${mac}`)).toBeNull();
     expect(verifyUnsubscribeToken(k, 'a'.repeat(2000))).toBeNull();
     expect(verifyUnsubscribeToken(k, '')).toBeNull();
     expect(verifyUnsubscribeToken(k, `${t}.x`)).toBeNull();

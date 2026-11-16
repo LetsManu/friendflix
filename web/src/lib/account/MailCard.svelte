@@ -11,7 +11,7 @@
   import type { Account } from '#lib/api';
   import { t } from '#lib/i18n';
   import Toggle from '#lib/ui/Toggle.svelte';
-  import { MAIL_TYPES, saveMailPref, type MailPrefs, type MailState, type MailType } from './mail';
+  import { ADMIN_MAIL_TYPES, MAIL_TYPES, PERSON_MAIL_TYPES, saveMailPref, type MailState, type MailType } from './mail';
 
   export let account: Account;
 
@@ -20,16 +20,24 @@
     available: { label: 'account.account.mail.types.available.label', hint: 'account.account.mail.types.available.hint' },
     recording: { label: 'account.account.mail.types.recording.label', hint: 'account.account.mail.types.recording.hint' },
     licence: { label: 'account.account.mail.types.licence.label', hint: 'account.account.mail.types.licence.hint' },
+    digest: { label: 'account.account.mail.types.digest.label', hint: 'account.account.mail.types.digest.hint' },
+    update: { label: 'account.account.mail.types.update.label', hint: 'account.account.mail.types.update.hint' },
+    updatefailed: { label: 'account.account.mail.types.updatefailed.label', hint: 'account.account.mail.types.updatefailed.hint' },
+    syscheck: { label: 'account.account.mail.types.syscheck.label', hint: 'account.account.mail.types.syscheck.hint' },
+    storage: { label: 'account.account.mail.types.storage.label', hint: 'account.account.mail.types.storage.hint' },
   } as const;
 
   /** GET /api/account/mail, read by the page together with the account (so the card appears whole); null = it could not be read */
   export let mail: MailState | null;
 
-  let prefs: MailPrefs = mail ? { ...mail.prefs } : { available: true, recording: true, licence: true };
+  /** every type has a value (the ones the backend did not list stay off and unshown), so the switches can bind to it */
+  let prefs = { ...Object.fromEntries(MAIL_TYPES.map((x) => [x, false])), ...mail?.prefs } as Record<MailType, boolean>;
   /** the error line: the switches could not be read, or the last switch was not saved */
   let err: '' | 'loadFailed' | 'saveFailed' = mail ? '' : 'loadFailed';
-  let pending: Record<MailType, boolean> = { available: false, recording: false, licence: false };
+  let pending = Object.fromEntries(MAIL_TYPES.map((x) => [x, false])) as Record<MailType, boolean>;
   const configured = mail?.configured ?? true, hasAddress = mail?.hasAddress ?? true;
+  /** the admin switches are part of the first render: the backend lists them for admins only, and the card already has them */
+  const admin = mail?.admin === true;
 
   $: address = hasAddress ? account.email : null;
   $: locked = !mail || !configured || !hasAddress;
@@ -40,7 +48,7 @@
     // only this switch takes the answer: another switch still saving keeps the value it shows (its own answer brings its own)
     try {
       const saved = await saveMailPref(type, on);
-      prefs = { ...prefs, [type]: saved[type] }; // read after the await: the other switches as they are now
+      prefs = { ...prefs, [type]: saved[type] ?? on }; // read after the await: the other switches as they are now
     }
     catch {
       prefs = { ...prefs, [type]: !on };
@@ -62,13 +70,24 @@
   </div>
   {#if !configured}<p class="note">{$t('account.account.mail.notConfigured')}</p>{/if}
   <ul class="list">
-    {#each MAIL_TYPES as type (type)}
+    {#each PERSON_MAIL_TYPES as type (type)}
       <li>
         <Toggle id="acc-mail-{type}" label={$t(TEXT[type].label)} hint={$t(TEXT[type].hint)}
           bind:checked={prefs[type]} disabled={locked} pending={pending[type]} on:change={(e) => flip(type, e.detail)} />
       </li>
     {/each}
   </ul>
+  {#if admin}
+    <h3 id="acc-mail-admin">{$t('account.account.mail.admin')}</h3>
+    <ul class="list" aria-labelledby="acc-mail-admin">
+      {#each ADMIN_MAIL_TYPES as type (type)}
+        <li>
+          <Toggle id="acc-mail-{type}" label={$t(TEXT[type].label)} hint={$t(TEXT[type].hint)}
+            bind:checked={prefs[type]} disabled={locked} pending={pending[type]} on:change={(e) => flip(type, e.detail)} />
+        </li>
+      {/each}
+    </ul>
+  {/if}
   <p class="err line">{#if err}<span role="alert">{$t(`account.account.mail.${err}`)}</span>{/if}</p>
   <p class="muted hint">{$t('account.account.mail.footer')}</p>
 </section>
@@ -76,6 +95,7 @@
 <style>
   .card { display: flex; flex-direction: column; gap: .75rem; margin: 0; min-width: 0; }
   h2 { font-size: 1.15rem; margin: 0; }
+  h3 { font-size: .95rem; margin: .5rem 0 0; }
   .to { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .5rem; font-size: .92rem; min-width: 0; }
   .addr { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
   .ext { display: inline-flex; align-items: center; min-height: 44px; color: #54b9c5; font-weight: 600; }

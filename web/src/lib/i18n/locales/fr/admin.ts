@@ -105,6 +105,7 @@ const fr: Translation<typeof de> = {
     loadFailed: 'Échec du chargement.',
     saved: 'Enregistré.',
     sent: 'Test envoyé. Voir les notifications et /digest.',
+    sentMailed: 'Test envoyé. Un e-mail est en file d’attente.',
     duplicate: 'Non envoyé (doublon).',
     nothing: 'Rien à signaler : il ne s’est rien passé de nouveau ces 7 derniers jours.',
     sendFailed: 'Échec de l’envoi.',

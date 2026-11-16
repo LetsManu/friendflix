@@ -11,7 +11,7 @@
 import type { Config } from './config.js';
 import type { Ctx } from './ctx.js';
 import { secretTag } from './crypto.js';
-import { AkUpstreamError, deniedClass, endpointOf, fetchFailClass, noteAkFailure } from './akdiag.js';
+import { AkUpstreamError, deniedClass, endpointOf, fetchFailClass, noteAkFailure, type AkFailClass } from './akdiag.js';
 import { akBase } from './invites.js';
 import { HttpError } from './users.js';
 
@@ -235,6 +235,9 @@ export interface FlowStages {
   exists: boolean; failed: boolean; stages: FlowStage[];
   /** a validate stage could not be read because the token lacks `view_authenticatorvalidatestage` (403): its settings are unknown */
   stageDenied?: boolean;
+  /** with `failed`: why the read failed (a bad token, a missing permission, no answer), when Authentik said, and which read it was */
+  failCls?: AkFailClass;
+  failEndpoint?: string;
 }
 const NO_FLOW: FlowStages = { exists: false, failed: false, stages: [] };
 
@@ -276,13 +279,15 @@ export async function akFlowStages(ctx: AkCtx, slug: string): Promise<FlowStages
             ttl = FLOW_FAILED_TTL;
           }
         }
-      } catch {
+      } catch (e) {
         out.failed = true; // the flow exists, its stages are unknown
+        if (e instanceof AkUpstreamError) Object.assign(out, { failCls: e.failure.cls, failEndpoint: e.failure.endpoint });
         ttl = FLOW_FAILED_TTL;
       }
     }
   } catch (e) {
-    out = e instanceof HttpError && e.statusCode === 404 ? NO_FLOW : { exists: false, failed: true, stages: [] };
+    out = e instanceof HttpError && e.statusCode === 404 ? NO_FLOW
+      : { exists: false, failed: true, stages: [], ...(e instanceof AkUpstreamError ? { failCls: e.failure.cls, failEndpoint: e.failure.endpoint } : {}) };
     ttl = FLOW_FAILED_TTL; // missing or failed: looked at again within a minute
   }
   await ctx.kv.set(key, JSON.stringify(out), ttl);
@@ -348,10 +353,16 @@ export function akFlowUrl(cfg: Pick<Config, 'OIDC_ISSUER'>, slug: string): strin
 
 const notConfigured = () => new HttpError(409, 'recovery_not_configured');
 
-/** The first e-mail stage bound to the flow (by binding order). 409 `recovery_not_configured` without flow or stage. */
+/**
+ * The first e-mail stage bound to the flow (by binding order). 409 `recovery_not_configured` without flow or stage; a failed read is
+ * 503 `authentik_unavailable` (an AkUpstreamError naming the failure class when Authentik said why).
+ */
 async function emailStageOf(ctx: AkCtx, slug: string): Promise<string> {
   const flow = await akFlowStages(ctx, slug);
-  if (flow.failed) throw new HttpError(503, 'authentik_unavailable');
+  if (flow.failed) {
+    throw flow.failCls ? new AkUpstreamError(503, 'authentik_unavailable', { area: 'api', cls: flow.failCls, endpoint: flow.failEndpoint ?? endpointOf(`api/v3/flows/instances/${slug}/`) })
+      : new HttpError(503, 'authentik_unavailable');
+  }
   const stage = flow.stages.find((b) => b.model === 'authentik_stages_email.emailstage')?.pk;
   if (!stage) throw notConfigured();
   return stage;
@@ -369,7 +380,7 @@ export async function akSendRecovery(ctx: AkCtx, sub: string): Promise<void> {
   if (!configured(ctx)) throw new HttpError(503, 'authentik_unavailable');
   const user = await akUserBySub(ctx, sub);
   if (!user) throw new HttpError(404, 'authentik_user_not_found');
-  const stage = await emailStageOf(ctx, ctx.cfg.AUTHENTIK_RECOVERY_FLOW || 'default-recovery-flow');
+  const stage = await akRecoveryEmailStage(ctx);
   // the stage goes as query parameter (older releases) and as body (newer ones take a serializer); each ignores the other
   try {
     await call(ctx, `api/v3/core/users/${user.pk}/recovery_email/?${new URLSearchParams({ email_stage: stage })}`,
@@ -379,6 +390,65 @@ export async function akSendRecovery(ctx: AkCtx, sub: string): Promise<void> {
     if (e instanceof HttpError && e.statusCode === 404) await akForget(ctx, sub); // a stale pk (user deleted / re-created in Authentik)
     throw e;
   }
+}
+
+const recoverySlug = (cfg: Pick<Config, 'AUTHENTIK_RECOVERY_FLOW'>) => cfg.AUTHENTIK_RECOVERY_FLOW || 'default-recovery-flow';
+
+/** The first e-mail stage of AUTHENTIK_RECOVERY_FLOW (`default-recovery-flow` when unset); errors as `emailStageOf`. */
+export const akRecoveryEmailStage = (ctx: AkCtx): Promise<string> => emailStageOf(ctx, recoverySlug(ctx.cfg));
+
+/** Drops the cached read of the recovery flow (a stage pk Authentik answered 404 for): the next lookup reads the flow again. */
+export async function akForgetRecoveryEmailStage(ctx: AkCtx): Promise<void> {
+  await ctx.kv.del(akFlowCacheKey(ctx.cfg, recoverySlug(ctx.cfg)));
+}
+
+/*
+ * Brand and e-mail stage writes (mail stage C, akBranding.ts: *Branding an Authentik übertragen*). Field names checked against the
+ * Authentik 2026.8.3 source (the compose.authentik.yaml pin) and its schema.yml:
+ * - brands/api.py BrandSerializer: `brand_uuid` (the pk, `/core/brands/{brand_uuid}/`), `domain`, `default`, `branding_title`,
+ *   `branding_logo` (a FileField; admin/files/validation.py lets an http(s) URL through to the passthrough backend);
+ * - stages/email/api.py EmailStageSerializer (`/stages/email/{stage_uuid}/`): `use_global_settings`, `host`, `port`, `username`,
+ *   `password` (write-only), `use_tls`, `use_ssl`, `timeout`, `from_address` (a models.EmailField, schema `format: email`: a bare
+ *   address only, `Name <address>` is refused with 400). stages/email/tasks.py uses the stage's `from_address` only when
+ *   `use_global_settings` is off (else AUTHENTIK_EMAIL__FROM).
+ * Errors as `call()` throws them (an AkUpstreamError with `failure.cls`); the body is never part of an error, a log line or akdiag.
+ */
+
+/**
+ * The brand Authentik itself picks for `host` (the Host header a browser sends to the OIDC issuer: a non-default port included), as
+ * brands/utils.py `get_brand_for_request` does on 2026.8.3: among the brands whose `domain` is the host or a parent of it (`host`
+ * ends with `.domain`), case-insensitive, the longest domain wins; else the default brand; null when there is neither.
+ * `GET /core/brands/?page_size=100` (needs `authentik_brands.view_brand`: without it the list answers 403).
+ */
+export async function akBrandFor(ctx: AkCtx, host: string | null): Promise<{ uuid: string } | null> {
+  const r = await json<Page<{ brand_uuid?: unknown; domain?: unknown; default?: unknown }>>(ctx, 'api/v3/core/brands/?page_size=100');
+  const list = Array.isArray(r?.results) ? r.results.filter((b): b is { brand_uuid: string; domain?: unknown; default?: unknown } => typeof b.brand_uuid === 'string' && b.brand_uuid !== '') : [];
+  const h = host?.toLowerCase() ?? '';
+  let best: { uuid: string; len: number } | null = null;
+  for (const b of list) {
+    const d = typeof b.domain === 'string' ? b.domain.toLowerCase() : '';
+    if (h && d && (h === d || h.endsWith('.' + d)) && d.length > (best?.len ?? -1)) best = { uuid: b.brand_uuid, len: d.length };
+  }
+  const hit = best?.uuid ?? list.find((b) => b.default === true)?.brand_uuid;
+  return hit ? { uuid: hit } : null;
+}
+
+/** `GET /stages/email/<pk>/` (needs `authentik_stages_email.view_emailstage`, in the blueprint): whether it sends with the global settings */
+export async function akEmailStage(ctx: AkCtx, pk: string): Promise<{ useGlobalSettings: boolean }> {
+  const s = await json<{ use_global_settings?: unknown }>(ctx, `api/v3/stages/email/${encodeURIComponent(pk)}/`);
+  return { useGlobalSettings: s?.use_global_settings === true };
+}
+
+/** `PATCH /core/brands/<uuid>/` (needs `authentik_brands.change_brand`) */
+export async function akPatchBrand(ctx: AkCtx, uuid: string, body: { branding_title: string; branding_logo?: string }): Promise<void> {
+  const r = await call(ctx, `api/v3/core/brands/${encodeURIComponent(uuid)}/`, { method: 'PATCH', body: JSON.stringify(body) });
+  await r.body?.cancel().catch(() => undefined);
+}
+
+/** `PATCH /stages/email/<pk>/` (needs `authentik_stages_email.change_emailstage`); the body may hold the SMTP password: it goes nowhere else */
+export async function akPatchEmailStage(ctx: AkCtx, pk: string, body: Record<string, unknown>): Promise<void> {
+  const r = await call(ctx, `api/v3/stages/email/${encodeURIComponent(pk)}/`, { method: 'PATCH', body: JSON.stringify(body) });
+  await r.body?.cancel().catch(() => undefined);
 }
 
 /** `PATCH /core/users/<pk>/`; 404 -> 404 `authentik_user_not_found` (cache dropped), other errors as `call()` maps them. */

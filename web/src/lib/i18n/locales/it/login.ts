@@ -235,7 +235,7 @@ const login: Translation<typeof de> = {
     failed: 'Non ha funzionato. Riprova.',
     settings: 'Impostazioni e-mail',
     /** {type} in the texts above */
-    types: { available: 'richieste disponibili', recording: 'registrazioni', licence: 'download in scadenza' },
+    types: { available: 'richieste disponibili', recording: 'registrazioni', licence: 'download in scadenza', digest: 'il tuo riepilogo settimanale', update: 'le nuove versioni', updatefailed: 'gli aggiornamenti non riusciti', syscheck: 'i problemi nel controllo del sistema', storage: 'lo spazio di archiviazione quasi esaurito' },
   },
   pending: {
     title: 'Ci siamo quasi',

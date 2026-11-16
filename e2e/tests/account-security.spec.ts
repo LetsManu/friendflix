@@ -394,6 +394,25 @@ test.describe('/confirm-email', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Link abgelaufen oder schon benutzt' })).toBeVisible();
   });
 
+  for (const view of ['done', 'expired'] as const) {
+    test(`"Zum Konto" opens the account page with a full load (${view} view)`, async ({ page }) => {
+      const body = view === 'done' ? done('/confirm-email?ok=1') : { stage: 'expired' };
+      const st = loginState({ resumes: [{ body }] });
+      await installLogin(page.context(), st);
+      await page.goto(`/confirm-email?token=${TOKEN}`);
+      await page.getByRole('button', { name: 'Adresse bestätigen' }).click();
+      const link = page.getByRole('link', { name: 'Zum Konto' });
+      // a full load: the app shell (sign-in check, navigation) never boots on this public page, a client navigation would leave /me/account on "Lade …"
+      await expect(link).toHaveAttribute('data-sveltekit-reload', '');
+      let me = 0;
+      page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/me') me++; });
+      await link.click();
+      await expect(page).toHaveURL(/\/me\/account$/);
+      await expect(security(page)).toBeVisible();
+      expect(me).toBeGreaterThan(0);
+    });
+  }
+
   test('without a token it says the link is no longer valid, and makes no call', async ({ page }) => {
     const st = loginState();
     await installLogin(page.context(), st);

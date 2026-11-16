@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
 import { REDEPLOY_KEY, REDEPLOY_LOCK } from '../src/redeploy.js';
-import { autoUpdateTick, parseStatus, signUpdater, updaterKey } from '../src/updater.js';
+import { autoUpdateTick, parseStatus, signUpdater, updaterKey, updaterView } from '../src/updater.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 import { sessionKey } from '../src/session.js';
 
@@ -237,6 +237,53 @@ describe('settings and automatic updates', () => {
     expect(await autoUpdateTick(env.ctx, at(2, 1, 29))).toBe('started');
     expect(fake.portainer).toEqual([{ method: 'POST', url: `${HOOK}?FF_TAG=latest` }]); // the stable channel rides along
     expect(fake.calls.filter((c) => c.method === 'POST')).toEqual([]);
+  });
+});
+
+// Mail stage C, Task 3: a failed update job and a failed automatic Portainer redeploy are admin alerts (notice + mail `updatefailed`)
+describe('admin alerts', () => {
+  const failedNotices = async () => (await env.pool.query<{ user_id: string; title: string; dedupe: string }>("select user_id, title, dedupe from notifications where kind = 'update_failed' order by id")).rows;
+  const admins = async () => (await env.pool.query<{ id: string }>("select id from users where role = 'admin' and not disabled")).rows.map((r) => r.id);
+  beforeEach(async () => { await env.pool.query("delete from notifications where kind = 'update_failed'"); });
+
+  it('a rolled-back update job reported through updaterView alerts the admins', async () => {
+    await env.kv.set(`updater:pending:${JOB_ID}`, JSON.stringify({ actor: null, action: 'update', from: 'sha-aaaaaaa', to: 'latest', auto: true }), 600);
+    fake.jobState = 'rolled_back';
+    for (const k of await env.kv.keys('update:')) await env.kv.del(k); // no release cached: the stable tag gives no version
+    await updaterView(env.ctx);
+    await updaterView(env.ctx); // the result is taken once: no second alert, no second audit
+    const ids = await admins();
+    expect(ids.length).toBeGreaterThan(0);
+    const n = await failedNotices();
+    expect(n.map((x) => x.user_id).sort()).toEqual([...ids].sort());
+    expect(n[0]).toMatchObject({ title: 'Update fehlgeschlagen', dedupe: `update-failed-${JOB_ID}-${n[0]!.user_id}` });
+    expect((await audits('system.updater_result')).at(-1)).toEqual({ actor: null, meta: { action: 'update', from: 'sha-aaaaaaa', to: 'latest', result: 'rolled_back', error: null, auto: true } });
+    expect((await audits('system.updater_result')).filter((a) => a.meta.result === 'rolled_back')).toHaveLength(1);
+  });
+
+  it('a succeeded update job does not alert', async () => {
+    await env.kv.set(`updater:pending:${JOB_ID}`, JSON.stringify({ actor: null, action: 'update', from: 'sha-aaaaaaa', to: 'latest', auto: true }), 600);
+    fake.jobState = 'succeeded';
+    await updaterView(env.ctx);
+    expect(await failedNotices()).toEqual([]);
+  });
+
+  it('the failed automatic Portainer redeploy alerts once per target and day', async () => {
+    await endRedeploy();
+    const at = (h: number, m: number, d: number) => new Date(2026, 10, d, h, m);
+    setCfg({ AUTO_UPDATE: 'nightly-window', AUTO_UPDATE_TIME: '02:00', PORTAINER_WEBHOOK_URL: HOOK });
+    fake.stack = 'foreign';
+    fake.release = 'v99.2.0';
+    fake.portainerStatus = 500;
+    expect(await autoUpdateTick(env.ctx, at(2, 1, 2))).toBe('failed');
+    const ids = await admins();
+    expect((await failedNotices()).map((x) => x.title)).toEqual(ids.map(() => 'Automatisches Update über Portainer fehlgeschlagen'));
+    expect((await failedNotices())[0]!.dedupe).toMatch(/^update-failed-portainer-stable:99\.2\.0-2026-11-02-/);
+    expect(await autoUpdateTick(env.ctx, at(2, 5, 2))).toBe('done'); // the night's one attempt is used up
+    expect(await failedNotices()).toHaveLength(ids.length);
+    // the next night it fails again: one more alert
+    expect(await autoUpdateTick(env.ctx, at(2, 1, 3))).toBe('failed');
+    expect(await failedNotices()).toHaveLength(2 * ids.length);
   });
 });
 

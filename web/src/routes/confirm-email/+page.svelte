@@ -53,12 +53,12 @@
       <div class="af-big" aria-hidden="true"><Icon name="check" size={30} /></div>
       <h1 bind:this={heading} tabindex="-1">{$t('login.confirm.doneTitle')}</h1>
       <p class="af-sub">{$t('login.confirm.doneText')}</p>
-      <a class="btn af-pri" href="/me/account">{$t('login.confirm.toAccount')}</a>
+      <a class="btn af-pri" href="/me/account" data-sveltekit-reload>{$t('login.confirm.toAccount')}</a>
     {:else if view === 'expired'}
       <div class="af-big" aria-hidden="true"><Icon name="clock" size={30} /></div>
       <h1 bind:this={heading} tabindex="-1">{$t('login.confirm.expiredTitle')}</h1>
       <p class="af-sub">{$t('login.confirm.expiredText')}</p>
-      <a class="btn af-pri" href="/me/account">{$t('login.confirm.toAccount')}</a>
+      <a class="btn af-pri" href="/me/account" data-sveltekit-reload>{$t('login.confirm.toAccount')}</a>
     {:else}
       <div class="af-big" aria-hidden="true"><Icon name="mail" size={30} /></div>
       <h1>{$t('login.confirm.title')}</h1>

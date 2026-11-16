@@ -1,0 +1,39 @@
+{# FriendFlix: the link is Authentik's own ({{ url }}); edit the name and colour lines marked ff:brand if you like #}
+{# SPDX-FileCopyrightText: 2026 Manuel Weißböck #}
+{# SPDX-License-Identifier: AGPL-3.0-or-later #}
+{# Password reset e-mail for installs without the in-app sign-in: the button opens Authentik's own recovery page. Mount this folder #}
+{# at /templates on the Authentik server and worker, then set this file as the template of the recovery flow's e-mail stage (see #}
+{# docs/authentik.md, section 10b). Standalone: copying this one file is enough. Not imported by FriendFlix. #}
+
+{% load i18n %}
+
+{# ff:head #}
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"><title>FriendFlix</title></head>
+<body style="margin:0;padding:0;background-color:#f4f4f6;color:#1a1d21;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f4f4f6" style="background-color:#f4f4f6;"><tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;max-width:600px;background-color:#ffffff;border-radius:12px;">
+{# ff:brand: the accent colour: replace #d6325a everywhere in this file (it appears in the bar, the letter tile and the button) #}
+<tr><td height="4" bgcolor="#d6325a" style="height:4px;font-size:0;line-height:0;background-color:#d6325a;border-radius:12px 12px 0 0;">&nbsp;</td></tr>
+<tr><td style="padding:28px 32px 8px 32px;color:#1a1d21;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.55;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+<td width="48" height="48" align="center" valign="middle" bgcolor="#d6325a" style="width:48px;height:48px;background-color:#d6325a;border-radius:12px;color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:24px;font-weight:700;line-height:48px;text-align:center;">F</td>
+{# ff:brand: the name #}
+<td valign="middle" style="padding-left:14px;color:#1a1d21;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:18px;font-weight:700;line-height:1.55;">FriendFlix</td>
+</tr></table></td></tr>
+<tr><td style="padding:16px 32px 28px 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+{# /ff:head #}
+<tr><td style="padding:0 0 16px 0;color:#1a1d21;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:22px;font-weight:700;line-height:1.3;">{% trans "Reset your password" %}</td></tr>
+<tr><td style="padding:0 0 16px 0;color:#1a1d21;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.55;">{% trans "Use the button below to choose a new password for your FriendFlix account." %}</td></tr>
+<tr><td style="padding:8px 0 24px 0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+<td align="center" bgcolor="#d6325a" style="background-color:#d6325a;border-radius:8px;color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.55;">
+<a href="{{ url }}" rel="noopener noreferrer" target="_blank" style="display:inline-block;padding:13px 28px;color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;font-weight:600;line-height:1.55;text-decoration:none;">{% trans "Choose a new password" %}</a>
+</td></tr></table></td></tr>
+<tr><td style="padding:0;border-top:1px solid #e3e5e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:16px 0 0 0;color:#5b6370;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:1.55;">
+{% blocktrans with expires=expires|timeuntil %}If you did not ask for this, ignore this e-mail. The link is valid for {{ expires }}.{% endblocktrans %}
+</td></tr></table></td></tr>
+{# ff:foot #}
+</table></td></tr>
+</table></td></tr></table></body></html>
+{# /ff:foot #}

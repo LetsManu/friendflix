@@ -228,6 +228,38 @@ describe('mail layout and test template', () => {
     expect(msg('de', 'mail.fallback.subject', { app: 'FriendFlix' })).not.toMatch(/mail\./);
   });
 
+  // Mail stage C, Task 1: an admin alert is a notice mail like the stage B kinds, with its own button, reason and token.
+  it('admin kinds render as notice mails with unsubscribe', async () => {
+    atFriend();
+    const r = await renderMail(env.ctx, 'syscheck', 'de', { title: 'Systemcheck: ein neues Problem', body: null, link: '/admin/status' }, { userId: actor });
+    const tok = unsubscribeToken(env.ctx.encKey, actor, 'syscheck');
+    expect(r.subject).toBe('Systemcheck: ein neues Problem');
+    expect(r.html).toContain(`href="${ORIGIN}/admin/status"`);
+    expect(r.text).toContain(`Zum Systemcheck: ${ORIGIN}/admin/status`);
+    expect(r.headers['List-Unsubscribe']).toBe(`<${ORIGIN}/api/public/mail/unsubscribe?t=${tok}>`);
+    expect(r.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+    expect(r.text).toContain(`Diese E-Mails abbestellen: ${ORIGIN}/mail/unsubscribe?t=${tok}`);
+    expect(r.text).toContain(`E-Mail-Einstellungen: ${ORIGIN}/me/account#mail`);
+    expect(r.text).toContain(msg('de', 'mail.syscheck.reason', { app: 'FriendFlix' }));
+    expect(r.text).toContain('Du bekommst diese E-Mail, weil du Admin von FriendFlix bist und E-Mails zu Problemen im Systemcheck eingeschaltet hast.');
+    // no body: the neutral line
+    expect(r.text).toContain(msg('de', 'mail.fallback.body', { app: 'FriendFlix' }));
+    const buttons = { update: 'Zum Update', updatefailed: 'Zum Update', syscheck: 'Zum Systemcheck', storage: 'Details ansehen' } as const;
+    for (const kind of ['update', 'updatefailed', 'syscheck', 'storage'] as const) {
+      const k = await renderMail(env.ctx, kind, 'de', { title: 'Nordlicht', body: 'Ein Text aus der Mitteilung', link: '/admin/update' }, { userId: actor });
+      expect(k.text, kind).toContain('Ein Text aus der Mitteilung');
+      expect(k.text, kind).toContain(`${buttons[kind]}: ${ORIGIN}/admin/update`);
+      expect(k.text, kind).toContain(msg('de', `mail.${kind}.reason`, { app: 'FriendFlix' }));
+      expect(k.headers['List-Unsubscribe'], kind).toContain(unsubscribeToken(env.ctx.encKey, actor, kind));
+      // every language has the texts
+      for (const lang of ['en', 'pl'] as const) {
+        const l = await renderMail(env.ctx, kind, lang, { title: 'Nordlicht' }, { userId: actor });
+        expect(l.text, `${kind} ${lang}`).toContain(msg(lang, `mail.${kind}.reason`, { app: 'FriendFlix' }));
+        expect(l.text, `${kind} ${lang}`).not.toContain(`mail.${kind}.`);
+      }
+    }
+  });
+
   it('a pref kind without its recipient or without PUBLIC_URL throws', async () => {
     atFriend();
     await expect(renderMail(env.ctx, 'available', 'de', { title: 'Nordlicht' })).rejects.toThrow();
@@ -238,7 +270,7 @@ describe('mail layout and test template', () => {
 
   it('an unknown kind throws', async () => {
     atFriend();
-    await expect(renderMail(env.ctx, 'digest' as MailKind, 'de', {}, { userId: actor })).rejects.toThrow(/unknown mail kind/);
+    await expect(renderMail(env.ctx, 'weekly' as MailKind, 'de', {}, { userId: actor })).rejects.toThrow(/unknown mail kind/);
     await expect(renderMail(env.ctx, 'toString' as MailKind, 'de', {}, { userId: actor })).rejects.toThrow(/unknown mail kind/);
   });
 
@@ -338,6 +370,116 @@ describe('mail layout and test template', () => {
     await expect(renderMail(env.ctx, 'welcome', 'de', {}, { userId: actor })).rejects.toThrow();
     await expect(renderMail(env.ctx, 'available', 'de', { body: 'x' }, { userId: actor })).rejects.toThrow();
     await expect(renderMail(env.ctx, 'recording', 'de', { title: 7 }, { userId: actor })).rejects.toThrow();
+  });
+
+  // Mail stage C, Task 2: the weekly recap as a mail, titles as text lists in sections.
+  const DIGEST = {
+    headline: m('digest.titleWith', { parts: { join: [m('digest.movies', { n: 14 }), m('digest.episodes', { n: 3 })], sep: ', ' } }),
+    since: '2026-11-08T12:00:00.000Z', until: '2026-11-15T12:10:00.000Z',
+    movies: { names: ['Nordlicht', 'Polarnacht'], total: 14 },
+    series: [{ name: 'Nordlicht TV', count: 3, followed: true }],
+    wishes: ['„Nordlicht“ ist jetzt verfügbar'],
+    recs: [{ name: 'Polarnacht', from: 'Anna Beispiel' }],
+  };
+
+  it('digest lists titles as text with sections', async () => {
+    atFriend();
+    await setBrand({ website: 'https://friend.example.com/' });
+    await setSymbol(PNG_SIG, 'image/png', 5_000);
+    const r = await renderMail(env.ctx, 'digest', 'de', DIGEST, { userId: actor });
+    expect(r.subject).toBe('Dein Wochenrückblick: 14 neue Filme, 3 neue Folgen');
+    expect(r.text).toContain('Dein Wochenrückblick: 14 neue Filme, 3 neue Folgen');
+    // the range is two days, no time of day (the until is the moment the tick sent it)
+    expect(r.text).toContain('Neu in FriendFlix vom 08.11.2026 bis 15.11.2026.\n');
+    expect(msg('en', 'mail.digest.range', { app: 'FriendFlix', from: { date: DIGEST.since, only: 'day' }, to: { date: DIGEST.until, only: 'day' } }))
+      .toBe('New in FriendFlix from 8 Nov 2026 to 15 Nov 2026.');
+    // the date-and-time form is unchanged
+    expect(msg('en', 'mail.invite.expires', { date: { date: DIGEST.until } })).toMatch(/15 Nov 2026, \d\d:10/);
+    expect(r.text).toContain('Neue Filme\n- Nordlicht\n- Polarnacht\n- … und 12 weitere\n\n');
+    expect(r.text).toContain('Neue Folgen\n- Nordlicht TV (3 neue Folgen)\n');
+    expect(r.text).toContain('Deine Wünsche sind da\n- „Nordlicht“ ist jetzt verfügbar\n');
+    expect(r.text).toContain('Empfehlungen für dich\n- Polarnacht – von Anna Beispiel\n');
+    // the sections come in this order, before the button
+    const at = ['Neue Filme', 'Neue Folgen', 'Deine Wünsche sind da', 'Empfehlungen für dich', 'Zum Wochenrückblick:'].map((x) => r.text.indexOf(x));
+    expect(at).toEqual([...at].sort((a, b) => a - b));
+    expect(r.text).toContain(`Zum Wochenrückblick: ${ORIGIN}/digest`);
+    expect(r.text).toContain(msg('de', 'mail.digest.reason', { app: 'FriendFlix' }));
+    expect(r.html).toContain('>• Nordlicht TV (3 neue Folgen)<');
+    expect(r.html).not.toContain('<ul');
+    // no images but the brand symbol, no links but the button, the brand's and the footer's
+    for (const img of r.html.match(/<img\b[^>]*>/g) ?? []) expect(img).toContain('src="cid:brand-symbol"');
+    const tok = unsubscribeToken(env.ctx.encKey, actor, 'digest');
+    const hrefs = [...r.html.matchAll(/href="([^"]*)"/g)].map((x) => x[1]);
+    expect(hrefs.sort()).toEqual([`${ORIGIN}/digest`, 'https://friend.example.com/', `${ORIGIN}/me/account#mail`, `${ORIGIN}/mail/unsubscribe?t=${tok}`].sort());
+  });
+
+  it('digest escapes names', async () => {
+    atFriend();
+    const r = await renderMail(env.ctx, 'digest', 'de', { ...DIGEST, movies: { names: ['<b>"Nordlicht"</b>'], total: 1 } }, { userId: actor });
+    expect(r.html).toContain('&lt;b&gt;&quot;Nordlicht&quot;&lt;/b&gt;');
+    expect(r.html).not.toContain('<b>"Nordlicht"');
+    // all names shown: no "more" line
+    expect(r.text).not.toContain('weitere');
+  });
+
+  it('digest carries the unsubscribe headers', async () => {
+    atFriend();
+    const r = await renderMail(env.ctx, 'digest', 'de', DIGEST, { userId: actor });
+    const tok = unsubscribeToken(env.ctx.encKey, actor, 'digest');
+    expect(r.headers['List-Unsubscribe']).toBe(`<${ORIGIN}/api/public/mail/unsubscribe?t=${tok}>`);
+    expect(r.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+    expect(r.text).toContain(`Diese E-Mails abbestellen: ${ORIGIN}/mail/unsubscribe?t=${tok}`);
+    expect(r.text).toContain(`E-Mail-Einstellungen: ${ORIGIN}/me/account#mail`);
+    const tokens = new Set([...`${r.html}\n${r.text}\n${JSON.stringify(r.headers)}`.matchAll(/v1\.[0-9a-f-]{36}\.[a-z]+\.[A-Za-z0-9_-]{43}/g)].map((x) => x[0]));
+    expect([...tokens]).toEqual([tok]);
+    // like every switch: no recipient or no public URL, no mail
+    await expect(renderMail(env.ctx, 'digest', 'de', DIGEST, { userId: null })).rejects.toThrow();
+    env.ctx.cfg = { ...cfg, PUBLIC_URL: '' };
+    await expect(renderMail(env.ctx, 'digest', 'de', DIGEST, { userId: actor })).rejects.toThrow();
+  });
+
+  it('a full digest stays under 100 000 bytes', async () => {
+    atFriend();
+    await setBrand({ name: 'N'.repeat(24), byline: 'B'.repeat(32), website: 'https://friend.example.com/' });
+    await setSymbol(PNG_SIG, 'image/png', MAX_INLINE_SYMBOL_BYTES);
+    const name = (i: number) => `${i} ${'Nordlicht '.repeat(12)}`.slice(0, 120);
+    const full = {
+      ...DIGEST,
+      movies: { names: Array.from({ length: 12 }, (_, i) => name(i)), total: 400 },
+      series: Array.from({ length: 20 }, (_, i) => ({ name: name(i), count: 99, followed: i < 5 })),
+      wishes: Array.from({ length: 20 }, (_, i) => name(i)),
+      recs: Array.from({ length: 5 }, (_, i) => ({ name: name(i), from: name(i + 100) })),
+    };
+    const r = await renderMail(env.ctx, 'digest', 'de', full, { userId: actor });
+    expect(r.attachments).toHaveLength(1);
+    expect(Buffer.byteLength(r.html)).toBeLessThan(100_000);
+    expect(r.text).toContain('… und 388 weitere');
+  });
+
+  it('empty sections are left out', async () => {
+    atFriend();
+    const r = await renderMail(env.ctx, 'digest', 'de', { ...DIGEST, movies: { names: [], total: 0 }, wishes: [], recs: [] }, { userId: actor });
+    expect(r.text).toContain('Neue Folgen\n- Nordlicht TV (3 neue Folgen)');
+    for (const h of ['Neue Filme', 'Deine Wünsche sind da', 'Empfehlungen für dich']) {
+      expect(r.text, h).not.toContain(h);
+      expect(r.html, h).not.toContain(h);
+    }
+    // one episode: the singular; every language has the texts
+    const one = await renderMail(env.ctx, 'digest', 'de', { ...DIGEST, series: [{ name: 'Nordlicht TV', count: 1, followed: false }] }, { userId: actor });
+    expect(one.text).toContain('- Nordlicht TV (1 neue Folge)');
+    for (const lang of ['en', 'fr', 'es', 'it', 'tr', 'pl'] as const) {
+      const l = await renderMail(env.ctx, 'digest', lang, DIGEST, { userId: actor });
+      expect(l.text, lang).not.toMatch(/mail\.digest\.|\{\w+\}/); // no raw key, no placeholder left
+      expect(l.text, lang).toContain(msg(lang, 'mail.digest.reason', { app: 'FriendFlix' }));
+    }
+  });
+
+  it('digest params are checked', async () => {
+    atFriend();
+    await expect(renderMail(env.ctx, 'digest', 'de', { ...DIGEST, movies: { names: [7], total: 1 } }, { userId: actor })).rejects.toThrow();
+    await expect(renderMail(env.ctx, 'digest', 'de', { ...DIGEST, since: 'letzte Woche' }, { userId: actor })).rejects.toThrow();
+    const { recs: _recs, ...noRecs } = DIGEST;
+    await expect(renderMail(env.ctx, 'digest', 'de', noRecs, { userId: actor })).rejects.toThrow();
   });
 
   // Mail stage B, Task 3: the invitation's button only ever leads to this instance.

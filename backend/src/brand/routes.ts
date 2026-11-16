@@ -40,8 +40,8 @@ export function publicBrand(b: Brand): PublicBrand {
 
 type ImageUrls = { logo?: string; symbol?: string; signIn?: string };
 
-/** the URLs of the brand's images that exist (with the extension of their stored type) */
-async function imageUrls(db: Db, b: Brand): Promise<ImageUrls> {
+/** the URLs of the brand's images that exist (with the extension of their stored type); also the logo Authentik gets (akBranding.ts) */
+export async function imageUrls(db: Db, b: Brand): Promise<ImageUrls> {
   const hashes = IMAGE_FIELDS.map(([f]) => b[f]).filter((h): h is string => h !== null);
   if (!hashes.length) return {};
   const r = await db.query<{ hash: string; mime: BrandImageMime }>('select hash, mime from brand_images where hash = any($1::text[])', [hashes]);

@@ -115,6 +115,7 @@ const pl: Translation<typeof de> = {
     loadFailed: 'Nie udało się wczytać.',
     saved: 'Zapisano.',
     sent: 'Wysłano test. Zobacz powiadomienia i /digest.',
+    sentMailed: 'Wysłano test. E-mail czeka w kolejce.',
     duplicate: 'Nie wysłano (duplikat).',
     nothing: 'Nie ma o czym pisać: w ciągu ostatnich 7 dni nie wydarzyło się nic nowego.',
     sendFailed: 'Nie udało się wysłać.',

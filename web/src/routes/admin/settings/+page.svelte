@@ -35,6 +35,7 @@
   import { toast } from '#lib/ui/toast';
   import { refreshSummary } from '#lib/admin/summary';
   import MailStatus from '#lib/admin/settings/MailStatus.svelte';
+  import AuthentikSync from '#lib/admin/settings/AuthentikSync.svelte';
   import SettingRow from '#lib/admin/settings/SettingRow.svelte';
   import { highlightSetting } from '#lib/admin/settings/highlight';
   import { SEARCH_MIN, searchSettings, type SettingHit } from '#lib/admin/settings/search';
@@ -398,6 +399,8 @@
             <Button type="submit" icon="check" pending={$busyKeys.has(`set:save:${g.id}`)} disabled={!dirty && savedGroup !== g.id} done={savedGroup === g.id && !dirty}>{$t('settings.save')}</Button>
           </div>
         </form>
+        <!-- after the form's Save row: the card appears once its preview is read, and nothing above it moves then -->
+        {#if g.id === 'mail'}<AuthentikSync reload={mailSaves} />{/if}
       </AdminCard>
     {/each}
 

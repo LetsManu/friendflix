@@ -105,6 +105,7 @@ const es: Translation<typeof de> = {
     loadFailed: 'No se pudo cargar.',
     saved: 'Guardado.',
     sent: 'Prueba enviada. Consulta las notificaciones y /digest.',
+    sentMailed: 'Prueba enviada. Hay un correo en cola.',
     duplicate: 'No enviado (duplicado).',
     nothing: 'Nada que contar: en los últimos 7 días no ha pasado nada nuevo.',
     sendFailed: 'No se pudo enviar.',

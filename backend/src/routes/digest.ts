@@ -88,6 +88,6 @@ export function digestRoutes(app: FastifyInstance, ctx: Ctx) {
     const until = new Date();
     const since = new Date(until.getTime() - 7 * 24 * 3600_000);
     const r = await sendDigest(ctx, req.user!, { key: 'test', since, until }, true);
-    return { sent: r.sent, data: r.data };
+    return { sent: r.sent, mailed: r.mailed, data: r.data };
   });
 }

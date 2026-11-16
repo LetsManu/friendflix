@@ -8,6 +8,8 @@ import { appVersion, codenameFor, compareSemver, parseSemver } from './version.j
 
 const TTL = 600;
 const CACHE_MS = 'update:info:';
+/** the kv key of the cached GitHub answer for this build */
+const infoKey = (cfg: Ctx['cfg']): string => `${CACHE_MS}${cfg.UPDATE_REPO}:${cfg.GIT_SHA}:${appVersion(cfg).version}`;
 const GH = 'https://api.github.com';
 
 export interface Latest { sha: string; date: string; runUrl: string }
@@ -115,6 +117,16 @@ async function fetchLatest(ctx: Ctx): Promise<Fetched> {
   return { release, ...(main ?? { latest: null, behind: null, commits: [] }) };
 }
 
+/** The newest release's version from the cached GitHub answer only (no request); null when nothing is cached or there is no release. */
+export async function cachedReleaseVersion(ctx: Pick<Ctx, 'kv' | 'cfg'>): Promise<string | null> {
+  try {
+    const hit = await ctx.kv.get(infoKey(ctx.cfg));
+    return hit ? ((JSON.parse(hit) as Partial<Fetched>).release?.version ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Installed vs newest release (stable channel) or vs the newest CI build on main (nightly channel: commits ahead; on stable
  * secondary info, and the only comparison before the first release). GitHub answers are cached for 10 min (unauthenticated limit: 60/h); an outage never throws.
@@ -132,7 +144,7 @@ export async function updateInfo(ctx: Ctx, refresh = false): Promise<UpdateInfo>
     ...base, ...f, channel,
     updateAvailable: channelUpdate(selected, { releaseNewer: f.release ? compareSemver(f.release.version, ver.version) > 0 : null, behind: f.behind, pinnedDiffers: pinned ? pinned !== ver.version : null }),
   });
-  const key = `${CACHE_MS}${ctx.cfg.UPDATE_REPO}:${ctx.cfg.GIT_SHA}:${ver.version}`;
+  const key = infoKey(ctx.cfg);
   if (!refresh) {
     const hit = await ctx.kv.get(key).catch(() => null);
     if (hit) return withState(JSON.parse(hit) as Fetched);

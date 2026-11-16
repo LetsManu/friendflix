@@ -8,8 +8,8 @@ import type { Config } from '../src/config.js';
 import { decrypt, encrypt } from '../src/crypto.js';
 import { m } from '../src/i18n.js';
 import * as outbox from '../src/mail/outbox.js';
-import { mailRecipient, setMailPref } from '../src/mail/people.js';
-import { notify, type Notice } from '../src/notify.js';
+import { MAIL_PREF_TYPES, mailRecipient, setMailPref } from '../src/mail/people.js';
+import { notify, notifyAdmins, type Notice } from '../src/notify.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 // Mail stage B, Task 2: mail as the fourth channel of notify(). A notice with `mail` and a dedupe key queues one outbox row of that
@@ -107,6 +107,42 @@ describe('notify mails a notice', () => {
     }
   });
 
+  // Mail stage C, Task 1: an admin notice with `mail` mails every admin whose switch is on; a friend gets neither notice nor mail.
+  it('notifyAdmins with mail queues one row per admin with the switch on', async () => {
+    const add = async (sub: string, email: string, name: string, role: 'admin' | 'friend') => {
+      const id = randomUUID();
+      await env.pool.query(
+        'insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values ($1, $2, $3, $4, $5, $6, $7, $8)',
+        [id, sub, email, name, role, sub.padEnd(32, '0'), sub, encrypt(env.ctx.encKey, 'pw')]);
+      await env.pool.query('insert into profiles(id, user_id, name, is_owner) values ($1, $1, $2, true)', [id, name]);
+      return id;
+    };
+    const ben = await add('sub-ben', 'ben@friend.example.com', 'Ben Muster', 'friend');
+    const carla = await add('sub-carla', 'carla@friend.example.com', 'Carla Muster', 'admin');
+    await env.pool.query("update users set role = 'admin' where id = $1", [anna]);
+    try {
+      await setMailPref(env.ctx, carla, 'storage', false);
+      // a friend's stored admin switch does not count
+      await env.pool.query('insert into user_prefs(user_id, data) values ($1, $2)', [ben, JSON.stringify({ mail: { storage: true } })]);
+      const sent = await notifyAdmins(env.ctx, { kind: 'livetv.rec.storage', title: 'x', link: '/admin/livetv', dedupe: 'ltvrec-storage-2026-11-16', mail: 'storage' });
+      expect(sent).toBe(2);
+      const inApp = (await env.pool.query<{ user_id: string }>("select user_id from notifications where kind = 'livetv.rec.storage'")).rows.map((r) => r.user_id).sort();
+      expect(inApp).toEqual([anna, carla].sort());
+      expect(inApp).not.toContain(ben);
+      const rows = await mails();
+      expect(rows.map(({ kind, dedupe, user_id }) => ({ kind, dedupe, user_id }))).toEqual([
+        { kind: 'storage', dedupe: `n:ltvrec-storage-2026-11-16-${anna}`, user_id: anna },
+      ]);
+      expect(JSON.parse(decrypt(env.ctx.encKey, rows[0]!.params_enc))).toEqual({ title: 'x', body: null, link: '/admin/livetv' });
+      // the same alert again: neither a notice nor a mail
+      expect(await notifyAdmins(env.ctx, { kind: 'livetv.rec.storage', title: 'x', link: '/admin/livetv', dedupe: 'ltvrec-storage-2026-11-16', mail: 'storage' })).toBe(0);
+      expect(await mails()).toHaveLength(1);
+    } finally {
+      await env.pool.query("update users set role = 'friend' where id = $1", [anna]);
+      await env.pool.query('delete from users where id = any($1)', [[ben, carla]]);
+    }
+  });
+
   it('a mail failure never fails notify', async () => {
     vi.spyOn(outbox, 'enqueueMail').mockRejectedValue(new Error('outbox down'));
     expect(await notify(env.ctx, notice())).toBe(true);
@@ -149,9 +185,12 @@ describe('every mailed notice has a dedupe key', () => {
     const all = noticeLiterals();
     expect(all.length).toBeGreaterThan(20);
     const mailing = all.filter((n) => /(^|[\s,])mail:/.test(n.top));
-    // wish available, recording failed/partial, series episode, recording done, recording to be deleted, licences expiring
+    // wish available, recording failed/partial, series episode, recording done, recording to be deleted, licences expiring; the admin
+    // alerts (update available, update failed, Portainer redeploy failed, Systemcheck problem, disk full) and both recordings-storage notices
     expect(mailing.map((n) => n.file).sort()).toEqual([
-      'downloadExpiry.ts', 'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recstore.ts', 'routes/seerr.ts',
+      'adminAlerts.ts', 'adminAlerts.ts', 'adminAlerts.ts', 'adminAlerts.ts', 'downloadExpiry.ts',
+      'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recstore.ts', 'livetv/recstore.ts', 'routes/seerr.ts',
+      'syscheckAlerts.ts',
     ]);
     for (const n of mailing) expect(n.top, n.file).toMatch(/(^|[\s,])dedupe:/);
   });
@@ -161,7 +200,7 @@ describe('every mailed notice has a dedupe key', () => {
     // condition) outside src/mail must be one of the literals it checked
     const src = join(__dirname, '../src');
     const files = (readdirSync(src, { recursive: true }) as string[]).filter((f) => f.endsWith('.ts') && !f.startsWith('mail/'));
-    const typed = /\bmail: (?:[^,}\n]*\? )?'(?:available|recording|licence)'/g;
+    const typed = new RegExp(`\\bmail: (?:[^,}\\n]*\\? )?'(?:${MAIL_PREF_TYPES.join('|')})'`, 'g');
     const sites = files.flatMap((f) => [...readFileSync(join(src, f), 'utf8').matchAll(typed)].map(() => f));
     expect(sites.sort()).toEqual(noticeLiterals().filter((n) => /(^|[\s,])mail:/.test(n.top)).map((n) => n.file).sort());
   });

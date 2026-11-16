@@ -6,7 +6,7 @@ import { reqSerializer } from '../src/app.js';
 import type { Config } from '../src/config.js';
 import { encrypt } from '../src/crypto.js';
 import { mailSubkey } from '../src/mail/address.js';
-import { readMailPrefs } from '../src/mail/people.js';
+import { ADMIN_MAIL_TYPES, MAIL_PREF_TYPES, readMailPrefs } from '../src/mail/people.js';
 import { unsubscribeToken } from '../src/mail/unsubscribe.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
@@ -17,18 +17,20 @@ const ANNA = 'anna@friend.example.com';
 const BEN = 'ben@friend.example.com';
 const MAIL_CFG: Partial<Config> = { MAIL_SMTP_HOST: 'mail.example.com', MAIL_FROM: 'kino@friend.example.com', PUBLIC_URL: 'https://friend.example.com' };
 const URL_ = '/api/public/mail/unsubscribe';
-const ALL_ON = { available: true, recording: true, licence: true };
+/** every switch as stored without a choice (readMailPrefs), and what a non-admin's account page gets (the person types only) */
+const DEFAULTS = { available: true, recording: true, licence: true, digest: false, update: true, updatefailed: true, syscheck: true, storage: true };
+const PERSON = { available: true, recording: true, licence: true, digest: false };
 
 describe('mail person routes', () => {
   let env: TestEnv;
   let anna: string, ben: string;
-  let annaS: Sess;
+  let annaS: Sess, benS: Sess;
   const logs: string[] = [];
 
   // every call comes from its own address, so the per-IP limits (tested on their own) do not count the other tests
   let n = 0;
   const ip = () => `192.0.2.${(n = (n % 200) + 1)}`;
-  const tok = (userId: string, type: 'available' | 'recording' | 'licence' = 'licence') => unsubscribeToken(env.ctx.encKey, userId, type);
+  const tok = (userId: string, type: (typeof MAIL_PREF_TYPES)[number] = 'licence') => unsubscribeToken(env.ctx.encKey, userId, type);
   const oneClick = (t: string, type: 'form' | 'multipart' = 'form', extra: { cookies?: Record<string, string>; remoteAddress?: string } = {}) =>
     env.app.inject({
       method: 'POST', url: `${URL_}?t=${encodeURIComponent(t)}`, remoteAddress: extra.remoteAddress ?? ip(), cookies: extra.cookies,
@@ -53,6 +55,7 @@ describe('mail person routes', () => {
         [sub, email, name, sub.padEnd(32, '0'), sub, encrypt(env.ctx.encKey, 'pw')]);
     }
     annaS = await env.login({ sub: 'sub-anna', email: ANNA, name: 'Anna Beispiel', groups: [] });
+    benS = await env.login({ sub: 'sub-ben', email: BEN, name: 'Ben Muster', groups: [] });
     const ids = (await env.pool.query<{ id: string; authentik_sub: string }>("select id, authentik_sub from users where authentik_sub in ('sub-anna','sub-ben')")).rows;
     anna = ids.find((r) => r.authentik_sub === 'sub-anna')!.id;
     ben = ids.find((r) => r.authentik_sub === 'sub-ben')!.id;
@@ -65,6 +68,7 @@ describe('mail person routes', () => {
     await env.pool.query('delete from mail_outbox');
     await env.pool.query("delete from audit_log where action = 'mail.pref'");
     await env.pool.query('delete from user_prefs where user_id = any($1)', [[anna, ben]]);
+    await env.pool.query("update users set role = 'friend' where id = any($1)", [[anna, ben]]);
   });
   afterEach(() => {
     env.ctx.cfg = cfg;
@@ -85,7 +89,7 @@ describe('mail person routes', () => {
     const f = await env.app.inject({ method: 'POST', url: `${URL_}?t=${t}`, remoteAddress: ip(), headers: { 'content-type': 'application/x-www-form-urlencoded' },
       payload: `t=${tok(ben, 'recording')}&on=true` });
     expect(f.json()).toEqual({ ok: true, type: 'licence', on: false });
-    expect(await readMailPrefs(env.ctx, ben)).toEqual(ALL_ON);
+    expect(await readMailPrefs(env.ctx, ben)).toEqual(DEFAULTS);
     // nor a large one
     expect((await env.app.inject({ method: 'POST', url: `${URL_}?t=${t}`, remoteAddress: ip(), headers: { 'content-type': 'application/x-www-form-urlencoded' },
       payload: 'x'.repeat(5000) })).statusCode).toBe(413);
@@ -130,11 +134,11 @@ describe('mail person routes', () => {
 
   it('invalid token answers 400 and changes nothing', async () => {
     const annaMac = tok(anna).split('.')[3]!;
-    const digestMac = createHmac('sha256', mailSubkey(env.ctx.encKey, 'unsubscribe')).update(`v1|${anna}|digest`).digest('base64url');
+    const weeklyMac = createHmac('sha256', mailSubkey(env.ctx.encKey, 'unsubscribe')).update(`v1|${anna}|weekly`).digest('base64url');
     const bad = [
       `v1.${ben}.licence.${annaMac}`, // another person
       `v1.${anna}.recording.${annaMac}`, // another type
-      `v1.${anna}.digest.${digestMac}`, // unknown type, properly signed
+      `v1.${anna}.weekly.${weeklyMac}`, // unknown type, properly signed
       `v1.${anna}.licence.${annaMac.slice(0, 42)}`, // cut mac
       `v1.${anna}.licence.${annaMac.slice(0, 42)}A`.replace(/A$/, annaMac.endsWith('A') ? 'B' : 'A'), // changed mac
       `v2.${anna}.licence.${annaMac}`,
@@ -157,8 +161,8 @@ describe('mail person routes', () => {
       expect(r.statusCode).toBe(400);
       expect(r.json()).toEqual({ error: 'invalid_token' });
     }
-    expect(await readMailPrefs(env.ctx, anna)).toEqual(ALL_ON);
-    expect(await readMailPrefs(env.ctx, ben)).toEqual(ALL_ON);
+    expect(await readMailPrefs(env.ctx, anna)).toEqual(DEFAULTS);
+    expect(await readMailPrefs(env.ctx, ben)).toEqual(DEFAULTS);
     expect((await env.pool.query('select 1 from user_prefs where user_id = any($1)', [[anna, ben]])).rowCount).toBe(0);
     expect(await audits()).toEqual([]);
   });
@@ -185,7 +189,7 @@ describe('mail person routes', () => {
     }
     // even with a session cookie
     expect((await env.app.inject({ method: 'GET', url: `${URL_}?t=${t}`, cookies: annaS.cookies, remoteAddress: ip() })).statusCode).toBe(303);
-    expect(await readMailPrefs(env.ctx, anna)).toEqual(ALL_ON);
+    expect(await readMailPrefs(env.ctx, anna)).toEqual(DEFAULTS);
     expect(await audits()).toEqual([]);
     for (const q of ['?t=%3Cscript%3E', '', '?t=', `?t=${'a'.repeat(201)}`, '?t=a%0d%0aSet-Cookie:x=1', '?t=//evil.example.com']) {
       const r = await env.app.inject({ method: 'GET', url: `${URL_}${q}`, remoteAddress: ip() });
@@ -244,24 +248,69 @@ describe('mail person routes', () => {
     expect(all).not.toContain(t.split('.')[3]!);
   });
 
+  // Mail stage C, Task 1: the admin alert switches are an admin's only.
+  it('account mail lists admin types only for admins', async () => {
+    const b = await as(benS, 'GET', '/api/account/mail');
+    expect(b.statusCode).toBe(200);
+    expect(b.json()).toMatchObject({ admin: false });
+    expect(Object.keys(b.json().prefs)).toEqual(['available', 'recording', 'licence', 'digest']);
+    await env.pool.query("update users set role = 'admin' where id = $1", [anna]);
+    const a = await as(annaS, 'GET', '/api/account/mail');
+    expect(a.statusCode).toBe(200);
+    expect(a.json()).toEqual({ configured: true, hasAddress: true, admin: true, prefs: DEFAULTS });
+    expect(Object.keys(a.json().prefs)).toEqual([...MAIL_PREF_TYPES]);
+  });
+
+  it('PUT of an admin type as a non-admin answers 403', async () => {
+    for (const type of ADMIN_MAIL_TYPES) {
+      const r = await as(benS, 'PUT', '/api/account/mail', { type, on: false });
+      expect(r.statusCode, type).toBe(403);
+      expect(r.json()).toEqual({ error: 'admin_only' });
+    }
+    expect((await env.pool.query('select 1 from user_prefs where user_id = $1', [ben])).rowCount).toBe(0);
+    expect(await audits()).toEqual([]);
+    // his own person types, digest included, he may switch
+    expect((await as(benS, 'PUT', '/api/account/mail', { type: 'digest', on: true })).json()).toEqual({ prefs: { ...PERSON, digest: true } });
+    await env.pool.query("update users set role = 'admin' where id = $1", [anna]);
+    const r = await as(annaS, 'PUT', '/api/account/mail', { type: 'update', on: false });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().prefs.update).toBe(false);
+    expect(r.json().prefs).toEqual({ ...DEFAULTS, update: false });
+    expect((await readMailPrefs(env.ctx, anna)).update).toBe(false);
+  });
+
+  it('one-click unsubscribe works for digest and admin types', async () => {
+    await env.pool.query("update users set role = 'admin' where id = $1", [anna]);
+    const r = await oneClick(tok(anna, 'storage'));
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ ok: true, type: 'storage', on: false });
+    expect((await readMailPrefs(env.ctx, anna)).storage).toBe(false);
+    const d = await page({ t: tok(ben, 'digest'), on: true });
+    expect(d.json()).toEqual({ ok: true, type: 'digest', on: true });
+    expect((await readMailPrefs(env.ctx, ben)).digest).toBe(true);
+    // a token of an admin type still works after a demotion: switching off is always allowed
+    await env.pool.query("update users set role = 'friend' where id = $1", [anna]);
+    expect((await oneClick(tok(anna, 'update'))).json()).toEqual({ ok: true, type: 'update', on: false });
+  });
+
   it('account mail GET and PUT', async () => {
     const g = await as(annaS, 'GET', '/api/account/mail');
     expect(g.statusCode).toBe(200);
     expect(g.headers['cache-control']).toContain('no-store');
-    expect(g.json()).toEqual({ configured: true, hasAddress: true, prefs: ALL_ON });
+    expect(g.json()).toEqual({ configured: true, hasAddress: true, admin: false, prefs: PERSON });
     expect(g.body).not.toContain('@');
 
     const queued = await insertRow(anna, 'recording');
     const kept = await insertRow(anna, 'licence');
     const p = await as(annaS, 'PUT', '/api/account/mail', { type: 'recording', on: false });
     expect(p.statusCode).toBe(200);
-    expect(p.json()).toEqual({ prefs: { ...ALL_ON, recording: false } });
-    expect((await as(annaS, 'GET', '/api/account/mail')).json().prefs).toEqual({ ...ALL_ON, recording: false });
+    expect(p.json()).toEqual({ prefs: { ...PERSON, recording: false } });
+    expect((await as(annaS, 'GET', '/api/account/mail')).json().prefs).toEqual({ ...PERSON, recording: false });
     const left = (await env.pool.query<{ id: string }>('select id from mail_outbox')).rows.map((r) => r.id);
     expect(left).toEqual([kept]);
     expect(left).not.toContain(queued);
     expect(await audits()).toEqual([{ actor: anna, meta: { type: 'recording', on: false, via: 'account' } }]);
-    expect((await as(annaS, 'PUT', '/api/account/mail', { type: 'recording', on: true })).json()).toEqual({ prefs: ALL_ON });
+    expect((await as(annaS, 'PUT', '/api/account/mail', { type: 'recording', on: true })).json()).toEqual({ prefs: PERSON });
 
     // CSRF as for every session route
     const noCsrf = await env.app.inject({ method: 'PUT', url: '/api/account/mail', cookies: annaS.cookies, payload: { type: 'licence', on: false }, remoteAddress: ip() });
@@ -270,21 +319,21 @@ describe('mail person routes', () => {
     // no session
     expect((await env.app.inject({ method: 'GET', url: '/api/account/mail', remoteAddress: ip() })).statusCode).toBe(401);
     // bad bodies
-    for (const b of [{ type: 'digest', on: false }, { type: 'welcome', on: false }, { type: 'licence', on: 'no' }, {}]) {
+    for (const b of [{ type: 'weekly', on: false }, { type: 'welcome', on: false }, { type: 'licence', on: 'no' }, {}]) {
       const r = await as(annaS, 'PUT', '/api/account/mail', b);
       expect(r.statusCode).toBe(400);
     }
-    expect(await readMailPrefs(env.ctx, anna)).toEqual(ALL_ON);
+    expect(await readMailPrefs(env.ctx, anna)).toEqual(DEFAULTS);
 
     // without mail settings, and without an address
     env.ctx.cfg = cfg;
-    expect((await as(annaS, 'GET', '/api/account/mail')).json()).toEqual({ configured: false, hasAddress: true, prefs: ALL_ON });
+    expect((await as(annaS, 'GET', '/api/account/mail')).json()).toEqual({ configured: false, hasAddress: true, admin: false, prefs: PERSON });
     env.ctx.cfg = { ...cfg, ...MAIL_CFG, PUBLIC_URL: '' };
     expect((await as(annaS, 'GET', '/api/account/mail')).json().configured).toBe(false);
     env.ctx.cfg = { ...cfg, ...MAIL_CFG };
     await env.pool.query('update users set email = null where id = $1', [anna]);
     try {
-      expect((await as(annaS, 'GET', '/api/account/mail')).json()).toEqual({ configured: true, hasAddress: false, prefs: ALL_ON });
+      expect((await as(annaS, 'GET', '/api/account/mail')).json()).toEqual({ configured: true, hasAddress: false, admin: false, prefs: PERSON });
     } finally {
       await env.pool.query('update users set email = $1 where id = $2', [ANNA, anna]);
     }
@@ -295,6 +344,6 @@ describe('mail person routes', () => {
     const kid: Sess = { cookies: { ff_sid: sel.cookies.find((c) => c.name === 'ff_sid')!.value }, csrf: annaS.csrf };
     expect((await as(kid, 'GET', '/api/account/mail')).statusCode).toBe(403);
     expect((await as(kid, 'PUT', '/api/account/mail', { type: 'licence', on: false })).statusCode).toBe(403);
-    expect(await readMailPrefs(env.ctx, anna)).toEqual(ALL_ON);
+    expect(await readMailPrefs(env.ctx, anna)).toEqual(DEFAULTS);
   });
 });

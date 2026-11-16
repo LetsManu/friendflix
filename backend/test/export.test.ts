@@ -375,11 +375,16 @@ describe('GET /api/account/export', () => {
   it('export lists the mail switches', async () => {
     const { s, a } = await setup();
     fakeHistory();
-    expect((await get(s)).json().notifications.mail).toEqual({ available: true, recording: true, licence: true });
+    // the exporting account is an admin: the admin alert switches are listed too
+    const defaults = { available: true, recording: true, licence: true, digest: false, update: true, updatefailed: true, syscheck: true, storage: true };
+    expect((await get(s)).json().notifications.mail).toEqual(defaults);
     await setMailPref(env.ctx, a, 'recording', false);
     const doc = (await get(s)).json();
     expect(doc.notifications.mail).toEqual(await readMailPrefs(env.ctx, a));
-    expect(doc.notifications.mail).toEqual({ available: true, recording: false, licence: true });
+    expect(doc.notifications.mail).toEqual({ ...defaults, recording: false });
+    // a non-admin's export lists the person types only
+    await env.pool.query("update users set role = 'friend' where id = $1", [a]);
+    expect((await get(s)).json().notifications.mail).toEqual({ available: true, recording: false, licence: true, digest: false });
   });
 
   it('export is audited', async () => {

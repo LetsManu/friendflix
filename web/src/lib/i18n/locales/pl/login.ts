@@ -235,7 +235,7 @@ const login: Translation<typeof de> = {
     failed: 'Tym razem się nie udało. Spróbuj ponownie.',
     settings: 'Ustawienia e-maili',
     /** {type} in the texts above */
-    types: { available: 'dostępnych życzeniach', recording: 'nagraniach', licence: 'wygasających pobraniach' },
+    types: { available: 'dostępnych życzeniach', recording: 'nagraniach', licence: 'wygasających pobraniach', digest: 'cotygodniowym podsumowaniu', update: 'nowych wersjach', updatefailed: 'nieudanych aktualizacjach', syscheck: 'problemach w kontroli systemu', storage: 'małej ilości miejsca na dane' },
   },
   pending: {
     title: 'Prawie gotowe',

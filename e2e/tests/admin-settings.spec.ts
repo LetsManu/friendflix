@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { done, identify, installLogin, loginState, password } from '../mocks/login.js';
-import { LEAK } from '../mocks/settings.js';
+import { LEAK, mailConfigured } from '../mocks/settings.js';
 
 // Admin → Einstellungen (/admin/settings): the settings store (Block 25, spec Part I). Secrets are write-only, env rows are locked,
 // a save sends only the fields that changed. A re-authentication happens in place (the in-app dialog) when GET /auth/flow/config
@@ -703,5 +703,148 @@ test.describe('admin: settings search', () => {
     await search(page).fill('tmdb');
     await expect(page.locator('#set-results').getByRole('link')).toHaveCount(1);
     expect(await page.locator('#set-results').innerText()).not.toMatch(/abcd|mock-leak/);
+  });
+});
+
+// *Branding an Authentik übertragen* (mail stage C, Task 6): under the E-Mail card, only while the Authentik API is set up. The SMTP
+// settings go only on an explicit tick (unchecked on every load); a 401 reauth_required runs the in-place sign-in and sends once more.
+test.describe('admin: settings, Authentik branding', () => {
+  test.use({ allowedConsole: /status of (401|403)/ });
+  test.beforeEach(({ api }) => { api.asAdmin = true; });
+  const ak = (page: Page) => page.locator('section', { has: page.getByRole('heading', { level: 3, name: 'Authentik', exact: true }) });
+  const run = (page: Page) => ak(page).getByRole('button', { name: 'Branding an Authentik übertragen' });
+  const smtpBox = (page: Page) => ak(page).getByRole('checkbox', { name: /Auch die SMTP-Einstellungen übertragen/ });
+
+  test('Authentik card hidden when Authentik is not set up', async ({ page, api }) => {
+    api.settings.ak.available = false;
+    await page.goto('/admin/settings?tab=notifications');
+    await expect(card(page, 'E-Mail').getByTestId('mail-status')).toBeVisible();
+    await expect.poll(() => api.settings.ak.gets).toBeGreaterThan(0);
+    await expect(ak(page)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Branding an Authentik übertragen' })).toHaveCount(0);
+  });
+
+  test('transfer without SMTP', async ({ page, api }) => {
+    api.settings.ak.title = 'Nordlicht TV';
+    api.settings.ak.logoUrl = 'https://friend.example.com/api/public/brand/img/' + 'a'.repeat(64) + '.png';
+    mailConfigured(api.settings);
+    await page.goto('/admin/settings?tab=notifications');
+    await expect(ak(page).getByText('Nordlicht TV', { exact: true })).toBeVisible();
+    await expect(ak(page).getByText(api.settings.ak.logoUrl)).toBeVisible();
+    await expect(ak(page).getByText('kino@friend.example.com', { exact: true })).toBeVisible();
+    // the copy goes stale: the card says when to run it again
+    await expect(ak(page).getByText('Eine einmalige Kopie: Nach einer Änderung an Logo, Name oder Mail-Server-Einstellungen hier erneut übertragen.', { exact: true })).toBeVisible();
+    await run(page).click();
+    await expect(ak(page).getByTestId('ak-brand-result')).toHaveText('Name und Logo übertragen.');
+    await expect(ak(page).getByTestId('ak-stage-result')).toHaveText('Absender übertragen.');
+    expect(api.settings.ak.posts).toEqual([{ smtp: false }]);
+  });
+
+  test('the SMTP checkbox starts unchecked and is sent only when ticked', async ({ page, api }) => {
+    mailConfigured(api.settings);
+    await page.goto('/admin/settings?tab=notifications');
+    await expect(smtpBox(page)).not.toBeChecked();
+    await expect(smtpBox(page)).toBeEnabled();
+    await expect(ak(page).getByText(/Das Passwort geht nur an Authentik/)).toBeVisible();
+    await run(page).click();
+    await expect(ak(page).getByTestId('ak-stage-result')).toHaveText('Absender übertragen.');
+    await smtpBox(page).check();
+    await run(page).click();
+    await expect(ak(page).getByTestId('ak-stage-result')).toHaveText('Absender und SMTP-Einstellungen übertragen.');
+    expect(api.settings.ak.posts).toEqual([{ smtp: false }, { smtp: true }]);
+    // consent is for one transfer: the box is clear again, and after a reload too
+    await expect(smtpBox(page)).not.toBeChecked();
+    await page.reload();
+    await expect(smtpBox(page)).not.toBeChecked();
+    expect(await page.content()).not.toContain(LEAK);
+  });
+
+  test('the SMTP checkbox is disabled while mail is not set up', async ({ page, api }) => {
+    await page.goto('/admin/settings?tab=notifications');
+    await expect(smtpBox(page)).toBeDisabled();
+    await expect(ak(page).getByText(/sobald Server und Absenderadresse oben eingetragen/)).toBeVisible();
+    await expect(ak(page).getByText('keine Absenderadresse', { exact: true })).toBeVisible();
+    await expect(ak(page).getByText('kein Logo', { exact: true })).toBeVisible();
+    await run(page).click();
+    await expect(ak(page).getByTestId('ak-brand-result')).toHaveText('Name und Logo übertragen.');
+    expect(api.settings.ak.posts).toEqual([{ smtp: false }]);
+  });
+
+  test('a missing permission names it', async ({ page, api }) => {
+    mailConfigured(api.settings);
+    api.settings.ak.answers = [{ status: 200, body: { brand: { state: 'failed', code: 'permission', permission: 'authentik_brands.change_brand' }, stage: { state: 'done' } } }];
+    await page.goto('/admin/settings?tab=notifications');
+    await run(page).click();
+    const brand = ak(page).getByTestId('ak-brand-result');
+    await expect(brand).toContainText('Name und Logo: Dem Authentik-Token fehlt die Berechtigung „authentik_brands.change_brand“.');
+    await expect(brand.getByRole('link', { name: 'Anleitung' })).toHaveAttribute('href', 'https://github.com/LetsManu/friendflix/blob/main/docs/authentik.md#10b-e-mails-in-the-friendflix-look');
+    await expect(ak(page).getByTestId('ak-stage-result')).toHaveText('Absender übertragen.');
+    await expect(ak(page).getByTestId('ak-stage-result').getByRole('link')).toHaveCount(0);
+  });
+
+  test('a stage on Authentik\'s global settings and a brand without logo say what really happened', async ({ page, api }) => {
+    mailConfigured(api.settings);
+    api.settings.ak.answers = [{ status: 200, body: { brand: { state: 'done', logo: false }, stage: { state: 'skipped', code: 'global_settings' } } }];
+    await page.goto('/admin/settings?tab=notifications');
+    await run(page).click();
+    await expect(ak(page).getByTestId('ak-brand-result')).toHaveText('Name übertragen.');
+    await expect(ak(page).getByTestId('ak-stage-result')).toHaveText('Authentik nutzt seine globalen E-Mail-Einstellungen – Absender nicht geändert.');
+  });
+
+  test('an expired tab token is no question of rights', async ({ page, api }) => {
+    api.settings.ak.answers = [{ status: 403, body: { error: 'csrf' } }];
+    await page.goto('/admin/settings?tab=notifications');
+    await run(page).click();
+    await expect(ak(page).getByTestId('ak-brand-result')).toHaveText('Die Übertragung ließ sich nicht starten. Versuch es gleich noch einmal.');
+  });
+
+  // just above the phone layout the card is narrowest: the longest results still fit their reserved room, in every locale
+  for (const loc of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
+    test(`760 px, ${loc}: the longest results fit their reserved room`, async ({ page, api }) => {
+      await page.addInitScript((l) => { try { localStorage.setItem('ff-locale', l); } catch { /* blocked storage */ } }, loc);
+      await page.setViewportSize({ width: 760, height: 900 });
+      api.settings.ak.answers = [{ status: 200, body: { brand: { state: 'failed', code: 'permission', permission: 'authentik_brands.change_brand' }, stage: { state: 'failed', code: 'permission', permission: 'authentik_stages_email.change_emailstage' } } }];
+      await page.goto('/admin/settings?tab=notifications');
+      const sec = page.locator('section[aria-labelledby="ak-sync-h"]');
+      const results = sec.getByTestId('ak-results');
+      await results.scrollIntoViewIfNeeded();
+      const h0 = await results.evaluate((el) => el.getBoundingClientRect().height);
+      await sec.locator('.act button').click();
+      await expect(sec.getByTestId('ak-stage-result').getByRole('link')).toBeVisible();
+      expect(await results.evaluate((el) => el.getBoundingClientRect().height)).toBe(h0);
+      for (const line of await results.locator('p').all()) expect(await line.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(0);
+    });
+  }
+
+  test('a 401 asks for the sign-in and repeats the transfer', async ({ page, api }) => {
+    mailConfigured(api.settings);
+    api.settings.ak.answers = [{ status: 401, body: { error: 'reauth_required' } }];
+    const st = loginState({ starts: [{ body: password('admin') }], answers: [() => ({ body: done('') })] });
+    await installLogin(page.context(), st);
+    await page.goto('/admin/settings?tab=notifications');
+    await smtpBox(page).check();
+    await run(page).click();
+    const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    await dlg.getByLabel('Passwort', { exact: true }).fill('hunter2-fixture');
+    await dlg.getByRole('button', { name: 'Anmelden' }).click();
+    await expect(ak(page).getByTestId('ak-stage-result')).toHaveText('Absender und SMTP-Einstellungen übertragen.');
+    await expect(dlg).toHaveCount(0);
+    expect(api.settings.ak.posts).toEqual([{ smtp: true }, { smtp: true }]);
+    await expect(page).toHaveURL(/\/admin\/settings\?tab=notifications$/);
+  });
+
+  test('a sign-in given up says so and sends nothing more', async ({ page, api }) => {
+    mailConfigured(api.settings);
+    api.settings.ak.answers = [{ status: 401, body: { error: 'reauth_required' } }];
+    await installLogin(page.context(), loginState({ starts: [{ body: password('admin') }] }));
+    await page.goto('/admin/settings?tab=notifications');
+    await smtpBox(page).check();
+    await run(page).click();
+    const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    await expect(dlg).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dlg).toHaveCount(0);
+    await expect(ak(page).getByTestId('ak-brand-result')).toHaveText('Für die SMTP-Einstellungen musst du dich erneut anmelden.');
+    expect(api.settings.ak.posts).toEqual([{ smtp: true }]);
   });
 });

@@ -23,7 +23,8 @@ import { classifyMailError, createMailTransport, mailConfigured, type MailFailur
  *   (attempts − 1), waits by the backoff of consecutive transport failures (kv `mail:transport:fails`) and stops.
  * - A row over a rate limit goes back without an attempt counted, due when the oldest counted mail leaves the window.
  * - A person mail (welcome or a per-type mail, with its user) is checked once more right before the send: an account disabled or
- *   expired since it was queued, an address changed or removed since, or a type switched off since, deletes the row unsent (see
+ *   expired since it was queued, an admin alert whose recipient is no longer an admin, an address changed or removed since, or a type
+ *   switched off since, deletes the row unsent and logs its code (`inactive`, `not_admin`, `address_changed`, `unsubscribed`; see
  *   `dropUnwanted`). An invitation mail whose invite is revoked, expired or used up is deleted unsent too (`housekeeping`).
  *
  * Times come from the database clock (or the caller's `now`), so next_at and created_at compare on one clock. Log lines carry the row
@@ -144,9 +145,10 @@ const withSmtp = (o: Outcome, smtp: number | null): Outcome => (smtp === null ? 
  * The last check of a person mail before it goes out: a code when its person no longer wants or may get it, or no longer has the
  * address it was queued for, and then the row is deleted (still under this tick's lease). It closes the race with the enqueue (which
  * read the switch before the person turned it off; setMailPref only deletes rows that are queued by then), with a switch turned off
- * while the row waited, and with an address changed while it waited (the old address must never get it). Deleted, not
- * `failed`: nothing went wrong with the mail system, so it must not count as a failure in the status or the Systemcheck, and the
- * end state is the one setMailPref gives a row it reaches in time. The admin's test mail and the invitation are not person mails.
+ * while the row waited, with an admin demoted while an alert waited (`not_admin`), and with an address changed while it waited (the
+ * old address must never get it). Deleted, not `failed`: nothing went wrong with the mail system, so it must not count as a failure
+ * in the status or the Systemcheck, and the end state is the one setMailPref gives a row it reaches in time. The admin's test mail
+ * and the invitation are not person mails.
  */
 async function dropUnwanted(ctx: Pick<Ctx, 'db' | 'encKey'>, r: Claimed, lease: Date): Promise<string | null> {
   if (!r.user_id || (r.kind !== 'welcome' && !isMailPrefType(r.kind))) return null;

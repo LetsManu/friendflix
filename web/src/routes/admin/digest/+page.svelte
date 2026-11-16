@@ -40,8 +40,8 @@
   const reset = () => { if (saved) apply(saved); };
   function test() {
     void runAction({
-      key: 'digest:test', run: () => api<{ sent: number; data?: unknown }>('/api/admin/digest/test', { method: 'POST' }),
-      success: (r) => (r?.sent ? tr('admin.digest.sent') : r?.data ? tr('admin.digest.duplicate') : tr('admin.digest.nothing')),
+      key: 'digest:test', run: () => api<{ sent: number; mailed?: boolean; data?: unknown }>('/api/admin/digest/test', { method: 'POST' }),
+      success: (r) => (r?.sent ? tr(r.mailed ? 'admin.digest.sentMailed' : 'admin.digest.sent') : r?.data ? tr('admin.digest.duplicate') : tr('admin.digest.nothing')),
       error: tr('admin.digest.sendFailed'),
     });
   }
