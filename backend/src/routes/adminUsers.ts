@@ -12,6 +12,12 @@ import { restoreDeletion } from '../deletion.js';
 import { forgetUserAuth, revokeSessions } from '../devices.js';
 import { userLicenses } from '../downloads.js';
 import { createInvite, deleteAuthentikInvitation } from '../invites.js';
+import { LANGUAGES, broadcastLanguage } from '../i18n.js';
+import { maskAddress } from '../mail/address.js';
+import { enqueueMail } from '../mail/outbox.js';
+import { mailConfigured } from '../mail/transport.js';
+import { deliverNow, type DeliverResult } from '../mail/worker.js';
+import { publicOrigin } from '../config.js';
 import { getUserLimits } from '../limits.js';
 import { KIDS_RATINGS, ProfileError, accountJellyfinIds, createProfile, deleteProfile, getProfile, jfUserFor, listProfiles, lockProfileKids, onConnection, publicProfile } from '../profiles.js';
 import { roleLimitFor } from '../requestlimit.js';
@@ -785,12 +791,32 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       maxUses: z.number().int().min(1).max(50).default(1),
       /** access_until of each new account = now + accessDays; null = no end */
       accessDays: z.number().int().min(1).max(3650).nullable().default(null),
+      /** mail the link to this address (single-use invites only); `lang` = the mail's language, default the instance language */
+      email: z.email().max(254).optional(),
+      lang: z.enum(LANGUAGES).optional(),
     }).parse(req.body);
     if (!(await invitableRoles(ctx)).includes(b.role)) throw new HttpError(400, 'role_not_invitable');
+    if (b.email) {
+      // everything that can refuse comes before the invite exists
+      if (b.maxUses !== 1) throw new HttpError(400, 'invite_mail_single_use');
+      if (!mailConfigured(ctx.cfg) || !publicOrigin(ctx.cfg)) throw new HttpError(400, 'mail_not_configured');
+      if ((await ctx.kv.incr(`mail:invite:${req.user!.id}`, 86400)) > 20) throw new HttpError(429, 'rate_limited');
+    }
     const inv = await createInvite(ctx, req.user!.id, b, req.log);
-    await audit(ctx, req.user!.id, 'invite.create', inv.id, { role: b.role, authentik: inv.authentik, maxUses: b.maxUses, accessDays: b.accessDays });
+    let mail: DeliverResult | undefined;
+    if (b.email) {
+      const id = await enqueueMail(ctx, {
+        kind: 'invite', to: b.email, userId: null, lang: b.lang ?? (await broadcastLanguage(ctx)),
+        params: { link: inv.link, expiresAt: inv.expiresAt.toISOString(), inviter: req.user!.name }, dedupe: `invite:${inv.id}`,
+      });
+      mail = id ? await deliverNow(ctx, id, { log: req.log }) : { state: 'failed', code: 'unexpected' };
+    }
+    await audit(ctx, req.user!.id, 'invite.create', inv.id, {
+      role: b.role, authentik: inv.authentik, maxUses: b.maxUses, accessDays: b.accessDays,
+      ...(b.email && mail ? { mail: { to: maskAddress(b.email), state: mail.state } } : {}),
+    });
     // token is shown exactly once
-    return { id: inv.id, link: inv.link, enrollUrl: inv.enrollUrl, authentik: inv.authentik, expiresAt: inv.expiresAt, uses: inv.uses, maxUses: inv.maxUses };
+    return { id: inv.id, link: inv.link, enrollUrl: inv.enrollUrl, authentik: inv.authentik, expiresAt: inv.expiresAt, uses: inv.uses, maxUses: inv.maxUses, ...(mail ? { mail } : {}) };
   });
 
   // ?q= (note/role/first redeemer) &status=open|used|expired &sort=role|note|validUntil|status|createdAt &dir= &limit= &offset=; without params: the newest 100

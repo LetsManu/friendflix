@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import { ApiError } from '#lib/api';
-import { accessPreset, accountGuardText, auditArea, deletionErrorText, restoredText, auditDetails, bulkSummary, dayEnd, dayStart, deviceKind, futureDayEnd, humanizeKey, inviteStatus, today } from './people';
+import { accessPreset, accountGuardText, auditArea, deletionErrorText, restoredText, auditDetails, bulkSummary, dayEnd, dayStart, deviceKind, futureDayEnd, humanizeKey, inviteStatus, mailAddressOk, maskMail, today } from './people';
 
 afterEach(async () => { await setLocale('de'); });
 
@@ -122,5 +122,27 @@ describe('scheduled deletion texts', () => {
     expect(restoredText('Anna', null, now)).toBe('Anna restored.');
     expect(restoredText('Anna', '2026-10-20T00:00:00Z', now)).toBe('Anna restored.');
     expect(restoredText('Anna', '2026-10-13T00:00:00Z', now)).toBe('Anna restored – stays locked because the access has ended.');
+  });
+});
+
+describe('maskMail', () => {
+  it('keeps the first character and the domain', () => {
+    expect(maskMail('anna@friend.example.com')).toBe('a…@friend.example.com');
+    expect(maskMail('Émile@friend.example.com')).toBe('É…@friend.example.com');
+    expect(maskMail('a@b@friend.example.com')).toBe('a…@friend.example.com');
+  });
+  it('gives only an ellipsis without both parts', () => {
+    expect(maskMail('')).toBe('…');
+    expect(maskMail('anna')).toBe('…');
+    expect(maskMail('@friend.example.com')).toBe('…');
+    expect(maskMail('anna@')).toBe('…');
+  });
+});
+
+describe('mailAddressOk', () => {
+  it('accepts empty and plain addresses, refuses the rest', () => {
+    expect(mailAddressOk('')).toBe(true);
+    expect(mailAddressOk('ben@friend.example.com')).toBe(true);
+    for (const bad of ['ben', 'ben@', '@friend.example.com', 'ben@friend', 'ben @friend.example.com', `${'a'.repeat(250)}@x.example.com`]) expect(mailAddressOk(bad)).toBe(false);
   });
 });

@@ -6,11 +6,12 @@
    * (shown once), list with uses ("1/3", accounts unfold), status, revoke (confirm).
    */
   import { createEventDispatcher, onMount } from 'svelte';
-  import { api } from '#lib/api';
+  import { api, ApiError } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
-  import { fmtDateTime, fmtRelative, t, tr, trDynamic, type TKey } from '#lib/i18n';
+  import { LOCALES, fmtDateTime, fmtRelative, isLocale, t, tr, trDynamic, type TKey } from '#lib/i18n';
   import { refreshSummary } from '#lib/admin/summary';
-  import { EXPIRY_PRESETS, inviteStatus, type InviteStatus } from '#lib/admin/people';
+  import { EXPIRY_PRESETS, inviteStatus, mailAddressOk, maskMail, type InviteStatus } from '#lib/admin/people';
+  import { loadMailStatus, mailCodeText } from '#lib/admin/settings/mail';
   import { roleName, type RoleInfo } from '#lib/roles';
   import { runAction, errorText } from '#lib/ui/action';
   import { toast } from '#lib/ui/toast';
@@ -40,7 +41,7 @@
     uses: number; max_uses: number; access_days: number | null
   }
   interface Use { id: string; name: string }
-  interface Created { link: string; authentik?: 'off' | 'skipped' | 'ok' | 'failed' }
+  interface Created { link: string; authentik?: 'off' | 'skipped' | 'ok' | 'failed'; mail?: { state: 'sent' | 'queued' | 'failed'; code?: string; smtp?: number }; maskedTo?: string }
   const PAGE = 25;
   let rows: I[] | null = null, total = 0, error: string | null = null;
   let q = '', sort: SortState | null = null, page = 0, statusFilter = '';
@@ -50,6 +51,8 @@
   let role = 'friend', expiry = 'd2', note = '', hasAccount = false, creating = false;
   let maxUses: string | number | null = 1, accessDays: string | number | null = '';
   let created: Created | null = null;
+  // mail: the e-mail field exists once the instance can send; the language defaults to the instance language
+  let mailOn = false, email = '', mailLang = 'de';
   /** accounts per invite (undefined = not loaded, null = failed) */
   let uses: Record<string, Use[] | null | undefined> = {};
 
@@ -74,7 +77,15 @@
   function retry() { error = null; rows = null; void load(); }
   function onQuery(e: CustomEvent<Query>) { cur = e.detail; void load(); }
   function refilter() { page = 0; cur = { ...cur, offset: 0 }; void load(); }
-  onMount(() => { void load(); });
+  async function loadMail() {
+    try {
+      if (!(await loadMailStatus()).configured) return;
+      const l = (await api<{ language: string }>('/api/admin/settings/language')).language;
+      if (isLocale(l)) mailLang = l;
+      mailOn = true;
+    } catch { /* no e-mail field: the invite works as before */ }
+  }
+  onMount(() => { void load(); void loadMail(); });
 
   async function loadUses(i: I) {
     if (uses[i.id]) return;
@@ -103,20 +114,31 @@
   $: maxUsesErr = maxUsesN === null || !Number.isInteger(maxUsesN) || maxUsesN < 1 || maxUsesN > 50 ? $t('adminPeople.invites.errMaxUses') : '';
   $: accessDaysErr = accessDaysN !== null && (!Number.isInteger(accessDaysN) || accessDaysN < 1 || accessDaysN > 3650) ? $t('adminPeople.invites.errAccessDays') : '';
 
+  // only a single-use invite can be mailed
+  $: multi = maxUsesN !== null && maxUsesN > 1;
+  $: mailAddr = email.trim();
+  $: mailErr = mailAddr && !mailAddressOk(mailAddr) ? $t('adminPeople.invites.errMailAddress') : '';
+  $: sendMail = mailOn && !multi && mailAddr !== '' && !mailErr;
+  const MAIL_ERR: Record<string, TKey> = { invite_mail_single_use: 'adminPeople.invites.errMailSingle', mail_not_configured: 'adminPeople.invites.errMailOff', rate_limited: 'adminPeople.invites.errMailLimit' };
+  const failText = (e: unknown) => (e instanceof ApiError && typeof e.body?.error === 'string' && MAIL_ERR[e.body.error] ? trDynamic(MAIL_ERR[e.body.error]!) : errorText(e));
+  const mailLine = (c: Created): string => !c.mail ? '' : c.mail.state === 'sent' ? tr('adminPeople.invites.mailSent', { masked: c.maskedTo ?? '…' })
+    : c.mail.state === 'queued' ? tr('adminPeople.invites.mailQueued') : tr('adminPeople.invites.mailFailed', { reason: mailCodeText(c.mail.code ?? 'unexpected', c.mail.smtp) });
+
   async function create() {
-    if (creating || rolesState !== 'ready' || maxUsesErr || accessDaysErr) return;
+    if (creating || rolesState !== 'ready' || maxUsesErr || accessDaysErr || mailErr) return;
     creating = true;
     try {
       const hours = EXPIRY_PRESETS.find((p) => p.id === expiry)?.hours ?? 48;
       created = await api<Created>('/api/admin/invites', {
         method: 'POST',
-        body: { role, ttlHours: hours, note: note.trim() || undefined, enroll: !hasAccount, maxUses: maxUsesN, accessDays: accessDaysN },
+        body: { role, ttlHours: hours, note: note.trim() || undefined, enroll: !hasAccount, maxUses: maxUsesN, accessDays: accessDaysN, ...(sendMail ? { email: mailAddr, lang: mailLang } : {}) },
       });
-      note = '';
+      if (created.mail) created.maskedTo = maskMail(mailAddr);
+      note = ''; email = '';
       toast.success(tr('adminPeople.invites.createdToast'));
       page = 0; cur = { ...cur, offset: 0 };
       void load(); void refreshSummary();
-    } catch (e) { toast.error(errorText(e), { action: { label: tr('ui.retry'), run: create } }); }
+    } catch (e) { toast.error(failText(e), { action: { label: tr('ui.retry'), run: create } }); }
     finally { creating = false; }
   }
 
@@ -167,6 +189,14 @@
     <Select label={$t('adminPeople.invites.expiry')} options={expiryOptions} bind:value={expiry} />
     <Field type="number" label={$t('adminPeople.invites.maxUses')} bind:value={maxUses} min={1} max={50} step={1} hint={$t('adminPeople.invites.maxUsesHint')} error={maxUsesErr} />
     <Field type="number" label={$t('adminPeople.invites.accessDays')} bind:value={accessDays} min={1} max={3650} step={1} placeholder={$t('adminPeople.invites.accessUnlimited')} hint={$t('adminPeople.invites.accessDaysHint')} error={accessDaysErr} />
+    {#if mailOn}
+      <Field type="email" label={$t('adminPeople.invites.mailAddress')} bind:value={email} autocomplete="off" maxlength={254} disabled={multi}
+        hint={multi ? $t('adminPeople.invites.mailSingleOnly') : $t('adminPeople.invites.mailAddressHint')} error={mailErr} />
+      <!-- always laid out (hidden until an address is typed), so the form never jumps -->
+      <div class="lang" class:off={!sendMail} inert={!sendMail}>
+        <Select label={$t('adminPeople.invites.mailLang')} options={LOCALES.map((l) => ({ value: l.code, label: l.name }))} bind:value={mailLang} />
+      </div>
+    {/if}
     <div class="wide"><Field label={$t('adminPeople.invites.note')} bind:value={note} placeholder={$t('adminPeople.invites.notePlaceholder')} hint={$t('adminPeople.invites.noteHint')} maxlength={100} /></div>
     <div class="wide"><Toggle label={$t('adminPeople.invites.hasAccount')} hint={$t('adminPeople.invites.hasAccountHint')} bind:checked={hasAccount} /></div>
     <div class="wide"><Button type="submit" icon="plus" pending={creating} disabled={rolesState !== 'ready'}>{$t('adminPeople.invites.create')}</Button></div>
@@ -177,6 +207,9 @@
   <section class="card panel result" aria-labelledby="inv-link">
     <div class="rh"><h2 id="inv-link">{$t('adminPeople.invites.linkTitle')}</h2><Button variant="ghost" size="sm" icon="x" on:click={() => (created = null)}>{$t('adminPeople.invites.closeLink')}</Button></div>
     <CopyField label={$t('adminPeople.invites.link')} value={created.link} qr hint={$t('adminPeople.invites.linkHint')} />
+    {#if created.mail}
+      <p class="mailline {created.mail.state}" role="status"><Icon name={created.mail.state === 'sent' ? 'check' : created.mail.state === 'failed' ? 'alert' : 'clock'} size={18} /><span>{mailLine(created)}</span></p>
+    {/if}
     {#if created.authentik && AUTH[created.authentik]}
       <p class="auth {created.authentik}"><Icon name={created.authentik === 'ok' ? 'check' : created.authentik === 'failed' ? 'alert' : 'info'} size={18} />{trDynamic(AUTH[created.authentik]!)}</p>
     {/if}
@@ -231,6 +264,11 @@
   .result { display: flex; flex-direction: column; gap: .8rem; border-color: var(--ok); }
   .rh { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
   .rh h2 { margin: 0; }
+  .lang { transition: opacity .2s ease; }
+  .lang.off { opacity: 0; visibility: hidden; }
+  .mailline { display: flex; gap: .5rem; align-items: flex-start; margin: 0; min-height: 2.8em; font-size: .9rem; color: var(--mut); }
+  .mailline.sent { color: var(--ok); } .mailline.failed { color: var(--warn); }
+  .mailline :global(svg) { flex: none; margin-top: .1rem; }
   .auth { display: flex; gap: .5rem; align-items: flex-start; margin: 0; font-size: .9rem; color: var(--mut); }
   .auth.ok { color: var(--ok); } .auth.failed { color: var(--warn); }
   .auth :global(svg) { flex: none; margin-top: .1rem; }
