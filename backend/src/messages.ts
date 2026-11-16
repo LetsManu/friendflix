@@ -119,6 +119,16 @@ const de = {
   'digest.pushMovies': 'Filme: {list}',
   'digest.pushSeries': 'Serien: {list}',
   'digest.pushYourSeries': 'Deine Serien: {list}',
+  // e-mail (backend/src/mail/templates.ts)
+  'mail.test.subject': 'Testmail von {app}',
+  'mail.test.heading': 'E-Mail-Versand funktioniert',
+  'mail.test.body': 'Diese Testmail hat {app} über deinen Mailserver geschickt. Wenn du sie lesen kannst, kommen E-Mails von {app} an.',
+  'mail.test.reason': 'Du bekommst diese E-Mail, weil du in {app} unter „Einstellungen → Benachrichtigungen“ eine Testmail angefordert hast.',
+  'mail.open': '{app} öffnen',
+  'mail.footer.website': 'Website',
+  'mail.footer.imprint': 'Impressum',
+  'mail.footer.privacy': 'Datenschutz',
+  'mail.footer.help': 'Hilfe',
 } satisfies Record<string, Message>;
 
 export type MsgKey = keyof typeof de;
@@ -220,6 +230,16 @@ const en: Catalog = {
   'digest.pushMovies': 'Movies: {list}',
   'digest.pushSeries': 'Shows: {list}',
   'digest.pushYourSeries': 'Your shows: {list}',
+  // e-mail (backend/src/mail/templates.ts)
+  'mail.test.subject': 'Test mail from {app}',
+  'mail.test.heading': 'E-mail delivery works',
+  'mail.test.body': 'This test mail was sent by {app} through your mail server. If you can read it, e-mails from {app} are getting through.',
+  'mail.test.reason': 'You are receiving this e-mail because you requested a test mail in {app} under “Settings → Notifications”.',
+  'mail.open': 'Open {app}',
+  'mail.footer.website': 'Website',
+  'mail.footer.imprint': 'Legal notice',
+  'mail.footer.privacy': 'Privacy',
+  'mail.footer.help': 'Help',
 };
 
 const fr: Catalog = {
@@ -318,6 +338,16 @@ const fr: Catalog = {
   'digest.pushMovies': 'Films : {list}',
   'digest.pushSeries': 'Séries : {list}',
   'digest.pushYourSeries': 'Vos séries : {list}',
+  // e-mail (backend/src/mail/templates.ts)
+  'mail.test.subject': 'E-mail de test de {app}',
+  'mail.test.heading': 'L’envoi d’e-mails fonctionne',
+  'mail.test.body': 'Cet e-mail de test a été envoyé par {app} via votre serveur de messagerie. Si vous pouvez le lire, les e-mails de {app} arrivent bien.',
+  'mail.test.reason': 'Vous recevez cet e-mail parce que vous avez demandé un e-mail de test dans {app}, sous « Paramètres → Notifications ».',
+  'mail.open': 'Ouvrir {app}',
+  'mail.footer.website': 'Site web',
+  'mail.footer.imprint': 'Mentions légales',
+  'mail.footer.privacy': 'Confidentialité',
+  'mail.footer.help': 'Aide',
 };
 
 const es: Catalog = {
@@ -416,6 +446,16 @@ const es: Catalog = {
   'digest.pushMovies': 'Películas: {list}',
   'digest.pushSeries': 'Series: {list}',
   'digest.pushYourSeries': 'Tus series: {list}',
+  // e-mail (backend/src/mail/templates.ts)
+  'mail.test.subject': 'Correo de prueba de {app}',
+  'mail.test.heading': 'El envío de correos funciona',
+  'mail.test.body': 'Este correo de prueba lo ha enviado {app} a través de tu servidor de correo. Si puedes leerlo, los correos de {app} te llegan.',
+  'mail.test.reason': 'Recibes este correo porque has solicitado un correo de prueba en {app}, en «Ajustes → Notificaciones».',
+  'mail.open': 'Abrir {app}',
+  'mail.footer.website': 'Sitio web',
+  'mail.footer.imprint': 'Aviso legal',
+  'mail.footer.privacy': 'Privacidad',
+  'mail.footer.help': 'Ayuda',
 };
 
 const it: Catalog = {
@@ -514,6 +554,16 @@ const it: Catalog = {
   'digest.pushMovies': 'Film: {list}',
   'digest.pushSeries': 'Serie: {list}',
   'digest.pushYourSeries': 'Le tue serie: {list}',
+  // e-mail (backend/src/mail/templates.ts)
+  'mail.test.subject': 'E-mail di prova da {app}',
+  'mail.test.heading': 'L’invio delle e-mail funziona',
+  'mail.test.body': 'Questa e-mail di prova è stata inviata da {app} tramite il tuo server di posta. Se riesci a leggerla, le e-mail di {app} arrivano.',
+  'mail.test.reason': 'Ricevi questa e-mail perché hai richiesto un’e-mail di prova in {app}, in «Impostazioni → Notifiche».',
+  'mail.open': 'Apri {app}',
+  'mail.footer.website': 'Sito web',
+  'mail.footer.imprint': 'Note legali',
+  'mail.footer.privacy': 'Privacy',
+  'mail.footer.help': 'Aiuto',
 };
 
 const tr: Catalog = {
@@ -612,6 +662,16 @@ const tr: Catalog = {
   'digest.pushMovies': 'Filmler: {list}',
   'digest.pushSeries': 'Diziler: {list}',
   'digest.pushYourSeries': 'Dizilerin: {list}',
+  // e-mail (backend/src/mail/templates.ts)
+  'mail.test.subject': '{app} test e-postası',
+  'mail.test.heading': 'E-posta gönderimi çalışıyor',
+  'mail.test.body': 'Bu test e-postasını {app}, senin e-posta sunucun üzerinden gönderdi. Okuyabiliyorsan {app} e-postaları ulaşıyor.',
+  'mail.test.reason': 'Bu e-postayı, {app} içinde “Ayarlar → Bildirimler” bölümünden bir test e-postası istediğin için alıyorsun.',
+  'mail.open': '{app} uygulamasını aç',
+  'mail.footer.website': 'Web sitesi',
+  'mail.footer.imprint': 'Yasal bilgiler',
+  'mail.footer.privacy': 'Gizlilik',
+  'mail.footer.help': 'Yardım',
 };
 
 const pl: Catalog = {
@@ -720,6 +780,16 @@ const pl: Catalog = {
   'digest.pushMovies': 'Filmy: {list}',
   'digest.pushSeries': 'Seriale: {list}',
   'digest.pushYourSeries': 'Twoje seriale: {list}',
+  // e-mail (backend/src/mail/templates.ts)
+  'mail.test.subject': 'Wiadomość testowa od {app}',
+  'mail.test.heading': 'Wysyłanie e-maili działa',
+  'mail.test.body': 'Tę wiadomość testową wysłała aplikacja {app} przez Twój serwer poczty. Jeśli możesz ją przeczytać, e-maile z {app} do Ciebie docierają.',
+  'mail.test.reason': 'Otrzymujesz tę wiadomość, bo w {app} w sekcji „Ustawienia → Powiadomienia” zażądano wiadomości testowej.',
+  'mail.open': 'Otwórz {app}',
+  'mail.footer.website': 'Strona internetowa',
+  'mail.footer.imprint': 'Dane prawne',
+  'mail.footer.privacy': 'Polityka prywatności',
+  'mail.footer.help': 'Pomoc',
 };
 
 export const CATALOGS = { de: de as Catalog, en, fr, es, it, tr, pl } as const;
