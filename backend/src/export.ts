@@ -14,6 +14,7 @@
 import type { Ctx } from './ctx.js';
 import { jfUserFor } from './profiles.js';
 import { loadPrefs } from './routes/prefs.js';
+import { readMailPrefs } from './mail/people.js';
 import { requestStateKey, SeerrError } from './seerr/client.js';
 import type { ItemDto } from './media/types.js';
 import type { JfUser, ProfileRow, UserRow } from './types.js';
@@ -207,7 +208,7 @@ export async function* exportUserData(ctx: Ctx, user: UserRow): AsyncGenerator<s
     'select label, name, approved, created_at, last_seen from devices where user_id=$1 order by created_at'))
     .map((d) => ({ label: d.label, name: d.name, approved: d.approved, createdAt: d.created_at, lastSeen: d.last_seen })));
 
-  // notification settings are account level (user_prefs); the ntfy topic is a secret, so only whether one is set. Own notices
+  // notification settings are account level (user_prefs, the mail switches included); the ntfy topic is a secret, so only whether one is set. Own notices
   // without title, body and link: they are rendered with other people's names, lists and parties (invites, recommendations,
   // admin notices about other accounts), and links carry their ids.
   const prefs = await loadPrefs(ctx, uid);
@@ -215,7 +216,7 @@ export async function* exportUserData(ctx: Ctx, user: UserRow): AsyncGenerator<s
   const notes = await q<{ kind: string; created_at: Date; read: boolean }>(
     'select kind, created_at, read_at is not null read from notifications where user_id=$1 order by created_at desc');
   yield field('notifications', {
-    weeklyDigest: prefs.weeklyDigest, ntfyTopicSet: prefs.ntfyTopic !== '', pushSubscriptions: Number(push.n),
+    weeklyDigest: prefs.weeklyDigest, ntfyTopicSet: prefs.ntfyTopic !== '', pushSubscriptions: Number(push.n), mail: await readMailPrefs(ctx, uid),
     items: notes.map((n) => ({ kind: n.kind, createdAt: n.created_at, read: n.read })),
   });
 

@@ -443,7 +443,7 @@ describe('mail outbox and worker', () => {
 
   it('mailStatus counts and last failure carry no address', async () => {
     await useFake({ rcpt: (a) => (a === ANNA ? 550 : null) });
-    expect(await mailStatus(env.ctx)).toEqual({ configured: true, queued: 0, failed24h: 0, lastSentAt: null, lastFailure: null, transport: null, oldestQueuedAt: null });
+    expect(await mailStatus(env.ctx)).toEqual({ configured: true, queued: 0, failed24h: 0, lastSentAt: null, lastFailure: null, transport: null, oldestOverdueAt: null });
     await enqueue();
     await enqueue({ to: 'gast@friend.example.com', userId: null });
     await mailTick(env.ctx, await dbNow());
@@ -452,7 +452,7 @@ describe('mail outbox and worker', () => {
     const s = await mailStatus(env.ctx);
     expect(s).toMatchObject({ configured: true, queued: 1, failed24h: 1, lastFailure: { kind: 'test', code: 'recipient_refused', smtp: 550 }, transport: { code: 'auth' } });
     expect(typeof s.lastSentAt).toBe('string');
-    expect(typeof s.oldestQueuedAt).toBe('string');
+    expect(typeof s.oldestOverdueAt).toBe('string');
     expect(typeof s.lastFailure!.at).toBe('string');
     const json = JSON.stringify(s);
     expect(json).not.toContain('anna@');

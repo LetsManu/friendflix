@@ -133,8 +133,9 @@ export function prefsRoutes(app: FastifyInstance, ctx: Ctx) {
       [req.profile!.id, JSON.stringify(viewing)],
     );
     if (!stored) {
+      // merged: user_prefs also holds keys this form does not send (the mail switches, user_prefs.data.mail), and they stay
       await ctx.db.query(
-        `insert into user_prefs(user_id, data) values ($1,$2) on conflict (user_id) do update set data = excluded.data, updated_at = now()`,
+        `insert into user_prefs(user_id, data) values ($1,$2) on conflict (user_id) do update set data = user_prefs.data || excluded.data, updated_at = now()`,
         [req.user!.id, JSON.stringify(pickAccount(prefs))],
       );
     }

@@ -5,9 +5,10 @@ import type { Ctx } from '../ctx.js';
 import { msg, type Language } from '../i18n.js';
 import { mailBrand } from './brand.js';
 import { layout } from './html.js';
+import type { MailPrefType } from './people.js';
 
-/** the kinds of mail the outbox sends; stage A has the admin's test mail only */
-export type MailKind = 'test';
+/** the kinds of mail the outbox sends: the admin's test mail, the one-offs without a switch, and one kind per mail switch */
+export type MailKind = 'test' | 'welcome' | 'invite' | MailPrefType;
 
 export interface RenderedMail {
   subject: string;

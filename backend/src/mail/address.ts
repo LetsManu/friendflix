@@ -24,7 +24,7 @@ export function maskAddress(addr: string): string {
 }
 
 /** A 32-byte key for one purpose, derived from APP_ENC_KEY (HKDF-SHA256), so a hash or token never uses the encryption key itself. */
-export function mailSubkey(encKey: Buffer, purpose: 'recipient' | 'unsubscribe'): Buffer {
+export function mailSubkey(encKey: Buffer, purpose: 'recipient' | 'unsubscribe' | 'probe'): Buffer {
   return Buffer.from(hkdfSync('sha256', encKey, 'friendflix-mail', `${purpose} v1`, 32));
 }
 
