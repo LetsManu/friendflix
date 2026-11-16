@@ -177,8 +177,8 @@
   /* the note's box is there from the start: the outcome slides into it, nothing below moves */
   /* reserved for a closed note: the longest of the 7 locales measured at 1280 px (132 px) plus ~10 % (phones below) */
   .result { min-height: 9.25rem; display: grid; align-content: start; }
-  .note { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px 14px; padding: 14px 18px; border-radius: var(--fr-r-tile); opacity: 0; transform: translateY(10px) scale(.98);
-    animation: ff-note 420ms var(--fr-spring) forwards; min-width: 0; }
+  .note { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px 14px; padding: 14px 18px; border-radius: var(--fr-r-tile); opacity: 0; transform: translateY(8px);
+    animation: ff-note var(--m-d-m) var(--m-emph-out) forwards; min-width: 0; } /* --m-d-m (320 ms): pop-ups open within 200–320 ms */
   @keyframes ff-note { to { opacity: 1; transform: none; } }
   .body { display: grid; gap: 10px; min-width: 0; }
   .note p { margin: 0; min-width: 0; overflow-wrap: break-word; }

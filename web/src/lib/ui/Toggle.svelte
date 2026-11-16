@@ -40,7 +40,7 @@
   .sw::before { content: ''; position: absolute; left: 3px; right: 3px; top: 50%; height: 28px; transform: translateY(-50%); border-radius: 99px; background: rgba(255, 255, 255, .18); box-shadow: inset 0 0 0 1px var(--fr-line); }
   .sw:hover:not(:disabled) { background: transparent; }
   .sw.on::before { background: var(--acc); box-shadow: none; }
-  .knob { position: absolute; top: 50%; left: 6px; width: 22px; height: 22px; margin-top: -11px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .35); display: grid; place-items: center; color: #2b333c; font-size: .7rem; transition: transform 300ms var(--fr-spring); }
+  .knob { position: absolute; top: 50%; left: 6px; width: 22px; height: 22px; margin-top: -11px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .35); display: grid; place-items: center; color: #2b333c; font-size: .7rem; transition: transform 300ms var(--m-emph-out); }
   .on .knob { transform: translateX(18px); }
   :global(html.m-still) .knob { transition: none; }
   .txt { display: flex; flex-direction: column; padding-top: .55rem; min-width: 0; }

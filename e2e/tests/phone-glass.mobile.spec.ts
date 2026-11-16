@@ -92,7 +92,7 @@ test.describe('phone glass', () => {
     expect(await css(grab, 'background-image')).toContain('linear-gradient');
   });
 
-  test('press feedback: a tap scales the button and leaves a ripple from the touch point', async ({ page }) => {
+  test('press feedback: a tap dims the button (text never scales) and leaves a ripple from the touch point', async ({ page }) => {
     await setup(page);
     await page.goto('/');
     const sheet = await openSheet(page);
@@ -108,7 +108,8 @@ test.describe('phone glass', () => {
     expect(Math.abs(c.x - (at.x - box0.x))).toBeLessThanOrEqual(2);
     expect(Math.abs(c.y - (at.y - box0.y))).toBeLessThanOrEqual(2);
     expect(Math.abs(c.w - 2 * Math.max(box0.width, box0.height))).toBeLessThanOrEqual(2);
-    await expect.poll(() => play.evaluate((e) => getComputedStyle(e).transform)).toBe('matrix(0.92, 0, 0, 0.92, 0, 0)');
+    await expect.poll(() => play.evaluate((e) => getComputedStyle(e).opacity)).toBe('0.72');
+    expect(await css(play, 'transform')).toBe('none');
     await play.dispatchEvent('pointerup', { pointerType: 'touch', bubbles: true });
     await expect(play).not.toHaveClass(/(^|\s)pressed(\s|$)/);
     await page.waitForTimeout(700);

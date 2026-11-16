@@ -194,3 +194,24 @@ export async function opensPlayer(page: Page, click: () => Promise<void>, id: st
   await Promise.all([page.waitForURL((u) => u.pathname === path, { waitUntil: 'commit' }), click()]);
   expect(new URL(page.url()).pathname).toBe(path);
 }
+
+/**
+ * A dialog's button row (`.dlg-acts`, ModalShell dialogs): the buttons' names in DOM order, their boxes and the computed look the
+ * shared dialog rules promise (44 px pills; the secondary a glass pill, the primary coral, a danger primary solid red).
+ */
+export async function dialogActs(dlg: Locator): Promise<{
+  names: string[]; row: { x: number; y: number; width: number; height: number };
+  btns: Array<{ x: number; y: number; width: number; height: number; radius: string; bg: string; glass: boolean }>;
+}> {
+  const acts = dlg.locator('.dlg-acts');
+  await expect(acts).toBeVisible();
+  const btns = acts.locator('> button, > a');
+  const names = (await btns.allInnerTexts()).map((s) => s.trim());
+  const boxes = [];
+  for (const b of await btns.all()) {
+    const box = (await b.boundingBox())!;
+    const look = await b.evaluate((el) => { const cs = getComputedStyle(el); return { radius: cs.borderTopLeftRadius, bg: cs.backgroundColor, glass: el.classList.contains('frost-btn') }; });
+    boxes.push({ ...box, ...look });
+  }
+  return { names, row: (await acts.boundingBox())!, btns: boxes };
+}

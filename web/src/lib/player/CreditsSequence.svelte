@@ -8,7 +8,7 @@
   import { t } from '#lib/i18n';
   import { motionAllowed } from '#lib/preview';
   import { stagger } from '#lib/tv/motion';
-  import { springAt } from '#lib/player/desk/grow';
+  import { emphOut } from '#lib/glass/fx';
   import { CHIP_MS, creditPicks, type CreditsBeat } from '#lib/player/desk/logic';
   import { ringOffset } from '#lib/player/nextup';
   import type { PostplayRow } from '#lib/postplay';
@@ -44,7 +44,7 @@
   const dispatch = createEventDispatcher<{ play: void; credits: void; pick: { item: Item }; more: void }>();
   const RING = 2 * Math.PI * 10;
   const motion = motionAllowed();
-  const rise = (el: Element) => fly(el, { y: 16, duration: motion ? 300 : 0, easing: springAt });
+  const rise = (el: Element) => fly(el, { y: 16, duration: motion ? 300 : 0, easing: emphOut });
   const out = (el: Element) => fade(el, { duration: motion ? 150 : 0 });
   /** back-out (beat -> 'off'): everything fades and sinks 8 px while the Player springs the picture back (never a cut) */
   const leave = (_el: Element) => ({ duration: motion ? 200 : 0, css: (k: number) => `opacity: ${k}; transform: translate3d(0, ${(1 - k) * 8}px, 0)` });

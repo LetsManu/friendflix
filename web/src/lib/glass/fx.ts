@@ -35,8 +35,7 @@ export function cubicBezier(x1: number, y1: number, x2: number, y2: number): (t:
   return (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : sy(solve(t)));
 }
 
-/** GLASS_SPRING, GLASS_IN and GLASS_OUT (`#lib/tv/motion`) as functions */
-export const springEase = cubicBezier(0.34, 1.56, 0.64, 1);
+/** GLASS_IN and GLASS_OUT (`#lib/tv/motion`) as functions (no pop-up uses the overshooting GLASS_SPRING any more) */
 export const inEase = cubicBezier(0.4, 0, 1, 1);
 export const outEase = cubicBezier(0.22, 1, 0.36, 1);
 
@@ -55,52 +54,65 @@ export function fxMode(): FxMode {
   return motionLevel() === 'reduced' ? 'reduced' : 'full';
 }
 
-export const GROW_IN_MS = 380;
-export const GROW_OUT_MS = 200;
+export const GROW_IN_MS = 220;
+export const GROW_OUT_MS = 150;
 export const REDUCED_MS = 160;
 
 export type DOMRectLike = { left: number; top: number; width: number; height: number };
+export type Shift = { x: number; y: number };
 
-/** the trigger's centre relative to the popover's box, clamped into it (a `transform-origin`) */
-export function growOrigin(trigger: DOMRectLike, pop: DOMRectLike): string {
-  const x = Math.min(pop.width, Math.max(0, trigger.left + trigger.width / 2 - pop.left));
-  const y = Math.min(pop.height, Math.max(0, trigger.top + trigger.height / 2 - pop.top));
-  return `${Math.round(x)}px ${Math.round(y)}px`;
+/** the pop-up entry curve: fast start, long soft landing, never above 1 */
+export const emphOut: (t: number) => number = cubicBezier(0.05, 0.7, 0.1, 1);
+
+const SHIFT_PX = 8;
+/**
+ * The popover's entry offset in px (at most 8 per axis): it slides toward its place from the trigger's side. A popover whose top
+ * lies below the trigger's centre opens downward (y -8), one whose bottom lies above it opens upward (+8); side-opening ones
+ * (vertically level with the trigger) get x instead.
+ */
+export function growShift(trigger: DOMRectLike, pop: DOMRectLike): Shift {
+  const cy = trigger.top + trigger.height / 2;
+  const cx = trigger.left + trigger.width / 2;
+  if (pop.top >= cy) return { x: 0, y: -SHIFT_PX };
+  if (pop.top + pop.height <= cy) return { x: 0, y: SHIFT_PX };
+  return { x: pop.left >= cx ? -SHIFT_PX : SHIFT_PX, y: 0 };
 }
 
 const linear = (t: number) => t;
+const px = (v: number) => Math.round(v * 10) / 10 + 0; // + 0: no "-0"
 
 /**
- * Svelte transition: menus and sheets grow out of their button (§8.3). Full motion: scale .4 → 1 with the spring (380 ms) on
- * the way in, back with GLASS_IN (200 ms) on the way out. Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
+ * Svelte transition: menus and sheets fade and slide 8 px from their button; text never scales. Full motion: emphOut (220 ms)
+ * in, `inEase` (150 ms) out. Reduced set: a 160 ms crossfade. Calm / reduced motion: instant. The translate is a function of
+ * t alone, so a reversal mid-flight continues from the current point without a jump.
  */
-export function grow(_node: Element, p: { origin?: string; dir?: 'in' | 'out'; mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number, u: number) => string } {
+export function grow(_node: Element, p: { shift?: Shift; dir?: 'in' | 'out'; mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number, u: number) => string } {
   const mode = watched(p.mode ?? fxMode());
-  const origin = p.origin ?? '50% 0';
+  const sh = p.shift ?? { x: 0, y: -SHIFT_PX };
   if (mode === 'still') return { duration: 0, delay: 0, easing: linear, css: () => '' };
   if (mode === 'reduced') return { duration: REDUCED_MS, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
   const out = p.dir === 'out';
   return {
     duration: out ? GROW_OUT_MS : GROW_IN_MS,
     delay: 0,
-    easing: out ? inEase : springEase,
-    css: (t) => `transform-origin:${origin};transform:scale(${Math.round((0.4 + 0.6 * t) * 1000) / 1000});opacity:${Math.min(1, t)}`,
+    easing: out ? inEase : emphOut,
+    css: (t) => `transform:translate(${px(sh.x * (1 - t))}px,${px(sh.y * (1 - t))}px);opacity:${Math.min(1, Math.max(0, t))}`,
   };
 }
 
-const grown = new WeakMap<Element, string>();
+const grown = new WeakMap<Element, Shift>();
 /**
- * grow() out of a trigger (menus, §5): the origin is the trigger's centre against the popover's placed box, measured once when
- * the popover first opens (unscaled) and kept for its close and for a reopen mid-close (a box measured mid-flight is scaled).
+ * grow() out of a trigger (menus, §5): the shift comes from the trigger's centre against the popover's placed box, measured once
+ * when the popover first opens and kept for its close and for a reopen mid-close.
  * The reversal itself comes from using it as a bidirectional transition (`growBoth` with Svelte's `transition:`).
  */
 export function growFrom(node: Element, p: { trigger?: Element | null; dir?: 'in' | 'out'; mode?: FxMode } = {}): ReturnType<typeof grow> {
-  let origin = grown.get(node);
-  if (!origin && p.trigger) {
-    origin = growOrigin(p.trigger.getBoundingClientRect(), node.getBoundingClientRect());
-    grown.set(node, origin);
+  let shift = grown.get(node);
+  if (!shift && p.trigger) {
+    shift = growShift(p.trigger.getBoundingClientRect(), node.getBoundingClientRect());
+    grown.set(node, shift);
   }
-  return grow(node, { origin, dir: p.dir, mode: p.mode });
+  return grow(node, { shift, dir: p.dir, mode: p.mode });
 }
 
 export type Dir = 'in' | 'out';
@@ -118,10 +130,10 @@ export function growBoth(node: Element, p: { trigger?: Element | null; mode?: Fx
   return twoWay((dir) => growFrom(node, { ...p, dir }));
 }
 
-export const SHEET_IN_MS = 380;
+export const SHEET_IN_MS = 320;
 export const SHEET_OUT_MS = 200;
 /**
- * Svelte transition: a phone bottom sheet slides up from below the window (translateY 100 % → 0, 380 ms spring) and back down
+ * Svelte transition: a phone bottom sheet slides up from below the window (translateY 100 % → 0, 320 ms emphOut) and back down
  * (200 ms GLASS_IN); `side: 'right'` slides in from the right edge instead (translateX), for the desktop role sheet. Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
  */
 export function sheetSlide(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode; side?: 'bottom' | 'right' } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number, u: number) => string } {
@@ -129,13 +141,13 @@ export function sheetSlide(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMod
   if (mode === 'still') return { duration: 0, delay: 0, easing: linear, css: () => '' };
   if (mode === 'reduced') return { duration: REDUCED_MS, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
   const out = p.dir === 'out';
-  return { duration: out ? SHEET_OUT_MS : SHEET_IN_MS, delay: 0, easing: out ? inEase : springEase, css: (_t, u) => `transform:translate${p.side === 'right' ? 'X' : 'Y'}(${Math.round(u * 1000) / 10}%)` };
+  return { duration: out ? SHEET_OUT_MS : SHEET_IN_MS, delay: 0, easing: out ? inEase : emphOut, css: (_t, u) => `transform:translate${p.side === 'right' ? 'X' : 'Y'}(${Math.round(u * 1000) / 10}%)` };
 }
 
-export const TOAST_IN_MS = 420;
-export const TOAST_OUT_MS = 260;
+export const TOAST_IN_MS = 300;
+export const TOAST_OUT_MS = 200;
 /**
- * Svelte transition: a toast rises in (translateY 140 % → 0 and opacity, 420 ms spring) and slides out (260 ms GLASS_IN), §8.5.
+ * Svelte transition: a toast rises in (translateY 140 % → 0 and opacity, 300 ms emphOut) and slides out (200 ms inEase), §8.5.
  * Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
  */
 export function toastRise(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number, u: number) => string } {
@@ -146,7 +158,7 @@ export function toastRise(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode
   return {
     duration: out ? TOAST_OUT_MS : TOAST_IN_MS,
     delay: 0,
-    easing: out ? inEase : springEase,
+    easing: out ? inEase : emphOut,
     css: (t, u) => `transform:translateY(${Math.round(u * 1400) / 10}%);opacity:${Math.min(1, Math.max(0, t))}`,
   };
 }
@@ -163,6 +175,31 @@ export function barRise(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode }
   if (mode === 'reduced') return { duration: REDUCED_MS, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
   const out = p.dir === 'out';
   return { duration: out ? BAR_OUT_MS : BAR_IN_MS, delay: 0, easing: out ? inEase : outEase, css: (t, u) => `transform:translateY(${Math.round(u * 160) / 10}px);opacity:${Math.min(1, Math.max(0, t))}` };
+}
+
+export const DIALOG_IN_MS = 220;
+export const DIALOG_OUT_MS = 150;
+const DIALOG_RISE_PX = 10;
+/**
+ * Svelte transition: a dialog (ModalShell) fades and rises 10 px into place and goes back the same way; text never scales. Full
+ * motion: emphOut (220 ms) in, `inEase` (150 ms) out. The css is one function of t (whole pixels), so the close at t stands where
+ * the open stood at t and a close mid-open continues without a jump. Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
+ */
+export function dialogRise(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode } = {}): Cfg {
+  const mode = watched(p.mode ?? fxMode());
+  if (mode === 'still') return { duration: 0, delay: 0, easing: linear, css: () => '' };
+  if (mode === 'reduced') return { duration: REDUCED_MS, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
+  const out = p.dir === 'out';
+  return {
+    duration: out ? DIALOG_OUT_MS : DIALOG_IN_MS,
+    delay: 0,
+    easing: out ? inEase : emphOut,
+    css: (t) => `transform:translateY(${Math.round(DIALOG_RISE_PX * (1 - t)) + 0 /* + 0: never "-0px" */}px);opacity:${Math.min(1, Math.max(0, t))}`,
+  };
+}
+/** dialogRise as a bidirectional transition: `transition:dialogBoth` */
+export function dialogBoth(node: Element, p: { mode?: FxMode } = {}): (o?: { direction?: 'in' | 'out' | 'both' }) => Cfg {
+  return twoWay((dir) => dialogRise(node, { ...p, dir }));
 }
 
 /** Svelte transition: a sheet's scrim fades (200 ms; the reduced set's 160 ms; instant when still) */

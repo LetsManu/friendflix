@@ -7,20 +7,25 @@ vi.mock('#lib/preview', () => ({ motionAllowed: () => m.allowed }));
 vi.mock('#lib/tv/motion', () => ({ motionLevel: () => m.level, watchFrames: () => { m.watched++; } }));
 
 import {
-  COUNT_MS, countAt, cubicBezier, fxMode, grow, growBoth, growFrom, GROW_IN_MS, GROW_OUT_MS, growOrigin, inEase, outEase, PILL_MID, pillParts,
-  REDUCED_MS, rippleBox, scrimFade, twoWay, SHEET_IN_MS, SHEET_OUT_MS, sheetSlide, springEase, TOAST_IN_MS, TOAST_OUT_MS, toastRise, barRise, BAR_IN_MS, BAR_OUT_MS,
+  COUNT_MS, countAt, cubicBezier, fxMode, grow, growBoth, growFrom, GROW_IN_MS, GROW_OUT_MS, growShift, emphOut, inEase, outEase, PILL_MID, pillParts,
+  REDUCED_MS, rippleBox, scrimFade, twoWay, SHEET_IN_MS, SHEET_OUT_MS, sheetSlide, TOAST_IN_MS, TOAST_OUT_MS, toastRise, barRise, BAR_IN_MS, BAR_OUT_MS,
+  dialogRise, dialogBoth, DIALOG_IN_MS, DIALOG_OUT_MS,
 } from './fx';
 
+type Cfg = ReturnType<typeof grow>;
 const node = {} as Element;
+const box = (left: number, top: number, width: number, height: number) => ({ getBoundingClientRect: () => ({ left, top, width, height }) }) as unknown as Element;
 const ts = Array.from({ length: 101 }, (_, i) => i / 100);
 
 describe('curves', () => {
-  it('cubicBezier endpoints and the spring overshoot', () => {
-    expect(springEase(0)).toBe(0);
-    expect(springEase(1)).toBe(1);
-    expect(springEase(-1)).toBe(0);
-    expect(springEase(2)).toBe(1);
-    expect(Math.max(...ts.map(springEase))).toBeGreaterThan(1.05);
+  it('cubicBezier endpoints, an overshooting curve, in and out', () => {
+    // a spring-like curve (y beyond 1) is computed faithfully, clamped only outside 0…1 (no pop-up uses one: fx.test 'no overshoot')
+    const spring = cubicBezier(0.34, 1.56, 0.64, 1);
+    expect(spring(0)).toBe(0);
+    expect(spring(1)).toBe(1);
+    expect(spring(-1)).toBe(0);
+    expect(spring(2)).toBe(1);
+    expect(Math.max(...ts.map(spring))).toBeGreaterThan(1.05);
     // in / out: monotonic, the ease-in slow at the start, the ease-out fast
     expect(inEase(0.25)).toBeLessThan(0.25);
     expect(outEase(0.25)).toBeGreaterThan(0.5);
@@ -54,30 +59,95 @@ describe('fxMode', () => {
 });
 
 describe('grow', () => {
-  it('growOrigin clamps', () => {
+  it('growShift slides down from a trigger above and up from one below, at most 8 px', () => {
     const pop = { left: 100, top: 100, width: 300, height: 200 };
-    expect(growOrigin({ left: 180, top: 60, width: 40, height: 40 }, pop)).toBe('100px 0px'); // above: clamped to the top edge
-    expect(growOrigin({ left: 200, top: 150, width: 40, height: 40 }, pop)).toBe('120px 70px');
-    expect(growOrigin({ left: 0, top: 500, width: 10, height: 10 }, pop)).toBe('0px 200px');
-    expect(growOrigin({ left: 900, top: 120, width: 10, height: 11 }, pop)).toBe('300px 26px'); // 25.5 rounds up
+    expect(growShift({ left: 180, top: 60, width: 40, height: 40 }, pop)).toEqual({ x: 0, y: -8 });
+    expect(growShift({ left: 180, top: 400, width: 40, height: 40 }, pop)).toEqual({ x: 0, y: 8 });
+  });
+
+  it('growShift: a side-opening popover slides 8 px sideways from its trigger, never vertically', () => {
+    const pop = { left: 100, top: 100, width: 300, height: 200 };
+    // the trigger sits level with the popover, left of it: the popover opens to the right and slides in from the left
+    expect(growShift({ left: 20, top: 150, width: 40, height: 40 }, pop)).toEqual({ x: -8, y: 0 });
+    // right of it: it opens to the left and slides in from the right
+    expect(growShift({ left: 420, top: 150, width: 40, height: 40 }, pop)).toEqual({ x: 8, y: 0 });
+    // level with the popover's top or bottom third (still overlapping the trigger's centre line): the same rule
+    expect(growShift({ left: 20, top: 90, width: 40, height: 40 }, pop)).toEqual({ x: -8, y: 0 });
+    expect(growShift({ left: 420, top: 270, width: 40, height: 40 }, pop)).toEqual({ x: 8, y: 0 });
+    // and the css starts 8 px to that side, on x only
+    expect(grow(node, { shift: { x: -8, y: 0 }, mode: 'full' }).css(0, 1)).toBe('transform:translate(-8px,0px);opacity:0');
+    expect(grow(node, { shift: { x: 8, y: 0 }, mode: 'full' }).css(0, 1)).toBe('transform:translate(8px,0px);opacity:0');
+  });
+
+  it('grow css never scales', () => {
+    for (const dir of ['in', 'out'] as const) {
+      const g = grow(node, { dir, mode: 'full' });
+      for (let i = 0; i <= 20; i++) {
+        const t = i / 20;
+        expect(g.css(t, 1 - t)).not.toMatch(/scale/);
+        expect(g.css(t, 1 - t)).toMatch(/translate/);
+      }
+    }
+  });
+
+  it('grow moves at most 8 px', () => {
+    for (const shift of [undefined, { x: 0, y: -8 }, { x: 8, y: 0 }]) {
+      const g = grow(node, { shift, mode: 'full' });
+      const m0 = /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(g.css(0, 1))!;
+      expect(Math.abs(Number(m0[1]))).toBeLessThanOrEqual(8);
+      expect(Math.abs(Number(m0[2]))).toBeLessThanOrEqual(8);
+      expect(g.css(1, 0)).toMatch(/translate\(0px,\s*0px\)/);
+    }
+  });
+
+  it('no pop-up easing overshoots', () => {
+    for (const e of [grow(node, { mode: 'full' }).easing, sheetSlide(node, { mode: 'full' }).easing, toastRise(node, { mode: 'full' }).easing]) {
+      const v = Array.from({ length: 201 }, (_, i) => e(i / 200));
+      expect(Math.max(...v)).toBeLessThanOrEqual(1);
+      expect(Math.min(...v)).toBeGreaterThanOrEqual(0);
+    }
+    expect(emphOut(0)).toBe(0);
+    expect(emphOut(1)).toBe(1);
+  });
+
+  it('reverses mid-flight without a jump', () => {
+    const el = { getBoundingClientRect: () => ({ left: 0, top: 50, width: 200, height: 100 }) } as unknown as Element;
+    const g = growBoth(el, { trigger: box(80, 0, 40, 40), mode: 'full' });
+    const fin = g({ direction: 'in' }), fout = g({ direction: 'out' });
+    // the frame Svelte 5 draws `p` into a run from t1 to t2 (transitions.js animate(): t = t1 + (t2 - t1) * easing(p))
+    const at = (c: Cfg, t1: number, t2: number, p: number) => { const t = t1 + (t2 - t1) * c.easing(p); return c.css(t, 1 - t); };
+    const ty = (css: string) => Number(/translate\(-?[\d.]+px,\s*(-?[\d.]+)px\)/.exec(css)![1]);
+    for (const p of [0.05, 0.2, 0.35, 0.5, 0.65, 0.8, 0.95]) {
+      // a close p into the opening: the closing run starts where the opening stood, same position and opacity
+      const now = fin.easing(p);
+      expect(at(fout, now, 0, 0), `close at ${p}`).toBe(at(fin, 0, 1, p));
+      // and moves on from there toward its start, by less than a pixel in its first 1/60 of the way
+      expect(Math.abs(ty(at(fout, now, 0, 1 / 60)) - ty(at(fout, now, 0, 0)))).toBeLessThan(1);
+      // a reopen p into the closing: the same, the other way round
+      const back = 1 - fout.easing(p);
+      expect(at(fin, back, 1, 0), `reopen at ${p}`).toBe(at(fout, 1, 0, p));
+      // the css is one function of t whichever way it runs ('both' included)
+      expect(fout.css(now, 1 - now)).toBe(fin.css(now, 1 - now));
+      expect(g({ direction: 'both' }).css(now, 1 - now)).toBe(fin.css(now, 1 - now));
+    }
+    // the shift is the one measured at the open, kept for the close
+    expect(fout.css(0, 1)).toBe(fin.css(0, 1));
+    expect(fin.css(0, 1)).toBe('transform:translate(0px,-8px);opacity:0');
   });
 
   it('grow per mode', () => {
-    const fin = grow(node, { origin: '10px 20px', mode: 'full' });
+    const fin = grow(node, { shift: { x: 0, y: -8 }, mode: 'full' });
     expect(fin.duration).toBe(GROW_IN_MS);
-    expect(fin.duration).toBe(380);
+    expect(fin.duration).toBe(220);
     expect(fin.delay).toBe(0);
-    expect(fin.easing).toBe(springEase);
-    expect(fin.css(0, 1)).toContain('scale(0.4)');
-    expect(fin.css(0, 1)).toContain('transform-origin:10px 20px');
-    expect(fin.css(0, 1)).toContain('opacity:0');
-    expect(fin.css(1, 0)).toBe('transform-origin:10px 20px;transform:scale(1);opacity:1');
+    expect(fin.easing).toBe(emphOut);
+    expect(fin.css(0, 1)).toBe('transform:translate(0px,-8px);opacity:0');
+    expect(fin.css(1, 0)).toBe('transform:translate(0px,0px);opacity:1');
     const fout = grow(node, { dir: 'out', mode: 'full' });
     expect(fout.duration).toBe(GROW_OUT_MS);
-    expect(fout.duration).toBe(200);
+    expect(fout.duration).toBe(150);
     expect(fout.easing).toBe(inEase);
-    expect(fout.css(0.5, 0.5)).toContain('scale(0.7)');
-    const red = grow(node, { mode: 'reduced', origin: '1px 1px' });
+    const red = grow(node, { mode: 'reduced', shift: { x: 1, y: 1 } });
     expect(red.duration).toBe(REDUCED_MS);
     expect(red.duration).toBe(160);
     expect(red.easing(0.3)).toBe(0.3);
@@ -91,8 +161,8 @@ describe('grow', () => {
 
   it('grow reads the motion mode by default', () => {
     m.allowed = true; m.level = 'full';
-    expect(grow(node).duration).toBe(380);
-    expect(grow(node).css(1, 0)).toContain('transform-origin:50% 0');
+    expect(grow(node).duration).toBe(220);
+    expect(grow(node).css(1, 0)).toContain('translate(0px,0px)');
     m.level = 'reduced';
     expect(grow(node).duration).toBe(160);
     m.allowed = false;
@@ -102,45 +172,43 @@ describe('grow', () => {
 });
 
 describe('growFrom, sheetSlide, toastRise, scrimFade', () => {
-  const box = (left: number, top: number, width: number, height: number) => ({ getBoundingClientRect: () => ({ left, top, width, height }) }) as unknown as Element;
-
-  it('growFrom measures the origin once (open) and keeps it for the close and a reverse', () => {
+  it('growFrom measures the shift once (open) and keeps it for the close and a reverse', () => {
     let pop = { left: 100, top: 100, width: 300, height: 200 };
     const el = { getBoundingClientRect: () => pop } as unknown as Element;
     const trig = box(180, 60, 40, 40);
     const fin = growFrom(el, { trigger: trig, mode: 'full' });
-    expect(fin.duration).toBe(380);
-    expect(fin.css(1, 0)).toContain('transform-origin:100px 0px');
-    pop = { left: 40, top: 40, width: 120, height: 80 }; // scaled mid-flight: not measured again
+    expect(fin.duration).toBe(220);
+    expect(fin.css(0, 1)).toContain('translate(0px,-8px)');
+    pop = { left: 40, top: 300, width: 120, height: 80 }; // moved mid-flight: not measured again
     const fout = growFrom(el, { trigger: trig, dir: 'out', mode: 'full' });
-    expect(fout.duration).toBe(200);
-    expect(fout.css(0.5, 0.5)).toContain('transform-origin:100px 0px');
-    // no trigger and nothing measured: grow()'s default origin; the mode passes through
+    expect(fout.duration).toBe(150);
+    expect(fout.css(0, 1)).toContain('translate(0px,-8px)');
+    // no trigger and nothing measured: grow()'s default shift; the mode passes through
     const other = box(0, 0, 10, 10);
-    expect(growFrom(other, { mode: 'full' }).css(1, 0)).toContain('transform-origin:50% 0');
+    expect(growFrom(other, { mode: 'full' }).css(0, 1)).toContain('translate(0px,-8px)');
     expect(growFrom(other, { trigger: null, mode: 'reduced' }).duration).toBe(160);
-    expect(growFrom(other).duration).toBe(380);
+    expect(growFrom(other).duration).toBe(220);
   });
 
   it('twoWay / growBoth pick the config once the direction is known', () => {
     const make = vi.fn((dir: 'in' | 'out') => grow(node, { dir, mode: 'full' }));
     const t = twoWay(make);
     expect(make).not.toHaveBeenCalled();
-    expect(t({ direction: 'in' }).duration).toBe(380);
-    expect(t({ direction: 'out' }).duration).toBe(200);
-    expect(t({ direction: 'both' }).duration).toBe(380);
-    expect(t({}).duration).toBe(380);
-    expect(t().duration).toBe(380);
+    expect(t({ direction: 'in' }).duration).toBe(220);
+    expect(t({ direction: 'out' }).duration).toBe(150);
+    expect(t({ direction: 'both' }).duration).toBe(220);
+    expect(t({}).duration).toBe(220);
+    expect(t().duration).toBe(220);
     const el = { getBoundingClientRect: () => ({ left: 0, top: 50, width: 200, height: 100 }) } as unknown as Element;
     const g = growBoth(el, { trigger: box(80, 0, 40, 40), mode: 'full' });
-    expect(g({ direction: 'in' }).css(1, 0)).toContain('transform-origin:100px 0px');
+    expect(g({ direction: 'in' }).css(0, 1)).toContain('translate(0px,-8px)');
     expect(g({ direction: 'out' }).easing).toBe(inEase);
-    expect(growBoth(el)({ direction: 'in' }).duration).toBe(380);
+    expect(growBoth(el)({ direction: 'in' }).duration).toBe(220);
   });
 
   it('sheetSlide from the right edge moves on x with the same timing', () => {
     const fin = sheetSlide(node, { mode: 'full', side: 'right' });
-    expect(fin.duration).toBe(380);
+    expect(fin.duration).toBe(320);
     expect(fin.css(0, 1)).toBe('transform:translateX(100%)');
     expect(fin.css(1, 0)).toBe('transform:translateX(0%)');
     expect(sheetSlide(node, { dir: 'out', mode: 'full', side: 'right' }).css(0.25, 0.75)).toBe('transform:translateX(75%)');
@@ -151,9 +219,9 @@ describe('growFrom, sheetSlide, toastRise, scrimFade', () => {
   it('sheetSlide per mode', () => {
     const fin = sheetSlide(node, { mode: 'full' });
     expect(fin.duration).toBe(SHEET_IN_MS);
-    expect(fin.duration).toBe(380);
+    expect(fin.duration).toBe(320);
     expect(fin.delay).toBe(0);
-    expect(fin.easing).toBe(springEase);
+    expect(fin.easing).toBe(emphOut);
     expect(fin.css(0, 1)).toBe('transform:translateY(100%)');
     expect(fin.css(1, 0)).toBe('transform:translateY(0%)');
     expect(fin.css(0.5, 0.5)).toBe('transform:translateY(50%)');
@@ -171,7 +239,7 @@ describe('growFrom, sheetSlide, toastRise, scrimFade', () => {
     expect(still.css(0, 1)).toBe('');
     expect(still.easing(0.4)).toBe(0.4);
     m.allowed = true; m.level = 'full';
-    expect(sheetSlide(node).duration).toBe(380);
+    expect(sheetSlide(node).duration).toBe(320);
     m.allowed = false;
     expect(sheetSlide(node).duration).toBe(0);
     m.allowed = true;
@@ -180,15 +248,15 @@ describe('growFrom, sheetSlide, toastRise, scrimFade', () => {
   it('toastRise per mode', () => {
     const fin = toastRise(node, { mode: 'full' });
     expect(fin.duration).toBe(TOAST_IN_MS);
-    expect(fin.duration).toBe(420);
-    expect(fin.easing).toBe(springEase);
+    expect(fin.duration).toBe(300);
+    expect(fin.easing).toBe(emphOut);
     expect(fin.css(0, 1)).toBe('transform:translateY(140%);opacity:0');
     expect(fin.css(1, 0)).toBe('transform:translateY(0%);opacity:1');
-    expect(fin.css(1.1, -0.1)).toBe('transform:translateY(-14%);opacity:1'); // the spring overshoots up; opacity stays ≤ 1
+    expect(fin.css(1.1, -0.1)).toBe('transform:translateY(-14%);opacity:1'); // extrapolated past 1: opacity stays ≤ 1
     expect(fin.css(-0.1, 1.1)).toContain('opacity:0');
     const fout = toastRise(node, { dir: 'out', mode: 'full' });
     expect(fout.duration).toBe(TOAST_OUT_MS);
-    expect(fout.duration).toBe(260);
+    expect(fout.duration).toBe(200);
     expect(fout.easing).toBe(inEase);
     const red = toastRise(node, { mode: 'reduced' });
     expect(red.duration).toBe(160);
@@ -240,8 +308,8 @@ describe('pill, count-up, ripple', () => {
 });
 
 describe('the frame guard watches glass motion', () => {
-  it('grow, sheetSlide and toastRise pulse it when built with full motion, never in the reduced set or when still', () => {
-    for (const make of [grow, sheetSlide, toastRise]) {
+  it('grow, sheetSlide, toastRise and dialogRise pulse it when built with full motion, never in the reduced set or when still', () => {
+    for (const make of [grow, sheetSlide, toastRise, dialogRise]) {
       m.watched = 0;
       make(node, { mode: 'full' });
       make(node, { dir: 'out', mode: 'full' });
@@ -278,5 +346,73 @@ describe('barRise (the cast bar)', () => {
     const still = barRise(node, { mode: 'still' });
     expect(still.duration).toBe(0);
     expect(still.css(0, 1)).toBe('');
+  });
+});
+
+describe('dialogRise (ModalShell)', () => {
+  const ty = (css: string) => /^transform:translateY\((-?\d+)px\);opacity:([\d.]+)$/.exec(css);
+  it('dialogRise never scales and moves at most 10 px, in whole pixels', () => {
+    for (const dir of ['in', 'out'] as const) {
+      const d = dialogRise(node, { dir, mode: 'full' });
+      for (let i = 0; i <= 20; i++) {
+        const t = i / 20, css = d.css(t, 1 - t);
+        expect(css).not.toMatch(/scale|zoom|font-size|letter-spacing/);
+        const m = ty(css)!;
+        expect(m, css).not.toBeNull();
+        expect(Number(m[1])).toBeGreaterThanOrEqual(0);
+        expect(Number(m[1])).toBeLessThanOrEqual(10);
+        expect(Number(m[2])).toBe(t);
+      }
+      expect(d.css(0, 1)).toBe('transform:translateY(10px);opacity:0');
+      expect(d.css(1, 0)).toBe('transform:translateY(0px);opacity:1');
+      expect(d.css(0.5, 0.5)).toBe('transform:translateY(5px);opacity:0.5');
+    }
+  });
+
+  it('dialogRise is symmetric: the close at t stands where the open stood at t', () => {
+    const fin = dialogRise(node, { mode: 'full' }), fout = dialogRise(node, { dir: 'out', mode: 'full' });
+    for (const t of ts) expect(fout.css(t, 1 - t)).toBe(fin.css(t, 1 - t));
+    // a close mid-open (Svelte starts the close from the current t) continues from the same frame
+    for (const p of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+      const now = fin.easing(p);
+      expect(fout.css(now + (0 - now) * fout.easing(0), 1 - now)).toBe(fin.css(now, 1 - now));
+    }
+  });
+
+  it('dialogRise per mode: 220 ms emphOut in, 150 ms inEase out; the reduced set fades 160 ms; still is instant', () => {
+    const fin = dialogRise(node, { mode: 'full' });
+    expect([fin.duration, DIALOG_IN_MS, fin.delay]).toEqual([220, 220, 0]);
+    expect(fin.easing).toBe(emphOut);
+    const fout = dialogRise(node, { dir: 'out', mode: 'full' });
+    expect([fout.duration, DIALOG_OUT_MS]).toEqual([150, 150]);
+    expect(fout.easing).toBe(inEase);
+    for (const e of [fin.easing, fout.easing]) {
+      const v = Array.from({ length: 201 }, (_, i) => e(i / 200));
+      expect(Math.max(...v)).toBeLessThanOrEqual(1);
+      expect(Math.min(...v)).toBeGreaterThanOrEqual(0);
+    }
+    const red = dialogRise(node, { dir: 'out', mode: 'reduced' });
+    expect(red.duration).toBe(160);
+    expect(red.css(0.5, 0.5)).toBe('opacity:0.5');
+    expect(red.easing(0.3)).toBe(0.3);
+    for (const dir of ['in', 'out'] as const) {
+      const still = dialogRise(node, { dir, mode: 'still' });
+      expect(still.duration).toBe(0);
+      expect(still.css(0, 1)).toBe('');
+    }
+    // the page's mode by default: calm mode is instant
+    m.allowed = false;
+    expect(dialogRise(node).duration).toBe(0);
+    m.allowed = true; m.level = 'full';
+    expect(dialogRise(node).duration).toBe(220);
+  });
+
+  it('dialogBoth picks the direction once Svelte knows it', () => {
+    const b = dialogBoth(node, { mode: 'full' });
+    expect(b({ direction: 'in' }).duration).toBe(220);
+    expect(b({ direction: 'out' }).duration).toBe(150);
+    expect(b({ direction: 'out' }).easing).toBe(inEase);
+    expect(b().duration).toBe(220);
+    expect(dialogBoth(node, { mode: 'still' })({ direction: 'out' }).duration).toBe(0);
   });
 });
