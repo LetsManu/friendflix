@@ -23,10 +23,12 @@
   import { genreLine, lengthLabel, previewRect, ratingBadge, type PreviewBox } from '#lib/hover';
   import { playPreview, previewOwner, stopPreview, toggleSound } from '#lib/preview';
   import { artClick, clipEnv, hoverClipAllowed, portal, previewActions, ratingLoader, releaseClick as release, saveFavorite } from '#lib/hoverShared';
+  import { fxMode, REDUCED_MS, REVEAL_IN_MS, revealKeyframes, revealShift } from '#lib/glass/fx';
+  import { EMPH_OUT, watchFrames } from '#lib/tv/motion';
 
-  /** Desktop pop-out preview of a card: portal on <body>, grows out of the card, clamped to the viewport. */
+  /** Desktop pop-out preview of a card: portal on <body>, fades in from the card (sliding at most 12 px), clamped to the viewport. */
   export let item: Item;
-  /** the card's 16:9 thumbnail; the pop-out starts exactly there */
+  /** the card's 16:9 thumbnail; the pop-out reveals from there */
   export let anchor: HTMLElement;
   export let href: string;
   export let detail: string;
@@ -84,10 +86,13 @@
       compute(el.offsetHeight - box.mediaH);
       void tick().then(() => {
         ready = true;
-        if (!reduce && box && el.animate) {
-          const f = box.from;
-          el.animate([{ transform: `translate(${f.dx}px, ${f.dy}px) scale(${f.scale})`, opacity: 0.4 }, { transform: 'none', opacity: 1 }], { duration: 220, easing: 'cubic-bezier(.2,.7,.2,1)' });
-        }
+        // reveal from the card (transform + opacity only, text never scales): full motion fades in while sliding at most 12 px from
+        // the card's side, the reduced set fades in 160 ms, calm mode / reduced motion show it at once
+        const mode = fxMode();
+        if (mode === 'still' || !box || !el.animate) return;
+        if (mode === 'reduced') { el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: REDUCED_MS, easing: 'linear' }); return; }
+        watchFrames();
+        el.animate(revealKeyframes(revealShift(anchor.getBoundingClientRect(), box), 'in'), { duration: REVEAL_IN_MS, easing: EMPH_OUT });
       });
     });
     // sound-on preview after 1 s, only titles that have a clip and only when the viewer allows it
@@ -200,7 +205,7 @@
 </div>
 
 <style>
-  .hp { position: fixed; z-index: 65; background: var(--surface); border-radius: 8px; box-shadow: 0 14px 40px rgba(0,0,0,.75), 0 0 0 1px rgba(255,255,255,.06); overflow: hidden; transform-origin: 0 0; visibility: hidden; color: var(--fg); }
+  .hp { position: fixed; z-index: 65; background: var(--surface); border-radius: 8px; box-shadow: 0 14px 40px rgba(0,0,0,.75), 0 0 0 1px rgba(255,255,255,.06); overflow: hidden; visibility: hidden; color: var(--fg); }
   .hp.ready { visibility: visible; }
   .media { position: relative; background: #0a0d10; overflow: hidden; cursor: pointer; }
   .media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
