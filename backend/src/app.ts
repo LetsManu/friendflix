@@ -22,6 +22,7 @@ import { authentikRepairRoutes } from './routes/authentikRepair.js';
 import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { adminSettingsRoutes } from './routes/adminSettings.js';
 import { mailRoutes } from './mail/routes.js';
+import { mailPersonRoutes } from './mail/personRoutes.js';
 import { updaterRoutes } from './routes/updater.js';
 import { livetvAdminRoutes } from './livetv/adminRoutes.js';
 import { livetvRoutes } from './livetv/routes.js';
@@ -82,9 +83,10 @@ export interface Extra {
 
 /**
  * routes whose bodies hold secrets or one-time credentials (spec Part E3; the in-app sign-in's passwords and codes; Live TV provider
- * URLs, F13; the brand's image bytes and admin ids, branding plan Task 1): never logged with an error
+ * URLs, F13; the brand's image bytes and admin ids, branding plan Task 1; the unsubscribe token and the mail switches, mail stage B
+ * Task 4): never logged with an error
  */
-const SENSITIVE_BODY = /^\/(api\/(setup\/|admin\/settings|admin\/mail|admin\/authentik\/|admin\/livetv\/(sources|channels)|admin\/brand)|auth\/flow\/)/;
+const SENSITIVE_BODY = /^\/(api\/(setup\/|admin\/settings|admin\/mail|admin\/authentik\/|admin\/livetv\/(sources|channels)|admin\/brand|public\/mail\/|account\/mail)|auth\/flow\/)/;
 
 /**
  * What answers while setup is incomplete (spec Part E1, rulings D23): matched by the route pattern, so an unknown or encoded path is
@@ -103,10 +105,12 @@ const SETUP_LOGIN: ReadonlySet<string> = new Set(['/auth/login', '/auth/callback
  * - /api/tv/code, /api/tv/claim: anonymous, protected by the TV's own poll secret
  * - /api/restore: acts on the account named by the signed ff_restore cookie, never on a session (another account's live session in the
  *   same browser must not make it demand that session's token); JSON-only + SameSite + HMAC cookie protect it (routes/auth.ts)
+ * - /api/public/mail/unsubscribe: the RFC 8058 one-click POST (a mail client, no session) and the confirm page; acts only on the account
+ *   and type its signed token names, never on a session (a signed-in browser must not get 403 csrf); rate limited (mail/personRoutes.ts)
  * - /api/setup/*: never acts on an account session; requireSetupSession checks its own token (x-ff-setup-csrf against the setup session
  *   and the ff_setup_csrf cookie). An admin's ff_sid next to an old ff_setup cookie must get 409 setup_complete, never this hook's 403.
  */
-const CSRF_EXEMPT: ReadonlySet<string> = new Set(['/api/client-errors', '/api/tv/code', '/api/tv/claim', '/api/restore']);
+const CSRF_EXEMPT: ReadonlySet<string> = new Set(['/api/client-errors', '/api/tv/code', '/api/tv/claim', '/api/restore', '/api/public/mail/unsubscribe']);
 const CSRF_EXEMPT_PREFIX = /^\/api\/(invite|setup)\//;
 const MUTATING: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -114,13 +118,13 @@ const MUTATING: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH', 'DELETE']
 const SLOW_REQUEST_MS = 500;
 
 /**
- * The request log's `req` (Fastify's default fields) with the signed logo `sig` redacted: it is the credential of the cast logo URL
- * (`/api/livetv/logos/<hash>?exp=..&sig=..`) and must not land in the logs.
+ * The request log's `req` (Fastify's default fields) with the credentials in query strings redacted: the signed logo `sig` (the cast
+ * logo URL `/api/livetv/logos/<hash>?exp=..&sig=..`) and the unsubscribe token `t` (`/api/public/mail/unsubscribe?t=..`, mail stage B).
  */
 export function reqSerializer(req: { method?: string; url?: string; host?: string; ip?: string; socket?: { remotePort?: number } }) {
   return {
     method: req.method,
-    url: req.url?.replace(/([?&]sig=)[^&#]*/g, '$1[redacted]'),
+    url: req.url?.replace(/([?&](?:sig|t)=)[^&#]*/g, '$1[redacted]'),
     host: req.host,
     remoteAddress: req.ip,
     remotePort: req.socket?.remotePort,
@@ -275,6 +279,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   adminRoutes(app, ctx);
   adminSettingsRoutes(app, ctx);
   mailRoutes(app, ctx);
+  mailPersonRoutes(app, ctx);
   updaterRoutes(app, ctx);
   livetvAdminRoutes(app, ctx);
   livetvRoutes(app, ctx);
