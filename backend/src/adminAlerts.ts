@@ -118,8 +118,9 @@ export async function diskAlerts(ctx: AlertCtx, snap: HealthSnapshot, now: Date 
     if (!(await ctx.kv.setnx(claim, '1', DAY_CLAIM_TTL_S))) continue;
     // "full" covers "almost full" for the rest of the day (taken only when free: an earlier warn claim is left alone)
     const warnKey = `alerts:disk:${id}:warn:${day}`;
-    const claims = [claim, ...(d.level === 'err' && (await ctx.kv.setnx(warnKey, '1', DAY_CLAIM_TTL_S)) ? [warnKey] : [])];
+    const claims = [claim];
     try {
+      if (d.level === 'err' && (await ctx.kv.setnx(warnKey, '1', DAY_CLAIM_TTL_S))) claims.push(warnKey);
       await notifyAdmins(ctx, {
         kind: 'disk_low', title: m(d.level === 'err' ? 'notify.disk.full.title' : 'notify.disk.almostFull.title', { disk: m(`notify.disk.${id}`), pct: d.usedPct }),
         body: d.freeBytes !== undefined ? m('notify.disk.free.body', { free: freeText(d.freeBytes) }) : null,

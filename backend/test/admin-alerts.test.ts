@@ -316,6 +316,32 @@ describe('Systemcheck problems', () => {
     expect(JSON.parse((await env.kv.get('alerts:syscheck:prev'))!)).toEqual(['core.redis']);
   });
 
+  it('the downloads and previews disk lines never alert here: the storage alert owns them', async () => {
+    resetChecksForTests();
+    const DISKS = ['core.disk.downloads', 'core.disk.previews', 'core.disk.database'] as const;
+    registerChecks([fake('core', [...CORE, ...DISKS])]);
+    set(['core.disk.downloads', 'core.disk.previews'], 'problem');
+    expect(await run()).toEqual([]);
+    expect(await notices('syscheck_problem')).toEqual([]);
+    // the database disk has no storage alert: it stays a Systemcheck alert
+    set(['core.disk.database'], 'problem');
+    expect(await run(at(16, 10, 15))).toEqual(['core.disk.database']);
+  });
+
+  it('a problem whose check timed out in between does not alert again the next day', async () => {
+    set(['signin.authentik'], 'problem');
+    expect(await run()).toEqual(['signin.authentik']);
+    // a run in which the sign-in check missed its limit: its lines are unknown
+    const timedOut: CheckLine[] = SIGNIN.map((id) => ({ id, group: 'signin', status: 'unknown', runs: 'server', cause: 'check_timeout' }));
+    for (const k of await env.kv.keys('alerts:syscheck:tick')) await env.kv.del(k);
+    await env.kv.set('syscheck:result', JSON.stringify({ at: new Date().toISOString(), lines: timedOut, counts: {} }), 300);
+    expect(await syscheckAlertTick(env.ctx, at(16, 10, 15))).toEqual([]);
+    expect(JSON.parse((await env.kv.get('alerts:syscheck:prev'))!)).toEqual(['signin.authentik']);
+    // still the same problem the next day: it never went away
+    expect(await run(at(17, 10))).toEqual([]);
+    expect(await notices('syscheck_problem')).toHaveLength(2);
+  });
+
   it('a failed notice gives the run and its line days back', async () => {
     set(['core.database'], 'problem');
     vi.spyOn(notify, 'notifyAdmins').mockRejectedValueOnce(new Error('database down'));
@@ -382,6 +408,18 @@ describe('disk and recordings storage', () => {
     // no free bytes known: no body
     expect(n[0]).toMatchObject({ title: 'Speicher voll: Vorschauen zu 70 % belegt', body: null, dedupe: `disk-previews-err-2026-11-16-${anna}` });
     expect(await diskAlerts(env.ctx, snap([{ id: 'downloads', level: 'off', reason: 'unavailable', ownBytes: 0 }]), at(16))).toEqual([]);
+  });
+
+  it('a kv failure while taking the almost-full claim gives the full claim back', async () => {
+    const take = env.kv.setnx.bind(env.kv);
+    vi.spyOn(env.kv, 'setnx').mockImplementation(async (k: string, v: string, ttl: number) => {
+      if (k.includes(':warn:')) throw new Error('redis down');
+      return take(k, v, ttl);
+    });
+    await expect(diskAlerts(env.ctx, snap([dl('err', 96)]), at(16))).rejects.toThrow('redis down');
+    expect(await env.kv.get('alerts:disk:downloads:err:2026-11-16')).toBeNull();
+    vi.restoreAllMocks();
+    expect(await diskAlerts(env.ctx, snap([dl('err', 96)]), at(16))).toEqual(['downloads']);
   });
 
   it('a failed notice gives the disk day back', async () => {

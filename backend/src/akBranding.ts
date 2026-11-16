@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { AkUpstreamError } from './akdiag.js';
 import { audit } from './audit.js';
 import { akBrandFor, akEmailStage, akForgetRecoveryEmailStage, akPatchBrand, akPatchEmailStage, akRecoveryEmailStage } from './authentik.js';
-import { readBrand } from './brand/repo.js';
+import { keepAuthentikLogo, readBrand } from './brand/repo.js';
 import { imageUrls } from './brand/routes.js';
 import { publicOrigin, type Config } from './config.js';
 import type { Ctx } from './ctx.js';
@@ -55,13 +55,15 @@ function issuerHost(cfg: Config): string | null {
   }
 }
 
-/** the brand's name and the absolute URL of its logo (else its symbol; null without either or without PUBLIC_URL) */
-async function brandParts(ctx: Ctx): Promise<{ title: string; logoUrl: string | null }> {
+/**
+ * the brand's name and the absolute URL of its logo (else its symbol; null without either or without PUBLIC_URL), with the image's hash
+ */
+async function brandParts(ctx: Ctx): Promise<{ title: string; logoUrl: string | null; logoHash: string | null }> {
   const { brand } = await readBrand(ctx.db);
   const origin = publicOrigin(ctx.cfg);
   const urls = await imageUrls(ctx.db, brand);
-  const path = urls.logo ?? urls.symbol;
-  return { title: brand.name, logoUrl: origin && path ? origin + path : null };
+  const [path, hash] = urls.logo ? [urls.logo, brand.logo] : urls.symbol ? [urls.symbol, brand.symbol] : [undefined, null];
+  return origin && path && hash ? { title: brand.name, logoUrl: origin + path, logoHash: hash } : { title: brand.name, logoUrl: null, logoHash: null };
 }
 
 /**
@@ -96,8 +98,12 @@ function failedPart(e: unknown, permission?: string): AkPart {
   return { state: 'failed', code: 'error' };
 }
 
+/**
+ * Authentik keeps the logo URL and loads the image from FriendFlix: the sent image is recorded so the brand clean-up keeps it after a logo
+ * change, until the next transfer (a transfer without a logo leaves Authentik's logo, and so the record, as it was).
+ */
 async function syncBrand(ctx: Ctx): Promise<AkPart> {
-  const { title, logoUrl } = await brandParts(ctx);
+  const { title, logoUrl, logoHash } = await brandParts(ctx);
   let target: { uuid: string } | null;
   try {
     target = await akBrandFor(ctx, issuerHost(ctx.cfg));
@@ -110,6 +116,7 @@ async function syncBrand(ctx: Ctx): Promise<AkPart> {
   } catch (e) {
     return failedPart(e, AK_BRANDING_PERMS.brandPatch);
   }
+  if (logoHash) await keepAuthentikLogo(ctx.db, logoHash);
   return { state: 'done', logo: Boolean(logoUrl) };
 }
 

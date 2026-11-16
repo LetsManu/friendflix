@@ -16,6 +16,9 @@ const SYSCHECK_TICK_TTL_S = 840;
 const SYSCHECK_PREV = 'alerts:syscheck:prev';
 const SYSCHECK_PREV_TTL_S = 86_400;
 
+/** the downloads and previews disk lines: the storage alert (diskAlerts, *Speicherplatz*) tells them, the Systemcheck alert does not */
+const STORAGE_LINES: ReadonlySet<string> = new Set<CheckId>(['core.disk.downloads', 'core.disk.previews']);
+
 async function previousProblems(ctx: Pick<Ctx, 'kv'>): Promise<Set<string>> {
   try {
     const v = JSON.parse((await ctx.kv.get(SYSCHECK_PREV)) ?? '[]') as unknown;
@@ -27,16 +30,19 @@ async function previousProblems(ctx: Pick<Ctx, 'kv'>): Promise<Set<string>> {
 
 /**
  * 15-minute timer, one instance per run. A server line *turns* problem when it is one now and was not in the previous run; each line
- * alerts at most once per server-local day (a flapping line), a problem that stays never repeats, and all lines turning in one run make
- * one notice naming their groups (an outage flips several at once). Returns the lines alerted in this run.
+ * alerts at most once per server-local day (a flapping line), a problem that stays never repeats (a run in which its check did not
+ * answer, `unknown`, keeps it), and all lines turning in one run make one notice naming their groups (an outage flips several at once).
+ * The downloads and previews disk lines are left out: the storage alert owns them. Returns the lines alerted in this run.
  */
 export async function syscheckAlertTick(ctx: Ctx, now: Date = new Date()): Promise<CheckId[]> {
   if (!(await ctx.kv.setnx(SYSCHECK_TICK, '1', SYSCHECK_TICK_TTL_S))) return [];
   const claimed: string[] = [];
   try {
     const result = await getSystemcheck(ctx);
-    const problems = result.lines.filter((l) => l.runs === 'server' && l.status === 'problem');
+    const server = result.lines.filter((l) => l.runs === 'server' && !STORAGE_LINES.has(l.id));
+    const problems = server.filter((l) => l.status === 'problem');
     const prev = await previousProblems(ctx);
+    const kept = server.filter((l) => l.status === 'unknown' && prev.has(l.id));
     const day = dayKey(now);
     const turned: typeof problems = [];
     for (const l of problems) {
@@ -55,7 +61,7 @@ export async function syscheckAlertTick(ctx: Ctx, now: Date = new Date()): Promi
         link: '/admin/status', dedupe: `syscheck-${day}-${ids.join(',')}`, mail: 'syscheck',
       });
     }
-    await ctx.kv.set(SYSCHECK_PREV, JSON.stringify(problems.map((l) => l.id)), SYSCHECK_PREV_TTL_S);
+    await ctx.kv.set(SYSCHECK_PREV, JSON.stringify([...problems, ...kept].map((l) => l.id)), SYSCHECK_PREV_TTL_S);
     return turned.map((l) => l.id);
   } catch (e) {
     await Promise.all([SYSCHECK_TICK, ...claimed].map((k) => ctx.kv.del(k).catch(() => undefined)));

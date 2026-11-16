@@ -20,6 +20,18 @@ export const IMAGE_FIELDS: ReadonlyArray<readonly ['logo' | 'symbol' | 'signInIm
 /** images no brand refers to are deleted after this long (an upload waits for the save that sets it); checked on every save and upload */
 export const UNREFERENCED_IMAGE_TTL = '1 hour';
 
+/**
+ * app_settings key of the image the last *Branding an Authentik übertragen* sent as Authentik's logo (a JSON string, the hash): Authentik
+ * loads it from FriendFlix's public image URL, so the clean-up keeps it until a later transfer sends another one (akBranding.ts)
+ */
+export const AK_LOGO_KEY = 'authentik.brandLogo';
+
+/** Records the image hash Authentik now shows as its logo (after a brand PATCH that carried it). */
+export async function keepAuthentikLogo(db: Db, hash: string): Promise<void> {
+  await db.query(
+    'insert into app_settings(key, value) values ($1, $2) on conflict (key) do update set value = excluded.value, updated_at = now()', [AK_LOGO_KEY, JSON.stringify(hash)]);
+}
+
 /** a save against an older rev: someone else saved in between (409 brand_conflict, with the current rev) */
 export class BrandConflict extends HttpError {
   constructor(readonly rev: number) { super(409, 'brand_conflict'); }
@@ -54,10 +66,15 @@ async function lockBrand(c: pg.PoolClient): Promise<{ rev: number; brand: Brand 
   return { rev: Number(r.rows[0]!.rev), brand: brandFromStored(r.rows[0]!.data) };
 }
 
-/** deletes the images `brand` does not refer to once they are older than the TTL (the caller holds the row lock) */
+/**
+ * deletes the images `brand` does not refer to once they are older than the TTL (the caller holds the row lock); the logo the last
+ * Authentik transfer sent stays (AK_LOGO_KEY)
+ */
 async function dropUnreferenced(c: pg.PoolClient, brand: Brand): Promise<void> {
   const keep = IMAGE_FIELDS.map(([f]) => brand[f]).filter((h): h is string => h !== null);
-  await c.query(`delete from brand_images where created_at < now() - interval '${UNREFERENCED_IMAGE_TTL}' and not (hash = any($1::text[]))`, [keep]);
+  await c.query(
+    `delete from brand_images where created_at < now() - interval '${UNREFERENCED_IMAGE_TTL}' and not (hash = any($1::text[]))
+     and hash is distinct from (select value #>> '{}' from app_settings where key = $2)`, [keep, AK_LOGO_KEY]);
 }
 
 const changedFields = (a: Brand, b: Brand) => BRAND_KEYS.filter((k) => a[k] !== b[k]).sort();

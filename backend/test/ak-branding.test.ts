@@ -118,8 +118,6 @@ describe('Branding an Authentik übertragen', () => {
     adminId = (await env.pool.query<{ id: string }>("select id from users where authentik_sub = 'sub-admin'")).rows[0]!.id;
     await env.pool.query("insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(),'sub-ben','ben@friend.example.com','Ben Muster','friend','jfben','Ben',$1)", [encrypt(env.ctx.encKey, 'pw')]);
     friend = await env.login(FRIEND);
-    await storeImage(env.ctx.db, { bytes: PNG, mime: 'image/png', width: 1024, height: 256, hash: LOGO_HASH });
-    await storeImage(env.ctx.db, { bytes: Buffer.concat([PNG, Buffer.from([9])]), mime: 'image/png', width: 512, height: 512, hash: SYMBOL_HASH });
   });
   afterAll(() => env.close());
   beforeEach(async () => {
@@ -130,6 +128,9 @@ describe('Branding an Authentik übertragen', () => {
     await env.kv.del('akdiag:last:api');
     await env.pool.query("delete from audit_log where action = 'authentik.branding'");
     await resetBrand(env.ctx.db, adminId, (await readBrand(env.ctx.db)).rev);
+    // stored again before each test: the clean-up test deletes images
+    await storeImage(env.ctx.db, { bytes: PNG, mime: 'image/png', width: 1024, height: 256, hash: LOGO_HASH });
+    await storeImage(env.ctx.db, { bytes: Buffer.concat([PNG, Buffer.from([9])]), mime: 'image/png', width: 512, height: 512, hash: SYMBOL_HASH });
     await setBrand({ name: 'Nordlicht TV', logo: LOGO_HASH });
     await fresh(admin);
   });
@@ -347,6 +348,54 @@ describe('Branding an Authentik übertragen', () => {
     expect(r.json()).toMatchObject({ stage: { state: 'done' } });
     expect(calls.filter((c) => c.path.startsWith('/api/v3/stages/email/')).map((c) => `${c.method} ${c.path}`))
       .toEqual(['GET /api/v3/stages/email/s-old/', 'GET /api/v3/stages/email/s-1/', 'PATCH /api/v3/stages/email/s-1/']);
+  });
+
+  it('with consent and a stale cached stage id the password goes to the stage PATCHes only, and the retry is the write', async () => {
+    await env.kv.set(akFlowCacheKey(env.ctx.cfg, 'default-recovery-flow'),
+      JSON.stringify({ exists: true, failed: false, stages: [{ pk: 's-old', model: 'authentik_stages_email.emailstage' }] }), 600);
+    ak.goneStages = ['s-old'];
+    const r = await post(true);
+    expect(r.json()).toEqual({ brand: { state: 'done', logo: true }, stage: { state: 'done' } });
+    // with consent the stage is not read first: the PATCH to the deleted stage (404, nothing written) carries the same body, then the
+    // stage is looked up again and the retried PATCH is the one that applies
+    expect(calls.filter((c) => (c.body ?? '').includes(PASS)).map((c) => `${c.method} ${c.path}`))
+      .toEqual(['PATCH /api/v3/stages/email/s-old/', 'PATCH /api/v3/stages/email/s-1/']);
+    expect(bodyOf(patches(/\/stages\/email\/s-1\//)[0])).toMatchObject({ password: PASS, use_global_settings: false });
+    expect(calls.filter((c) => c.method !== 'PATCH').every((c) => c.body === null)).toBe(true);
+    expect(r.body).not.toContain(PASS);
+    expect((await env.pool.query('select meta::text as m from audit_log')).rows.map((x: { m: string }) => x.m).join('\n')).not.toContain(PASS);
+    const kv = (env.kv as unknown as { m: Map<string, { v: string }> }).m;
+    for (const [k, v] of kv) expect(`${k}=${v.v}`).not.toContain(PASS);
+    for (const line of logs) expect(line).not.toContain(PASS);
+  });
+
+  it('the logo Authentik loads stays stored after a logo change, until the next transfer sends another', async () => {
+    const NEW_HASH = createHash('sha256').update('nordlicht-logo-2').digest('hex');
+    await storeImage(env.ctx.db, { bytes: Buffer.concat([PNG, Buffer.from([7])]), mime: 'image/png', width: 1024, height: 256, hash: NEW_HASH });
+    const stored = async () => (await env.pool.query<{ hash: string }>('select hash from brand_images')).rows.map((r) => r.hash);
+    /** an hour later a save cleans up the images nothing refers to */
+    const cleanUp = async (name: string) => {
+      await env.pool.query("update brand_images set created_at = now() - interval '2 hours'");
+      await setBrand({ name });
+    };
+    await post(false); // Authentik now loads LOGO_HASH from FriendFlix
+    await setBrand({ logo: NEW_HASH });
+    await cleanUp('Nordlicht TV 2');
+    expect(await stored()).toContain(LOGO_HASH);
+    expect(await stored()).not.toContain(SYMBOL_HASH); // the clean-up did run
+    // a refused transfer changes nothing in Authentik: the old logo stays kept
+    ak.brandPatch = { status: 403 };
+    await post(false);
+    await cleanUp('Nordlicht TV 3');
+    expect(await stored()).toContain(LOGO_HASH);
+    // the next transfer sends the new logo: the old one is let go
+    ak.brandPatch = undefined;
+    calls.length = 0;
+    await post(false);
+    expect(bodyOf(patches(/\/core\/brands\//)[0])).toMatchObject({ branding_logo: `https://friend.example.com/api/public/brand/img/${NEW_HASH}.png` });
+    await setBrand({ logo: null });
+    await cleanUp('Nordlicht TV 4');
+    expect(await stored()).toEqual([NEW_HASH]);
   });
 
   it('a stage that stays gone answers not_found after one retry', async () => {
