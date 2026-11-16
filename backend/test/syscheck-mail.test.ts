@@ -112,6 +112,17 @@ describe('core.mail', () => {
     expect(await line()).toMatchObject({ status: 'problem', cause: 'mail_auth' });
   });
 
+  it('a changed host is not answered from the cache', async () => {
+    const a = await useFake();
+    expect((await line()).status).toBe('ok');
+    await fake!.close();
+    const old = a.connections;
+    env.ctx.cfg = { ...env.ctx.cfg, MAIL_SMTP_HOST: 'localhost' };
+    expect(a.connections).toBe(old);
+    // nothing listens on the port any more: a fresh probe (not the cached ok) answers unreachable
+    expect(await line()).toMatchObject({ status: 'problem', cause: 'mail_unreachable' });
+  });
+
   it('a good probe clears the stale transport failure', async () => {
     await useFake();
     await env.kv.set('mail:transport', JSON.stringify({ code: 'unreachable', at: new Date().toISOString() }), 600);

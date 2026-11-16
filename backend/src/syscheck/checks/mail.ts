@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import type { Config } from '../../config.js';
 import { clearMailTransport, mailStatus } from '../../mail/outbox.js';
 import { mailConfigured } from '../../mail/transport.js';
@@ -24,8 +24,8 @@ const STUCK_MS = 3_600_000;
 const HREF = '/admin/settings?tab=notifications';
 const DOCS = 'mail.md';
 
-/** a hash of what the probe depends on (the password included, never stored in the clear) */
-const fingerprint = (c: Config) => createHash('sha256')
+/** an HMAC (keyed with APP_ENC_KEY) of what the probe depends on: the password is in it, so a bare hash would be brute-forceable */
+const fingerprint = (key: Buffer, c: Config) => createHmac('sha256', key)
   .update(JSON.stringify([c.MAIL_SMTP_HOST, c.MAIL_SMTP_PORT, c.MAIL_SMTP_TLS, c.MAIL_SMTP_USER, c.MAIL_SMTP_PASSWORD, c.MAIL_FROM])).digest('hex');
 
 function parseCached(raw: string | null, fp: string, now: number): ProbeResult | null {
@@ -41,7 +41,7 @@ function parseCached(raw: string | null, fp: string, now: number): ProbeResult |
 
 async function probe(env: CheckEnv): Promise<ProbeResult> {
   const { ctx } = env;
-  const fp = fingerprint(ctx.cfg);
+  const fp = fingerprint(ctx.encKey, ctx.cfg);
   if (!env.fresh) {
     const hit = parseCached(await ctx.kv.get(PROBE_KEY).catch(() => null), fp, Date.now());
     if (hit) return hit;

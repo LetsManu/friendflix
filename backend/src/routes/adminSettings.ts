@@ -297,7 +297,7 @@ export function saveWithProbes(ctx: Ctx, values: Record<string, unknown>, opts: 
 
 /** Tests a group's probes against the unsaved candidate (omitted secrets are the saved ones); the worst result wins. */
 export async function testGroup(ctx: Ctx, group: SettingGroup, values: Record<string, unknown>, opts: { allowedKeys?: readonly string[] } = {}):
-  Promise<{ errors: Record<string, string> } | { noProbe: true } | (ProbeResult & { probe?: ProbeId })> {
+  Promise<{ errors: Record<string, string> } | { noProbe: true } | (ProbeResult & { probe?: ProbeId; saved?: boolean })> {
   const ids = [...new Set(SETTINGS.filter((d) => d.group === group && d.visible !== false && d.probe).map((d) => d.probe!))];
   if (!ids.length) return { noProbe: true };
   const c = candidate(ctx, values, { allowedKeys: opts.allowedKeys, skipLocked: true });
@@ -307,7 +307,10 @@ export async function testGroup(ctx: Ctx, group: SettingGroup, values: Record<st
   const results = await Promise.all(run.map((id) => runProbe(ctx, id, c.cfg)));
   let worst = 0;
   results.forEach((r, i) => { if (RANK(r) < RANK(results[worst]!)) worst = i; });
-  return { ...results[worst]!, probe: run[worst]! };
+  // saved: the probe ran against the saved values of this group (nothing submitted, or only what is already saved)
+  const keys = SETTINGS.filter((d) => d.group === group).map((d) => d.key);
+  const saved = keys.every((k) => JSON.stringify((c.cfg as Record<string, unknown>)[k] ?? null) === JSON.stringify((ctx.cfg as Record<string, unknown>)[k] ?? null));
+  return { ...results[worst]!, probe: run[worst]!, saved };
 }
 
 /** 32 random bytes as hex: the shared secret for the media server's and the request service's webhooks. */
@@ -348,8 +351,10 @@ export function adminSettingsRoutes(app: FastifyInstance, ctx: Ctx) {
     if ('noProbe' in r) return reply.code(400).send({ error: 'no_probe' });
     if ('errors' in r) return reply.code(400).send({ error: 'invalid_settings', errors: r.errors });
     // a connection that works again is no longer shown as failing
-    if (r.ok && r.probe === 'mail') await clearMailTransport(ctx);
-    return r;
+    // (only when the saved settings were tested: a probe of unsaved values says nothing about them)
+    if (r.ok && r.probe === 'mail' && r.saved) await clearMailTransport(ctx);
+    const { saved: _saved, ...answer } = r;
+    return answer;
   });
 
   app.post('/api/admin/settings/import-env', admin, async (req) => {

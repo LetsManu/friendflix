@@ -20,7 +20,10 @@ describe('mail admin routes', () => {
   let adminId: string;
   let fake: SmtpFake | undefined;
 
-  const as = (s: Sess, method: string, url: string) => env.app.inject({ method: method as 'GET', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf } });
+  // every call comes from its own address, so the route's per-IP limit (tested on its own) does not count the other tests
+  let n = 0;
+  const as = (s: Sess, method: string, url: string, ip = `192.0.2.${(n = (n % 200) + 1)}`) =>
+    env.app.inject({ method: method as 'GET', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, remoteAddress: ip });
   const useFake = async (o: Partial<SmtpFakeOptions> = {}, patch: Partial<Config> = {}) => {
     fake = await startSmtp({ mode: 'starttls', user: 'kino', pass: PASS, ...o });
     env.ctx.cfg = { ...cfg, MAIL_SMTP_HOST: '127.0.0.1', MAIL_SMTP_PORT: fake.port, MAIL_SMTP_TLS: 'starttls', MAIL_SMTP_USER: 'kino', MAIL_SMTP_PASSWORD: PASS, MAIL_FROM: FROM, ...patch };
@@ -134,10 +137,58 @@ describe('mail admin routes', () => {
     expect((await as(admin, 'GET', '/api/admin/mail/status')).json().transport).toBeNull();
   });
 
+  const failure = () => env.kv.set('mail:transport', JSON.stringify({ code: 'unreachable', at: new Date().toISOString() }), 600);
+  const testMail = (values?: Record<string, unknown>) => env.app.inject({ method: 'POST', url: '/api/admin/settings/test', cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: { group: 'mail', ...(values ? { values } : {}) } });
+
+  it('a test of unsaved values that probe ok keeps the failure of the saved settings', async () => {
+    const f = await useFake();
+    // the password is saved as a setting (not env-locked, so the test route may overlay it) and wrong
+    await env.ctx.settings.save({ MAIL_SMTP_PASSWORD: 'broken-saved' }, adminId);
+    expect(env.ctx.cfg.MAIL_SMTP_PASSWORD).toBe('broken-saved');
+    await failure();
+    await env.kv.incr('mail:transport:fails', 600);
+    const r = await testMail({ MAIL_SMTP_PASSWORD: PASS });
+    expect(r.json()).toMatchObject({ ok: true });
+    expect(r.json()).not.toHaveProperty('saved');
+    expect(f.auths).toBeGreaterThan(0);
+    expect(await env.kv.get('mail:transport')).not.toBeNull();
+    expect(await env.kv.get('mail:transport:fails')).not.toBeNull();
+  });
+
+  it('a test body that repeats the saved values clears the failure', async () => {
+    await useFake();
+    await env.ctx.settings.save({ MAIL_SMTP_PASSWORD: PASS }, adminId);
+    await failure();
+    const r = await testMail({ MAIL_SMTP_HOST: '127.0.0.1', MAIL_SMTP_PORT: env.ctx.cfg.MAIL_SMTP_PORT, MAIL_SMTP_USER: 'kino', MAIL_SMTP_PASSWORD: PASS });
+    expect(r.json()).toMatchObject({ ok: true });
+    expect(await env.kv.get('mail:transport')).toBeNull();
+  });
+
+  it('a queued test mail is audited with its code', async () => {
+    await useFake({}, { MAIL_SMTP_PASSWORD: undefined, MAIL_SMTP_USER: undefined });
+    await fake!.close();
+    const r = await as(admin, 'POST', '/api/admin/mail/test');
+    const body = r.json(); 
+    expect(body.state).toBe('queued');
+    expect(typeof body.code).toBe('string');
+    const meta = (await env.pool.query<{ meta: unknown }>("select meta from audit_log where action = 'mail.test'")).rows[0]!.meta;
+    expect(meta).toEqual({ state: 'queued', code: body.code });
+  });
+
   it('a failed settings test keeps the transport failure', async () => {
     await useFake({}, { MAIL_SMTP_PASSWORD: 'wrong' });
     await env.kv.set('mail:transport', JSON.stringify({ code: 'unreachable', at: new Date().toISOString() }), 600);
     await env.app.inject({ method: 'POST', url: '/api/admin/settings/test', cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: { group: 'mail' } });
     expect(await env.kv.get('mail:transport')).not.toBeNull();
+  });
+
+  it('the test mail route is limited to 10 per minute', async () => {
+    await useFake();
+    let last = 0;
+    for (let i = 0; i < 11; i++) {
+      await env.kv.del(`mail:test:${adminId}`); // the per-admin allowance is not what is tested here
+      last = (await as(admin, 'POST', '/api/admin/mail/test', '198.51.100.7')).statusCode;
+    }
+    expect(last).toBe(429);
   });
 });
