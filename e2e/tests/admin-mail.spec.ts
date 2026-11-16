@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { LEAK, mailConfigured } from '../mocks/settings.js';
-import { SERVER_IDS, result } from '../mocks/syscheck.js';
+import { syscheckWith } from '../mocks/syscheck.js';
 
 // Admin → Einstellungen → Benachrichtigungen → E-Mail (mail stage A): the SMTP settings, the status line (GET /api/admin/mail/status)
 // and *Testmail senden* (POST /api/admin/mail/test, to the admin's own address). Answers carry codes only; the mocks also carry a
@@ -89,6 +89,17 @@ test.describe('admin: e-mail', () => {
     await noLeak(page);
   });
 
+  test('Testen with a refused SMTP login names user name and password, not a key or token', async ({ page, api }) => {
+    mailConfigured(api.settings);
+    api.settings.testResult = { ok: false, code: 'unauthorized' };
+    await page.goto('/admin/settings?tab=notifications');
+    const mail = card(page, 'E-Mail');
+    await mail.getByRole('button', { name: 'Testen' }).click();
+    const alert = mail.getByRole('alert');
+    await expect(alert).toHaveText('Der Mailserver hat die Anmeldung abgelehnt – Benutzername und Passwort prüfen (bei vielen Anbietern ein eigenes App-Passwort).');
+    expect(api.settings.tests.map((t) => t.group)).toEqual(['mail']);
+  });
+
   test('status line shows the last failure with its SMTP status', async ({ page, api }) => {
     mailConfigured(api.settings);
     api.settings.mail.status = {
@@ -116,8 +127,7 @@ test.describe('admin: e-mail', () => {
   });
 
   test('Systemcheck shows the mail line', async ({ page, api }) => {
-    api.syscheck.result = result([
-      ...SERVER_IDS.map((id) => ({ id, status: 'ok' as const })),
+    api.syscheck.result = syscheckWith([
       { id: 'core.mail', status: 'problem', cause: 'mail_auth', fix: 'mail_auth', settingKey: 'MAIL_SMTP_PASSWORD', settingGroup: 'mail', docs: 'mail.md' },
     ]);
     await page.goto('/admin/status');

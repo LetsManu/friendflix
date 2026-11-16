@@ -376,10 +376,10 @@
           {/each}
           {#if probe}
             {#if probe.result.ok}
-              <p class="probe ok" role="status">{probeText(probe.result)}</p>
+              <p class="probe ok" role="status">{probeText(probe.result, g.id)}</p>
             {:else}
               <div class="probe err" role="alert">
-                <p>{probe.save ? $t('settings.probeFailed', { reason: probeText(probe.result) }) : probeText(probe.result)}</p>
+                <p>{probe.save ? $t('settings.probeFailed', { reason: probeText(probe.result, g.id) }) : probeText(probe.result, g.id)}</p>
                 {#if probe.save && SOFT_PROBE_CODES.has(probe.result.code)}
                   <p class="muted">{$t('settings.probeSoft')}</p>
                   <Button variant="secondary" size="sm" pending={$busyKeys.has(`set:save:${g.id}`)} on:click={() => save(g.id, true)}>{$t('settings.saveAnyway')}</Button>

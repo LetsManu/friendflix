@@ -158,9 +158,13 @@ export const errorText = (code: string, key?: string): string =>
   (key && /^[A-Z][A-Z0-9_]*$/.test(key) && /^[a-z_]+$/.test(code) && hasKey(`settings.keyErrors.${key}.${code}`) ? trDynamic(`settings.keyErrors.${key}.${code}`)
     : /^[a-z_]+$/.test(code) && hasKey(`settings.errors.${code}`) ? trDynamic(`settings.errors.${code}`) : tr('settings.errors.invalid'));
 
-/** Text of a probe result: the code's sentence plus the detail's, when there is one. */
-export function probeText(r: ProbeResult): string {
-  const code = hasKey(`settings.probe.${r.code}`) ? trDynamic(`settings.probe.${r.code}`) : tr('settings.probe.invalid');
+/**
+ * Text of a probe result: the code's sentence plus the detail's, when there is one. With the group, a group's own sentence for the code
+ * wins (`settings.probeGroup.<group>.<code>`: a refused SMTP login names user name and password, not a key or token).
+ */
+export function probeText(r: ProbeResult, group?: SettingGroup): string {
+  const own = group && hasKey(`settings.probeGroup.${group}.${r.code}`) ? `settings.probeGroup.${group}.${r.code}` : '';
+  const code = own ? trDynamic(own) : hasKey(`settings.probe.${r.code}`) ? trDynamic(`settings.probe.${r.code}`) : tr('settings.probe.invalid');
   const detail = r.detail && /^[a-z_]+$/.test(r.detail) && hasKey(`settings.probeDetail.${r.detail}`) ? trDynamic(`settings.probeDetail.${r.detail}`) : '';
   return detail ? `${code} ${detail}` : code;
 }

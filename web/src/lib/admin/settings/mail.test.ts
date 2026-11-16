@@ -131,4 +131,15 @@ describe('mail settings texts', () => {
     for (const d of ['insecure_auth', 'tls', 'no_user', 'not_set']) expect(hasKey(`settings.probeDetail.${d}`), d).toBe(true);
     expect(probeText({ ok: false, code: 'invalid', detail: 'no_user' })).toContain('Benutzername');
   });
+
+  it('a refused SMTP login on Testen names the mail login, not a key or token; other groups keep the generic text', () => {
+    const refused = { ok: false, code: 'unauthorized' as const };
+    expect(probeText(refused, 'mail')).toBe(tr('settings.probeGroup.mail.unauthorized'));
+    expect(probeText(refused, 'mail')).toContain('Benutzername und Passwort');
+    expect(probeText(refused, 'mail')).not.toMatch(/Schlüssel|Token/);
+    expect(probeText(refused, 'media')).toBe(tr('settings.probe.unauthorized'));
+    expect(probeText(refused)).toBe(tr('settings.probe.unauthorized'));
+    // a code without a group text falls back to the shared one, its detail still added
+    expect(probeText({ ok: false, code: 'invalid', detail: 'tls' }, 'mail')).toBe(`${tr('settings.probe.invalid')} ${tr('settings.probeDetail.tls')}`);
+  });
 });

@@ -67,6 +67,8 @@ export default {
     tls: 'Die verschlüsselte Verbindung kam nicht zustande (Zertifikat ungültig oder kein STARTTLS).',
     no_user: 'Ein Passwort ohne Benutzername wird nicht gesendet. Trag den Benutzernamen ein oder lösch das Passwort.',
   },
+  /** a probe text of one group that replaces the shared one (`probe.<code>`): the mail login is no key or token */
+  probeGroup: { mail: { unauthorized: 'Der Mailserver hat die Anmeldung abgelehnt – Benutzername und Passwort prüfen (bei vielen Anbietern ein eigenes App-Passwort).' } },
   errors: {
     invalid: 'Ungültiger Wert.',
     invalid_url: 'Bitte eine Adresse mit http:// oder https:// eingeben, ohne Benutzername und Passwort.',

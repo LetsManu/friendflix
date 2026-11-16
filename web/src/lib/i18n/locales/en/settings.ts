@@ -69,6 +69,8 @@ const settings: Translation<typeof de> = {
     tls: 'The encrypted connection could not be made (invalid certificate or no STARTTLS).',
     no_user: 'A password without a user name is not sent. Enter the user name or delete the password.',
   },
+  /** a probe text of one group that replaces the shared one (`probe.<code>`): the mail login is no key or token */
+  probeGroup: { mail: { unauthorized: 'The mail server refused the sign-in – check user name and password (with many providers, an app password of its own).' } },
   errors: {
     invalid: 'Invalid value.',
     invalid_url: 'Please enter an address starting with http:// or https://, without user name and password.',

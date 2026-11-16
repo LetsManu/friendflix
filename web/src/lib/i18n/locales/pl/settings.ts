@@ -74,6 +74,8 @@ const settings: Translation<typeof de> = {
     tls: 'Nie udało się nawiązać szyfrowanego połączenia (nieprawidłowy certyfikat lub brak STARTTLS).',
     no_user: 'Hasło bez nazwy użytkownika nie jest wysyłane. Wpisz nazwę użytkownika albo usuń hasło.',
   },
+  /** a probe text of one group that replaces the shared one (`probe.<code>`): the mail login is no key or token */
+  probeGroup: { mail: { unauthorized: 'Serwer poczty odrzucił logowanie – sprawdź nazwę użytkownika i hasło (u wielu dostawców osobne hasło do aplikacji).' } },
   errors: {
     invalid: 'Nieprawidłowa wartość.',
     invalid_url: 'Wpisz adres zaczynający się od http:// lub https://, bez nazwy użytkownika i hasła.',

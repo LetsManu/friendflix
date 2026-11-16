@@ -72,6 +72,8 @@ const settings: Translation<typeof de> = {
     tls: 'Şifreli bağlantı kurulamadı (geçersiz sertifika veya STARTTLS yok).',
     no_user: 'Kullanıcı adı olmayan bir parola gönderilmez. Kullanıcı adını gir ya da parolayı sil.',
   },
+  /** a probe text of one group that replaces the shared one (`probe.<code>`): the mail login is no key or token */
+  probeGroup: { mail: { unauthorized: 'E-posta sunucusu oturum açmayı reddetti – kullanıcı adını ve parolayı kontrol et (birçok sağlayıcıda ayrı bir uygulama parolası).' } },
   errors: {
     invalid: 'Geçersiz değer.',
     invalid_url: 'Lütfen http:// veya https:// ile başlayan, kullanıcı adı ve parola içermeyen bir adres gir.',

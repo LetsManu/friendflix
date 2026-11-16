@@ -73,6 +73,8 @@ const settings: Translation<typeof de> = {
     tls: 'La connexion chiffrée n’a pas pu être établie (certificat non valide ou pas de STARTTLS).',
     no_user: 'Un mot de passe sans nom d’utilisateur n’est pas envoyé. Saisis le nom d’utilisateur ou supprime le mot de passe.',
   },
+  /** a probe text of one group that replaces the shared one (`probe.<code>`): the mail login is no key or token */
+  probeGroup: { mail: { unauthorized: 'Le serveur de mail a refusé la connexion – vérifie le nom d’utilisateur et le mot de passe (chez beaucoup de fournisseurs, un mot de passe d’application dédié).' } },
   errors: {
     invalid: 'Valeur invalide.',
     invalid_url: 'Saisis une adresse commençant par http:// ou https://, sans nom d’utilisateur ni mot de passe.',

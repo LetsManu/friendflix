@@ -73,6 +73,8 @@ const settings: Translation<typeof de> = {
     tls: 'Non è stato possibile stabilire la connessione cifrata (certificato non valido o niente STARTTLS).',
     no_user: 'Una password senza nome utente non viene inviata. Inserisci il nome utente o cancella la password.',
   },
+  /** a probe text of one group that replaces the shared one (`probe.<code>`): the mail login is no key or token */
+  probeGroup: { mail: { unauthorized: 'Il server di posta ha rifiutato l’accesso: controlla nome utente e password (con molti provider, una password per le app dedicata).' } },
   errors: {
     invalid: 'Valore non valido.',
     invalid_url: 'Inserisci un indirizzo che inizi con http:// o https://, senza nome utente e password.',
