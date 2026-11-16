@@ -652,7 +652,7 @@ const dict: Translation<typeof de> = {
       role: 'Rol', from: 'Önce', to: 'Sonra', requestsPerMonth: 'Aylık istek', transcoding: 'Dönüştürmeye izin', maxHeight: 'Azami çözünürlük',
       download: 'İndirmelere izin', maxDownloads: 'Eşzamanlı indirme', downloadMaxHeight: 'Azami indirme kalitesi', downloadDays: 'Geçerlilik (gün)',
       authentik: 'Authentik', by: 'Onaylayan', sessions: 'Sonlandırılan oturumlar', language: 'Dil', count: 'Sayı', name: 'Başlık', leavesAt: 'Kalkış tarihi',
-      maxStreams: 'Eşzamanlı yayınlar', remoteBitrate: 'Ev dışı sınır', hasPin: 'PIN ayarlı',
+      maxStreams: 'Eşzamanlı yayınlar', remoteBitrate: 'Ev dışı sınır', hasPin: 'PIN ayarlı', fields: 'Alanlar', kind: 'Tür',
     },
     values: { yes: 'Evet', no: 'Hayır', unlimited: 'Sınırsız', ok: 'Tamam', failed: 'Başarısız', off: 'Kapalı', skipped: 'Atlandı', admin: 'Yönetici', self: 'Kendisi' },
   },

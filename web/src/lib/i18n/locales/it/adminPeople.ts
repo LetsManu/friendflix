@@ -652,7 +652,7 @@ const dict: Translation<typeof de> = {
       role: 'Ruolo', from: 'Prima', to: 'Dopo', requestsPerMonth: 'Richieste al mese', transcoding: 'Transcodifica consentita', maxHeight: 'Risoluzione max.',
       download: 'Download consentiti', maxDownloads: 'Download simultanei', downloadMaxHeight: 'Qualità max. di download', downloadDays: 'Validità (giorni)',
       authentik: 'Authentik', by: 'Approvato', sessions: 'Sessioni terminate', language: 'Lingua', count: 'Numero', name: 'Titolo', leavesAt: 'Esce il',
-      maxStreams: 'Stream simultanei', remoteBitrate: 'Limite fuori casa', hasPin: 'PIN impostato',
+      maxStreams: 'Stream simultanei', remoteBitrate: 'Limite fuori casa', hasPin: 'PIN impostato', fields: 'Campi', kind: 'Tipo',
     },
     values: { yes: 'Sì', no: 'No', unlimited: 'Illimitato', ok: 'OK', failed: 'Non riuscito', off: 'Disattivato', skipped: 'Saltato', admin: 'Admin', self: 'Sé stesso' },
   },

@@ -49,7 +49,7 @@
     {#if col.key === 'entry'}
       {@const a = describeActivity(row)}
       {@const rs = entrySentence(row, names)}
-      {@const details = auditDetails(row.meta)}
+      {@const details = auditDetails(row.meta, row.action)}
       <div class="ent">
         <span class="ic" aria-hidden="true"><Icon name={a.icon} size={16} /></span>
         <div class="tx">

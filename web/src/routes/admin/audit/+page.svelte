@@ -105,7 +105,7 @@
   <svelte:fragment slot="cell" let:row let:col>
     {#if col.key === 'entry'}
       {@const s = sentence(row)}
-      {@const details = auditDetails(row.meta)}
+      {@const details = auditDetails(row.meta, row.action)}
       {@const ar = auditArea(row.action)}
       <div class="ent">
         <span class="ic" aria-hidden="true"><Icon name={s.icon} size={16} /></span>

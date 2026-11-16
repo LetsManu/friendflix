@@ -652,7 +652,7 @@ const dict: Translation<typeof de> = {
       role: 'Rola', from: 'Przedtem', to: 'Potem', requestsPerMonth: 'Próśb miesięcznie', transcoding: 'Konwersja dozwolona', maxHeight: 'Maks. rozdzielczość',
       download: 'Pobieranie dozwolone', maxDownloads: 'Jednoczesne pobrania', downloadMaxHeight: 'Maks. jakość pobierania', downloadDays: 'Ważność (dni)',
       authentik: 'Authentik', by: 'Zatwierdzone', sessions: 'Zakończone sesje', language: 'Język', count: 'Liczba', name: 'Tytuł', leavesAt: 'Zniknie',
-      maxStreams: 'Jednoczesne odtworzenia', remoteBitrate: 'Limit poza domem', hasPin: 'PIN ustawiony',
+      maxStreams: 'Jednoczesne odtworzenia', remoteBitrate: 'Limit poza domem', hasPin: 'PIN ustawiony', fields: 'Pola', kind: 'Rodzaj',
     },
     values: { yes: 'Tak', no: 'Nie', unlimited: 'Bez limitu', ok: 'OK', failed: 'Nie powiodło się', off: 'Wyłączone', skipped: 'Pominięto', admin: 'Admin', self: 'Samodzielnie' },
   },

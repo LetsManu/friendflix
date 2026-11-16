@@ -652,7 +652,7 @@ const dict: Translation<typeof de> = {
       role: 'Rôle', from: 'Avant', to: 'Après', requestsPerMonth: 'Demandes par mois', transcoding: 'Transcodage autorisé', maxHeight: 'Résolution max.',
       download: 'Téléchargements autorisés', maxDownloads: 'Téléchargements simultanés', downloadMaxHeight: 'Qualité de téléchargement max.', downloadDays: 'Validité (jours)',
       authentik: 'Authentik', by: 'Approuvé', sessions: 'Sessions terminées', language: 'Langue', count: 'Nombre', name: 'Titre', leavesAt: 'Retiré le',
-      maxStreams: 'Flux simultanés', remoteBitrate: 'Limite hors du domicile', hasPin: 'PIN défini',
+      maxStreams: 'Flux simultanés', remoteBitrate: 'Limite hors du domicile', hasPin: 'PIN défini', fields: 'Champs', kind: 'Type',
     },
     values: { yes: 'Oui', no: 'Non', unlimited: 'Illimité', ok: 'OK', failed: 'Échec', off: 'Désactivé', skipped: 'Ignoré', admin: 'Admin', self: 'Lui-même' },
   },

@@ -4,7 +4,10 @@
   /**
    * The accent of Admin → Branding: six presets (a radiogroup of 44 px swatches, arrow keys move the choice), the own colour as hex
    * text and the browser's colour picker, and the contrast readout of the derived tokens (model.ts ratioRows: accent text on the dark
-   * page, white on the buttons, accent text on light glass; "angepasst" when a shade had to move). The error line keeps its room.
+   * page, white on the buttons, accent text on light glass; "angepasst" when a shade had to move). Nothing moves: the error line keeps
+   * one line (clamped, its whole text in `title`), and each readout row keeps the room of "· angepasst" whether it shows or not (the
+   * ratio has a fixed width too), so a label wraps the same way in every state.
+   * `leave` fires when the hex field is left (the page shows its message from then on).
    */
   import { createEventDispatcher } from 'svelte';
   import Icon from '#lib/Icon.svelte';
@@ -17,7 +20,7 @@
   /** the tokens of the last valid accent */
   export let tokens: BrandTokens;
   export let error = '';
-  const dispatch = createEventDispatcher<{ change: string }>();
+  const dispatch = createEventDispatcher<{ change: string; leave: void }>();
 
   $: hex = normalizeAccent(value);
   $: rows = ratioRows(tokens);
@@ -53,17 +56,18 @@
     <div class="own field" class:has-err={!!error}>
       <label class="sr-only" for="bf-accent">{$t('admin.branding.colors.hex')}</label>
       <input id="bf-accent" type="text" class="hex" value={value} maxlength={16} spellcheck="false" autocomplete="off" aria-invalid={error ? 'true' : undefined}
-        aria-describedby="bf-accent-m" on:input={(e) => dispatch('change', e.currentTarget.value)} />
+        aria-describedby="bf-accent-m" on:input={(e) => dispatch('change', e.currentTarget.value)} on:blur={() => dispatch('leave')} />
       <input type="color" class="pick" value={pickerValue} aria-label={$t('admin.branding.colors.picker')} on:input={(e) => dispatch('change', e.currentTarget.value)} />
     </div>
   </div>
-  <p class="msg" id="bf-accent-m">{#if error}<span class="err" role="alert">{error}</span>{/if}</p>
+  <p class="msg" id="bf-accent-m">{#if error}<span class="err" role="alert" title={error}>{error}</span>{/if}</p>
   <ul class="ratios" aria-label={$t('admin.branding.colors.contrast')}>
     {#each rows as r (r.id)}
       <li class:adj={r.adjusted}>
         <span class="ic" aria-hidden="true"><Icon name={r.adjusted ? 'alert' : 'check'} size={18} /></span>
         <span class="rl">{$t(label(r.id))}</span>
-        <span class="rv">{ratioText(r.ratio)}{#if r.adjusted}{` · ${$t('admin.branding.colors.adjusted')}`}{/if}</span>
+        <!-- "· angepasst" is always laid out (hidden when not adjusted): the row never changes width or height -->
+        <span class="rv"><span class="num">{ratioText(r.ratio)}</span><span class="sfx" class:off={!r.adjusted} aria-hidden={r.adjusted ? undefined : 'true'}>{` · ${$t('admin.branding.colors.adjusted')}`}</span></span>
       </li>
     {/each}
   </ul>
@@ -82,11 +86,14 @@
   .own { display: flex; flex-direction: row; gap: 8px; align-items: center; }
   .hex { width: 8.5rem; font-variant-numeric: tabular-nums; }
   .pick { width: 44px; height: 44px; min-height: 44px; padding: 2px; border-radius: 12px; cursor: pointer; background: rgba(var(--fr-scrim-rgb), .35); border: 1px solid var(--fr-line); }
-  .msg { margin: 0; min-height: 1.35em; font-size: .85rem; }
-  .err { color: var(--err); font-weight: 600; }
+  .msg { margin: 0; height: 1.4em; line-height: 1.4; font-size: .85rem; overflow: hidden; }
+  .err { display: block; color: var(--err); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ratios { list-style: none; margin: .2rem 0 0; padding: 0; display: grid; gap: .35rem; }
   .ratios li { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 24px; font-size: .88rem; color: rgba(255, 255, 255, .85); }
   .ic, .rv { color: var(--ok); }
   .adj .ic, .adj .rv { color: var(--warn); }
   .rv { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+  /* "21,0:1" is the widest ratio */
+  .num { display: inline-block; min-width: 6.2ch; text-align: end; }
+  .sfx.off { visibility: hidden; }
 </style>

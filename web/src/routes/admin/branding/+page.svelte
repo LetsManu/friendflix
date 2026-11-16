@@ -4,15 +4,20 @@
   /**
    * Admin → Branding (branding spec; stage A Task 4): the tabs Identität, Logo & Symbol and Farben & Stimmung (Texte, Rechtliches & Hilfe
    * and Teilen & E-Mails come with stage B) beside a live preview (Desktop, Telefon, TV, Anmeldung) of the staged values.
-   * - Edits are staged (lib/admin/branding/model.ts) and checked while typing; the save bar (the rights' SaveBar) saves only the changed
-   *   fields with the rev the page loaded (`PUT /api/admin/brand`). A field error opens its tab and focuses the field instead.
+   * - Edits are staged (lib/admin/branding/model.ts). A field's message shows once the field was left (blur) or a save was tried, and
+   *   then follows the typing; never on the first keystroke. The save bar (the rights' SaveBar) saves only the changed fields with the
+   *   rev the page loaded (`PUT /api/admin/brand`). A field error opens its tab and focuses the field instead. While a save runs the
+   *   form and the reset are disabled, so no edit is made that the answer would overwrite.
    * - A 409 `brand_conflict` (another admin saved meanwhile) loads the newer brand, keeps this admin's edits on top of it and says so in
-   *   the bar; a 400 `invalid` names its field (an image swept before the save: upload it again).
+   *   the bar (or that nothing is left to save, or that the newer brand could not be loaded); a 400 `invalid` names its field (an image
+   *   swept before the save: upload it again) and focuses it (the image row's *Hochladen*, a choice's chosen segment).
    * - Uploads are prepared in the browser (imageResize.ts: the symbol cropped to 512 × 512, the others fitted; re-encoded, so a JPEG is
    *   sent as PNG), uploaded at once (`PUT /api/admin/brand/image/:kind`) and their hash is staged; the save sets them.
    * - After a save or a reset the page's own brand reloads (lib/brand.ts loadBrand), so this tab shows it at once.
    * - *Auf Standard zurücksetzen* asks first, then `POST /api/admin/brand/reset` with the rev. Leaving the page with edits asks too.
-   * Nothing jumps: every message line keeps its room, the preview frame has a fixed size, the page end keeps the save bar's room.
+   * Nothing jumps: every message line keeps its room (two lines under a text field, clamped, the whole text in `title` and read through
+   * aria-describedby), the two-column fields follow the form column's width (a container query), the preview frame has a fixed size,
+   * the page end keeps the save bar's room.
    */
   import { onMount, tick } from 'svelte';
   import { api, apiCode, ApiError } from '#lib/api';
@@ -49,6 +54,9 @@
   let tab: BrandTab = 'identity';
   let view: PreviewView = 'desktop';
   let saving = false, barError: string | null = null;
+  /** the fields whose message shows (left once, or every field after a save was tried) */
+  let shown = new Set<FieldKey>();
+  let attempted = false;
   let lastAccent = DEFAULT_BRAND.accent;
   /** per upload: working, its note, or its error */
   let uploads: Partial<Record<BrandImageKind, { busy: boolean; text: string; error: boolean }>> = {};
@@ -64,13 +72,19 @@
   $: count = Object.keys(diff).length;
   $: dirty = dirtyTabs(diff);
   $: local = validate(staged);
-  $: errors = { ...local, ...serverErrors } as Partial<Record<FieldKey, string>>;
+  $: errors = { ...visible(local, shown, attempted), ...serverErrors } as Partial<Record<FieldKey, string>>;
   $: pb = previewBrand(staged, urls, lastAccent);
   $: barText = $t('admin.branding.saveBar', { n: count });
 
   leaveGuard((nav) => leavesRoute(nav) && count > 0, () => ({
     title: tr('admin.branding.leave.title'), body: tr('admin.branding.leave.body'), danger: true, confirmLabel: tr('admin.branding.leave.confirm'),
   }));
+
+  /** the local errors the admin is shown: a field's once it was left, all of them once a save was tried */
+  function visible(e: Partial<Record<FieldKey, string>>, sh: Set<FieldKey>, all: boolean): Partial<Record<FieldKey, string>> {
+    return all ? e : Object.fromEntries(Object.entries(e).filter(([k]) => sh.has(k as FieldKey)));
+  }
+  const leave = (k: FieldKey) => { if (!shown.has(k)) shown = new Set([...shown, k]); };
 
   /** the answer's images by field (the URLs carry the stored type's extension) */
   function take(a: AdminAnswer, keepEdits: Partial<PublicBrand> | null) {
@@ -114,44 +128,53 @@
   const selectView = (v: string) => { view = v as PreviewView; };
   function showTab(v: BrandTab, el: HTMLElement) { tab = v; el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
 
-  /** opens a field's tab and focuses it */
+  /** opens a field's tab and focuses it: the input, an image row's *Hochladen*, a choice's chosen segment (else its first) */
   async function reveal(k: FieldKey) {
     tab = FIELD_TAB[k];
     await tick();
-    const el = document.getElementById(`bf-${k}`) ?? document.querySelector<HTMLElement>(`[data-field="${k}"] button`);
+    const el = document.getElementById(`bf-${k}`)
+      ?? document.querySelector<HTMLElement>(`[data-field="${k}"] [aria-checked="true"]`)
+      ?? document.querySelector<HTMLElement>(`[data-field="${k}"] button`);
     el?.focus();
   }
 
   // ---- save, conflict, reset ----
   async function save() {
     if (saving || count === 0) return;
+    attempted = true;
     const first = firstError(validate(staged));
     if (first) { barError = null; await reveal(first); return; }
     const sent = diff;
     saving = true;
     barError = null;
+    /** the field the server named: focused once the form is enabled again */
+    let named: FieldKey | null = null;
     try {
       take(await api<AdminAnswer>('/api/admin/brand', { method: 'PUT', body: { rev, brand: sent } }), null);
       serverErrors = {};
       uploads = {};
+      shown = new Set();
+      attempted = false;
       toast.success(tr('admin.branding.saved'));
       void loadBrand(); // this tab's own brand (and the other tabs on their next visibility check)
     } catch (e) {
       const code = apiCode(e);
       if (code === 'brand_conflict') {
-        // another admin saved: their brand underneath, these edits on top (fields they both changed keep this admin's value)
-        await load(sent);
-        barError = tr('admin.branding.conflict');
+        // another admin saved: their brand underneath, these edits on top (fields they both changed keep this admin's value);
+        // the same changes as theirs leave nothing to save; a failed reload keeps the old rev and says so
+        if (!(await load(sent))) barError = tr('admin.branding.conflictLoadFailed');
+        else barError = tr(Object.keys(stagedDiff(saved, staged)).length ? 'admin.branding.conflict' : 'admin.branding.conflictNone');
       } else if (code === 'invalid' && e instanceof ApiError && typeof e.body?.field === 'string' && serverFieldError(e.body.field)) {
         const fe = serverFieldError(e.body.field)!;
         serverErrors = { ...serverErrors, [fe.field]: fe.text };
-        await reveal(fe.field);
+        named = fe.field;
       } else {
         barError = tr('admin.branding.saveFailed');
       }
     } finally {
       saving = false;
     }
+    if (named) await reveal(named);
   }
 
   function discard() {
@@ -159,16 +182,21 @@
     serverErrors = {};
     uploads = {};
     barError = null;
+    shown = new Set();
+    attempted = false;
   }
 
   async function reset() {
     const ok = await confirm({ title: tr('admin.branding.resetTitle'), body: tr('admin.branding.resetBody'), danger: true, confirmLabel: tr('admin.branding.resetConfirm') });
-    if (!ok) return;
+    if (!ok || saving) return;
+    saving = true;
     try {
       take(await api<AdminAnswer>('/api/admin/brand/reset', { method: 'POST', body: { rev } }), null);
       serverErrors = {};
       uploads = {};
       barError = null;
+      shown = new Set();
+      attempted = false;
       toast.success(tr('admin.branding.resetDone'));
       void loadBrand();
     } catch (e) {
@@ -176,6 +204,8 @@
         await load(null);
         toast.error(tr('admin.branding.conflictReset'));
       } else toast.error(tr('admin.branding.resetFailed'));
+    } finally {
+      saving = false;
     }
   }
 
@@ -244,7 +274,7 @@
         </div>
         <div id="bp-panel" role="tabpanel" aria-labelledby="bt-{tab}" class="panel-wrap">
           {#key tab}
-          <div class="pane">
+          <fieldset class="pane" disabled={saving}>
           {#if tab === 'identity'}
             <AdminCard title={$t('admin.branding.identity.title')}>
               <div class="grid">
@@ -255,9 +285,9 @@
                     <label for="bf-{f.k}">{$t(f.label)}</label>
                     <input id="bf-{f.k}" type={'type' in f ? f.type : 'text'} value={val} maxlength={LIMITS[f.k] * 4} autocomplete="off" spellcheck={f.k !== 'website'}
                       placeholder={'placeholder' in f ? $t(f.placeholder) : undefined} aria-invalid={err ? 'true' : undefined} aria-describedby="bf-{f.k}-m"
-                      on:input={(e) => set(f.k, textValue(e))} />
+                      on:input={(e) => set(f.k, textValue(e))} on:blur={() => leave(f.k)} />
                     <p class="msg" id="bf-{f.k}-m">
-                      {#if err}<span class="err" role="alert">{err}</span>
+                      {#if err}<span class="err" role="alert" title={err}>{err}</span>
                       {:else}<span>{'hint' in f ? $t(f.hint) : ''}</span>{#if f.k !== 'website'}<span class="cnt">{$t('admin.branding.identity.count', { n: charCount(String(val).trim()), max: LIMITS[f.k] })}</span>{/if}{/if}
                     </p>
                   </div>
@@ -265,9 +295,9 @@
                 <div class="field fld" class:has-err={!!errors.about}>
                   <label for="bf-about">{$t('admin.branding.identity.about')}</label>
                   <textarea id="bf-about" rows="3" value={staged.about} maxlength={LIMITS.about * 4} aria-invalid={errors.about ? 'true' : undefined} aria-describedby="bf-about-m"
-                    on:input={(e) => set('about', textValue(e))}></textarea>
+                    on:input={(e) => set('about', textValue(e))} on:blur={() => leave('about')}></textarea>
                   <p class="msg" id="bf-about-m">
-                    {#if errors.about}<span class="err" role="alert">{errors.about}</span>{:else}<span></span><span class="cnt">{$t('admin.branding.identity.count', { n: charCount(staged.about.trim()), max: LIMITS.about })}</span>{/if}
+                    {#if errors.about}<span class="err" role="alert" title={errors.about}>{errors.about}</span>{:else}<span></span><span class="cnt">{$t('admin.branding.identity.count', { n: charCount(staged.about.trim()), max: LIMITS.about })}</span>{/if}
                   </p>
                 </div>
               </div>
@@ -281,9 +311,9 @@
                     on:change={(e) => { set('header', e.detail as BrandHeader); view = 'desktop'; }} />
                   <p class="msg">{staged.header === 'logo' && !staged.logo ? $t('admin.branding.logo.headerLogoMissing') : ''}</p>
                 </div>
-                <ImageField kind="logo" wide title={$t('admin.branding.logo.logoTitle')} help={$t('admin.branding.logo.logoHelp')} url={staged.logo ? urls.logo ?? null : null}
+                <ImageField kind="logo" uploadId="bf-logo" wide title={$t('admin.branding.logo.logoTitle')} help={$t('admin.branding.logo.logoHelp')} url={staged.logo ? urls.logo ?? null : null}
                   busy={uploads.logo?.busy ?? false} status={ls.text} error={ls.error} on:pick={(e) => pick('logo', e.detail)} on:remove={() => removeImage('logo')} />
-                <ImageField kind="symbol" title={$t('admin.branding.logo.symbolTitle')} help={$t('admin.branding.logo.symbolHelp')} url={pb.images.symbol ?? null}
+                <ImageField kind="symbol" uploadId="bf-symbol" title={$t('admin.branding.logo.symbolTitle')} help={$t('admin.branding.logo.symbolHelp')} url={pb.images.symbol ?? null}
                   busy={uploads.symbol?.busy ?? false} status={ss.text || (pb.images.symbol ? '' : $t('admin.branding.logo.symbolNone'))} error={ss.error}
                   on:pick={(e) => pick('symbol', e.detail)} on:remove={() => removeImage('symbol')} />
                 <div class="crop" role="group" aria-label={$t('admin.branding.logo.crop')} style={previewVars(pb)}>
@@ -300,14 +330,14 @@
             <AdminCard title={$t('admin.branding.colors.title')}>
               <div class="stack">
                 <div data-field="accent">
-                  <Swatches value={staged.accent} tokens={pb.tokens} error={errors.accent ?? ''} on:change={(e) => set('accent', e.detail)} />
+                  <Swatches value={staged.accent} tokens={pb.tokens} error={errors.accent ?? ''} on:change={(e) => set('accent', e.detail)} on:leave={() => leave('accent')} />
                 </div>
                 <div data-field="glow"><Seg label={$t('admin.branding.colors.glow')} options={glowOptions($t)} value={staged.glow} on:change={(e) => set('glow', e.detail as BrandGlow)} /></div>
                 <div data-field="signInBg">
                   <Seg label={$t('admin.branding.colors.signIn')} options={signInOptions($t)} value={staged.signInBg}
                     on:change={(e) => { set('signInBg', e.detail as BrandSignInBg); view = 'signIn'; }} />
                 </div>
-                <ImageField kind="signIn" wide title={$t('admin.branding.colors.signInImage')} help={$t('admin.branding.colors.signInImageHelp')}
+                <ImageField kind="signIn" uploadId="bf-signInImage" wide title={$t('admin.branding.colors.signInImage')} help={$t('admin.branding.colors.signInImageHelp')}
                   url={staged.signInImage ? urls.signInImage ?? null : null} busy={uploads.signIn?.busy ?? false}
                   status={si.text || (staged.signInBg === 'image' && !staged.signInImage ? $t('admin.branding.colors.signInImageMissing') : '')} error={si.error}
                   on:pick={(e) => { view = 'signIn'; void pick('signInImage', e.detail); }} on:remove={() => removeImage('signInImage')} />
@@ -315,7 +345,7 @@
               </div>
             </AdminCard>
           {/if}
-          </div>
+          </fieldset>
           {/key}
         </div>
       </div>
@@ -325,17 +355,17 @@
           <h2 id="bp-pv-h" class="cap">{$t('admin.branding.preview.title')}</h2>
           <div class="pts" role="tablist" aria-label={$t('admin.branding.preview.title')}>
             {#each PREVIEW_VIEWS as k (k)}
-              <button type="button" role="tab" id="bv-{k}" class="pt" class:on={view === k} aria-selected={view === k} tabindex={view === k ? 0 : -1}
+              <button type="button" role="tab" id="bv-{k}" class="pt" class:on={view === k} aria-selected={view === k} aria-controls="bp-pv-frame" tabindex={view === k ? 0 : -1}
                 on:click={() => (view = k)} on:keydown={(e) => tabKey(e, PREVIEW_VIEWS, view, selectView, 'bv-')}>{$t(viewLabel(k))}</button>
             {/each}
           </div>
         </div>
-        <Preview b={pb} {view} labelledby="bv-{view}" />
-        <div class="reset"><Button variant="ghost" icon="refresh" on:click={reset}>{$t('admin.branding.reset')}</Button></div>
+        <Preview b={pb} {view} id="bp-pv-frame" labelledby="bv-{view}" />
+        <div class="reset"><Button variant="ghost" icon="refresh" disabled={saving} on:click={reset}>{$t('admin.branding.reset')}</Button></div>
       </section>
     </div>
     <SaveBar count={count} text={barText} busy={saving} progress={null} error={barError} saveLabel={$t('admin.branding.save')}
-      on:discard={discard} on:review={save} on:retry={save} />
+      retry={false} on:discard={discard} on:review={save} />
   {/if}
 </div>
 
@@ -345,7 +375,8 @@
   .intro { margin: 0 0 1rem; color: var(--mut); max-width: 60ch; }
   .cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
   @media (min-width: 1180px) { .cols { grid-template-columns: minmax(0, 480px) minmax(0, 1fr); gap: 1.75rem; align-items: start; } }
-  .form { min-width: 0; }
+  /* the identity grid follows this column's width, not the window's (beside the preview it is 480 px wide on any desktop) */
+  .form { min-width: 0; container: bform / inline-size; }
 
   /* the tabs as in the mockup: pills, the chosen one light; on a phone the row scrolls sideways inside itself */
   .tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-bottom: .9rem; padding: 2px; max-width: 100%; }
@@ -358,19 +389,20 @@
   .dot.on { opacity: 1; }
   .tab.on .dot { background: #8a5a00; }
   .panel-wrap { outline: none; min-width: 0; }
-  .pane { animation: bp-in 160ms linear both; }
+  .pane { animation: bp-in 160ms linear both; margin: 0; padding: 0; border: 0; min-width: 0; }
   @keyframes bp-in { from { opacity: 0; } to { opacity: 1; } }
 
   .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: .3rem 12px; }
-  @media (min-width: 560px) { .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .grid > .fld:not(.half) { grid-column: 1 / -1; } }
+  @container bform (min-width: 640px) { .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .grid > .fld:not(.half) { grid-column: 1 / -1; } }
   .fld { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
   .fld label { font-weight: 700; color: rgba(255, 255, 255, .85); }
   .fld input, .fld textarea { width: 100%; }
   textarea { resize: vertical; min-height: 5.5rem; line-height: 1.4; }
-  /* a field's line keeps its room: the counter (or a hint) until an error takes its place */
-  .msg { margin: 0; min-height: 1.35em; display: flex; justify-content: space-between; gap: .6rem; font-size: .82rem; color: rgba(255, 255, 255, .72); }
+  /* a field's line keeps its room: the counter (or a hint) until an error takes its place. Two lines are always kept (the longest
+     message in the narrowest column), a longer one is clamped (its whole text in `title`, and read in full through aria-describedby) */
+  .msg { margin: 0; height: 2.7em; line-height: 1.35; overflow: hidden; display: flex; align-items: flex-start; justify-content: space-between; gap: .6rem; font-size: .82rem; color: rgba(255, 255, 255, .72); }
   .cnt { font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .err { color: var(--err); font-weight: 600; }
+  .err { color: var(--err); font-weight: 600; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
   .help { margin: .6rem 0 0; font-size: .88rem; color: rgba(255, 255, 255, .78); line-height: 1.45; }
   .stack { display: grid; gap: 1rem; min-width: 0; }
   .stack .msg { margin-top: .4rem; }

@@ -23,6 +23,8 @@
   export let error = false;
   /** the thumbnail's shape: wide (the logo, the sign-in image) or square (the symbol) */
   export let wide = false;
+  /** the id of *Hochladen* (the page focuses it when the server names this image) */
+  export let uploadId: string | undefined = undefined;
 
   const dispatch = createEventDispatcher<{ pick: File; remove: void }>();
   let input: HTMLInputElement | undefined;
@@ -41,7 +43,7 @@
     </span>
     <span class="txt"><b>{title}</b><span class="help">{help}</span></span>
     <span class="acts">
-      <Button variant="secondary" size="sm" icon="arrow-up" pending={busy} aria-label={$t('admin.branding.logo.uploadA11y', { what: title })} on:click={() => input?.click()}>{$t('admin.branding.logo.upload')}</Button>
+      <Button id={uploadId} variant="secondary" size="sm" icon="arrow-up" pending={busy} aria-label={$t('admin.branding.logo.uploadA11y', { what: title })} on:click={() => input?.click()}>{$t('admin.branding.logo.upload')}</Button>
       <!-- always there (disabled without an image): the row never changes width -->
       <Button variant="ghost" size="sm" disabled={busy || !url} aria-label={$t('admin.branding.logo.removeA11y', { what: title })} on:click={() => dispatch('remove')}>{$t('admin.branding.logo.remove')}</Button>
     </span>
@@ -65,6 +67,6 @@
   .file { display: none; }
   .status { margin: .35rem 0 0; min-height: 2.6em; font-size: .85rem; color: rgba(255, 255, 255, .8); }
   .status span { display: inline-flex; gap: .4rem; align-items: flex-start; }
-  .status .err { color: #ffbdbd; font-weight: 600; }
+  .status .err { color: var(--err); font-weight: 600; }
   .status :global(svg) { flex: none; margin-top: .1rem; }
 </style>

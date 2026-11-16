@@ -23,6 +23,8 @@
   export let view: PreviewView;
   /** the id of the tab that labels this panel */
   export let labelledby: string;
+  /** the frame's id (the preview tabs' aria-controls) */
+  export let id: string | undefined = undefined;
 
   $: vars = previewVars(b);
   $: glow = glowBackground(b.brand.glow, b.tokens);
@@ -34,7 +36,7 @@
   $: tiles = Array.from({ length: 18 }, (_, i) => (i % 3 === 0 ? pal.art[i % pal.art.length] : ['#2b3f4c', '#3d2a3f', '#2f3a2c', '#43352a', '#2a3a45', '#3a2f45'][i % 6]));
 </script>
 
-<div class="frame" data-pv-frame role="tabpanel" aria-labelledby={labelledby} style={vars}>
+<div class="frame" {id} data-pv-frame role="tabpanel" aria-labelledby={labelledby} style={vars}>
   <div class="glow" style:background={glow}></div>
   {#key view}
     <div class="pane">

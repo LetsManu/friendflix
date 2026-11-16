@@ -8,8 +8,12 @@
  *   512 on its shorter side;
  * - the logo: fit within 2048 × 512; the sign-in image: fit within 2560 × 1600 (never upscaled).
  * The result is a PNG. A logo or sign-in photo whose PNG is over 2 MB is tried as WebP (where the browser encodes it), then drawn smaller
- * in steps of a fifth, until it fits. The size maths is pure and unit-tested; `prepareImage` needs a browser.
+ * in steps of a fifth, until it fits (`encodeFitting`, unit-tested with a fake encoder). Before anything is decoded, the file's header
+ * gives its size (imageSize.ts): a side over 12 000 px is refused without decoding it. The size maths is pure and unit-tested;
+ * `prepareImage` needs a browser.
  */
+
+import { readImageSize, type ImageSize } from './imageSize';
 
 export type BrandImageKind = 'symbol' | 'logo' | 'signIn';
 
@@ -59,6 +63,37 @@ function encode(canvas: HTMLCanvasElement, type: string, quality?: number): Prom
   return new Promise((resolve) => canvas.toBlob((b) => resolve(b), type, quality));
 }
 
+/** draws a plan and encodes it as `type` (a canvas in the browser, a fake in the tests); null when the browser could not */
+export type Encoder = (p: DrawPlan, type: 'image/png' | 'image/webp', quality?: number) => Promise<Blob | null>;
+
+/**
+ * The first encoding of `first` that fits in 2 MB: PNG; then (not the symbol) WebP at .9 and .8, then everything again a fifth smaller.
+ * The browser's own type is checked (Safari answers a WebP request with a PNG). null: nothing fitted (or the picture is down to 1 px).
+ */
+export async function encodeFitting(first: DrawPlan, kind: BrandImageKind, enc: Encoder): Promise<{ blob: Blob; width: number; height: number } | null> {
+  let p = first;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const png = await enc(p, 'image/png');
+    if (png && png.type === 'image/png' && png.size <= MAX_UPLOAD_BYTES) return { blob: png, width: p.w, height: p.h };
+    if (kind === 'symbol') break; // 512 × 512 always fits; nothing smaller is allowed
+    for (const q of [0.9, 0.8]) {
+      const webp = await enc(p, 'image/webp', q);
+      if (webp && webp.type === 'image/webp' && webp.size <= MAX_UPLOAD_BYTES) return { blob: webp, width: p.w, height: p.h };
+    }
+    const s = shrink(p);
+    if (s.w === p.w && s.h === p.h) break;
+    p = { ...p, ...s };
+  }
+  return null;
+}
+
+/** the header's size of a picked file (the first 64 KB; a JPEG whose frame header lies further in: the whole file) */
+async function headerSize(file: Blob): Promise<ImageSize | null> {
+  const head = readImageSize(new Uint8Array(await file.slice(0, 65536).arrayBuffer()));
+  if (head || file.size <= 65536) return head;
+  return readImageSize(new Uint8Array(await file.arrayBuffer()));
+}
+
 /** draws `p` of `src` onto a fresh canvas of p.w × p.h (high-quality smoothing) */
 function draw(src: CanvasImageSource, p: DrawPlan): HTMLCanvasElement {
   const c = document.createElement('canvas');
@@ -76,6 +111,15 @@ function draw(src: CanvasImageSource, p: DrawPlan): HTMLCanvasElement {
 export async function prepareImage(file: File, kind: BrandImageKind): Promise<Prepared> {
   if (!(PICK_TYPES as readonly string[]).includes(file.type)) return { ok: false, error: 'type' };
   if (file.size > MAX_SOURCE_BYTES) return { ok: false, error: 'large' };
+  // the size from the header, before anything is decoded
+  let head: ImageSize | null;
+  try {
+    head = await headerSize(file);
+  } catch {
+    head = null;
+  }
+  if (!head) return { ok: false, error: 'read' };
+  if (head.width > MAX_SOURCE_SIDE || head.height > MAX_SOURCE_SIDE) return { ok: false, error: 'large', width: head.width, height: head.height };
   let bmp: ImageBitmap;
   try {
     bmp = await createImageBitmap(file);
@@ -87,21 +131,14 @@ export async function prepareImage(file: File, kind: BrandImageKind): Promise<Pr
     if (width > MAX_SOURCE_SIDE || height > MAX_SOURCE_SIDE) return { ok: false, error: 'large', width, height };
     const first = plan(kind, width, height);
     if ('error' in first) return { ok: false, error: 'small', width, height };
-    let p = first;
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const canvas = draw(bmp, p);
-      const png = await encode(canvas, 'image/png');
-      if (png && png.type === 'image/png' && png.size <= MAX_UPLOAD_BYTES) return { ok: true, blob: png, width: p.w, height: p.h };
-      if (kind === 'symbol') break; // 512 × 512 always fits; nothing smaller is allowed
-      for (const q of [0.9, 0.8]) {
-        const webp = await encode(canvas, 'image/webp', q);
-        if (webp && webp.type === 'image/webp' && webp.size <= MAX_UPLOAD_BYTES) return { ok: true, blob: webp, width: p.w, height: p.h };
-      }
-      const s = shrink(p);
-      if (s.w === p.w && s.h === p.h) break;
-      p = { ...p, ...s };
-    }
-    return { ok: false, error: 'tooLarge' };
+    // one canvas per size: the PNG and both WebP tries of a size share it
+    let canvas: HTMLCanvasElement | null = null, drawn: DrawPlan | null = null;
+    const enc: Encoder = (p, type, quality) => {
+      if (!canvas || drawn !== p) { canvas = draw(bmp, p); drawn = p; }
+      return encode(canvas, type, quality);
+    };
+    const out = await encodeFitting(first, kind, enc);
+    return out ? { ok: true, ...out } : { ok: false, error: 'tooLarge' };
   } catch {
     return { ok: false, error: 'read' };
   } finally {

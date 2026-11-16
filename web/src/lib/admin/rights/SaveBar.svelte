@@ -33,6 +33,8 @@
   export let error: string | null;
   /** the primary button's label (default: the roles' *Überprüfen …*, which opens a review; Admin → Branding saves at once) */
   export let saveLabel: string | null = null;
+  /** offer *Erneut anwenden* after an error (Admin → Branding: no, its one save button tries again; nothing to save: only *Schließen*) */
+  export let retry = true;
 
   const dispatch = createEventDispatcher<{ discard: void; review: void; retry: void }>();
   let box: HTMLDivElement | undefined;
@@ -73,7 +75,7 @@
           {:else if error !== null}
             <Button variant="ghost" on:click={() => dispatch('discard')}>{$t('common.close')}</Button>
           {/if}
-          {#if error !== null}<Button variant={count > 0 ? 'secondary' : 'primary'} icon="refresh" on:click={() => dispatch('retry')}>{$t('adminPeople.roles.applyAgain')}</Button>{/if}
+          {#if error !== null && retry}<Button variant={count > 0 ? 'secondary' : 'primary'} icon="refresh" on:click={() => dispatch('retry')}>{$t('adminPeople.roles.applyAgain')}</Button>{/if}
           {#if count > 0}<Button on:click={() => dispatch('review')}>{saveLabel ?? $t('adminPeople.roles.review')}</Button>{/if}
         </div>
       {/if}
