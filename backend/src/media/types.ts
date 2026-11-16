@@ -37,6 +37,19 @@ export class MediaSetupError extends Error {
 // ---------------------------------------------------------------- capabilities
 
 export type SegmentType = 'intro' | 'outro' | 'recap' | 'preview';
+/**
+ * The libraries a name stored in a role picks (access control: a role's library names become the identity's folders / sections). Every
+ * library of exactly that name; else, so a name stored in another case keeps working, the one library whose name matches without regard to
+ * case and surrounding spaces. When two or more do ("FILME" with "Filme" and "filme" on the server) it picks none: fail closed.
+ */
+export function librariesNamed<T>(name: string, libs: readonly T[], nameOf: (l: T) => string): T[] {
+  const exact = libs.filter((l) => nameOf(l) === name);
+  if (exact.length) return exact;
+  const fold = (s: string) => s.trim().toLowerCase();
+  const loose = libs.filter((l) => fold(nameOf(l)) === fold(name));
+  return loose.length === 1 ? loose : [];
+}
+
 export const SEGMENT_TYPES: readonly SegmentType[] = ['intro', 'outro', 'recap', 'preview'];
 
 /** What the configured server can do. The web hides UI for anything unsupported (Jellyfin: everything supported). */

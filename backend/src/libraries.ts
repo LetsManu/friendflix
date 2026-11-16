@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Ctx } from './ctx.js';
+import { librariesNamed } from './media/types.js';
 import { HttpError } from './users.js';
 
 /**
@@ -27,22 +28,21 @@ export async function fetchLibraries(ctx: Pick<Ctx, 'jf'>, fresh = false): Promi
 export const serverLibraries = async (ctx: Pick<Ctx, 'jf'>): Promise<Library[]> => (await fetchLibraries(ctx)) ?? [];
 export const forgetLibraries = (ctx: object): void => void libCache.delete(ctx);
 
-const lc = (s: string) => s.toLowerCase();
-/** library names of a template the server no longer has (matched case-insensitively, like the policy); [] when that cannot be told */
+/** library names of a template that pick no library on the server (librariesNamed, like the policy: gone, or ambiguous in case); [] when
+ * that cannot be told */
 export function missingLibraries(libraries: 'all' | string[], known: Library[] | undefined): string[] {
   if (libraries === 'all' || !known?.length) return [];
-  const have = new Set(known.map((l) => lc(l.name)));
-  return libraries.filter((n) => !have.has(lc(n)));
+  return libraries.filter((n) => !librariesNamed(n, known, (l) => l.name).length);
 }
 
 /**
- * Names a write wants → the server's spelling of each (deduplicated). A name the cached list lacks gets one fresh look (a library added
- * a minute ago); still unknown → 400 unknown_library. 502 libraries_unavailable while the server cannot list them. No names (no library)
+ * Names a write wants → the server's spelling of each (deduplicated; librariesNamed: the exact name, else the one library of another case).
+ * A name the cached list lacks gets one fresh look (a library added a minute ago); still unknown or ambiguous → 400 unknown_library. 502 libraries_unavailable while the server cannot list them. No names (no library)
  * need no lookup: [] without asking the server.
  */
 export async function knownLibraries(ctx: Pick<Ctx, 'jf'>, names: string[]): Promise<string[]> {
   if (!names.length) return [];
-  const find = (list: Library[]) => names.map((n) => list.find((l) => lc(l.name) === lc(n))?.name);
+  const find = (list: Library[]) => names.map((n) => librariesNamed(n, list, (l) => l.name)[0]?.name);
   let list = await fetchLibraries(ctx);
   let found = list && find(list);
   if (!found || found.includes(undefined)) {

@@ -35,6 +35,14 @@ describe('resolveAccess', () => {
     expect(resolveAccess({ identity: 'x', libraries: ['movies', 'Nope'], maxAge: 12, blockUnrated: ['Movie', 'Series'], disabled: false }, secs, 'x'))
       .toEqual({ identity: 'x', sections: [1], maxAge: 12, blockTypes: ['movie', 'show', 'season', 'episode'] });
   });
+  it('two sections whose titles differ only in case: the exact title wins; another case matches only a unique title', () => {
+    const two = [{ id: 1, title: 'Movies' }, { id: 2, title: 'movies' }, { id: 3, title: 'TV' }];
+    const sectionsFor = (libraries: string[]) => resolveAccess({ identity: 'x', libraries, maxAge: null, blockUnrated: [], disabled: false }, two, 'x').sections;
+    expect(sectionsFor(['Movies'])).toEqual([1]);
+    expect(sectionsFor(['movies'])).toEqual([2]);
+    expect(sectionsFor(['MOVIES'])).toEqual([]);
+    expect(sectionsFor(['tv', 'MOVIES'])).toEqual([3]);
+  });
   it('resolveAccess({ libraries: [] }) → sections [] and the SQL predicate matches no item', () => {
     const acc = resolveAccess({ identity: 'x', libraries: [], maxAge: null, blockUnrated: [], disabled: false }, secs, 'x');
     expect(acc.sections).toEqual([]);

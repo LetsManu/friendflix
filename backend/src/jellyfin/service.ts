@@ -13,7 +13,7 @@ import { bestTraits, isTextSubtitle, maxWidthFor, toDownloadSource, toItemDto, t
 import { toChapters, toCredits, toItemAbout, toProviderIds } from './dto.js'; // Block 17 P1, Block 21
 import { toHygieneFacts, toServerSession } from './dto.js'; // Block 22
 import { toItemFeatures } from './dto.js'; // R1
-import { MediaError } from '../media/types.js';
+import { librariesNamed, MediaError } from '../media/types.js';
 import { applyGate, boxHeightFor, jellyfinRanges, planStream, type HevcGate, type StreamPlan } from '../media/streamplan.js';
 import type { ClientCaps } from '../media/clientCaps.js';
 import type { ChapterDto, ItemAboutDto, ItemCreditsDto, MediaCollection } from '../media/types.js'; // Block 17 P1, Block 21
@@ -1131,8 +1131,8 @@ export class JellyfinService implements MediaServer {
         if (t.libraries !== 'all' && !t.libraries.length) ids = []; // no library: nothing to look up
         else if (t.libraries !== 'all') {
           const folders = await client.mediaFolders();
-          const want = new Set(t.libraries.map((n) => n.toLowerCase()));
-          ids = folders.filter((f) => want.has(f.Name.toLowerCase())).map((f) => f.Id);
+          const picked = new Set(t.libraries.flatMap((n) => librariesNamed(n, folders, (f) => f.Name)));
+          ids = folders.filter((f) => picked.has(f)).map((f) => f.Id);
         }
         const parental = p.parental
           ? { ...(p.parental.maxRating !== undefined ? { MaxParentalRating: p.parental.maxRating } : {}), BlockUnratedItems: p.parental.blockUnrated }
