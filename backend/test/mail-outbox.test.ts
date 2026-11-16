@@ -394,6 +394,35 @@ describe('mail outbox and worker', () => {
     expect((await row(id)).attempts).toBe(0);
   });
 
+  it('a password without a user is recorded as no_user, nothing is claimed', async () => {
+    await useFake({}, { MAIL_SMTP_USER: undefined });
+    const id = (await enqueue())!;
+    expect(await deliverNow(env.ctx, id)).toEqual({ state: 'queued', code: 'no_user' });
+    expect(JSON.parse((await env.kv.get('mail:transport'))!)).toMatchObject({ code: 'no_user' });
+    expect((await row(id)).attempts).toBe(0);
+  });
+
+  it('the lease budget counts from before the database time is read', async () => {
+    // a retention delete that takes 100 s of the monotonic clock: the lease (2 min) was anchored before it, so only 20 s are left
+    let mono = 1_000;
+    setMailClockForTests(() => mono);
+    const f = await useFake();
+    const real = env.ctx.db;
+    env.ctx.db = Object.assign(Object.create(real) as typeof real, {
+      query: (sql: unknown, ...rest: unknown[]) => {
+        if (typeof sql === 'string' && sql.startsWith('delete from mail_outbox')) mono += 100_000;
+        return (real.query as (...a: unknown[]) => unknown).call(real, sql, ...rest);
+      },
+    });
+    try {
+    await enqueue();
+    expect(await mailTick(env.ctx, await dbNow())).toEqual({ sent: 0, failed: 0, deferred: 1 });
+    expect(f.messages).toHaveLength(0);
+    } finally {
+      env.ctx.db = real;
+    }
+  });
+
   it('deliverNow claims only its row and answers its state', async () => {
     const f = await useFake({ rcpt: (a) => (a.startsWith('gast') ? 550 : null) });
     const other = (await enqueue())!;

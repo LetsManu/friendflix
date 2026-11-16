@@ -5,7 +5,7 @@
    * The foot of the E-Mail card (mail stage A): the status line (GET /api/admin/mail/status) and *Testmail senden* with its result
    * line. The test goes to the admin's own address only. Both lines keep their space whether they show text or not, so nothing in the
    * card moves when a result arrives; the result fades in (opacity only). The status is read on mount, after every test and whenever
-   * `reload` changes (the page bumps it after the card's group was saved).
+   * `reload` changes (the page bumps it after the card's group was saved or tested). Only the result line is a live region, so a test is announced once.
    */
   import { fmtDateTime, t, type TKey, type TParams } from '#lib/i18n';
   import { busyKeys, runAction } from '#lib/ui/action';
@@ -17,6 +17,8 @@
 
   const BUSY = 'set:mail:test';
   let status: MailStatus | null = null;
+  /** the first read failed (there is no earlier line to keep) */
+  let failed = false;
   /** the last test's answer (the text follows a language switch); `n` restarts the fade for a repeated answer */
   let answer: { r: TestMailResult | { error: string }; n: number } | null = null;
   let seq = 0;
@@ -26,8 +28,11 @@
     const mine = ++seq;
     try {
       const s = await loadMailStatus();
-      if (mine === seq) status = s;
-    } catch { /* keep the last line; the card itself still works */ }
+      if (mine === seq) { status = s; failed = false; }
+    } catch {
+      // keep an earlier line; without one, say so (the card itself still works)
+      if (mine === seq && status === null) failed = true;
+    }
   }
   $: void refresh(reload);
 
@@ -39,14 +44,15 @@
   }
 
   $: tx = (key: string, params?: TParams) => $t(key as TKey, params);
-  $: line = status ? statusLine(status, tx, (iso) => fmtDateTime(iso)) : '';
+  $: line = status ? statusLine(status, tx, (iso) => fmtDateTime(iso)) : failed ? $t('settings.mail.statusFailed') : '';
   $: result = answer ? testResultText(answer.r, tx) : null;
   $: tone = (result?.tone ?? 'none') as ResultTone | 'none';
-  $: offline = status !== null && !status.configured;
+  /** nothing to send with: not set up, or the status is still loading (a failed load leaves the button to the server's answer) */
+  $: offline = status === null ? !failed : !status.configured;
 </script>
 
 <div class="mail">
-  <p class="status" data-testid="mail-status" aria-live="polite">{line}</p>
+  <p class="status" data-testid="mail-status">{line}</p>
   <div class="act">
     <Button variant="secondary" icon="send" pending={$busyKeys.has(BUSY)} disabled={offline} aria-describedby="mail-test-hint" on:click={test}>{$t('settings.mail.test')}</Button>
     <span id="mail-test-hint" class="hint">{$t('settings.mail.testHint')}</span>

@@ -21,6 +21,12 @@ export interface MailBrand {
   legal: { imprint?: string; privacy?: string; help?: string };
 }
 
+/** the tile's letter: uppercased, unless that makes more than one character ("ß" would become "SS") */
+const initial = (c: string): string => {
+  const up = c.toUpperCase();
+  return [...up].length === 1 ? up : c;
+};
+
 export async function mailBrand(ctx: Pick<Ctx, 'db'>): Promise<MailBrand> {
   const { brand } = await readBrand(ctx.db);
   const img = brand.symbol ? await readImage(ctx.db, brand.symbol) : null;
@@ -28,6 +34,6 @@ export async function mailBrand(ctx: Pick<Ctx, 'db'>): Promise<MailBrand> {
   const first = [...brand.name][0] ?? '?';
   return {
     name: brand.name, byline: brand.byline, website: brand.website,
-    fill: deriveTokens(brand.accent).accFill, letter: first.toUpperCase(), symbol, legal: {},
+    fill: deriveTokens(brand.accent).accFill, letter: initial(first), symbol, legal: {},
   };
 }

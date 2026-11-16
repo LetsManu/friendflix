@@ -784,7 +784,7 @@ const pl: Catalog = {
   'mail.test.subject': 'Wiadomość testowa od {app}',
   'mail.test.heading': 'Wysyłanie e-maili działa',
   'mail.test.body': 'Tę wiadomość testową wysłała aplikacja {app} przez Twój serwer poczty. Jeśli możesz ją przeczytać, e-maile z {app} do Ciebie docierają.',
-  'mail.test.reason': 'Otrzymujesz tę wiadomość, bo w {app} w sekcji „Ustawienia → Powiadomienia” zażądano wiadomości testowej.',
+  'mail.test.reason': 'Otrzymujesz tę wiadomość, bo w {app}, w sekcji „Ustawienia → Powiadomienia”, wysłano testowy e-mail na Twój adres.',
   'mail.open': 'Otwórz {app}',
   'mail.footer.website': 'Strona internetowa',
   'mail.footer.imprint': 'Dane prawne',

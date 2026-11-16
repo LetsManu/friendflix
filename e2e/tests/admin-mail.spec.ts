@@ -28,7 +28,7 @@ async function noLeak(page: Page) {
 }
 
 test.describe('admin: e-mail', () => {
-  test.use({ allowedConsole: /status of (400|429)/ });
+  test.use({ allowedConsole: /status of (400|429|500)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
   test('mail card on the notifications tab', async ({ page }) => {
@@ -108,7 +108,8 @@ test.describe('admin: e-mail', () => {
     };
     await page.goto('/admin/settings?tab=notifications');
     const status = card(page, 'E-Mail').getByTestId('mail-status');
-    await expect(status).toContainText('Letzter Fehler: Empfängeradresse abgelehnt (SMTP 550)');
+    await expect(status).toContainText(/Letzter Fehler \(.+\): Empfängeradresse abgelehnt \(SMTP 550\)/);
+    await expect(status).not.toContainText(') (');
     await expect(status).toContainText('2 E-Mails warten');
     await noLeak(page);
   });
@@ -124,6 +125,40 @@ test.describe('admin: e-mail', () => {
     await expect.poll(() => api.settings.puts.length).toBe(1);
     expect(api.settings.puts[0]!.values).toEqual({ MAIL_SMTP_HOST: 'mail.example.com', MAIL_FROM: 'kino@friend.example.com' });
     await expect(mail.getByTestId('mail-status')).toHaveText('Noch keine E-Mail gesendet.');
+  });
+
+  test('a good Testen of the card refreshes the status line', async ({ page, api }) => {
+    mailConfigured(api.settings);
+    api.settings.mail.status = { ...api.settings.mail.status, transport: { code: 'auth', at: '2026-11-16T11:00:00Z' } };
+    await page.goto('/admin/settings?tab=notifications');
+    const mail = card(page, 'E-Mail');
+    await expect(mail.getByTestId('mail-status')).toContainText('Verbindung gestört');
+    // the server cleared the failure on the good probe
+    api.settings.mail.status = { ...api.settings.mail.status, transport: null };
+    api.settings.testResult = { ok: true, code: 'ok' };
+    await mail.getByRole('button', { name: 'Testen' }).click();
+    await expect(mail.getByTestId('mail-status')).not.toContainText('Verbindung gestört');
+  });
+
+  test('the test button waits while the status loads', async ({ page, api }) => {
+    mailConfigured(api.settings);
+    let release!: () => void;
+    const gate = new Promise<void>((res) => { release = res; });
+    await page.route('**/api/admin/mail/status', async (r) => { await gate; await r.fallback(); });
+    await page.goto('/admin/settings?tab=notifications');
+    const button = card(page, 'E-Mail').getByRole('button', { name: 'Testmail senden' });
+    await expect(button).toBeDisabled();
+    release();
+    await expect(button).toBeEnabled();
+  });
+
+  test('a status that cannot be loaded says so, and the status line is no live region', async ({ page, api }) => {
+    mailConfigured(api.settings);
+    await page.route('**/api/admin/mail/status', (r) => r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"x"}' }));
+    await page.goto('/admin/settings?tab=notifications');
+    const status = card(page, 'E-Mail').getByTestId('mail-status');
+    await expect(status).toHaveText('Der Status ließ sich nicht laden.');
+    await expect(status).not.toHaveAttribute('aria-live', /.+/);
   });
 
   test('Systemcheck shows the mail line', async ({ page, api }) => {

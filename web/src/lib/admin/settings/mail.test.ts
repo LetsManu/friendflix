@@ -17,7 +17,7 @@ const status = (o: Partial<MailStatus> = {}): MailStatus => ({
 
 /** every delivery and transport code the backend can send (MailErrorCode plus the worker's own codes) */
 const CODES = ['unreachable', 'timeout', 'tls', 'auth', 'sender_refused', 'recipient_refused', 'message_refused', 'expired', 'unexpected',
-  'rate_limited', 'unreadable', 'not_configured', 'insecure_auth'];
+  'rate_limited', 'unreadable', 'not_configured', 'no_user', 'insecure_auth'];
 
 describe('mail status line', () => {
   it('not configured: asks for server and sender', () => {
@@ -35,8 +35,10 @@ describe('mail status line', () => {
       lastFailure: { kind: 'test', code: 'recipient_refused', smtp: 550, at: '2026-11-16T10:00:00Z' },
     }), tr, when);
     expect(s).toContain('Zuletzt gesendet: [2026-11-16T09:00:00Z]');
-    expect(s).toContain(`Letzter Fehler: ${tr('settings.mail.code.recipient_refused')} (SMTP 550) ([2026-11-16T10:00:00Z])`);
+    expect(s).toContain(`Letzter Fehler ([2026-11-16T10:00:00Z]): ${tr('settings.mail.code.recipient_refused')} (SMTP 550)`);
     expect(s).toContain('550');
+    // one pair of parentheses around the time; the SMTP status is no second pair after the reason in a row
+    expect(s).not.toContain(') (');
   });
 
   it('the queued count is a plural', () => {

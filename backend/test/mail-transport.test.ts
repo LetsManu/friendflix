@@ -88,7 +88,7 @@ describe('transport options', () => {
   it('a password without a user is not silently dropped', async () => {
     for (const mode of ['starttls', 'tls'] as const) {
       const noUser = mailCfg(587, { MAIL_SMTP_TLS: mode, MAIL_SMTP_USER: undefined });
-      expect(() => transportOptions(noUser), mode).toThrow('not_configured');
+      expect(() => transportOptions(noUser), mode).toThrow('no_user');
       expect(await probeMail(noUser), mode).toEqual({ ok: false, code: 'invalid', detail: 'no_user' });
     }
   });

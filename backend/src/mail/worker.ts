@@ -211,9 +211,11 @@ async function sendClaimed(ctx: Ctx, rows: Claimed[], transport: Transporter, no
 
 /**
  * One pass: housekeeping, then claim and send. Not configured: housekeeping only. A configuration the transport refuses
- * (`insecure_auth`, a password without a user) is recorded in kv `mail:transport` and nothing is claimed.
+ * (`insecure_auth`, `no_user`: a password without a user) is recorded in kv `mail:transport` and nothing is claimed.
  */
 async function run(ctx: Ctx, now: Date | undefined, log: MailLog, id?: string): Promise<{ outcomes: Map<string, Outcome>; blocked?: string }> {
+  // the monotonic start comes before the database time is read: the lease (anchored at `at`) is never counted longer than it is
+  const t0 = clock();
   const at = now ?? await dbNow(ctx.db);
   await housekeeping(ctx.db, at, log);
   if (!mailConfigured(ctx.cfg)) return { outcomes: new Map(), blocked: 'not_configured' };
@@ -226,8 +228,7 @@ async function run(ctx: Ctx, now: Date | undefined, log: MailLog, id?: string): 
     return { outcomes: new Map(), blocked: code };
   }
   try {
-    // the monotonic start is taken before the claim, so the budget never counts on more lease than the rows have
-    const lease: Lease = { until: new Date(at.getTime() + LEASE_MS), endsAt: clock() + LEASE_MS };
+    const lease: Lease = { until: new Date(at.getTime() + LEASE_MS), endsAt: t0 + LEASE_MS };
     const rows = await claim(ctx.db, at, lease.until, id);
     return { outcomes: rows.length ? await sendClaimed(ctx, rows, transport, at, lease, log) : new Map() };
   } finally {

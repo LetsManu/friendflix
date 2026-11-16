@@ -66,7 +66,7 @@
   /** a generated webhook secret, shown once (in memory only) */
   let generated: Record<string, string> = {};
   let resumeNotice: 'resumed' | 'dropped' | 'failed' | null = null;
-  /** saves of the mail group: the E-Mail card's status line reads the new state after each */
+  /** saves and good tests of the mail group: the E-Mail card's status line reads the new state after each */
   let mailSaves = 0;
   /** the action repeated after a re-authentication runs: another reauth_required is an error, not a new round trip */
   let resuming = false;
@@ -261,7 +261,12 @@
     if (refuseRedacted(group)) return;
     const values = changesOf(group);
     const res = await runAction({ key: `set:test:${group}`, run: () => testGroup(group, values), error: false });
-    if (res.ok && res.value) { probes = { ...probes, [group]: { result: res.value, save: false } }; return; }
+    if (res.ok && res.value) {
+      probes = { ...probes, [group]: { result: res.value, save: false } };
+      // a good connection check clears the mail card's "connection trouble" on the server: the status line reads it again
+      if (group === 'mail' && res.value.ok) mailSaves++;
+      return;
+    }
     if (isReauthError(res.error)) return reauth({ action: 'test', group }, () => test(group));
     const fe = fieldErrors(res.error);
     if (fe) errors = { ...errors, ...fe };

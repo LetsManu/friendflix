@@ -23,7 +23,7 @@ FriendFlix can send e-mail through an SMTP server you choose: your mailbox provi
 
 E-mail counts as set up once the server and the sender address are filled in. *Testen* checks the connection (connect, encryption and login, no mail is sent) and *Testmail senden* sends a real one; see [Checking it](#checking-it).
 
-**Fresh sign-in.** Saving a password needs a sign-in at most 10 minutes old, like every secret under *Admin → Einstellungen*. While a password is saved, changing the server, the port or the encryption needs a fresh sign-in too, so a stored password can never be sent to a host you did not mean ([security.md](security.md#e-mail)).
+**Fresh sign-in.** Saving a password needs a sign-in at most 10 minutes old, like every secret under *Admin → Einstellungen*. Changing the server, the port or the encryption needs a fresh sign-in too, saved password or not (they are where a password goes), and so does *Testen* when it would send the saved password to a changed server, port or encryption, so a stored password cannot be sent to a host you did not mean ([security.md](security.md#e-mail)).
 
 ## Encryption
 
@@ -88,8 +88,8 @@ A mail is not sent from the request that asks for it: it is written to a queue i
 - **A broken connection is not the mail's fault.** If the server cannot be reached, the TLS handshake fails or the login is refused, the mails do not use up an attempt: they wait, and the job tries again after a growing pause (1 minute up to 6 hours).
 - **Expiry.** A mail that is still queued after **72 hours** fails with `expired`.
 - **Limits.** Per recipient 10 mails an hour and 50 a day, and 200 an hour for the whole installation. A mail over a limit waits until it fits; this is not an error and uses no attempt.
-- **Timeouts.** Connecting 10 s, the server's greeting 10 s, and 30 s without traffic; the connection check uses 5 s.
-- **Several instances.** A mail is claimed with a 2-minute lease and a batch stops before the lease runs out, so two backends never send the same mail twice.
+- **Timeouts.** Connecting 10 s, the server's greeting 10 s, and 30 s without traffic; *Testen* checks the connection within 5 s, the Systemcheck within 3.5 s.
+- **Several instances.** A mail is claimed with a 2-minute lease, and a batch stops starting new sends when less than 45 seconds of the lease are left (the rest goes back to the queue), so a second backend normally has no reason to pick up a mail that is still being sent. Rarely a mail can go out twice: if the backend stops between sending and noting it as sent, or if one single send takes longer than the lease, the mail is sent again once.
 - **History.** Final rows (sent or failed) are deleted 30 days after they ended.
 
 ### Error codes
@@ -108,7 +108,8 @@ A mail is not sent from the request that asks for it: it is written to a queue i
 | `expired` | *Nach 72 Stunden aufgegeben* | The mail waited 72 hours without being sent. Final. |
 | `rate_limited` | *Versandgrenze erreicht* | Over a limit; goes on later. |
 | `unreadable` | *Gespeicherte Empfängeradresse nicht lesbar* | The queued mail was stored with another encryption key (`APP_ENC_KEY` changed) or is damaged. Final. |
-| `not_configured` | *Server oder Absenderadresse fehlt* | Nothing to send with. |
+| `not_configured` | *Server oder Absenderadresse fehlt* | Nothing to send with: the server or the sender address is empty. |
+| `no_user` | *Passwort ohne Benutzername* | A password is set but no user name; it is not sent without one. Enter the user name or delete the password (only reachable through `.env`, the settings page refuses to save it). |
 | `insecure_auth` | *Ohne Verschlüsselung wird kein Passwort gesendet* | *Keine* with a login. |
 | `unexpected` | *Unerwarteter Fehler* | Anything else, e.g. a mail that was claimed again and again without finishing. Retried, but final after the 6th attempt. |
 

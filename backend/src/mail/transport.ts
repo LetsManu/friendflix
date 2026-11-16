@@ -10,7 +10,7 @@ import { fail, OK, type ProbeResult } from '../settings/probeKit.js';
  * starttls requires the upgrade, so a server without STARTTLS fails with `tls` before any login; `none` never logs in. Errors leave
  * this module as codes and the 3-digit SMTP status only: the server's reply text (which may quote an address) is never passed on.
  */
-export type MailErrorCode = 'not_configured' | 'insecure_auth' | 'unreachable' | 'timeout' | 'tls' | 'auth' | 'sender_refused'
+export type MailErrorCode = 'not_configured' | 'no_user' | 'insecure_auth' | 'unreachable' | 'timeout' | 'tls' | 'auth' | 'sender_refused'
   | 'recipient_refused' | 'message_refused' | 'unexpected';
 
 /** transport: nothing is wrong with the message (try again later); message: this message was refused (5xx permanent, 4xx retried) */
@@ -37,7 +37,7 @@ export function mailConfigured(cfg: Config): boolean {
   return Boolean(cfg.MAIL_SMTP_HOST && cfg.MAIL_FROM);
 }
 
-/** A password is set but no user: nodemailer would log in without it, so the setup counts as incomplete (probe `invalid`/`no_user`). */
+/** A password is set but no user: nodemailer would log in without it, so the setup counts as incomplete (`no_user`, probe `invalid`/`no_user`). */
 const passwordWithoutUser = (cfg: Config) => Boolean(cfg.MAIL_SMTP_PASSWORD && !cfg.MAIL_SMTP_USER);
 
 const failure = (code: MailErrorCode, smtp: number | null = null, scope: MailFailure['scope'] = 'transport', permanent = false): MailFailure =>
@@ -55,7 +55,7 @@ function ehloName(cfg: Config): string {
 
 /**
  * nodemailer options for the current config: one pooled connection per tick (`maxMessages` 50; the caller closes it at the end), send
- * timeouts 10 / 10 / 30 s, the probe's 5 s each (or the caller's smaller limit). Throws MailError `not_configured` / `insecure_auth`.
+ * timeouts 10 / 10 / 30 s, the probe's 5 s each (or the caller's smaller limit). Throws MailError `not_configured` / `no_user` / `insecure_auth`.
  */
 export function transportOptions(cfg: Config, o: { probe?: boolean; timeoutMs?: number } = {}): SMTPPoolOptions & { pool: true } {
   if (!mailConfigured(cfg)) throw new MailError(failure('not_configured'));
@@ -63,7 +63,7 @@ export function transportOptions(cfg: Config, o: { probe?: boolean; timeoutMs?: 
   const login = Boolean(cfg.MAIL_SMTP_USER || cfg.MAIL_SMTP_PASSWORD);
   // never a password in clear: a plain relay is used without login only
   if (mode === 'none' && login) throw new MailError(failure('insecure_auth'));
-  if (passwordWithoutUser(cfg)) throw new MailError(failure('not_configured'));
+  if (passwordWithoutUser(cfg)) throw new MailError(failure('no_user'));
   const t = o.probe ? Math.min(PROBE_TIMEOUT_MS, o.timeoutMs ?? PROBE_TIMEOUT_MS) : undefined;
   return {
     // hostSchema keeps an IPv6 literal bracketed (`[2001:db8::1]`); nodemailer needs it bare, else it looks the brackets up in DNS
@@ -138,7 +138,8 @@ export async function probeMail(cfg: Config, o: { timeoutMs?: number } = {}): Pr
   } catch (e) {
     const { code } = classifyMailError(e);
     switch (code) {
-      case 'not_configured': return fail('invalid', mailConfigured(cfg) && passwordWithoutUser(cfg) ? 'no_user' : 'not_set');
+      case 'not_configured': return fail('invalid', 'not_set');
+      case 'no_user': return fail('invalid', 'no_user');
       case 'insecure_auth': return fail('invalid', 'insecure_auth');
       case 'auth': return fail('unauthorized');
       case 'tls': return fail('invalid', 'tls');

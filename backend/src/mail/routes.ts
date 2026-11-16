@@ -34,7 +34,7 @@ export function mailRoutes(app: FastifyInstance, ctx: Ctx) {
     if ((await ctx.kv.incr(`mail:test:${userId}`, TEST_WINDOW_S)) > TEST_LIMIT) return reply.code(429).send({ error: 'rate_limited' });
     const id = await enqueueMail(ctx, { kind: 'test', to: row.email, userId, lang: await userLanguage(ctx, userId) });
     // no dedupe key: a row always comes back
-    const r = await deliverNow(ctx, id!);
+    const r = await deliverNow(ctx, id!, { log: req.log });
     await audit(ctx, userId, 'mail.test', undefined, { state: r.state, ...(r.code ? { code: r.code } : {}) });
     return r;
   });

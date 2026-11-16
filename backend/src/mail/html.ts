@@ -83,7 +83,7 @@ export function layout(i: LayoutInput): { html: string; text: string } {
   const text = [
     i.heading, '', ...i.paragraphs.flatMap((p) => [p, '']),
     ...(i.button && btnUrl ? [`${i.button.label}: ${btnUrl}`, ''] : []),
-    '--', i.reason,
+    '-- ', i.reason,
     ...links.map((l) => `${l.label}: ${l.url}`),
     '', b.name,
   ].join('\n');

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encrypt } from '../src/crypto.js';
 import type { Config } from '../src/config.js';
 import { setMailTestCa } from '../src/mail/transport.js';
@@ -19,6 +19,7 @@ describe('mail admin routes', () => {
   let admin: Sess, friend: Sess;
   let adminId: string;
   let fake: SmtpFake | undefined;
+  const logs: string[] = [];
 
   // every call comes from its own address, so the route's per-IP limit (tested on its own) does not count the other tests
   let n = 0;
@@ -33,7 +34,7 @@ describe('mail admin routes', () => {
 
   beforeAll(async () => {
     setMailTestCa(SMTP_CERT);
-    env = await makeEnv();
+    env = await makeEnv({}, { logger: { stream: { write: (m: string) => { logs.push(m); } }, level: 'trace' } });
     admin = await env.login(ADMIN);
     await env.pool.query("insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(),'sub-f','f@example.com','Fritz','friend','jffritz','Fritz',$1)", [encrypt(env.ctx.encKey, 'pw')]);
     friend = await env.login(FRIEND);
@@ -105,6 +106,16 @@ describe('mail admin routes', () => {
     expect(r.json()).toEqual({ state: 'failed', code: 'recipient_refused', smtp: 550 });
     const meta = (await env.pool.query<{ meta: { state: string; code: string } }>("select meta from audit_log where action = 'mail.test'")).rows[0]!.meta;
     expect(meta).toEqual({ state: 'failed', code: 'recipient_refused' });
+  });
+
+  it('a failed test mail is logged through the app logger, not the console', async () => {
+    await useFake({ rcpt: () => 550 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    logs.length = 0;
+    await as(admin, 'POST', '/api/admin/mail/test');
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+    expect(logs.join('')).toContain('"code":"recipient_refused"');
   });
 
   it('fourth test mail in 10 minutes is rate limited', async () => {

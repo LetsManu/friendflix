@@ -93,6 +93,15 @@ describe('mail layout and test template', () => {
     expect(r.text).toContain(msg('de', 'mail.test.body', { app: 'FriendFlix' }));
     expect(r.text).toContain('FriendFlix öffnen: https://portal.example.com/');
     expect(r.text).not.toContain('<');
+    // the signature separator keeps its trailing space (RFC 3676), so mail clients can cut the signature
+    expect(r.text).toContain(`\n-- \n${msg('de', 'mail.test.reason', { app: 'FriendFlix' })}`);
+  });
+
+  it('the letter tile of a name starting with an uppercase-expanding letter is the letter as is', async () => {
+    await setBrand({ name: 'ßeta' });
+    expect((await mailBrand(env.ctx)).letter).toBe('ß');
+    await setBrand({ name: 'ábc' });
+    expect((await mailBrand(env.ctx)).letter).toBe('Á');
   });
 
   it('renders in the requested language', async () => {
