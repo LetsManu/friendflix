@@ -207,6 +207,8 @@ A tidy admin area in dense glass with a sidebar (People, Content, Operations) an
 
 **Branding:** give the installation its own name, byline ("by …"), logo, app symbol, accent colour and background mood in *Admin → Branding*, with a live preview for desktop, phone, TV and sign-in; colours are kept readable automatically ([docs/branding.md](docs/branding.md)).
 
+**E-Mail:** an admin connects an SMTP server in *Admin → Settings → Notifications → E-Mail* (your provider or your own mail server, encrypted, the password stored encrypted), checks it with *Test* and a branded test mail, and the Systemcheck keeps watching it. Mails go through a durable outbox with retries and rate limits, with no tracking ([docs/mail.md](docs/mail.md)).
+
 Also in the admin area: invitations, **brand hubs**, featured and themed lists, **leaving-soon** dates, hover-preview clips, the nightly playback check with the shared conversion limit, the weekly digest, Live TV and an audit log. **Updates** in *Admin → Update*: the updater installs the channel you pick (Stable, Nightly or a fixed version), or FriendFlix redeploys a Portainer stack (Portainer API or webhook) and follows it step by step – pulling the images, recreating the containers, health check – and says why it did not run.
 
 **People and rights:** one list of every account with filters (role, status, last activity, rights) and bulk actions (role, a right, lock, access until, sign out everywhere), a *Waiting for approval* tab for people who signed in without an invite, and invites with several uses and access days. *Roles & rights* is a table of every role and every right – libraries, age limit, streams, bitrate, downloads, wishes, Chromecast and AirPlay, watch party – where you duplicate, rename, order and delete roles and see who is affected before you save. A page per person shows usage, rights with their own exceptions (and which layer decides each one), profiles (switch one to kids, set its age limit, reset its PIN), devices, downloads, viewing history and the audit log; *Check view* tells you what one profile sees and why a title is hidden. Access can end on a date: FriendFlix reminds three days ahead and locks the account on the day. Looking at someone's viewing history is itself written to the audit log.
@@ -449,6 +451,7 @@ npm run spdx:check                              # licence headers, as in CI
 | Themed lists, calm mode, sound in the player, phone shortcuts and badge | [docs/personal.md](docs/personal.md) |
 | UI kit, glass look and admin shell | [docs/ui-kit.md](docs/ui-kit.md) |
 | Branding: name, byline, logo and symbol, colours, where it shows, image rules | [docs/branding.md](docs/branding.md) |
+| E-Mail: SMTP settings, providers, your own mail server, outbox and error codes | [docs/mail.md](docs/mail.md) |
 | Languages and translations | [docs/i18n.md](docs/i18n.md) |
 | Security model, trust boundaries, updater and livetv hardening | [docs/security.md](docs/security.md) |
 | Reproducible builds: rebuild an image and compare its digest | [docs/reproducible-builds.md](docs/reproducible-builds.md) |
