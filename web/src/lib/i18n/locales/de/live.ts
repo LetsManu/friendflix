@@ -86,6 +86,10 @@ export default {
     watch: 'Jetzt ansehen',
     record: 'Aufnehmen',
     cancelRecord: 'Aufnahme abbrechen',
+    recordFromNow: 'Ab jetzt aufnehmen',
+    recordSpan: 'Eigenen Zeitraum aufnehmen …',
+    stopRecord: 'Aufnahme beenden',
+    cancelDelete: 'Abbrechen und löschen',
     recordSeries: 'Serie aufnehmen',
   },
   rec: {
@@ -96,6 +100,10 @@ export default {
     seriesStop: 'Serie nicht mehr aufnehmen',
     seriesStopped: 'Serie wird nicht mehr aufgenommen',
     cancelled: 'Aufnahme abgebrochen',
+    stopped: 'Aufnahme beendet. Das Aufgenommene bleibt erhalten.',
+    deleteBody: 'Was bisher aufgenommen wurde, wird gelöscht. Mit „Aufnahme beenden“ bleibt es erhalten.',
+    sameStart: 'Auf diesem Sender beginnt zu dieser Zeit schon eine Aufnahme. Wähle einen anderen Beginn.',
+    nothingRecorded: 'Noch nichts aufgenommen. Die Aufnahme wurde abgebrochen.',
     onlyNew: 'Nur neue Folgen',
     thisChannel: 'Nur dieser Sender',
     allChannels: 'Alle Sender',
@@ -143,6 +151,7 @@ export default {
     delete: 'Löschen',
     deleted: 'Aufnahme gelöscht',
     cancel: 'Abbrechen',
+    stop: 'Jetzt beenden',
     conflict: 'Konflikt',
     episodes: { one: '{n} Folge', other: '{n} Folgen' },
     emptyRow: 'Noch keine Aufnahmen. Im Player unter Programm → Aufnehmen.',
@@ -172,6 +181,7 @@ export default {
     name: 'Titel',
     save: 'Aufnahme planen',
     savedRule: 'Aufnahme nach Uhrzeit angelegt',
+    startPast: 'Der Beginn liegt zu weit zurück. Wähle eine Zeit ab jetzt.',
   },
   /** eine Aufnahme im Player (Phase 3, spec §15.7, Review Focus 5) */
   recPlayer: {

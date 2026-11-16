@@ -13,6 +13,7 @@ import { deletePushSubscriptions } from './push.js';
 import { forgetAuth } from './routes/internal.js';
 import { dropPartyPeers } from './partySockets.js';
 import { dropRemotePeers } from './routes/tv.js';
+import { SESSION_PREFIX, hashOfSessionKey, scanSessions, sessionHash, sessionKey } from './session.js';
 
 export const DEVICE_COOKIE = 'ff_dev';
 
@@ -45,32 +46,39 @@ export async function registerDevice(ctx: Ctx, req: FastifyRequest, reply: Fasti
   return { deviceId: dev, approved };
 }
 
-/** Deletes sessions of a user (optionally only one device, optionally keeping the current session). Returns the count. */
+/**
+ * Deletes sessions of a user (optionally only one device, optionally keeping the current session). Returns the count. Scans every
+ * `sess:` key, so a legacy key (raw session id, from before the hashed keys) is deleted too.
+ */
 export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string, exceptSid?: string): Promise<number> {
   let n = 0;
+  /** the session hashes that ended (sockets and the gateway memo know sessions by their hash) */
   const gone = new Set<string>();
+  const keep = exceptSid ? sessionHash(exceptSid) : null;
   // the session that stays logged in keeps its device's push subscriptions, cast and live tokens
   let keepDevice: string | undefined;
   if (exceptSid) {
-    const raw = await ctx.kv.get(`sess:${exceptSid}`);
+    const raw = await ctx.kv.get(sessionKey(exceptSid));
     const ks = raw ? (JSON.parse(raw) as { userId: string; deviceId?: string }) : null;
     if (ks?.userId === userId) keepDevice = ks.deviceId;
   }
-  for (const k of await ctx.kv.keys('sess:')) {
-    if (exceptSid && k === `sess:${exceptSid}`) continue;
-    const raw = await ctx.kv.get(k);
-    if (!raw) continue;
-    const s = JSON.parse(raw) as { userId: string; deviceId?: string };
+  for await (const { listed, hash: h, s } of scanSessions(ctx.kv)) {
+    if (h === keep) continue;
     if (s.userId === userId && (!deviceId || s.deviceId === deviceId)) {
-      await ctx.kv.del(k);
-      gone.add(k.slice('sess:'.length));
+      // both names: the hashed one, and the legacy one the scan listed (a first use may move it, an old process may write it)
+      await ctx.kv.del(`${SESSION_PREFIX}${h}`);
+      if (listed !== `${SESSION_PREFIX}${h}`) await ctx.kv.del(listed);
       n++;
+      gone.add(h);
     }
   }
   if (gone.size) {
+    // a session stored under both names (an old process wrote its raw key back after the move) is yielded once by the scan, under
+    // whichever name came first: sweep the other name too, or the next sign-in with that cookie would move it back and revive it
+    for (const k of await ctx.kv.keys(SESSION_PREFIX)) if (gone.has(hashOfSessionKey(k))) await ctx.kv.del(k);
     dropRemotePeers(userId, gone);
     dropPartyPeers(userId, gone);
-    for (const sid of gone) forgetAuth(sid); // the media gateway must not keep serving a memoised identity
+    for (const h of gone) forgetAuth(h); // the media gateway must not keep serving a memoised identity
   }
   if (!(deviceId && deviceId === keepDevice)) {
     await revokeCasts(ctx, userId, deviceId, keepDevice);
@@ -87,10 +95,9 @@ export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string
  */
 export async function forgetUserAuth(ctx: Ctx, userId: string): Promise<number> {
   let n = 0;
-  for (const k of await ctx.kv.keys('sess:')) {
-    const raw = await ctx.kv.get(k);
-    if (!raw || (JSON.parse(raw) as { userId: string }).userId !== userId) continue;
-    forgetAuth(k.slice('sess:'.length));
+  for await (const { hash, s } of scanSessions(ctx.kv)) {
+    if (s.userId !== userId) continue;
+    forgetAuth(hash);
     n++;
   }
   return n;
@@ -98,11 +105,9 @@ export async function forgetUserAuth(ctx: Ctx, userId: string): Promise<number> 
 
 /** True if a live session of the user (other than `exceptSid`) still belongs to this device. */
 export async function deviceHasSession(ctx: Ctx, userId: string, deviceId: string, exceptSid?: string): Promise<boolean> {
-  for (const k of await ctx.kv.keys('sess:')) {
-    if (exceptSid && k === `sess:${exceptSid}`) continue;
-    const raw = await ctx.kv.get(k);
-    if (!raw) continue;
-    const s = JSON.parse(raw) as { userId: string; deviceId?: string };
+  const skip = exceptSid ? sessionHash(exceptSid) : null;
+  for await (const { hash, s } of scanSessions(ctx.kv)) {
+    if (hash === skip) continue;
     if (s.userId === userId && s.deviceId === deviceId) return true;
   }
   return false;

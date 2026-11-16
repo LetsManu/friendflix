@@ -12,6 +12,7 @@ import { DEFAULT_ROLES } from '../src/roles.js';
 import { forgetAuth } from '../src/routes/internal.js';
 import { applyRole } from '../src/users.js';
 import { ENC_KEY, fakeHttp, makeEnv, type Call, type Handler, type TestEnv } from './helpers.js';
+import { sessionHash } from '../src/session.js';
 
 const A = 'a'.repeat(32);
 const B = 'b'.repeat(32);
@@ -249,6 +250,6 @@ describe('backend: item authz endpoint, webhook dispatch, subtitle route, exact 
     const kidSid = sel.cookies.find((c) => c.name === 'ff_sid')!.value;
     expect((await authzItem({ sid: kidSid, itemId: B })).json()).toEqual({ allow: false });
     expect((await authzItem({ sid: kidSid, itemId: A })).json()).toEqual({ allow: true });
-    forgetAuth(kidSid);
+    forgetAuth(sessionHash(kidSid));
   });
 });

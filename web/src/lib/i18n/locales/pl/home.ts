@@ -104,6 +104,7 @@ const pl: Translation<typeof de> = {
     trending: 'Ten tydzień u nas',
     featured: '{name} · Poleca {owner}',
     myList: 'Do obejrzenia',
+    recordings: 'Twoje nagrania',
     upcomingWish: 'Wkrótce – zgłoś życzenie',
     top10: 'Top 10 według ocen',
     libraryFailed: 'Nie udało się wczytać biblioteki.',

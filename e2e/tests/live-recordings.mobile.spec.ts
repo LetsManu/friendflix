@@ -47,3 +47,25 @@ test('the row scrolls sideways inside the screen', async ({ page, api }) => {
   const t = (await row.getByRole('listitem').first().boundingBox())!;
   expect(t.height).toBeGreaterThanOrEqual(44);
 });
+
+test('a list of finished recordings has no reserved Jetzt beenden slot: the actions fit one row', async ({ page, api }) => {
+  await arm(page, api);
+  await page.goto('/live/recordings');
+  await expect(page.locator('li.ritem')).toHaveCount(3);
+  await expect(page.locator('li.ritem button.stopb')).toHaveCount(0);
+  // one row of 44 px buttons (Behalten, Teilen …, Löschen), no empty second line
+  for (const h of await page.locator('li.ritem .acts').evaluateAll((l) => l.map((e) => e.getBoundingClientRect().height))) expect(h).toBeLessThan(60);
+});
+
+test('a recording that finishes while watched keeps its height', async ({ page, api }) => {
+  await arm(page, api);
+  api.livetv.recordings = [mockRecording({ title: 'Wetter am Hafen', seriesKey: 'wetter', state: 'recording', growing: true, start: at(12, 20), end: at(12, 21) }), ...api.livetv.recordings];
+  await page.goto('/live/recordings');
+  const it = page.locator('li.ritem').filter({ hasText: 'Wetter am Hafen' });
+  const before = (await it.boundingBox())!;
+  await it.getByRole('button', { name: 'Jetzt beenden' }).tap();
+  await expect(it.getByText('Fertig', { exact: true })).toBeVisible();
+  const after = (await it.boundingBox())!;
+  expect(after.height).toBeCloseTo(before.height, 0);
+  expect(after.y).toBeCloseTo(before.y, 0);
+});

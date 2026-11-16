@@ -13,6 +13,7 @@ import { removeSourceKey, resetSourceState, setSourceKey } from '../../src/sourc
 import { fakeHttp, makeEnv, type Call, type Handler, type TestEnv } from '../helpers.js';
 import { PLEX_TOKEN, PLEX_URL, PlexFake } from '../plexfake.js';
 import { identity, item, kids, plexEnv, section, type PlexEnv } from './setup.js';
+import { sessionKey } from '../../src/session.js';
 
 // ---------------------------------------------------------------- pure mappers
 
@@ -343,7 +344,7 @@ describe('GET /api/items/:id/about on Plex', () => {
 
   it('Data sources admin API works unchanged on Plex and never returns a key', async () => {
     // Block 23 phase 2: saving or deleting a key needs a recent re-authentication on the session
-    const k = `sess:${owner.cookies.ff_sid}`;
+    const k = sessionKey(owner.cookies.ff_sid!);
     await env.kv.set(k, JSON.stringify({ ...JSON.parse((await env.kv.get(k))!), reauthAt: Date.now() }), 600);
     const put = await call(owner, 'PUT', '/api/admin/sources/tmdb', { key: TMDB_KEY });
     expect(put.statusCode, put.body).toBeLessThan(300);

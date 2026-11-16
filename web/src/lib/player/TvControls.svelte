@@ -208,13 +208,13 @@
   .seeking .kd { opacity: .5; transform: scale(.6); }
   .marker { position: absolute; left: -1.5px; top: 50%; width: 3px; height: 1.6rem; margin-top: -.8rem; border-radius: 2px; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
 
-  /* the preview card: above the marker, kept inside the bar; it scales in from .92 with the spring */
+  /* the preview card: above the marker, kept inside the bar; it rises 12 px while it fades in */
   .pv { position: absolute; left: 0; bottom: calc(100% + 1rem); }
-  .pcard { display: flex; flex-direction: column; align-items: center; gap: .5rem; transform-origin: 50% 100%; animation: tv-pv-in var(--tv-d-spring) var(--tv-spring) both; }
+  .pcard { display: flex; flex-direction: column; align-items: center; gap: .5rem; transform-origin: 50% 100%; animation: tv-pv-in var(--tv-d-m) var(--tv-emph-out) both; }
   .still { position: relative; width: 100%; overflow: hidden; border-radius: var(--tv-radius, 6px); background: #141414; box-shadow: 0 0 0 2px rgba(255, 255, 255, .9), 0 18px 40px rgba(0, 0, 0, .55); }
   .pt { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; text-shadow: 0 1px 10px rgba(0, 0, 0, .6); }
   .pc { max-width: 100%; font-size: 1.1rem; font-weight: 500; color: var(--tv-white-78); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 10px rgba(0, 0, 0, .6); margin-top: -.25rem; }
-  @keyframes tv-pv-in { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: scale(1); } }
+  @keyframes tv-pv-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 
   /* the button row: transparent icon + label rows (the detail page's buttons, laid out horizontally); white fill on focus */
   .btns { display: flex; align-items: flex-end; gap: .75rem; margin-left: -1.25rem; }

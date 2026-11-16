@@ -18,6 +18,7 @@ export default {
     newOnly: 'Neu',
     myList: 'Merkliste',
     live: 'Live-TV',
+    recordings: 'Aufnahmen',
     categories: 'Kategorien',
   },
   mobile: {
@@ -83,6 +84,7 @@ export default {
     accountSettings: 'Konto & Einstellungen',
     devices: 'Geräte',
     downloads: 'Downloads',
+    recordings: 'Aufnahmen',
     surprise: 'Überrasch mich',
     help: 'Hilfe',
     admin: 'Admin',

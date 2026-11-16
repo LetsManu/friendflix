@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Session } from '../src/session.js';
 import { lockUser } from '../src/users.js';
 import { fakeHttp, makeEnv, type Handler, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 let env: TestEnv;
@@ -79,7 +80,7 @@ describe('GET /api/account', () => {
 
   it('reauthUntil = reauthAt + 10 min while the stamp is valid', async () => {
     const s = await mk();
-    const key = `sess:${s.cookies.ff_sid}`;
+    const key = sessionKey(s.cookies.ff_sid!);
     const sess = JSON.parse((await env.kv.get(key))!) as Session;
     const at = Date.now() - 60_000;
     await env.kv.set(key, JSON.stringify({ ...sess, reauthAt: at }), 300);

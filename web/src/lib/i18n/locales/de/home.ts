@@ -93,6 +93,7 @@ export default {
     trending: 'Diese Woche bei uns',
     featured: '{name} · Empfohlen von {owner}',
     myList: 'Merkliste',
+    recordings: 'Deine Aufnahmen',
     upcomingWish: 'Demnächst – jetzt wünschen',
     top10: 'Top 10 nach Bewertung',
     libraryFailed: 'Bibliothek konnte nicht geladen werden.',

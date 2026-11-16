@@ -151,18 +151,34 @@ Text over glass must reach AA (4.5:1) against the ambient's brightest point. `to
 | Helper | What it does |
 |---|---|
 | `SlidePill` (`host`, `selector`, `tone` light/white) | the sliding selection pill for tabs, segmented controls and side navigation: three parts moved by transforms, 450 ms spring, jumps without `html.m-glass` |
-| `grow` / `growFrom` / `growBoth` (`fx.ts`) | menus and sheets grow out of their button: scale .4 to 1 with the spring (380 ms), back in 200 ms; reduced set: 160 ms fade; calm: instant. `growFrom({ trigger })` measures the origin from the button once per open and keeps it |
+| `grow` / `growFrom` / `growBoth` (`fx.ts`) | menus and sheets fade and slide at most 8 px out of their button (220 ms `emphOut`), back in 150 ms (`inEase`); reduced set: 160 ms fade; calm: instant. `growFrom({ trigger })` measures the shift from the button once per open and keeps it |
 | `twoWay(make)`, `growBoth` | the reversal contract: use them with Svelte's bidirectional `transition:` (never `in:`/`out:`), so a close mid-open or a reopen mid-close turns around from where it is. `transition:growBoth={{ trigger }}` for a menu; `twoWay((dir) => …)` to build your own |
-| `sheetSlide` | a phone bottom sheet (the card sheet, MoreActions on phones) slides up from below the window (380 ms in, 200 ms out) |
-| `toastRise` | a toast rises in (420 ms spring) and slides out (260 ms) |
-| `scrimFade` | a sheet's scrim fades (200 ms) |
+| `sheetSlide` | a phone bottom sheet (the card sheet, MoreActions on phones) slides up from below the window (320 ms in, 200 ms out) |
+| `toastRise` | a toast rises in (300 ms `emphOut`, no overshoot) and slides out (200 ms) |
+| `scrimFade` | a sheet's or dialog's scrim fades (200 ms). Put it on a sibling layer under the glass, never on the glass's parent: an ancestor below opacity 1 cuts the `backdrop-filter` off from the page behind |
 | `countAt` | the count-up value (1.1 s ease-out) for admin numbers; `admin/glass.ts` `countable()` decides which values count (plain numbers only) |
 | `sheen` (`pointer.ts`) | action: a light sheen follows the pointer inside a glass surface (host clips it) |
 | `tilt` (`pointer.ts`) | action: poster and card tilt toward the pointer (up to 9 degrees), glare, light band, shadow; siblings step back |
-| `press` (`press.ts`) | action: touch press feedback, scale .92 in 80 ms, spring back in 350 ms, ripple from the touch point (the action adds `.ff-press` itself) |
+| `press` (`press.ts`) | action: touch press feedback: a text control dims to opacity .72 in 80 ms and back in 200 ms (never scaled), an icon-only one squeezes to .92; a ripple from the touch point (the action adds `.ff-press` itself and gives back any inline style it replaced) |
 | `Button` `done` | after a save the label becomes "Saved" with a drawn checkmark; the caller resets it after about 2 s |
 
-`sheen`, `tilt` and `press` run only with full motion (`fxLive()`): `sheen` and `tilt` need a fine pointer off TV and kids, `press` needs touch or pen. `grow`, `sheetSlide`, `toastRise` and `tilt` pulse the frame guard when they start with full motion, so slow glass motion can trip it.
+`sheen`, `tilt` and `press` run only with full motion (`fxLive()`): `sheen` and `tilt` need a fine pointer off TV and kids, `press` needs touch or pen. `grow`, `sheetSlide`, `toastRise`, `dialogRise` and `tilt` pulse the frame guard when they start with full motion, so slow glass motion can trip it.
+
+### Motion of pop-ups
+
+**Rule: text never scales.** A menu, sheet, dialog, toast or any text control animates `transform` (translate) and `opacity` only, never `scale()`: scaled text blurs and jumps between pixel grids. No overshooting spring curve either. Pressing a button dims it (opacity), it does not shrink it. `lib/glass/fx.ts` holds the tokens:
+
+| Token | Value | Use |
+|---|---|---|
+| `GROW_IN_MS` / `GROW_OUT_MS` | 220 / 150 ms | `grow`, `growFrom`, `growBoth`: a menu slides at most `SHIFT_PX` (8 px) out of its button and fades; `emphOut` in, `inEase` out |
+| `SHEET_IN_MS` / `SHEET_OUT_MS` | 320 / 200 ms | `sheetSlide`: a bottom sheet |
+| `TOAST_IN_MS` / `TOAST_OUT_MS` | 300 / 200 ms | `toastRise` |
+| `DIALOG_IN_MS` / `DIALOG_OUT_MS` | 220 / 150 ms | `dialogRise` / `dialogBoth` (`ModalShell`): a dialog rises 10 px and fades |
+| `REDUCED_MS` | 160 ms | the reduced set (frame guard tripped): a crossfade; calm mode and reduced motion: instant |
+
+Dialogs share one layout: `.dlg-title`, `.dlg-body`, `.dlg-err` (a reserved status line) and `.dlg-acts` (primary on the right, on phones stacked with the primary on top); a long dialog wraps its middle part in `.dlg-main`, which scrolls while the title and buttons stay in view. Nothing behind a dialog moves: `app.css` reserves the scrollbar's room (`scrollbar-gutter: stable` on `<html>`, off on TV, on the player pages and where scrollbars take no room: `html.no-gutter`), `body` clips its horizontal overflow (`overflow-x: clip`, so sticky elements keep their place when the page locks) and `lib/ui/scrollLock.ts` is the one owner of the page lock (it pads by the scrollbar's width only where the gutter is off). Known gap: the root layout sets `html.no-gutter` after hydration, so a first load straight onto a player page on a desktop with classic scrollbars paints with the gutter for a moment, then the player widens by its width.
+
+Guards: `web/src/lib/ui/motionRule.test.ts` scans the source for `scale()` in animations (an `ALLOW` map names each exception with its reason: TV focus design, text-free artwork) and `e2e/tests/motion-frames*.spec.ts` samples text scale on every frame (`e2e/frames.ts`: `watchTextScale`, `textScaleDuring`, `stableBox`) while the menus, toasts, dialogs and the Update result open and close. Known temporary exceptions (`TEMPORARY` in `ALLOW`, each removed when fixed): `HoverPreview.svelte` and `desk/DeskPreview.svelte` (stage 2, desktop menus), `phone/Carousel.svelte` (stage 3, phone), the TV focus scale on text (the side bar, category tiles, cards, `.tv-btn`, the favourite tiles: stage 5, TV menus) and the quiet hero title (`Hero.svelte`, stage 6). The scan checks `scale()`, `scale3d()`, the `scale` property and `zoom` in keyframes and in state rules (`:active`, `:hover`, `:focus`, `.pressed`, `.open`, `.on`, `.show`, `.quiet`, `[open]`, …), scale strings in script and markup, `svelte/transition` `scale` and `svelte/animate` `flip`.
 
 ### Named animation exceptions
 

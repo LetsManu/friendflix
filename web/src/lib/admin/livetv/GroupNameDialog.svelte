@@ -37,18 +37,17 @@
 
 <ModalShell bind:this={shell} labelledby="{id}-t" focus="input" {trigger} locked={busy} on:close={cancel}>
   <form on:submit|preventDefault={submit}>
-    <h2 id="{id}-t">{title}</h2>
-    <Field label={$t('adminLive.grp.nameLabel')} bind:value={name} maxlength={40} error={bad || error} disabled={busy} autocomplete="off" />
-    <div class="acts">
-      <Button variant="ghost" disabled={busy} on:click={() => shell.dismiss()}>{$t('common.cancel')}</Button>
+    <h2 id="{id}-t" class="dlg-title">{title}</h2>
+    <!-- a refusal is about the name (taken, too long): it stays the field's error; the status line keeps the row's place -->
+    <div class="dlg-main"><Field label={$t('adminLive.grp.nameLabel')} bind:value={name} maxlength={40} error={bad || error} disabled={busy} autocomplete="off" /></div>
+    <div class="dlg-err" aria-hidden="true"></div>
+    <div class="dlg-acts">
+      <Button variant="glass" disabled={busy} on:click={() => shell.dismiss()}>{$t('common.cancel')}</Button>
       <Button type="submit" pending={busy}>{confirmLabel}</Button>
     </div>
   </form>
 </ModalShell>
 
 <style>
-  h2 { margin: 0; font-size: 1.2rem; overflow-wrap: anywhere; }
-  form :global(.field) { margin-top: 1rem; }
-  .acts { display: flex; justify-content: flex-end; gap: .6rem; margin-top: 1.4rem; flex-wrap: wrap; }
-  @media (max-width: 420px) { .acts { flex-direction: column-reverse; } .acts :global(.ui-btn) { width: 100%; } }
+  form :global(.field) { margin-top: 4px; }
 </style>

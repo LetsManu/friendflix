@@ -9,6 +9,7 @@
   import { activeChips, applyDraft, browseQuery, draftOf, filterCount, parseBrowse, type FilterDraft } from '#lib/discovery';
   import { dialogKeys } from '#lib/actions';
   import { onDestroy, tick } from 'svelte';
+  import { scrollLockToggle } from '#lib/ui/scrollLock';
   import { langLabel } from '#lib/langs';
   import LazyRow from '#lib/LazyRow.svelte';
   import Icon from '#lib/Icon.svelte';
@@ -84,8 +85,9 @@
   let fsheet = false, draft: FilterDraft = { genre: '', decade: '', minRating: '', sort: 'SortName', filter: '', audio: '', subs: '' }, fbtn: HTMLButtonElement, dragY = 0, dragging = false, dragStart = 0;
   $: fcount = filterCount(s) + qlist.length;
   const portal = (node: HTMLElement) => { document.body.appendChild(node); return { destroy() { node.remove(); } }; };
-  $: if (typeof document !== 'undefined') document.documentElement.style.overflow = fsheet ? 'hidden' : ''; // no page scroll behind the sheet
-  onDestroy(() => { if (typeof document !== 'undefined') document.documentElement.style.overflow = ''; });
+  const sheetLock = scrollLockToggle(); // no page scroll behind the sheet (the one owner of the lock: scrollLock.ts)
+  $: sheetLock(fsheet);
+  onDestroy(() => sheetLock(false));
   function openFilters() { draft = draftOf(s); dragY = 0; fsheet = true; }
   async function closeFilters(refocus = true) { fsheet = false; dragY = 0; dragging = false; if (refocus) { await tick(); fbtn?.focus(); } }
   async function applyFilters() { await goto(applyDraft(new URL($page.url.href), draft), { reset: false }); void closeFilters(); }

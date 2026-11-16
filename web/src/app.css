@@ -73,10 +73,20 @@
 /* focus not obscured (WCAG 2.4.11): an element scrolled into view (Tab, find, a #hash jump) stops clear of the glass bars - below
    the fixed header and, on phones, above the floating tab bar and the home indicator. TV scrolls its rows itself. */
 html { scroll-padding-top: calc(var(--nav-total) + 8px); }
+/* the scrollbar's room stays reserved (a desktop with a classic scrollbar), so nothing moves sideways when a dialog or sheet locks
+   the page (lib/ui/scrollLock.ts): not the content, not the fixed bars. Overlay scrollbars (phones, macOS) reserve nothing. Not on
+   TV (no scrollbar; its layout is measured to the edge), not on the player pages (a fixed full-window player would get an empty
+   strip) and not where scrollbars take no room at all (html.no-gutter, set by the root layout: overlay or hidden scrollbars);
+   there scrollLock pads instead, which only matters where a scrollbar shows. */
+html { scrollbar-gutter: stable; }
+html.tv, html.no-gutter { scrollbar-gutter: auto; }
 @media (max-width: 720px) { html:not(.kids) { scroll-padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 16px); } }
 html.tv { scroll-padding: 0; }
 /* no global smooth scrolling: it animated SvelteKit's scroll restoration on back/forward. In-page jumps pass behavior:'smooth' explicitly. */
-body { margin: 0; background: var(--bg); color: var(--fg); font: 400 16px/1.5 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+/* overflow-x: clip, not hidden: hidden makes <body> a scroll container of its own as soon as the page lock (lib/ui/scrollLock.ts)
+   hides <html>'s overflow, and every sticky element (the admin side bar, table heads) would re-anchor to it and jump. `hidden`
+   stays first for engines without `clip` (the TVs' old Chromium). */
+body { margin: 0; background: var(--bg); color: var(--fg); font: 400 16px/1.5 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; -webkit-font-smoothing: antialiased; overflow-x: hidden; overflow-x: clip; }
 a { color: inherit; text-decoration: none; }
 h1, h2, h3 { margin: .2rem 0 .8rem; line-height: 1.2; letter-spacing: -.01em; }
 img { max-width: 100%; }
@@ -101,7 +111,7 @@ html.m-still .lib-in { animation: none; }
    a glass control that wants a fading fill or edge uses .fill-hover / .edge-hover (below) ---- */
 button, .btn { font: inherit; font-weight: 600; background: var(--acc-fill); color: #fff; border: 0; border-radius: 4px; padding: .6rem 1.2rem; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: .5rem; transition: transform var(--t-fast), opacity var(--t-fast); }
 button:hover:not(:disabled), .btn:hover { background: var(--acc-fill-hover); }
-button:active:not(:disabled), .btn:active { transform: scale(.97); }
+button:active:not(:disabled), .btn:active { opacity: .82; }
 button.sec, .btn.sec { background: rgba(112, 124, 138, .55); }
 button.sec:hover:not(:disabled), .btn.sec:hover { background: rgba(112, 124, 138, .35); }
 /* hero / detail pair: filled coral pill + glass outline pill */
@@ -252,6 +262,27 @@ html:not(.m-glass) .frost-flat::before, html.tv .frost-flat::before, html.kids .
 html:not(.m-glass) .panel::before, html.tv .panel::before, html.kids .panel::before,
 html:not(.m-glass) .frost-btn::before, html.tv .frost-btn::before, html.kids .frost-btn::before { display: none; }
 html.m-still .frost-sheen, html.m-still .frost-tint, html.tv .frost-sheen, html.kids .frost-sheen { display: none; }
+/* ---- Dialogs (lib/ui/ModalShell.svelte, the owner-approved dialog mockup): one title, body, status line and button row. The row
+   is [secondary, primary] in the DOM, the primary on the right; under 420 px it stacks, full width, the primary on top. Every
+   button is a 44 px pill: the secondary the glass pill (.frost-btn), the primary coral (--acc-fill), a danger primary solid red.
+   A busy button keeps its width: the label goes transparent, the spinner sits over it. ---- */
+.dlg-title { margin: 0 0 10px; font-size: 21px; font-weight: 800; line-height: 1.25; letter-spacing: normal; overflow-wrap: anywhere; }
+.dlg-body { margin: 0; font-size: 15px; line-height: 1.5; color: #c9ced4; overflow-wrap: anywhere; }
+/* the status line's room is always there (a refusal appears without moving the buttons) */
+.dlg-err { min-height: 22px; margin: 10px 0 8px; font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--err-mark); overflow-wrap: anywhere; }
+.dlg-acts { display: flex; justify-content: flex-end; gap: 10px; }
+/* a long dialog: the form's middle part (.dlg-main) scrolls on its own, so the title and the buttons stay in view (ModalShell caps
+   the panel's height); 4 px of room keep the focus rings inside the scroller. An engine without :has scrolls the whole panel. */
+.ff-dlg > form:has(> .dlg-main) { display: flex; flex-direction: column; min-height: 0; }
+.ff-dlg > form:has(> .dlg-main) > :not(.dlg-main) { flex: none; }
+.dlg-main { min-height: 0; margin: -4px; padding: 4px; overflow-y: auto; overscroll-behavior: contain; }
+.dlg-acts > :is(button, .btn) { position: relative; min-height: 44px; padding: 0 22px; border-radius: var(--fr-r-pill); font-size: 15px; font-weight: 700; }
+/* opacity, not visibility: a hidden label would take the busy button's accessible name with it */
+.dlg-acts > [aria-busy='true'] .ui-lbl { opacity: 0; }
+.dlg-acts > [aria-busy='true'] .spinner { position: absolute; left: 50%; top: 50%; margin: -.5em 0 0 -.5em; }
+@media (max-width: 420px) { .dlg-acts { flex-direction: column-reverse; } .dlg-acts > :is(button, .btn) { width: 100%; } }
+/* fields in a dialog show one ring: the white outline 2 px off the field, no dark companion shadow with it */
+.ff-dlg :is(input:not([type='checkbox']):not([type='radio']), select, textarea):focus-visible { outline: 2px solid #fff; outline-offset: 2px; box-shadow: none; }
 /* text on the light glass over the ambient background (.panel and the .frost-text surfaces: settings, /me, phone search):
    the mockup's hierarchy, AA on the light card over the brightest glow, on the raw ambient and on the solid fallback
    (lib/glass/pages.test.ts): dim text white .72, hints white .66, the status colours a step lighter, links and coral text lighter */
@@ -274,10 +305,11 @@ html:root :is(.frost, .frost-flat, .panel) .panel::before { display: none; }
 .edge-hover::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; border: 1px solid rgba(255, 255, 255, .42); opacity: 0; pointer-events: none; transition: opacity var(--t-fast); }
 .edge-hover:hover::after { opacity: 1; }
 html.m-still :is(.fill-hover, .edge-hover)::after { transition: none; } /* calm mode / reduced motion: at once */
-/* §8.9 phone press feedback (lib/glass/press.ts): squeeze in 80 ms, spring back in 350 ms; a ripple from the touch point
+/* §8.9 phone press feedback (lib/glass/press.ts): a text control dims (opacity, set inline) in 80 ms and returns in 200 ms,
+   never scaled; an icon-only one squeezes (inline transform); a ripple from the touch point
    (twice the larger side, clipped by the node). .pressed is set with full motion only. */
-html:root .ff-press { position: relative; overflow: hidden; -webkit-tap-highlight-color: transparent; transition: transform 350ms var(--fr-spring), opacity 150ms; }
-html:root .ff-press.pressed { transform: scale(.92); transition: transform 80ms var(--fr-spring), opacity 150ms; }
+html:root .ff-press { position: relative; overflow: hidden; -webkit-tap-highlight-color: transparent; transition: transform 200ms linear, opacity 200ms linear; }
+html:root .ff-press.pressed { transition: transform 80ms linear, opacity 80ms linear; }
 .ripple { position: absolute; border-radius: 50%; background: rgba(255, 255, 255, .35); transform: scale(0); opacity: 0; pointer-events: none; }
 
 video { width: 100%; background: #000; }

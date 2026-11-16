@@ -89,6 +89,7 @@ const fr: Translation<typeof de> = {
     trending: 'Cette semaine chez nous',
     featured: '{name} · Recommandé par {owner}',
     myList: 'Mes envies',
+    recordings: 'Vos enregistrements',
     upcomingWish: 'Prochainement – à demander',
     top10: 'Top 10 des mieux notés',
     libraryFailed: 'Impossible de charger la bibliothèque.',

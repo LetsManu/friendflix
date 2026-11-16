@@ -82,6 +82,8 @@ beforeAll(async () => {
   await env.pool.query(
     `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values ($1, 'anna', 'anna@friend.example.com', 'Anna Beispiel', 'family', $2, 'anna', $3)`,
     [annaId, 'a'.repeat(32), encrypt(key, 'pw')]);
+  // recording is off by default for every role but Admin (owner decision 2026-11-15): Familie gets it explicitly here
+  await env.pool.query(`insert into role_settings(role, perms) values ('family', '{"liveRecord": true}')`);
   anna = await env.login({ sub: 'anna', email: 'anna@friend.example.com', name: 'Anna Beispiel', groups: [] });
   await env.pool.query('update devices set approved = true where user_id = $1', [annaId]);
 });
@@ -115,7 +117,9 @@ beforeEach(async () => {
 describe('space and retention (spec §15.5)', () => {
   it('usage over 90 % schedules the oldest unprotected for deletion with a 24-h notice', async () => {
     env.ctx.cfg = { ...cfg, LIVETV_RECORD_LIMIT_GB: 1 };
-    const now = Date.now();
+    // noon UTC of today: the admin's storage notice is deduplicated per UTC day, so "again within the day" (now + 1 h) must not
+    // cross midnight; with the wall clock this failed every day between 23:00 and 24:00 UTC
+    const now = new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00.000Z').getTime();
     const a = await row({ bytes: 0.4 * GB, start_at: new Date(now - 9 * DAY), end_at: new Date(now - 9 * DAY + HOUR), title: 'Die Leuchtturmwärter' });
     const kept = await row({ bytes: 0.3 * GB, keep: true, start_at: new Date(now - 8 * DAY), end_at: new Date(now - 8 * DAY + HOUR) });
     const c = await row({ bytes: 0.3 * GB, start_at: new Date(now - 7 * DAY), end_at: new Date(now - 7 * DAY + HOUR) });

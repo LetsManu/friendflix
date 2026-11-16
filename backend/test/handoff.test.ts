@@ -10,6 +10,7 @@ import { playbackReport } from '../src/routes/media.js';
 import type { ProfileRow } from '../src/types.js';
 import { getUserById } from '../src/users.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 // Dunmoor S1 E4 "The Lantern Road" and S1 E5 "Wrenfield Pier" (fictional)
 const SER = 'd'.repeat(32);
@@ -51,7 +52,7 @@ beforeAll(async () => {
     }),
   });
   s = await env.login();
-  const sess = JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!) as { userId: string; deviceId: string };
+  const sess = JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!) as { userId: string; deviceId: string };
   uid = sess.userId;
   dev = sess.deviceId;
   pid = (await env.pool.query<{ id: string }>('select id from profiles where user_id = $1 and is_owner', [uid])).rows[0]!.id;

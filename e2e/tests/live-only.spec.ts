@@ -58,11 +58,11 @@ test.describe('a person without libraries (desktop)', () => {
     await page.clock.install({ time: NOW });
   });
 
-  test('desktop bar shows only Live; account menu shows no library entries; footer has no library links', async ({ page }) => {
+  test('desktop bar shows only Live and its recordings; account menu shows no library entries; footer has no library links', async ({ page }) => {
     const lib = libraryCalls(page);
     await page.goto('/live');
     await expect(page.getByRole('heading', { level: 1, name: 'Live-TV' })).toBeVisible();
-    await expect(nav(page).getByRole('link')).toHaveText(['Live-TV']);
+    await expect(nav(page).getByRole('link')).toHaveText(['Live-TV', 'Aufnahmen']);
     await expect(nav(page).getByRole('button', { name: 'Kategorien' })).toHaveCount(0); // genres and languages are library data
     await expect(page.getByRole('search')).toHaveCount(0); // the search looks through the library
     await expect(page.getByRole('link', { name: 'Nordlicht TV' }).or(page.getByRole('button', { name: /^1 Nordlicht TV/ })).first()).toBeVisible();
@@ -113,14 +113,14 @@ test.describe('a person without libraries (desktop)', () => {
     await page.goto('/live');
     // the page renders early from the hint: the bar is there while /api/me still waits, with Live TV and without a library tab;
     // the logo already goes to Live TV
-    await expect(nav(page).getByRole('link')).toHaveText(['Live-TV']);
+    await expect(nav(page).getByRole('link')).toHaveText(['Live-TV', 'Aufnahmen']);
     expect(asked).toBe(true);
     await expect(page.getByRole('link', { name: 'FriendFlix Startseite' })).toHaveAttribute('href', '/live');
     await expect(page.getByRole('link', { name: 'Start', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Kategorien' })).toHaveCount(0);
     await expect(page.getByRole('search')).toHaveCount(0);
     release();
-    await expect(nav(page).getByRole('link')).toHaveText(['Live-TV']);
+    await expect(nav(page).getByRole('link')).toHaveText(['Live-TV', 'Aufnahmen']);
     await expect(nav(page).getByRole('link', { name: 'Start' })).toHaveCount(0);
   });
 
@@ -138,7 +138,7 @@ test.describe('a person without libraries (desktop)', () => {
     await expect(page.locator('nav.pill a[href="/browse/movies"]')).toBeHidden();
     release();
     await expect(page).toHaveURL((u) => u.pathname === '/live');
-    await expect(nav(page).getByRole('link')).toHaveText(['Live-TV']);
+    await expect(nav(page).getByRole('link')).toHaveText(['Live-TV', 'Aufnahmen']);
     await page.waitForLoadState('networkidle');
     expect(await page.evaluate(() => (window as unknown as { __libSeen: string[] }).__libSeen)).toEqual([]);
   });
@@ -196,7 +196,7 @@ test.describe('a person without libraries (desktop)', () => {
     expect(lib).toEqual([]);
   });
 
-  test('TV: /tv goes to /live?play=last; the rail shows Live only', async ({ page }) => {
+  test('TV: /tv goes to /live?play=last; the rail shows Live and its recordings only', async ({ page }) => {
     await page.routeWebSocket(/\/ws\/remote/, () => {});
     await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, tv: true, startLive: false, features: { livetv: true }, areas: { ...LIVE_ONLY } } }));
     const to = page.waitForRequest((r) => r.isNavigationRequest() && new URL(r.url()).pathname === '/live' && new URL(r.url()).search === '?play=last');
@@ -208,8 +208,8 @@ test.describe('a person without libraries (desktop)', () => {
     await page.goto('/live?tv=1');
     await expect(page.locator('html.tv')).toHaveCount(1);
     const rail = page.getByRole('navigation', { name: 'Hauptmenü' });
-    await expect(rail.getByRole('listitem')).toHaveCount(1);
-    await expect(rail.getByRole('listitem').getByRole('link')).toHaveAttribute('href', '/live');
+    await expect(rail.getByRole('listitem')).toHaveCount(2);
+    expect(await rail.getByRole('listitem').getByRole('link').evaluateAll((l) => l.map((a) => a.getAttribute('href')))).toEqual(['/live', '/live/recordings']);
   });
 
   test('kids profile without library opens /live, not /kids', async ({ page }) => {

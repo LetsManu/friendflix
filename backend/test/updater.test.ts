@@ -7,6 +7,7 @@ import { encrypt } from '../src/crypto.js';
 import { REDEPLOY_KEY, REDEPLOY_LOCK } from '../src/redeploy.js';
 import { autoUpdateTick, parseStatus, signUpdater, updaterKey } from '../src/updater.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 // The backend side of the opt-in updater: signing (shared vectors with updater/), the admin routes (admin only, re-auth, rate
 // limit, audit of start and result), the updater-absent fallback and the automatic update tick.
@@ -271,7 +272,7 @@ describe('POST /api/admin/updater/:action', () => {
   let e2: TestEnv, a2: Sess;
   const post = (action: string) => e2.app.inject({ method: 'POST', url: `/api/admin/updater/${action}`, cookies: a2.cookies, headers: { 'x-csrf-token': a2.csrf } });
   const stamp = async (at = Date.now()) => {
-    const key = `sess:${a2.cookies.ff_sid}`;
+    const key = sessionKey(a2.cookies.ff_sid!);
     await e2.kv.set(key, JSON.stringify({ ...JSON.parse((await e2.kv.get(key))!), reauthAt: at }), 600);
   };
   // a fresh app per test: the route allows 3 starts per 2 minutes for the whole portal

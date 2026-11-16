@@ -8,6 +8,7 @@ import { m } from '../src/i18n.js';
 import { notify, notifyAdmins } from '../src/notify.js';
 import type { ItemDto } from '../src/media/types.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 let env: TestEnv;
@@ -440,10 +441,10 @@ describe('GET /api/account/export', () => {
     const { s, aKid } = await setup();
     fakeHistory();
     const sid = s.cookies.ff_sid!;
-    const raw = JSON.parse((await env.kv.get(`sess:${sid}`))!);
-    await env.kv.set(`sess:${sid}`, JSON.stringify({ ...raw, profileId: aKid }), 600);
+    const raw = JSON.parse((await env.kv.get(sessionKey(sid)))!);
+    await env.kv.set(sessionKey(sid), JSON.stringify({ ...raw, profileId: aKid }), 600);
     expect((await get(s)).statusCode).toBe(403);
-    await env.kv.set(`sess:${sid}`, JSON.stringify(raw), 600);
+    await env.kv.set(sessionKey(sid), JSON.stringify(raw), 600);
     for (let i = 0; i < 5; i++) expect((await get(s)).statusCode).toBe(200);
     expect((await get(s)).statusCode).toBe(429);
   });

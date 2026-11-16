@@ -70,8 +70,11 @@ test.describe('admin: Live-TV, Live-Status (desktop)', () => {
     await expect(card(page, 'Ereignisse')).toBeVisible();
     await expect(card(page, 'Gesendete Streams')).toHaveCount(0);
 
+    // "since 20 minutes ago", but never before today's midnight: within the first 20 minutes of a day it would read "gestern"
+    const midnight = new Date(); midnight.setHours(0, 0, 30, 0);
+    const since = Math.max(midnight.getTime(), Date.now() - 20 * 60_000);
     api.admin.livetv.status.ingest = [
-      { channelId: 'ch-wolkenlos', name: 'Kanal Wolkenlos', port: 9001, state: 'receiving', since: Date.now() - 20 * 60_000, bitrate: 2_000_000, rejected1h: 2 },
+      { channelId: 'ch-wolkenlos', name: 'Kanal Wolkenlos', port: 9001, state: 'receiving', since, bitrate: 2_000_000, rejected1h: 2 },
       { channelId: 'ch-sternwarte', name: 'Sternwarte 24', port: 9002, state: 'idle', since: null, bitrate: null, rejected1h: 0 },
     ];
     await page.reload();

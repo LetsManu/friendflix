@@ -6,6 +6,7 @@ import { FILE_FP_KEY, getSourceKey, INVALID_KEY, PAUSE_KEY, syncFileKeys } from 
 import { buildApp } from '../src/app.js';
 import { MemoryKV } from '../src/kv.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 const KEY = 'tmdbsecretkey1234';
 let env: TestEnv;
@@ -15,7 +16,7 @@ const call = (e: TestEnv, a: typeof admin | null, method: 'GET' | 'PUT' | 'DELET
 
 /** stamps a re-authentication on the session (replacing or removing a key needs one at most 10 minutes old) */
 const reauth = async (e: TestEnv, a: typeof admin, at = Date.now()) => {
-  const k = `sess:${a.cookies.ff_sid}`;
+  const k = sessionKey(a.cookies.ff_sid!);
   await e.kv.set(k, JSON.stringify({ ...JSON.parse((await e.kv.get(k))!), reauthAt: at }), 600);
 };
 
@@ -138,7 +139,7 @@ describe('source keys', () => {
       ['1'.repeat(32), encrypt(keyFromBase64(ENC_KEY), 'pw')],
     )).rows[0].id;
     const sid = `bob-session-${'x'.repeat(30)}`;
-    await env.kv.set(`sess:${sid}`, JSON.stringify({ userId: id, csrf: 'bobcsrf', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
+    await env.kv.set(sessionKey(sid), JSON.stringify({ userId: id, csrf: 'bobcsrf', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
     const friend = { cookies: { ff_sid: sid }, csrf: 'bobcsrf' };
     const reqs: Array<['GET' | 'PUT' | 'DELETE' | 'POST', string, unknown?]> = [
       ['GET', '/api/admin/sources'], ['GET', '/api/admin/sources/tmdb'], ['PUT', '/api/admin/sources/tmdb', { key: KEY }],

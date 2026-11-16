@@ -122,11 +122,11 @@
 <style>
   /* one continuous timeline (~3.2 s) in step with sonic.ts: tile + swell 0-0.9 s, F drawn 0.4-1.1 s on the rising notes,
      play mark + flare + sweep on the chord at 1.2 s, wordmark 1.3-2.1 s, then a soft accent ring expands once from the tile
-     (1.9-3.0 s) while the stage eases to 1.04 and the overlay fades out (2.7-3.2 s). Only transform and opacity animate,
+     (1.9-3.0 s) while the overlay fades out (2.7-3.2 s). Only transform and opacity animate,
      and every phase overlaps the next so the motion never stops or jumps. */
   .intro { position: fixed; inset: 0; z-index: 10000; background: #000; display: grid; place-items: center; overflow: hidden; cursor: pointer; animation: ff-out .5s cubic-bezier(.4, 0, .2, 1) 2.7s both; contain: strict; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; margin: 0; }
-  .stage { --tile: clamp(104px, 22vmin, 176px); position: relative; display: grid; justify-items: center; gap: clamp(.9rem, 3.2vmin, 1.7rem); will-change: transform; animation: ff-stage 3.2s linear both; }
+  .stage { --tile: clamp(104px, 22vmin, 176px); position: relative; display: grid; justify-items: center; gap: clamp(.9rem, 3.2vmin, 1.7rem); }
   .glow { position: absolute; inset: -110%; border-radius: 50%; background: radial-gradient(circle, rgba(var(--acc-rgb), .45) 0%, rgba(var(--acc-rgb), .14) 38%, transparent 68%); opacity: 0; pointer-events: none; will-change: transform, opacity; animation: ff-bloom 3.2s cubic-bezier(.22, 1, .36, 1) .05s both; }
   .tilewrap { position: relative; width: var(--tile); aspect-ratio: 1; will-change: transform, opacity; animation: ff-tile .95s cubic-bezier(.16, 1, .3, 1) .05s both; }
   .tile { display: block; width: 100%; height: 100%; overflow: visible; }
@@ -147,8 +147,6 @@
   /* another brand's symbol (an upload or the initial on the accent fill) has no F to draw: it rises in (opacity and translation only) */
   .own .tilewrap { animation-name: ff-rise; }
 
-  /* gentle drift in, then a slow ease to 1.04 as the overlay fades */
-  @keyframes ff-stage { 0% { transform: scale(.94); animation-timing-function: cubic-bezier(.33, 0, .2, 1); } 40% { transform: scale(1.02); animation-timing-function: cubic-bezier(.3, 0, .4, 1); } 100% { transform: scale(1.04); } }
   @keyframes ff-tile { from { opacity: 0; transform: scale(.72); } to { opacity: 1; transform: scale(1); } }
   @keyframes ff-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
   @keyframes ff-bloom { 0% { opacity: 0; transform: scale(.6); } 35% { opacity: .85; transform: scale(1.05); } 100% { opacity: 0; transform: scale(1.25); } }

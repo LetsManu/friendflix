@@ -23,7 +23,7 @@
     "comments": true,
     "cast": true,
     "liveTv": true,
-    "liveRecord": true
+    "liveRecord": false
    },
    "areas": {
     "library": true,
@@ -55,7 +55,7 @@
     "comments": true,
     "cast": true,
     "liveTv": true,
-    "liveRecord": true
+    "liveRecord": false
    },
    "areas": {
     "library": true,

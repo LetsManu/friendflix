@@ -4,7 +4,8 @@
   /**
    * Button with the kit's variants (docs/ui-kit.md). Renders <a> when `href` is set.
    *   <Button variant="danger" pending={busy} on:click={remove} icon="x">{$t('ui.confirm.delete')}</Button>
-   * `pending`: spinner, aria-busy, disabled (the label stays so the width does not jump).
+   * `pending`: spinner, aria-busy, disabled (the label stays, in a `.ui-lbl` span, so the width does not jump; a dialog's row hides
+   * it and centres the spinner over it).
    * `done`: a save went through: the label becomes "Saved" with a drawn checkmark (glass spec §8.8; the caller resets it after
    * 2.2 s). The check's `stroke-dashoffset` runs 24 → 0 in 420 ms (GLASS_OUT); calm mode and reduced motion: drawn at once.
    */
@@ -12,7 +13,8 @@
   import { t } from '#lib/i18n';
   import { fxMode } from '#lib/glass/fx';
   import { GLASS_OUT } from '#lib/tv/motion';
-  export let variant: 'primary' | 'secondary' | 'ghost' | 'danger' = 'primary';
+  /** `glass`: the glass pill (.frost-btn), the secondary button of a dialog */
+  export let variant: 'primary' | 'secondary' | 'ghost' | 'danger' | 'glass' = 'primary';
   export let pending = false;
   export let disabled = false;
   export let type: 'button' | 'submit' | 'reset' = 'button';
@@ -32,7 +34,7 @@
   function draw(el: SVGPathElement) {
     if (fxMode() !== 'still') el.animate([{ strokeDashoffset: '24' }, { strokeDashoffset: '0' }], { duration: 420, easing: GLASS_OUT });
   }
-  $: klass = ['ui-btn', done ? 'done' : '', variant === 'secondary' ? 'sec' : variant === 'primary' ? '' : variant, size === 'sm' ? 'sm' : '', block ? 'block' : '', solid ? 'solid' : '', cls].filter(Boolean).join(' ');
+  $: klass = ['ui-btn', done ? 'done' : '', variant === 'secondary' ? 'sec' : variant === 'glass' ? 'frost-btn' : variant === 'primary' ? '' : variant, size === 'sm' ? 'sm' : '', block ? 'block' : '', solid ? 'solid' : '', cls].filter(Boolean).join(' ');
 </script>
 
 {#if href && !disabled}
@@ -41,7 +43,8 @@
   <!-- pending keeps focus (aria-disabled instead of disabled) and swallows clicks before any on:click handler runs -->
   <button {type} class={klass} {disabled} aria-disabled={pending ? 'true' : undefined} aria-busy={pending ? 'true' : undefined} {...$$restProps} on:click|capture={guard} on:click>
     {#if done}<svg class="chk" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" use:draw /></svg>{$t('common.saved')}
-    {:else}{#if pending}<span class="spinner" aria-hidden="true"></span>{:else if icon}<Icon name={icon} size={18} />{/if}<slot />{/if}
+    {:else if pending}<span class="spinner" aria-hidden="true"></span><span class="ui-lbl"><slot /></span>
+    {:else}{#if icon}<Icon name={icon} size={18} />{/if}<slot />{/if}
   </button>
 {/if}
 

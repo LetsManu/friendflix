@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MemoryKV } from '../src/kv.js';
-import { authenticate, newSession, saveSession } from '../src/session.js';
+import { authenticate, newSession, saveSession, sessionKey } from '../src/session.js';
 import { revokeSessions } from '../src/devices.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
@@ -61,19 +61,19 @@ describe('MemoryKV', () => {
 describe('races', () => {
   it('a stale touch after revoke does not recreate the session', async () => {
     const sid = me.cookies.ff_sid!;
-    const raw = JSON.parse((await env.kv.get(`sess:${sid}`))!);
+    const raw = JSON.parse((await env.kv.get(sessionKey(sid)))!);
     await saveSession(env.ctx, sid, { ...raw, touchedAt: 1 }); // old enough to be refreshed
     const get = env.kv.get.bind(env.kv);
-    env.kv.get = async (k: string) => { const v = await get(k); if (k === `sess:${sid}`) { env.kv.get = get; await revokeSessions(env.ctx, raw.userId); } return v; };
+    env.kv.get = async (k: string) => { const v = await get(k); if (k === sessionKey(sid)) { env.kv.get = get; await revokeSessions(env.ctx, raw.userId); } return v; };
     const ok = await authenticate(env.ctx, { cookies: { ff_sid: sid } } as never);
     expect(ok).toBe(true); // it was loaded before the revoke
-    expect(await env.kv.get(`sess:${sid}`)).toBeNull();
+    expect(await env.kv.get(sessionKey(sid))).toBeNull();
     me = await env.login();
   });
 
   it('saveSession for a new session still creates it', async () => {
     expect(await saveSession(env.ctx, 'new1', newSession({ userId: 'u', csrf: 'c', deviceApproved: true }))).toBe(true);
-    expect(await env.kv.get('sess:new1')).not.toBeNull();
+    expect(await env.kv.get(sessionKey('new1'))).not.toBeNull();
   });
 
   it('two concurrent claims with the same code: exactly one wins', async () => {

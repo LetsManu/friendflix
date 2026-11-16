@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 let env: TestEnv;
 let me: { cookies: Record<string, string>; csrf: string };
@@ -64,7 +65,7 @@ describe('TV pairing', () => {
     const c = (await post('/api/tv/code')).json();
     await post('/api/tv/pair', { code: c.code }, me);
     const sid = (await post('/api/tv/claim', { code: c.code, pollToken: c.pollToken })).cookies.find((x) => x.name === 'ff_sid')!.value;
-    const sess = JSON.parse((await env.kv.get(`sess:${sid}`))!);
+    const sess = JSON.parse((await env.kv.get(sessionKey(sid)))!);
     expect(sess).toMatchObject({ ttl: 90 * 86400, idle: 90 * 86400, deviceApproved: true });
   });
 
@@ -222,6 +223,6 @@ async function makeLea() {
     ['2'.repeat(32), encrypt(keyFromBase64(ENC_KEY), 'pw')],
   )).rows[0].id;
   const sid = 'lea-session-' + 'y'.repeat(30);
-  await env.kv.set(`sess:${sid}`, JSON.stringify({ userId: id, csrf: 'c', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
+  await env.kv.set(sessionKey(sid), JSON.stringify({ userId: id, csrf: 'c', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
   return sid;
 }

@@ -5,6 +5,7 @@ import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { HttpError, assertNotLastAdmin, lockUser, unlockUser } from '../src/users.js';
 import { bulkUsers } from '../src/routes/adminUsers.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 let env: TestEnv;
 let admin: { cookies: Record<string, string>; csrf: string };
@@ -24,7 +25,7 @@ const addUser = async (sub: string, name: string, role: string, disabled = false
 const row = async (id: string) => (await env.pool.query('select role, disabled, locked_reason, access_until from users where id=$1', [id])).rows[0];
 const audits = async (action: string, target: string) => (await env.pool.query('select actor, meta from audit_log where action=$1 and target=$2 order by id', [action, target])).rows;
 const fakeSession = (userId: string, sid: string) =>
-  env.kv.set(`sess:${sid}`, JSON.stringify({ userId, csrf: 'c', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
+  env.kv.set(sessionKey(sid), JSON.stringify({ userId, csrf: 'c', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
 
 beforeAll(async () => {
   env = await makeEnv({
@@ -49,7 +50,7 @@ describe('lockUser / unlockUser', () => {
     env.jfCalls.length = 0;
     await lockUser(env.ctx, adminId, ids.anna!, 'expired');
     expect(await row(ids.anna!)).toMatchObject({ disabled: true, locked_reason: 'expired' });
-    expect(await env.kv.get(`sess:${sid}`)).toBeNull();
+    expect(await env.kv.get(sessionKey(sid))).toBeNull();
     expect(env.jfCalls.some((c) => c.path === `/Users/${jfId('anna')}/Policy` && c.body.IsDisabled === true)).toBe(true);
     expect((await audits('user.disable', ids.anna!)).at(-1)).toMatchObject({ actor: adminId, meta: { reason: 'expired' } });
 
@@ -206,13 +207,13 @@ describe('bulk', () => {
     await fakeSession(ids.clara!, sid);
     expect((await bulk({ ids: [ids.anna, ids.clara], action: 'lock' })).json()).toEqual({ done: 2 });
     expect(await row(ids.clara!)).toMatchObject({ disabled: true, locked_reason: 'manual' });
-    expect(await env.kv.get(`sess:${sid}`)).toBeNull();
+    expect(await env.kv.get(sessionKey(sid))).toBeNull();
     expect((await bulk({ ids: [ids.anna, ids.clara, ids.ben], action: 'unlock' })).json()).toEqual({ done: 2 }); // ben was not locked
     expect((await row(ids.anna!)).disabled).toBe(false);
 
     await fakeSession(ids.ben!, sid);
     expect((await bulk({ ids: [ids.ben], action: 'revoke' })).json()).toEqual({ done: 1 });
-    expect(await env.kv.get(`sess:${sid}`)).toBeNull();
+    expect(await env.kv.get(sessionKey(sid))).toBeNull();
     expect((await audits('user.revoke_sessions', ids.ben!)).at(-1)!.meta).toEqual({ sessions: 1 });
 
     const until = '2030-01-01T00:00:00.000Z';

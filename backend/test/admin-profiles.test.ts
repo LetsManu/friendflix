@@ -7,6 +7,7 @@ import { onConnection } from '../src/profiles.js';
 import { sockets } from '../src/partySockets.js';
 import type { ProfileRow } from '../src/types.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey, sessionHash } from '../src/session.js';
 
 /** pg's "client is already executing a query" warning, from the start of this file */
 const pgWarnings: string[] = [];
@@ -113,7 +114,7 @@ const auditClean = async () => {
   for (const s of ['Ben', 'Carla', 'Dunmoor', '4711', '2468', '$scrypt', 'pin']) expect(all).not.toContain(s);
 };
 const session = (sid: string, deviceId: string, profileId: string, userId = ANNA) =>
-  env.kv.set(`sess:${sid}`, JSON.stringify({ userId, csrf: 'c', deviceId, deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now(), profileId }), 600);
+  env.kv.set(sessionKey(sid), JSON.stringify({ userId, csrf: 'c', deviceId, deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now(), profileId }), 600);
 /** a fake open party socket of a session: records how it was closed */
 const peer = (sid: string, closed: string[], userId = ANNA) => {
   const p = { sid, close: () => closed.push(`${sid}:revoked`), forbid: () => closed.push(`${sid}:forbidden`) };
@@ -177,7 +178,7 @@ describe('PATCH /api/admin/users/:id/profiles/:pid (kids)', () => {
     // the cached overrides of the account go, the caches of the old policy go, the gateway forgets the profile's sessions only
     expect(invalidateRights).toHaveBeenCalledWith(ANNA);
     expect(policyChanged).toHaveBeenCalledWith(env.ctx, JF.ben);
-    expect(vi.mocked(forgetAuth).mock.calls.map((c) => c[0])).toEqual(['s-ben']);
+    expect(vi.mocked(forgetAuth).mock.calls.map((c) => c[0])).toEqual([sessionHash('s-ben')]);
     expect(await audits('profile.admin_update')).toEqual([{
       actor: expect.any(String), target: ANNA,
       meta: { profile: BEN, from: { kids: false, maxRating: null }, to: { kids: true, maxRating: 6 } },
@@ -326,8 +327,8 @@ describe('DELETE /api/admin/users/:id/profiles/:pid', () => {
     expect((await env.pool.query('select 1 from handoff where profile_id=$1', [KID])).rowCount).toBe(0);
     expect((await env.pool.query('select 1 from watchlist where profile_id=$1', [KID])).rowCount).toBe(0);
     // the session on that profile loses it (re-resolves on its next request), the owner's session keeps its profile
-    expect(JSON.parse((await env.kv.get('sess:s-kid'))!).profileId).toBeUndefined();
-    expect(JSON.parse((await env.kv.get('sess:s-own'))!).profileId).toBe(ANNA);
+    expect(JSON.parse((await env.kv.get(sessionKey('s-kid')))!).profileId).toBeUndefined();
+    expect(JSON.parse((await env.kv.get(sessionKey('s-own')))!).profileId).toBe(ANNA);
     expect(await audits('profile.admin_delete')).toEqual([{ actor: expect.any(String), target: ANNA, meta: { profile: KID } }]);
     await auditClean();
   });

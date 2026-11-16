@@ -8,6 +8,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { buildInfo } from './channel.js';
 import type { Ctx } from './ctx.js';
 import { MIN_ANDROID } from './version.js';
+import { loadSession } from './session.js';
 import { authOrigin } from './oidc.js';
 import { noteUntrustedForwarding, trustProxy } from './netaddr.js';
 import { compressJson } from './compress.js';
@@ -232,10 +233,10 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
     if (!MUTATING.has(req.method)) return;
     const route = req.routeOptions.url;
     if (route !== undefined && (!route.startsWith('/api/') || CSRF_EXEMPT.has(route) || CSRF_EXEMPT_PREFIX.test(route))) return;
-    const sid = req.cookies.ff_sid;
-    const raw = sid ? await ctx.kv.get(`sess:${sid}`) : null;
-    if (!raw) return; // unauthenticated -> route handler answers 401
-    const want = Buffer.from((JSON.parse(raw) as { csrf: string }).csrf);
+    // loadSession: the hashed key, and a legacy one moved first (it must not slip past this check and be found by the route)
+    const s = await loadSession(ctx, req.cookies.ff_sid);
+    if (!s) return; // unauthenticated -> route handler answers 401
+    const want = Buffer.from(s.csrf);
     const sent = Buffer.from(String(req.headers['x-csrf-token'] ?? ''));
     if (sent.length !== want.length || !timingSafeEqual(sent, want)) return reply.code(403).send({ error: 'csrf' });
   });

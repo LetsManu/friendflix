@@ -3,6 +3,7 @@
 <script lang="ts">
   import '../app.css';
   import { onDestroy, onMount, tick } from 'svelte';
+  import { classicScrollbar, scrollLockToggle } from '#lib/ui/scrollLock';
   import { get } from 'svelte/store';
   import { afterNavigate, beforeNavigate, goto, onNavigate } from '$app/navigation';
   import { pageStore } from '#lib/page';
@@ -34,7 +35,7 @@
   import Intro from '#lib/Intro.svelte';
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
-  import { isRailTop, isTabActive, libraryTabs, LIVE_RAIL, liveTabs, TV_RAIL } from '#lib/menu';
+  import { activeTab, isRailTop, libraryTabs, LIVE_RAILS, liveTabs, TV_RAIL } from '#lib/menu';
   import { deskGuardBudget, tvGuardBudget, deskPagePlan, frameGuard, framesIdle, framesResume, isDetailPage, motionLevel, motionTripped, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
@@ -266,10 +267,16 @@
     const to = areaRedirect(me, path, $features.livetv) ?? kidsRedirect(me, path) ?? (needsWelcome(me, path) ? welcomeHref(path + $page.url.search, kidsHomeOf(me)) : null);
     if (to) void goto(to, { replaceState: true });
   }
+  const pageLock = scrollLockToggle();
+  /** classic scrollbars take room here (measured once in the browser; scrollLock.ts) */
+  const classicBar = typeof document !== 'undefined' && classicScrollbar();
   $: if (typeof document !== 'undefined') {
     document.documentElement.classList.toggle('m-chips', chipsRoom && !watchPage && !profilesPage);
-    document.documentElement.style.overflow = catOpen ? 'hidden' : ($previewSheet ? 'hidden' : ''); // no page scroll behind the overlay / sheet
+    // no reserved scrollbar strip (app.css): on the full-window player pages, and where scrollbars take no room (overlay / hidden)
+    document.documentElement.classList.toggle('no-gutter', watchPage || !classicBar);
+    pageLock(catOpen || !!$previewSheet); // no page scroll behind the overlay / sheet (the one owner of the lock: scrollLock.ts)
   }
+  onDestroy(() => pageLock(false));
   // the web app manifest (name, shortcuts) follows the UI language and the brand (its rev makes a changed brand a new URL)
   /** the phone header's parts for the brand's header style */
   $: mHead = headerParts($brand);
@@ -534,8 +541,8 @@
 
   // ---- TV page transitions (spec 5.2; plan in lib/tv/motion.ts): artwork -> detail backdrop morph, rail pages slide, else crossfade ----
   let pageFadeIn = false; // no View Transitions API (TV, desktop detail): the new page fades in (afterNavigate)
-  $: tvRail = liveTabs(libraryTabs(TV_RAIL, $areas.library), LIVE_RAIL, $features.livetv);
-  const railAt = (p: string) => tvRail.findIndex(([href]) => isTabActive(href, p));
+  $: tvRail = liveTabs(libraryTabs(TV_RAIL, $areas.library), LIVE_RAILS, $features.livetv);
+  const railAt = (p: string) => ((a) => tvRail.findIndex(([href]) => href === a))(activeTab(tvRail.map(([href]) => href), p));
   const onScreen = (el: Element | null | undefined): el is HTMLElement => {
     const r = el?.getBoundingClientRect();
     return !!r && r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;

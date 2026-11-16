@@ -13,6 +13,7 @@
    * *Meine Aufnahmen*. Hidden when there is nothing to show and the person may not record; a kids profile gets the shared
    * kid-friendly recordings read-only (no *Alle*, the tile only plays). With `wrap` (a TV's *Meine Aufnahmen*) the tiles fill a grid
    * and there is no head. A TV: one focused tile with the 1.08 ring, OK plays (the shell's D-pad moves the focus).
+   * With `home` it is the home page's *Deine Aufnahmen* row (DVR follow-ups): its own heading, the page's side gutter.
    */
   /** null while loading */
   export let recordings: Recording[] | null;
@@ -23,6 +24,10 @@
   export let wrap = false;
   /** the first tile takes the entry focus (a TV page) */
   export let autofocus = false;
+  /** the heading (default: *Aufnahmen*) */
+  export let title = '';
+  /** the home page's row: its gutter and heading size */
+  export let home = false;
 
   $: shown = recordings ? (wrap ? recordings : rowRecordings(recordings)) : [];
   $: visible = wrap || (recordings === null ? canRecord : shown.length > 0 || (canRecord && !kids));
@@ -31,10 +36,10 @@
 </script>
 
 {#if visible}
-  <section class="recrow" class:tv class:kids class:wrap aria-labelledby={wrap ? undefined : 'lrr-h'} aria-label={wrap ? $t('live.recordings') : undefined} aria-busy={recordings === null ? 'true' : undefined}>
+  <section class="recrow" class:tv class:kids class:wrap class:home aria-labelledby={wrap ? undefined : 'lrr-h'} aria-label={wrap ? $t('live.recordings') : undefined} aria-busy={recordings === null ? 'true' : undefined}>
     {#if !wrap}
       <div class="hd">
-        <h2 id="lrr-h">{$t('live.recordings')}</h2>
+        <h2 id="lrr-h">{title || $t('live.recordings')}</h2>
         {#if !kids}<a class="all" href="/live/recordings">{$t('live.all')}</a>{/if}
       </div>
     {/if}
@@ -64,6 +69,9 @@
 
 <style>
   .recrow { margin: 1.6rem 0 1rem; }
+  /* the home page: its rows' gutter and heading */
+  .home { position: relative; z-index: 1; margin: 1.6rem 0 0; padding: 0 var(--pad-x); }
+  .home h2 { font-size: clamp(1.05rem, .55vw + .8rem, 1.45rem); font-weight: 600; letter-spacing: -.005em; line-height: 1.25; }
   .hd { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 44px; margin-bottom: .5rem; }
   h2 { margin: 0; font-size: 1.25rem; }
   .all { display: inline-flex; align-items: center; min-height: 44px; padding: 0 .9rem; border-radius: 999px; color: var(--acc-text); font-weight: 700; text-decoration: none; }

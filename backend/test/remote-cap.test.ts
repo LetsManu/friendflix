@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { forgetAuth } from '../src/routes/internal.js';
 import { writeRole } from '../src/roleWrite.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
+import { sessionHash } from '../src/session.js';
 
 const ID = 'a'.repeat(32);
 const H = { 'x-internal-secret': cfg.INTERNAL_SECRET };
@@ -78,7 +79,7 @@ describe('POST /api/cast/session remote cap', () => {
 describe('POST /internal/authz {sid, ip}', () => {
   it('lowers maxBitrate for remote IPs only', async () => {
     const sid = friend.cookies.ff_sid!;
-    forgetAuth(sid);
+    forgetAuth(sessionHash(sid));
     expect((await authz(sid, '203.0.113.9')).json().maxBitrate).toBe(8_000_000);
     expect((await authz(sid, '192.168.1.10')).json().maxBitrate).toBe(20_000_000);
     expect((await authz(sid, '::ffff:192.168.1.10')).json().maxBitrate).toBe(20_000_000);
@@ -86,7 +87,7 @@ describe('POST /internal/authz {sid, ip}', () => {
   });
   it("ip 'unknown' (what the gateway sends for a non-loopback peer without forwarding headers) gets the remote cap", async () => {
     const sid = friend.cookies.ff_sid!;
-    forgetAuth(sid);
+    forgetAuth(sessionHash(sid));
     expect((await authz(sid, 'unknown')).json().maxBitrate).toBe(8_000_000);
     expect((await authz(sid, '127.0.0.1')).json().maxBitrate).toBe(20_000_000);
   });

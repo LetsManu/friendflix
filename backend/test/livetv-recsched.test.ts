@@ -133,6 +133,8 @@ beforeAll(async () => {
   await person(ANNA, 'family', 'Anna Beispiel');
   await person(BEN, 'friend', 'Ben Muster');
   await person(GUEST, 'guest', 'Gast Probe');
+  // recording is off by default for every role but Admin (owner decision 2026-11-15): grant it to Familie and Freund explicitly
+  await env.pool.query(`insert into role_settings(role, perms) values ('family', '{"liveRecord": true}'), ('friend', '{"liveRecord": true}')`);
 });
 afterAll(() => env.close());
 beforeEach(async () => {
@@ -600,6 +602,8 @@ describe('the tick', () => {
     const r = await getRecording(env.ctx, id);
     expect([r!.state, r!.error]).toEqual(['failed', 'no_slot']);
     expect(await notices('livetv.rec.failed')).toEqual([{ user_id: ANNA, title: 'Aufnahme fehlgeschlagen: Sternstunde Physik (kein Platz frei)' }]);
+    // nothing was recorded: the notice leads to the list, not to an item that cannot play
+    expect((await env.pool.query("select link from notifications where kind = 'livetv.rec.failed'")).rows).toEqual([{ link: '/live/recordings' }]);
   });
 
   it('a slot that frees up later starts the recording late: the delay is a gap and it ends partial', async () => {
@@ -688,6 +692,9 @@ describe('the tick', () => {
     expect(admins).toEqual([{ user_id: adminId, title: 'Aufnahmespeicher voll: eine Aufnahme wurde beendet' }]);
     expect(JSON.stringify(admins)).not.toContain('Sternstunde');
     expect(await notices('livetv.rec.episode')).toEqual([{ user_id: ANNA, title: 'Neue Folge aufgenommen: Sternstunde Physik – Sternstunde Physik' }]);
+    // both notices lead to the recording itself: what was recorded plays from there (DVR follow-ups)
+    expect((await env.pool.query("select kind, link from notifications where kind in ('livetv.rec.failed', 'livetv.rec.episode') order by kind")).rows)
+      .toEqual([{ kind: 'livetv.rec.episode', link: `/live/recordings/${id}` }, { kind: 'livetv.rec.failed', link: `/live/recordings/${id}` }]);
     expect((await listEvents(env.ctx)).map((e) => e.code)).toEqual(expect.arrayContaining(['rec_partial', 'rec_storage_full']));
     // the stream is free: no recording uses the channel any more
     invalidateRecordingUses();

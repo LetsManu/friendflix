@@ -6,6 +6,7 @@ import { encrypt } from '../src/crypto.js';
 import { hygieneIdle } from '../src/hygiene/scan.js';
 import { MediaError, type HygieneFacts } from '../src/media/types.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
+import { sessionKey } from '../src/session.js';
 
 // Block 22 Task 6: hygiene admin API (summary, list, ignore, refresh, scan).
 type Sess = { cookies: Record<string, string>; csrf: string };
@@ -183,8 +184,8 @@ describe('hygiene admin API', () => {
     const s = await env.login(ADMIN);
     const pid = randomUUID();
     await env.pool.query('insert into profiles(id, user_id, name, is_owner, kids, jellyfin_user_id) values ($1, $2, $3, false, false, $4)', [pid, adminId, 'Gast', 'f'.repeat(32)]);
-    const raw = JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!);
-    await env.kv.set(`sess:${s.cookies.ff_sid}`, JSON.stringify({ ...raw, profileId: pid }), 600);
+    const raw = JSON.parse((await env.kv.get(sessionKey(s.cookies.ff_sid!)))!);
+    await env.kv.set(sessionKey(s.cookies.ff_sid!), JSON.stringify({ ...raw, profileId: pid }), 600);
     const calls: Array<[string, string, unknown?]> = [
       ['GET', '/api/admin/hygiene/summary'], ['GET', '/api/admin/hygiene'], ['POST', '/api/admin/hygiene/ignore', { itemId: id(1), code: 'no_poster' }],
       ['DELETE', '/api/admin/hygiene/ignore', { itemId: id(1), code: 'no_poster' }], ['POST', `/api/admin/hygiene/${id(1)}/refresh`], ['POST', '/api/admin/hygiene/scan'],

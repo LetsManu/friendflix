@@ -10,7 +10,7 @@ import { clientKind } from '../deviceKind.js';
 import type { Ctx } from '../ctx.js';
 import { FALLBACK_LANGUAGE, instanceLanguage, m, msg, userLanguage } from '../i18n.js';
 import { notify } from '../notify.js';
-import { COOKIE, newSession, rand, requireUser, saveSession, authenticate } from '../session.js';
+import { COOKIE, newSession, rand, requireUser, saveSession, authenticate, sessionHash } from '../session.js';
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I: readable from across the room
 const TTL = 600;
@@ -46,9 +46,12 @@ const fromTv = z.object({
   duration: z.number().min(0).max(1e6).optional(), paused: z.boolean().optional(),
 });
 
-/** Closes the sockets of revoked sessions (device removed, "log out everywhere", user disabled): a revoked TV must not stay connected. */
-export function dropRemotePeers(userId: string, sids: Set<string>) {
-  for (const p of [...(peers.get(userId) ?? [])]) if (sids.has(p.sid)) p.ws.close(4401, 'revoked');
+/**
+ * Closes the sockets of revoked sessions (device removed, "log out everywhere", user disabled): a revoked TV must not stay connected.
+ * `hashes`: the sessions by their hash (session.ts sessionHash; a revoke only lists the hashed keys).
+ */
+export function dropRemotePeers(userId: string, hashes: Set<string>) {
+  for (const p of [...(peers.get(userId) ?? [])]) if (hashes.has(sessionHash(p.sid))) p.ws.close(4401, 'revoked');
 }
 
 /** A profile switch rotates the session id: keep the already connected sockets of the old sid alive under the new one. */
