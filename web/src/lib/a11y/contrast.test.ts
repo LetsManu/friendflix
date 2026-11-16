@@ -9,7 +9,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { AA, contrast, frostComposite, SCRIM_BAR, textContrast, type RGB } from '#lib/glass/tone';
+import { AA, contrast, frostComposite, luminance, SCRIM_BAR, textContrast, type RGB } from '#lib/glass/tone';
 
 const SRC = fileURLToPath(new URL('../../', import.meta.url));
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8');
@@ -159,7 +159,9 @@ describe('layout (WCAG 1.4.10 / 2.4.11)', () => {
 
 describe('ranked strip over a bright poster (WCAG 1.4.3)', () => {
   const app = read('app.css');
-  const coral = hex(/\.frost-text \{[^}]*--acc-text: (#[0-9a-f]{6})/.exec(app)![1]!);
+  // the glass block reads the brand's --acc-glass (lib/brand.ts brandPalette); the default brand's value is in :root
+  expect(/\.frost-text \{[^}]*--acc-text: var\(--acc-glass\)/.test(app)).toBe(true);
+  const coral = hex(/:root \{[^}]*--acc-glass: (#[0-9a-f]{6})/.exec(app)![1]!);
   it('the coral rank numeral and the white title keep AA over a pure white poster, with the strip scrim and milk read from the stylesheets', () => {
     for (const file of ['lib/Card.svelte', 'lib/PosterCard.svelte']) {
       const src = read(file);
@@ -193,9 +195,11 @@ describe('cast bar and remote text pairs pass 4.5:1', () => {
     for (const bg of surfaces) for (const c of ['#ffc56b', '#ffbdbd']) expect(contrast(hex(c), bg), c).toBeGreaterThanOrEqual(AA);
     expect(textContrast(frostComposite(WHITE, SAFE), 0.9)).toBeGreaterThanOrEqual(AA); // the neutral status line
   });
-  it('the remote eyebrow #ff8aa0 sits on the ambient base', () => {
-    expect(rule(read('lib/cast/RemoteScreen.svelte'), '.eyebrow')).toContain('color: #ff8aa0');
+  it('the remote eyebrow (the brand\'s --acc-light, #ff8aa0 by default) sits on the ambient base', () => {
+    expect(rule(read('lib/cast/RemoteScreen.svelte'), '.eyebrow')).toContain('color: var(--acc-light)');
     expect(contrast(hex('#ff8aa0'), AMBIENT_BASE)).toBeGreaterThanOrEqual(AA);
+    // any brand's --acc-light passes 4.5:1 on the scrim colour #121018 (lib/brandColors.ts), and the ambient base is darker still
+    expect(luminance(AMBIENT_BASE)).toBeLessThan(luminance(hex('#121018')));
   });
   it('the volume hints (.78 white) and the coral text token on the solid fallback', () => {
     const remote = read('lib/cast/RemoteScreen.svelte');

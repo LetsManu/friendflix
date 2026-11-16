@@ -8,7 +8,7 @@ const login: Translation<typeof de> = {
   loading: 'Preparazione dell’accesso …',
   busy: 'Un momento …',
   inviteGone: 'Questo invito non è più valido. Se hai già un account, accedi semplicemente.',
-  stale: { title: 'Accesso non confermato', text: 'Authentik non ha richiesto di nuovo l’accesso, quindi FriendFlix lo ha rifiutato. Riprova tra mezzo minuto. Se continua a succedere, gli orologi del server e di Authentik potrebbero non coincidere (un amministratore può controllare).', retry: 'Accedi di nuovo' },
+  stale: { title: 'Accesso non confermato', text: 'Authentik non ha richiesto di nuovo l’accesso, quindi {app} lo ha rifiutato. Riprova tra mezzo minuto. Se continua a succedere, gli orologi del server e di Authentik potrebbero non coincidere (un amministratore può controllare).', retry: 'Accedi di nuovo' },
   identify: {
     title: 'Bentornato',
     text: 'Accedi per continuare a guardare.',
@@ -33,7 +33,7 @@ const login: Translation<typeof de> = {
     otherMethod: 'Scegli un altro metodo',
     retry: 'Riprova',
     cancelledTitle: 'Nessuna passkey confermata',
-    cancelledText: 'La richiesta è stata annullata, oppure questo dispositivo non ha una passkey per FriendFlix. Le passkey create nella pagina di accesso qui non valgono.',
+    cancelledText: 'La richiesta è stata annullata, oppure questo dispositivo non ha una passkey per {app}. Le passkey create nella pagina di accesso qui non valgono.',
     timeoutTitle: 'Tempo scaduto',
     timeoutText: 'La richiesta del dispositivo è scaduta. Riprova.',
     unsupportedTitle: 'Passkey non disponibile qui',
@@ -68,8 +68,8 @@ const login: Translation<typeof de> = {
   },
   notice: {
     unavailableTimeout: 'Il servizio di accesso ha impiegato troppo tempo a rispondere. Riprova tra un momento.',
-    unavailableUnreachable: 'Al momento FriendFlix non raggiunge il servizio di accesso. Riprova tra un momento.',
-    unavailableServiceToken: 'Il servizio di accesso rifiuta l\'accesso di FriendFlix. Un admin può ripararlo in Admin → Stato → Accesso.',
+    unavailableUnreachable: 'Al momento {app} non raggiunge il servizio di accesso. Riprova tra un momento.',
+    unavailableServiceToken: 'Il servizio di accesso rifiuta l\'accesso di {app}. Un admin può ripararlo in Admin → Stato → Accesso.',
     classicTitle: 'Continua nella pagina di accesso',
     classicText: 'Questo passaggio funziona solo nella pagina di accesso.',
     classic: 'Continua nella pagina di accesso',
@@ -103,15 +103,15 @@ const login: Translation<typeof de> = {
   sec: {
     manageClassic: 'Continua sulla pagina di accesso',
     refused: {
-      classic: 'L\'accesso dentro FriendFlix è disattivato, quindi questa modifica si fa sulla pagina di accesso.',
+      classic: 'L\'accesso dentro {app} è disattivato, quindi questa modifica si fa sulla pagina di accesso.',
       flow_not_configured: 'Non è ancora configurato nel servizio di accesso. Un admin può configurarlo in Admin → Stato → Accesso.',
       authentik_user_not_found: 'Il tuo account non è stato trovato nel servizio di accesso. Chiedi a un admin.',
     },
     problem: {
-      service_token: 'Al momento le tue impostazioni di sicurezza non si possono leggere: il servizio di accesso rifiuta l\'accesso di FriendFlix. Un admin può ripararlo in Admin → Stato → Accesso.',
+      service_token: 'Al momento le tue impostazioni di sicurezza non si possono leggere: il servizio di accesso rifiuta l\'accesso di {app}. Un admin può ripararlo in Admin → Stato → Accesso.',
       unreachable: 'Al momento le tue impostazioni di sicurezza non si possono leggere: il servizio di accesso non risponde.',
       error: 'Al momento le tue impostazioni di sicurezza non si possono leggere.',
-      not_configured: 'FriendFlix non è collegato all\'API del servizio di accesso, quindi queste impostazioni si gestiscono sulla pagina di accesso.',
+      not_configured: '{app} non è collegato all\'API del servizio di accesso, quindi queste impostazioni si gestiscono sulla pagina di accesso.',
     },
     username: {
       title: 'Nome utente',
@@ -177,8 +177,8 @@ const login: Translation<typeof de> = {
       unsupported: 'Il tuo browser non può creare una passkey qui.',
       add: 'Aggiungi una passkey',
       addClassic: 'Aggiungi nella pagina di accesso',
-      note: 'Le passkey create qui valgono per FriendFlix.',
-      renew: 'Hai creato le tue passkey nella pagina di accesso? Quelle non valgono in FriendFlix. Aggiungi qui una nuova passkey una volta.',
+      note: 'Le passkey create qui valgono per {app}.',
+      renew: 'Hai creato le tue passkey nella pagina di accesso? Quelle non valgono in {app}. Aggiungi qui una nuova passkey una volta.',
       exists: 'Questo dispositivo ha già una passkey per il tuo account. Usala per accedere o rimuovila nell’app Password.',
       unsupportedOptions: 'Questo dispositivo non soddisfa i requisiti per la passkey.',
       failed: 'Non è stato possibile creare la passkey.',
@@ -208,7 +208,7 @@ const login: Translation<typeof de> = {
   confirm: {
     pageTitle: 'Conferma e-mail',
     title: 'Conferma il tuo nuovo indirizzo e-mail',
-    text: 'Conferma che questo indirizzo deve appartenere al tuo account FriendFlix.',
+    text: 'Conferma che questo indirizzo deve appartenere al tuo account {app}.',
     button: 'Conferma indirizzo',
     unavailable: 'Al momento non è possibile. Riprova tra poco.',
     doneTitle: 'Indirizzo e-mail cambiato',

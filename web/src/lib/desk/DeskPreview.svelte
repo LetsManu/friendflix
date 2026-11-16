@@ -311,7 +311,7 @@
   .snd::after { content: ''; position: absolute; inset: -4px; }
   .snd:hover { border-color: #fff; }
   .dpv-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, .22); }
-  .dpv-progress i { display: block; height: 100%; background: var(--acc, #ff4f6d); transform-origin: left; }
+  .dpv-progress i { display: block; height: 100%; background: var(--acc); transform-origin: left; }
   /* the text part sits over page content nobody sampled (rows, Top 10 posters, the billboard): its own dark underlay, solved for a
      pure white page behind (preview.ts INFO_UNDERLAY), above the tint and the milk; the picture part keeps the tone's glass */
   .dpv-info { min-width: 0; padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 10px; background: rgba(var(--fr-scrim-rgb), var(--dpv-under, .76)); }

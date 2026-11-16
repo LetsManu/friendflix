@@ -38,9 +38,13 @@ const parse = (v: string): RGB | number => (v.startsWith('#') ? hex(v) : Number(
 const cr = (t: RGB | number, bg: RGB) => (typeof t === 'number' ? textContrast(bg, t) : contrast(t, bg));
 
 describe('glass pages: text contrast (B′)', () => {
-  const glass = vars('.panel, .frost-text');
+  const root0 = vars(':root');
+  /** the glass block's values with the brand's palette variable resolved (`--acc-glass`: the default brand's value in :root) */
+  const glass = Object.fromEntries(Object.entries(vars('.panel, .frost-text')).map(([k, v]) => [k, v === 'var(--acc-glass)' ? root0['--acc-glass']! : v]));
 
   it('the light glass cards carry the mockup\'s levels', () => {
+    // the accent text on glass is the brand's --acc-glass (lib/brand.ts brandPalette: #ffa7b6 for the default, AA for any accent)
+    expect(vars('.panel, .frost-text')['--acc-text']).toBe('var(--acc-glass)');
     expect(glass).toEqual({
       '--mut': 'rgba(255, 255, 255, .72)', '--hint': 'rgba(255, 255, 255, .66)',
       '--ok': '#4ade80', '--warn': '#f7b344', '--err': '#ffa8a8', '--link': '#80cbd4', '--info': '#80cbd4', '--acc-text': '#ffa7b6',
@@ -64,7 +68,7 @@ describe('glass pages: text contrast (B′)', () => {
     const root = vars(':root');
     for (const k of ['--mut', '--ok', '--warn', '--err', '--link']) for (const bg of ON_AMB_BG) expect(contrast(hex(root[k]!), bg), k).toBeGreaterThanOrEqual(AA);
     expect(root['--link']).toBe('#54b9c5');
-    expect(vars('html.amb')).toEqual({ '--acc-text': 'var(--acc-light)' }); // no grey override any more
+    expect(vars('html.amb body')).toEqual({ '--acc-text': 'var(--acc-light)' }); // no grey override any more
     expect(root['--acc-light']).toBe('#ff8aa0');
     for (const bg of ON_AMB_BG) expect(contrast(hex('#ff8aa0'), bg)).toBeGreaterThanOrEqual(AA);
     expect(contrast(hex(root['--acc-text']!), AMB_PEAK)).toBeLessThan(AA); // the brand coral does not

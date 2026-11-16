@@ -294,6 +294,8 @@ services:
     environment:
       # the origin comes from the request (Host + X-Forwarded-Proto, set by the reverse proxy); adapter-node 6 reads no ORIGIN
       PROTOCOL_HEADER: x-forwarded-proto
+      # the manifest route reads the public brand (name, icons) from here; unreachable: the manifest keeps the defaults
+      BACKEND_URL: http://backend:3000
     depends_on:
       bootstrap: { condition: service_completed_successfully }
     ports: ["${BIND_ADDR:-127.0.0.1}:${WEB_PORT:-3080}:3000"]

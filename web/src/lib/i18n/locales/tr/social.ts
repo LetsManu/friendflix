@@ -255,7 +255,7 @@ const tr: Translation<typeof de> = {
     top3: 'İLK 3’ÜM',
     minutes: '{n} dk',
     achievements: '{total} başarımın {earned} tanesi açıldı',
-    shareTitle: 'FriendFlix {year} yıl özeti',
+    shareTitle: '{app} {year} yıl özeti',
   },
   digest: {
     title: 'Haftalık özet',

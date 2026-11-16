@@ -53,6 +53,7 @@
   import { chipsTucked, SOLID_AFTER } from '#lib/phone/logic';
   import { closePreview, previewSheet } from '#lib/previewSheet';
   import { isLocale, locale, pageEpoch, pickLocale, ready, setLocale, setMediaServer, t, type Locale } from '#lib/i18n';
+  import { brand, builtInMark, headerParts, loadBrand, refetchOnVisible } from '#lib/brand';
   import Rich from '#lib/i18n/Rich.svelte';
   import LanguageGate from '#lib/LanguageGate.svelte';
   import ToastHost from '#lib/ui/ToastHost.svelte';
@@ -277,8 +278,10 @@
     pageLock(catOpen || !!$previewSheet); // no page scroll behind the overlay / sheet (the one owner of the lock: scrollLock.ts)
   }
   onDestroy(() => pageLock(false));
-  // the web app manifest (name, shortcuts) follows the UI language
-  $: if (typeof document !== 'undefined') document.querySelector('link[rel="manifest"]')?.setAttribute('href', `/manifest.webmanifest?lang=${$locale}`);
+  // the web app manifest (name, shortcuts) follows the UI language and the brand (its rev makes a changed brand a new URL)
+  /** the phone header's parts for the brand's header style */
+  $: mHead = headerParts($brand);
+  $: if (typeof document !== 'undefined') document.querySelector('link[rel="manifest"]')?.setAttribute('href', `/manifest.webmanifest?lang=${$locale}${$brand.rev ? `&rev=${$brand.rev}` : ''}`);
   $: if (!$mobile) { catOpen = false; catGone(); closePreview(); }
   /** desktop shell (pill bar; later the desktop browse pieces): not on TV, phones or kids profiles */
   $: desk = deskUi({ tv, mobile: $mobile, kids: kidsUi });
@@ -781,6 +784,7 @@
     window.addEventListener('online', setOnline); window.addEventListener('offline', setOnline);
     stops.push(() => { window.removeEventListener('online', setOnline); window.removeEventListener('offline', setOnline); });
     if (isFireTvApp()) applyFireTvViewport(); // the Fire TV app lays the TV UI out 1920 px wide, like the LG app
+    stops.push(refetchOnVisible()); // another admin's brand change shows when the tab comes back (no push channel for the brand)
     void boot();
     // Notification clicks (service worker) ask an already open window to navigate in-app.
     const onSwMessage = (e: MessageEvent) => {
@@ -806,6 +810,9 @@
   }
 
   async function boot() {
+    // the brand first, on every page (sign-in and setup included): the cached one is already on screen (lib/brand.ts applies it on
+    // import), this asks the public route for the current one alongside /api/me
+    void loadBrand();
     if (!publicPage) {
       try {
         const m = await api<Me>('/api/me');
@@ -877,7 +884,7 @@
   {#if ambPage}<div class="frost-amb" aria-hidden="true"></div>{/if}
   {#if !watchPage && !profilesPage && kidsUi}
     <header class="nav kidsnav" class:solid={scrolled || !path.startsWith('/kids')}>
-      <a class="klogo" href={$areas.library ? '/kids' : home} aria-label={$t('kids.nav.homeLink')}><Logo wordmark={!$mobile} size={$mobile ? 30 : 32} label="" /> <span class="kbadge">{$t('kids.badge')}</span></a>
+      <a class="klogo" href={$areas.library ? '/kids' : home} aria-label={$t('kids.nav.homeLink')}><Logo header={!$mobile} wordmark={$mobile && !builtInMark($brand) && !$brand.images.symbol} size={$mobile ? 30 : 32} label="" /> <span class="kbadge">{$t('kids.badge')}</span></a>
       <span class="sp"></span>
       <nav class="knav" aria-label={$t('kids.nav.label')}>
         {#if $areas.library}<a class="kbtn" class:lib-held={libHeld} class:lib-in={libIn} href="/kids/search" aria-label={$t('kids.nav.search')} aria-current={path.startsWith('/kids/search') ? 'page' : undefined}><Icon name="search" size={26} /></a>{/if}
@@ -892,7 +899,7 @@
       <header class="nav m" class:solid={mSolid || !heroPage} class:chips={chipsRoom} class:tuck={chipsRoom && mTucked}>
         <span class="mbg" aria-hidden="true"></span>
         <div class="mrow">
-          <a class="mlogo" href={home} aria-label={$t('shell.nav.homeLink')} aria-current={path === home ? 'page' : undefined}><Logo size={28} label="" /><span class="wm" aria-hidden="true">FriendFlix</span></a>
+          <a class="mlogo" href={home} aria-label={$t('shell.nav.homeLink')} aria-current={path === home ? 'page' : undefined}>{#if mHead.logo}<img class="mlimg" src={mHead.logo} alt="" width="112" height="28" draggable="false" />{:else}{#if mHead.mark}<Logo size={28} label="" />{/if}{#if mHead.name}<span class="wm" aria-hidden="true">{$brand.name}</span>{/if}{/if}</a>
           <span class="sp">{#if castHeader && $barSess}<button type="button" class="icon-btn castind" aria-label={$t('player.castBar.castingTo', { device: $barSess.device })} on:click={openCastRemote}><Icon name="cast" size={24} /></button>{/if}</span>
           {#if $areas.library}<a class="icon-btn" class:lib-held={libHeld} class:lib-in={libIn} href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>{/if}
           <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
@@ -968,7 +975,7 @@
       <div class="hbox" role="dialog" aria-modal="true" aria-labelledby="help-h" use:dialogKeys={{ close: () => (help = false) }}>
         <div class="hhead"><h2 id="help-h">{$t('shell.help.title')}</h2><button type="button" class="icon-btn" aria-label={$t('common.close')} on:click={() => (help = false)} data-autofocus><Icon name="x" size={22} /></button></div>
         <dl>
-          {#each HELP as [dt, dd] (dt)}<dt>{$t(dt)}</dt><dd><Rich text={$t(dd)} onLink={() => (help = false)} /></dd>{/each}
+          {#each HELP as [dt, dd] (dt)}<dt>{$t(dt)}</dt><dd><Rich key={dd} onLink={() => (help = false)} /></dd>{/each}
         </dl>
       </div>
     </div>
@@ -1001,6 +1008,7 @@
   .dot { position: absolute; top: 4px; right: 2px; background: var(--acc-fill); color: #fff; font-size: .65rem; min-width: 1.1rem; height: 1.1rem; border-radius: 99px; display: grid; place-items: center; font-weight: 700; }
   .avatar { width: auto; min-height: 44px; height: 44px; padding: 0 .1rem; background: transparent; gap: .45rem; border-radius: 4px; }
   .avatar:hover:not(:disabled) { background: transparent; }
+  /* the profile avatar's default colour (lib/avatars.ts 'red'): a person's colour, not the brand accent */
   .face { width: 34px; height: 34px; border-radius: 24%; display: grid; place-items: center; background: linear-gradient(135deg, #ff6b81, #9a2440); font-weight: 800; box-shadow: 0 0 0 1px rgba(255,255,255,.12); }
   /* ---- kids header: bright, big touch targets, logo + "Kids" badge, search, avatar (switch profile) ---- */
   .kidsnav { background: linear-gradient(100deg, #4f6bed, #7b5cff); color: #fff; } /* always solid: the white wordmark stays readable */
@@ -1057,7 +1065,10 @@
   .nav.m.tuck .mbg { transform: translateY(-48px); } /* the chip bar's height: the glass ends under the top row */
   .mrow { display: flex; align-items: center; gap: .1rem; height: 56px; padding: 0 calc(var(--pad-x) - 8px) 0 var(--pad-x); }
   .mlogo { display: inline-flex; align-items: center; gap: .5rem; min-height: 44px; min-width: 0; }
-  .wm { font-size: 1.06rem; font-weight: 800; letter-spacing: -.02em; white-space: nowrap; text-shadow: 0 1px 8px rgba(0,0,0,.6); }
+  /* the brand's name ellipsizes in the room left of the buttons (lib/brand.ts headerParts); the padding (cancelled by the margin) keeps
+     descenders inside the clip. An uploaded logo sits in a fixed 4:1 box, so it cannot move anything when it loads */
+  .wm { font-size: 1.06rem; font-weight: 800; letter-spacing: -.02em; white-space: nowrap; text-shadow: 0 1px 8px rgba(0,0,0,.6); min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: .2em 0; margin: -.2em 0; }
+  .mlimg { flex: none; display: block; width: 112px; height: 28px; object-fit: contain; object-position: left center; }
   .nav.m .icon-btn { display: inline-flex; align-items: center; justify-content: center; }
   .nav.m .avatar { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 4px; }
   .nav.m .face { width: 30px; height: 30px; font-size: .9rem; }

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Renders a shareable "year in review" card (PNG) in the browser: nothing leaves the device. */
+import { get } from 'svelte/store';
+import { brand, brandPalette } from './brand';
 import { fmtDate, tr } from './i18n';
 
 /** German weekday names as /api/stats/me sends them (Sunday first, like Date.getDay()) */
@@ -33,12 +35,14 @@ export function renderCard(s: Stats, name = ''): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = 1080; c.height = 1350;
   const g = c.getContext('2d')!;
+  // the instance's brand: its name on top, its accent for the highlights (today's coral and wine by default)
+  const b = get(brand), pal = brandPalette(b.tokens), acc = b.tokens.acc;
   const bg = g.createLinearGradient(0, 0, 1080, 1350);
-  bg.addColorStop(0, '#5a1424'); bg.addColorStop(0.55, '#12161c'); bg.addColorStop(1, '#0a0d11');
+  bg.addColorStop(0, pal.deep); bg.addColorStop(0.55, '#12161c'); bg.addColorStop(1, '#0a0d11');
   g.fillStyle = bg; g.fillRect(0, 0, 1080, 1350);
-  g.fillStyle = 'rgba(255, 79, 109,.22)'; g.beginPath(); g.arc(930, 230, 360, 0, Math.PI * 2); g.fill();
+  g.fillStyle = `rgba(${pal.rgb},.22)`; g.beginPath(); g.arc(930, 230, 360, 0, Math.PI * 2); g.fill();
   const font = (w: number, px: number) => `${w} ${px}px 'Inter Variable', Inter, system-ui, sans-serif`;
-  g.fillStyle = '#ff4f6d'; g.font = font(900, 54); g.fillText('FriendFlix', 72, 120);
+  g.fillStyle = acc; g.font = font(900, 54); g.fillText(b.name, 72, 120);
   g.fillStyle = '#f5f5f5'; g.font = font(700, 40); g.fillText(`${tr('social.wrapped.heading', { year: String(s.year) })}${name ? ' · ' + name : ''}`, 72, 190);
   const h = Math.floor(s.totalMinutes / 60), m = s.totalMinutes % 60;
   g.font = font(900, 190); g.fillText(`${h}`, 72, 420);
@@ -48,11 +52,11 @@ export function renderCard(s: Stats, name = ''): HTMLCanvasElement {
   g.fillStyle = '#f5f5f5'; g.font = font(600, 44);
   g.fillText(tr('social.wrapped.counts', { titles: s.titles, movies: s.movies, episodes: s.episodes }), 72, 520);
   if (s.favoriteWeekday) { g.fillStyle = '#b3bac2'; g.font = font(500, 38); g.fillText(tr('social.wrapped.favoriteDay', { day: localWeekday(s.favoriteWeekday) }), 72, 585); }
-  g.fillStyle = '#ff4f6d'; g.font = font(800, 36); g.fillText(tr('social.wrapped.top3'), 72, 700);
+  g.fillStyle = acc; g.font = font(800, 36); g.fillText(tr('social.wrapped.top3'), 72, 700);
   s.topItems.slice(0, 3).forEach((t, i) => {
     const y = 780 + i * 150;
     g.fillStyle = 'rgba(255,255,255,.08)'; g.beginPath(); g.roundRect(72, y - 70, 936, 120, 20); g.fill();
-    g.fillStyle = '#ff4f6d'; g.font = font(900, 76); g.fillText(String(i + 1), 104, y + 22);
+    g.fillStyle = acc; g.font = font(900, 76); g.fillText(String(i + 1), 104, y + 22);
     g.fillStyle = '#f5f5f5'; g.font = font(700, 40); wrap(g, t.name, 200, y - 6, 640, 46);
     g.fillStyle = '#b3bac2'; g.font = font(500, 32); g.textAlign = 'right'; g.fillText(tr('social.wrapped.minutes', { n: t.minutes }), 980, y + 18); g.textAlign = 'left';
   });

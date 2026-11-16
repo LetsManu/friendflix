@@ -63,13 +63,17 @@ const LOADERS: Record<Exclude<Locale, 'de'>, () => Promise<{ default: AnyDict }>
 };
 const dicts: Partial<Record<Locale, AnyDict>> = { de };
 
+/** the instance's name until the brand says otherwise (lib/brand.ts; the backend's DEFAULT_BRAND.name) */
+export const DEFAULT_APP_NAME = 'FriendFlix';
+
 /**
  * `server`: the media server kind of this instance (/api/me server.kind; 'jellyfin' until known). A kind other than Jellyfin may
  * override single texts that name the media server: `serverText.<kind>.<key>` (locales/<lang>/serverText.ts) wins over `<key>`.
+ * `app`: the instance's name (the brand, lib/brand.ts): every `{app}` in a message gets it unless the caller passes its own `app`.
  */
-interface State { locale: Locale; dict: AnyDict; server: string }
-const state = writable<State>({ locale: DEFAULT_LOCALE, dict: de, server: 'jellyfin' });
-let current: State = { locale: DEFAULT_LOCALE, dict: de, server: 'jellyfin' };
+interface State { locale: Locale; dict: AnyDict; server: string; app: string }
+const state = writable<State>({ locale: DEFAULT_LOCALE, dict: de, server: 'jellyfin', app: DEFAULT_APP_NAME });
+let current: State = { locale: DEFAULT_LOCALE, dict: de, server: 'jellyfin', app: DEFAULT_APP_NAME };
 state.subscribe((s) => (current = s));
 const loadingStore = writable(false);
 
@@ -107,7 +111,7 @@ export async function setLocale(code: string | null | undefined): Promise<Locale
     return current.locale; // chunk not reachable: stay in the current language
   }
   if (my !== seq) return current.locale;
-  state.set({ locale: l, dict, server: current.server });
+  state.set({ locale: l, dict, server: current.server, app: current.app });
   loadingStore.set(false);
   if (typeof document !== 'undefined') document.documentElement.lang = l;
   try { localStorage.setItem(LOCALE_KEY, l); } catch { /* private mode */ }
@@ -189,9 +193,10 @@ function translate(s: State, key: string, params?: TParams): string {
     const cat = n === 0 && msg.zero !== undefined ? 'zero' : pluralRules(tag).select(n);
     text = (msg as unknown as Record<string, string | undefined>)[cat] ?? msg.other;
   }
-  if (!params || !text.includes('{')) return text;
+  if (!text.includes('{')) return text;
   return text.replace(/\{(\w+)\}/g, (all, name: string) => {
-    const v = params[name];
+    // {app}: the instance's name, a default every message gets (a caller's own `app` wins)
+    const v = params?.[name] ?? (name === 'app' && params?.app === undefined ? s.app : undefined);
     if (v === undefined || v === null) return all;
     return typeof v === 'number' ? new Intl.NumberFormat(tag).format(v) : v;
   });
@@ -204,12 +209,22 @@ export const tr: TFn = (key, params) => translate(current, key, params);
 /** Like `tr` but for keys built at runtime (e.g. `shell.menu.${id}`); unknown keys return the key and warn in dev. */
 export const trDynamic = (key: string, params?: TParams): string => translate(current, key, params);
 /** Translate in a specific language (falls back to German when that language is not loaded yet, see loadLocale). Used by the language pickers to preview. */
-export const trIn = (l: Locale, key: TKey, params?: TParams): string => translate({ locale: dicts[l] ? l : DEFAULT_LOCALE, dict: dicts[l] ?? de, server: current.server }, key, params);
+export const trIn = (l: Locale, key: TKey, params?: TParams): string => translate({ locale: dicts[l] ? l : DEFAULT_LOCALE, dict: dicts[l] ?? de, server: current.server, app: current.app }, key, params);
 /** The media server kind of this instance (root layout, from /api/me server.kind): texts that name the server follow it. */
 export function setMediaServer(kind: string | null | undefined): void {
   const k = typeof kind === 'string' && /^[a-z]{2,16}$/.test(kind) ? kind : 'jellyfin';
   if (k !== current.server) state.update((s) => ({ ...s, server: k }));
 }
+/**
+ * The instance's name for every `{app}` (lib/brand.ts applies the brand's name; blank → the default). `$t` texts follow at once,
+ * texts a script computed earlier with `tr` keep the old name until they are computed again.
+ */
+export function setAppName(name: string | null | undefined): void {
+  const n = typeof name === 'string' && name.trim() ? name.trim() : DEFAULT_APP_NAME;
+  if (n !== current.app) state.update((s) => ({ ...s, app: n }));
+}
+/** the instance's name as `{app}` gets it (reactive) */
+export const appName: Readable<string> = derived(state, (s) => s.app);
 /** true when the key exists in German (useful for optional texts built from data) */
 export const hasKey = (key: string): boolean => lookup(de, key) !== undefined;
 

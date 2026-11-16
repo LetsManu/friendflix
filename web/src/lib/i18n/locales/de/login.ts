@@ -6,7 +6,7 @@ const login = {
   loading: 'Anmeldung wird vorbereitet …',
   busy: 'Einen Moment …',
   inviteGone: 'Diese Einladung ist nicht mehr gültig. Wenn du schon ein Konto hast, melde dich einfach an.',
-  stale: { title: 'Anmeldung nicht bestätigt', text: 'Authentik hat die Anmeldung nicht erneut abgefragt, deshalb hat FriendFlix sie abgelehnt. Versuch es in einer halben Minute noch einmal. Passiert das immer wieder, gehen die Uhren von Server und Authentik womöglich unterschiedlich (ein Admin kann das prüfen).', retry: 'Erneut anmelden' },
+  stale: { title: 'Anmeldung nicht bestätigt', text: 'Authentik hat die Anmeldung nicht erneut abgefragt, deshalb hat {app} sie abgelehnt. Versuch es in einer halben Minute noch einmal. Passiert das immer wieder, gehen die Uhren von Server und Authentik womöglich unterschiedlich (ein Admin kann das prüfen).', retry: 'Erneut anmelden' },
   identify: {
     title: 'Willkommen zurück',
     text: 'Melde dich an, um weiterzuschauen.',
@@ -31,7 +31,7 @@ const login = {
     otherMethod: 'Andere Methode wählen',
     retry: 'Erneut versuchen',
     cancelledTitle: 'Kein Passkey bestätigt',
-    cancelledText: 'Die Anfrage wurde abgebrochen, oder auf diesem Gerät ist kein Passkey für FriendFlix gespeichert. Passkeys von der Anmeldeseite gelten hier nicht.',
+    cancelledText: 'Die Anfrage wurde abgebrochen, oder auf diesem Gerät ist kein Passkey für {app} gespeichert. Passkeys von der Anmeldeseite gelten hier nicht.',
     timeoutTitle: 'Zeit abgelaufen',
     timeoutText: 'Die Anfrage deines Geräts ist abgelaufen. Versuch es noch einmal.',
     unsupportedTitle: 'Passkey hier nicht möglich',
@@ -66,8 +66,8 @@ const login = {
   },
   notice: {
     unavailableTimeout: 'Der Anmeldedienst hat zu lange nicht geantwortet. Versuch es gleich noch einmal.',
-    unavailableUnreachable: 'FriendFlix erreicht den Anmeldedienst gerade nicht. Versuch es gleich noch einmal.',
-    unavailableServiceToken: 'Der Anmeldedienst verweigert FriendFlix den Zugriff. Ein Admin kann das unter Admin → Status → Anmeldung reparieren.',
+    unavailableUnreachable: '{app} erreicht den Anmeldedienst gerade nicht. Versuch es gleich noch einmal.',
+    unavailableServiceToken: 'Der Anmeldedienst verweigert {app} den Zugriff. Ein Admin kann das unter Admin → Status → Anmeldung reparieren.',
     classicTitle: 'Weiter auf der Anmeldeseite',
     classicText: 'Dieser Schritt geht nur auf der Anmeldeseite.',
     classic: 'Auf der Anmeldeseite fortfahren',
@@ -102,15 +102,15 @@ const login = {
   sec: {
     manageClassic: 'Auf der Anmeldeseite fortfahren',
     refused: {
-      classic: 'Die Anmeldung in FriendFlix ist ausgeschaltet, deshalb änderst du das auf der Anmeldeseite.',
+      classic: 'Die Anmeldung in {app} ist ausgeschaltet, deshalb änderst du das auf der Anmeldeseite.',
       flow_not_configured: 'Das ist beim Anmeldedienst noch nicht eingerichtet. Ein Admin kann es unter Admin → Status → Anmeldung einrichten.',
       authentik_user_not_found: 'Dein Konto wurde beim Anmeldedienst nicht gefunden. Frag einen Admin.',
     },
     problem: {
-      service_token: 'Deine Sicherheitseinstellungen lassen sich gerade nicht lesen: Der Anmeldedienst verweigert FriendFlix den Zugriff. Ein Admin kann das unter Admin → Status → Anmeldung reparieren.',
+      service_token: 'Deine Sicherheitseinstellungen lassen sich gerade nicht lesen: Der Anmeldedienst verweigert {app} den Zugriff. Ein Admin kann das unter Admin → Status → Anmeldung reparieren.',
       unreachable: 'Deine Sicherheitseinstellungen lassen sich gerade nicht lesen: Der Anmeldedienst antwortet nicht.',
       error: 'Deine Sicherheitseinstellungen lassen sich gerade nicht lesen.',
-      not_configured: 'FriendFlix ist nicht mit der Schnittstelle des Anmeldedienstes verbunden, deshalb verwaltest du das auf der Anmeldeseite.',
+      not_configured: '{app} ist nicht mit der Schnittstelle des Anmeldedienstes verbunden, deshalb verwaltest du das auf der Anmeldeseite.',
     },
     username: {
       title: 'Benutzername',
@@ -176,8 +176,8 @@ const login = {
       unsupported: 'Hier kann dein Browser keinen Passkey erstellen.',
       add: 'Passkey hinzufügen',
       addClassic: 'Auf der Anmeldeseite hinzufügen',
-      note: 'Passkeys, die du hier anlegst, gelten für FriendFlix.',
-      renew: 'Hast du deine Passkeys früher auf der Anmeldeseite angelegt? Die gelten in FriendFlix nicht. Lege hier einmal einen neuen Passkey an.',
+      note: 'Passkeys, die du hier anlegst, gelten für {app}.',
+      renew: 'Hast du deine Passkeys früher auf der Anmeldeseite angelegt? Die gelten in {app} nicht. Lege hier einmal einen neuen Passkey an.',
       exists: 'Auf diesem Gerät gibt es schon einen Passkey für dein Konto. Nutze ihn zum Anmelden oder entferne ihn in der Passwörter-App.',
       unsupportedOptions: 'Dieses Gerät kann die Anforderungen für den Passkey nicht erfüllen.',
       failed: 'Der Passkey konnte nicht erstellt werden.',
@@ -207,7 +207,7 @@ const login = {
   confirm: {
     pageTitle: 'E-Mail bestätigen',
     title: 'Neue E-Mail-Adresse bestätigen',
-    text: 'Bestätige, dass diese Adresse zu deinem FriendFlix-Konto gehören soll.',
+    text: 'Bestätige, dass diese Adresse zu deinem {app}-Konto gehören soll.',
     button: 'Adresse bestätigen',
     unavailable: 'Gerade nicht möglich. Versuch es gleich noch einmal.',
     doneTitle: 'E-Mail-Adresse geändert',

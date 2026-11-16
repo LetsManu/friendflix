@@ -382,6 +382,24 @@ In Admin → Einstellungen → Wiedergabe: `HEVC_STREAMS` (0 = aus; Standard 2 g
 5. **Diagnose.** /diagnose → „Bild und Ton“ auf einem Gerät mit HEVC öffnen: Zeile „Spielt HEVC-Dateien und -Streams“, bei einem Gerät ohne Datei-Anspruch „Spielt nur HEVC-Streams“. Nach einer Wiedergabe steht in „Letzte Wiedergabe“ mit Grund, was das Gerät bekam.
 6. **Chromecast mit Google TV am AV-Receiver.** Mit dem eigenen Empfänger ([cast-receiver.md](cast-receiver.md), App-ID eingetragen, Testgerät registriert) *Wrenfield Pier* (HEVC-Datei mit Dolby-Digital-Plus-Ton) vom Chrome-Browser aus übertragen. Erwartet: Der AV-Receiver zeigt Dolby Digital Plus (nicht PCM), das Bild läuft ohne Neukodierung (Jellyfin-Dashboard: Direktes Streamen der Videospur). Dann dasselbe mit Googles Default Media Receiver (App-ID leeren): H.264 in Stereo wie bisher.
 
+## Branding: Uploads und Manifest
+*Admin → Branding* ([branding.md](branding.md)) lädt Logo, App-Symbol und Anmeldebild als rohen Body hoch: `PUT /api/admin/brand/image/<symbol|logo|signIn>`, höchstens 2 MB (darüber antwortet das Backend 413 `too_large`). Die mitgelieferte `/api/`-Location erlaubt nur 1 MB, deshalb hat [`deploy/npm/portal.advanced.conf`](../deploy/npm/portal.advanced.conf) eine eigene Regex-Location dafür (sie gewinnt gegen das `/api/`-Präfix):
+
+```nginx
+location ~ ^/api/admin/brand/image/[A-Za-z]+$ {
+    proxy_pass http://127.0.0.1:3081;
+    # … dieselben proxy_set_header wie bei /api/ …
+    client_max_body_size 3m;
+    proxy_read_timeout 60s;
+}
+```
+
+Die 3 MB lassen Luft, damit die eigene 413-Antwort des Backends die Seite erreicht und nicht die von nginx. Wer eine eigene Proxy-Konfiguration pflegt, übernimmt diesen Block; ohne ihn scheitert jedes Bild über 1 MB mit einer nginx-Fehlerseite.
+
+**Manifest und Cast-Empfänger** rendert der `web`-Container. Er holt das Branding beim Backend unter `BACKEND_URL` (Compose setzt `http://backend:3000`) und merkt es sich eine Minute. Ohne `BACKEND_URL` oder solange das Backend nicht antwortet, zeigen beide das Standard-Branding. Das Manifest selbst darf 5 Minuten gecacht werden: Ein neuer Name oder ein neues Symbol erscheint auf neu installierten Startbildschirm-Symbolen also nach spätestens etwa 6 Minuten.
+
+**Hochgeladene Bilder** liegen in der Datenbank (Tabelle `brand_images`, mit dem Datenbank-Backup gesichert). Ein Bild, das kein gespeichertes Branding mehr verwendet, wird nach einer Stunde gelöscht.
+
 ## Plan B: NPM liefert /media/ direkt (auth_request)
 Standard ist das Node-Gateway. Wird es bei vielen parallelen Streams zum Engpass (CPU des `gateway`-Containers, `rate(friendflix_gateway_bytes_total)`), kann NPM/nginx `/media/` selbst ausliefern. Jede Anfrage wird vorher vom Backend freigegeben (`GET /internal/authz-nginx`).
 

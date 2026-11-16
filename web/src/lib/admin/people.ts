@@ -25,7 +25,23 @@ export function humanizeKey(k: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function valueText(key: string, v: unknown): string | null {
+/**
+ * Admin → Branding's audit values (brand.update / brand.reset `fields`, brand.image `kind`): the page's own field labels, so a detail
+ * reads "Felder: Name und Akzentfarbe" instead of the ids.
+ */
+const BRAND_VALUES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  fields: {
+    name: 'admin.branding.identity.name', byline: 'admin.branding.identity.byline', shortName: 'admin.branding.identity.shortName',
+    website: 'admin.branding.identity.website', about: 'admin.branding.identity.about', header: 'admin.branding.logo.header',
+    logo: 'admin.branding.logo.logoTitle', symbol: 'admin.branding.logo.symbolTitle', accent: 'admin.branding.colors.accent',
+    glow: 'admin.branding.colors.glow', signInBg: 'admin.branding.colors.signIn', signInImage: 'admin.branding.colors.signInImage',
+  },
+  kind: { logo: 'admin.branding.logo.logoTitle', symbol: 'admin.branding.logo.symbolTitle', signIn: 'admin.branding.colors.signInImage' },
+};
+
+function valueText(key: string, v: unknown, scoped?: Readonly<Record<string, Readonly<Record<string, string>>>>): string | null {
+  if (typeof v === 'string' && scoped?.[key]?.[v]) return trDynamic(scoped[key][v]);
+  if (Array.isArray(v)) { const parts = v.map((x) => valueText(key, x, scoped)).filter((x): x is string => x !== null); return parts.length ? fmtList(parts) : null; }
   if (v === null || v === undefined || v === '') return HEIGHT_KEYS.has(key) && v === null ? tr('adminPeople.audit.values.unlimited') : null;
   if (typeof v === 'boolean') return tr(v ? 'adminPeople.audit.values.yes' : 'adminPeople.audit.values.no');
   if (typeof v === 'number') return HEIGHT_KEYS.has(key) ? (v ? `${v}p` : tr('adminPeople.audit.values.unlimited')) : fmtNumber(v);
@@ -36,7 +52,6 @@ function valueText(key: string, v: unknown): string | null {
     const val = `adminPeople.audit.values.${v}`;
     return hasKey(val) ? trDynamic(val) : v;
   }
-  if (Array.isArray(v)) { const parts = v.map((x) => valueText(key, x)).filter((x): x is string => x !== null); return parts.length ? fmtList(parts) : null; }
   if (typeof v === 'object') {
     const parts = Object.entries(v as Record<string, unknown>).map(([k, x]) => { const t = valueText(k, x); return t === null ? null : `${detailLabel(k)}: ${t}`; }).filter((x): x is string => x !== null);
     return parts.length ? parts.join(', ') : null;
@@ -45,12 +60,16 @@ function valueText(key: string, v: unknown): string | null {
 }
 export const detailLabel = (k: string): string => (hasKey(`adminPeople.audit.keys.${k}`) ? trDynamic(`adminPeople.audit.keys.${k}`) : humanizeKey(k));
 
-/** the `meta` of an audit entry as label/value pairs (translated, no JSON, no ids; empty values are left out) */
-export function auditDetails(meta: Record<string, unknown> | null | undefined): Array<{ label: string; value: string }> {
+/**
+ * the `meta` of an audit entry as label/value pairs (translated, no JSON, no ids; empty values are left out); `action` (the entry's,
+ * e.g. "brand.update") picks the area's own words for its values where it has them
+ */
+export function auditDetails(meta: Record<string, unknown> | null | undefined, action = ''): Array<{ label: string; value: string }> {
   if (!meta || typeof meta !== 'object') return [];
+  const scoped = action.startsWith('brand.') ? BRAND_VALUES : undefined;
   const out: Array<{ label: string; value: string }> = [];
   for (const [k, v] of Object.entries(meta)) {
-    const value = valueText(k, v);
+    const value = valueText(k, v, scoped);
     if (value !== null) out.push({ label: detailLabel(k), value });
   }
   return out;

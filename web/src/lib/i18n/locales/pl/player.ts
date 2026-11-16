@@ -233,7 +233,7 @@ const pl: Translation<typeof de> = {
     more: 'Więcej sterowania',
     collapse: 'Zwiń',
     regionExpanded: 'Teraz na telewizorze, rozwinięte',
-    nothingThere: 'Na {device} nie odtwarza się nic z FriendFlix.',
+    nothingThere: 'Na {device} nie odtwarza się nic z {app}.',
   },
   castPicker: {
     title: 'Odtwarzaj na',
@@ -390,7 +390,7 @@ const pl: Translation<typeof de> = {
   tv: {
     pageTitle: 'Połącz telewizor',
     title: 'Połącz telewizor',
-    step1: 'Otwórz FriendFlix w telefonie i wybierz <b>Menu › Pilot</b> – albo zeskanuj kod QR.',
+    step1: 'Otwórz {app} w telefonie i wybierz <b>Menu › Pilot</b> – albo zeskanuj kod QR.',
     step2: 'Wpisz tam ten kod i potwierdź:',
     connected: 'Połączono …',
     codeAria: 'Kod parowania {code}',

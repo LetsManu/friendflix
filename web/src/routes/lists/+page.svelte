@@ -128,7 +128,7 @@
   .emo-in { width: 5rem; text-align: center; font-size: 1.2rem; }
   .swatches { display: flex; gap: .45rem; flex-wrap: wrap; align-items: center; }
   .sw { width: 32px; height: 32px; min-height: 32px; padding: 0; border-radius: 50%; border: 2px solid transparent; }
-  .sw.on { border-color: #fff; box-shadow: 0 0 0 2px var(--acc, #ff4f6d); }
+  .sw.on { border-color: #fff; box-shadow: 0 0 0 2px var(--acc); }
   .mosaic { position: relative; }
   .mosaic .tcover { position: absolute; inset: auto 0 0 auto; width: auto; height: auto; padding: .15rem .55rem; border-radius: 8px 0 0 0; font-size: 1.3rem; line-height: 1.4; }
   .manage { margin-top: 2.5rem; max-width: 760px; } .manage h2 { margin: 0 0 .3rem; font-size: 1.15rem; }

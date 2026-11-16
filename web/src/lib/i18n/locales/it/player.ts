@@ -218,7 +218,7 @@ const it: Translation<typeof de> = {
     more: 'Altri controlli',
     collapse: 'Comprimi',
     regionExpanded: 'Ora sul televisore, esteso',
-    nothingThere: 'Su {device} non è in riproduzione nulla da FriendFlix.',
+    nothingThere: 'Su {device} non è in riproduzione nulla da {app}.',
   },
   castPicker: {
     title: 'Riproduci su',
@@ -370,7 +370,7 @@ const it: Translation<typeof de> = {
   tv: {
     pageTitle: 'Collega la TV',
     title: 'Collega la TV',
-    step1: 'Apri FriendFlix sul telefono e tocca <b>Menu › Telecomando</b> – oppure scansiona il QR code.',
+    step1: 'Apri {app} sul telefono e tocca <b>Menu › Telecomando</b> – oppure scansiona il QR code.',
     step2: 'Inserisci qui questo codice e conferma:',
     connected: 'Connesso…',
     codeAria: 'Codice di associazione {code}',

@@ -9,11 +9,34 @@ import { setupRoute, type SetupMock } from './setup.js';
 import { startRedeploy, updaterRoute, updaterState, type UpdaterMock } from './updater.js';
 import { syscheckDrip, syscheckRoute, syscheckSocket, syscheckState, syscheckUpload, type SyscheckMock } from './syscheck.js';
 import { livetvMedia, livetvRoute, livetvState, type LivetvMock } from './livetv.js';
+import { brandAdminRoute, brandAdminState, type BrandAdminMock } from './brand.js';
 
 /** Item whose reactions are locked (viewer has not seen it) / unlocked and contain an XSS probe. */
 export const LOCKED_ID = MOVIE.id;
 export const UNLOCKED_ID = MOVIE2.id;
 export const XSS_COMMENT = '<b>x</b><img src=x onerror=alert(1)>';
+
+/** GET /api/public/brand of an instance nobody branded (backend DEFAULT_BRAND and today's tokens, app.css :root) */
+export const DEFAULT_BRAND_ANSWER = {
+  rev: 0,
+  brand: { name: 'FriendFlix', byline: '', shortName: '', website: '', about: '', header: 'wordmark', accent: '#ff4f6d', glow: 'accentViolet', signInBg: 'posters', logo: null, symbol: null, signInImage: null },
+  tokens: { acc: '#ff4f6d', accHover: '#e63e5c', accFill: '#d6325a', accFillHover: '#c9304d', accText: '#ff4f6d', accLight: '#ff8aa0', accLine: '#ff9cad', adjusted: { text: false, fill: true } },
+  images: {},
+};
+
+/** the tokens the backend derives for the blue preset #4c9dff (backend/src/brand/colors.ts; brand.spec.ts) */
+export const BLUE_TOKENS = { acc: '#4c9dff', accHover: '#2d8cff', accFill: '#006ff4', accFillHover: '#0063db', accText: '#4c9dff', accLight: '#89bfff', accLine: '#99c7ff', adjusted: { text: false, fill: true } };
+/** an image URL of the public brand route (`kind` makes the hash unique; the mock serves a PNG for any of them) */
+export const brandImage = (kind: string) => `/api/public/brand/img/${kind.padEnd(64, '0').slice(0, 64).replace(/[^0-9a-f]/g, 'a')}.png`;
+/** GET /api/public/brand of a branded instance: Nordlicht Kino by Anna Beispiel in blue (override any field) */
+export function brandAnswer(over: Record<string, unknown> = {}, images: Record<string, string> = {}, tokens: Record<string, unknown> = BLUE_TOKENS) {
+  return {
+    rev: 7,
+    brand: { ...DEFAULT_BRAND_ANSWER.brand, name: 'Nordlicht Kino', byline: 'by Anna Beispiel', shortName: 'Nordlicht', accent: '#4c9dff', glow: 'accentViolet', ...over },
+    tokens: structuredClone(tokens),
+    images,
+  };
+}
 
 export interface MockState {
   lists: MockList[];
@@ -97,6 +120,10 @@ export interface MockState {
   setup?: SetupMock;
   /** the sign-in cover wall: GET /api/public/login-art answers this status and image paths (mocks/login.ts ART_IMAGES) */
   loginArt: { status: number; images: string[] };
+  /** GET /api/public/brand (branding): the answer; the default is the shipped brand (today's look) */
+  brand: Record<string, unknown>;
+  /** Admin → Branding (mocks/brand.ts): what the page sent, and a forced conflict / invalid field */
+  brandAdmin: BrandAdminMock;
   /** Block 23 phase 3 Task 11: GET /api/account/security; DELETE .../devices/:type/:id answers 401 reauth_required while `securityStale` */
   security: MockSecurity;
   securityStale: boolean;
@@ -171,6 +198,8 @@ export function freshState(): MockState {
     ],
     revokedOthers: 2,
     loginArt: { status: 200, images: [] },
+    brand: structuredClone(DEFAULT_BRAND_ANSWER), // a copy per test: a spec may change it
+    brandAdmin: brandAdminState(),
     security: {
       mfa: { totp: true, webauthn: false, static: true },
       devices: [{ id: '11', type: 'totp', name: 'Pixel 8', lastUsed: null }, { id: '21', type: 'static', name: 'Recovery', lastUsed: null }],
@@ -243,6 +272,9 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
         failed: [...failed].sort(),
       });
     }
+    // the public brand (every page loads it at boot, signed in or not)
+    if (p === '/api/public/brand' && m === 'GET') return J(st.brand);
+    if (/^\/api\/public\/brand\/img\/[0-9a-f]{64}\.(png|webp)$/.test(p) && m === 'GET') return route.fulfill({ status: 200, contentType: 'image/png', body: pngFor(req.url()) });
     // the public cover wall of the sign-in pages (/login, /pending): the list, and the generated image for every path
     if (p === '/api/public/login-art' && m === 'GET') {
       return st.loginArt.status === 200 ? J({ images: st.loginArt.images }) : J({ error: st.loginArt.status === 503 ? 'setup_required' : 'unavailable' }, st.loginArt.status);
@@ -573,6 +605,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       startRedeploy(st.updater, ch === 'nightly' ? 'nightly' : 'latest', false);
       return J({ ok: true, mode: 'webhook' }, 202);
     }
+    if (p.startsWith('/api/admin/brand')) { const r = brandAdminRoute(st, m, p, req, body, J); if (r) return r; }
     if (p.startsWith('/api/admin/settings')) { st.settings.livetvInstalled = st.admin.livetv.installed; const r = settingsRoute(st.settings, m, p, body(), J); if (r) return r; }
     if (p.startsWith('/api/admin/')) {
       // Live TV: the offer is hidden by the LIVETV_OFFER_HIDDEN setting (the "Nicht mehr anzeigen" save and the Settings switch)

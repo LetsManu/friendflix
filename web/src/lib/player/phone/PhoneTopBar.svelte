@@ -31,6 +31,6 @@
     background: rgba(20, 20, 24, .62); border: 1px solid rgba(255, 255, 255, .12); }
   .gl:hover:not(:disabled) { background: rgba(40, 40, 46, .72); }
   .blur .gl { -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
-  .gl.on { color: var(--acc, #ff4f6d); }
+  .gl.on { color: var(--acc); }
   .gl.busy { opacity: .55; }
 </style>

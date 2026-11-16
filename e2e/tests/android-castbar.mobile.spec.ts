@@ -244,7 +244,8 @@ test('a slow app at page start: the bar comes after one retry when the page is s
   await fakeNativeApp(page, { ...APP2, cast: SNAP, capsHangFirst: true });
   await page.goto('/');
   await expect.poll(async () => (await nativeCalls(page, 'capabilities')).length).toBe(1);
-  await page.waitForFunction(() => performance.now() > 5600); // the 5 s request timeout has passed
+  const [c] = await nativeCalls(page, 'capabilities'); // the 5 s request timeout counts from this call
+  await page.waitForFunction((at) => Date.now() > at + 5300, c!.at);
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   await expect(bar(page)).toContainText('Auf Wohnzimmer-TV');
   expect(await nativeCalls(page, 'castState')).toHaveLength(1);
@@ -255,7 +256,8 @@ test('a slow app at page start: going to the background does not fire the retry'
   await fakeNativeApp(page, { ...APP2, cast: SNAP, capsHangFirst: true });
   await page.goto('/');
   await expect.poll(async () => (await nativeCalls(page, 'capabilities')).length).toBe(1);
-  await page.waitForFunction(() => performance.now() > 5600);
+  const [c] = await nativeCalls(page, 'capabilities'); // the 5 s request timeout counts from this call
+  await page.waitForFunction((at) => Date.now() > at + 5300, c!.at);
   const hide = (hidden: boolean) => page.evaluate((h) => {
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => h });
     document.dispatchEvent(new Event('visibilitychange'));

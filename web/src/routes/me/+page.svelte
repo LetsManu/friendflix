@@ -115,6 +115,7 @@
 <style>
   .me { max-width: 1000px; margin: 0 auto; }
   .prof { display: flex; align-items: center; gap: 1.1rem; padding: .6rem 0 1.2rem; }
+  /* the profile avatar's default colour (lib/avatars.ts 'red'): a person's colour, not the brand accent */
   .face { width: 72px; height: 72px; flex: none; border-radius: 24%; display: grid; place-items: center; font-size: 2rem; font-weight: 800; box-shadow: 0 0 0 1px rgba(255,255,255,.12); background: linear-gradient(135deg, #ff6b81, #9a2440); }
   .who { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; gap: .1rem; }
   .who b { font-size: 1.4rem; line-height: 1.2; overflow-wrap: anywhere; }

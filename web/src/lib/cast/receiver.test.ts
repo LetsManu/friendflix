@@ -7,6 +7,8 @@ import {
   CAPS_PROBES, COUNTDOWN_SECONDS, DEFAULT_STRINGS, LIVE_CARD_MS, NS, PAUSE_SHOW_MS, PROGRESS_MS, STALL_SHOW_MS, WHO_MS, activeSkip, buildCaps, createReporter, creditsStart, formatTime, initialState, liveOf, parseMessage, probeCaps, seekTarget, step, textTrackStyle, view,
 } from '../../../static/cast-receiver/logic.js';
 import { CAF_URL, RECEIVER_CSP, receiverHtml } from './receiverPage';
+import { brandPalette, parseBrand } from '#lib/brand';
+import { deriveTokens } from '#lib/brandColors';
 import { GET, trailingSlash } from '../../routes/cast-receiver/+server';
 
 /** FriendFlix's own Cast receiver: its pure logic (web/static/cast-receiver/logic.js) and its page. */
@@ -484,5 +486,48 @@ describe('receiver page', () => {
     expect(csp).not.toMatch(/unsafe-eval|script-src[^;]*unsafe-inline|\*/);
     expect(csp).toContain("frame-ancestors 'none'");
     expect(await res.text()).toBe(receiverHtml());
+  });
+});
+
+describe('receiver: the brand on the idle screen (branding Task 3)', () => {
+  const HASH = 'b'.repeat(64);
+  const brand = (over: Record<string, unknown> = {}, images: Record<string, string> = {}) => parseBrand({
+    rev: 2, images,
+    brand: { name: 'Nordlicht Kino', byline: 'by Anna Beispiel', shortName: '', website: '', about: '', header: 'wordmark', accent: '#4c9dff', glow: 'accent', signInBg: 'posters', logo: null, symbol: null, signInImage: null, ...over },
+    tokens: deriveTokens((over.accent as string) ?? '#4c9dff'),
+  })!;
+
+  it('the default brand renders today\'s idle screen: the shipped mark, FriendFlix, no colour override', () => {
+    const html = receiverHtml();
+    expect(html).toContain('<title>FriendFlix</title>');
+    expect(html).toContain('<div class="brand" aria-hidden="true"><div><img src="/logo-icon.svg" alt="">FriendFlix</div></div>');
+    expect(html).toContain('<html lang="en">');
+  });
+
+  it('a brand: its name (title too), byline, initial and colours', () => {
+    const b = brand();
+    const html = receiverHtml(b);
+    expect(html).toContain('<title>Nordlicht Kino</title>');
+    expect(html).toContain('<span class="initial">N</span><span class="names"><span class="nm">Nordlicht Kino</span><span class="by">by Anna Beispiel</span></span>');
+    const tk = deriveTokens('#4c9dff');
+    expect(html).toContain(`<html lang="en" style="--acc: ${tk.acc}; --acc-fill: ${tk.accFill}; --coral: ${brandPalette(tk).glassText}">`);
+    expect(html).not.toContain('#ff4f6d');
+  });
+
+  it('an uploaded symbol is shown; texts are escaped, never markup', () => {
+    const img = `/api/public/brand/img/${HASH}.webp`;
+    const html = receiverHtml(brand({ name: '<b>Kino</b>', byline: '"><script>x</script>' }, { symbol: img }));
+    expect(html).toContain(`<img src="${img}" alt="">`);
+    expect(html).toContain('&#60;b&#62;Kino&#60;/b&#62;');
+    expect(html).not.toContain('<b>Kino');
+    expect(html).not.toContain('<script>x');
+    expect(html.match(/<script/g)).toHaveLength(2);
+  });
+
+  it('FriendFlix in another colour: the F tile in that colour', () => {
+    const html = receiverHtml(brand({ name: 'FriendFlix', byline: '' }));
+    const p = brandPalette(deriveTokens('#4c9dff'));
+    expect(html).toContain(`stop-color="${p.markFrom}"`);
+    expect(html).not.toContain('logo-icon.svg');
   });
 });

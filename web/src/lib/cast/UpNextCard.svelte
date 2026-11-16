@@ -59,7 +59,7 @@
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .ph { color: #9aa4ad; }
   .txt { display: grid; gap: 2px; min-width: 0; }
-  .eyebrow { margin: 0; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #ff8aa0; }
+  .eyebrow { margin: 0; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--acc-light); }
   .unt { font-size: 1rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mut { color: rgba(255, 255, 255, .72); font-size: .9rem; }
   .acts { grid-column: 1 / -1; display: grid; gap: 6px; margin-top: 4px; }

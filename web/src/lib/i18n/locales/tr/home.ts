@@ -42,7 +42,7 @@ const tr: Translation<typeof de> = {
     series: 'Dizi',
     movie: 'Film',
     episode: 'Bölüm',
-    shareText: '{title} FriendFlix’te',
+    shareText: '{title} – {app}',
     dateOpen: 'Tarih belli değil',
     releasesOn: '{date} tarihinde çıkıyor',
     watching: { one: '{n} kişi izliyor', other: '{n} kişi izliyor' },
@@ -118,7 +118,7 @@ const tr: Translation<typeof de> = {
     close: 'Fragmanı kapat',
   },
   intro: {
-    loading: 'FriendFlix yükleniyor',
+    loading: '{app} yükleniyor',
   },
   new: {
     title: 'Yeni ve Yakında',
@@ -302,7 +302,7 @@ const tr: Translation<typeof de> = {
   },
   noAccess: {
     title: 'Henüz seninle hiçbir şey paylaşılmadı',
-    body: 'FriendFlix’i yöneten kişiye sor.',
+    body: '{app} yöneticisine sor.',
   },
 };
 export default tr;

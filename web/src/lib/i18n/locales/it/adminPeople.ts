@@ -646,13 +646,13 @@ const dict: Translation<typeof de> = {
     areas: {
       user: 'Utenti', device: 'Dispositivi', invite: 'Inviti', request: 'Richieste', poll: 'Sondaggi', list: 'Liste', hub: 'Riquadri dei marchi',
       role: 'Ruoli', profile: 'Profili', download: 'Download', digest: 'Riepilogo settimanale', settings: 'Impostazioni', system: 'Sistema',
-      session: 'Sessioni', tv: 'Televisori', party: 'Watch party', subtitle: 'Sottotitoli', login: 'Accessi', leaving: 'In uscita', preview: 'Anteprime',
+      session: 'Sessioni', tv: 'Televisori', party: 'Watch party', subtitle: 'Sottotitoli', login: 'Accessi', leaving: 'In uscita', preview: 'Anteprime', brand: 'Branding',
     },
     keys: {
       role: 'Ruolo', from: 'Prima', to: 'Dopo', requestsPerMonth: 'Richieste al mese', transcoding: 'Transcodifica consentita', maxHeight: 'Risoluzione max.',
       download: 'Download consentiti', maxDownloads: 'Download simultanei', downloadMaxHeight: 'Qualità max. di download', downloadDays: 'Validità (giorni)',
       authentik: 'Authentik', by: 'Approvato', sessions: 'Sessioni terminate', language: 'Lingua', count: 'Numero', name: 'Titolo', leavesAt: 'Esce il',
-      maxStreams: 'Stream simultanei', remoteBitrate: 'Limite fuori casa', hasPin: 'PIN impostato',
+      maxStreams: 'Stream simultanei', remoteBitrate: 'Limite fuori casa', hasPin: 'PIN impostato', fields: 'Campi', kind: 'Tipo',
     },
     values: { yes: 'Sì', no: 'No', unlimited: 'Illimitato', ok: 'OK', failed: 'Non riuscito', off: 'Disattivato', skipped: 'Saltato', admin: 'Admin', self: 'Sé stesso' },
   },

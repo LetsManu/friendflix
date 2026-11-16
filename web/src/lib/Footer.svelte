@@ -6,6 +6,7 @@
   import { areas, features, linkShown, serverCaps } from '#lib/capabilities';
   import { perms } from '#lib/perms';
   import Logo from '#lib/Logo.svelte';
+  import { brand } from '#lib/brand';
   import { LOCALES, locale, t, type Locale } from '#lib/i18n';
   import { saveLanguage } from '#lib/stores';
   import VersionEgg from '#lib/version/VersionEgg.svelte';
@@ -43,7 +44,7 @@
       </label>
       {#if langErr}<span class="err" role="alert">{$t('account.language.saveFailed')}</span>{/if}
       <button type="button" class="help" on:click={onHelp}>{$t('shell.footer.help')}</button>
-      <span class="brand"><Logo size={18} label="" /> {$t('shell.footer.tagline')}</span>
+      <span class="brand"><Logo size={18} label="" /> {$t('shell.footer.tagline')}{#if $brand.brand.byline.trim()}<span class="by"> · {$brand.brand.byline.trim()}</span>{/if}</span>
       <span class="version"><VersionEgg version={APP_VERSION} codename={APP_CODENAME} label="{$t('common.appName')} {versionText(APP_VERSION, APP_CODENAME, $buildInfo)}" /></span>
     </div>
   </div>

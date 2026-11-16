@@ -130,6 +130,11 @@ describe('cover wall', () => {
     expect(a).toHaveLength(12);
     expect(fallbackArt(7, 12)).toEqual(a);
     expect(fallbackArt(8, 12)).not.toEqual(a);
+    // the bright and deep tones follow the brand: another accent's palette replaces today's corals and wine
+    const blue = fallbackArt(7, 40, ['#1111aa', '#2222bb', '#3333cc'], '#0a1a3a');
+    const used = new Set(blue.flatMap((t) => [t.from, t.to]));
+    for (const c of ['#ff4f6d', '#d6325a', '#ff6b81', '#3a1a2a']) expect(used.has(c), c).toBe(false);
+    expect([...used].some((c) => ['#1111aa', '#2222bb', '#3333cc'].includes(c))).toBe(true);
     for (const t of a) {
       expect(t.from).toMatch(/^#[0-9a-f]{6}$/);
       expect(t.to).toMatch(/^#[0-9a-f]{6}$/);

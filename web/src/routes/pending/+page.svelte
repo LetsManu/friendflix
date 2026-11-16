@@ -55,7 +55,7 @@
 <style>
   .body { display: grid; gap: 4px; }
   .body p { margin: 0 0 8px; }
-  .big { width: 62px; height: 62px; border-radius: 18px; background: rgba(255, 79, 109, .14); color: var(--acc); display: grid; place-items: center; margin: 0 auto 14px; }
+  .big { width: 62px; height: 62px; border-radius: 18px; background: rgba(var(--acc-rgb), .14); color: var(--acc); display: grid; place-items: center; margin: 0 auto 14px; }
   .small { font-size: .85rem; }
   .btn { width: 100%; border-radius: 10px; }
   blockquote { margin: .4rem 0 0; padding: .6rem .9rem; border-left: 3px solid var(--acc); background: rgba(255,255,255,.06); white-space: pre-wrap; overflow-wrap: anywhere; text-align: left; }

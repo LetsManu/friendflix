@@ -10,6 +10,8 @@
   import { areas, features } from '#lib/capabilities';
   import { focusFirst, hasTarget } from '#lib/spatial';
   import { railKey, type RailAction, type RailInput } from './rail';
+  import Logo from '#lib/Logo.svelte';
+  import { brand } from '#lib/brand';
 
   export let path: string;
   /** the person's home (Live TV without libraries): Back there offers to leave the app */
@@ -105,13 +107,15 @@
 </script>
 
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-<nav class="rail" class:open data-scope={open ? '' : undefined} data-nav-skip={open ? undefined : ''} bind:this={nav} aria-label={$t('tv.rail.label')}
+<nav class="rail" class:open class:long={rail.length > 7} data-scope={open ? '' : undefined} data-nav-skip={open ? undefined : ''} bind:this={nav} aria-label={$t('tv.rail.label')}
   on:keydown={onKeydown} on:focusin={onFocusin} on:focusout={onFocusout} on:click={onClick} on:pointermove={onPointerMove} on:pointerleave={onPointerLeave}>
+  <!-- the brand at the top: its symbol in the icon column, the name fading in with the labels (decorative: nothing to focus) -->
+  <div class="brand" aria-hidden="true"><span class="ic"><Logo size={36} label="" /></span><span class="lb bn">{$brand.name}</span></div>
   <ul>
     {#each rail as [href, label, icon], i (href)}
       <li class:cur={i === cur} style="--i:{i};--ri:{rail.length - 1 - i}"><a {href} aria-current={i === cur ? 'page' : undefined} aria-label={open ? undefined : $t(navLabel(label, $features.requests))}><span class="ic"><Icon name={icon} size={26} /></span><span class="lb">{$t(navLabel(label, $features.requests))}</span></a></li>
     {/each}
-    <!-- the active page's coral dot: one element that springs to the current item when the page changes (transform only) -->
+    <!-- the active page's accent dot: one element that springs to the current item when the page changes (transform only) -->
     <li class="dot" class:on={cur >= 0} style="transform: translate3d(0, calc(var(--step, 66px) * {Math.max(0, cur)}), 0)" aria-hidden="true"></li>
   </ul>
   <a class="acct" href="/me" aria-current={path === '/me' || path.startsWith('/me/') ? 'page' : undefined} aria-label={open ? undefined : $t('tv.rail.account')}><span class="ic"><Icon name="user" size={26} /></span><span class="lb">{$t('tv.rail.account')}</span></a>
@@ -140,13 +144,20 @@
   /* labels slide in from -12 px with a 30 ms stagger top to bottom; they leave bottom to top, faster (70 %) */
   .lb { white-space: nowrap; font-weight: 500; font-size: 1.375rem; opacity: 0; transform: translate3d(-12px, 0, 0); transition: opacity calc(var(--tv-d-s, 200ms) * .7) var(--tv-emph-in, ease) calc(var(--ri, 0) * 21ms), transform calc(var(--tv-d-s, 200ms) * .7) var(--tv-emph-in, ease) calc(var(--ri, 0) * 21ms); }
   .rail.open .lb { opacity: 1; transform: none; transition: opacity var(--tv-d-m, 320ms) var(--tv-emph-out, ease) calc(var(--i, 0) * 30ms), transform var(--tv-d-m, 320ms) var(--tv-emph-out, ease) calc(var(--i, 0) * 30ms); }
+  .brand { flex: none; margin-bottom: 10px; display: flex; align-items: center; height: 56px; width: 56px; overflow: hidden; pointer-events: none; }
+  .rail.open .brand { width: 280px; }
+  .bn { --i: 0; --ri: 8; font-weight: 800; color: #fff; max-width: 216px; overflow: hidden; text-overflow: ellipsis; }
+  /* short screens (960x540): no room for the brand above 7 items, the rail keeps its items where they are; with 8 items (Live TV and
+     Aufnahmen) it needs about 790 px: below that the brand gives its room to the account and profile entries */
+  @media (max-height: 620px) { .brand { display: none; } }
+  @media (max-height: 799px) { .rail.long .brand { display: none; } }
   .acct { margin-bottom: 10px; }
   .acct .lb { --i: 6; --ri: 1; }
   .who .lb { --i: 7; --ri: 0; }
   :global(html.tv-motion-reduced) .lb { transition-delay: 0s !important; transform: none; }
-  /* active page: 6 px coral dot, centred 14 px left of the 26 px icon (the icon starts 15 px into its 56 px cell); on the li so the link's clipping does not cut it */
+  /* active page: 6 px accent dot, centred 14 px left of the 26 px icon (the icon starts 15 px into its 56 px cell); on the li so the link's clipping does not cut it */
   ul { position: relative; }
-  .dot { position: absolute; left: -2px; top: 25px; width: 6px; height: 6px; border-radius: 50%; background: var(--acc, #ff4f6d); pointer-events: none; opacity: 0; transition: transform var(--tv-d-spring, 420ms) var(--tv-spring, ease), opacity var(--tv-d-xs, 120ms) ease; }
+  .dot { position: absolute; left: -2px; top: 25px; width: 6px; height: 6px; border-radius: 50%; background: var(--acc); pointer-events: none; opacity: 0; transition: transform var(--tv-d-spring, 420ms) var(--tv-spring, ease), opacity var(--tv-d-xs, 120ms) ease; }
   .dot.on { opacity: 1; }
   /* short screens (720p, 540p): tighter gaps and edges, the entries keep their 56 px; what still does not fit (Live TV's 8 entries at 540p)
      scrolls inside the list while account and profile stay put. Nothing above 800 px high changes. */

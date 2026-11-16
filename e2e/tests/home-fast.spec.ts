@@ -13,7 +13,8 @@ const watchApi = (page: Page) => {
   page.on('request', (r) => {
     const u = new URL(r.url());
     if (!u.pathname.startsWith('/api/') || r.headers()['x-mock-sub']) return;
-    if (u.pathname === '/api/me' || u.pathname.startsWith('/api/notifications') || u.pathname.startsWith('/api/prefs')) return;
+    // (and the public brand, which every page, signed in or not, loads at boot: lib/brand.ts)
+    if (u.pathname === '/api/me' || u.pathname === '/api/public/brand' || u.pathname.startsWith('/api/notifications') || u.pathname.startsWith('/api/prefs')) return;
     seen.push(u.pathname);
   });
   return seen;

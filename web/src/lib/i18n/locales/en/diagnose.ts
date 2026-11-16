@@ -25,7 +25,7 @@ const dict: Translation<typeof de> = {
     testBusy: 'Stop casting first.',
     copyReport: 'Copy report',
     support: 'Cast support',
-    supportReady: 'Ready · FriendFlix receiver',
+    supportReady: 'Ready · {app} receiver',
     supportDefault: "Ready · Google's standard receiver",
     supportNoBrowser: 'Not available in this browser (needs Chrome or Edge)',
     supportOff: 'Off on this server',

@@ -51,7 +51,7 @@ export const INFO_INKS: { rgb: RGB; a: number }[] = [
   { rgb: [255, 255, 255], a: 1 },
   { rgb: [255, 255, 255], a: 0.9 },
   { rgb: [74, 222, 128], a: 1 }, // --ok
-  { rgb: [255, 138, 160], a: 1 }, // the reason line
+  { rgb: [255, 138, 160], a: 1 }, // the reason line (--acc-light of the default brand: the mockup's contrast model, a constant)
 ];
 
 const mix = (b: RGB, t: RGB, a: number): RGB => [0, 1, 2].map((i) => b[i]! * (1 - a) + t[i]! * a) as RGB;

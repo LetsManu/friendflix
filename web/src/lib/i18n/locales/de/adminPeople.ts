@@ -648,13 +648,13 @@ export default {
     areas: {
       user: 'Nutzer', device: 'Geräte', invite: 'Einladungen', request: 'Wünsche', poll: 'Abstimmungen', list: 'Listen', hub: 'Marken-Kacheln',
       role: 'Rollen', profile: 'Profile', download: 'Downloads', digest: 'Wochenrückblick', settings: 'Einstellungen', system: 'System',
-      session: 'Sitzungen', tv: 'Fernseher', party: 'Watch-Party', subtitle: 'Untertitel', login: 'Anmeldungen', leaving: 'Bald weg', preview: 'Vorschauen',
+      session: 'Sitzungen', tv: 'Fernseher', party: 'Watch-Party', subtitle: 'Untertitel', login: 'Anmeldungen', leaving: 'Bald weg', preview: 'Vorschauen', brand: 'Branding',
     },
     keys: {
       role: 'Rolle', from: 'Vorher', to: 'Nachher', requestsPerMonth: 'Wünsche pro Monat', transcoding: 'Umwandeln erlaubt', maxHeight: 'Max. Auflösung',
       download: 'Downloads erlaubt', maxDownloads: 'Gleichzeitige Downloads', downloadMaxHeight: 'Max. Download-Qualität', downloadDays: 'Gültigkeit (Tage)',
       authentik: 'Authentik', by: 'Freigegeben', sessions: 'Beendete Sitzungen', language: 'Sprache', count: 'Anzahl', name: 'Titel', leavesAt: 'Verlässt uns am',
-      maxStreams: 'Gleichzeitige Streams', remoteBitrate: 'Limit unterwegs', hasPin: 'PIN gesetzt',
+      maxStreams: 'Gleichzeitige Streams', remoteBitrate: 'Limit unterwegs', hasPin: 'PIN gesetzt', fields: 'Felder', kind: 'Art',
     },
     values: { yes: 'Ja', no: 'Nein', unlimited: 'Unbegrenzt', ok: 'In Ordnung', failed: 'Fehlgeschlagen', off: 'Aus', skipped: 'Übersprungen', admin: 'Admin', self: 'Selbst' },
   },

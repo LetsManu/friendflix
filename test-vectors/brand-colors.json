@@ -1,0 +1,24 @@
+{
+  "targets": {
+    "accText": { "on": ["#101418", "#161b21", "#242b33"], "min": 4.5 },
+    "accFill": { "on": "#ffffff", "min": 4.5 },
+    "accLight": { "on": "#121018", "min": 4.5 },
+    "accLine": { "on": "#5e5c63", "min": 3 }
+  },
+  "vectors": [
+    { "accent": "#ff4f6d", "note": "default: today's table", "adjusted": { "text": false, "fill": true }, "tokens": { "acc": "#ff4f6d", "accHover": "#e63e5c", "accFill": "#d6325a", "accFillHover": "#c9304d", "accText": "#ff4f6d", "accLight": "#ff8aa0", "accLine": "#ff9cad" } },
+    { "accent": "#a37cff", "adjusted": { "text": false, "fill": true }, "tokens": { "acc": "#a37cff", "accHover": "#8e5dff", "accFill": "#834eff", "accFillHover": "#7134ff", "accText": "#a37cff", "accLight": "#ceb9ff", "accLine": "#d9c9ff" } },
+    { "accent": "#4c9dff", "adjusted": { "text": false, "fill": true }, "tokens": { "acc": "#4c9dff", "accHover": "#2d8cff", "accFill": "#006ff4", "accFillHover": "#0063db", "accText": "#4c9dff", "accLight": "#89bfff", "accLine": "#99c7ff" } },
+    { "accent": "#2fc4b2", "adjusted": { "text": false, "fill": true }, "tokens": { "acc": "#2fc4b2", "accHover": "#29ab9c", "accFill": "#1f8276", "accFillHover": "#1a6d63", "accText": "#2fc4b2", "accLight": "#59d7c8", "accLine": "#65dacc" } },
+    { "accent": "#f2b52c", "adjusted": { "text": false, "fill": true }, "tokens": { "acc": "#f2b52c", "accHover": "#f0ab0f", "accFill": "#9a6e09", "accFillHover": "#825d08", "accText": "#f2b52c", "accLight": "#f6c966", "accLine": "#f6ce74" } },
+    { "accent": "#5ccf6a", "adjusted": { "text": false, "fill": true }, "tokens": { "acc": "#5ccf6a", "accHover": "#44c854", "accFill": "#288834", "accFillHover": "#22742c", "accText": "#5ccf6a", "accLight": "#8bdd95", "accLine": "#97e0a0" } },
+    { "accent": "#f2e94e", "note": "too light", "adjusted": { "text": false, "fill": true }, "tokens": { "acc": "#f2e94e", "accHover": "#f0e531", "accFill": "#7f7909", "accFillHover": "#676207", "accText": "#f2e94e", "accLight": "#f6f087", "accLine": "#f7f295" } },
+    { "accent": "#1a1a40", "note": "too dark", "adjusted": { "text": true, "fill": false }, "tokens": { "acc": "#8a8acf", "accHover": "#7474c6", "accFill": "#1a1a40", "accFillHover": "#13132e", "accText": "#8a8acf", "accLight": "#b5b5e1", "accLine": "#c0c0e5" } },
+    { "accent": "#c0392b", "note": "dark red", "adjusted": { "text": true, "fill": false }, "tokens": { "acc": "#dd7469", "accHover": "#d75d50", "accFill": "#c0392b", "accFillHover": "#ab3326", "accText": "#dd7469", "accLight": "#e8a29b", "accLine": "#ebaea7" } },
+    { "accent": "#ffffff", "adjusted": { "text": false, "fill": true }, "tokens": { "acc": "#ffffff", "accHover": "#f0f0f0", "accFill": "#757575", "accFillHover": "#686868", "accText": "#ffffff", "accLight": "#ffffff", "accLine": "#ffffff" } },
+    { "accent": "#000000", "adjusted": { "text": true, "fill": false }, "tokens": { "acc": "#919191", "accHover": "#828282", "accFill": "#000000", "accFillHover": "#000000", "accText": "#919191", "accLight": "#b0b0b0", "accLine": "#b7b7b7" } },
+    { "accent": "#e0405a", "note": "review: 4.57 on --bg only", "adjusted": { "text": true, "fill": true }, "tokens": { "acc": "#e76c80", "accHover": "#e35269", "accFill": "#dd2e4b", "accFillHover": "#d0223f", "accText": "#e76c80", "accLight": "#f0a1ad", "accLine": "#f2aeb9" } },
+    { "accent": "#8a63ff", "note": "review: 4.68 on --bg only", "adjusted": { "text": true, "fill": true }, "tokens": { "acc": "#9d7dff", "accHover": "#865eff", "accFill": "#7f54ff", "accFillHover": "#6c3aff", "accText": "#9d7dff", "accLight": "#cbbaff", "accLine": "#d7caff" } },
+    { "accent": "#3d7bff", "note": "review: 4.82 on --bg only", "adjusted": { "text": true, "fill": true }, "tokens": { "acc": "#5c90ff", "accHover": "#3d7bff", "accFill": "#236aff", "accFillHover": "#0959ff", "accText": "#5c90ff", "accLight": "#99baff", "accLine": "#a9c4ff" } }
+  ]
+}

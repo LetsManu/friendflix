@@ -8,7 +8,7 @@ const login: Translation<typeof de> = {
   loading: 'Preparando el inicio de sesión …',
   busy: 'Un momento …',
   inviteGone: 'Esta invitación ya no es válida. Si ya tienes una cuenta, simplemente inicia sesión.',
-  stale: { title: 'Inicio de sesión no confirmado', text: 'Authentik no volvió a pedir el inicio de sesión, así que FriendFlix lo rechazó. Inténtalo de nuevo en medio minuto. Si sigue ocurriendo, los relojes del servidor y de Authentik pueden no coincidir (un administrador puede comprobarlo).', retry: 'Iniciar sesión de nuevo' },
+  stale: { title: 'Inicio de sesión no confirmado', text: 'Authentik no volvió a pedir el inicio de sesión, así que {app} lo rechazó. Inténtalo de nuevo en medio minuto. Si sigue ocurriendo, los relojes del servidor y de Authentik pueden no coincidir (un administrador puede comprobarlo).', retry: 'Iniciar sesión de nuevo' },
   identify: {
     title: 'Bienvenido de nuevo',
     text: 'Inicia sesión para seguir viendo.',
@@ -33,7 +33,7 @@ const login: Translation<typeof de> = {
     otherMethod: 'Elegir otro método',
     retry: 'Reintentar',
     cancelledTitle: 'Ninguna llave de acceso confirmada',
-    cancelledText: 'La solicitud se canceló o este dispositivo no tiene ninguna llave de acceso para FriendFlix. Las llaves creadas en la página de inicio de sesión no sirven aquí.',
+    cancelledText: 'La solicitud se canceló o este dispositivo no tiene ninguna llave de acceso para {app}. Las llaves creadas en la página de inicio de sesión no sirven aquí.',
     timeoutTitle: 'Se acabó el tiempo',
     timeoutText: 'La solicitud de tu dispositivo ha caducado. Inténtalo de nuevo.',
     unsupportedTitle: 'Llave de acceso no disponible aquí',
@@ -68,8 +68,8 @@ const login: Translation<typeof de> = {
   },
   notice: {
     unavailableTimeout: 'El servicio de inicio de sesión tardó demasiado en responder. Inténtalo de nuevo en un momento.',
-    unavailableUnreachable: 'FriendFlix no puede contactar ahora con el servicio de inicio de sesión. Inténtalo de nuevo en un momento.',
-    unavailableServiceToken: 'El servicio de inicio de sesión rechaza el acceso de FriendFlix. Un administrador puede repararlo en Admin → Estado → Inicio de sesión.',
+    unavailableUnreachable: '{app} no puede contactar ahora con el servicio de inicio de sesión. Inténtalo de nuevo en un momento.',
+    unavailableServiceToken: 'El servicio de inicio de sesión rechaza el acceso de {app}. Un administrador puede repararlo en Admin → Estado → Inicio de sesión.',
     classicTitle: 'Continuar en la página de inicio de sesión',
     classicText: 'Este paso solo funciona en la página de inicio de sesión.',
     classic: 'Continuar en la página de inicio de sesión',
@@ -103,15 +103,15 @@ const login: Translation<typeof de> = {
   sec: {
     manageClassic: 'Continuar en la página de inicio de sesión',
     refused: {
-      classic: 'El inicio de sesión dentro de FriendFlix está desactivado, así que este cambio se hace en la página de inicio de sesión.',
+      classic: 'El inicio de sesión dentro de {app} está desactivado, así que este cambio se hace en la página de inicio de sesión.',
       flow_not_configured: 'Esto aún no está configurado en el servicio de inicio de sesión. Un administrador puede configurarlo en Admin → Estado → Inicio de sesión.',
       authentik_user_not_found: 'Tu cuenta no se encontró en el servicio de inicio de sesión. Pregunta a un administrador.',
     },
     problem: {
-      service_token: 'Ahora no se pueden leer tus ajustes de seguridad: el servicio de inicio de sesión rechaza el acceso de FriendFlix. Un administrador puede repararlo en Admin → Estado → Inicio de sesión.',
+      service_token: 'Ahora no se pueden leer tus ajustes de seguridad: el servicio de inicio de sesión rechaza el acceso de {app}. Un administrador puede repararlo en Admin → Estado → Inicio de sesión.',
       unreachable: 'Ahora no se pueden leer tus ajustes de seguridad: el servicio de inicio de sesión no responde.',
       error: 'Ahora no se pueden leer tus ajustes de seguridad.',
-      not_configured: 'FriendFlix no está conectado a la API del servicio de inicio de sesión, así que estos ajustes se gestionan en la página de inicio de sesión.',
+      not_configured: '{app} no está conectado a la API del servicio de inicio de sesión, así que estos ajustes se gestionan en la página de inicio de sesión.',
     },
     username: {
       title: 'Nombre de usuario',
@@ -177,8 +177,8 @@ const login: Translation<typeof de> = {
       unsupported: 'Tu navegador no puede crear una passkey aquí.',
       add: 'Añadir una passkey',
       addClassic: 'Añadir en la página de inicio de sesión',
-      note: 'Las passkeys que crees aquí valen para FriendFlix.',
-      renew: '¿Creaste tus llaves de acceso antes en la página de inicio de sesión? Esas no sirven en FriendFlix. Crea aquí una nueva una vez.',
+      note: 'Las passkeys que crees aquí valen para {app}.',
+      renew: '¿Creaste tus llaves de acceso antes en la página de inicio de sesión? Esas no sirven en {app}. Crea aquí una nueva una vez.',
       exists: 'Este dispositivo ya tiene una passkey para tu cuenta. Úsala para iniciar sesión o elimínala en la app de contraseñas.',
       unsupportedOptions: 'Este dispositivo no cumple los requisitos para crear la passkey.',
       failed: 'No se pudo crear la passkey.',
@@ -208,7 +208,7 @@ const login: Translation<typeof de> = {
   confirm: {
     pageTitle: 'Confirmar correo',
     title: 'Confirma tu nueva dirección de correo',
-    text: 'Confirma que esta dirección debe pertenecer a tu cuenta de FriendFlix.',
+    text: 'Confirma que esta dirección debe pertenecer a tu cuenta de {app}.',
     button: 'Confirmar dirección',
     unavailable: 'Ahora no es posible. Inténtalo de nuevo en un momento.',
     doneTitle: 'Dirección de correo cambiada',

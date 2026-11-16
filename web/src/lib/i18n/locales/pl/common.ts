@@ -5,8 +5,8 @@ import type { Translation } from '../../types';
 
 /** Polish – area "common". Missing keys fall back to German (docs/i18n.md). */
 const pl: Translation<typeof de> = {
-  appName: 'FriendFlix',
-  pageTitle: '{page} – FriendFlix',
+  appName: '{app}',
+  pageTitle: '{page} – {app}',
   save: 'Zapisz',
   saving: 'Zapisuję …',
   saved: 'Zapisano',

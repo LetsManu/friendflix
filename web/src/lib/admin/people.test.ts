@@ -36,6 +36,15 @@ describe('auditDetails', () => {
     expect(auditDetails({ requestsPerMonth: 3, download: true })).toEqual([{ label: 'Requests per month', value: '3' }, { label: 'Downloads allowed', value: 'Yes' }]);
   });
   it('humanizeKey', () => { expect(humanizeKey('maxDownloadsPerDay')).toBe('Max downloads per day'); });
+  it('brand entries: the fields and the image kind read as the Branding page\'s words, other areas keep their values', async () => {
+    await setLocale('de');
+    expect(auditDetails({ fields: ['accent', 'shortName', 'signInImage'] }, 'brand.update')).toEqual([{ label: 'Felder', value: 'Akzentfarbe, Kurzname (Startbildschirm) und Bild für die Anmeldung' }]);
+    expect(auditDetails({ kind: 'signIn' }, 'brand.image')).toEqual([{ label: 'Art', value: 'Bild für die Anmeldung' }]);
+    expect(auditDetails({ fields: ['name', 'kind'] }, 'livetv.rec.library_create')).toEqual([{ label: 'Felder', value: 'name und kind' }]);
+    await setLocale('en');
+    expect(auditDetails({ fields: ['accent', 'name'] }, 'brand.reset')).toEqual([{ label: 'Fields', value: 'Accent colour and Platform name' }]);
+    expect(auditDetails({ kind: 'symbol' }, 'brand.image')).toEqual([{ label: 'Kind', value: 'App symbol' }]);
+  });
 });
 
 describe('helpers', () => {

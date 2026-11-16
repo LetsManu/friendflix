@@ -62,7 +62,7 @@
   .ptx.off { opacity: 0; visibility: hidden; transition: opacity 200ms ease, visibility 0s linear 200ms; }
   .port .ptx { max-width: 100%; }
   /* the chapter eyebrow is white with a coral bar (WCAG 1.4.3: coral text sank to 1:1 over a bright frame) */
-  em { font-style: normal; color: #fff; border-left: 3px solid var(--acc, #ff4f6d); padding-left: 6px; font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+  em { font-style: normal; color: #fff; border-left: 3px solid var(--acc); padding-left: 6px; font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   b { font-size: 28px; font-weight: 900; line-height: 1.1; letter-spacing: -.01em; overflow-wrap: break-word;
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }

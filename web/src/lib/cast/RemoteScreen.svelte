@@ -312,7 +312,7 @@
   .shade { position: absolute; inset: 0; background: linear-gradient(rgba(0, 0, 0, .55), rgba(0, 0, 0, .25) 40%, rgba(0, 0, 0, .8)); pointer-events: none; }
   .wrap { position: relative; width: 100%; max-width: 1100px; margin: 0 auto; flex: 1 0 auto; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
   .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .eyebrow { margin: 0; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #ff8aa0; transition: opacity 120ms ease; }
+  .eyebrow { margin: 0; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--acc-light); transition: opacity 120ms ease; }
   .eyebrow.wait { opacity: 0; } /* AirPlay, TV not playing yet: the line keeps its room */
 
   /* top row: close, device chip (truncates), Stop */
@@ -361,7 +361,7 @@
   .conthead h2 { margin: 0; font-size: 1rem; font-weight: 800; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .conthead :global(.pill) { flex: none; }
   .continfo { margin: 0; font-size: .88rem; line-height: 1.3; color: rgba(255, 255, 255, .78); }
-  .rowshead { margin: 3px 0 0; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #ff8aa0; }
+  .rowshead { margin: 3px 0 0; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--acc-light); }
   .rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
   .rows li { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; font-size: .92rem; color: rgba(255, 255, 255, .78); }
   .rows li.now { color: #fff; font-weight: 700; }
