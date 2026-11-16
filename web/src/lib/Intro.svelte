@@ -24,6 +24,12 @@
   const b = $brand;
   const letters = graphemes(b.name).map((ch) => (ch === ' ' ? '\u00a0' : ch));
   /** the letters arrive within the same 0.4 s however long the name is (FriendFlix: 45 ms apart, as before) */
+  /** the letters grouped per word (a space is its own item): a long name wraps between words, never inside one */
+  const words: Array<{ sp: boolean; chars: Array<{ ch: string; i: number }> }> = [];
+  letters.forEach((ch, i) => {
+    const sp = ch === '\u00a0', last = words[words.length - 1];
+    if (last && last.sp === sp) last.chars.push({ ch, i }); else words.push({ sp, chars: [{ ch, i }] });
+  });
   const stagger = Math.min(45, 405 / Math.max(1, letters.length - 1));
   const own = !builtInMark(b);
   const pal = brandPalette(b.tokens);
@@ -109,7 +115,7 @@
       {/if}
       <div class="ring"></div>
     </div>
-    <div class="word">{#each letters as ch, i}<span class="ch" style="--d:{i * stagger}ms">{ch}</span>{/each}</div>
+    <div class="word">{#each words as w}<span class="wd">{#each w.chars as c}<span class="ch" style="--d:{c.i * stagger}ms">{c.ch}</span>{/each}</span>{/each}</div>
   </div>
 </div>
 
@@ -132,6 +138,7 @@
   /* the ring: a soft accent radial band (transparent centre) that grows from the tile once and fades while it travels */
   .ring { position: absolute; inset: -4%; border-radius: 50%; opacity: 0; pointer-events: none; background: radial-gradient(circle, transparent 52%, rgba(var(--acc-rgb), .55) 60%, rgba(var(--acc-rgb), .18) 70%, transparent 78%); will-change: transform, opacity; animation: ff-ring 1.15s cubic-bezier(.2, .6, .25, 1) 1.9s both; }
   .word { display: flex; flex-wrap: wrap; justify-content: center; max-width: 90vw; align-items: baseline; font-weight: 800; font-size: clamp(1.2rem, 3.8vmin, 2.1rem); letter-spacing: -.005em; color: #fff; }
+  .wd { display: inline-flex; white-space: nowrap; }
   .ch { display: inline-block; will-change: transform, opacity; animation: ff-letter .75s cubic-bezier(.16, 1, .3, 1) calc(1.3s + var(--d)) both; }
   .g0 { stop-color: var(--mark-from); }
   .g1 { stop-color: var(--mark-to); }

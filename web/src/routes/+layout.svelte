@@ -51,7 +51,7 @@
   import { chipsTucked, SOLID_AFTER } from '#lib/phone/logic';
   import { closePreview, previewSheet } from '#lib/previewSheet';
   import { isLocale, locale, pageEpoch, pickLocale, ready, setLocale, setMediaServer, t, type Locale } from '#lib/i18n';
-  import { brand, headerParts, loadBrand, refetchOnVisible } from '#lib/brand';
+  import { brand, builtInMark, headerParts, loadBrand, refetchOnVisible } from '#lib/brand';
   import Rich from '#lib/i18n/Rich.svelte';
   import LanguageGate from '#lib/LanguageGate.svelte';
   import ToastHost from '#lib/ui/ToastHost.svelte';
@@ -875,7 +875,7 @@
   {#if ambPage}<div class="frost-amb" aria-hidden="true"></div>{/if}
   {#if !watchPage && !profilesPage && kidsUi}
     <header class="nav kidsnav" class:solid={scrolled || !path.startsWith('/kids')}>
-      <a class="klogo" href={$areas.library ? '/kids' : home} aria-label={$t('kids.nav.homeLink')}><Logo header={!$mobile} size={$mobile ? 30 : 32} label="" /> <span class="kbadge">{$t('kids.badge')}</span></a>
+      <a class="klogo" href={$areas.library ? '/kids' : home} aria-label={$t('kids.nav.homeLink')}><Logo header={!$mobile} wordmark={$mobile && !builtInMark($brand) && !$brand.images.symbol} size={$mobile ? 30 : 32} label="" /> <span class="kbadge">{$t('kids.badge')}</span></a>
       <span class="sp"></span>
       <nav class="knav" aria-label={$t('kids.nav.label')}>
         {#if $areas.library}<a class="kbtn" class:lib-held={libHeld} class:lib-in={libIn} href="/kids/search" aria-label={$t('kids.nav.search')} aria-current={path.startsWith('/kids/search') ? 'page' : undefined}><Icon name="search" size={26} /></a>{/if}

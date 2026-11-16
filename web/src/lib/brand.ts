@@ -350,17 +350,23 @@ let seq = 0;
  * the cached brand is applied at once. A failed request (offline, an older backend) keeps what is shown; of overlapping calls the last
  * one wins.
  */
-export async function loadBrand(fetchFn: typeof fetch = fetch): Promise<void> {
+export const BRAND_TIMEOUT_MS = 4000;
+
+export async function loadBrand(fetchFn: typeof fetch = fetch, timeoutMs = BRAND_TIMEOUT_MS): Promise<void> {
   if (!applied) applyCached();
   const my = ++seq;
   let next: LoadedBrand | null;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs); // a hanging request must not hold the sign-in wall back
   try {
-    const r = await fetchFn(BRAND_URL, { credentials: 'same-origin', headers: { accept: 'application/json' } });
+    const r = await fetchFn(BRAND_URL, { credentials: 'same-origin', headers: { accept: 'application/json' }, signal: ctl.signal });
     if (!r.ok) { known.set(true); return; }
     next = parseBrand(await r.json());
   } catch {
-    known.set(true); // offline, an older backend: the defaults (or the cached brand) stand
+    known.set(true); // offline, hanging, an older backend: the defaults (or the cached brand) stand
     return;
+  } finally {
+    clearTimeout(timer);
   }
   if (!next) known.set(true);
   if (!next || my !== seq) return;

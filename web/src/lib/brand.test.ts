@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appName, setLocale, t, tr } from '#lib/i18n';
 import { markParams, richParts } from '#lib/i18n/rich';
 import {
-  applyBrand, applyCached, brand, BRAND_CACHE_KEY, brandInitial, brandPalette, builtInMark, DEFAULT_LOADED, GLASS_TEXT_ON, headerParts, loadBrand, parseBrand,
+  applyBrand, applyCached, brand, BRAND_CACHE_KEY, brandKnown, brandInitial, brandPalette, builtInMark, DEFAULT_LOADED, GLASS_TEXT_ON, headerParts, loadBrand, parseBrand,
   refetchOnVisible, resetBrandForTests,
 } from './brand';
 import { ACC_FILL_ON, ACC_LIGHT_ON, ACC_LINE_ON, ACC_TEXT_ON, contrast, DEFAULT_TOKENS, deriveTokens, TOKENS_VERSION, type BrandTokens } from './brandColors';
@@ -196,6 +196,19 @@ describe('loading', () => {
     resetBrandForTests();
     expect(applyCached(asDoc(f))).toBe(true);
     expect(get(brand).name).toBe('Kinoabend');
+  });
+
+  it('a hanging request is aborted after the timeout: the cached brand stands and the brand counts as known', async () => {
+    storage.setItem(BRAND_CACHE_KEY, JSON.stringify(loaded(answer(7))));
+    let signal: AbortSignal | undefined;
+    const fetchFn = vi.fn((_u: string, init?: RequestInit) => new Promise<Response>((_r, rej) => {
+      signal = init?.signal ?? undefined;
+      signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')));
+    }));
+    await loadBrand(fetchFn as unknown as typeof fetch, 20);
+    expect(signal?.aborted).toBe(true);
+    expect(get(brand).name).toBe('Nordlicht Kino');
+    expect(get(brandKnown)).toBe(true);
   });
 
   it('no cache, a failed request or a broken answer keeps what is shown (the defaults)', async () => {

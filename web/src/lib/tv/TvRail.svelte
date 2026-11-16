@@ -140,9 +140,11 @@
   /* labels slide in from -12 px with a 30 ms stagger top to bottom; they leave bottom to top, faster (70 %) */
   .lb { white-space: nowrap; font-weight: 500; font-size: 1.375rem; opacity: 0; transform: translate3d(-12px, 0, 0); transition: opacity calc(var(--tv-d-s, 200ms) * .7) var(--tv-emph-in, ease) calc(var(--ri, 0) * 21ms), transform calc(var(--tv-d-s, 200ms) * .7) var(--tv-emph-in, ease) calc(var(--ri, 0) * 21ms); }
   .rail.open .lb { opacity: 1; transform: none; transition: opacity var(--tv-d-m, 320ms) var(--tv-emph-out, ease) calc(var(--i, 0) * 30ms), transform var(--tv-d-m, 320ms) var(--tv-emph-out, ease) calc(var(--i, 0) * 30ms); }
-  .brand { position: absolute; top: 5vh; left: 20px; display: flex; align-items: center; height: 56px; width: 56px; overflow: hidden; pointer-events: none; }
+  .brand { flex: none; margin-bottom: 10px; display: flex; align-items: center; height: 56px; width: 56px; overflow: hidden; pointer-events: none; }
   .rail.open .brand { width: 280px; }
   .bn { --i: 0; --ri: 8; font-weight: 800; color: #fff; max-width: 216px; overflow: hidden; text-overflow: ellipsis; }
+  /* short screens (960x540): no room for the brand above 7 items, the rail keeps its items where they are */
+  @media (max-height: 620px) { .brand { display: none; } }
   .acct { margin-bottom: 10px; }
   .acct .lb { --i: 6; --ri: 1; }
   .who .lb { --i: 7; --ri: 0; }

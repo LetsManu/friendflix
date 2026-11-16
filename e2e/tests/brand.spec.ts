@@ -143,6 +143,30 @@ test.describe('the brand on every surface', () => {
     expect(b.y + b.h).toBeLessThanOrEqual(first.y);
   });
 
+  test('TV rail: the brand never overlaps an item (7 items with Live TV), everything stays in the viewport', async ({ page, api }) => {
+    api.brand = brandAnswer();
+    await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, tv: true, features: { requests: true, postplay: true, surround: false, livetv: true } } }));
+    await page.routeWebSocket(/\/ws\/remote/, () => {});
+    for (const [w, h] of [[960, 540], [1280, 720]] as const) {
+      await page.setViewportSize({ width: w, height: h });
+      await page.goto('/');
+      await expect(page.locator('html.tv')).toHaveCount(1);
+      const items = page.locator('nav.rail ul a');
+      await expect(items).toHaveCount(7);
+      const first = await box(items.first());
+      const brand = page.locator('nav.rail .brand');
+      if (await brand.isVisible()) {
+        const b = await box(brand);
+        expect(b.y + b.h, `${w}x${h}`).toBeLessThanOrEqual(first.y);
+      } else expect(h).toBeLessThanOrEqual(620); // hidden only on short screens
+      for (const a of await items.all()) {
+        const r = await box(a);
+        expect(r.y).toBeGreaterThanOrEqual(0);
+        expect(r.y + r.h).toBeLessThanOrEqual(h);
+      }
+    }
+  });
+
   test('long name ellipsizes in the desktop header; the pill and the buttons do not move', async ({ page, api }) => {
     await page.goto('/');
     const pill = bar(page).locator('.pill'), right = bar(page).locator('.right');
