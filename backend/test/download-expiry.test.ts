@@ -70,6 +70,27 @@ describe('licence expiry warnings', () => {
     expect(await notices()).toEqual([]);
   });
 
+  // fix round 1: no licence mail at night; a run that missed its day window (a deploy, a restart, downloads switched on late)
+  // waits for the next 09:00
+  it('at 20:59 it still runs', async () => {
+    await licence(anna, 30);
+    expect(await licenceExpiryTick(env.ctx, new Date(2026, 10, 16, 20, 59, 0))).toEqual({ warned: 1, people: 1 });
+    expect(await env.kv.get(DAY_KEY)).not.toBeNull();
+    expect(await notices()).toHaveLength(1);
+  });
+
+  it('from 21:00 it waits for the next 09:00', async () => {
+    const a = await licence(anna, 30);
+    for (const at of [new Date(2026, 10, 16, 21, 0, 0), new Date(2026, 10, 16, 23, 30, 0), new Date(2026, 10, 17, 8, 59, 0)]) {
+      expect(await licenceExpiryTick(env.ctx, at), at.toString()).toBeNull();
+    }
+    expect(await env.kv.keys('mail:licence-day:')).toEqual([]);
+    expect(await warned(a)).toBeNull();
+    expect(await notices()).toEqual([]);
+    expect(await licenceExpiryTick(env.ctx, new Date(2026, 10, 17, 9, 0, 0))).toEqual({ warned: 1, people: 1 });
+    expect(await env.kv.get('mail:licence-day:2026-11-17')).not.toBeNull();
+  });
+
   it('licences inside the window are warned once per person', async () => {
     const a30 = await licence(anna, 30);
     const a47 = await licence(anna, 47);

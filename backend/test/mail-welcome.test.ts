@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../src/config.js';
 import { decrypt, encrypt } from '../src/crypto.js';
 import { migrate } from '../src/db.js';
+import * as outbox from '../src/mail/outbox.js';
 import { welcomeOnce } from '../src/mail/welcome.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
@@ -42,6 +43,7 @@ describe('welcome mail', () => {
   });
   afterEach(() => {
     env.ctx.cfg = cfg;
+    vi.restoreAllMocks();
   });
 
   it('migration 58 marks existing accounts as welcomed', async () => {
@@ -90,5 +92,18 @@ describe('welcome mail', () => {
     env.ctx.cfg = { ...cfg, ...MAIL_CFG };
     expect(await welcomeOnce(env.ctx, notSetUp)).toBe(false);
     expect(await mails(notSetUp)).toEqual([]);
+  });
+
+  // fix round 1: a database error while queueing gives the claim back, so the next sign-in welcomes again (the outbox key
+  // `welcome:<id>` still stops a second mail if the row did land)
+  it('a failed enqueue gives the welcome claim back', async () => {
+    const id = await account();
+    vi.spyOn(outbox, 'enqueueMail').mockRejectedValueOnce(new Error('outbox down'));
+    await expect(welcomeOnce(env.ctx, id)).rejects.toThrow('outbox down');
+    expect((await env.pool.query('select welcomed_at from users where id = $1', [id])).rows[0].welcomed_at).toBeNull();
+    expect(await mails(id)).toEqual([]);
+    expect(await welcomeOnce(env.ctx, id)).toBe(true);
+    expect((await mails(id)).map((r) => r.dedupe)).toEqual([`welcome:${id}`]);
+    expect(await welcomeOnce(env.ctx, id)).toBe(false);
   });
 });

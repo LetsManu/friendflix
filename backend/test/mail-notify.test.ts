@@ -126,7 +126,7 @@ function noticeLiterals(): Array<{ file: string; top: string }> {
   const files = (readdirSync(src, { recursive: true }) as string[]).filter((f) => f.endsWith('.ts'));
   for (const file of files) {
     const text = readFileSync(join(src, file), 'utf8');
-    for (const m of text.matchAll(/\bnotify(?:Admins)?\(ctx,\s*\{/g)) {
+    for (const m of text.matchAll(/\bnotify(?:Admins)?\(\s*[\w.]+\s*,\s*\{/g)) {
       let depth = 0;
       let top = '';
       for (let i = m.index + m[0].length - 1; i < text.length; i++) {
@@ -154,5 +154,15 @@ describe('every mailed notice has a dedupe key', () => {
       'downloadExpiry.ts', 'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recsched.ts', 'livetv/recstore.ts', 'routes/seerr.ts',
     ]);
     for (const n of mailing) expect(n.top, n.file).toMatch(/(^|[\s,])dedupe:/);
+  });
+
+  it('no mail type is set outside a notify() call literal', () => {
+    // a notice object built elsewhere and handed over by name would escape the check above: every `mail: '<type>'` (also behind a
+    // condition) outside src/mail must be one of the literals it checked
+    const src = join(__dirname, '../src');
+    const files = (readdirSync(src, { recursive: true }) as string[]).filter((f) => f.endsWith('.ts') && !f.startsWith('mail/'));
+    const typed = /\bmail: (?:[^,}\n]*\? )?'(?:available|recording|licence)'/g;
+    const sites = files.flatMap((f) => [...readFileSync(join(src, f), 'utf8').matchAll(typed)].map(() => f));
+    expect(sites.sort()).toEqual(noticeLiterals().filter((n) => /(^|[\s,])mail:/.test(n.top)).map((n) => n.file).sort());
   });
 });
