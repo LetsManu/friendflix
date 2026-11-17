@@ -367,7 +367,7 @@
   - `notifications.mobile.spec.ts`, at phone width:
     - `Mein Bereich shows the newest 5 groups and does not mark read`: no `/read` call.
     - `Alle opens the full-height sheet`: the dialog height equals the viewport height minus the safe areas; 44-px targets for chips, ✕ and footer buttons; no horizontal scroll.
-    - `swipe or ✕ removes one group with undo`: use ✕ if swipe is not built. Swipe is optional; if not built, ledger it.
+    - `swipe left removes one group with undo`: touch drag on the row, transform only; past 40 % of the width or a fling hides it, shorter springs back. `✕ removes one group with undo`: 44 px, always visible on touch.
   - The desktop badge: `the bell shows 45 when 45 are unread`, with the mock answering `unread: 45`.
 - [ ] **Step 2: Run** them. Expected: FAIL.
 - [ ] **Step 3: Implement.**
