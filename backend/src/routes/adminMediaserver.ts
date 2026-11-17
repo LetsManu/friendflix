@@ -6,8 +6,11 @@ import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { addressOnly } from '../media/address.js';
+import { MediaSetupError } from '../media/types.js';
 import { BACKUP_ID, mediaOp, startMediaJob, type MediaStatus } from '../mediaserver/client.js';
-import { adminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged } from '../mediaserver/store.js';
+import { libraryReferences, referenced } from '../mediaserver/references.js';
+import { deleteLibrary, managedKey, MANAGED_URL, renameLibrary } from '../mediaserver/serverApi.js';
+import { adminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged, type SetupStep } from '../mediaserver/store.js';
 import { recentlyAuthenticated } from '../reauth.js';
 import { requireAdmin } from '../session.js';
 import { requireSetupSession } from '../setup/code.js';
@@ -57,14 +60,6 @@ const MAX_ENTRIES = 300;
 /** the server's time zone for the container: TZ when it is an IANA name the updater accepts, else Etc/UTC */
 export function containerTz(tz = process.env.TZ): string {
   return tz && tz.length <= 64 && TZ_RE.test(tz) ? tz : 'Etc/UTC';
-}
-
-/**
- * How many FriendFlix references (lists, resume points, recordings) point at items of the library `slug`. Task 14 counts them from the
- * backend's own tables; until then none.
- */
-export async function libraryReferences(_ctx: Ctx, _slug: string): Promise<number> {
-  return 0;
 }
 
 const pinned = (ctx: Ctx): boolean => {
@@ -172,28 +167,61 @@ async function toExternal(ctx: Ctx, restore: boolean, actor: string | null): Pro
   await audit(ctx, actor, 'mediaserver.mode', undefined, { from: 'managed', to: 'external' });
 }
 
-/** the libraries of an apply, or library_referenced (spec "Folder changes after the first run") */
-async function librariesFor(ctx: Ctx, managed: MediaManaged, b: ApplyBody): Promise<{ chosen: LibraryEntry[]; kept: LibraryEntry[] } | null> {
+interface Libraries { chosen: LibraryEntry[]; kept: LibraryEntry[]; changed: Array<{ from: LibraryEntry; to: LibraryEntry }> }
+/**
+ * the libraries of an apply, or null for library_referenced (spec "Folder changes after the first run"); `changed`: libraries in the
+ * server that are renamed or retyped (unreferenced). Throws MediaSetupError when the references cannot be counted (fail closed).
+ */
+async function librariesFor(ctx: Ctx, managed: MediaManaged, b: ApplyBody): Promise<Libraries | null> {
   // a folder chosen before keeps its slug (its mount point); a removed folder's library stays once it exists in the server (its items
   // show as missing); a new kind starts without libraries
   const before = managed.kind === b.kind ? managed.libraries : [];
   const byRel = new Map(before.map((l) => [l.rel, l]));
+  const changed: Libraries['changed'] = [];
   for (const f of b.folders) {
     const l = byRel.get(f.rel);
-    if (l?.created && (l.name !== f.name || l.type !== f.type) && (await libraryReferences(ctx, l.slug)) > 0) return null;
+    if (!l?.created || (l.name === f.name && l.type === f.type)) continue;
+    if (referenced(await libraryReferences(ctx, l.slug))) return null;
+    // a new type is a new library (delete + create: the tick creates it), a new name a rename in place
+    changed.push({ from: l, to: { ...l, name: f.name, type: f.type, created: l.type === f.type } });
   }
+  const changedTo = new Map(changed.map((c) => [c.to.slug, c.to]));
   const rels = new Set(b.folders.map((f) => f.rel));
   const kept = before.filter((l) => !rels.has(l.rel) && l.created);
   const taken = new Set([...kept, ...b.folders.flatMap((f) => byRel.get(f.rel) ?? [])].map((l) => l.slug));
   const chosen = b.folders.map((f): LibraryEntry => {
     const l = byRel.get(f.rel);
-    if (l) return { ...l, name: f.name, type: f.type };
+    if (l) return changedTo.get(l.slug) ?? { ...l, name: f.name, type: f.type };
     const slug = slugFor(f.name, taken);
     taken.add(slug);
     return { slug, name: f.name, type: f.type, rel: f.rel, created: false };
   });
-  return { chosen, kept };
+  return { chosen, kept, changed };
 }
+
+/** stores one entry as it is now in the server (by slug), so a refused apply after it leaves the stored list true */
+async function storeEntry(ctx: Ctx, entry: LibraryEntry): Promise<void> {
+  const m = await readManaged(ctx.db);
+  await writeManaged(ctx, { libraries: m.libraries.map((l) => (l.slug === entry.slug ? entry : l)) });
+}
+
+/** renames or retypes the changed libraries in the server before the apply recreates it (the server answers now) */
+async function changeLibraries(ctx: Ctx, changed: Libraries['changed']): Promise<void> {
+  if (!changed.length) return;
+  const key = managedKey(ctx.cfg);
+  if (!key) throw new MediaSetupError('unreachable');
+  for (const { from, to } of changed) {
+    if (from.type !== to.type) await deleteLibrary(ctx.fetchImpl, MANAGED_URL, key, from.name);
+    else await renameLibrary(ctx.fetchImpl, MANAGED_URL, key, from.name, to.name);
+    await storeEntry(ctx, to);
+  }
+}
+
+/** a code for an answer from a MediaSetupError, rethrowing anything else */
+const setupCode = (e: unknown): string => {
+  if (e instanceof MediaSetupError) return e.code;
+  throw e;
+};
 
 /** one operation: its body (checked before anything runs), whether the admin must have re-authenticated for it, what it does */
 interface Op<T> { body: z.ZodType<T>; reauth?: (b: T) => boolean; run: (b: T, reply: FastifyReply, actor: string | null, req: FastifyRequest) => Promise<unknown> }
@@ -272,10 +300,16 @@ function ops(ctx: Ctx) {
   const apply = op({
     body: S.apply, reauth: () => true,
     run: async (b, reply, actor) => {
-      const { view, managed } = await load(ctx);
+      const { view, managed, status } = await load(ctx);
       const reason = await offerReason(ctx, view, managed, b.kind);
       if (reason) return reply.code(409).send({ error: reason });
-      const libs = await librariesFor(ctx, managed, b);
+      let libs: Libraries | null;
+      try {
+        libs = await librariesFor(ctx, managed, b);
+        if (libs) await changeLibraries(ctx, libs.changed);
+      } catch (e) {
+        return reply.code(409).send({ error: setupCode(e) });
+      }
       if (!libs) return reply.code(409).send({ error: 'library_referenced' });
       // a first run (or one that has not finished): the generated administrator. Ferrofin gets its password in the create body (without
       // it, it would start with a passwordless admin). A stored password is reused: a data volume that survived (a failed run, a remove
@@ -300,7 +334,11 @@ function ops(ctx: Ctx) {
       const r = await startMediaJob(ctx, body, actor, { kind: b.kind, folders: b.folders.length, gpu: b.gpu, egress: b.egress });
       if (r.ok) {
         const patch: ManagedPatch = { kind: b.kind, libraries: [...libs.chosen, ...libs.kept] };
-        await writeManaged(ctx, firstRun ? { ...patch, setup: 'applying', setupError: null, adminUser: ADMIN_USER } : patch);
+        // after the first run: a new (or retyped) library goes back to the libraries step, a changed GPU to the encoding settings; the
+        // tick waits for this apply first
+        const again: SetupStep | null = firstRun ? null : libs.chosen.some((l) => !l.created) ? 'libraries' : status?.desired?.gpu !== b.gpu ? 'hwaccel' : null;
+        if (firstRun) await writeManaged(ctx, { ...patch, setup: 'applying', setupError: null, adminUser: ADMIN_USER });
+        else await writeManaged(ctx, again ? { ...patch, setup: again, setupError: null } : patch);
       }
       return jobAnswer(reply, r);
     },
@@ -381,19 +419,44 @@ export function adminMediaserverRoutes(app: FastifyInstance, ctx: Ctx) {
     return { backups: status?.backups ?? [] };
   });
 
+  // references: null while the server cannot list the library's items
   app.get(`${P}/libraries`, { preHandler: guard, config: LIMITS.libraries }, async () => {
     const m = await readManaged(ctx.db);
-    return { libraries: await Promise.all(m.libraries.map(async (l) => ({ ...l, references: await libraryReferences(ctx, l.slug) }))) };
+    const refs = async (slug: string) => {
+      try {
+        return await libraryReferences(ctx, slug);
+      } catch (e) {
+        setupCode(e); // rethrows anything but a server failure
+        return null;
+      }
+    };
+    const libraries = [];
+    for (const l of m.libraries) libraries.push({ ...l, references: await refs(l.slug) });
+    return { libraries };
   });
 
+  // deletes the library in the server (its references stay orphaned; the dialog counted them before) and its entry
   const del = route(guard, op({
     body: S.none, reauth: () => true,
-    run: async (_b, reply, _actor, req) => {
+    run: async (_b, reply, who, req) => {
       const { slug } = req.params as { slug: string };
       const m = await readManaged(ctx.db);
-      if (!SLUG_RE.test(slug) || !m.libraries.some((l) => l.slug === slug)) return reply.code(404).send({ error: 'not_found' });
-      // Task 14 deletes the library in the server (audited as mediaserver.action {op: 'library_delete'}); a 409, not a 5xx: no server error
-      return reply.code(409).send({ error: 'not_supported' });
+      const lib = SLUG_RE.test(slug) ? m.libraries.find((l) => l.slug === slug) : undefined;
+      if (!lib) return reply.code(404).send({ error: 'not_found' });
+      if (lib.created) {
+        const key = managedKey(ctx.cfg);
+        // a 409 with a code, not a 5xx: no server error reaches the answer
+        if (!key) return reply.code(409).send({ error: 'unreachable' });
+        try {
+          await deleteLibrary(ctx.fetchImpl, MANAGED_URL, key, lib.name);
+        } catch (e) {
+          return reply.code(409).send({ error: setupCode(e) });
+        }
+      }
+      const now = await readManaged(ctx.db);
+      await writeManaged(ctx, { libraries: now.libraries.filter((l) => l.slug !== slug) });
+      await audit(ctx, who, 'mediaserver.action', undefined, { op: 'library_delete' });
+      return { ok: true };
     },
   }), LIMITS.libraryDelete, actor, true);
   app.delete(`${P}/libraries/:slug`, del.opts, del.handler);

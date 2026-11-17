@@ -195,22 +195,28 @@ describe('admin routes', () => {
     expect((await readManaged(env.pool)).hasPassword).toBe(true);
   });
 
-  it('a re-apply keeps slugs and the stored password; a referenced rename is refused only when referenced', async () => {
+  it('a re-apply keeps slugs and the stored password; a rename that cannot be counted is refused', async () => {
     await reauth(admin);
     await noIds();
     expect((await req(admin, 'POST', '/apply', applyBody())).statusCode).toBe(202);
     const first = opBodies('apply')[0]!.firstRun.password as string;
+    // a created library cannot be renamed while its references cannot be counted (no managed connection here): fail closed, nothing sent
     await env.pool.query("update media_managed set setup = 'done', libraries = jsonb_set(libraries, '{0,created}', 'true')");
-    // the films folder renamed (created, no references until Task 14), a new folder with a clashing name, the series folder removed
+    const refused = await req(admin, 'POST', '/apply', applyBody({ folders: [{ rel: 'Filme', name: 'Kino', type: 'movies' }] }));
+    expect(refused.json()).toEqual({ error: 'unreachable' });
+    expect(opBodies('apply')).toHaveLength(1);
+    // the films folder renamed (not created yet), a new folder with a clashing name, the series folder removed
+    await env.pool.query("update media_managed set libraries = jsonb_set(libraries, '{0,created}', 'false')");
     const r = await req(admin, 'POST', '/apply', applyBody({ folders: [{ rel: 'Filme', name: 'Kino', type: 'movies' }, { rel: 'Neu', name: 'Filme', type: 'movies' }] }));
     expect(r.statusCode).toBe(202);
     const second = opBodies('apply')[1]!;
     expect(second.firstRun).toBeUndefined();
     expect(second.spec.folders).toEqual([{ rel: 'Filme', target: '/media/filme' }, { rel: 'Neu', target: '/media/filme-2' }]);
     const m = await readManaged(env.pool);
-    expect(m.setup).toBe('done');
+    // after done, libraries not created yet send the setup back to its libraries step
+    expect(m.setup).toBe('libraries');
     // the series library was never created in the server: dropped; the renamed one keeps its slug
-    expect(m.libraries.map((l) => [l.slug, l.name, l.created])).toEqual([['filme', 'Kino', true], ['filme-2', 'Filme', false]]);
+    expect(m.libraries.map((l) => [l.slug, l.name, l.created])).toEqual([['filme', 'Kino', false], ['filme-2', 'Filme', false]]);
     // an unfinished setup sends the first run again, with the stored password
     await env.pool.query("update media_managed set setup = 'failed', setup_error = 'unhealthy'");
     offset += 3 * 60_000;
@@ -359,11 +365,12 @@ describe('admin routes', () => {
     expect((await readManaged(env.pool)).setupError).toBeNull();
     expect(fake.bodies).toEqual([]);
     expect((await audits('mediaserver.action')).map((a) => a.meta)).toEqual([{ op: 'retry' }]);
-    expect((await req(admin, 'GET', '/libraries')).json()).toEqual({ libraries: [{ slug: 'filme', name: 'Filme', type: 'movies', rel: 'Filme', created: true, references: 0 }] });
+    // no managed connection here: the references are unknown and the library cannot be deleted in the server (mediaserver-firstrun.test.ts
+    // covers both against a server)
+    expect((await req(admin, 'GET', '/libraries')).json()).toEqual({ libraries: [{ slug: 'filme', name: 'Filme', type: 'movies', rel: 'Filme', created: true, references: null }] });
     await reauth(admin);
     expect((await req(admin, 'DELETE', '/libraries/nope')).statusCode).toBe(404);
-    // deleting it in the server is Task 14's
-    expect((await req(admin, 'DELETE', '/libraries/filme')).json()).toEqual({ error: 'not_supported' });
+    expect((await req(admin, 'DELETE', '/libraries/filme')).json()).toEqual({ error: 'unreachable' });
   });
 
   it('audit rows carry no code or password', async () => {

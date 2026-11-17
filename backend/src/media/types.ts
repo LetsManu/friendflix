@@ -24,8 +24,9 @@ export class MediaError extends Error {
   }
 }
 
-/** Why a setup provider's automation (media/setup.ts `auto.run`) failed: answered to the wizard as a ProbeResult failure. */
-export type MediaSetupCode = 'invalid' | 'wizard_pending' | 'unauthorized' | 'not_admin' | 'unreachable' | 'unexpected';
+/** Why a setup provider's automation (media/setup.ts `auto.run`) failed: answered to the wizard as a ProbeResult failure. `wizard_taken`: the managed
+ * server's startup wizard was completed by something else (mediaserver/serverApi.ts). */
+export type MediaSetupCode = 'invalid' | 'wizard_pending' | 'wizard_taken' | 'unauthorized' | 'not_admin' | 'unreachable' | 'unexpected';
 
 /** The message names the code only: an upstream text, a URL or the credentials typed into the wizard never go into it. */
 export class MediaSetupError extends Error {

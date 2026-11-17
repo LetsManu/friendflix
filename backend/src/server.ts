@@ -56,6 +56,7 @@ import { recoIndexDue, startRecoIndexListener, stopRecoIndex } from './reco/inde
 import { announceSetupCode } from './setup/code.js';
 import { isOperational, isSetupComplete, onOperational } from './setup/state.js';
 import { autoUpdateTick, syncChannel } from './updater.js';
+import { mediaManagedTick } from './mediaserver/firstRun.js';
 import { joinedStopsSettled } from './cast.js';
 
 // the bootstrap keys open the database: env (incl. VAR_FILE) wins, else the bootstrap volume written by the init container (a missing
@@ -178,6 +179,14 @@ timers.push(setInterval(() => {
   void deletionTick(ctx).catch(jobFailed(ctx, app.log, 'account-deletion', 'account deletion tick failed')).finally(() => { deletionBusy = false; });
 }, 60_000)); // final account deletion after the grace period
 if (cfg.BACKGROUND_JOBS === 'true') {
+  // the managed media server's first run (mediaserver/firstRun.ts): not gated by op(), the setup wizard's media step runs before the
+  // portal is operational; one step per tick across instances (KV media:managed:tick), idle unless a setup is unfinished
+  let mediaManagedBusy = false;
+  timers.push(setInterval(() => {
+    if (mediaManagedBusy) return;
+    mediaManagedBusy = true;
+    void mediaManagedTick(ctx, app.log).catch(jobFailed(ctx, app.log, 'media-managed', 'managed media server setup tick failed')).finally(() => { mediaManagedBusy = false; });
+  }, 10_000));
   // Live TV recordings (Phase 3): reservations, due starts and stops, the reconcile with livetv's recorders (one runner: KV ltv:rectick).
   // Also while livetv is not installed: due recordings then fail `livetv_off` and their owners are told.
   let livetvRecordBusy = false;
