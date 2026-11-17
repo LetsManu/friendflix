@@ -656,15 +656,15 @@ describe('livetv HTTP API and status', () => {
 
 describe('livetv in the docs', () => {
   const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), 'utf8');
-  it('the docs count six updater actions and name every route', () => {
+  it('the docs count seven updater routes and name every route', () => {
     const sec = read('docs/security.md');
-    for (const r of ['/v1/status', '/v1/channel', '/v1/update', '/v1/rollback', '/v1/self-update', '/v1/livetv']) expect(sec).toContain(r);
+    for (const r of ['/v1/status', '/v1/channel', '/v1/update', '/v1/rollback', '/v1/self-update', '/v1/livetv', '/v1/mediaserver']) expect(sec).toContain(r);
     for (const f of ['docs/security.md', 'docs/setup.md']) {
-      expect(read(f), f).toMatch(/\bsix\b/i);
-      expect(read(f), f).not.toMatch(/\bfive\b/i);
+      expect(read(f), f).toMatch(/\bseven\b (fixed|signed)/i);
+      expect(read(f), f).not.toMatch(/\b(five|six)\b (fixed|signed)/i);
     }
-    expect(read('docs/de/setup.md')).toMatch(/\bsechs\b/);
-    expect(read('docs/de/setup.md')).not.toMatch(/\bfünf\b/);
+    expect(read('docs/de/setup.md')).toMatch(/\bsieben\b/);
+    expect(read('docs/de/setup.md')).not.toMatch(/\b(fünf|sechs)\b/);
   });
 });
 
