@@ -386,6 +386,7 @@ describe('kids guard on social, Seerr, stats and account routes', () => {
       ['GET', '/api/seerr/upcoming'], ['GET', '/api/stats/me'], ['GET', '/api/achievements'], ['GET', '/api/stats/community'], ['GET', '/api/digest/latest'],
       ['GET', '/api/nowplaying'], ['GET', '/api/friends'], ['POST', '/api/match', {}], ['POST', '/api/recommend', {}], ['GET', '/api/recommendations'],
       ['POST', '/api/recommendations/seen', {}], ['GET', '/api/library/friends-rated'], ['GET', '/api/notifications'], ['POST', '/api/notifications/read'],
+      ['POST', '/api/notifications/hide', { category: 'all' }], ['POST', '/api/notifications/unhide', { token: 'x' }],
       ['GET', '/api/devices'], ['POST', '/api/push/subscribe', {}], ['POST', '/api/push/test', {}],
       ['GET', '/api/reminders'], ['GET', '/api/reminders/keys'], ['POST', '/api/reminders', {}], ['DELETE', '/api/reminders/1'], ['GET', '/api/library/trending'],
     ];

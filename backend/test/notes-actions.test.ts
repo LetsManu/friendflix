@@ -147,11 +147,14 @@ describe('read, hide and undo', () => {
     expect(await titles(anna)).toEqual(['Erfolg gelesen']);
     expect((await hide({ category: 'all' })).json().n).toBe(1);
     expect(await titles(anna)).toEqual([]);
-    for (const bad of [{}, { category: 'nope' }, { ids: [1], extra: true }, { ids: Array.from({ length: 201 }, (_, i) => i + 1) }]) {
+    const undoKeys = async () => (await env.kv.keys('notes:undo:')).length;
+    const keysBefore = await undoKeys();
+    for (const bad of [{}, { ids: [] }, { groups: [] }, { ids: [], groups: [] }, { category: 'nope' }, { ids: [1], extra: true }, { ids: Array.from({ length: 201 }, (_, i) => i + 1) }]) {
       const r = await hide(bad);
       expect([r.statusCode, r.json().error], JSON.stringify(bad).slice(0, 40)).toEqual([400, 'invalid_body']);
     }
     expect((await call(anna, 'POST', '/api/notifications/hide')).statusCode).toBe(400);
+    expect(await undoKeys()).toBe(keysBefore); // a refused clear writes no undo key
     // Ben's own row and the broadcast stay for him
     expect(await titles(ben)).toEqual(['Bens Fernseher', 'Neu: Nordlicht']);
   });
@@ -169,10 +172,13 @@ describe('read, hide and undo', () => {
     expect([again.statusCode, again.json().error]).toEqual([404, 'undo_expired']);
     expect((await call(anna, 'POST', '/api/notifications/unhide', { token: 'x'.repeat(22) })).statusCode).toBe(404);
     expect((await call(anna, 'POST', '/api/notifications/unhide', {})).statusCode).toBe(400);
-    // Ben cannot undo Anna's clear
+    // Ben cannot undo Anna's clear, nor use up her token
     const t3 = (await call(anna, 'POST', '/api/notifications/hide', { ids: [id2] })).json().undo;
-    expect((await call(ben, 'POST', '/api/notifications/unhide', { token: t3 })).json()).toEqual({ n: 0 });
+    const byBen = await call(ben, 'POST', '/api/notifications/unhide', { token: t3 });
+    expect([byBen.statusCode, byBen.json().error]).toEqual([404, 'undo_expired']);
     expect((await groupsOf(anna)).map((x) => x.title)).toEqual([]);
+    expect((await call(anna, 'POST', '/api/notifications/unhide', { token: t3 })).json()).toEqual({ n: 1 });
+    expect((await groupsOf(anna)).map((x) => x.title)).toEqual(['Zwei']);
   });
 
   it("another person's group id is refused", async () => {
@@ -186,6 +192,16 @@ describe('read, hide and undo', () => {
     }
     expect((await call(anna, 'POST', '/api/notifications/read', { groups: Array.from({ length: 51 }, () => g.id) })).statusCode).toBe(400);
     expect((await tvGroupOf(anna))!.unread).toBe(true);
+  });
+
+  it('POST /read with empty ids or groups is the same as no body', async () => {
+    for (const body of [{ ids: [] }, { groups: [] }]) {
+      await env.pool.query('update users set notifications_read_at = null');
+      await seed([{ title: 'Eins' }, { user: null, kind: 'available_all', title: 'Neu: Nordlicht' }]);
+      expect((await call(anna, 'POST', '/api/notifications/read', body)).statusCode).toBe(200);
+      expect((await countsOf(anna)).unread, JSON.stringify(body)).toBe(0);
+      expect((await env.pool.query('select notifications_read_at from users where id = $1', [ua])).rows[0].notifications_read_at).not.toBeNull();
+    }
   });
 
   it('POST /read without a body keeps today\'s behaviour', async () => {
@@ -226,6 +242,17 @@ describe('read, hide and undo', () => {
 });
 
 describe('retention', () => {
+  it('a failed retention run gives the day back', async () => {
+    const now = new Date();
+    const [old] = await seed([{ title: 'Alt', at: new Date(now.getTime() - 91 * 86_400_000) }]);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    await env.kv.del(`notes:retention:${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`);
+    const failing = { kv: env.ctx.kv, db: { query: async () => { throw new Error('db down'); } } } as unknown as Parameters<typeof notesRetentionTick>[0];
+    await expect(notesRetentionTick(failing, now)).rejects.toThrow('db down');
+    expect(await notesRetentionTick(env.ctx, now)).toBe(1);
+    expect((await env.pool.query('select 1 from notifications where id = $1', [old])).rowCount).toBe(0);
+  });
+
   it('retention deletes rows older than 90 days once a day', async () => {
     const now = new Date();
     const day = 86_400_000;

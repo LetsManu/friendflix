@@ -16,12 +16,21 @@ export const selectionSchema = z.strictObject({
   category: z.enum(['all', 'unread', ...CATEGORIES]).optional(),
 });
 
-export const isEmptySelection = (s: Selection) => s.ids === undefined && s.groups === undefined && s.category === undefined;
+/** No ids, no groups (an empty list counts as none) and no category. */
+export const isEmptySelection = (s: Selection) => !s.ids?.length && !s.groups?.length && s.category === undefined;
 
-/** Undo of a clear: kv `notes:undo:<token>`, 30 s. */
+/** Undo of a clear: kv `notes:undo:<token>`, 30 s, bound to the person who cleared. */
 const UNDO_TTL_S = 30;
 const undoKey = (token: string) => `notes:undo:${token}`;
-const undoSchema = z.object({ personal: z.array(z.number().int()), broadcast: z.array(z.number().int()) });
+const undoSchema = z.object({ user: z.string(), personal: z.array(z.number().int()), broadcast: z.array(z.number().int()) });
+const parseUndo = (raw: string | null) => {
+  if (raw === null) return null;
+  try {
+    return undoSchema.parse(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+};
 
 /** A group id that does not name a group of this person (tampered, or handed out to someone else). */
 export class InvalidGroupError extends Error {
@@ -102,22 +111,21 @@ export async function hide(ctx: Pick<Ctx, 'db' | 'kv' | 'encKey'>, userId: strin
     params,
   );
   const row = r.rows[0]!;
-  const undo = { personal: row.personal.map(Number), broadcast: row.broadcast.map(Number) };
+  const undo = { user: userId, personal: row.personal.map(Number), broadcast: row.broadcast.map(Number) };
   const token = randomBytes(16).toString('base64url');
   await ctx.kv.set(undoKey(token), JSON.stringify(undo), UNDO_TTL_S);
   return { undo: token, n: undo.personal.length + undo.broadcast.length };
 }
 
-/** Undoes a clear: the token's rows become visible again for this person. null when the token is unknown, used or expired. */
+/**
+ * Undoes a clear: the token's rows become visible again for this person. null when the token is unknown, used, expired or another
+ * person's (which leaves it for its owner).
+ */
 export async function unhide(ctx: Pick<Ctx, 'db' | 'kv'>, userId: string, token: string): Promise<{ n: number } | null> {
-  const raw = await ctx.kv.take(undoKey(token));
-  if (raw === null) return null;
-  let undo: z.infer<typeof undoSchema>;
-  try {
-    undo = undoSchema.parse(JSON.parse(raw));
-  } catch {
-    return null;
-  }
+  const key = undoKey(token);
+  if (parseUndo(await ctx.kv.get(key))?.user !== userId) return null;
+  const undo = parseUndo(await ctx.kv.take(key)); // taken once: a second use (or a concurrent one) finds nothing
+  if (undo?.user !== userId) return null;
   const r = await ctx.db.query<{ n: number }>(
     `with p as (update notifications set hidden_at = null where user_id = $1 and id = any($2::bigint[]) and hidden_at is not null returning id),
      b as (update notification_state set hidden_at = null where user_id = $1 and notification_id = any($3::bigint[]) and hidden_at is not null returning notification_id)
