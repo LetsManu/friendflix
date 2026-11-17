@@ -25,7 +25,7 @@ services:
     networks: [monitoring]
 
   prometheus:
-    image: prom/prometheus:v3.15.0
+    image: prom/prometheus:v3.16.0
     restart: unless-stopped
     # not read_only: compose writes the environment-sourced secret into the container at start, which a read-only
     # service refuses. The process still runs as nobody without capabilities, on an internal network without egress.
@@ -47,7 +47,7 @@ services:
     networks: [monitoring]
 
   grafana:
-    image: grafana/grafana:13.2.3
+    image: grafana/grafana:13.3.1
     restart: unless-stopped
     read_only: true
     tmpfs: [/tmp]
