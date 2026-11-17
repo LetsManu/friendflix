@@ -15,6 +15,7 @@
     "start": "node server",
     "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --threshold error && svelte-check --tsconfig ./src/service-worker/tsconfig.json --threshold error",
     "test": "vitest run",
+    "test:docs": "vitest run src/lib/admin/settings/akBranding.test.ts src/lib/admin/syscheck.test.ts src/lib/admin/syscheckBrowser.test.ts",
     "coverage": "vitest run --coverage"
   },
   "dependencies": {

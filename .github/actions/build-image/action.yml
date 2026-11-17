@@ -1,0 +1,137 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Builds one FriendFlix image: everything that shapes an image's bytes lives here (build args, labels, outputs,
+# SBOM/provenance, the BuildKit pin), so this file is an input of every image in the change map (.github/images.json).
+#   publish 'false'  build with load:true as friendflix-<service>:ci (no push, forks cannot write packages), gha cache
+#   publish 'true'   build without cache import, push <image>:<tag> with SBOM + SLSA provenance (mode=max); the caller
+#                    logs in to GHCR first
+# Needs the repository checked out (context = the checkout). The caller scans and smoke-tests outputs.ref.
+name: Build image
+description: Builds one FriendFlix image (PR - local, publish - the ci-<sha> candidate in GHCR)
+inputs:
+  service:
+    description: backend | gateway | web | updater | livetv | mediaserver (its Dockerfile is <service>/Dockerfile)
+    required: true
+  publish:
+    description: "'true' pushes the candidate, 'false' builds locally"
+    required: true
+  image:
+    description: image name without tag, ghcr.io/<owner>/<repo>-<service> (publish only)
+    required: false
+    default: ""
+  tag:
+    description: candidate tag, ci-<sha> (publish only)
+    required: false
+    default: ""
+  mediaserver-pins:
+    description: backend only - the media server pins, written as the label io.github.letsmanu.friendflix.mediaserver.pins (value only)
+    required: false
+    default: ""
+  # BuildKit that builds every image, here and in scripts/reproduce-image.sh (which reads this line): the same commit only
+  # yields the same bytes with the same BuildKit. Pinned by digest; Dependabot does not see it, bump tag + digest by hand.
+  buildkit-image:
+    description: BuildKit image of the builder
+    required: false
+    default: moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+outputs:
+  digest:
+    description: pushed digest (publish only)
+    value: ${{ steps.push.outputs.digest }}
+  ref:
+    description: what was built - <image>@<digest> (publish) or friendflix-<service>:ci (local)
+    value: ${{ inputs.publish == 'true' && format('{0}@{1}', inputs.image, steps.push.outputs.digest) || format('friendflix-{0}:ci', inputs.service) }}
+runs:
+  using: composite
+  steps:
+    - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      with:
+        driver-opts: image=${{ inputs.buildkit-image }}
+    # SOURCE_DATE_EPOCH = commit time: image/history timestamps, rewrite-timestamp, BUILD_TIME and the `created` label
+    # all derive from it, never from the clock, so a rebuild of the commit reproduces them. The Node images also bake
+    # APP_VERSION / APP_CODENAME from version.json (BUILD_TIME only into the published candidate); mediaserver takes neither.
+    - name: Build arguments (commit time, version.json)
+      id: ver
+      shell: bash
+      env:
+        SERVICE: ${{ inputs.service }}
+        PUBLISH: ${{ inputs.publish }}
+        IMAGE: ${{ inputs.image }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+        case "$PUBLISH" in
+          true) [ -n "$IMAGE" ] && [ -n "$TAG" ] || { echo "::error::build-image: publish needs image and tag"; exit 1; } ;;
+          false) ;;
+          *) echo "::error::build-image: publish must be 'true' or 'false', got '$PUBLISH'"; exit 1 ;;
+        esac
+        sde=$(git log -1 --format=%ct)
+        build_time=$(date -u -d "@$sde" +%Y-%m-%dT%H:%M:%SZ)
+        args=("SOURCE_DATE_EPOCH=$sde" "GIT_SHA=$GITHUB_SHA")
+        if [ "$SERVICE" != mediaserver ]; then
+          [ "$PUBLISH" != true ] || args+=("BUILD_TIME=$build_time")
+          args+=("APP_VERSION=$(jq -er .version version.json)" "APP_CODENAME=$(jq -er .codename version.json)")
+        fi
+        {
+          echo "build_time=$build_time"
+          echo "args<<FF_BUILD_ARGS"
+          printf '%s\n' "${args[@]}"
+          echo "FF_BUILD_ARGS"
+        } >> "$GITHUB_OUTPUT"
+    # ---- publish 'false': build locally, the caller scans and discards ----
+    - name: Build (PR / other dispatch, not pushed)
+      if: inputs.publish != 'true'
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+      with:
+        context: .
+        file: ${{ inputs.service }}/Dockerfile
+        platforms: ${{ inputs.service == 'mediaserver' && 'linux/amd64' || '' }}
+        load: true
+        tags: friendflix-${{ inputs.service }}:ci
+        build-args: ${{ steps.ver.outputs.args }}
+        cache-from: type=gha,scope=${{ inputs.service }}
+        cache-to: type=gha,mode=max,scope=${{ inputs.service }}
+    # ---- publish 'true': build once, push the candidate tag ----
+    - name: OCI labels
+      id: meta
+      if: inputs.publish == 'true' && inputs.service != 'mediaserver'
+      uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+      with:
+        images: ${{ inputs.image }}
+        # default would be the clock; the commit time keeps the label (part of the image config) reproducible
+        labels: |
+          org.opencontainers.image.created=${{ steps.ver.outputs.build_time }}
+          ${{ inputs.service == 'backend' && inputs.mediaserver-pins != '' && format('io.github.letsmanu.friendflix.mediaserver.pins={0}', inputs.mediaserver-pins) || '' }}
+    - name: OCI labels (mediaserver)
+      id: meta-mediaserver
+      if: inputs.publish == 'true' && inputs.service == 'mediaserver'
+      uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+      with:
+        images: ${{ inputs.image }}
+        # commit time, not the clock; its own title, description and licence (Ferrofin is GPL-3.0-only), not the
+        # repository's AGPL default
+        labels: |
+          org.opencontainers.image.created=${{ steps.ver.outputs.build_time }}
+          org.opencontainers.image.title=FriendFlix media server (Ferrofin)
+          org.opencontainers.image.description=Ferrofin with FriendFlix's numbered changes (mediaserver/README.md). Trial.
+          org.opencontainers.image.licenses=GPL-3.0-only
+    - name: Build and push candidate
+      id: push
+      if: inputs.publish == 'true'
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+      with:
+        context: .
+        file: ${{ inputs.service }}/Dockerfile
+        platforms: linux/amd64
+        # push = image exporter; rewrite-timestamp clamps every file mtime to SOURCE_DATE_EPOCH (reproducible layers)
+        outputs: type=image,name=${{ inputs.image }}:${{ inputs.tag }},push=true,oci-mediatypes=true,compression=gzip,rewrite-timestamp=true
+        labels: ${{ steps.meta.outputs.labels || steps.meta-mediaserver.outputs.labels }}
+        build-args: ${{ steps.ver.outputs.args }}
+        # No cache import for what gets published: rewrite-timestamp only clamps mtimes NEWER than SOURCE_DATE_EPOCH, so
+        # a layer reused from an older commit's cache keeps that build's (older) mtimes and the image would differ from
+        # a clean rebuild. The fresh layers are still exported as cache for PR builds.
+        no-cache: true
+        cache-to: type=gha,mode=max,scope=${{ inputs.service }}
+        # SPDX SBOM + full SLSA provenance stored next to the image (index digest); publish.yml re-uses the SBOM.
+        # They are separate manifests in the index (with build times); the linux/amd64 image manifest is what reproduces.
+        sbom: true
+        provenance: mode=max

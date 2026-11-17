@@ -74,8 +74,9 @@ updates:
     cooldown: { default-days: 7 }
     rebase-strategy: disabled
     open-pull-requests-limit: 1
+  # the workflows and the local composite actions (.github/actions/build-image pins setup-buildx, build-push, metadata)
   - package-ecosystem: github-actions
-    directory: /
+    directories: ["/", "/.github/actions/*"]
     schedule: { interval: monthly }
     cooldown: { default-days: 7 }
     rebase-strategy: disabled

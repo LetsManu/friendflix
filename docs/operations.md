@@ -274,7 +274,7 @@ Strenger (nur `main` und Versions-Tags): `--certificate-identity-regexp '^https:
 git clone https://github.com/LetsManu/friendflix && cd friendflix
 scripts/reproduce-image.sh backend --ref v1.4.0 --compare ghcr.io/letsmanu/friendflix-backend:1.4.0
 ```
-Das Skript baut aus `git archive` mit `SOURCE_DATE_EPOCH` = Commit-Zeit, `rewrite-timestamp=true`, ohne Cache und mit der in `ci.yml` gepinnten BuildKit-Version. Was verglichen wird, was nicht (Attestations, Index-Digest) und wo die Grenze liegt (Alpine-Pakete): [reproducible-builds.md](reproducible-builds.md). Der CI-Job `reproducible` prüft das bei jedem PR (zwei saubere Builds) und jedem Push (Nachbau gegen den gepushten Kandidaten); `publish` wartet auf ihn.
+Das Skript baut aus `git archive` mit `SOURCE_DATE_EPOCH` = Commit-Zeit, `rewrite-timestamp=true`, ohne Cache und mit der in der Build-Action (`.github/actions/build-image/action.yml`) gepinnten BuildKit-Version. Was verglichen wird, was nicht (Attestations, Index-Digest) und wo die Grenze liegt (Alpine-Pakete): [reproducible-builds.md](reproducible-builds.md). Der CI-Job `reproducible` prüft das bei jedem PR (zwei saubere Builds) und jedem Push (Nachbau gegen den gepushten Kandidaten); `publish` wartet auf ihn.
 
 ## Weitere Prüfungen in der Pipeline
 - **DAST:** Der CI-Job `dast` startet die gebaute Web-App und lässt einen **OWASP-ZAP-Baseline-Scan** darüber laufen (schlägt bei „High“ fehl, warnt bei „Medium/Low“; Regeln und bewusste Ausnahmen in `.zap/rules.tsv`, Bericht als Artefakt `zap-report`). `publish` wartet auf ihn.
