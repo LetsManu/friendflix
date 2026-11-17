@@ -106,3 +106,175 @@ describe('notifications feed store', () => {
     expect(get(s).loading).toBe('idle');
   });
 });
+
+const deferred = <T>() => {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+};
+const bigGroup = (id: string, count: number, over: Partial<FeedGroup> = {}) => g(id, { count, ...over });
+const pageOf = (groups: FeedGroup[], unread: number, next: string | null = null): Feed => ({ sections: [{ key: 'today', groups }], next, unread, categories: [] });
+
+describe('notifications feed store: baseline, reset, concurrency', () => {
+  it('noteFresh counts against the baseline lowered by local read and hide', async () => {
+    const feed = vi.fn(async () => pageOf([bigGroup('a1', 2), bigGroup('a2', 1)], 3));
+    const s = createFeed(fake({ feed }));
+    await s.load('all');
+    await s.read();
+    s.noteFresh(2);
+    expect(get(s).fresh).toBe(2);
+    await s.load('all');
+    await s.hide({ groups: ['a1'] });
+    s.noteFresh(3); // 3 unread now, the page knew 3 and 2 of them are gone: one entry was added... 3 - 1 = 2
+    expect(get(s).fresh).toBe(2);
+  });
+  it('a failed read or hide and an undo restore the baseline', async () => {
+    const feed = vi.fn(async () => pageOf([bigGroup('a1', 2), bigGroup('a2', 1)], 3));
+    const s = createFeed(fake({ feed, markRead: vi.fn(async () => { throw new Error('x'); }), hide: vi.fn().mockRejectedValueOnce(new Error('x')).mockResolvedValue({ undo: 'tok', n: 1 }) }));
+    await s.load('all');
+    await s.read();
+    s.noteFresh(3);
+    expect(get(s).fresh).toBe(0);
+    await s.hide({ groups: ['a1'] });
+    s.noteFresh(3);
+    expect(get(s).fresh).toBe(0);
+    await s.hide({ groups: ['a1'] });
+    s.noteFresh(3);
+    expect(get(s).fresh).toBe(2);
+    await s.undo('tok');
+    s.noteFresh(3);
+    expect(get(s).fresh).toBe(0);
+  });
+  it('reset empties everything and load clears rows at once', async () => {
+    const d = deferred<Feed>();
+    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1']]])).mockReturnValueOnce(d.promise);
+    const s = createFeed(fake({ feed }));
+    await s.load('all');
+    s.toggle('a1');
+    await s.hide({ groups: ['a1'] });
+    const p = s.load('unread');
+    expect(get(s).sections).toEqual([]);
+    expect(get(s).loading).toBe('first');
+    expect(get(s).open.size).toBe(0);
+    d.resolve(page([['today', ['u1']]]));
+    await p;
+    s.toggle('u1');
+    s.reset();
+    expect(get(s)).toMatchObject({ filter: 'all', sections: [], next: null, loading: 'idle', error: null, fresh: 0 });
+    expect(get(s).open.size).toBe(0);
+    await s.undo('tok'); // the token is gone: nothing comes back
+    expect(get(s).sections).toEqual([]);
+  });
+  it('a reset during a load drops its answer', async () => {
+    const d = deferred<Feed>();
+    const s = createFeed(fake({ feed: vi.fn(() => d.promise) }));
+    const p = s.load('all');
+    s.reset();
+    d.resolve(page([['today', ['a1']]]));
+    await p;
+    expect(get(s).sections).toEqual([]);
+  });
+  it('a filter change during an in-flight more never mixes results', async () => {
+    const d = deferred<Feed>();
+    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1']]], 'n')).mockReturnValueOnce(d.promise).mockResolvedValueOnce(page([['today', ['u1']]]));
+    const s = createFeed(fake({ feed }));
+    await s.load('all');
+    const m = s.more();
+    await s.load('unread');
+    d.resolve(page([['today', ['a2']]], 'n2'));
+    await m;
+    expect(ids(s)).toEqual([['today', ['u1']]]);
+    expect(get(s).next).toBeNull();
+    expect(get(s).loading).toBe('idle');
+  });
+  it('two more() calls hit the api once', async () => {
+    const d = deferred<Feed>();
+    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1']]], 'n')).mockReturnValueOnce(d.promise);
+    const s = createFeed(fake({ feed }));
+    await s.load('all');
+    const m1 = s.more();
+    const m2 = s.more();
+    d.resolve(page([['today', ['a2']]]));
+    await Promise.all([m1, m2]);
+    expect(feed).toHaveBeenCalledTimes(2);
+    expect(ids(s)).toEqual([['today', ['a1', 'a2']]]);
+  });
+  it('a merged section drops groups it already has', async () => {
+    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1', 'a2']]], 'n')).mockResolvedValueOnce(page([['today', ['a2', 'a3']]]));
+    const s = createFeed(fake({ feed }));
+    await s.load('all');
+    await s.more();
+    expect(ids(s)).toEqual([['today', ['a1', 'a2', 'a3']]]);
+  });
+  it('a failed read puts back only the groups it flipped', async () => {
+    const d = deferred<unknown>();
+    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1']]], 'n')).mockResolvedValueOnce(page([['today', ['a2']]]));
+    const s = createFeed(fake({ feed, markRead: vi.fn(() => d.promise) }));
+    await s.load('all');
+    const r = s.read({ groups: ['a1'] });
+    await s.more();
+    d.reject(new Error('x'));
+    await r;
+    expect(ids(s)).toEqual([['today', ['a1', 'a2']]]);
+    expect(get(s).sections[0].groups.map((x) => x.unread)).toEqual([true, true]);
+  });
+  it('a filter switch or refresh invalidates undo tokens', async () => {
+    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1', 'a2']]])).mockResolvedValueOnce(page([['today', ['a2']]]));
+    const s = createFeed(fake({ feed }));
+    await s.load('all');
+    await s.hide({ groups: ['a1'] });
+    await s.refresh();
+    await s.undo('tok'); // the server may undo it, but this page does not know it: no row is put back from the old page
+    expect(ids(s)).toEqual([['today', ['a2']]]);
+  });
+  it('a hide answered after a filter switch leaves no stale token', async () => {
+    const d = deferred<{ undo: string; n: number }>();
+    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1']]])).mockResolvedValueOnce(page([['today', ['u1']]]));
+    const s = createFeed(fake({ feed, hide: vi.fn(() => d.promise) }));
+    await s.load('all');
+    const h = s.hide({ groups: ['a1'] });
+    await s.load('unread');
+    d.resolve({ undo: 'late', n: 1 });
+    await h;
+    await s.undo('late');
+    expect(ids(s)).toEqual([['today', ['u1']]]);
+  });
+  it('ids hide a group only when all its rows are known', async () => {
+    const feed = vi.fn(async () => pageOf([g('a1', { count: 3, items: [{ id: 1, title: 't', body: null, at: '' }] }), g('a2', { id: 'a2', count: 1, items: [{ id: 2, title: 't', body: null, at: '' }] })], 2));
+    const s = createFeed(fake({ feed }));
+    await s.load('all');
+    await s.hide({ ids: [1, 2] });
+    expect(ids(s)).toEqual([['today', ['a1']]]);
+  });
+  it('undo keeps the token after a transient error and drops it on undo_expired', async () => {
+    const { ApiError } = await import('#lib/api');
+    const unhide = vi.fn().mockRejectedValueOnce(new Error('net')).mockResolvedValueOnce({ n: 1 });
+    const s = createFeed(fake({ unhide }));
+    await s.load('all');
+    await s.hide({ groups: ['a1'] });
+    await s.undo('tok');
+    expect(ids(s)).toEqual([]);
+    await s.undo('tok');
+    expect(ids(s)).toEqual([['today', ['a1']]]);
+    const gone = createFeed(fake({ unhide: vi.fn(async () => { throw new ApiError(404, { error: 'undo_expired' }); }) }));
+    await gone.load('all');
+    await gone.hide({ groups: ['a1'] });
+    await gone.undo('tok');
+    expect(get(gone).error).toBe('undo_expired');
+    await gone.undo('tok');
+    expect(ids(gone)).toEqual([]);
+  });
+  it('refresh keeps the rows and reports its own loading state', async () => {
+    const d = deferred<Feed>();
+    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1']]])).mockReturnValueOnce(d.promise);
+    const s = createFeed(fake({ feed }));
+    await s.load('all');
+    const p = s.refresh();
+    expect(get(s).loading).toBe('refresh');
+    expect(ids(s)).toEqual([['today', ['a1']]]);
+    d.resolve(page([['today', ['a9']]]));
+    await p;
+    expect(ids(s)).toEqual([['today', ['a9']]]);
+  });
+});

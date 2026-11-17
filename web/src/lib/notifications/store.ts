@@ -9,7 +9,7 @@ export interface FeedState {
   filter: Filter;
   sections: Section[];
   next: string | null;
-  loading: 'idle' | 'first' | 'more';
+  loading: 'idle' | 'first' | 'refresh' | 'more';
   error: string | null;
   /** unread entries that arrived since the first page was loaded (shown as a pill; never inserted as rows) */
   fresh: number;
@@ -18,6 +18,8 @@ export interface FeedState {
 
 export interface FeedStore extends Readable<FeedState> {
   load(filter: Filter): Promise<void>;
+  /** back to the empty state (logout, profile switch): nothing of the previous person stays in memory */
+  reset(): void;
   more(): Promise<void>;
   refresh(): Promise<void>;
   noteFresh(unreadNow: number): void;
@@ -34,25 +36,30 @@ const copy = (s: Section[]): Section[] => s.map((x) => ({ key: x.key, groups: [.
 const hits = (g: FeedGroup, sel: Selection) =>
   !!sel.groups?.includes(g.id) ||
   (sel.category !== undefined && (sel.category === 'all' || (sel.category === 'unread' ? g.unread : g.category === sel.category))) ||
-  (!!sel.ids?.length && g.items.length > 0 && g.items.every((i) => sel.ids!.includes(i.id)));
+  // only when every row of the group is known (count === items.length); else the next refresh corrects it
+  (!!sel.ids?.length && g.count === g.items.length && g.items.length > 0 && g.items.every((i) => sel.ids!.includes(i.id)));
+/** unread entries a group stands for (its count while it is unread) */
+const unreadOf = (g: FeedGroup) => (g.unread ? g.count : 0);
 const everything = (sel: Selection) => !sel.ids?.length && !sel.groups?.length && sel.category === undefined;
 
 export function createFeed(api: NotesApi = defaultApi): FeedStore {
-  const { subscribe, update } = writable<FeedState>({ filter: 'all', sections: [], next: null, loading: 'idle', error: null, fresh: 0, open: new Set() });
+  const initial = (): FeedState => ({ filter: 'all', sections: [], next: null, loading: 'idle', error: null, fresh: 0, open: new Set() });
+  const { subscribe, update, set } = writable<FeedState>(initial());
   let state!: FeedState;
   subscribe((s) => (state = s));
   let gen = 0; // a newer load / refresh makes older answers obsolete
   let baseUnread = 0;
   const undoable = new Map<string, Removed[]>();
 
-  const first = async (filter: Filter, keepOpen: boolean) => {
+  const first = async (filter: Filter, keepRows: boolean) => {
     const g = ++gen;
-    update((s) => ({ ...s, filter, loading: 'first', error: null }));
+    undoable.clear(); // a token of another filter or an older page must not put rows back
+    update((s) => (keepRows ? { ...s, filter, loading: 'refresh', error: null } : { ...initial(), filter, loading: 'first' }));
     try {
       const f: Feed = await api.feed({ filter });
       if (g !== gen) return;
       baseUnread = f.unread;
-      update((s) => ({ ...s, sections: f.sections, next: f.next, loading: 'idle', fresh: 0, open: keepOpen ? s.open : new Set() }));
+      update((s) => ({ ...s, sections: f.sections, next: f.next, loading: 'idle', fresh: 0, open: s.open }));
     } catch (e) {
       if (g === gen) update((s) => ({ ...s, loading: 'idle', error: errorOf(e) }));
     }
@@ -81,6 +88,7 @@ export function createFeed(api: NotesApi = defaultApi): FeedStore {
   return {
     subscribe,
     load: (filter) => first(filter, false),
+    reset() { gen++; baseUnread = 0; undoable.clear(); set(initial()); },
     refresh: () => first(state.filter, true),
     async more() {
       if (!state.next || state.loading !== 'idle') return;
@@ -106,22 +114,37 @@ export function createFeed(api: NotesApi = defaultApi): FeedStore {
     noteFresh: (unreadNow) => update((s) => ({ ...s, fresh: Math.max(0, unreadNow - baseUnread) })),
     toggle: (id) => update((s) => { const open = new Set(s.open); if (!open.delete(id)) open.add(id); return { ...s, open }; }),
     async read(sel = {}) {
-      const before = state.sections;
-      update((s) => ({ ...s, sections: s.sections.map((x) => ({ key: x.key, groups: x.groups.map((g) => (g.unread && (everything(sel) || hits(g, sel)) ? { ...g, unread: false } : g)) })) }));
+      const all = everything(sel);
+      const flipped = new Set<string>();
+      let lowered = 0;
+      update((s) => ({ ...s, sections: s.sections.map((x) => ({ key: x.key, groups: x.groups.map((g) => {
+        if (!g.unread || !(all || hits(g, sel))) return g;
+        flipped.add(g.id);
+        lowered += unreadOf(g);
+        return { ...g, unread: false };
+      }) })) }));
+      const prior = baseUnread;
+      baseUnread = all ? 0 : Math.max(0, baseUnread - lowered);
+      const g0 = gen;
       try {
-        await api.markRead(everything(sel) ? undefined : sel);
+        await api.markRead(all ? undefined : sel);
       } catch (e) {
-        update((s) => ({ ...s, sections: before, error: errorOf(e) }));
+        if (g0 === gen) baseUnread = prior; // an obsolete page keeps its own baseline
+        // only the groups this call flipped come back unread; a page appended meanwhile stays as it is
+        update((s) => ({ ...s, error: errorOf(e), sections: s.sections.map((x) => ({ key: x.key, groups: x.groups.map((g) => (flipped.has(g.id) ? { ...g, unread: true } : g)) })) }));
       }
     },
     async hide(sel) {
+      const g0 = gen;
       const removed = removeGroups(sel);
+      const lowered = removed.reduce((n, r) => n + unreadOf(r.group), 0);
+      baseUnread = Math.max(0, baseUnread - lowered);
       try {
         const r = await api.hide(sel);
-        undoable.set(r.undo, removed);
+        if (g0 === gen) undoable.set(r.undo, removed);
         return r.undo;
       } catch (e) {
-        restore(removed);
+        if (g0 === gen) { baseUnread += lowered; restore(removed); }
         update((s) => ({ ...s, error: errorOf(e) }));
         return null;
       }
@@ -131,13 +154,15 @@ export function createFeed(api: NotesApi = defaultApi): FeedStore {
       try {
         await api.unhide(token);
       } catch (e) {
-        update((s) => ({ ...s, error: errorOf(e) })); // undo_expired: the entries stay cleared
-        undoable.delete(token);
+        update((s) => ({ ...s, error: errorOf(e) }));
+        if (apiCode(e) === 'undo_expired') undoable.delete(token); // final: the entries stay cleared; any other failure keeps the token for a retry
         return;
       }
       undoable.delete(token);
-      if (removed) restore(removed);
-      else await first(state.filter, true);
+      if (removed) {
+        baseUnread += removed.reduce((n, r) => n + unreadOf(r.group), 0);
+        restore(removed);
+      } else await first(state.filter, true);
     },
   };
 }
