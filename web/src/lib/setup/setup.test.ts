@@ -115,6 +115,15 @@ describe('step 3: the media server choice', () => {
     expect(initialChoice({ mediaKind: 'plex', mediaserver: offer(true) })).toBe('external');
   });
 
+  it('waits (null) while the updater has not read the media status yet since it started, never the address', () => {
+    const starting = { offer: { managed: false, reason: 'starting' as const }, kinds: { ferrofin: false, jellyfin: false } };
+    expect(initialChoice({ mediaKind: 'jellyfin', mediaserver: starting })).toBeNull();
+    // once read, the offer decides as before
+    expect(initialChoice({ mediaKind: 'jellyfin', mediaserver: offer(true) })).toBe(DEFAULT_MANAGED);
+    // Plex keeps its step: nothing waits
+    expect(initialChoice({ mediaKind: 'plex', mediaserver: starting })).toBe('external');
+  });
+
   it('the managed path has its texts in every language, without a product it must not name', async () => {
     for (const l of LOCALES) {
       await setLocale(l);

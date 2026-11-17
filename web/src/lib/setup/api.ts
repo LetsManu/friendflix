@@ -125,11 +125,14 @@ export function firstOpenStep(s: Pick<SetupState, 'steps'>): 2 | 3 | 4 | 5 {
 /**
  * Step 3's first choice (spec "Admin and wizard"): the managed default kind (DEFAULT_MANAGED, *Jellyfin (offiziell, verwaltet)* while
  * Ferrofin is a trial) when the backend offers a managed server and this build has its image, else the other managed kind with an
- * image, else the existing server by address. Plex keeps today's step: always the address.
+ * image, else the existing server by address. Plex keeps today's step: always the address. null: none yet, the updater has not read
+ * the media status since it started (offer reason `starting`; a fresh install runs the wizard right after it starts), the step waits.
  */
-export function initialChoice(s: Pick<SetupState, 'mediaKind' | 'mediaserver'>): Kind | 'external' {
+export function initialChoice(s: Pick<SetupState, 'mediaKind' | 'mediaserver'>): Kind | 'external' | null {
   const m = s.mediaserver;
-  if (s.mediaKind === 'plex' || !m?.offer.managed) return 'external';
+  if (s.mediaKind === 'plex') return 'external';
+  if (m?.offer.reason === 'starting') return null;
+  if (!m?.offer.managed) return 'external';
   if (m.kinds[DEFAULT_MANAGED]) return DEFAULT_MANAGED;
   return (['ferrofin', 'jellyfin'] as const).find((k) => m.kinds[k]) ?? 'external';
 }

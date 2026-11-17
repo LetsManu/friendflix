@@ -73,6 +73,8 @@ export interface SetupMediaMock {
   baseUnreadable: boolean;
   /** the next write answers this refusal once */
   refuse: { status: number; error: string } | null;
+  /** this many GETs of the view answer as an updater that has not read the media status yet since it started (reason `starting`) */
+  startingReads: number;
   calls: Array<{ p: string; body: any }>;
 }
 /** offered: an updater that reaches its engine (both images pinned); else the default of an install without one (no_updater) */
@@ -87,9 +89,15 @@ export function setupMedia(offered: boolean): SetupMediaMock {
     tree: { '': [{ name: 'Filme' }, { name: 'Serien' }, { name: 'Musik' }], Filme: [{ name: 'Klassiker' }, { name: 'Neu' }], Serien: [], Musik: [] },
     gpu: { dri: [{ node: 'renderD128', gid: 109, vendor: 'intel' }], nvidia: false },
     setupSeq: ['first_run', 'api_key', 'libraries', 'hwaccel', 'finishing', 'done'],
-    baseUnreadable: false, refuse: null, calls: [],
+    baseUnreadable: false, refuse: null, startingReads: 0, calls: [],
   };
 }
+
+/** the updater's media status before its first read (updater/src/mediaserver/status.ts STARTING_VIEW) */
+const STARTING_STATUS = {
+  available: false, reason: 'starting', base: { set: false, path: null, pending: false, expiresAt: null }, desired: null, container: null, pin: null,
+  pins: { ferrofin: false, jellyfin: false }, engine: { api: null, logs: false, arch: null, nvidia: false }, error: null, backups: [], hdr: null,
+};
 
 export const SETUP_CODE = 'K7QM-3XA9-PT2D';
 const CSRF = 'mock-setup-csrf-token';
@@ -188,6 +196,11 @@ function setupMediaRoute(st: SetupMock, ms: SetupMediaMock, m: string, p: string
   if (m !== 'GET') ms.calls.push({ p, body });
   if (m !== 'GET' && ms.refuse) { const r = ms.refuse; ms.refuse = null; return J({ error: r.error }, r.status); }
   if (p === P && m === 'GET') {
+    if (ms.startingReads > 0) {
+      ms.startingReads--;
+      return J({ mode: ms.mode, offer: { managed: false, reason: 'starting' }, kinds: { ferrofin: false, jellyfin: false }, status: STARTING_STATUS, managed: ms.managed,
+        external: { url: null, hasKey: false }, livetvLibraryPath: null });
+    }
     if (ms.mode === 'managed' && !['done', 'none', 'failed'].includes(ms.managed.setup) && !ms.managed.setupError && ms.setupSeq.length) {
       ms.managed.setup = ms.setupSeq.shift();
       if (ms.managed.setup === 'done') {

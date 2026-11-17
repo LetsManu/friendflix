@@ -279,6 +279,30 @@ test.describe('setup wizard', () => {
     expect(ms.calls.filter((c) => c.p.endsWith('/action')).map((c) => c.body)).toEqual([{ op: 'retry' }]);
   });
 
+  test('while the updater has not read the media status yet: the neutral line in its kept place, polled, then the managed default', async ({ page, api }) => {
+    api.setup!.steps.publicUrl = 'done';
+    const ms = (api.setup!.mediaserver = setupMedia(true));
+    ms.startingReads = 2;
+    let reads = 0;
+    page.on('request', (r) => { if (r.method() === 'GET' && new URL(r.url()).pathname === '/api/setup/mediaserver') reads++; });
+    await unlock(page);
+    await expect(h2(page, 'Medienserver')).toBeVisible();
+    const wait = page.getByTestId('media-starting');
+    await expect(wait).toHaveText('Medienserver-Status wird gelesen…');
+    // never the address fields while it waits (a fresh install must not lose the managed offer), no "not offered" line
+    await expect(page.getByLabel('Admin-Passwort')).toHaveCount(0);
+    await expect(page.getByTestId('media-off')).toHaveCount(0);
+    const sk = page.getByTestId('media-wait');
+    const first = await box(sk);
+    // the next poll answers starting again: nothing moves
+    await expect.poll(() => reads, { timeout: 6_000 }).toBeGreaterThanOrEqual(2);
+    expect(await box(sk)).toEqual(first);
+    const seg = page.getByRole('radiogroup', { name: 'Art des Medienservers' });
+    await expect(seg.getByRole('radio', { name: 'Jellyfin (offiziell, verwaltet)' })).toHaveAttribute('aria-checked', 'true', { timeout: 8_000 });
+    await expect(wait).toHaveCount(0);
+    expect(reads).toBe(3);
+  });
+
   test('without an offer: today\'s fields with the reason line', async ({ page, api }) => {
     api.setup!.steps.publicUrl = 'done';
     await unlock(page);

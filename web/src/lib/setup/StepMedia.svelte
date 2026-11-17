@@ -10,13 +10,15 @@
    * once on the way in, never on Plex), the step shows the Admin card's three choices (MediaChoice) with the default managed kind
    * preselected (api.ts initialChoice); the existing server by address keeps the fields below unchanged, a managed kind is
    * StepMediaManaged (setupMediaApi()). Not offered: today's fields with the reason line. Plex: today's step, nothing read.
+   * While the updater has not read the media status yet since it started (reason `starting`, model.ts statusStarting) the step waits
+   * like on its way in, with the neutral line in its kept place, and reads the view again every 2 s; then the first choice is made.
    */
-  import { createEventDispatcher, onMount } from 'svelte';
+  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
   import { setupMediaApi, type MediaView } from '#lib/admin/mediaserver/api';
   import MediaChoice from '#lib/admin/mediaserver/MediaChoice.svelte';
-  import { DEFAULT_MANAGED, choiceDisabled, currentChoice, reasonText, type Choice } from '#lib/admin/mediaserver/model';
+  import { DEFAULT_MANAGED, choiceDisabled, currentChoice, reasonText, statusStarting, type Choice } from '#lib/admin/mediaserver/model';
   import { errorText as fieldText, keyHelp, keyLabel } from '#lib/admin/settings/form';
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
@@ -110,17 +112,29 @@
     }
   }
 
-  /** the offer, read once; the managed path reads the view again while it follows the first run */
+  /** the updater has not read the media status yet since it started: the step waits and reads the view again */
+  let starting = false;
+  const STARTING_POLL_MS = 2000;
+  let timer: ReturnType<typeof setTimeout> | undefined, gone = false;
+  /** the offer, read once (again every 2 s while it is starting); the managed path reads the view again while it follows the first run */
   async function load(): Promise<void> {
     try {
       const v = await call(() => media.view());
-      view = v;
       state.mediaserver = { offer: v.offer, kinds: v.kinds };
-      choice = v.mode === 'managed' ? currentChoice(v) : initialChoice(state);
+      const first = statusStarting(v) ? null : v.mode === 'managed' ? currentChoice(v) : initialChoice(state);
+      if (first === null) {
+        starting = true;
+        if (!gone) timer = setTimeout(() => { void load(); }, STARTING_POLL_MS);
+        return;
+      }
+      view = v;
+      choice = first;
     } catch { /* a backend without the route, or the network: today's step */ }
+    starting = false;
     loaded = true;
   }
   onMount(() => { if (!loaded) void load(); });
+  onDestroy(() => { gone = true; clearTimeout(timer); });
 
   $: offered = Boolean(view && !plex && (view.offer.managed || view.mode === 'managed'));
   /** why the managed server is not offered (a view that was read; Plex never shows it) */
@@ -130,8 +144,11 @@
 
 <h2 id="setup-step-h">{$t('setup.media.title')}</h2>
 {#if !loaded}
-  <div class="sk" aria-hidden="true"><Skeleton h="1.2rem" lines={2} /><Skeleton h="3rem" /></div>
-  <p class="sr-only" role="status">{$t('ui.table.loading')}</p>
+  <!-- the line keeps its place while loading too: the neutral line of a starting updater moves nothing -->
+  <div data-testid="media-wait">
+    <div class="sk" aria-hidden="true"><Skeleton h="1.2rem" lines={2} /><Skeleton h="3rem" /></div>
+    <p class="wait" role="status" data-testid="media-starting">{#if starting}{$t('mediaserver.reason.starting')}{:else}<span class="sr-only">{$t('ui.table.loading')}</span>{/if}</p>
+  </div>
 {:else if offered && view}
   <p>{$t('setup.media.textChoice')}</p>
   {#if state.steps.media === 'done'}<p class="muted">{$t('setup.doneText')}</p>{/if}
@@ -213,6 +230,7 @@
   .seg button.on { background: var(--fg); color: var(--bg); }
   @media (max-width: 480px) { .acts > :global(*) { flex: 1 1 100%; } .seg { display: flex; } .seg button { flex: 1; } }
   .sk { display: grid; gap: .8rem; }
+  .wait { margin: .6rem 0 0; min-height: 1.5em; font-size: .9rem; color: var(--mut); }
   .off { display: flex; align-items: flex-start; gap: .4rem; font-size: .9rem; }
   .off :global(svg) { flex: none; margin-top: .15rem; color: var(--info-mark); }
 </style>
