@@ -797,7 +797,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     // step). A plausible one counts against the account's budget; whether another account holds it is NOT told (security audit G8): such
     // an address is answered like a free one further down, but never sent to Authentik, so no mail goes out.
     let newEmail: string | undefined;
-    let taken = false;
+    let inUse = false; // the new address belongs to another account (answered like a free one, never sent)
     if (jar.kind === 'change-email' && shown.stage === 'prompt') {
       const bad = await checkNewEmail(jar, (answer as { email?: unknown }).email);
       if (bad && bad !== 'email_in_use') return { ...jar.last.step, errors: [bad] };
@@ -806,7 +806,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
         await ctx.kv.decr(tries);
         return { ...jar.last.step, errors: ['rate_limited'] };
       }
-      taken = bad === 'email_in_use';
+      inUse = bad === 'email_in_use';
       newEmail = String((answer as { email: string }).email).trim();
       answer = { ...answer, email: newEmail };
     }
@@ -828,11 +828,11 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     let budget: string[] = [];
     if (mails) {
       if (shown.stage === 'email-sent' && !(await ctx.kv.setnx(resendKey(flowId), '1', RESEND_GAP_S))) return limited();
-      const taken = await takeMailBudget(identifier, req.ip, await mailAddressOf(jar.kind === 'change-email' ? undefined : identifier, newEmail));
-      if (!taken) return limited();
-      budget = taken;
+      const keys = await takeMailBudget(identifier, req.ip, await mailAddressOf(jar.kind === 'change-email' ? undefined : identifier, newEmail));
+      if (!keys) return limited();
+      budget = keys;
     }
-    if (taken && newEmail !== undefined) {
+    if (inUse && newEmail !== undefined) {
       // an address another account holds: Authentik is asked about the flow (a comparable round trip, nothing is answered, so nothing is
       // sent) and the attempt ends exactly like a sent mail. The budgets stay taken, as for a sent mail.
       await akExec(ctx, jar, 'GET', undefined, req.ip).catch(() => undefined);
