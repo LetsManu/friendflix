@@ -10,7 +10,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
-    "test:docs": "vitest run test/syscheck-core-media.test.ts test/syscheck-livetv-updates.test.ts test/syscheck-mail.test.ts test/syscheck-proxy.test.ts test/syscheck-signin.test.ts test/syscheck.test.ts",
+    "test:docs": "vitest run test/syscheck-core-media.test.ts test/syscheck-livetv-updates.test.ts test/syscheck-mail.test.ts test/syscheck-managed.test.ts test/syscheck-proxy.test.ts test/syscheck-signin.test.ts test/syscheck.test.ts",
     "coverage": "vitest run --coverage",
     "compose:env": "UPDATE_COMPOSE_ENV=1 vitest run test/compose-env.test.ts"
   },
