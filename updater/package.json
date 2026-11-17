@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
+    "test:docs": "vitest run test/livetv.test.ts",
     "coverage": "vitest run --coverage"
   },
   "devDependencies": {

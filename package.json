@@ -12,6 +12,7 @@
     "typecheck": "npm run typecheck --workspaces && tsc -p e2e/tsconfig.json",
     "test": "npm run test --workspaces --if-present && npm run test:scripts",
     "coverage": "npm run coverage --workspaces --if-present",
+    "test:docs": "npm run test:docs --workspaces --if-present",
     "test:scripts": "node --test scripts/*.test.mjs",
     "e2e": "playwright test -c e2e/playwright.config.ts",
     "spdx:check": "node scripts/spdx.mjs --check",

@@ -91,7 +91,12 @@ export async function installLogin(ctx: BrowserContext, st: LoginMock): Promise<
     if (p === '/auth/flow/answer') return J(next(st.answers));
     if (p === '/auth/flow/resume') return J(next(st.resumes));
     if (p === '/auth/flow/cancel') {
-      await ctx.clearCookies({ name: 'ff_flow_csrf' });
+      // a late cancel can land after its test ended (like the config request above); the closed context then throws outside any test
+      try {
+        await ctx.clearCookies({ name: 'ff_flow_csrf' });
+      } catch {
+        return;
+      }
       return J({ body: { ok: true } });
     }
     return J({ status: 404, body: { error: 'not_found' } });

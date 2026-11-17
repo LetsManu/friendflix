@@ -28,8 +28,9 @@ What the script does (it is short – read it before you trust it):
 1. Takes the build context from `git archive <ref>`: only committed files, every mtime = commit time, modes 644/755.
    Your local changes, untracked files, umask or `core.autocrlf` cannot leak in.
 2. `SOURCE_DATE_EPOCH=$(git log -1 --format=%ct <ref>)` – the commit time is the only "time" in the build.
-3. Creates a fresh, throw-away BuildKit builder with the BuildKit image pinned in `ci.yml` (`BUILDKIT_IMAGE`; another
-   BuildKit version may legitimately produce different bytes) and builds with `--no-cache --pull`,
+3. Creates a fresh, throw-away BuildKit builder with the BuildKit image pinned in the build action
+   (`.github/actions/build-image/action.yml`, the `default:` of input `buildkit-image`; older refs: `BUILDKIT_IMAGE` in
+   `ci.yml`; another BuildKit version may legitimately produce different bytes) and builds with `--no-cache --pull`,
    `--provenance=false --sbom=false` and `--output type=oci,…,oci-mediatypes=true,compression=gzip,rewrite-timestamp=true`.
 4. With `--compare`, copies the image's labels and the build-arg ENVs (`GIT_SHA`, `BUILD_TIME`, `APP_VERSION`,
    `APP_CODENAME`) from the published image into the rebuild – they are metadata the release pipeline sets – and compares
@@ -40,7 +41,7 @@ By hand, without the script, the core of it is:
 
 ```bash
 export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
-docker buildx create --name repro --driver docker-container --driver-opt image=<BUILDKIT_IMAGE from ci.yml>
+docker buildx create --name repro --driver docker-container --driver-opt image=$(scripts/reproduce-image.sh --buildkit-image)
 docker buildx build --builder repro --no-cache --pull --platform linux/amd64 --provenance=false --sbom=false \
   --build-arg SOURCE_DATE_EPOCH --build-arg GIT_SHA=$(git rev-parse HEAD) \
   --build-arg BUILD_TIME=$(date -u -d @$SOURCE_DATE_EPOCH +%Y-%m-%dT%H:%M:%SZ) \
@@ -71,8 +72,8 @@ Build from a fresh clone (`git archive` in the script): files whose mtime is old
   reused from an older commit's cache keeps that build's older mtimes, so the candidate that CI pushes is built with
   `no-cache` (it still exports its layers as cache for PR builds).
 - **Pinned toolchain:** base image by digest (`node:26-alpine@sha256:…`, Dependabot), BuildKit by digest
-  (`BUILDKIT_IMAGE` in ci.yml, bumped by hand), npm dependencies by `package-lock.json` (`npm ci`). Two clean `npm ci`
-  runs produce byte-identical `node_modules` (mtimes are clamped).
+  (`buildkit-image` in `.github/actions/build-image/action.yml`, bumped by hand), npm dependencies by `package-lock.json`
+  (`npm ci`). Two clean `npm ci` runs produce byte-identical `node_modules` (mtimes are clamped).
 - **App build output:** `tsc` (backend, gateway) is deterministic. The web app's SvelteKit `version.name` defaulted to
   `Date.now()` and ended up in `_app/version.json`, the service worker, the prerendered `/offline` page and the server
   chunks; it is now the git sha (else `SOURCE_DATE_EPOCH`) – [kit-version.ts](../web/src/lib/version/kit-version.ts).
