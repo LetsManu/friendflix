@@ -234,7 +234,7 @@ describe('update job', () => {
 
   it('a job interrupted by a restart is marked failed', () => {
     const job = { id: '0123456789abcdef', action: 'update' as const, state: 'running' as const, step: 'health' as const, from: null, to: 'latest', startedAt: new Date().toISOString(), finishedAt: null, error: null,
-      steps: { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'running' as const, rollback: 'skipped' as const } };
+      steps: { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'running' as const, rollback: 'skipped' as const }, media: null };
     const s = memoryStore({ ...DEFAULT_STATE, lastJob: job });
     new Updater(world().ops, s);
     expect(s.state.lastJob).toMatchObject({ state: 'failed', error: 'interrupted', steps: { health: 'failed' } });

@@ -540,7 +540,7 @@ describe('livetv jobs', () => {
 
   it('a livetv job interrupted by a restart is marked failed; the state stays', () => {
     const job = { id: '0123456789abcdef', action: 'livetv-enable' as const, state: 'running' as const, step: 'health' as const, from: null, to: 'latest', startedAt: new Date().toISOString(), finishedAt: null, error: null,
-      steps: { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'running' as const, rollback: 'skipped' as const } };
+      steps: { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'running' as const, rollback: 'skipped' as const }, media: null };
     const s = memoryStore({ ...DEFAULT_STATE, livetv: 'disabled', lastJob: job });
     const w = world();
     new Updater(dockerOps(new Docker({ projectDir: '/srv/friendflix', files: ['compose.prod.yaml'], repo: 'LetsManu/friendflix', dockerHost: 'tcp://docker-proxy:2375' }, w.run), 'http://b/health', w.health), s);
