@@ -48,6 +48,7 @@ const dict: Translation<typeof de> = {
     clearTitle: 'Zresetować folder bazowy?',
     clearBody: 'FriendFlix zapomina folder. Żadne pliki nie są usuwane.',
     unreadable: 'Użytkownik kontenera nie może czytać tego folderu. Sprawdź uprawnienia albo dodaj grupę w sekcji „Użytkownik”.',
+    unreadableLater: 'Użytkownik kontenera nie może czytać tego folderu. Sprawdź uprawnienia; użytkownika i grupę kontenera zmienisz później w Admin → Ustawienia → Serwer multimediów.',
     done: 'Folder bazowy potwierdzony.',
     kept: 'Zachowane foldery: {list}.',
     dropped: 'Nie znaleziono w nowym folderze, już nie wybrane: {list}.',

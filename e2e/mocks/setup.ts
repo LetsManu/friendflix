@@ -69,6 +69,8 @@ export interface SetupMediaMock {
   gpu: { dri: Array<{ node: string; gid: number; vendor: string }>; nvidia: boolean };
   /** the first run's steps after an apply, one per GET of the view */
   setupSeq: string[];
+  /** a base request answers the warning base_unreadable (the container user cannot list it) */
+  baseUnreadable: boolean;
   /** the next write answers this refusal once */
   refuse: { status: number; error: string } | null;
   calls: Array<{ p: string; body: any }>;
@@ -85,7 +87,7 @@ export function setupMedia(offered: boolean): SetupMediaMock {
     tree: { '': [{ name: 'Filme' }, { name: 'Serien' }, { name: 'Musik' }], Filme: [{ name: 'Klassiker' }, { name: 'Neu' }], Serien: [], Musik: [] },
     gpu: { dri: [{ node: 'renderD128', gid: 109, vendor: 'intel' }], nvidia: false },
     setupSeq: ['first_run', 'api_key', 'libraries', 'hwaccel', 'finishing', 'done'],
-    refuse: null, calls: [],
+    baseUnreadable: false, refuse: null, calls: [],
   };
 }
 
@@ -197,7 +199,7 @@ function setupMediaRoute(st: SetupMock, ms: SetupMediaMock, m: string, p: string
   }
   if (p === `${P}/base` && m === 'POST') {
     ms.status.base = { ...ms.status.base, pending: true, expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), requested: body.path };
-    return J({ pending: true, expiresAt: ms.status.base.expiresAt, warning: null });
+    return J({ pending: true, expiresAt: ms.status.base.expiresAt, warning: ms.baseUnreadable ? 'base_unreadable' : null });
   }
   if (p === `${P}/base/confirm` && m === 'POST') {
     const norm = (c: string) => String(c).toUpperCase().replace(/[^0-9A-Z]/g, '');

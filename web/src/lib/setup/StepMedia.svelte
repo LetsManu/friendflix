@@ -7,33 +7,24 @@
    * The administrator's password is sent once and the field is emptied afterwards; a typed API key is emptied after the save.
    *
    * The managed media server (spec "Admin and wizard", wizard step 3): where the backend offers it (GET /api/setup/mediaserver, read
-   * once on the way in, never on Plex), the step shows the card's three choices with the default managed kind preselected
-   * (api.ts initialChoice); the existing server by address keeps the fields below unchanged. A managed kind runs *Basisordner* →
-   * *Ordner* → *Grafikkarte* (+ *Metadaten aus dem Internet*) → *Einrichten* with the Admin card's sections bound to setupMediaApi()
-   * (setup session, no re-authentication; what the wizard has no route for, those sections hide), then follows the first run every
-   * 2 s and goes on once it is done. Nothing above the progress moves while it runs. Not offered: today's fields with the reason line.
+   * once on the way in, never on Plex), the step shows the Admin card's three choices (MediaChoice) with the default managed kind
+   * preselected (api.ts initialChoice); the existing server by address keeps the fields below unchanged, a managed kind is
+   * StepMediaManaged (setupMediaApi()). Not offered: today's fields with the reason line. Plex: today's step, nothing read.
    */
-  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
-  import { apiCode } from '#lib/api';
+  import { createEventDispatcher, onMount } from 'svelte';
   import Icon from '#lib/Icon.svelte';
-  import { t, tr } from '#lib/i18n';
-  import { setupMediaApi, type FolderInput, type Gpu, type MediaView } from '#lib/admin/mediaserver/api';
-  import BaseFolder from '#lib/admin/mediaserver/BaseFolder.svelte';
-  import FolderPicker from '#lib/admin/mediaserver/FolderPicker.svelte';
-  import GpuSection from '#lib/admin/mediaserver/GpuSection.svelte';
-  import SetupProgress from '#lib/admin/mediaserver/SetupProgress.svelte';
-  import {
-    CHOICES, DEFAULT_MANAGED, DOCS_HREF, TRIAL_KINDS, choiceDisabled, folderRowsError, initialRows, keptLibraries, mediaErrorText, nameTakenRow, reasonText, setupActive,
-    type Choice,
-  } from '#lib/admin/mediaserver/model';
+  import { t } from '#lib/i18n';
+  import { setupMediaApi, type MediaView } from '#lib/admin/mediaserver/api';
+  import MediaChoice from '#lib/admin/mediaserver/MediaChoice.svelte';
+  import { DEFAULT_MANAGED, choiceDisabled, currentChoice, reasonText, type Choice } from '#lib/admin/mediaserver/model';
   import { errorText as fieldText, keyHelp, keyLabel } from '#lib/admin/settings/form';
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
   import Skeleton from '#lib/ui/Skeleton.svelte';
-  import Toggle from '#lib/ui/Toggle.svelte';
   import { initialChoice, mediaAuto, saveSetup, testSetup, type AutoField, type SetupState } from './api';
   import { failure, filled, isSecretKey, otherFieldErrors, probeText, type Handle, type Message } from './messages';
   import Notice from './Notice.svelte';
+  import StepMediaManaged from './StepMediaManaged.svelte';
 
   export let state: SetupState;
   export let handle: Handle;
@@ -119,111 +110,22 @@
     }
   }
 
+  /** the offer, read once; the managed path reads the view again while it follows the first run */
   async function load(): Promise<void> {
     try {
       const v = await call(() => media.view());
-      const was = view?.mode === 'managed' ? view.managed.setup : null;
       view = v;
-      if (hdrWait && ((v.status?.hdr?.at ?? null) !== hdrBefore || ++hdrPolls >= HDR_POLLS)) hdrWait = false;
-      if (!loaded) {
-        state.mediaserver = { offer: v.offer, kinds: v.kinds };
-        loaded = true;
-        pick(v.mode === 'managed' && v.managed.kind ? v.managed.kind : initialChoice(state));
-      } else if (was !== null && was !== 'done' && v.mode === 'managed' && v.managed.setup === 'done') {
-        // the first run this step followed is done: on to the sign-in (the step stays as it is while the page moves on)
-        leaving = true;
-        dispatch('done');
-      }
-    } catch {
-      loaded = true;
-    }
+      state.mediaserver = { offer: v.offer, kinds: v.kinds };
+      choice = v.mode === 'managed' ? currentChoice(v) : initialChoice(state);
+    } catch { /* a backend without the route, or the network: today's step */ }
+    loaded = true;
   }
+  onMount(() => { if (!loaded) void load(); });
 
   $: offered = Boolean(view && !plex && (view.offer.managed || view.mode === 'managed'));
   /** why the managed server is not offered (a view that was read; Plex never shows it) */
   $: offReason = view && !plex && !offered ? choiceDisabled(view, DEFAULT_MANAGED) : null;
-  $: active = Boolean(view && view.mode === 'managed' && setupActive(view.managed));
-  // the HDR test's job is not followed here (the wizard has no job view): its result arrives with the view, or the wait ends
-  const HDR_POLLS = 60;
-  let hdrWait = false, hdrPolls = 0, hdrBefore: string | null = null;
-  $: following = active || hdrWait;
-  let timer: ReturnType<typeof setTimeout> | undefined, gone = false;
-  function schedule() {
-    clearTimeout(timer);
-    if (gone || !following) return;
-    timer = setTimeout(async () => { await load(); schedule(); }, 2000);
-  }
-  $: if (following) schedule();
-  onMount(() => { if (!loaded) void load(); });
-  onDestroy(() => { gone = true; clearTimeout(timer); });
-
-  // the form of a managed kind; user and media group stay what runs (else 1000:1000), they are set later in Admin
-  let rows: FolderInput[] = [], gpu: Gpu = 'off', egress = true, preselectGpu = true;
-  let ids: { uid: number; gid: number; mediaGid: number | null } = { uid: 1000, gid: 1000, mediaGid: null };
-  let rowErrors: Record<string, string> = {}, error = '', applying = false, acting: '' | 'retry' | 'hdr-test' = '', leaving = false;
-  function pick(c: Choice) {
-    choice = c; error = ''; rowErrors = {};
-    if (c === 'external' || !view) return;
-    const same = view.managed.kind === c;
-    const d = same ? view.status?.desired : null;
-    rows = same ? initialRows(view) : [];
-    ids = { uid: d?.uid ?? 1000, gid: d?.gid ?? 1000, mediaGid: d?.mediaGid ?? null };
-    gpu = d?.gpu ?? 'off'; preselectGpu = !d; egress = d?.egress ?? true;
-  }
-  let segBtns: HTMLButtonElement[] = [];
-  /** a disabled choice, unless it is the one the server is on */
-  const segOff = (v: MediaView, c: Choice) => c !== (v.mode === 'managed' && v.managed.kind ? v.managed.kind : 'external') && Boolean(choiceDisabled(v, c));
-  function segKey(e: KeyboardEvent, i: number) {
-    const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
-    if (!d || !view) return;
-    e.preventDefault();
-    for (let k = 1; k <= CHOICES.length; k++) {
-      const j = (i + d * k + CHOICES.length * 3) % CHOICES.length;
-      if (!segOff(view, CHOICES[j]!)) { pick(CHOICES[j]!); segBtns[j]?.focus(); return; }
-    }
-  }
-  $: reasons = view ? [...new Set((['ferrofin', 'jellyfin'] as const).map((k) => choiceDisabled(view!, k)).filter((r): r is NonNullable<typeof r> => r !== null))] : [];
-
   $: managedKind = choice === 'external' ? null : choice;
-  $: isCurrent = Boolean(view && managedKind && view.mode === 'managed' && view.managed.kind === managedKind);
-  $: locked = !view?.status?.available || Boolean(view && managedKind && !isCurrent && choiceDisabled(view, managedKind));
-  $: base = view?.status?.base ?? { set: false, path: null, pending: false, expiresAt: null };
-  $: kept = view && isCurrent ? keptLibraries(view) : [];
-  $: working = applying || acting !== '' || active || hdrWait;
-  /** set up before this step was opened: *Übernehmen* for changes and *Weiter* */
-  $: finished = isCurrent && view?.managed.setup === 'done' && !leaving;
-  const edited = () => { rowErrors = {}; error = ''; };
-
-  async function apply() {
-    if (!view || !managedKind || working) return;
-    edited();
-    if (!base.set) { error = tr('mediaserver.apply.needBase'); return; }
-    const bad = folderRowsError(rows);
-    if (bad) { error = tr(`mediaserver.folders.error.${bad}`); return; }
-    applying = true;
-    try {
-      await call(() => media.apply({ kind: managedKind!, folders: rows.map((r) => ({ ...r, name: r.name.trim() })), ...ids, gpu, egress }));
-      await load();
-    } catch (e) {
-      const code = apiCode(e);
-      error = mediaErrorText(code);
-      const i = code === 'library_name_taken' ? nameTakenRow(rows, kept) : -1;
-      if (i >= 0) rowErrors = { [rows[i]!.rel]: tr('mediaserver.folders.nameTaken') };
-    } finally { applying = false; }
-  }
-  /** *Nochmal* (the failed first-run step) and *HDR-Test*: the two actions the setup routes have */
-  async function act(op: 'retry' | 'hdr-test') {
-    if (!managedKind) return;
-    acting = op; error = '';
-    try {
-      hdrBefore = view?.status?.hdr?.at ?? null;
-      await call(() => media.action(op === 'retry' ? { op } : { op, kind: managedKind! }));
-      if (op === 'hdr-test') { hdrWait = true; hdrPolls = 0; }
-      await load();
-    } catch (e) {
-      error = mediaErrorText(apiCode(e));
-    } finally { acting = ''; }
-  }
 </script>
 
 <h2 id="setup-step-h">{$t('setup.media.title')}</h2>
@@ -233,20 +135,7 @@
 {:else if offered && view}
   <p>{$t('setup.media.textChoice')}</p>
   {#if state.steps.media === 'done'}<p class="muted">{$t('setup.doneText')}</p>{/if}
-  <div class="choice" role="radiogroup" aria-label={$t('mediaserver.choice.label')} data-testid="media-choice">
-    {#each CHOICES as c, i (c)}
-      {@const off = segOff(view, c)}
-      <button type="button" role="radio" aria-checked={choice === c} tabindex={choice === c ? 0 : -1} class:on={choice === c} disabled={off} data-choice={c}
-        aria-describedby={off ? 'sm-reasons' : undefined} bind:this={segBtns[i]} on:click={() => pick(c)} on:keydown={(e) => segKey(e, i)}>
-        <span class="lbl">{$t(`mediaserver.choice.${c}`)}</span>
-        {#if c !== 'external' && TRIAL_KINDS.includes(c)}<span class="badge">{$t('mediaserver.choice.trial')}</span>{/if}
-      </button>
-    {/each}
-  </div>
-  <div id="sm-reasons" class="reasons">
-    {#each reasons as r (r)}<p><Icon name="info" size={16} />{reasonText(r)}</p>{/each}
-    {#if TRIAL_KINDS.length}<p class="muted">{$t('mediaserver.choice.trialNote')} <a href={DOCS_HREF} target="_blank" rel="noopener noreferrer">{$t('mediaserver.choice.trialDocs')}</a></p>{/if}
-  </div>
+  <MediaChoice {view} {choice} reasonsId="sm-reasons" on:pick={(e) => (choice = e.detail)} />
 {:else}
   <p>{$t(plex ? 'setup.media.textPlex' : 'setup.media.text')}</p>
   {#if offReason}<p class="muted off" data-testid="media-off"><Icon name="info" size={16} /><span>{$t('setup.media.managedOff')} {reasonText(offReason)}</span></p>{/if}
@@ -256,33 +145,7 @@
 {#if !loaded}
   <!-- the offer is being read -->
 {:else if managedKind && view}
-  <p class="intro">{$t('setup.media.managedText')}</p>
-  <div class="secs">
-    {#key managedKind}
-      <BaseFolder api={media} {call} {base} inUse={Boolean(view.status?.container)} disabled={locked || working} on:changed={() => load()} on:job={() => load()} />
-      {#if base.set}
-        <FolderPicker api={media} {call} bind:rows libraries={isCurrent ? view.managed.libraries : []} {kept} {rowErrors} disabled={locked || working} on:changed={edited} />
-        <GpuSection api={media} {call} bind:gpu preselect={preselectGpu} hdr={view.status?.hdr ?? null}
-          canTest={isCurrent && Boolean(view.status?.container) && !working} deployed={isCurrent ? view.status?.desired?.gpu ?? null : null}
-          testing={acting === 'hdr-test' || hdrWait} disabled={locked || working} on:hdr={() => act('hdr-test')} />
-        <section class="sec">
-          <Toggle label={$t('mediaserver.metadata.label')} hint={$t('mediaserver.metadata.hint')} bind:checked={egress} disabled={locked || working} />
-        </section>
-      {/if}
-    {/key}
-  </div>
-  <div class="apply">
-    <div class="acts">
-      {#if finished}<Button variant="secondary" icon="chevron-right" disabled={working} on:click={() => dispatch('done')}>{$t('setup.next')}</Button>{/if}
-      <Button class="go" icon="check" pending={applying} disabled={locked || working || !base.set} data-testid="media-apply" on:click={apply}>
-        {finished ? $t('mediaserver.apply.apply') : $t('mediaserver.apply.setup')}
-      </Button>
-    </div>
-    <p class="msg" class:err={error} role={error ? 'alert' : 'status'} data-testid="media-apply-error">{error}</p>
-  </div>
-  {#if isCurrent && view.managed.setup !== 'none'}
-    <SetupProgress managed={view.managed} busy={acting === 'retry'} canRecreate={false} on:retry={() => act('retry')} />
-  {/if}
+  {#key managedKind}<StepMediaManaged api={media} {call} bind:view kind={managedKind} on:done={() => dispatch('done')} />{/key}
 {:else}
 {#if offered}<p>{$t('setup.media.text')}</p>{/if}
 {#if autoFields.length}
@@ -351,33 +214,5 @@
   @media (max-width: 480px) { .acts > :global(*) { flex: 1 1 100%; } .seg { display: flex; } .seg button { flex: 1; } }
   .sk { display: grid; gap: .8rem; }
   .off { display: flex; align-items: flex-start; gap: .4rem; font-size: .9rem; }
-  .off :global(svg), .reasons :global(svg) { flex: none; margin-top: .15rem; color: var(--info-mark); }
-  /* the three choices (the Admin card's look): glass tiles in one row, stacked on a phone; the selected one is marked by an overlay that only fades */
-  .choice { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 4px; border-radius: var(--fr-r-tile); border: 1px solid var(--line); background: rgba(255, 255, 255, .04); }
-  .choice button { position: relative; min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .3rem .5rem; padding: .45rem .7rem; border-radius: 14px;
-    background: transparent; color: var(--mut); font-weight: 600; text-align: center; isolation: isolate; border: 0; }
-  .choice button::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: rgba(var(--acc-rgb), .22); box-shadow: inset 0 0 0 1px var(--acc-line); opacity: 0; transition: opacity .2s ease; }
-  .choice button.on { color: var(--fg); }
-  .choice button.on::before { opacity: 1; }
-  .choice button:hover:not(:disabled):not(.on) { color: var(--fg); background: rgba(255, 255, 255, .06); }
-  .choice button:disabled { opacity: .55; cursor: not-allowed; }
-  .lbl { overflow-wrap: anywhere; }
-  .badge { padding: .05rem .5rem; border-radius: var(--fr-r-pill); background: var(--acc-fill); color: #fff; font-size: .72rem; font-weight: 700; }
-  .reasons { display: grid; gap: .25rem; margin: .5rem 0 .8rem; font-size: .88rem; }
-  .reasons p { display: flex; align-items: flex-start; gap: .4rem; margin: 0; }
-  .reasons a { text-decoration: underline; }
-  .intro { margin: 0 0 .8rem; }
-  .secs { display: grid; gap: 1.2rem; }
-  .secs > :global(section + section) { padding-top: 1rem; border-top: 1px solid var(--line); }
-  .apply { display: grid; gap: .3rem; margin-top: 1.2rem; padding-top: 1rem; border-top: 1px solid var(--line); }
-  /* one width for *Einrichten* and *Übernehmen*: the label switching at the end of the first run moves nothing */
-  .apply :global(.go) { min-width: 11rem; }
-  .msg { margin: 0; min-height: 2.6em; font-size: .9rem; color: var(--mut); text-align: right; }
-  .msg.err { color: var(--err-mark); }
-  .apply ~ :global(.sp) { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
-  @media (max-width: 600px) {
-    .choice { grid-template-columns: minmax(0, 1fr); }
-    .choice button { justify-content: flex-start; text-align: left; }
-  }
-  @media (prefers-reduced-motion: reduce) { .choice button::before { transition: none; } }
+  .off :global(svg) { flex: none; margin-top: .15rem; color: var(--info-mark); }
 </style>

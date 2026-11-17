@@ -48,6 +48,7 @@ const dict: Translation<typeof de> = {
     clearTitle: 'Temel klasör sıfırlansın mı?',
     clearBody: 'FriendFlix klasörü unutur. Hiçbir dosya silinmez.',
     unreadable: 'Kapsayıcı kullanıcısı bu klasörü okuyamıyor. İzinleri kontrol et ya da “Kullanıcı” altında bir grup ekle.',
+    unreadableLater: 'Kapsayıcı kullanıcısı bu klasörü okuyamıyor. İzinleri kontrol et; kapsayıcının kullanıcısını ve grubunu daha sonra Admin → Ayarlar → Medya sunucusu altında değiştirebilirsin.',
     done: 'Temel klasör onaylandı.',
     kept: 'Korunan klasörler: {list}.',
     dropped: 'Yeni klasörün altında bulunamadı ve artık seçili değil: {list}.',

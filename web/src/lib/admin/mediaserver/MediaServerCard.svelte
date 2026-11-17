@@ -30,14 +30,15 @@
   import { MEDIA_TAB, type UpdaterJob } from '../updater';
   import { adminMediaApi, type FolderInput, type Gpu, type Kind, type MediaApi, type MediaView } from './api';
   import {
-    CHOICES, DOCS_HREF, TRIAL_KINDS, actionsFor, choiceDisabled, currentChoice, folderRowsError, idError, initialRows, keptLibraries, kindName, livetvOffer,
-    mediaErrorText, nameTakenRow, reasonText, setupActive, type ActionOp, type Choice,
+    actionsFor, choiceDisabled, currentChoice, folderRowsError, idError, initialRows, keptLibraries, kindName, livetvOffer, mediaErrorText, nameTakenRow, setupActive,
+    type ActionOp, type Choice,
   } from './model';
   import BackupDialogs from './BackupDialogs.svelte';
   import BaseFolder from './BaseFolder.svelte';
   import FolderPicker from './FolderPicker.svelte';
   import GpuSection from './GpuSection.svelte';
   import LogDialog from './LogDialog.svelte';
+  import MediaChoice from './MediaChoice.svelte';
   import MediaStatus from './MediaStatus.svelte';
   import SetupProgress from './SetupProgress.svelte';
 
@@ -103,18 +104,6 @@
     gpu = d?.gpu ?? 'off'; preselectGpu = !d; egress = d?.egress ?? true;
     rowErrors = {}; applyError = '';
   }
-  let segBtns: HTMLButtonElement[] = [];
-  function segKey(e: KeyboardEvent, i: number) {
-    const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
-    if (!d || !view) return;
-    e.preventDefault();
-    for (let k = 1; k <= CHOICES.length; k++) {
-      const j = (i + d * k + CHOICES.length * 3) % CHOICES.length;
-      if (!segOff(CHOICES[j]!)) { pick(CHOICES[j]!); segBtns[j]?.focus(); return; }
-    }
-  }
-  /** a disabled choice, unless it is the one the server is on */
-  const segOff = (c: Choice) => Boolean(view && c !== currentChoice(view) && choiceDisabled(view, c));
 
   $: managedKind = choice === 'external' ? null : choice;
   $: isCurrent = Boolean(view && managedKind && view.mode === 'managed' && view.managed.kind === managedKind);
@@ -126,7 +115,6 @@
   $: firstRun = !isCurrent || view?.managed.setup !== 'done';
   $: actions = view ? actionsFor(view) : [];
   $: running = job?.state === 'running';
-  $: reasons = view ? [...new Set((['ferrofin', 'jellyfin'] as const).map((k) => choiceDisabled(view!, k)).filter((r): r is NonNullable<typeof r> => r !== null))] : [];
   const num = (s: string) => (/^\d{1,5}$/.test(s.trim()) ? Number(s.trim()) : NaN);
   $: uidErr = idError(num(uid)) ? $t('mediaserver.user.idError') : '';
   $: gidErr = idError(num(gid)) ? $t('mediaserver.user.idError') : '';
@@ -264,20 +252,7 @@
   {:else if !view}
     <div class="sk" aria-hidden="true"><Skeleton h="3rem" /><Skeleton h="2.4rem" /></div><p class="sr-only" role="status">{$t('ui.table.loading')}</p>
   {:else}
-    <div class="seg" role="radiogroup" aria-label={$t('mediaserver.choice.label')} data-testid="media-choice">
-      {#each CHOICES as c, i (c)}
-        {@const off = segOff(c)}
-        <button type="button" role="radio" aria-checked={choice === c} tabindex={choice === c ? 0 : -1} class:on={choice === c} disabled={off} data-choice={c}
-          aria-describedby={off ? 'ms-reasons' : undefined} bind:this={segBtns[i]} on:click={() => pick(c)} on:keydown={(e) => segKey(e, i)}>
-          <span class="lbl">{$t(`mediaserver.choice.${c}`)}</span>
-          {#if c !== 'external' && TRIAL_KINDS.includes(c)}<span class="badge">{$t('mediaserver.choice.trial')}</span>{/if}
-        </button>
-      {/each}
-    </div>
-    <div id="ms-reasons" class="reasons" data-testid="media-reasons">
-      {#each reasons as r (r)}<p><Icon name="info" size={16} />{reasonText(r)}</p>{/each}
-      {#if TRIAL_KINDS.length}<p class="muted">{$t('mediaserver.choice.trialNote')} <a href={DOCS_HREF} target="_blank" rel="noopener noreferrer">{$t('mediaserver.choice.trialDocs')}</a></p>{/if}
-    </div>
+    <MediaChoice {view} {choice} on:pick={(e) => pick(e.detail)} />
 
     {#if choice === 'external'}
       <div class="ext">
@@ -388,21 +363,6 @@
   .state { display: flex; flex-direction: column; align-items: center; gap: .6rem; text-align: center; padding: 1.4rem 1rem; }
   .state p { margin: 0; }
   .state :global(svg) { color: var(--err); }
-  /* the three choices: glass tiles in one row, stacked on a phone; the selected one is marked by an overlay that only fades */
-  .seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 4px; border-radius: var(--fr-r-tile); border: 1px solid var(--line); background: rgba(255, 255, 255, .04); }
-  .seg button { position: relative; min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .3rem .5rem; padding: .45rem .7rem; border-radius: 14px;
-    background: transparent; color: var(--mut); font-weight: 600; text-align: center; isolation: isolate; }
-  .seg button::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: rgba(var(--acc-rgb), .22); box-shadow: inset 0 0 0 1px var(--acc-line); opacity: 0; transition: opacity .2s ease; }
-  .seg button.on { color: var(--fg); }
-  .seg button.on::before { opacity: 1; }
-  .seg button:hover:not(:disabled):not(.on) { color: var(--fg); background: rgba(255, 255, 255, .06); }
-  .seg button:disabled { opacity: .55; cursor: not-allowed; }
-  .lbl { overflow-wrap: anywhere; }
-  .badge { padding: .05rem .5rem; border-radius: var(--fr-r-pill); background: var(--acc-fill); color: #fff; font-size: .72rem; font-weight: 700; }
-  .reasons { display: grid; gap: .25rem; margin: .5rem 0 .8rem; font-size: .88rem; }
-  .reasons p { display: flex; align-items: flex-start; gap: .4rem; margin: 0; }
-  .reasons :global(svg) { flex: none; margin-top: .15rem; color: var(--info-mark); }
-  .reasons a { text-decoration: underline; }
   .note { margin: 0 0 .6rem; font-size: .9rem; }
   .ext { display: grid; gap: .6rem; }
   .ext p { margin: 0; }
@@ -425,10 +385,6 @@
   .rm-data { display: grid; gap: .5rem; margin-top: 12px; }
   .typed { transition: opacity .2s ease; }
   .typed.off { opacity: .35; }
-  @media (max-width: 720px) {
-    .seg { grid-template-columns: minmax(0, 1fr); }
-    .seg button { justify-content: flex-start; text-align: left; }
-  }
   @media (max-width: 420px) { .grp { grid-template-columns: minmax(0, 1fr); } }
-  @media (prefers-reduced-motion: reduce) { .seg button::before, .typed { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .typed { transition: none; } }
 </style>

@@ -48,6 +48,7 @@ const dict: Translation<typeof de> = {
     clearTitle: 'Réinitialiser le dossier de base ?',
     clearBody: 'FriendFlix oublie le dossier. Aucun fichier n’est supprimé.',
     unreadable: 'L’utilisateur du conteneur ne peut pas lire ce dossier. Vérifiez les droits ou ajoutez un groupe sous « Utilisateur ».',
+    unreadableLater: 'L’utilisateur du conteneur ne peut pas lire ce dossier. Vérifiez les droits ; vous pourrez changer l’utilisateur et le groupe du conteneur plus tard dans Admin → Paramètres → Serveur multimédia.',
     done: 'Dossier de base confirmé.',
     kept: 'Dossiers conservés : {list}.',
     dropped: 'Introuvables sous le nouveau dossier et plus choisis : {list}.',

@@ -27,6 +27,8 @@
   /** a managed container exists: the base cannot be cleared (it only narrows while nothing reads it) */
   export let inUse = false;
   export let disabled = false;
+  /** the card has the section *Benutzer* the unreadable note points to; the wizard has none (user and group come later, in Admin) */
+  export let userSection = true;
   const dispatch = createEventDispatcher<{ changed: void; job: UpdaterJob; unreadable: boolean }>();
 
   let editing = false, path = base.path ?? '', code = '', error = '', note = '', doing: '' | 'request' | 'confirm' | 'clear' = '';
@@ -53,7 +55,7 @@
       expiresAt = r.expiresAt ?? new Date(Date.now() + 30 * 60_000).toISOString();
       code = '';
       dispatch('unreadable', r.warning === 'base_unreadable');
-      if (r.warning === 'base_unreadable') note = tr('mediaserver.base.unreadable');
+      if (r.warning === 'base_unreadable') note = tr(userSection ? 'mediaserver.base.unreadable' : 'mediaserver.base.unreadableLater');
     } catch (e) {
       error = mediaErrorText(apiCode(e));
     } finally { doing = ''; }

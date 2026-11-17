@@ -50,6 +50,7 @@ export default {
     clearTitle: 'Basisordner zurücksetzen?',
     clearBody: 'FriendFlix vergisst den Ordner. Dateien werden nicht gelöscht.',
     unreadable: 'Der Container-Benutzer kann diesen Ordner nicht lesen. Prüfe die Rechte oder füge unter „Benutzer“ eine Gruppe hinzu.',
+    unreadableLater: 'Der Container-Benutzer kann diesen Ordner nicht lesen. Prüfe die Rechte; Benutzer und Gruppe des Containers kannst du später unter Admin → Einstellungen → Medienserver ändern.',
     done: 'Basisordner bestätigt.',
     kept: 'Übernommene Ordner: {list}.',
     dropped: 'Unter dem neuen Ordner nicht gefunden und nicht mehr gewählt: {list}.',

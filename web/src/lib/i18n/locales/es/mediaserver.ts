@@ -48,6 +48,7 @@ const dict: Translation<typeof de> = {
     clearTitle: '¿Restablecer la carpeta base?',
     clearBody: 'FriendFlix olvida la carpeta. No se borra ningún archivo.',
     unreadable: 'El usuario del contenedor no puede leer esta carpeta. Revisa los permisos o añade un grupo en «Usuario».',
+    unreadableLater: 'El usuario del contenedor no puede leer esta carpeta. Revisa los permisos; puedes cambiar el usuario y el grupo del contenedor más tarde en Admin → Ajustes → Servidor multimedia.',
     done: 'Carpeta base confirmada.',
     kept: 'Carpetas conservadas: {list}.',
     dropped: 'No encontradas en la nueva carpeta y ya no elegidas: {list}.',

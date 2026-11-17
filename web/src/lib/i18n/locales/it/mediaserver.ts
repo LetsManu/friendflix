@@ -48,6 +48,7 @@ const dict: Translation<typeof de> = {
     clearTitle: 'Reimpostare la cartella di base?',
     clearBody: 'FriendFlix dimentica la cartella. Nessun file viene eliminato.',
     unreadable: 'L’utente del container non può leggere questa cartella. Controlla i permessi o aggiungi un gruppo in «Utente».',
+    unreadableLater: 'L’utente del container non può leggere questa cartella. Controlla i permessi; potrai cambiare utente e gruppo del container più tardi in Admin → Impostazioni → Server multimediale.',
     done: 'Cartella di base confermata.',
     kept: 'Cartelle mantenute: {list}.',
     dropped: 'Non trovate nella nuova cartella e non più scelte: {list}.',

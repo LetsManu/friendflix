@@ -171,6 +171,9 @@ test.describe('setup wizard', () => {
     api.setup!.steps.publicUrl = 'done';
     const ms = (api.setup!.mediaserver = setupMedia(true));
     ms.setupSeq = ['first_run', 'api_key', 'libraries', 'done'];
+    ms.baseUnreadable = true;
+    // this build has no Ferrofin image: its choice is disabled and says why
+    ms.kinds.ferrofin = false;
     await unlock(page);
     const head = h2(page, 'Medienserver');
     await expect(head).toBeVisible();
@@ -179,12 +182,31 @@ test.describe('setup wizard', () => {
     await expect(seg.getByRole('radio', { name: 'Jellyfin (offiziell, verwaltet)' })).toHaveAttribute('aria-checked', 'true');
     await expect(seg.getByRole('radio', { name: /Ferrofin \(eigener\)/ })).toContainText('Test');
     await expect(page.getByLabel('Admin-Passwort')).toHaveCount(0);
+    const ferrofin = seg.getByRole('radio', { name: /Ferrofin \(eigener\)/ });
+    await expect(ferrofin).toBeDisabled();
+    await expect(page.getByTestId('media-reasons')).toContainText('Für diesen FriendFlix-Stand gibt es kein Image dieses Servers.');
+    // the arrow keys move the choice and the focus, past the disabled one
+    const jellyfin = seg.getByRole('radio', { name: 'Jellyfin (offiziell, verwaltet)' });
+    const external = seg.getByRole('radio', { name: 'Bestehender Jellyfin/Plex (Adresse)' });
+    await jellyfin.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(external).toBeFocused();
+    await expect(external).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByLabel('Admin-Passwort')).toBeVisible();
+    await page.keyboard.press('ArrowRight');
+    await expect(jellyfin).toBeFocused();
+    await expect(jellyfin).toHaveAttribute('aria-checked', 'true');
+    await expect(jellyfin).toHaveAttribute('tabindex', '0');
+    await expect(external).toHaveAttribute('tabindex', '-1');
     const at = { head: await box(head), seg: await box(seg) };
 
     await page.getByLabel('Pfad auf dem Server').fill('/srv/media');
     await page.getByRole('button', { name: 'Code anfordern' }).click();
     await expect(page.getByTestId('media-code-countdown')).toHaveText(/^Gültig noch (30:00|29:[0-5]\d)$/);
     await expect(page.getByTestId('media-code-hint')).toContainText('docker compose logs updater | grep "media folder"');
+    // the wizard has no section *Benutzer*: the unreadable note says where user and group are set later
+    await expect(page.getByText('Der Container-Benutzer kann diesen Ordner nicht lesen.')).toHaveText(
+      'Der Container-Benutzer kann diesen Ordner nicht lesen. Prüfe die Rechte; Benutzer und Gruppe des Containers kannst du später unter Admin → Einstellungen → Medienserver ändern.');
     await page.getByLabel('Code aus dem Protokoll').fill('abcd-efgh-jkmn');
     await page.getByRole('button', { name: 'Bestätigen' }).click();
     await expect(page.getByTestId('media-base-path')).toHaveText('/srv/media');

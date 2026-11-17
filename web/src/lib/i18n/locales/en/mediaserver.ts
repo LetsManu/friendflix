@@ -48,6 +48,7 @@ const dict: Translation<typeof de> = {
     clearTitle: 'Reset the base folder?',
     clearBody: 'FriendFlix forgets the folder. No files are deleted.',
     unreadable: 'The container user cannot read this folder. Check the permissions or add a group under “User”.',
+    unreadableLater: 'The container user cannot read this folder. Check the permissions; you can change the container\'s user and group later in Admin → Settings → Media server.',
     done: 'Base folder confirmed.',
     kept: 'Folders kept: {list}.',
     dropped: 'Not found below the new folder and no longer chosen: {list}.',

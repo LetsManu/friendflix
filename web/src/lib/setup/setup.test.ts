@@ -118,13 +118,16 @@ describe('step 3: the media server choice', () => {
   it('the managed path has its texts in every language, without a product it must not name', async () => {
     for (const l of LOCALES) {
       await setLocale(l);
-      const keys = ['setup.media.textChoice', 'setup.media.managedText', 'setup.media.managedOff'] as const;
+      const keys = ['setup.media.textChoice', 'setup.media.managedText', 'setup.media.managedOff', 'mediaserver.base.unreadableLater'] as const;
       for (const k of keys) expect(hasKey(k), `${l} ${k}`).toBe(true);
       const text = keys.map((k) => tr(k));
       for (const x of text) expect(x, l).not.toBe('');
       expect(text.join(' '), l).not.toMatch(/seerr|netflix|\.\.\./i);
       // the choice's intro names no server: it stands above all three choices
       expect(tr('setup.media.textChoice'), l).not.toMatch(/jellyfin|plex|ferrofin/i);
+      // the wizard has no section *Benutzer*: its unreadable note points to Admin instead
+      expect(tr('mediaserver.base.unreadableLater'), l).not.toBe(tr('mediaserver.base.unreadable'));
+      expect(tr('mediaserver.base.unreadableLater'), l).toContain('Admin →');
     }
   });
 });
