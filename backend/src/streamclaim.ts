@@ -7,9 +7,10 @@
  *
  * What counts as one stream: a play session (`play:` or `serve:`, the same play session once) or a live token minted but not fetched yet.
  * Sessions of the same device and the same item are ONE stream (seeking, a new play session for a quality or audio switch, a resume).
- * A running stream whose stop was reported may fetch its last segments for DRAIN_S without counting, so the next episode the player
- * starts after that stop is not refused by the old one's trailing requests; only a stop of a stream that was running opens that window,
- * and only once (a stop report for anything else, or a second one, does not), so stop reports are no way to stream uncounted. /api/playback/info counts the same set, so a
+ * A running stream whose stop was reported may fetch its last segments for DRAIN_S, but only while they fit next to every other
+ * stream, and while it is served it counts for every new start, except that a new start of the same device spares one draining stream
+ * of that device (the next episode after the stop). Only a stop of a stream that was running opens that window, and only once (a stop
+ * report for anything else, or a second one, does not), so stop reports are no way to stream uncounted. /api/playback/info counts the same set, so a
  * stream whose info was granted (the next episode prepared during the autoplay countdown included) also fits when it is first served,
  * unless another stream started meanwhile.
  *
@@ -24,14 +25,18 @@ import type { UserRow } from './types.js';
 /** a served stream is forgotten this long after its last request (a paused player keeps its slot through its progress reports) */
 export const SERVE_TTL_S = 60;
 
-/** after a running stream's stop: how long its trailing requests are served without counting */
+/** after a running stream's stop: how long its trailing requests may be served without a counted record of their own */
 export const DRAIN_S = 120;
+/** a draining stream counts while it was served this recently (the gateway re-asks every 10 s while it serves it) */
+export const DRAIN_SEEN_S = 20;
 
 /** `serve:<user>:<key>`: key = the play session, or `item-<itemId>` for a request that names none */
 export const serveKey = (userId: string, key: string) => `serve:${userId}:${key}`;
 const drainKey = (userId: string, key: string) => `servedrain:${userId}:${key}`;
 interface ServeRec { deviceId: string; itemId: string; at: number }
-interface Session { deviceId?: string; itemId?: string }
+/** the drain marker of a stopped stream: `until` = end of the window (never extended), `seen` = its last trailing request served */
+interface DrainRec { deviceId?: string; itemId: string; until: number; seen?: number }
+interface Session { deviceId?: string; itemId?: string; draining?: boolean }
 /** what is never counted for a check: its own play sessions, and its own stream (same device and item) */
 export interface StreamExcept { ps?: Iterable<string>; deviceId?: string; itemId?: string }
 
@@ -62,20 +67,36 @@ async function sessionsOf(ctx: Ctx, userId: string): Promise<Map<string, Session
     out.set(ps, { deviceId: known?.deviceId ?? r.deviceId, itemId: known?.itemId ?? r.itemId });
   }
   for (const ps of await unfetchedLiveSessions(ctx, userId)) if (!out.has(ps)) out.set(ps, {});
+  // a stopped stream that is still being served (its trailing requests) keeps counting (review: a drain must not be a free slot)
+  const drainPrefix = `servedrain:${userId}:`;
+  const now = Date.now();
+  for (const k of await ctx.kv.keys(drainPrefix)) {
+    const ps = k.slice(drainPrefix.length);
+    const d = parse<DrainRec>(await ctx.kv.get(k));
+    if (!d || out.has(ps) || !d.seen || now - d.seen > DRAIN_SEEN_S * 1000) continue;
+    out.set(ps, { deviceId: d.deviceId, itemId: d.itemId, draining: true });
+  }
   return out;
 }
 
 /** one stream per device and item; a session that names neither is a stream of its own */
 const identity = (ps: string, s: Session) => (s.deviceId && s.itemId ? `d|${s.deviceId}|${s.itemId.toLowerCase()}` : `p|${ps}`);
 
-function countOf(sessions: Map<string, Session>, except: StreamExcept = {}): number {
+/**
+ * `spare`: a new start (not a stopped stream's trailing request) leaves out at most one draining stream of its own device, the one its
+ * player just stopped (the next episode); every other draining stream that is still served counts.
+ */
+function countOf(sessions: Map<string, Session>, except: StreamExcept = {}, spare = true): number {
   const skipPs = new Set(except.ps ?? []);
   const mine = except.deviceId && except.itemId ? identity('', { deviceId: except.deviceId, itemId: except.itemId }) : null;
   const ids = new Set<string>();
+  let spared: string | null = null;
   for (const [ps, s] of sessions) {
     if (skipPs.has(ps)) continue;
     const id = identity(ps, s);
-    if (id !== mine) ids.add(id);
+    if (id === mine) continue;
+    if (spare && s.draining && except.deviceId && s.deviceId === except.deviceId && (spared === null || spared === id)) { spared = id; continue; }
+    ids.add(id);
   }
   return ids.size;
 }
@@ -116,7 +137,8 @@ export async function forgetServed(ctx: Pick<Ctx, 'kv'>, userId: string, s: { ps
     await ctx.kv.del(k);
   }
   if (!s.running && !gone.length) return;
-  for (const key of new Set([s.ps, `item-${item}`, ...gone])) await ctx.kv.set(drainKey(userId, key), '1', DRAIN_S);
+  const rec: DrainRec = { ...(s.deviceId ? { deviceId: s.deviceId } : {}), itemId: item, until: Date.now() + DRAIN_S * 1000 };
+  for (const key of new Set([s.ps, ...(s.deviceId ? [`item-${item}`] : []), ...gone])) await ctx.kv.set(drainKey(userId, key), JSON.stringify(rec), DRAIN_S);
 }
 
 export type ClaimResult = { ok: true } | { error: 'max_streams'; max: number };
@@ -137,10 +159,19 @@ export function claimStream(ctx: Ctx, user: UserRow, a: { deviceId: string; item
     };
     // a reported stream (it passed the limit when it started) or one already counted: served on (seeking, the next segments)
     if (own || (await ctx.kv.get(`play:${user.id}:${key}`))) return keep();
-    // a running stream's stop was reported a moment ago: the player may still fetch what it buffered, without counting again
-    if (await ctx.kv.get(drainKey(user.id, key))) return { ok: true };
     const max = (await effectiveLimits(ctx, user))!.maxStreams;
-    if (countOf(await sessionsOf(ctx, user.id), { ps: [key], deviceId: a.deviceId, itemId }) >= max) return { error: 'max_streams', max };
+    const sessions = await sessionsOf(ctx, user.id);
+    const others = { ps: [key], deviceId: a.deviceId, itemId };
+    // a running stream's stop was reported a moment ago: the player may still fetch what it buffered, but only while it fits next to
+    // everything else (no draining stream is spared for it); it then counts for the others as long as it is served
+    const drain = parse<DrainRec>(await ctx.kv.get(drainKey(user.id, key)));
+    if (drain) {
+      if (countOf(sessions, others, false) >= max) return { error: 'max_streams', max };
+      const ttl = Math.ceil((drain.until - Date.now()) / 1000);
+      if (ttl > 0) await ctx.kv.set(drainKey(user.id, key), JSON.stringify({ ...drain, seen: Date.now() } satisfies DrainRec), ttl);
+      return { ok: true };
+    }
+    if (countOf(sessions, others) >= max) return { error: 'max_streams', max };
     return keep();
   });
 }

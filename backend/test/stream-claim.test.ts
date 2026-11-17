@@ -102,13 +102,18 @@ describe('stream limit at the gateway (/internal/stream)', () => {
     expect((await report(me, 'start', ITEMS[2]!, next.json().playSessionId)).statusCode).toBe(200);
   });
 
-  it('a stopped stream may fetch its last segments without counting; an idle one is forgotten after a minute', async () => {
+  it('a stopped stream may fetch its last segments; it counts only while they are fetched; an idle one is forgotten after a minute', async () => {
     await setUserLimits(env.ctx, userId, { ...NONE, maxStreams: 1 });
     vi.useFakeTimers({ toFake: ['Date'] });
     expect((await claim(me, ITEMS[0]!, 'ps-s-0001')).statusCode).toBe(200);
     expect((await report(me, 'stop', ITEMS[0]!, 'ps-s-0001')).statusCode).toBe(200);
+    expect((await claim(other, ITEMS[1]!, 'ps-s-0009')).statusCode).toBe(200); // stopped and not fetched: no slot
+    await report(other, 'stop', ITEMS[1]!, 'ps-s-0009');
+    await env.kv.del(`servedrain:${userId}:ps-s-0009`);
     expect((await claim(me, ITEMS[0]!, 'ps-s-0001')).statusCode).toBe(200); // a buffered segment after the stop
-    expect((await claim(other, ITEMS[1]!, 'ps-s-0002')).statusCode).toBe(200); // the stopped one does not count
+    expect((await claim(other, ITEMS[1]!, 'ps-s-0002')).statusCode).toBe(429); // it is served right now: it counts
+    vi.setSystemTime(Date.now() + 21_000);
+    expect((await claim(other, ITEMS[1]!, 'ps-s-0002')).statusCode).toBe(200); // no longer fetched: the slot is free
     vi.setSystemTime(Date.now() + 61_000);
     expect((await claim(me, ITEMS[2]!, 'ps-s-0003')).statusCode).toBe(200); // ps-s-0002 idled out (no request for a minute)
   });
@@ -123,12 +128,46 @@ describe('stream limit at the gateway (/internal/stream)', () => {
     // a running one drains once; a second stop during the window does not extend it
     expect((await report(me, 'stop', ITEMS[0]!, 'ps-d-0001')).statusCode).toBe(200);
     expect((await claim(other, ITEMS[1]!, 'ps-d-0003')).statusCode).toBe(200); // the slot is free again
+    // the drained one cannot keep streaming next to the one that took the slot (review: re-armable drain)
+    expect((await claim(me, ITEMS[0]!, 'ps-d-0001')).statusCode).toBe(429);
     vi.setSystemTime(Date.now() + 100_000);
     expect((await report(me, 'stop', ITEMS[0]!, 'ps-d-0001')).statusCode).toBe(200);
-    expect((await claim(me, ITEMS[0]!, 'ps-d-0001')).statusCode).toBe(200); // still within the first window
     expect((await claim(other, ITEMS[1]!, 'ps-d-0003')).statusCode).toBe(200);
     vi.setSystemTime(Date.now() + 21_000);
     expect((await claim(me, ITEMS[0]!, 'ps-d-0001')).statusCode).toBe(429); // the window is over: counted again, and the slot is taken
+  });
+
+  it('streams cannot alternate through stop, re-claim and start reports to run beyond the limit (review)', async () => {
+    await setUserLimits(env.ctx, userId, { ...NONE, maxStreams: 1 });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const a = { s: me, item: ITEMS[0]!, ps: 'ps-x-0001' };
+    const b = { s: other, item: ITEMS[1]!, ps: 'ps-x-0002' };
+    expect((await claim(a.s, a.item, a.ps)).statusCode).toBe(200);
+    let [cur, nxt] = [a, b];
+    for (let round = 0; round < 6; round++) {
+      // the attacker stops the stream that holds the slot, starts the other one, and tries to keep both going
+      await report(cur.s, 'stop', cur.item, cur.ps);
+      await report(nxt.s, 'start', nxt.item, nxt.ps);
+      for (let i = 0; i < 3; i++) {
+        expect([(await claim(a.s, a.item, a.ps)).statusCode, (await claim(b.s, b.item, b.ps)).statusCode].filter((c) => c === 200).length, `round ${round}`).toBeLessThanOrEqual(1);
+        vi.setSystemTime(Date.now() + 10_000);
+      }
+      await report(cur.s, 'start', cur.item, cur.ps); // re-arm attempt: refused while the other one runs
+      vi.setSystemTime(Date.now() + 15_000);
+      [cur, nxt] = [nxt, cur];
+    }
+  });
+
+  it('the next title on the same device starts while the stopped one drains (one draining stream of the device is spared)', async () => {
+    await setUserLimits(env.ctx, userId, { ...NONE, maxStreams: 1 });
+    expect((await claim(me, ITEMS[0]!, 'ps-y-0001')).statusCode).toBe(200);
+    expect((await report(me, 'stop', ITEMS[0]!, 'ps-y-0001')).statusCode).toBe(200);
+    expect((await claim(me, ITEMS[0]!, 'ps-y-0001')).statusCode).toBe(200); // its trailing segments
+    expect((await info(other, ITEMS[2]!)).json().error).toBe('max_streams'); // another device: the draining stream still counts
+    expect((await claim(other, ITEMS[2]!, 'ps-y-0003')).statusCode).toBe(429);
+    expect((await info(me, ITEMS[1]!)).json().error).not.toBe('max_streams'); // the same device: the next episode
+    expect((await claim(me, ITEMS[1]!, 'ps-y-0002')).statusCode).toBe(200);
+    expect((await claim(me, ITEMS[0]!, 'ps-y-0001')).statusCode).toBe(429); // and from now on the old one is cut off
   });
 
   it('a stop also ends the requests of the same item and device that named no play session', async () => {
@@ -138,7 +177,7 @@ describe('stream limit at the gateway (/internal/stream)', () => {
     expect((await report(me, 'stop', ITEMS[0]!, 'ps-i-0001')).statusCode).toBe(200);
     expect(await env.kv.keys(`serve:${userId}:`)).toEqual([]);
     expect((await claim(me, ITEMS[0]!)).statusCode).toBe(200); // a trailing one drains
-    expect((await info(other, ITEMS[1]!)).json().error).not.toBe('max_streams'); // the next title is not refused by the old one
+    expect((await info(me, ITEMS[1]!)).json().error).not.toBe('max_streams'); // the next title is not refused by the old one
   });
 
   it('progress reports cannot bring a stream back beyond the limit, but the position is still saved', async () => {
