@@ -27,7 +27,14 @@ const LOCK = 'media:managed:tick';
 /** the last apply job the setup saw succeed (its finish-setup is started once per apply) */
 const APPLY_JOB = 'media:managed:apply';
 const finishKey = (applyId: string) => `media:managed:finish:${applyId}`;
+/** whether an apply job carried the first-run password ('1') or not ('0'), recorded by the apply route when it starts the job */
+const firstRunKey = (applyId: string) => `media:managed:firstrun:${applyId}`;
 const WEEK = 7 * 86_400;
+
+/** the apply route records whether the apply it started sent the first-run password (finishing skips finish-setup only on a '0') */
+export async function recordApplyFirstRun(ctx: Pick<Ctx, 'kv'>, jobId: string, firstRun: boolean): Promise<void> {
+  await ctx.kv.set(firstRunKey(jobId), firstRun ? '1' : '0', WEEK);
+}
 const ACTIVE: ReadonlySet<SetupStep> = new Set(['applying', 'first_run', 'api_key', 'libraries', 'hwaccel', 'finishing']);
 const CODE = /^[a-z][a-z0-9_]{0,39}$/;
 const RENDER_NODE = /^renderD[0-9]{1,4}$/;
@@ -179,12 +186,15 @@ async function hwaccel({ ctx, status }: Step): Promise<Next> {
 async function finishing({ ctx, m, status }: Step): Promise<Next> {
   if (m.kind !== 'ferrofin') return 'done';
   if (!status) return 'waiting';
-  const fk = finishKey((await ctx.kv.get(APPLY_JOB)) ?? 'unknown');
+  const applyId = await ctx.kv.get(APPLY_JOB);
+  const fk = finishKey(applyId ?? 'unknown');
   const finishId = await ctx.kv.get(fk);
   if (!finishId) {
     if (status.busy) return 'waiting';
-    // no password in the container's configuration (an apply after the first run sends none): nothing to finish
-    if (status.mediaserver?.container?.template === 'current') return 'done';
+    // nothing to finish only when the apply is known to have sent no password AND the container reads as current (a template the
+    // updater could not read also reads current); a missing record, a first-run apply or an apply never seen: finish-setup (fail closed)
+    const sent = applyId ? await ctx.kv.get(firstRunKey(applyId)) : null;
+    if (sent === '0' && status.mediaserver?.container?.template === 'current') return 'done';
     const r = await startMediaJob(ctx, { op: 'finish-setup' }, null, {});
     if (!r.ok) {
       if (r.error === 'busy' || r.error === 'not_available') return 'waiting';
@@ -201,10 +211,10 @@ async function finishing({ ctx, m, status }: Step): Promise<Next> {
     throw new StepFailed(j.error ?? 'unexpected');
   }
   if (status.busy) return 'waiting';
-  // a later job hides the finish job's result: the container's template tells whether it ran (update_pending until it does)
-  if (status.mediaserver?.container?.template === 'current') return 'done';
+  // a later job hides the finish job's result: never read as done from the template (an unreadable one reads current too); the next
+  // tick starts finish-setup again (a recreate without the password variable either way)
   await ctx.kv.del(fk);
-  throw new StepFailed('interrupted');
+  return 'waiting';
 }
 
 const STEPS: Partial<Record<SetupStep, (s: Step) => Promise<Next>>> = {

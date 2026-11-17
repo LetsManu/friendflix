@@ -544,13 +544,62 @@ describe('managed media server first run', () => {
     expect(await run('finishing')).toEqual(['first_run', 'api_key', 'libraries', 'hwaccel', 'finishing']);
     expect(await tick()).toBe('waiting');
     expect(opBodies('finish-setup')).toHaveLength(2);
+  });
 
-    // an apply after the first run sends no password (template current): nothing to finish
-    await seed('ferrofin', 'libraries', LIBS.map((l) => ({ ...l, created: true })));
-    appliedJob();
-    fake.media.container.template = 'current';
-    expect(await run('done')).toEqual(['hwaccel', 'finishing', 'done']);
-    expect(opBodies('finish-setup')).toHaveLength(2);
+  describe('finish-setup is skipped only for an apply known to have sent no password', () => {
+    const ferrofin = async () => {
+      resetFake('ferrofin');
+      server.wizardDone = true;
+      server.user = { name: 'friendflix-admin', password: PASSWORD };
+      await connected();
+      server.folders = BOTH_IN_SERVER();
+    };
+    const ferrofinFolders = (extra: unknown[] = []) => req('POST', '/apply', { kind: 'ferrofin', folders: [...FOLDERS, ...extra], uid: 1000, gid: 1000, gpu: 'dri', mediaGid: null, egress: true });
+
+    it('(a) a first-run apply whose template reads current (unreadable) still gets finish-setup', async () => {
+      await ferrofin();
+      await reauth();
+      expect((await ferrofinFolders()).statusCode).toBe(202);
+      expect(Object.keys(opBodies('apply')[0]!)).toContain('firstRun');
+      fake.media.container.template = 'current'; // the updater could not read the template: reads current
+      fake.job!.state = 'succeeded';
+      fake.busy = false;
+      expect(await run('finishing')).toEqual(['first_run', 'api_key', 'libraries', 'libraries', 'libraries', 'hwaccel', 'finishing']);
+      expect(await tick()).toBe('waiting');
+      expect(opBodies('finish-setup')).toHaveLength(1);
+    });
+
+    it('(b) a re-apply without the password and a current template is done without finish-setup', async () => {
+      await ferrofin();
+      await seed('ferrofin', 'done', LIBS.map((l) => ({ ...l, created: true })));
+      fake.media.container.template = 'current';
+      await reauth();
+      expect((await ferrofinFolders([{ rel: 'Musik', name: 'Musik', type: 'music' }])).statusCode).toBe(202);
+      expect(Object.keys(opBodies('apply')[0]!)).not.toContain('firstRun');
+      fake.job!.state = 'succeeded';
+      fake.busy = false;
+      expect(await run('done')).toEqual(['libraries', 'hwaccel', 'finishing', 'done']);
+      expect(opBodies('finish-setup')).toEqual([]);
+    });
+
+    it('(c) an apply without a record gets finish-setup', async () => {
+      await ferrofin();
+      await seed('ferrofin', 'libraries', LIBS.map((l) => ({ ...l, created: true })));
+      appliedJob(); // started elsewhere: no record of what it sent
+      fake.media.container.template = 'current';
+      expect(await run('finishing')).toEqual(['hwaccel', 'finishing']);
+      expect(await tick()).toBe('waiting');
+      expect(opBodies('finish-setup')).toHaveLength(1);
+      // another job hides the finish job's result: finish-setup again, never done from the template
+      fake.job = job('mediaserver-hdr-test', 'succeeded');
+      fake.busy = false;
+      expect(await tick()).toBe('waiting');
+      expect(await tick()).toBe('waiting');
+      expect(opBodies('finish-setup')).toHaveLength(2);
+      fake.job!.state = 'succeeded';
+      fake.busy = false;
+      expect(await tick()).toBe('done');
+    });
   });
 
   it('a refused apply after a retype still sends the setup back to libraries', async () => {

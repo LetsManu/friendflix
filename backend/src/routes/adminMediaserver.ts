@@ -8,6 +8,7 @@ import type { Ctx } from '../ctx.js';
 import { addressOnly } from '../media/address.js';
 import { MediaSetupError } from '../media/types.js';
 import { BACKUP_ID, mediaOp, startMediaJob, type MediaStatus } from '../mediaserver/client.js';
+import { recordApplyFirstRun } from '../mediaserver/firstRun.js';
 import { libraryReferences, referenced } from '../mediaserver/references.js';
 import { deleteLibrary, managedKey, MANAGED_URL, renameLibrary } from '../mediaserver/serverApi.js';
 import { adminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged, type SetupStep } from '../mediaserver/store.js';
@@ -347,6 +348,7 @@ function ops(ctx: Ctx) {
       const body = { op: 'apply', spec, ...(b.kind === 'ferrofin' && password ? { firstRun: { password } } : {}) };
       const r = await startMediaJob(ctx, body, actor, { kind: b.kind, folders: b.folders.length, gpu: b.gpu, egress: b.egress });
       if (r.ok) {
+        if ('job' in r) await recordApplyFirstRun(ctx, r.job.id, 'firstRun' in body);
         const patch: ManagedPatch = { kind: b.kind, libraries: [...libs.chosen, ...libs.kept] };
         // after the first run: a new (or retyped) library goes back to the libraries step, a changed GPU to the encoding settings; the
         // tick waits for this apply first
