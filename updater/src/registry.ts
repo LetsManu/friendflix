@@ -34,33 +34,42 @@ export async function registryDigest(repo: string, service: string, tag: string,
   try {
     const signal = AbortSignal.timeout(TIMEOUT_MS);
     const t = await fetchImpl(`https://${REGISTRY}/token?scope=repository:${path}:pull&service=${REGISTRY}`, { redirect: 'error', signal });
-    if (!t.ok) throw new Error();
+    if (!t.ok) { await t.body?.cancel().catch(() => undefined); throw new Error(); }
     const token = ((await t.json()) as { token?: unknown } | null)?.token;
     if (typeof token !== 'string' || !TOKEN_RE.test(token)) throw new Error();
     const r = await fetchImpl(`https://${REGISTRY}/v2/${path}/manifests/${tag}`, {
       method: 'HEAD', headers: { authorization: `Bearer ${token}`, accept: ACCEPT }, redirect: 'error', signal,
     });
+    if (!r.ok) await r.body?.cancel().catch(() => undefined);
     const digest = r.ok ? r.headers.get('docker-content-digest') : null;
     if (isDigest(digest)) return digest;
   } catch { /* the cause may carry the token or a body: dropped */ }
   throw new StepError('registry_failed');
 }
 
+/** a cached registry lookup; `size()` is how many entries the cache holds (expired ones are dropped on the next miss) */
+export type CachedRegistry = ((service: string, tag: string) => Promise<string | null>) & { size(): number };
+
 /**
  * registryDigest for the status page: one lookup per image and tag every `ttlMs`, a failure (null) asked again after `errTtlMs`;
- * callers asking at the same time share one lookup. A bad service or tag is null without a request.
+ * callers asking at the same time share one lookup. A bad service or tag is null without a request. Every miss first drops the
+ * expired entries, so the cache holds only what was asked within the last `ttlMs`.
  */
-export function cachedRegistry(repo: string, ttlMs = 600_000, errTtlMs = 60_000, now: () => number = Date.now, fetchImpl?: typeof fetch): (service: string, tag: string) => Promise<string | null> {
-  const cache = new Map<string, { at: number; ok: boolean | null; value: Promise<string | null> }>();
-  return (service, tag) => {
+export function cachedRegistry(repo: string, ttlMs = 600_000, errTtlMs = 60_000, now: () => number = Date.now, fetchImpl?: typeof fetch): CachedRegistry {
+  type Entry = { at: number; ok: boolean | null; value: Promise<string | null> };
+  const cache = new Map<string, Entry>();
+  const fresh = (e: Entry, t: number) => e.ok === null || t - e.at < (e.ok ? ttlMs : errTtlMs);
+  const lookup = (service: string, tag: string): Promise<string | null> => {
     if (!Object.hasOwn(IMAGE_OF, service) || !isTag(tag)) return Promise.resolve(null);
     const key = `${IMAGE_OF[service]}:${tag}`;
     const t = now();
     const hit = cache.get(key);
-    if (hit && (hit.ok === null || t - hit.at < (hit.ok ? ttlMs : errTtlMs))) return hit.value;
-    const entry: { at: number; ok: boolean | null; value: Promise<string | null> } = { at: t, ok: null, value: Promise.resolve(null) };
+    if (hit && fresh(hit, t)) return hit.value;
+    for (const [k, e] of cache) if (!fresh(e, t)) cache.delete(k);
+    const entry: Entry = { at: t, ok: null, value: Promise.resolve(null) };
     entry.value = registryDigest(repo, service, tag, fetchImpl).then((d) => { entry.ok = true; return d; }, () => { entry.ok = false; return null; });
     cache.set(key, entry);
     return entry.value;
   };
+  return Object.assign(lookup, { size: () => cache.size });
 }

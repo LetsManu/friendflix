@@ -520,24 +520,29 @@ export class Docker {
 
   /**
    * cosign keyless verification of one of this repository's images by digest against its publish workflow; anything but an own
-   * digest ref is false without a command. false on any failure.
+   * digest ref of a FriendFlix service is false without a command. false on any failure.
    */
   async verify(ref: string): Promise<boolean> {
-    if (!this.ownDigestService(ref)) return false;
-    const id = cosignIdentity(this.s.repo);
-    const r = await this.run('cosign', ['verify', '--certificate-identity-regexp', id.identityRegexp, '--certificate-oidc-issuer', id.issuer, ref],
-      { env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp' }, timeoutMs: 2 * MIN });
-    return r.code === 0;
+    return this.ownDigestService(ref) ? this.cosign(ref) : false;
   }
 
   /**
-   * verify for a local image named by tag: the digest of this repository it carries (pinnedRef), never the tag itself. For the
-   * callers that hold a tag: the update job until it pulls by digest, and the media server's running backend image.
+   * verify for a local image named by tag or digest ref: the digest it carries (pinnedRef: that repository, a sha256 digest the
+   * image really has), never a tag. Not limited to IMAGE_OF: the media server's pinned image is verified here too. For the callers
+   * that hold such a name: the update job until it pulls by digest, the media server's backend image and its pinned image.
    */
   async verifyPulled(image: string): Promise<boolean> {
     const info = await this.imageInfo(image);
     const ref = info ? pinnedRef(image, info.repoDigests) : null;
-    return ref ? this.verify(ref) : false;
+    return ref ? this.cosign(ref) : false;
+  }
+
+  /** `cosign verify` of a digest ref against this repository's publish workflow identity; the callers check the ref */
+  private async cosign(ref: string): Promise<boolean> {
+    const id = cosignIdentity(this.s.repo);
+    const r = await this.run('cosign', ['verify', '--certificate-identity-regexp', id.identityRegexp, '--certificate-oidc-issuer', id.issuer, ref],
+      { env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp' }, timeoutMs: 2 * MIN });
+    return r.code === 0;
   }
 }
 

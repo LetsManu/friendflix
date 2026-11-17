@@ -120,4 +120,30 @@ describe('registry digests', () => {
     expect(await digest('postgres', 'latest')).toBeNull();
     expect(heads()).toBe(6);
   });
+
+  it('cache: expired entries are dropped, so the map cannot grow without bound', async () => {
+    let t = 0;
+    const digest = cachedRegistry('example/friendflix', undefined, undefined, () => t, registry().fetchImpl);
+    for (let i = 0; i < 50; i++) await digest('web', `1.0.${i}`);
+    expect(digest.size()).toBe(50);
+    t = 600_000; // all expired: the next miss sweeps them
+    await digest('web', 'latest');
+    expect(digest.size()).toBe(1);
+    // a failure is kept only for its 60 s
+    const down = cachedRegistry('example/friendflix', undefined, undefined, () => t, registry({ head: () => new Response(null, { status: 503 }) }).fetchImpl);
+    for (let i = 0; i < 10; i++) expect(await down('web', `2.0.${i}`)).toBeNull();
+    expect(down.size()).toBe(10);
+    t += 60_000;
+    await down('gateway', 'latest');
+    expect(down.size()).toBe(1);
+  });
+
+  it('a refused token or manifest answer has its body cancelled, never read into the error', async () => {
+    const answers: Response[] = [];
+    const keep = (r: Response) => { answers.push(r); return r; };
+    await failed(registryDigest('example/friendflix', 'web', 'latest', registry({ token: () => keep(new Response('body-text ' + TOKEN, { status: 401 })) }).fetchImpl));
+    await failed(registryDigest('example/friendflix', 'web', 'latest', registry({ head: () => keep(new Response('body-text', { status: 404 })) }).fetchImpl));
+    expect(answers).toHaveLength(2);
+    for (const r of answers) expect(r.bodyUsed).toBe(true);
+  });
 });

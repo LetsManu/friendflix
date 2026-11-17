@@ -185,6 +185,24 @@ describe('docker command lines', () => {
     expect(await fake(() => ({ code: 1 })).docker.verifyPulled('ghcr.io/letsmanu/friendflix-web:latest')).toBe(false);
   });
 
+  it('verifyPulled: a digest ref of an image outside IMAGE_OF (the media server pin) reaches cosign with that very ref', async () => {
+    const pin = `ghcr.io/letsmanu/friendflix-mediaserver@${D}`;
+    const { calls, docker } = fake((c) => (c.program === 'docker' ? { stdout: `["${pin}"]\t[]\n` } : {}));
+    expect(await docker.verifyPulled(pin)).toBe(true);
+    expect(calls.map((c) => c.program)).toEqual(['docker', 'cosign']);
+    expect(calls[1]!.args).toEqual(['verify', '--certificate-identity-regexp',
+      '^https://github\\.com/LetsManu/friendflix/\\.github/workflows/publish\\.yml@refs/(heads/main|tags/v[0-9]+\\.[0-9]+\\.[0-9]+)$',
+      '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com', pin]);
+    // that pin through verify (the IMAGE_OF digest gate) is still refused without a command
+    const v = fake();
+    expect(await v.docker.verify(pin)).toBe(false);
+    expect(v.calls).toEqual([]);
+    // the image does not carry that digest: no cosign
+    const other = fake((c) => (c.program === 'docker' ? { stdout: `["ghcr.io/letsmanu/friendflix-mediaserver@sha256:${'d'.repeat(64)}"]\t[]\n` } : {}));
+    expect(await other.docker.verifyPulled(pin)).toBe(false);
+    expect(other.calls.map((c) => c.program)).toEqual(['docker']);
+  });
+
   it('pullDigest and tag run exactly these argv', async () => {
     const { calls, docker } = fake();
     await docker.pullDigest(`ghcr.io/letsmanu/friendflix-backend@${D}`);
