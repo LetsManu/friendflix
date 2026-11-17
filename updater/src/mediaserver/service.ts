@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { timingSafeEqual } from 'node:crypto';
 import { StepError } from '../docker.js';
-import type { Updater } from '../job.js';
+import type { StartResult, Updater } from '../job.js';
 import type { Job, MediaState } from '../state.js';
 import { EngineError, type Engine } from './engine.js';
 import type { EngineFacts } from './facts.js';
@@ -11,6 +11,7 @@ import { baseCodeLogLine, hashBaseCode, newBaseCode, normalizeBaseCode } from '.
 import { redactLine } from './logs.js';
 import { checkBasePath, isRel } from './paths.js';
 import { helperSpec, volumeSpec, names, type HelperMount, type HelperVerb } from './template.js';
+import type { DesiredSpec } from './types.js';
 
 export interface MediaDeps {
   engine: Engine;
@@ -55,11 +56,14 @@ const RENDER_NODE_RE = /^renderD[0-9]{1,4}$/;
 /** the facts a helper needs; null when the engine, the project or the own image is not known */
 type Ready = { project: string; image: string; facts: EngineFacts };
 
+/** what base-confirm needs from the media jobs: the recreate on the new base (MediaJobs.rebase) */
+export interface Rebase { rebase(spec: DesiredSpec): StartResult }
+
 export class MediaService {
   /** when each code was issued (in memory): at most 3 in 10 minutes */
   private issued: number[] = [];
 
-  constructor(private readonly d: MediaDeps) {}
+  constructor(private readonly d: MediaDeps, private readonly jobs?: Rebase) {}
 
   private async ready(): Promise<Ready | null> {
     let f: EngineFacts;
@@ -177,8 +181,17 @@ export class MediaService {
     this.d.updater.log.add('media base folder confirmed');
     // a replaced base volume that was never applied (neither the new one nor the one the container uses) is not needed any more
     if (old && old.volume !== volume && old.volume !== previousVolume) await this.dropUnusedVolume(old.volume, r.project);
-    // with a managed container the new base needs the apply of the lifecycle (a later step): until then nothing else changes
-    return { result: 'ok', path: pending.path, ...split, job: null };
+    // with a managed container the new base is applied at once: a recreate with the kept folders (Controller's call 4); the old base
+    // volume goes when it succeeds
+    return { result: 'ok', path: pending.path, ...split, job: this.recreate() };
+  }
+
+  private recreate(): Job | null {
+    const m = this.d.updater.mediaState();
+    if (!this.jobs || !m.container || !m.desired) return null;
+    const { run: _run, ...spec } = m.desired;
+    const started = this.jobs.rebase(spec);
+    return started.ok ? started.job : null;
   }
 
   /** best effort: only a base volume of this project, errors are swallowed */
