@@ -11,6 +11,8 @@ const serverText: Translation<typeof de> = {
     // on Plex, engine v1 is FriendFlix's own genre + cast similarity (Jellyfin has no part in it)
     reco: { admin: { engine: { v1: 'v1 (klasik)' } } },
     settings: { options: { RECO_ENGINE: { v1: 'v1 (klasik)' } } },
+    // the card Medienserver on a Plex instance: the managed choice and the address choice without naming Jellyfin
+    mediaserver: { choice: { jellyfin: 'Yönetilen sunucu (resmî)', external: 'Mevcut Plex (adres)' } },
   },
 };
 

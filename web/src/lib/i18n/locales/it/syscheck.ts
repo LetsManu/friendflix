@@ -102,7 +102,7 @@ const dict: Translation<typeof de> = {
     managed_base_missing: 'Manca la cartella di base (ad esempio una condivisione NAS non montata).',
     managed_folder_missing: 'Manca una cartella scelta nella cartella di base.',
     managed_gpu_missing: 'La scheda grafica scelta non è stata trovata.',
-    managed_job_failed: 'L’ultima operazione del server multimediale non è riuscita (codice di errore {code}).',
+    managed_job_failed: 'L’ultima operazione del server multimediale non è riuscita. {reason}',
     managed_update_pending: 'Da oltre 7 giorni il server multimediale non è alla versione prevista da questa versione di FriendFlix.',
     managed_backup_old: 'Da oltre 30 giorni non c’è nessun backup del server multimediale.',
     no_hw_accel: 'L’accelerazione hardware è disattivata: converte il processore, che è lento e regge pochi stream.',

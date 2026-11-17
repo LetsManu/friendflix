@@ -298,7 +298,7 @@ export default {
       result: {
         succeeded: 'Update auf {to} abgeschlossen.',
         rolled_back: 'Die neue Version startete nicht sauber: zurückgerollt auf {from}.',
-        succeeded_mediaserver_failed: 'FriendFlix aktualisiert, Medienserver nicht: {code}.',
+        succeeded_mediaserver_failed: 'FriendFlix aktualisiert, Medienserver nicht. {reason}',
         failed: 'Auftrag fehlgeschlagen: {reason}.',
         failedAt: 'Auftrag bei „{row}“ fehlgeschlagen.',
       },

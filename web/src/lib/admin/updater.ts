@@ -6,6 +6,7 @@
  * (the backend restarts in the middle: failed polls mean "reconnecting", not an error).
  */
 import { hasKey, trDynamic } from '#lib/i18n';
+import { mediaErrorText } from './mediaserver/model';
 
 export type StepName = 'pull' | 'verify' | 'restart' | 'health' | 'rollback';
 export type StepState = 'pending' | 'running' | 'ok' | 'failed' | 'skipped';
@@ -172,9 +173,9 @@ export function jobTone(state: JobState): JobTone {
   return state === 'succeeded_mediaserver_failed' ? 'warn' : 'bad';
 }
 
-/** "FriendFlix aktualisiert, Medienserver nicht: <code>" (an error that is no code reads as unknown) */
+/** "FriendFlix aktualisiert, Medienserver nicht." with the media server's code as a sentence (mediaserver/model.ts mediaErrorText) */
 export function mediaFailedText(code: string | null): string {
-  return trDynamic('admin.update.updater.result.succeeded_mediaserver_failed', { code: code && /^[a-z_]{1,40}$/.test(code) ? code : 'unknown' });
+  return trDynamic('admin.update.updater.result.succeeded_mediaserver_failed', { reason: mediaErrorText(code) });
 }
 
 /** a media job's name (Einrichten, Starten, …) */

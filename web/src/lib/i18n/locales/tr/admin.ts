@@ -299,7 +299,7 @@ const tr: Translation<typeof de> = {
       result: {
         succeeded: '{to} sürümüne güncelleme tamamlandı.',
         rolled_back: 'Yeni sürüm düzgün başlamadı: {from} sürümüne geri alındı.',
-        succeeded_mediaserver_failed: 'FriendFlix güncellendi, medya sunucusu güncellenmedi: {code}.',
+        succeeded_mediaserver_failed: 'FriendFlix güncellendi, medya sunucusu güncellenmedi. {reason}',
         failed: 'İş başarısız oldu: {reason}.',
         failedAt: 'İş “{row}” adımında başarısız oldu.',
       },

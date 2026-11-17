@@ -11,6 +11,8 @@ const serverText = {
     // on Plex, engine v1 is FriendFlix's own genre + cast similarity (Jellyfin has no part in it)
     reco: { admin: { engine: { v1: 'v1 (klassisch)' } } },
     settings: { options: { RECO_ENGINE: { v1: 'v1 (klassisch)' } } },
+    // the card Medienserver on a Plex instance: the managed choice and the address choice without naming Jellyfin
+    mediaserver: { choice: { jellyfin: 'Verwalteter Server (offiziell)', external: 'Bestehender Plex (Adresse)' } },
   },
 } as const;
 

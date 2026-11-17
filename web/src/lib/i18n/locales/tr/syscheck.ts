@@ -102,7 +102,7 @@ const dict: Translation<typeof de> = {
     managed_base_missing: 'Temel klasör eksik (örneğin bağlanmamış bir NAS paylaşımı).',
     managed_folder_missing: 'Seçilen bir klasör temel klasörde eksik.',
     managed_gpu_missing: 'Seçilen ekran kartı bulunamadı.',
-    managed_job_failed: 'Medya sunucusunun son işi başarısız oldu (hata kodu {code}).',
+    managed_job_failed: 'Medya sunucusunun son işi başarısız oldu. {reason}',
     managed_update_pending: 'Medya sunucusu 7 günden uzun süredir bu FriendFlix sürümünün öngördüğü sürümde değil.',
     managed_backup_old: '30 günden uzun süredir medya sunucusunun yedeği yok.',
     no_hw_accel: 'Donanım hızlandırma kapalı: işlemci dönüştürüyor, bu yavaş ve az yayın kaldırıyor.',

@@ -116,7 +116,8 @@ test.describe('admin update progress (desktop)', () => {
     await expect(state(flow, 'media-pull')).toHaveAttribute('data-state', 'failed');
     const note = flow.locator('[data-result="succeeded_mediaserver_failed"]');
     await expect(note).toHaveClass(/n-warn/);
-    await expect(note).toContainText('FriendFlix aktualisiert, Medienserver nicht: pull_failed.');
+    await expect(note).toContainText('FriendFlix aktualisiert, Medienserver nicht. Das Image ließ sich nicht laden. Prüfe die Internetverbindung des Servers.');
+    await expect(note).not.toContainText('pull_failed');
     // found on load: a status, not an alert
     await expect(note.locator('[data-headline]')).toHaveAttribute('role', 'status');
     // try again is the media tab's (a link), not the update's confirmation

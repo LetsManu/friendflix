@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { hasKey, setLocale, tr } from '#lib/i18n';
+import { hasKey, setLocale, tr, trDynamic } from '#lib/i18n';
+import { mediaErrorText } from './mediaserver/model';
 import { ApiError } from '#lib/api';
 import {
   MEDIA_JOB_ACTIONS, MEDIA_STEPS, MEDIA_TAB, TIME_RE, canRollback, failReason, foreignMode, foreignText, isMediaJob, isRunning, jobTone, mediaActionLabel, mediaFailedText, nextPoll,
@@ -175,22 +176,24 @@ describe('updater panel logic', () => {
 });
 
 describe('media server jobs and the update whose media server phase failed', () => {
-  it('succeeded_mediaserver_failed maps to the warn tone and its text names the code, in every locale', async () => {
+  it('succeeded_mediaserver_failed maps to the warn tone and its text says the code as a sentence, in every locale', async () => {
     expect(jobTone('running')).toBe('running');
     expect(jobTone('succeeded')).toBe('ok');
     expect(jobTone('failed')).toBe('bad');
     expect(jobTone('rolled_back')).toBe('bad');
     expect(jobTone('succeeded_mediaserver_failed')).toBe('warn');
-    expect(mediaFailedText('verify_failed')).toBe('FriendFlix aktualisiert, Medienserver nicht: verify_failed.');
-    // an error that is no code is never shown as it came
-    expect(mediaFailedText('<b>x</b>')).toBe('FriendFlix aktualisiert, Medienserver nicht: unknown.');
-    expect(mediaFailedText(null)).toContain('unknown');
+    expect(mediaFailedText('verify_failed')).toBe(`FriendFlix aktualisiert, Medienserver nicht. ${mediaErrorText('verify_failed')}`);
+    expect(mediaFailedText('verify_failed')).not.toContain('verify_failed');
+    // an unknown code still names itself; an error that is no code is never shown as it came
+    expect(mediaFailedText('brand_new_code')).toContain('brand_new_code');
+    expect(mediaFailedText('<b>x</b>')).not.toContain('<b>');
+    expect(mediaFailedText(null)).toContain(trDynamic('mediaserver.error.unknown', { code: '?' }));
     for (const l of ['en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
       await setLocale(l);
       const t = mediaFailedText('unhealthy');
       expect(t, l).toContain('FriendFlix');
-      expect(t, l).toContain('unhealthy');
-      expect(t, l).not.toMatch(/\{\w+\}/);
+      expect(t, l).toContain(mediaErrorText('unhealthy'));
+      expect(t, l).not.toMatch(/\{\w+\}|unhealthy/);
     }
   });
 

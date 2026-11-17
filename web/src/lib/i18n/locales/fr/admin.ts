@@ -299,7 +299,7 @@ const fr: Translation<typeof de> = {
       result: {
         succeeded: 'Mise à jour vers {to} terminée.',
         rolled_back: 'La nouvelle version n’a pas démarré correctement : retour à {from}.',
-        succeeded_mediaserver_failed: 'FriendFlix mis à jour, le serveur multimédia non : {code}.',
+        succeeded_mediaserver_failed: 'FriendFlix mis à jour, le serveur multimédia non. {reason}',
         failed: 'La tâche a échoué : {reason}.',
         failedAt: 'La tâche a échoué à « {row} ».',
       },

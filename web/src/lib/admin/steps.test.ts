@@ -116,7 +116,8 @@ describe('media server steps', () => {
     expect(f.rows.map((r) => r.key)).toEqual(['media-check', 'media-pull', 'media-verify', 'media-snapshot', 'media-create', 'media-start', 'media-health']);
     expect(f.rows.map((r) => r.state)).toEqual(['ok', 'ok', 'running', 'waiting', 'waiting', 'waiting', 'waiting']);
     expect(f.rows.map((r) => r.label)).toEqual(['Check requirements', 'Download image', 'Verify image', 'Back up data', 'Create container', 'Start', 'Health check']);
-    expect(f).toMatchObject({ outcome: 'running', count: 'Step 3 of 7', reserve: 0 });
+    // a media job may roll back: its rollback row's room is kept under the list from the start
+    expect(f).toMatchObject({ outcome: 'running', count: 'Step 3 of 7', reserve: 1 });
     // Live TV's step list passed to a media job changes nothing
     expect(jobFlow(job({ action: 'mediaserver-start', steps: SKIP, media: media() }), { steps: ['restart'] }).rows[0]!.key).toBe('media-check');
   });
@@ -125,8 +126,22 @@ describe('media server steps', () => {
     const f = jobFlow(job({ action: 'mediaserver-update', state: 'rolled_back', error: 'unhealthy', finishedAt: iso(9_000), steps: SKIP,
       media: media({ check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'skipped', create: 'ok', start: 'ok', health: 'failed', rollback: 'ok' }) }));
     expect(f.rows.at(-1)).toMatchObject({ key: 'media-rollback', state: 'ok', label: 'Roll back' });
-    expect(f).toMatchObject({ outcome: 'failed', count: 'Stopped at step 7 of 7' });
+    // the rollback row now fills the reserved slot
+    expect(f).toMatchObject({ outcome: 'failed', count: 'Stopped at step 7 of 7', reserve: 0 });
     expect(f.note).toMatchObject({ tone: 'bad', result: 'rolled_back', retry: true });
+  });
+
+  it('a media job\'s rollback starting takes the reserved slot: rows plus slots stay the same, the earlier rows keep their keys', () => {
+    for (const action of ['mediaserver-apply', 'mediaserver-update', 'mediaserver-restore', 'mediaserver-start'] as const) {
+      const before = jobFlow(job({ action, steps: SKIP, media: media({ check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'skipped', create: 'ok', start: 'ok', health: 'running' }, 'health') }));
+      const after = jobFlow(job({ action, steps: SKIP, media: media({ check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'skipped', create: 'ok', start: 'ok', health: 'failed', rollback: 'running' }, 'rollback') }));
+      expect(before.rows.length + (before.reserve ?? 0), action).toBe(after.rows.length + (after.reserve ?? 0));
+      expect(after.rows.map((r) => r.key).slice(0, before.rows.length), action).toEqual(before.rows.map((r) => r.key));
+      expect(after.rows.at(-1)!.key, action).toBe('media-rollback');
+      // finished without a rollback: the slot stays (nothing moves at the end either)
+      const ok = jobFlow(job({ action, state: 'succeeded', finishedAt: iso(9_000), steps: SKIP, media: media({ check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'skipped', create: 'ok', start: 'ok', health: 'ok', rollback: 'skipped' }) }));
+      expect(ok.reserve, action).toBe(1);
+    }
   });
 
   it('an update job with a media server phase adds its steps after the core steps', () => {
@@ -211,7 +226,7 @@ describe('media server steps', () => {
       media: media({ check: 'ok', pull: 'failed', verify: 'skipped', snapshot: 'skipped', create: 'skipped', start: 'skipped', health: 'skipped', rollback: 'skipped' }) }));
     expect(f.outcome).toBe('warn');
     expect(f.count).toBe('Stopped at step 6 of 11');
-    expect(f.note).toEqual({ tone: 'warn', result: 'succeeded_mediaserver_failed', text: 'FriendFlix updated, media server not: pull_failed.', advice: '', detail: 'Took 1 min', retry: false, href: '/admin/settings?tab=media' });
+    expect(f.note).toEqual({ tone: 'warn', result: 'succeeded_mediaserver_failed', text: 'FriendFlix updated, media server not. The image could not be downloaded. Check the server’s internet connection.', advice: '', detail: 'Took 1 min', retry: false, href: '/admin/settings?tab=media' });
   });
 
   it('a media rollback row never makes a step before it done while the list catches up', () => {

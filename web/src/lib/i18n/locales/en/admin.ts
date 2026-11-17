@@ -299,7 +299,7 @@ const en: Translation<typeof de> = {
       result: {
         succeeded: 'Update to {to} finished.',
         rolled_back: 'The new version did not start properly: rolled back to {from}.',
-        succeeded_mediaserver_failed: 'FriendFlix updated, media server not: {code}.',
+        succeeded_mediaserver_failed: 'FriendFlix updated, media server not. {reason}',
         failed: 'The job failed: {reason}.',
         failedAt: 'Job failed at “{row}”.',
       },

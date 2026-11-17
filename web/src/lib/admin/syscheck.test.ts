@@ -14,6 +14,7 @@ import {
   CHECK_GROUPS, CHECK_IDS, BROWSER_IDS, adviceTexts, cachedBrowserLines, cachedSystemcheck, checkedAtText, countLines, docsHref, forgetSystemcheck, isNewer, lineText, mergeLines, rememberBrowserLines, rememberSystemcheck, settingHref, statusIcon,
   loadSystemcheck, statusTone, summaryOf, type CheckLine, type CheckStatus, type SystemcheckResult,
 } from './syscheck';
+import { mediaErrorText } from './mediaserver/model';
 
 afterEach(async () => { await setLocale('de'); });
 
@@ -338,9 +339,14 @@ describe('media.managed (the managed media server)', () => {
     }
   });
 
-  it('a failed job names its code; anything else in params is not shown', () => {
-    expect(lineText(ln({ id: 'media.managed', status: 'warning', cause: 'managed_job_failed', fix: 'managed_job_failed', params: { code: 'verify_failed' } })).cause).toContain('verify_failed');
-    expect(lineText(ln({ id: 'media.managed', status: 'warning', cause: 'managed_job_failed', fix: 'managed_job_failed', params: { code: '/srv/media' } })).cause).not.toContain('/srv');
+  it('a failed job says its code as a sentence; anything else in params is not shown', () => {
+    const cause = (code: string) => lineText(ln({ id: 'media.managed', status: 'warning', cause: 'managed_job_failed', fix: 'managed_job_failed', params: { code } })).cause;
+    expect(cause('verify_failed')).toContain(mediaErrorText('verify_failed'));
+    expect(cause('verify_failed')).not.toContain('verify_failed');
+    // a code this build has no text for still names itself; a path is never shown
+    expect(cause('brand_new_code')).toContain('brand_new_code');
+    expect(cause('/srv/media')).not.toContain('/srv');
+    expect(cause('/srv/media')).not.toMatch(/\{\w+\}/);
     // Docker Engine 26 is named where the engine is too old
     expect(lineText(ln({ id: 'media.managed', status: 'not_set_up', cause: 'managed_engine_old', fix: 'managed_engine_old' })).fix).toContain('26');
   });

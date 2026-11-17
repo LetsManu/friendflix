@@ -103,7 +103,7 @@ export default {
     managed_base_missing: 'Der Basisordner fehlt (zum Beispiel eine nicht eingehängte NAS-Freigabe).',
     managed_folder_missing: 'Ein gewählter Ordner fehlt im Basisordner.',
     managed_gpu_missing: 'Die gewählte Grafikkarte wurde nicht gefunden.',
-    managed_job_failed: 'Der letzte Auftrag am Medienserver ist fehlgeschlagen (Fehlercode {code}).',
+    managed_job_failed: 'Der letzte Auftrag am Medienserver ist fehlgeschlagen. {reason}',
     managed_update_pending: 'Der Medienserver läuft seit über 7 Tagen nicht auf der Version, die dieser FriendFlix-Stand vorsieht.',
     managed_backup_old: 'Seit über 30 Tagen gibt es keine Sicherung des Medienservers.',
     no_hw_accel: 'Hardware-Beschleunigung ist aus: der Prozessor wandelt um, das ist langsam und schafft wenige Streams.',

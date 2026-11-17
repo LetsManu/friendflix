@@ -319,7 +319,7 @@ const pl: Translation<typeof de> = {
       result: {
         succeeded: 'Aktualizacja do {to} zakończona.',
         rolled_back: 'Nowa wersja nie uruchomiła się poprawnie: przywrócono {from}.',
-        succeeded_mediaserver_failed: 'FriendFlix zaktualizowany, serwer multimediów nie: {code}.',
+        succeeded_mediaserver_failed: 'FriendFlix zaktualizowany, serwer multimediów nie. {reason}',
         failed: 'Zadanie nie powiodło się: {reason}.',
         failedAt: 'Zadanie nie powiodło się na etapie „{row}”.',
       },

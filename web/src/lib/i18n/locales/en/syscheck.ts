@@ -102,7 +102,7 @@ const dict: Translation<typeof de> = {
     managed_base_missing: 'The base folder is missing (for example a NAS share that is not mounted).',
     managed_folder_missing: 'A chosen folder is missing from the base folder.',
     managed_gpu_missing: 'The chosen graphics card was not found.',
-    managed_job_failed: 'The last media server job failed (error code {code}).',
+    managed_job_failed: 'The last media server job failed. {reason}',
     managed_update_pending: 'For more than 7 days the media server has not been on the version this FriendFlix version provides.',
     managed_backup_old: 'There has been no media server backup for more than 30 days.',
     no_hw_accel: 'Hardware acceleration is off: the processor converts, which is slow and handles few streams.',

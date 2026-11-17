@@ -299,7 +299,7 @@ const it: Translation<typeof de> = {
       result: {
         succeeded: 'Aggiornamento a {to} completato.',
         rolled_back: 'La nuova versione non è partita correttamente: ripristinata {from}.',
-        succeeded_mediaserver_failed: 'FriendFlix aggiornato, il server multimediale no: {code}.',
+        succeeded_mediaserver_failed: 'FriendFlix aggiornato, il server multimediale no. {reason}',
         failed: 'Operazione non riuscita: {reason}.',
         failedAt: 'Operazione non riuscita a «{row}».',
       },

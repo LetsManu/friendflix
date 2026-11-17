@@ -102,7 +102,7 @@ const dict: Translation<typeof de> = {
     managed_base_missing: 'Brakuje folderu bazowego (na przykład niezamontowanego udziału NAS).',
     managed_folder_missing: 'W folderze bazowym brakuje wybranego folderu.',
     managed_gpu_missing: 'Nie znaleziono wybranej karty graficznej.',
-    managed_job_failed: 'Ostatnie zadanie serwera multimediów nie powiodło się (kod błędu {code}).',
+    managed_job_failed: 'Ostatnie zadanie serwera multimediów nie powiodło się. {reason}',
     managed_update_pending: 'Od ponad 7 dni serwer multimediów nie ma wersji, którą przewiduje ta wersja FriendFlix.',
     managed_backup_old: 'Od ponad 30 dni nie ma kopii zapasowej serwera multimediów.',
     no_hw_accel: 'Akceleracja sprzętowa jest wyłączona: konwertuje procesor, co jest wolne i obsługuje niewiele strumieni.',

@@ -43,7 +43,7 @@ export interface StepFlow {
   count: string;
   reconnecting: boolean;
   note: FlowNote | null;
-  /** invisible row slots kept under the list (an update's rollback, shown only once it starts): nothing moves when it appears */
+  /** invisible row slots kept under the list (an update's or a media job's rollback, shown only once it starts): nothing moves when it appears */
   reserve?: number;
 }
 
@@ -125,8 +125,9 @@ export function jobFlow(job: UpdaterJob, o: FlowOpts & { steps?: readonly StepNa
     note = { tone: outcome === 'ok' ? 'ok' : 'bad', result: job.state, text, advice, detail: [took(job.startedAt, job.finishedAt), code].filter(Boolean).join(' · '), retry: outcome === 'failed' };
   }
   const main = rows.filter((r) => !isRollback(r.key));
-  // an update may roll back: its row's room is kept from the start, the row itself shows only once the rollback started
-  const reserve = job.action === 'update' && main.length === rows.length ? 1 : 0;
+  // an update and a media job may roll back: the row's room is kept from the start, the row itself shows only once the rollback
+  // started (it takes the slot: nothing moves)
+  const reserve = (job.action === 'update' || isMediaJob(job.action)) && main.length === rows.length ? 1 : 0;
   return { rows, outcome, label, reconnecting: running && Boolean(o.reconnecting), note, reserve, ...frame(main, outcome) };
 }
 

@@ -102,7 +102,7 @@ const dict: Translation<typeof de> = {
     managed_base_missing: 'Falta la carpeta base (por ejemplo, una carpeta compartida del NAS sin montar).',
     managed_folder_missing: 'Falta una carpeta elegida en la carpeta base.',
     managed_gpu_missing: 'No se encontró la tarjeta gráfica elegida.',
-    managed_job_failed: 'La última tarea del servidor multimedia falló (código de error {code}).',
+    managed_job_failed: 'La última tarea del servidor multimedia falló. {reason}',
     managed_update_pending: 'Desde hace más de 7 días el servidor multimedia no está en la versión que prevé esta versión de FriendFlix.',
     managed_backup_old: 'No hay ninguna copia de seguridad del servidor multimedia desde hace más de 30 días.',
     no_hw_accel: 'La aceleración por hardware está desactivada: convierte el procesador, lo que es lento y admite pocas emisiones.',
