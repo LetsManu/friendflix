@@ -6,6 +6,7 @@ import { broadcastLanguage, isMsg, renderKnown, renderNotice, userLanguage, type
 export { renderNotice, type Rendered } from './i18n.js';
 import { mailPerson, type MailPrefType } from './mail/people.js';
 import { sendWebPush } from './push.js';
+import { groupKey, NEVER_GROUPED } from './notifications/categories.js';
 
 export interface Notice {
   /** null = broadcast to everyone */
@@ -55,10 +56,12 @@ export async function notify(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl' | 'encKey
   const lang = n.userId ? await userLanguage(ctx, n.userId) : instLang;
   const text = renderNotice(n, lang);
   const r = await ctx.db.query(
-    'insert into notifications(user_id, kind, title, body, link, dedupe, msg) values ($1,$2,$3,$4,$5,$6,$7) on conflict (dedupe) do nothing returning id',
-    [n.userId, n.kind, text.title, text.body ?? null, n.link ?? null, n.dedupe ?? null, storedMsg(n)],
+    'insert into notifications(user_id, kind, title, body, link, dedupe, msg, group_key) values ($1,$2,$3,$4,$5,$6,$7,$8) on conflict (dedupe) do nothing returning id',
+    [n.userId, n.kind, text.title, text.body ?? null, n.link ?? null, n.dedupe ?? null, storedMsg(n), groupKey(n.kind, n.title)],
   );
   if (!r.rowCount) return false;
+  // a never-grouped kind stands alone: its key carries its own id, known only after the insert
+  if (NEVER_GROUPED.has(n.kind)) await ctx.db.query('update notifications set group_key = $2 where id = $1', [r.rows[0].id, groupKey(n.kind, n.title, Number(r.rows[0].id))]);
   // Web Push: fire-and-forget, never blocks or fails the caller (tests await sendWebPush directly)
   void sendWebPush(ctx, n).catch(() => undefined);
   if (n.external) await pushExternal(ctx, renderNotice(n, instLang)).catch(() => undefined);
