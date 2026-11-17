@@ -12,7 +12,7 @@ import { Decrypter, Encrypter } from 'age-encryption';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { StepError } from '../src/docker.js';
 import { restoreBackup, writeBackup } from '../src/mediaHelper.js';
-import { BACKUP_EXCLUDE, metaEntry, type ArchiveMeta } from '../src/mediaserver/archive.js';
+import { BACKUP_EXCLUDE, entryCheck, metaEntry, type ArchiveMeta } from '../src/mediaserver/archive.js';
 import { backupId, decodePassphrase, download, older, prune, removeStaleParts, retain, upload } from '../src/mediaserver/backup.js';
 import { MediaJobs } from '../src/mediaserver/jobs.js';
 import type { BackupMeta, BackupTag } from '../src/mediaserver/types.js';
@@ -689,14 +689,14 @@ describe('helper verbs', () => {
   });
 
   /** one tar entry (ustar header + content padded to whole blocks) */
-  function tarEntry(name: string, body = '', o: { type?: string; link?: string; prefix?: string } = {}): Buffer {
+  function tarEntry(name: string, body = '', o: { type?: string; link?: string; prefix?: string; size?: number } = {}): Buffer {
     const content = Buffer.from(body, 'utf8');
     const h = Buffer.alloc(512);
     h.write(name, 0, 'utf8');
     h.write('0000644\0', 100, 'latin1');
     h.write('0000000\0', 108, 'latin1');
     h.write('0000000\0', 116, 'latin1');
-    h.write(content.length.toString(8).padStart(11, '0') + '\0', 124, 'latin1');
+    h.write((o.size ?? content.length).toString(8).padStart(11, '0') + '\0', 124, 'latin1');
     h.write('00000000000\0', 136, 'latin1');
     h.write(o.type ?? '0', 156, 'latin1');
     h.write(o.link ?? '', 157, 'utf8');
@@ -750,7 +750,36 @@ describe('helper verbs', () => {
       'an entry after one empty block': [tarEntry('ok.txt', 'ok'), Buffer.alloc(512), tarEntry('../escaped.txt', 'x')],
       'a pax path for an empty block': [tarEntry('PaxHeaders/x', pax({ path: 'fine.txt' }), { type: 'x' }), Buffer.alloc(512), tarEntry('../escaped.txt', 'x')],
       'a prefix without the ustar magic': [(() => { const e = tarEntry('escaped.txt', 'x', { prefix: '..' }); e.write('xxxxx', 257, 'latin1'); return fixSum(e); })()],
+      // tar reads no content for links and directories whatever the size says: the "content" would be its next header
+      'a directory with a size hiding a header': [tarEntry('d/', '', { type: '5', size: 512 }), tarEntry('data', '', { type: '2', link: '/backups' })],
+      'a symlink with a size hiding a header': [tarEntry('s', '', { type: '2', link: 'x', size: 512 }), tarEntry('../escaped.txt', 'x')],
+      'a hard link with a size hiding a header': [tarEntry('h', '', { type: '1', link: 'ok.txt', size: 512 }), tarEntry('/escaped.txt', 'x')],
+      'a file named as a directory with a size (busybox: a directory)': [tarEntry('d/', 'x'.repeat(512)), tarEntry('/escaped.txt', 'x')],
+      // busybox takes a header without a name for an empty block, whatever its size
+      'a header without a name hiding a header': [tarEntry('', '', { size: 512 }), tarEntry('data', '', { type: '2', link: '/backups' })],
+      'a character device': [tarEntry('null', '', { type: '3' })],
+      'a block device': [tarEntry('sda', '', { type: '4' })],
+      'a fifo': [tarEntry('pipe', '', { type: '6' })],
+      'an unknown entry type': [tarEntry('sparse', 'x', { type: 'S' })],
+      'a file entry with a link name out (busybox: a hard link)': [tarEntry('f', '', { link: '/etc/passwd' })],
+      'a pax linkpath out on a file entry': [tarEntry('PaxHeaders/x', pax({ linkpath: '../../etc/passwd' }), { type: 'x' }), tarEntry('f', '')],
+      'a pax value with a NUL (busybox reads "..")': [tarEntry('PaxHeaders/x', pax({ linkpath: '..\0x' }), { type: 'x' }), tarEntry('l', '', { type: '2', link: 'y' })],
+      'a long name with data after its NUL': [tarEntry('././@LongLink', 'ok.txt\0../escaped.txt', { type: 'L' }), tarEntry('placeholder', 'x')],
+      'a pax size': [tarEntry('PaxHeaders/x', pax({ size: '0' }), { type: 'x' }), tarEntry('f', 'x'.repeat(512)), tarEntry('../escaped.txt', 'x')],
+      'a symlink out, then a file through it': [tarEntry('lnk', '', { type: '2', link: '/backups' }), tarEntry('lnk/escaped.txt', 'x')],
     };
+    // the check alone, fed in pieces that cut headers and contents anywhere
+    const checked = async (buf: Buffer, step: number): Promise<string> => {
+      const t = entryCheck();
+      const done = new Promise<string>((resolve) => { t.on('error', () => resolve('refused')); t.on('finish', () => resolve('passed')); });
+      t.resume();
+      for (let i = 0; i < buf.length; i += step) t.write(buf.subarray(i, i + step));
+      t.end();
+      return done;
+    };
+    for (const [what, entries] of Object.entries(hostile)) {
+      for (const step of [1, 7, 511, 513, 65536]) expect([what, step, await checked(Buffer.concat([...entries, end]), step)]).toEqual([what, step, 'refused']);
+    }
     let n = 0;
     for (const [what, entries] of Object.entries(hostile)) {
       const id = `ferrofin-20261117-${String(1000 + n++)}-v1.5.1`;
@@ -769,6 +798,7 @@ describe('helper verbs', () => {
     const id = 'ferrofin-20261117-1500-v1.5.1';
     const body = execFileSync('tar', ['--format=gnu', '-c', '-f', '-', '-C', src, 'library.db', 'metadata']);
     writeFileSync(join(out, `${id}.tar.gz`), gzipSync(Buffer.concat([metaEntry(meta), tarEntry('PaxHeaders/y', pax({ comment: 'fine' }), { type: 'x' }), body])));
+    for (const step of [1, 7, 511, 513, 65536]) expect([step, await checked(body, step)]).toEqual([step, 'passed']);
     expect(await restoreBackup({ data: target, backups: out }, { id, kind: 'ferrofin' })).toEqual({ ok: true });
     expect(readFileSync(join(target, deep, 'poster.jpg'), 'utf8')).toBe('p');
     expect(readdirSync(parent)).toEqual(['data']);

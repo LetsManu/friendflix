@@ -128,7 +128,10 @@ function size(h: Buffer): number {
   }
   return num(h, 124, 12);
 }
-/** pax records `<len> key=value\n`: path and linkpath; null when malformed */
+/**
+ * pax records `<len> key=value\n`: path and linkpath; null when malformed, when a path value holds a NUL (busybox ends it there:
+ * `..\0x` is `..` to it) or when a record sets `size` (GNU tar would then read another length than the header's)
+ */
 function paxPaths(b: Buffer): { path?: string; linkpath?: string } | null {
   const out: { path?: string; linkpath?: string } = {};
   let at = 0;
@@ -141,12 +144,21 @@ function paxPaths(b: Buffer): { path?: string; linkpath?: string } | null {
     const eq = rec.indexOf('=');
     if (eq < 0) return null;
     const key = rec.slice(0, eq);
-    if (key === 'path' || key === 'linkpath') out[key] = rec.slice(eq + 1);
+    const value = rec.slice(eq + 1);
+    if (key === 'size') return null;
+    if (key === 'path' || key === 'linkpath') {
+      if (value.includes('\0')) return null;
+      out[key] = value;
+    }
     at += len;
   }
   return out;
 }
 const PAX_MAX = 1 << 20;
+/** the entry types restore accepts: file (`0`, old `\0`, contiguous `7`), hard link, symlink, directory */
+const ENTRY_TYPES = ['0', '\0', '7', '1', '2', '5'];
+/** types whose size field tar ignores (no content follows): a size there would make this check and tar read different blocks */
+const NO_CONTENT = ['1', '2', '5'];
 
 /**
  * Passes a tar stream through unchanged and fails it at the first entry whose name or link target leaves the folder it is
@@ -155,6 +167,11 @@ const PAX_MAX = 1 << 20;
  * extracts, GNU tar skips them), so restore decides itself, before the data folder is emptied. A backup the helper wrote never
  * holds such an entry. Checking ends at two empty blocks in a row, the end of the archive for every tar (busybox skips a single
  * one and reads on, so a single one does not end the check; one right after a long name or pax header is refused).
+ * Everything a tar could read differently from this check is refused too, so both always see the same headers: a size on an
+ * entry type tar reads without content (links, directories, and files whose name ends in `/`, which busybox makes directories),
+ * a header without a name (busybox takes it for an empty block whatever its size), a NUL inside a long name or pax value, a pax
+ * `size`, and every entry type but files, links and directories (devices and fifos have no place in a backup). Link targets are
+ * checked on every entry (busybox makes a file entry with a link name and no content a hard link).
  */
 export function entryCheck(): Transform {
   let head = Buffer.alloc(0);
@@ -168,6 +185,7 @@ export function entryCheck(): Transform {
     let p: { path?: string; linkpath?: string } | null;
     if (k.type === 'L' || k.type === 'K') {
       const end = b.indexOf(0);
+      if (end >= 0 && b.subarray(end).some((x) => x !== 0)) return false; // data after the NUL that ends it
       p = { [k.type === 'L' ? 'path' : 'linkpath']: b.subarray(0, end < 0 ? b.length : end).toString('utf8') };
     } else p = paxPaths(b);
     if (!p || Object.values(p).some(leaves)) return false;
@@ -194,12 +212,16 @@ export function entryCheck(): Transform {
       if (n === 0) { const k = keep; keep = null; return finish(k); }
       return true;
     }
+    if (!ENTRY_TYPES.includes(type)) return false;
     // the prefix whatever the magic says (a tar that joins it unchecked must not see more than this check)
     const prefix = field(h, 345, 155);
-    const name = next.path ?? (prefix ? `${prefix}/${field(h, 0, 100)}` : field(h, 0, 100));
+    const own = field(h, 0, 100);
+    if (own === '' && prefix === '' && next.path === undefined) return false;
+    const name = next.path ?? (prefix ? `${prefix}/${own}` : own);
     const link = next.linkpath ?? field(h, 157, 100);
     next = {};
-    return !leaves(name) && !((type === '1' || type === '2') && leaves(link));
+    if (n > 0 && (NO_CONTENT.includes(type) || name.endsWith('/'))) return false;
+    return !leaves(name) && !leaves(link);
   };
   return new Transform({
     transform(c: Buffer, _e, cb) {
