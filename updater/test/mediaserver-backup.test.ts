@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +13,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { StepError } from '../src/docker.js';
 import { restoreBackup, writeBackup } from '../src/mediaHelper.js';
 import { BACKUP_EXCLUDE, metaEntry, type ArchiveMeta } from '../src/mediaserver/archive.js';
-import { backupId, decodePassphrase, download, prune, retain, upload } from '../src/mediaserver/backup.js';
+import { backupId, decodePassphrase, download, prune, removeStaleParts, retain, upload } from '../src/mediaserver/backup.js';
 import { MediaJobs } from '../src/mediaserver/jobs.js';
 import type { BackupMeta, BackupTag } from '../src/mediaserver/types.js';
 import { JSPEC, N, SPEC, T0, ferroPin, jellyPin, world } from './media-world.js';
@@ -226,6 +226,33 @@ describe('download', () => {
     expect(openFds(file)).toBe(0);
     const job = await w.run({ op: 'restore', id });
     expect(job).toMatchObject({ action: 'mediaserver-restore', state: 'succeeded' });
+    // the safety snapshot of the same minute and upstream would have replaced the backup being restored: it moves on a minute
+    expect(w.helperCalls.find((c) => c.verb === 'backup')!.args[0]).toBe('jellyfin-20261117-1403-10.11.3');
+    expect(w.media().backups.map((b) => [b.id, b.tag])).toEqual([[id, 'manual'], ['jellyfin-20261117-1403-10.11.3', 'auto']]);
+  }, SLOW);
+
+  it('download checks the passphrase rule, and only one key derivation runs at a time', async () => {
+    const w = setup();
+    const id = 'jellyfin-20261117-1402-10.11.3';
+    writeFileSync(join(w.dir, `${id}.tar.gz`), randomBytes(1024));
+    w.updater.updateMedia((m) => { m.backups = [entry(id, 'manual', new Date(T0).toISOString())]; });
+    const short = new FakeRes();
+    await download({ dir: w.dir, updater: w.updater }, id, 'kurz', short.asRes());
+    expect([short.statusCode, JSON.parse(short.body().toString())]).toEqual([400, { error: 'invalid_passphrase' }]);
+
+    const first = new FakeRes();
+    const running = download({ dir: w.dir, updater: w.updater }, id, PASS, first.asRes());
+    const second = new FakeRes();
+    await download({ dir: w.dir, updater: w.updater }, id, PASS, second.asRes());
+    expect([second.statusCode, JSON.parse(second.body().toString())]).toEqual([409, { error: 'busy' }]);
+    const body = await encrypt(archive());
+    const stream = req(body);
+    expect(await upload({ dir: w.dir, updater: w.updater, now: () => T0 }, stream, PASS)).toEqual({ ok: false, status: 409, error: 'busy' });
+    // nothing of the refused upload was read
+    expect(stream.readableFlowing).toBeNull();
+    await running;
+    expect(first.statusCode).toBe(200);
+    expect((await upload({ dir: w.dir, updater: w.updater, now: () => T0 + 60_000 }, req(body), PASS)).ok).toBe(true);
   }, SLOW);
 
   it('a missing or unknown backup is not_found, one being restored is busy', async () => {
@@ -330,6 +357,67 @@ describe('upload', () => {
     expect(await upload(d, req(body), 'kurz')).toEqual({ ok: false, status: 400, error: 'invalid_passphrase' });
   }, SLOW);
 
+  it('an unsound age header is refused before age reads it, with bounded memory', async () => {
+    const w = setup();
+    const d = { dir: w.dir, updater: w.updater, now: () => T0 };
+    /** 1 GiB offered in 64-KB chunks; counts what was taken */
+    const offer = (first: Buffer, fill: Buffer) => {
+      let pulled = 0;
+      const src = Readable.from((function* () {
+        pulled++; yield first;
+        for (let i = 0; i < 16384; i++) { pulled++; yield fill; }
+      })());
+      return { stream: Object.assign(src, { headers: {} }) as unknown as IncomingMessage, pulled: () => pulled };
+    };
+    // no newline at all
+    const blob = Buffer.alloc(65536, 0x61);
+    let o = offer(blob, blob);
+    expect(await upload(d, o.stream, PASS)).toEqual({ ok: false, status: 400, error: 'backup_invalid' });
+    expect(o.pulled()).toBeLessThan(64);
+    // the right version line, but no end of the header within 64 KiB
+    o = offer(Buffer.from('age-encryption.org/v1\n'), Buffer.from(`${'a'.repeat(63)}\n`.repeat(1024)));
+    expect(await upload(d, o.stream, PASS)).toEqual({ ok: false, status: 400, error: 'backup_invalid' });
+    expect(o.pulled()).toBeLessThan(64);
+    // a scrypt work factor above 18 (age would accept up to 20: about 1 GB for the key)
+    const body = await encrypt(archive());
+    const head = body.subarray(0, 200).toString('latin1');
+    const stanza = /^-> scrypt \S+ 10$/m.exec(head)![0];
+    const heavy = Buffer.concat([Buffer.from(head.replace(stanza, stanza.replace(/ 10$/, ' 19')), 'latin1'), body.subarray(200)]);
+    expect(await upload(d, req(heavy), PASS)).toEqual({ ok: false, status: 400, error: 'backup_invalid' });
+    expect(readdirSync(w.dir)).toEqual([]);
+    // the same file with its own work factor passes
+    expect((await upload(d, req(body), PASS)).ok).toBe(true);
+  }, SLOW);
+
+  it('an archive cut short after its metadata is refused at upload', async () => {
+    const w = setup();
+    const whole = archive({}, randomBytes(100_000));
+    const cut = whole.subarray(0, 60_000);
+    const r = await upload({ dir: w.dir, updater: w.updater, now: () => T0 }, req(await encrypt(cut)), PASS);
+    expect(r).toEqual({ ok: false, status: 400, error: 'backup_invalid' });
+    expect(readdirSync(w.dir)).toEqual([]);
+  }, SLOW);
+
+  it('leftover part files are removed, at start and before each backup and upload', async () => {
+    const w = setup();
+    w.existing(SPEC, ferroPin(), 'v1.5.1');
+    const leave = (): void => {
+      writeFileSync(join(w.dir, 'ferrofin-20261117-1300-v1.5.1.tar.gz.part'), 'plain');
+      writeFileSync(join(w.dir, '.upload-0123456789abcdef01234567.part'), 'plain');
+    };
+    writeFileSync(join(w.dir, 'ferrofin-20261117-1300-v1.5.1.tar.gz'), 'kept');
+    leave();
+    await removeStaleParts(w.dir);
+    expect(readdirSync(w.dir)).toEqual(['ferrofin-20261117-1300-v1.5.1.tar.gz']);
+    await removeStaleParts(join(w.dir, 'missing'));
+    leave();
+    expect((await w.run({ op: 'backup', trickplay: false })).state).toBe('succeeded');
+    expect(readdirSync(w.dir)).toEqual(['ferrofin-20261117-1300-v1.5.1.tar.gz']);
+    leave();
+    expect((await upload({ dir: w.dir, updater: w.updater, now: () => T0 }, req(await encrypt(archive())), PASS)).ok).toBe(true);
+    expect(readdirSync(w.dir).filter((f) => f.endsWith('.part'))).toEqual([]);
+  }, SLOW);
+
   it('an upload is pruned with the manual ones and refused while that id is restored', async () => {
     const w = setup();
     w.existing(JSPEC, jellyPin('10.11.3'), '10.11.3');
@@ -391,31 +479,68 @@ describe('jobs', () => {
     expect(w.calls).toEqual([`stop ${N.container}`, 'helper backup']);
   });
 
-  it('restore stops, replaces the data, starts and checks health', async () => {
+  it('restore stops, takes a safety snapshot, replaces the data, starts and checks health', async () => {
     const w = setup();
     w.existing(JSPEC, jellyPin('10.11.3'), '10.11.3');
     const id = 'jellyfin-20261110-0900-10.11.2';
+    const safety = 'jellyfin-20261117-1402-10.11.3';
     writeFileSync(join(w.dir, `${id}.tar.gz`), 'x');
     w.updater.updateMedia((m) => { m.backups = [entry(id, 'upload', '2026-11-10T09:00:00.000Z', 'jellyfin', '10.11.2')]; });
     const job = await w.run({ op: 'restore', id });
     expect(job).toMatchObject({ action: 'mediaserver-restore', state: 'succeeded', error: null });
-    expect(w.calls).toEqual([`stop ${N.container}`, 'helper restore', `start ${N.container}`]);
+    expect(w.calls).toEqual([`stop ${N.container}`, 'helper backup', 'helper restore', `start ${N.container}`]);
+    expect(w.helperCalls.find((c) => c.verb === 'backup')!.args).toEqual([safety, '0', 'jellyfin', '10.11.3']);
     const call = w.helperCalls.find((c) => c.verb === 'restore')!;
     expect(call.args).toEqual([id, 'jellyfin']);
     expect(call.mounts).toEqual([
       { Type: 'volume', Source: N.data('jellyfin'), Target: '/data', ReadOnly: false, VolumeOptions: { NoCopy: true } },
       { Type: 'volume', Source: N.backup, Target: '/backups', ReadOnly: true },
     ]);
-    expect(job.media!.steps).toMatchObject({ check: 'ok', snapshot: 'ok', start: 'ok', health: 'ok' });
-
-    // a failed restore: half-restored data is never started on
+    expect(job.media!.steps).toMatchObject({ check: 'ok', snapshot: 'ok', create: 'ok', start: 'ok', health: 'ok', rollback: 'skipped' });
+    expect(w.media().backups.map((b) => [b.id, b.tag])).toEqual([[id, 'upload'], [safety, 'auto']]);
     const answer = w.cfg.answer;
-    w.cfg.answer = (c) => (c.verb === 'restore' ? new StepError('helper_timeout') : answer(c));
-    w.calls.length = 0;
-    const failed = await w.run({ op: 'restore', id });
-    expect(failed).toMatchObject({ state: 'failed', error: 'restore_failed' });
-    expect(w.calls).toEqual([`stop ${N.container}`, 'helper restore']);
+    const again = async (restore: (c: { args: string[] }) => ReturnType<typeof answer>) => {
+      w.cfg.answer = (c) => (c.verb === 'restore' ? restore(c) : answer(c));
+      w.calls.length = 0;
+      w.helperCalls.length = 0;
+      w.clock.t += 60_000;
+      return w.run({ op: 'restore', id });
+    };
+
+    // the archive failed the helper's check: nothing changed, the server runs again, no rollback
+    const invalid = await again(() => ({ error: 'backup_invalid' }));
+    expect(invalid).toMatchObject({ state: 'failed', error: 'backup_invalid' });
+    expect(w.calls).toEqual([`stop ${N.container}`, 'helper backup', 'helper restore', `start ${N.container}`]);
+    expect(invalid.media!.steps).toMatchObject({ snapshot: 'ok', create: 'failed', start: 'ok', rollback: 'skipped' });
+
+    // the extraction failed after the data was emptied: the safety snapshot goes back, the server runs again
+    const rolled = await again((c) => (c.args[0] === id ? { error: 'restore_failed' } : { ok: true }));
+    expect(rolled).toMatchObject({ state: 'rolled_back', error: 'restore_failed' });
+    expect(w.calls).toEqual([`stop ${N.container}`, 'helper backup', 'helper restore', 'helper restore', `start ${N.container}`]);
+    const [target, back] = w.helperCalls.filter((c) => c.verb === 'restore');
+    expect([target!.args[0], back!.args[0]]).toEqual([id, w.helperCalls.find((c) => c.verb === 'backup')!.args[0]]);
+    expect(rolled.media!.steps).toMatchObject({ create: 'failed', rollback: 'ok', start: 'ok', health: 'ok' });
+    expect(w.logs()).toContain('media server data restored from the safety snapshot');
     expect(w.media().lastError).toBe('restore_failed');
+
+    // the rollback fails too: half-restored data is never started on
+    const failed = await again(() => new StepError('helper_timeout'));
+    expect(failed).toMatchObject({ state: 'failed', error: 'restore_failed' });
+    expect(w.calls).toEqual([`stop ${N.container}`, 'helper backup', 'helper restore', 'helper restore']);
+    expect(failed.media!.steps).toMatchObject({ create: 'failed', rollback: 'failed', start: 'skipped' });
+    expect(w.find(N.container)!.running).toBe(false);
+
+    // a later restore whose safety snapshot fails changes nothing, and does not start the half-restored server either
+    w.cfg.answer = (c) => (c.verb === 'backup' ? { error: 'helper_failed' } : answer(c));
+    w.calls.length = 0;
+    const nosnap = await w.run({ op: 'restore', id });
+    expect(nosnap).toMatchObject({ state: 'failed', error: 'snapshot_failed' });
+    expect(w.calls).toEqual([`stop ${N.container}`, 'helper backup']);
+    // with the server running, a failed safety snapshot starts it again
+    w.find(N.container)!.running = true;
+    w.calls.length = 0;
+    expect(await w.run({ op: 'restore', id })).toMatchObject({ state: 'failed', error: 'snapshot_failed' });
+    expect(w.calls).toEqual([`stop ${N.container}`, 'helper backup', `start ${N.container}`]);
 
     // unknown backup, or its file is gone
     w.cfg.answer = answer;
@@ -508,6 +633,33 @@ describe('helper verbs', () => {
     await expect(restoreBackup({ data: target, backups: out }, { id, kind: 'ferrofin' })).rejects.toMatchObject({ code: 'backup_invalid' });
     expect(readdirSync(target).sort()).toEqual(['config', 'data', 'metadata', 'root']);
     await expect(restoreBackup({ data: target, backups: out }, { id: 'jellyfin-20261117-1404-10.11.3', kind: 'jellyfin' })).rejects.toMatchObject({ code: 'backup_invalid' });
+  });
+
+  it('restore checks the whole archive before it empties the data folder', async () => {
+    const out = tempDir();
+    const target = dataDir();
+    const before = (): string[] => execFileSync('find', [target]).toString().split('\n').sort();
+    const snapshot = before();
+    const meta: ArchiveMeta = { v: 1, kind: 'jellyfin', upstream: '10.11.3', createdAt: new Date(T0).toISOString() };
+    const store = (id: string, bytes: Buffer): string => { writeFileSync(join(out, `${id}.tar.gz`), bytes); return id; };
+    // cut short after the metadata entry; a broken tar after it; a valid one too big for the disk
+    const src = tempDir();
+    writeFileSync(join(src, 'library.db'), randomBytes(200_000));
+    const data = execFileSync('tar', ['-c', '-f', '-', '-C', src, 'library.db']);
+    const cut = store('jellyfin-20261117-1402-10.11.3', gzipSync(Buffer.concat([metaEntry(meta), data])).subarray(0, 80_000));
+    const broken = store('jellyfin-20261117-1403-10.11.3', gzipSync(Buffer.concat([metaEntry(meta), randomBytes(4096)])));
+    const big = store('jellyfin-20261117-1404-10.11.3', gzipSync(Buffer.concat([metaEntry(meta), data])));
+    for (const id of [cut, broken]) await expect(restoreBackup({ data: target, backups: out }, { id, kind: 'jellyfin' })).rejects.toMatchObject({ code: 'backup_invalid' });
+    await expect(restoreBackup({ data: target, backups: out }, { id: big, kind: 'jellyfin' }, { room: async () => 100_000 })).rejects.toMatchObject({ code: 'backup_invalid' });
+    expect(before()).toEqual(snapshot);
+    // a tar that lists but cannot extract: the folder was emptied, the job's rollback takes over
+    const fake = join(tempDir(), 'tar');
+    writeFileSync(fake, '#!/bin/sh\ncase "$1" in -t) cat >/dev/null; exit 0;; *) exit 1;; esac\n');
+    chmodSync(fake, 0o755);
+    await expect(restoreBackup({ data: target, backups: out }, { id: big, kind: 'jellyfin' }, { tar: fake })).rejects.toMatchObject({ code: 'restore_failed' });
+    // and the real one restores it
+    expect(await restoreBackup({ data: target, backups: out }, { id: big, kind: 'jellyfin' })).toEqual({ ok: true });
+    expect(readdirSync(target)).toEqual(['library.db']);
   });
 
   it('a failing tar leaves no part file', async () => {

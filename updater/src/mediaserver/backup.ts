@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomBytes } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
-import { chmod, open, rename, rm, stat } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { chmod, open, readdir, rename, rm, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
-import { Readable, Transform, finished } from 'node:stream';
+import { Readable, Transform, Writable, finished } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadable } from 'node:stream/web';
+import { createGunzip } from 'node:zlib';
 import { Decrypter, Encrypter } from 'age-encryption';
 import { StepError } from '../docker.js';
 import type { Updater } from '../job.js';
@@ -30,9 +31,13 @@ export const UPLOAD_MAX = 20 * 1024 ** 3;
 export const PASSPHRASE_MIN = 12;
 export const PASSPHRASE_MAX = 1024;
 const KEEP = { manualAndUpload: 3, auto: 2 };
+/** an upload's age header must end within this many bytes (age's own reader has no limit) */
+const HEADER_MAX = 64 * 1024;
+/** the highest scrypt work factor an upload may ask for: age's default, what the age CLI and our download write */
+const SCRYPT_MAX_LOG_N = 18;
 const VERSION_RE = /^v?([0-9]+)\.([0-9]+)\.([0-9]+)/;
 
-const fail = (code: 'backup_invalid' | 'backup_failed' | 'kind_mismatch' | 'downgrade_refused' | 'unhealthy'): never => { throw new StepError(code); };
+const fail = (code: 'backup_invalid' | 'backup_failed' | 'kind_mismatch' | 'downgrade_refused' | 'unhealthy' | 'restore_failed'): never => { throw new StepError(code); };
 const fileOf = (dir: string, id: string): string => join(dir, `${id}.tar.gz`);
 const codePoints = (s: string): number => [...s].length;
 const passphraseOk = (p: string): boolean => codePoints(p) >= PASSPHRASE_MIN && codePoints(p) <= PASSPHRASE_MAX;
@@ -74,12 +79,44 @@ export function prune(list: BackupMeta[]): { keep: BackupMeta[]; drop: BackupMet
 
 const downloads = new Map<string, number>();
 const restores = new Set<string>();
+/** `.part` files being written now (an upload's, a helper backup's); every other `.part` is a leftover */
+const writing = new Set<string>();
+/** one scrypt key derivation (download or upload) at a time: each takes about 256 MB */
+let scrypting = false;
 /** a download or a restore of this backup runs */
 export const backupInUse = (id: string): boolean => restores.has(id) || (downloads.get(id) ?? 0) > 0;
 const release = (id: string): void => {
   const n = (downloads.get(id) ?? 1) - 1;
   if (n > 0) downloads.set(id, n); else downloads.delete(id);
 };
+
+/**
+ * removes leftover `.part` files (plain archives of an interrupted backup or upload: they hold password hashes and keys), but
+ * never one being written. Runs at updater start and before each backup and upload.
+ */
+export async function removeStaleParts(dir: string): Promise<void> {
+  let names: string[];
+  try { names = await readdir(dir); } catch { return; }
+  for (const n of names) if (n.endsWith('.part') && !writing.has(n)) await rm(join(dir, n), { force: true }).catch(() => undefined);
+}
+
+/**
+ * a helper backup's id and time: `backupId` at `now`, moved on by a minute while that id is being restored or downloaded (the
+ * new archive would replace it: a safety snapshot in the minute of the upload it restores)
+ */
+export function freeBackupId(kind: Kind, upstream: string, now: number): { id: string; at: Date } {
+  let at = new Date(now);
+  while (backupInUse(backupId(kind, upstream, at))) at = new Date(at.getTime() + 60_000);
+  return { id: backupId(kind, upstream, at), at };
+}
+
+/** runs a helper backup that writes `<id>.tar.gz.part`: leftovers removed first, its own part file kept while it runs */
+export async function writingBackup<T>(dir: string, id: string, fn: () => Promise<T>): Promise<T> {
+  const part = `${id}.tar.gz.part`;
+  await removeStaleParts(dir);
+  writing.add(part);
+  try { return await fn(); } finally { writing.delete(part); }
+}
 
 /** applies the retention to `media.backups` and deletes the files of what it dropped (never one being restored) */
 export async function retain(d: { dir: string; updater: Updater }): Promise<void> {
@@ -97,27 +134,31 @@ export async function record(d: { dir: string; updater: Updater }, meta: BackupM
 
 // --- the streams ---
 
-function answer(res: ServerResponse, status: 404 | 409 | 500, error: string): void {
+function answer(res: ServerResponse, status: 400 | 404 | 409 | 500, error: string): void {
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(JSON.stringify({ error }));
 }
 
 /**
  * `GET /v1/mediaserver/backups/:id/download`: the backup encrypted to the passphrase (age, scrypt recipient) streamed into
- * `res`, no content-length. 404 `not_found` (unknown id or no file), 409 `busy` while that backup is being restored. A client
- * that goes away ends the stream and closes the file before this resolves.
+ * `res`, no content-length. 400 `invalid_passphrase` (12–1024 code points), 404 `not_found` (unknown id or no file), 409 `busy`
+ * while that backup is being restored or another download or upload derives its key. A client that goes away ends the stream
+ * and closes the file before this resolves.
  */
 export async function download(d: { dir: string; updater: Updater }, id: string, passphrase: string, res: ServerResponse): Promise<void> {
+  if (!passphraseOk(passphrase)) return answer(res, 400, 'invalid_passphrase');
   if (!BACKUP_ID_RE.test(id) || !d.updater.mediaState().backups.some((b) => b.id === id)) return answer(res, 404, 'not_found');
-  if (restores.has(id)) return answer(res, 409, 'busy');
+  if (restores.has(id) || scrypting) return answer(res, 409, 'busy');
+  scrypting = true;
   let fh;
-  try { fh = await open(fileOf(d.dir, id), 'r'); } catch { return answer(res, 404, 'not_found'); }
+  try { fh = await open(fileOf(d.dir, id), 'r'); } catch { scrypting = false; return answer(res, 404, 'not_found'); }
   const file = fh.createReadStream();
   downloads.set(id, (downloads.get(id) ?? 0) + 1);
   try {
     const e = new Encrypter();
     e.setPassphrase(passphrase);
-    const out = await e.encrypt(Readable.toWeb(file) as unknown as ReadableStream<Uint8Array>);
+    let out;
+    try { out = await e.encrypt(Readable.toWeb(file) as unknown as ReadableStream<Uint8Array>); } finally { scrypting = false; }
     res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="${id}.tar.gz.age"` });
     await pipeline(Readable.fromWeb(out as unknown as WebReadable<Uint8Array>), res);
     d.updater.log.add('media backup downloaded');
@@ -130,6 +171,58 @@ export async function download(d: { dir: string; updater: Updater }, id: string,
   }
 }
 
+/** the age header (up to and with its `--- <mac>` line): version line first, scrypt work factor at most 18 */
+function headerOk(text: string): boolean {
+  const lines = text.slice(0, -1).split('\n');
+  if (lines[0] !== 'age-encryption.org/v1' || !lines[lines.length - 1]!.startsWith('--- ')) return false;
+  return lines.every((l) => {
+    if (!l.startsWith('-> scrypt')) return true;
+    const a = l.split(' ');
+    return a.length === 4 && /^[1-9][0-9]?$/.test(a[3]!) && Number(a[3]) <= SCRYPT_MAX_LOG_N;
+  });
+}
+
+const VERSION_LINE = Buffer.from('age-encryption.org/v1\n', 'latin1');
+
+/**
+ * passes an upload on to age only once its header is known to be sound: the version line, a `---` line within HEADER_MAX
+ * bytes, no scrypt work factor above 18. Holds at most HEADER_MAX bytes plus one chunk (age's line reader would collect a
+ * newline-free body without limit). Throws on anything else.
+ */
+async function* ageHeaderGuard(src: AsyncIterable<Buffer>): AsyncGenerator<Buffer> {
+  const it = src[Symbol.asyncIterator]();
+  let buf = Buffer.alloc(0);
+  let end = -1;
+  while (end < 0) {
+    const r = await it.next();
+    if (r.done) throw new Error('age header');
+    buf = Buffer.concat([buf, r.value]);
+    const n = Math.min(buf.length, VERSION_LINE.length);
+    if (!buf.subarray(0, n).equals(VERSION_LINE.subarray(0, n))) throw new Error('age header');
+    const mac = buf.indexOf('\n--- ');
+    const nl = mac < 0 ? -1 : buf.indexOf('\n', mac + 1);
+    end = nl < 0 ? -1 : nl + 1;
+    if ((end < 0 && buf.length > HEADER_MAX) || end > HEADER_MAX) throw new Error('age header');
+  }
+  if (!headerOk(buf.subarray(0, end).toString('latin1'))) throw new Error('age header');
+  yield buf;
+  for (;;) {
+    const r = await it.next();
+    if (r.done) return;
+    yield r.value;
+  }
+}
+
+/** the whole gzip stream of a file decompresses (its CRC and length check at the end) */
+async function gzipComplete(path: string): Promise<boolean> {
+  try {
+    await pipeline(createReadStream(path), createGunzip(), new Writable({ write: (_c, _e, cb) => cb() }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export type UploadResult =
   | { ok: true; backup: BackupMeta }
   | { ok: false; status: 400 | 409 | 413; error: 'backup_invalid' | 'busy' | 'too_large' | 'invalid_passphrase' };
@@ -137,8 +230,9 @@ export type UploadResult =
 /**
  * `POST /v1/mediaserver/backups/upload`: an age file of a backup decrypted with the passphrase into the backup volume, tagged
  * `upload`, named by its metadata's kind and upstream and the upload time. More than `max` encrypted bytes (UPLOAD_MAX) abort
- * the request (`too_large`); a wrong passphrase, a damaged or cut file, or an archive without valid metadata is `backup_invalid`.
- * Nothing of a refused upload is kept.
+ * the request (`too_large`); an unsound age header (ageHeaderGuard), a wrong passphrase, a damaged or cut file, a gzip stream
+ * that does not decompress to its end, or an archive without valid metadata is `backup_invalid`; another download or upload
+ * deriving its key is `busy` (nothing read). Nothing of a refused upload is kept.
  */
 export async function upload(d: { dir: string; updater: Updater; now(): number; max?: number }, req: IncomingMessage, passphrase: string): Promise<UploadResult> {
   const max = d.max ?? UPLOAD_MAX;
@@ -149,8 +243,14 @@ export async function upload(d: { dir: string; updater: Updater; now(): number; 
   if (!passphraseOk(passphrase)) return refuse(400, 'invalid_passphrase');
   const declared = Number(req.headers['content-length']);
   if (Number.isFinite(declared) && declared > max) { req.destroy(); return refuse(413, 'too_large'); }
+  if (scrypting) return refuse(409, 'busy');
+  scrypting = true;
+  let keyed = false;
+  const unlock = (): void => { if (!keyed) { keyed = true; scrypting = false; } };
 
-  const part = join(d.dir, `.upload-${randomBytes(12).toString('hex')}.part`);
+  const name = `.upload-${randomBytes(12).toString('hex')}.part`;
+  const part = join(d.dir, name);
+  writing.add(name);
   let seen = 0;
   let tooLarge = false;
   const counted = new Transform({
@@ -163,12 +263,19 @@ export async function upload(d: { dir: string; updater: Updater; now(): number; 
   finished(req, (err) => { if (err) counted.destroy(err); });
   req.pipe(counted);
   try {
+    await removeStaleParts(d.dir);
     const dec = new Decrypter();
     dec.addPassphrase(passphrase);
-    const plain = await dec.decrypt(Readable.toWeb(counted) as unknown as ReadableStream<Uint8Array>);
+    let plain;
+    try {
+      plain = await dec.decrypt(Readable.toWeb(Readable.from(ageHeaderGuard(counted))) as unknown as ReadableStream<Uint8Array>);
+    } finally {
+      unlock();
+    }
     await pipeline(Readable.fromWeb(plain as unknown as WebReadable<Uint8Array>), createWriteStream(part, { flags: 'wx', mode: 0o644 }));
     // readable by the helper, which restores as the media server's user
     await chmod(part, 0o644);
+    if (!(await gzipComplete(part))) fail('backup_invalid');
     const head = (await readFileMeta(part)) ?? fail('backup_invalid');
     const at = new Date(d.now());
     const id = backupId(head.meta.kind, head.meta.upstream, at);
@@ -188,6 +295,9 @@ export async function upload(d: { dir: string; updater: Updater; now(): number; 
     if (tooLarge) req.destroy();
     await rm(part, { force: true }).catch(() => undefined);
     return tooLarge ? refuse(413, 'too_large') : refuse(400, 'backup_invalid');
+  } finally {
+    unlock();
+    writing.delete(name);
   }
 }
 
@@ -229,9 +339,14 @@ export async function backupJob(k: BackupKit, job: Job, trickplay: boolean): Pro
 
 /**
  * `mediaserver-restore`: the backup's kind must be the server's (`kind_mismatch`) and its upstream not newer than the running
- * image (`downgrade_refused`), both before anything stops; then stop, helper `restore`, start and health (when it should run).
- * Any failure after the check is `restore_failed`, and half-restored data is never started on. Steps: check, snapshot (the
- * restore), start, health.
+ * image (`downgrade_refused`), both before anything stops. Then:
+ * - `snapshot`: stop, and an automatic safety snapshot of the current data (tagged `auto`, normal retention);
+ * - `create`: helper `restore`, which verifies the whole archive before it empties the data volume;
+ * - `start`, `health` when the server should run.
+ * The helper's `backup_invalid` (and a failed safety snapshot) changed nothing: the server is started again if it ran before,
+ * and the job fails with that code. Any other restore failure touched the data: `rollback` restores the safety snapshot and
+ * starts the server again if it ran before (job `rolled_back`), or, when that fails too, leaves it stopped (half-restored data
+ * is never started on); the code is `restore_failed` either way.
  */
 export async function restoreJob(k: BackupKit, job: Job, id: string): Promise<void> {
   restores.add(id);
@@ -245,18 +360,44 @@ export async function restoreJob(k: BackupKit, job: Job, id: string): Promise<vo
       await stat(fileOf(k.dir, id)).catch(() => fail('backup_invalid'));
       return { b, found: await k.ours() };
     });
+    /** after a restore: when the server should run; with the data as it was: only when it ran before this job */
+    const startAgain = async (asBefore = false): Promise<void> => {
+      if (!c.found || !k.updater.mediaState().desired?.run || (asBefore && !c.found.running)) return;
+      const cid = c.found.id;
+      await k.step(job, 'start', () => k.engine.start(cid));
+      await k.step(job, 'health', async () => { if (!(await k.healthy(cid))) fail('unhealthy'); });
+    };
+    const codeOf = (e: unknown): string => (e instanceof StepError ? e.code : '');
+
+    let safety: BackupMeta;
     try {
-      await k.step(job, 'snapshot', async () => {
+      safety = await k.step(job, 'snapshot', async () => {
         if (c.found) await k.engine.stop(c.found.id);
-        await k.restoreSnapshot(id, c.b.kind);
+        return k.snapshot('auto', false);
       });
-      if (c.found && k.updater.mediaState().desired?.run) {
-        const cid = c.found.id;
-        await k.step(job, 'start', () => k.engine.start(cid));
-        await k.step(job, 'health', async () => { if (!(await k.healthy(cid))) fail('unhealthy'); });
-      }
     } catch (e) {
-      if (e instanceof StepError && e.code === 'template_violation') throw e;
+      if (codeOf(e) !== 'template_violation') await startAgain(true).catch(() => undefined);
+      throw e;
+    }
+
+    try {
+      await k.step(job, 'create', () => k.restoreSnapshot(id, c.b.kind));
+    } catch (e) {
+      if (codeOf(e) === 'template_violation') throw e;
+      if (codeOf(e) === 'backup_invalid') {
+        await startAgain(true).catch(() => undefined);
+        throw new StepError('backup_invalid');
+      }
+      const back = await k.step(job, 'rollback', () => k.restoreSnapshot(safety.id, safety.kind)).then(() => true, () => false);
+      k.updater.log.add(back ? 'media server data restored from the safety snapshot' : 'media rollback failed');
+      if (back) await startAgain(true).catch(() => undefined);
+      k.updater.updateMedia((m) => { m.lastError = 'restore_failed'; });
+      throw new StepError('restore_failed');
+    }
+
+    try {
+      await startAgain();
+    } catch {
       k.updater.updateMedia((m) => { m.lastError = 'restore_failed'; });
       throw new StepError('restore_failed');
     }

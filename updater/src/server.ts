@@ -6,6 +6,7 @@ import { loadConfig } from './config.js';
 import { Docker, StepError, execRunner, type ImageInfo, type ServiceState } from './docker.js';
 import type { StackInfo } from './stack.js';
 import { Updater, type Ops } from './job.js';
+import { BACKUP_DIR, removeStaleParts } from './mediaserver/backup.js';
 import { FF_SERVICES, HEALTH_SERVICES, SELF_SERVICE, channelTag, parseChannelBody, parseLivetvBody, shaTag } from './policy.js';
 import { ReplayCache, deriveKey, verify, type Verifier } from './protocol.js';
 import { fileStore } from './state.js';
@@ -207,6 +208,8 @@ export function start(env: NodeJS.ProcessEnv = process.env): Server {
   const docker = new Docker({ projectDir: cfg.projectDir, files: cfg.composeFiles, autoFiles: cfg.composeFilesAuto, projectName: cfg.projectName, repo: cfg.repo, dockerHost: cfg.dockerHost,
     livetv: () => livetvEnabled(), self: cfg.self }, execRunner);
   const updater = new Updater(dockerOps(docker, cfg.backendHealthUrl), fileStore(cfg.stateDir));
+  // plain archives an interrupted media server backup or upload left behind (they hold password hashes and keys)
+  void removeStaleParts(BACKUP_DIR);
   livetvEnabled = () => updater.livetv === 'enabled';
   const verifier: Verifier = { key: deriveKey(cfg.secret), cache: new ReplayCache(), notBefore: Date.now() };
   const services = servicesView(docker);

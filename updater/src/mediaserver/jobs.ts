@@ -3,7 +3,7 @@
 import { StepError } from '../docker.js';
 import type { StartResult } from '../job.js';
 import type { Job, MediaState } from '../state.js';
-import { BACKUP_DIR, backupId, backupInUse, backupJob, older, record, restoreJob, type BackupKit } from './backup.js';
+import { BACKUP_DIR, backupInUse, backupJob, freeBackupId, older, record, restoreJob, writingBackup, type BackupKit } from './backup.js';
 import { EngineError } from './engine.js';
 import type { EngineFacts } from './facts.js';
 import { TemplateViolation, assertHelper, assertManaged, assertManagedInspect } from './guard.js';
@@ -576,7 +576,8 @@ export class MediaJobs {
    * a backup of the data volume as the recorded container has it (kind, upstream): helper `backup` with the data volume
    * read-only and the backup volume writable, recorded with its tag and the retention applied (backup.ts). `auto` is the
    * deploy's snapshot (without trickplay; a failure is `snapshot_failed`), `manual` the backup job's (`backup_failed`). With a
-   * job it runs as that job's `snapshot` step.
+   * job it runs as that job's `snapshot` step. Leftover `.part` files go first; the id never replaces a backup being restored or
+   * downloaded (freeBackupId).
    */
   async snapshot(job: Job | null, tag: Exclude<BackupTag, 'upload'>, trickplay = false): Promise<BackupMeta> {
     const code: MediaError = tag === 'auto' ? 'snapshot_failed' : 'backup_failed';
@@ -584,26 +585,29 @@ export class MediaJobs {
       const m = this.u.mediaState();
       const c = m.container ?? fail(code);
       const { project, runner } = await this.ready();
-      const at = new Date(this.d.now());
-      const id = backupId(c.kind, c.upstream, at);
+      const { id, at } = freeBackupId(c.kind, c.upstream, this.d.now());
       if (!BACKUP_ID_RE.test(id)) fail(code);
+      const dir = this.d.backupDir ?? BACKUP_DIR;
       let a: Obj;
       try {
-        a = await this.helper(runner, userOf(m.desired), 'backup', [id, trickplay ? '1' : '0', c.kind, c.upstream],
-          [{ kind: 'data', volume: names(project).data(c.kind), rw: false }, { kind: 'backup', rw: true }], BACKUP_HELPER_MS);
+        a = await writingBackup(dir, id, () => this.helper(runner, userOf(m.desired), 'backup', [id, trickplay ? '1' : '0', c.kind, c.upstream],
+          [{ kind: 'data', volume: names(project).data(c.kind), rw: false }, { kind: 'backup', rw: true }], BACKUP_HELPER_MS));
       } catch (e) {
         guardFirst(e);
         return fail(code);
       }
       const size = typeof a.size === 'number' && Number.isSafeInteger(a.size) && a.size >= 0 ? a.size : fail(code);
       const meta: BackupMeta = { id, kind: c.kind, upstream: c.upstream, at: at.toISOString(), tag, size };
-      await record({ dir: this.d.backupDir ?? BACKUP_DIR, updater: this.u }, meta);
+      await record({ dir, updater: this.u }, meta);
       return meta;
     };
     return job ? this.step(job, 'snapshot', run) : run();
   }
 
-  /** helper `restore`: the data volume read-write, the backup volume read-only; any failure is `restore_failed` */
+  /**
+   * helper `restore`: the data volume read-write, the backup volume read-only. `backup_invalid` (the archive failed the helper's
+   * check before anything changed) passes; any other failure is `restore_failed`.
+   */
   async restoreSnapshot(id: string, kind: Kind): Promise<void> {
     if (!BACKUP_ID_RE.test(id)) fail('restore_failed');
     let a: Obj;
@@ -613,7 +617,7 @@ export class MediaJobs {
         [{ kind: 'data', volume: names(project).data(kind), rw: true }, { kind: 'backup', rw: false }], BACKUP_HELPER_MS);
     } catch (e) {
       guardFirst(e);
-      return fail('restore_failed');
+      return fail(e instanceof StepError && e.code === 'backup_invalid' ? 'backup_invalid' : 'restore_failed');
     }
     if (a.ok !== true) fail('restore_failed');
   }

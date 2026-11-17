@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn } from 'node:child_process';
 import { closeSync, createReadStream, createWriteStream, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, statSync, watch } from 'node:fs';
-import { chmod, rename, rm } from 'node:fs/promises';
+import { chmod, rename, rm, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Transform } from 'node:stream';
+import { Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
 import { createGunzip, createGzip } from 'node:zlib';
@@ -214,30 +214,85 @@ function skip(n: number): Transform {
   });
 }
 
+/** counts the bytes passing through */
+function counter(): Transform & { total: number } {
+  const t = new Transform({ transform(c: Buffer, _e, cb) { t.total += c.length; cb(null, c); } }) as Transform & { total: number };
+  t.total = 0;
+  return t;
+}
+
 /**
- * helper `restore`: checks the archive's metadata (this kind) before anything changes, empties the data folder and extracts the
- * archive into it without its metadata entry
+ * a child's stdin as the end of a pipeline that always reads its source to the end: a tar that stops reading after the end of
+ * the archive (busybox does) is no error, and the gzip stream before it is still checked to its last byte
  */
-export async function restoreBackup(dirs: { data: string; backups: string }, a: { id: string; kind: Kind }, tar = 'tar'): Promise<{ ok: true }> {
+function into(stdin: Writable): Writable {
+  let open = true;
+  stdin.on('error', () => { open = false; });
+  return new Writable({
+    write(c: Buffer, _e, cb) {
+      if (!open || stdin.destroyed) { cb(); return; }
+      stdin.write(c, () => cb());
+    },
+    final(cb) { if (open && !stdin.destroyed) stdin.end(); cb(); },
+  });
+}
+
+/** gunzip (to its end) → skip `skipBytes` → `tar <args> -f -`: true when both the stream and tar succeeded; the bytes tar was given */
+async function throughTar(tar: string, file: string, skipBytes: number, args: string[]): Promise<{ ok: boolean; total: number }> {
+  const child = spawn(tar, [...args, '-f', '-'], { stdio: ['pipe', 'ignore', 'ignore'] });
+  const code = exited(child);
+  code.catch(() => undefined);
+  const count = counter();
+  try {
+    await pipeline(createReadStream(file), createGunzip(), skip(skipBytes), count, into(child.stdin!));
+  } catch {
+    child.kill();
+    await code.catch(() => undefined);
+    return { ok: false, total: count.total };
+  }
+  return { ok: (await code.catch(() => null)) === 0, total: count.total };
+}
+
+/** the sizes of everything below `dir` (not following links) */
+function usage(dir: string): number {
+  let n = 0;
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    n += lstatSync(p).size;
+    if (e.isDirectory()) n += usage(p);
+  }
+  return n;
+}
+
+/** what the data folder can hold once emptied: free space plus what is in it now */
+async function room(dir: string): Promise<number> {
+  const s = await statfs(dir);
+  return s.bavail * s.bsize + usage(dir);
+}
+
+/**
+ * helper `restore`: the archive is checked completely before anything changes: its metadata (this kind), the whole gzip stream,
+ * a `tar -t` of all of it, and that its unpacked size fits the data folder (else `backup_invalid`, nothing touched). Then the
+ * data folder is emptied and the archive extracted into it without its metadata entry (a failure now is `restore_failed`).
+ */
+export async function restoreBackup(dirs: { data: string; backups: string }, a: { id: string; kind: Kind }, o: { tar?: string; room?(): Promise<number> } = {}): Promise<{ ok: true }> {
+  const tar = o.tar ?? 'tar';
   const file = join(dirs.backups, `${a.id}.tar.gz`);
   const head = await readFileMeta(file);
   if (!head || head.meta.kind !== a.kind) throw new HelperError('backup_invalid');
+  const listed = await throughTar(tar, file, head.length, ['-t']);
+  if (!listed.ok) throw new HelperError('backup_invalid');
+  let space: number;
+  try { space = await (o.room ?? (() => room(dirs.data)))(); } catch { throw new HelperError('backup_invalid'); }
+  if (listed.total > space) throw new HelperError('backup_invalid');
   try {
     for (const name of readdirSync(dirs.data)) await rm(join(dirs.data, name), { recursive: true, force: true });
-    const child = spawn(tar, ['-x', '-o', '-f', '-', '-C', dirs.data], { stdio: ['pipe', 'ignore', 'ignore'] });
-    const code = exited(child);
-    code.catch(() => undefined);
-    try {
-      await pipeline(createReadStream(file), createGunzip(), skip(head.length), child.stdin!);
-    } catch (e) {
-      child.kill();
-      throw e;
-    }
-    if ((await code) !== 0) throw new HelperError('restore_failed');
-    return { ok: true };
   } catch {
     throw new HelperError('restore_failed');
   }
+  const done = await throughTar(tar, file, head.length, ['-x', '-o', '-C', dirs.data]);
+  if (!done.ok) throw new HelperError('restore_failed');
+  return { ok: true };
 }
 
 /** the arguments of `backup` / `restore`: an id that names this kind and upstream */
