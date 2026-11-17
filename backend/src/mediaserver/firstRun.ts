@@ -24,7 +24,7 @@ import { adminPassword, readManaged, type MediaManaged, type SetupStep } from '.
  */
 
 const LOCK = 'media:managed:tick';
-/** the apply job the current setup follows (its finish-setup is started once per apply) */
+/** the last apply job the setup saw succeed (its finish-setup is started once per apply) */
 const APPLY_JOB = 'media:managed:apply';
 const finishKey = (applyId: string) => `media:managed:finish:${applyId}`;
 const WEEK = 7 * 86_400;
@@ -67,9 +67,11 @@ async function applying({ ctx, status }: Step): Promise<Next> {
   const j = status.job;
   if (j?.action !== 'mediaserver-apply') {
     if (status.busy) return 'waiting';
-    // no apply job to read (the updater restarted since): a running container is the apply's
-    if (status.mediaserver?.container?.state === 'running') return 'first_run';
-    throw new StepFailed('interrupted');
+    // no apply job to read (the updater restarted since): a running container is the apply's; its id is unknown, so a finish key of
+    // its own (never the one of an earlier apply)
+    if (status.mediaserver?.container?.state !== 'running') throw new StepFailed('interrupted');
+    await ctx.kv.set(APPLY_JOB, `unseen-${randomToken(8)}`, WEEK);
+    return 'first_run';
   }
   if (j.state === 'running') return 'waiting';
   if (j.state !== 'succeeded') throw new StepFailed(j.error ?? 'unexpected');
@@ -129,14 +131,18 @@ async function markCreated(ctx: Ctx, slug: string): Promise<void> {
        from jsonb_array_elements(libraries) with ordinality as t(e, n)), '[]'::jsonb), updated_at = now() where id = 1`, [slug]);
 }
 
-/** 4. one library per entry not created yet (an existing one of that name counts), then a scan */
+/**
+ * 4. one library per entry not created yet (an existing one of that name on its folder counts), one per tick (each tick's server calls
+ * stay well inside the lock's 60 s); once none is left, a scan
+ */
 async function libraries({ ctx, m }: Step): Promise<Next> {
   const key = managedKey(ctx.cfg);
   if (!key) return 'api_key';
-  const { language, country } = await serverLocale(ctx);
-  for (const lib of m.libraries.filter((l) => !l.created)) {
-    await ensureLibrary(ctx.fetchImpl, MANAGED_URL, key, lib, { language, country });
+  const lib = m.libraries.find((l) => !l.created);
+  if (lib) {
+    await ensureLibrary(ctx.fetchImpl, MANAGED_URL, key, lib, await serverLocale(ctx));
     await markCreated(ctx, lib.slug);
+    return 'libraries';
   }
   await refreshLibraries(ctx.fetchImpl, MANAGED_URL, key);
   return 'hwaccel';
@@ -177,6 +183,8 @@ async function finishing({ ctx, m, status }: Step): Promise<Next> {
   const finishId = await ctx.kv.get(fk);
   if (!finishId) {
     if (status.busy) return 'waiting';
+    // no password in the container's configuration (an apply after the first run sends none): nothing to finish
+    if (status.mediaserver?.container?.template === 'current') return 'done';
     const r = await startMediaJob(ctx, { op: 'finish-setup' }, null, {});
     if (!r.ok) {
       if (r.error === 'busy' || r.error === 'not_available') return 'waiting';
@@ -237,6 +245,8 @@ export async function mediaManagedTick(ctx: Ctx, log?: TickLog): Promise<SetupSt
         if (status.busy) return 'waiting';
         const j = status.job;
         if (j?.action === 'mediaserver-apply' && j.state !== 'succeeded' && j.state !== 'running') throw new StepFailed(j.error ?? 'unexpected');
+        // the apply this setup follows now (a re-apply after done comes back to a later step, not through applying)
+        if (j?.action === 'mediaserver-apply' && j.state === 'succeeded') await ctx.kv.set(APPLY_JOB, j.id, WEEK);
       }
       const next = await run({ ctx, m, status });
       if (next === 'waiting') return 'waiting';

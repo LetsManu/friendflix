@@ -170,26 +170,29 @@ async function toExternal(ctx: Ctx, restore: boolean, actor: string | null): Pro
 }
 
 interface Libraries { chosen: LibraryEntry[]; kept: LibraryEntry[]; changed: Array<{ from: LibraryEntry; to: LibraryEntry }> }
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 /**
- * the libraries of an apply, or null for library_referenced (spec "Folder changes after the first run"); `changed`: libraries in the
- * server that are renamed or retyped (unreferenced). Throws MediaSetupError when the references cannot be counted (fail closed).
+ * the libraries of an apply, or the refusal (spec "Folder changes after the first run"): `library_name_taken` when a folder is named like
+ * the kept library of a removed folder (the server holds one library per name), `library_referenced`. `changed`: libraries in the server
+ * that are renamed or retyped (unreferenced). Throws MediaSetupError when the references cannot be counted (fail closed).
  */
-async function librariesFor(ctx: Ctx, managed: MediaManaged, b: ApplyBody): Promise<Libraries | null> {
+async function librariesFor(ctx: Ctx, managed: MediaManaged, b: ApplyBody): Promise<Libraries | { error: 'library_name_taken' | 'library_referenced' }> {
   // a folder chosen before keeps its slug (its mount point); a removed folder's library stays once it exists in the server (its items
   // show as missing); a new kind starts without libraries
   const before = managed.kind === b.kind ? managed.libraries : [];
   const byRel = new Map(before.map((l) => [l.rel, l]));
+  const rels = new Set(b.folders.map((f) => f.rel));
+  const kept = before.filter((l) => !rels.has(l.rel) && l.created);
+  if (b.folders.some((f) => kept.some((k) => sameName(k.name, f.name)))) return { error: 'library_name_taken' };
   const changed: Libraries['changed'] = [];
   for (const f of b.folders) {
     const l = byRel.get(f.rel);
     if (!l?.created || (l.name === f.name && l.type === f.type)) continue;
-    if (referenced(await libraryReferences(ctx, l.slug))) return null;
+    if (referenced(await libraryReferences(ctx, l.slug))) return { error: 'library_referenced' };
     // a new type is a new library (delete + create: the tick creates it), a new name a rename in place
     changed.push({ from: l, to: { ...l, name: f.name, type: f.type, created: l.type === f.type } });
   }
   const changedTo = new Map(changed.map((c) => [c.to.slug, c.to]));
-  const rels = new Set(b.folders.map((f) => f.rel));
-  const kept = before.filter((l) => !rels.has(l.rel) && l.created);
   const taken = new Set([...kept, ...b.folders.flatMap((f) => byRel.get(f.rel) ?? [])].map((l) => l.slug));
   const chosen = b.folders.map((f): LibraryEntry => {
     const l = byRel.get(f.rel);
@@ -305,14 +308,23 @@ function ops(ctx: Ctx) {
       const { view, managed, status } = await load(ctx);
       const reason = await offerReason(ctx, view, managed, b.kind);
       if (reason) return reply.code(409).send({ error: reason });
-      let libs: Libraries | null;
+      let libs: Libraries;
       try {
-        libs = await librariesFor(ctx, managed, b);
-        if (libs) await changeLibraries(ctx, libs.changed);
+        const found = await librariesFor(ctx, managed, b);
+        if ('error' in found) return reply.code(409).send({ error: found.error });
+        libs = found;
       } catch (e) {
         return reply.code(409).send({ error: setupCode(e) });
       }
-      if (!libs) return reply.code(409).send({ error: 'library_referenced' });
+      // once the server was changed (a retyped library deleted, stored not created), the libraries step makes it whole again, whether
+      // the apply below starts or not (each change is stored as it happens: changeLibraries)
+      const resume = async () => { if (libs.changed.length && managed.setup === 'done') await writeManaged(ctx, { setup: 'libraries', setupError: null }); };
+      try {
+        await changeLibraries(ctx, libs.changed);
+      } catch (e) {
+        await resume();
+        return reply.code(409).send({ error: setupCode(e) });
+      }
       // a first run (or one that has not finished): the generated administrator. Ferrofin gets its password in the create body (without
       // it, it would start with a passwordless admin). A stored password is reused: a data volume that survived (a failed run, a remove
       // without data, a switch back) knows only the password it was created with.
@@ -341,6 +353,8 @@ function ops(ctx: Ctx) {
         const again: SetupStep | null = firstRun ? null : libs.chosen.some((l) => !l.created) ? 'libraries' : status?.desired?.gpu !== b.gpu ? 'hwaccel' : null;
         if (firstRun) await writeManaged(ctx, { ...patch, setup: 'applying', setupError: null, adminUser: ADMIN_USER });
         else await writeManaged(ctx, again ? { ...patch, setup: again, setupError: null } : patch);
+      } else {
+        await resume();
       }
       return jobAnswer(reply, r);
     },

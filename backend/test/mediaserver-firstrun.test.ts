@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { sessionKey } from '../src/session.js';
 import { mediaManagedTick } from '../src/mediaserver/firstRun.js';
 import { libraryReferences } from '../src/mediaserver/references.js';
+import { libraryItemIds } from '../src/mediaserver/serverApi.js';
 import { readManaged, writeManaged, type LibraryEntry } from '../src/mediaserver/store.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 
@@ -113,9 +114,11 @@ const fake = {
   bodies: [] as Array<Record<string, any>>,
   /** the render nodes the gpu op detects */
   dri: [] as Array<Record<string, unknown>>,
+  /** ops the updater refuses (busy) */
+  refuse: new Set<string>(),
 };
 const INTEL = [{ node: 'renderD129', gid: 44, vendor: 'intel' }];
-const resetFake = (kind = 'jellyfin') => Object.assign(fake, { media: media(kind), job: null, busy: false, bodies: [], dri: INTEL });
+const resetFake = (kind = 'jellyfin') => Object.assign(fake, { media: media(kind), job: null, busy: false, bodies: [], dri: INTEL, refuse: new Set<string>() });
 const opBodies = (op: string) => fake.bodies.filter((b) => b.op === op);
 
 const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -135,6 +138,7 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
   if (u.pathname !== '/v1/mediaserver') return j({ error: 'not_found' }, 404);
   fake.bodies.push(body);
   if (body.op === 'gpu') return j({ dri: fake.dri, nvidia: false });
+  if (fake.refuse.has(body.op)) return j({ error: 'busy' }, 409);
   fake.job = job(`mediaserver-${body.op === 'finish-setup' ? 'finish' : body.op}`);
   fake.busy = true;
   return j({ job: fake.job }, 202);
@@ -198,7 +202,8 @@ describe('managed media server first run', () => {
     expect((await readManaged(env.pool)).setup).toBe('applying');
     fake.job.state = 'succeeded';
     fake.busy = false;
-    expect(await run('done')).toEqual(['first_run', 'api_key', 'libraries', 'hwaccel', 'finishing', 'done']);
+    // one library per tick, the scan once none is left
+    expect(await run('done')).toEqual(['first_run', 'api_key', 'libraries', 'libraries', 'libraries', 'hwaccel', 'finishing', 'done']);
     expect(await readManaged(env.pool)).toMatchObject({ setup: 'done', setupError: null, libraries: LIBS.map((l) => ({ ...l, created: true })) });
 
     // the startup wizard, in order, with the generated administrator
@@ -242,7 +247,7 @@ describe('managed media server first run', () => {
     server.user = { name: 'friendflix-admin', password: PASSWORD };
     await seed('ferrofin', 'applying');
     appliedJob();
-    expect(await run('finishing')).toEqual(['first_run', 'api_key', 'libraries', 'hwaccel', 'finishing']);
+    expect(await run('finishing')).toEqual(['first_run', 'api_key', 'libraries', 'libraries', 'libraries', 'hwaccel', 'finishing']);
     expect(await tick()).toBe('waiting'); // finish-setup started
     expect(opBodies('finish-setup')).toEqual([{ op: 'finish-setup' }]);
     expect(await tick()).toBe('waiting'); // its job runs
@@ -305,7 +310,9 @@ describe('managed media server first run', () => {
     appliedJob();
     server.failOnce = (c) => (c.method === 'POST' && c.path === '/Library/VirtualFolders' && c.query.get('name') === 'Serien' ? 500 : null);
     const log = { warn: vi.fn() };
-    expect(await tick(log)).toBe('libraries');
+    expect(await tick(log)).toBe('libraries'); // Filme
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(await tick(log)).toBe('libraries'); // Serien fails
     expect(await readManaged(env.pool)).toMatchObject({ setup: 'libraries', setupError: 'unexpected', libraries: [{ slug: 'filme', created: true }, { slug: 'serien', created: false }] });
     expect(log.warn).toHaveBeenCalledWith({ step: 'libraries', code: 'unexpected' }, 'managed media server setup step failed');
     // nothing happens until Nochmal
@@ -314,6 +321,7 @@ describe('managed media server first run', () => {
     expect(server.calls).toHaveLength(n);
     expect((await req('POST', '/action', { op: 'retry' })).json()).toEqual({ ok: true });
     expect((await readManaged(env.pool)).setupError).toBeNull();
+    expect(await tick()).toBe('libraries'); // Serien
     expect(await tick()).toBe('hwaccel');
     expect(calls('POST', '/Library/VirtualFolders').map((c) => c.query.get('name'))).toEqual(['Filme', 'Serien', 'Serien']);
     expect(server.folders.map((f) => f.Name)).toEqual(['Filme', 'Serien']);
@@ -337,7 +345,7 @@ describe('managed media server first run', () => {
     // a library that exists in the server already (a switch back to managed: entries recomputed not created) is only marked
     await seed('jellyfin', 'libraries');
     server.folders = [{ Name: 'Filme', ItemId: hex('a'), CollectionType: 'movies', Locations: ['/media/filme'] }];
-    expect(await tick()).toBe('hwaccel');
+    expect(await run('hwaccel')).toEqual(['libraries', 'libraries', 'hwaccel']);
     expect(calls('POST', '/Library/VirtualFolders').map((c) => c.query.get('name'))).toEqual(['Serien']);
     expect((await readManaged(env.pool)).libraries.every((l) => l.created)).toBe(true);
   });
@@ -429,7 +437,7 @@ describe('managed media server first run', () => {
     expect(await tick()).toBe('waiting'); // the apply runs
     fake.job!.state = 'succeeded';
     fake.busy = false;
-    expect(await tick()).toBe('hwaccel');
+    expect(await run('hwaccel')).toEqual(['libraries', 'hwaccel']);
     expect(calls('POST', '/Library/VirtualFolders').map((c) => [c.query.get('name'), c.query.get('collectionType')])).toEqual([['Serien', 'mixed']]);
   });
 
@@ -445,7 +453,7 @@ describe('managed media server first run', () => {
     expect(await tick()).toBe('waiting'); // the apply mounts it first
     fake.job!.state = 'succeeded';
     fake.busy = false;
-    expect(await run('done')).toEqual(['hwaccel', 'finishing', 'done']);
+    expect(await run('done')).toEqual(['libraries', 'hwaccel', 'finishing', 'done']);
     const posts = calls('POST', '/Library/VirtualFolders');
     expect(posts.map((c) => [c.query.get('name'), c.query.getAll('paths')])).toEqual([['Musik', ['/media/musik']]]);
     expect(calls('POST', '/Startup/User')).toEqual([]);
@@ -476,5 +484,109 @@ describe('managed media server first run', () => {
     expect(opBodies('gpu')).toEqual([]);
     expect(server.encoding).toMatchObject({ HardwareAccelerationType: 'none', HardwareDecodingCodecs: [], TonemappingAlgorithm: 'bt2390' });
     expect(server.encoding.VaapiDevice).toBeUndefined();
+  });
+
+  // ------------------------------------------------------------------------------------------------- review fix round 1
+
+  const BOTH_IN_SERVER = () => [{ Name: 'Filme', ItemId: hex('a'), CollectionType: 'movies', Locations: ['/media/filme'] }, { Name: 'Serien', ItemId: hex('b'), CollectionType: 'tvshows', Locations: ['/media/serien'] }];
+  const applyWith = (folders: unknown[]) => req('POST', '/apply', { kind: 'jellyfin', folders, uid: 1000, gid: 1000, gpu: 'dri', mediaGid: null, egress: true });
+
+  it('a folder named like a kept library is refused: library_name_taken', async () => {
+    await seed('jellyfin', 'done', LIBS.map((l) => ({ ...l, created: true })));
+    await connected();
+    server.folders = BOTH_IN_SERVER();
+    await reauth();
+    // the films folder removed (its library kept), a new folder named like it, in another case
+    let r = await applyWith([FOLDERS[1], { rel: 'Filme-neu', name: ' filme ', type: 'movies' }]);
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'library_name_taken' });
+    // a rename onto the kept name likewise
+    r = await applyWith([{ ...FOLDERS[1], name: 'Filme' }]);
+    expect(r.json()).toEqual({ error: 'library_name_taken' });
+    expect(opBodies('apply')).toEqual([]);
+    expect(server.calls.filter((c) => c.method !== 'GET')).toEqual([]);
+    expect((await readManaged(env.pool)).libraries).toEqual(LIBS.map((l) => ({ ...l, created: true })));
+  });
+
+  it('ensureLibrary: a library of that name on another folder is library_name_taken, never marked created', async () => {
+    await seed('jellyfin', 'libraries', [{ slug: 'filme-2', name: 'Filme', type: 'movies', rel: 'Filme-neu', created: false }]);
+    await connected();
+    appliedJob();
+    server.folders = [BOTH_IN_SERVER()[0]!];
+    expect(await tick()).toBe('libraries');
+    expect(await readManaged(env.pool)).toMatchObject({ setup: 'libraries', setupError: 'library_name_taken', libraries: [{ slug: 'filme-2', created: false }] });
+    expect(calls('POST', '/Library/VirtualFolders')).toEqual([]);
+  });
+
+  it('finish-setup is keyed on the apply the setup follows now, not an earlier one', async () => {
+    resetFake('ferrofin');
+    server.wizardDone = true;
+    server.user = { name: 'friendflix-admin', password: PASSWORD };
+    await connected();
+    server.folders = BOTH_IN_SERVER();
+    // an earlier apply A with its finish job F, both done long ago
+    await env.kv.set('media:managed:apply', 'a'.repeat(16), 600);
+    await env.kv.set(`media:managed:finish:${'a'.repeat(16)}`, 'f'.repeat(16), 600);
+    // a new apply B that came back to a later step with the password in the container (template update_pending)
+    await seed('ferrofin', 'libraries', LIBS.map((l) => ({ ...l, created: true })));
+    appliedJob();
+    expect(await run('finishing')).toEqual(['hwaccel', 'finishing']);
+    expect(await tick()).toBe('waiting');
+    expect(opBodies('finish-setup')).toHaveLength(1);
+    fake.job!.state = 'succeeded';
+    fake.busy = false;
+    expect(await tick()).toBe('done');
+
+    // the updater restarted (no apply job to read): a finish key of its own, so finish-setup is sent again
+    await seed('ferrofin', 'applying', LIBS.map((l) => ({ ...l, created: true })));
+    fake.job = null;
+    fake.media.container.template = 'update_pending';
+    expect(await run('finishing')).toEqual(['first_run', 'api_key', 'libraries', 'hwaccel', 'finishing']);
+    expect(await tick()).toBe('waiting');
+    expect(opBodies('finish-setup')).toHaveLength(2);
+
+    // an apply after the first run sends no password (template current): nothing to finish
+    await seed('ferrofin', 'libraries', LIBS.map((l) => ({ ...l, created: true })));
+    appliedJob();
+    fake.media.container.template = 'current';
+    expect(await run('done')).toEqual(['hwaccel', 'finishing', 'done']);
+    expect(opBodies('finish-setup')).toHaveLength(2);
+  });
+
+  it('a refused apply after a retype still sends the setup back to libraries', async () => {
+    await seed('jellyfin', 'done', LIBS.map((l) => ({ ...l, created: true })));
+    await connected();
+    server.folders = BOTH_IN_SERVER();
+    fake.refuse.add('apply');
+    await reauth();
+    const r = await applyWith([FOLDERS[0], { ...FOLDERS[1], type: 'mixed' }]);
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'busy' });
+    expect(server.folders.map((f) => f.Name)).toEqual(['Filme']);
+    expect(await readManaged(env.pool)).toMatchObject({ setup: 'libraries', setupError: null, libraries: [{ slug: 'filme', created: true }, { slug: 'serien', type: 'mixed', created: false }] });
+    // the container still mounts the folder: the tick creates the library again
+    appliedJob();
+    expect(await run('hwaccel')).toEqual(['libraries', 'hwaccel']);
+    expect(calls('POST', '/Library/VirtualFolders').map((c) => [c.query.get('name'), c.query.get('collectionType'), c.query.get('paths')])).toEqual([['Serien', 'mixed', '/media/serien']]);
+  });
+
+  it('two ticks at once in the libraries step post one library', async () => {
+    await seed('jellyfin', 'libraries');
+    await connected();
+    appliedJob();
+    const results = await Promise.all([tick(), tick()]);
+    expect(results.sort()).toEqual(['libraries', 'locked']);
+    expect(calls('POST', '/Library/VirtualFolders').map((c) => c.query.get('name'))).toEqual(['Filme']);
+    expect((await readManaged(env.pool)).libraries.map((l) => l.created)).toEqual([true, false]);
+  });
+
+  it('item ids beyond the cap fail instead of a short count', async () => {
+    await connected();
+    server.folders = BOTH_IN_SERVER();
+    server.items[hex('a')] = Array.from({ length: 2000 }, (_, i) => i.toString(16).padStart(32, '0'));
+    await expect(libraryItemIds(env.ctx.fetchImpl, MANAGED, keyOf(1), 'Filme', 2000)).rejects.toMatchObject({ code: 'unexpected' });
+    server.items[hex('a')] = server.items[hex('a')]!.slice(1);
+    expect(await libraryItemIds(env.ctx.fetchImpl, MANAGED, keyOf(1), 'Filme', 2000)).toHaveLength(1999);
+    expect(await libraryItemIds(env.ctx.fetchImpl, MANAGED, keyOf(1), 'Filme')).toHaveLength(1999);
   });
 });

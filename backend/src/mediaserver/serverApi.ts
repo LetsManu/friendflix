@@ -102,24 +102,30 @@ export async function signsIn(f: typeof fetch, base: string, name: string, passw
   return true;
 }
 
-interface Folder { name: string; itemId: string | null }
+interface Folder { name: string; itemId: string | null; locations: string[] }
 async function virtualFolders(f: typeof fetch, base: string, key: string): Promise<Folder[]> {
   const list = await json(await call(f, base, 'GET', '/Library/VirtualFolders', { key }), 1024 * 1024);
   if (!Array.isArray(list)) throw new MediaSetupError('unexpected');
   return list.flatMap((x) => {
     const o = obj(x);
-    return typeof o?.Name === 'string' ? [{ name: o.Name, itemId: typeof o.ItemId === 'string' && ITEM_ID.test(o.ItemId) ? o.ItemId : null }] : [];
+    if (typeof o?.Name !== 'string') return [];
+    const locations = Array.isArray(o.Locations) ? o.Locations.filter((l): l is string => typeof l === 'string') : [];
+    return [{ name: o.Name, itemId: typeof o.ItemId === 'string' && ITEM_ID.test(o.ItemId) ? o.ItemId : null, locations }];
   });
 }
 const q = (v: Record<string, string>) => new URLSearchParams(v).toString();
 
 /**
  * The library of an entry (spec "First run" 5): `/media/<slug>`, real-time monitoring on, no local metadata and no savers (the media is
- * read-only), the instance's metadata language. A no-op when a library of that name exists (a restart after the post, a surviving server).
+ * read-only), the instance's metadata language. A no-op when a library of that name exists on that folder (a restart after the post, a
+ * surviving server); `library_name_taken` when a library of that name exists on another folder (its folder would get no library).
  */
 export async function ensureLibrary(f: typeof fetch, base: string, key: string, lib: LibraryEntry, o: { language: string; country: string }): Promise<void> {
-  if ((await virtualFolders(f, base, key)).some((v) => v.name === lib.name)) return;
-  const query = q({ name: lib.name, collectionType: lib.type, paths: `/media/${lib.slug}`, refreshLibrary: 'false' });
+  const path = `/media/${lib.slug}`;
+  const same = (await virtualFolders(f, base, key)).find((v) => v.name === lib.name);
+  if (same?.locations.includes(path)) return;
+  if (same) throw new MediaSetupError('library_name_taken');
+  const query = q({ name: lib.name, collectionType: lib.type, paths: path, refreshLibrary: 'false' });
   const LibraryOptions = { EnableRealtimeMonitor: true, SaveLocalMetadata: false, MetadataSavers: [], PreferredMetadataLanguage: o.language, MetadataCountryCode: o.country };
   await call(f, base, 'POST', `/Library/VirtualFolders?${query}`, { key, body: { LibraryOptions } }).then(done);
 }
@@ -137,12 +143,17 @@ export async function deleteLibrary(f: typeof fetch, base: string, key: string, 
   await call(f, base, 'DELETE', `/Library/VirtualFolders?${q({ name, refreshLibrary: 'false' })}`, { key }).then(done);
 }
 
-/** every item id below the library `name` (movies, series, seasons, episodes …), page by page; none when there is no such library */
-export async function libraryItemIds(f: typeof fetch, base: string, key: string, name: string): Promise<string[]> {
+/**
+ * every item id below the library `name` (movies, series, seasons, episodes …), page by page; none when there is no such library;
+ * `unexpected` when there may be more than `max` (never a short count)
+ */
+export async function libraryItemIds(f: typeof fetch, base: string, key: string, name: string, max = MAX_ITEMS): Promise<string[]> {
   const folder = (await virtualFolders(f, base, key)).find((v) => v.name === name);
   if (!folder?.itemId) return [];
   const ids: string[] = [];
-  for (let start = 0; start < MAX_ITEMS; start += PAGE) {
+  for (let start = 0; ; start += PAGE) {
+    // more items than counted: an under-count could let a referenced library be renamed, so it fails (the caller refuses)
+    if (start >= max) throw new MediaSetupError('unexpected', 'too_many_items');
     const query = q({ ParentId: folder.itemId, Recursive: 'true', EnableImages: 'false', EnableUserData: 'false', EnableTotalRecordCount: 'false', StartIndex: String(start), Limit: String(PAGE) });
     const items = obj(await json(await call(f, base, 'GET', `/Items?${query}`, { key }), 16 * 1024 * 1024))?.Items;
     if (!Array.isArray(items)) throw new MediaSetupError('unexpected');
