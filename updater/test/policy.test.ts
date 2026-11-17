@@ -92,4 +92,14 @@ describe('updater policy', () => {
       ['postgres', `ghcr.io/example/friendflix-postgres@${d}`], ['constructor', `ghcr.io/example/friendflix-web@${d}`], ['web', ''], ['web', null],
     ] as const) expect(isOwnDigestRef('example/friendflix', svc, ref as string), `${svc} ${ref}`).toBe(false);
   });
+
+  it('pinned ref: a digest ref (the media server pin) is pinned only by that very digest', () => {
+    const d = 'sha256:' + 'c'.repeat(64);
+    const pin = `ghcr.io/letsmanu/friendflix-mediaserver@${d}`;
+    expect(pinnedRef(pin, [`ghcr.io/letsmanu/friendflix-mediaserver@${d}`])).toBe(pin);
+    expect(pinnedRef(pin, [`ghcr.io/letsmanu/friendflix-mediaserver@sha256:${'d'.repeat(64)}`])).toBeNull();
+    expect(pinnedRef(pin, [`ghcr.io/evil/friendflix-mediaserver@${d}`])).toBeNull();
+    expect(pinnedRef(`ghcr.io/letsmanu/friendflix-mediaserver@sha256:short`, [`ghcr.io/letsmanu/friendflix-mediaserver@sha256:short`])).toBeNull();
+    expect(pinnedRef(pin, [])).toBeNull();
+  });
 });
