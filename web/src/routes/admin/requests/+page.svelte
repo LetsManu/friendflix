@@ -84,7 +84,7 @@
   $: columns = [
     { key: 'title', label: $t('admin.requests.title'), value: (r) => r.title, primary: true },
     { key: 'by', label: $t('admin.requests.from'), value: (r) => r.requestedBy, sortable: false },
-    // a season wish names its seasons ("Serie · Staffeln 2–3"); a whole series just "Serie"
+    // a series names the seasons of its request ("Serie · Staffeln 2–3"; the service lists them for a whole-series request too)
     { key: 'type', label: $t('admin.requests.type'), value: (r) => (r.mediaType === 'tv' ? [$t('admin.kind.series'), r.seasons?.length ? $t('home.wish.seasons.list', { n: r.seasons.length, list: seasonRanges(r.seasons) }) : ''].filter(Boolean).join(' · ') : $t('admin.kind.movie')), sortable: false },
     { key: 'status', label: $t('admin.requests.status'), value: (r) => r.statusKey, sortable: false },
     { key: 'when', label: $t('adminContent.requests.when'), value: (r) => r.createdAt ?? '', sortable: false },

@@ -3,7 +3,7 @@
 import { get } from 'svelte/store';
 import { describe, expect, it } from 'vitest';
 import {
-  allState, batchSummary, closeSheet, defaultParts, defaultSeasons, partOpen, pickSeasons, registerSheetHost, requestCollection, seasonOpen,
+  allState, batchSummary, choosable, closeSheet, defaultParts, defaultSeasons, partOpen, pickSeasons, registerSheetHost, requestCollection, seasonOpen,
   seasonRanges, sheetRequest, toggleAll, toggleParts, type Part, type Season,
 } from './picker';
 
@@ -50,8 +50,14 @@ describe('collection parts', () => {
     expect([...toggleParts(parts, false)]).toEqual([]);
   });
   it('batch summary counts each outcome', () => {
-    expect(batchSummary([{ tmdbId: 1, result: 'requested' }, { tmdbId: 2, result: 'exists' }, { tmdbId: 3, result: 'limit' }, { tmdbId: 4, result: 'limit' }, { tmdbId: 5, result: 'failed' }]))
-      .toEqual({ total: 5, requested: 1, exists: 1, limit: 2, failed: 1 });
+    expect(batchSummary([{ tmdbId: 1, result: 'requested' }, { tmdbId: 2, result: 'exists' }, { tmdbId: 3, result: 'limit' }, { tmdbId: 4, result: 'limit' }, { tmdbId: 5, result: 'failed' }, { tmdbId: 6, result: 'skipped' }]))
+      .toEqual({ total: 6, requested: 1, exists: 1, limit: 2, failed: 1, skipped: 1 });
+  });
+  it('after a send: failed and skipped parts can be tried again, done and quota-stopped ones cannot', () => {
+    const res = new Map<number, 'requested' | 'exists' | 'limit' | 'failed' | 'skipped'>([[2, 'requested'], [4, 'failed'], [7, 'skipped']]);
+    expect(parts.filter((p) => choosable(p, res)).map((p) => p.tmdbId)).toEqual([4, 7]);
+    expect(parts.filter((p) => choosable(p, new Map())).map((p) => p.tmdbId)).toEqual([2, 4, 7]);
+    expect(choosable(P(9, 'none'), new Map([[9, 'limit']]))).toBe(false);
   });
 });
 

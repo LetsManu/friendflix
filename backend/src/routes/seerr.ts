@@ -80,7 +80,14 @@ async function createWish(ctx: Ctx, req: FastifyRequest, b: { mediaType: 'movie'
   const title = String(d.title ?? d.name ?? `#${b.tmdbId}`);
   try {
     const seerrUserId = await ensureSeerrUser(ctx, user);
-    created = await requestsClient(ctx).createRequest({ mediaType: b.mediaType, mediaId: b.tmdbId, seasons: b.mediaType === 'tv' ? (seasons ?? 'all') : undefined, userId: seerrUserId });
+    try {
+      created = await requestsClient(ctx).createRequest({ mediaType: b.mediaType, mediaId: b.tmdbId, seasons: b.mediaType === 'tv' ? (seasons ?? 'all') : undefined, userId: seerrUserId });
+    } catch (e) {
+      if (e instanceof SeerrError && e.status === 409) return { kind: 'exists', status: st }; // somebody asked already (an older request we did not see)
+      throw e;
+    }
+    // a 2xx without a request id: the service had nothing left to ask for (e.g. 202 "no seasons available")
+    if (!Number.isInteger(created?.id)) return { kind: 'exists', status: st };
     await ctx.db.query(
       'insert into seerr_requests(seerr_request_id, user_id, media_type, tmdb_id, title, poster, seasons) values ($1,$2,$3,$4,$5,$6,$7) on conflict (seerr_request_id) do nothing',
       [created.id, user.id, b.mediaType, b.tmdbId, title, d.posterPath ?? null, seasons ?? null],
@@ -89,10 +96,24 @@ async function createWish(ctx: Ctx, req: FastifyRequest, b: { mediaType: 'movie'
     await release(ctx, slot);
   }
   await ctx.kv.del(`reqmine:${user.id}`).catch(() => undefined);
+  const collection = b.mediaType === 'movie' ? collectionOf(d) : null;
+  if (collection) await dropCollectionCache(ctx, collection.id); // the sheet of its collection shows it as asked for at once
   await audit(ctx, user.id, 'request.create', String(created.id), { title, ...(seasons ? { seasons } : {}) });
   await seerrHooks.run(ctx, { type: 'requested', user, tmdbId: b.tmdbId, mediaType: b.mediaType });
-  return { kind: 'ok', id: created.id, status: portalStatus(created.media?.status, created.status), ...(seasons ? { seasons } : {}), collection: b.mediaType === 'movie' ? collectionOf(d) : null };
+  return { kind: 'ok', id: created.id, status: portalStatus(created.media?.status, created.status), ...(seasons ? { seasons } : {}), collection };
 }
+
+/** the cached collection (titles and part states) per language: GET /api/seerr/movie/:id/collection */
+const colKey = (id: number, lang: string) => `seerrcol:${id}:${lang}`;
+async function dropCollectionCache(ctx: Pick<Ctx, 'kv'>, id: number) {
+  for (const l of LANGUAGES) await ctx.kv.del(colKey(id, l)).catch(() => undefined);
+}
+
+/**
+ * The batch's time budget: a part starts only within `startWindowMs` of the call (each service call is capped at 15 s, so the
+ * answer is back within about 55 s, before the usual 60 s proxy timeout). `now` is replaceable for tests.
+ */
+export const BATCH_LIMITS = { startWindowMs: 25_000, now: (): number => Date.now() };
 
 export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
   const on = requestsOn(ctx);
@@ -166,21 +187,27 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
         .refine((a) => new Set(a.map((x) => x.tmdbId)).size === a.length, 'duplicate'),
       collectionId: z.number().int().positive().optional(),
     }).parse(req.body);
-    const results: Array<{ tmdbId: number; result: 'requested' | 'exists' | 'limit' | 'failed'; status?: string }> = [];
-    let stopped = false;
+    type Result = 'requested' | 'exists' | 'limit' | 'failed' | 'skipped';
+    const results: Array<{ tmdbId: number; result: Result; status?: string }> = [];
+    // once set, every later part answers this without a call: `limit` (the quota is used up), `skipped` (the time budget is spent,
+    // or the service is unreachable / failing: a timeout, a network error or a 5xx says "the service", not "this title")
+    let stop: 'limit' | 'skipped' | null = null;
+    const start = BATCH_LIMITS.now();
     for (const it of b.items) {
-      if (stopped) { results.push({ tmdbId: it.tmdbId, result: 'limit' }); continue; }
+      if (!stop && BATCH_LIMITS.now() - start >= BATCH_LIMITS.startWindowMs) stop = 'skipped';
+      if (stop) { results.push({ tmdbId: it.tmdbId, result: stop }); continue; }
       try {
         const r = await createWish(ctx, req, { mediaType: 'movie', tmdbId: it.tmdbId });
         if (r.kind === 'ok') results.push({ tmdbId: it.tmdbId, result: 'requested', status: r.status });
         else if (r.kind === 'exists') results.push({ tmdbId: it.tmdbId, result: 'exists', status: r.status });
-        else { stopped = true; results.push({ tmdbId: it.tmdbId, result: 'limit' }); }
+        else { stop = 'limit'; results.push({ tmdbId: it.tmdbId, result: 'limit' }); }
       } catch (e) {
         req.log.warn({ err: e instanceof Error ? e.message : String(e), tmdbId: it.tmdbId }, 'batch wish failed');
         results.push({ tmdbId: it.tmdbId, result: 'failed' });
+        if (!(e instanceof SeerrError) || e.status >= 500) stop = 'skipped';
       }
     }
-    if (b.collectionId) await dropCollectionCache(b.collectionId);
+    if (b.collectionId) await dropCollectionCache(ctx, b.collectionId);
     return { results, quota: await quota(ctx, req.user!) };
   }));
 
@@ -194,10 +221,6 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
   // the collection a movie belongs to, its parts in release order (undated last) with their state. The movie -> collection link is
   // kept for a day, the collection itself (titles and states) for COLLECTION_TTL seconds; a batch wish with its id clears it.
   const COLLECTION_TTL = 30, COLLECTION_OF_TTL = 24 * 3600, PARTS_MAX = 30;
-  const colKey = (id: number, lang: string) => `seerrcol:${id}:${lang}`;
-  async function dropCollectionCache(id: number) {
-    for (const l of LANGUAGES) await ctx.kv.del(colKey(id, l)).catch(() => undefined);
-  }
   app.get('/api/seerr/movie/:id/collection', pre, wrap(async (req) => {
     const p = z.object({ id: z.string().regex(/^\d{1,10}$/).transform(Number).pipe(z.number().int().positive().max(2 ** 31 - 1)) }).parse(req.params);
     const lang = await viewerLanguage(ctx, req);

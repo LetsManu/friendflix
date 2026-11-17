@@ -89,7 +89,7 @@ test.describe('collection sheet', () => {
     await expect(dlg.locator('li').nth(4)).toContainText('Fehlgeschlagen');
     await expect(dlg.getByRole('checkbox', { name: 'Kometen' })).toBeChecked();
     api.requestSheets.batch = {};
-    await dlg.getByRole('button', { name: 'Fehlgeschlagene erneut anfragen' }).click();
+    await dlg.getByRole('button', { name: 'Erneut versuchen' }).click();
     await expect(dlg.getByText('2 von 2 angefragt.')).toBeVisible();
     expect(api.requestSheets.batches.map((b) => (b as { items: Array<{ tmdbId: number }> }).items.map((x) => x.tmdbId))).toEqual([[8002, 8008], [8008]]);
     await expect(dlg.getByRole('button', { name: 'Fertig' })).toBeVisible();
@@ -117,9 +117,17 @@ test.describe('collection sheet', () => {
     api.requestSheets.collections[8002] = { collection: { ...COLLECTION.collection, parts: COLLECTION.collection.parts.map((p) => (p.tmdbId === 8002 ? { ...p, state: 'requested' } : p)) } };
     await page.route('**/api/seerr/image/**', (r) => r.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"/>' }));
     await page.goto('/requests?q=Sternwarte');
-    await page.locator('.card', { hasText: 'Funkstille' }).getByRole('button', { name: 'Wünschen' }).click();
-    await expect(page.getByText('„Sternwarte 24: Funkstille“ gehört zur Reihe „Sternwarte 24 – Die Reihe“.')).toBeVisible();
-    await page.getByRole('button', { name: 'Ganze Reihe anfragen…' }).click();
+    const card = page.locator('.card', { hasText: 'Funkstille' });
+    await expect(card).toBeVisible();
+    const y0 = (await card.boundingBox())!.y;
+    await card.getByRole('button', { name: 'Wünschen' }).click();
+    const offer = page.getByRole('button', { name: 'Ganze Reihe anfragen: Sternwarte 24 – Die Reihe' });
+    await expect(offer).toBeVisible();
+    // the offer has its reserved row: the results do not move when it shows (the status line above is one line, as before)
+    await expect(page.getByRole('status').filter({ hasText: 'wurde gewünscht' })).toBeVisible();
+    await page.evaluate(() => document.querySelector('[role="status"] p')?.remove()); // only the offer's own effect is measured
+    expect((await card.boundingBox())!.y).toBe(y0);
+    await offer.click();
     const dlg = page.getByRole('dialog', { name: 'Ganze Reihe anfragen' });
     // the movie just wished counts as requested; Sternwarte 24 itself is open here (no library knowledge on this page)
     await expect(dlg.locator('li').nth(1)).toContainText('Angefragt');
@@ -138,6 +146,48 @@ test.describe('collection sheet', () => {
     const dlg = page.getByRole('dialog', { name: 'Ganze Reihe anfragen' });
     await expect(dlg.getByText('Dieser Film gehört zu keiner Reihe.')).toBeVisible();
     await expect(dlg.getByRole('button')).toHaveText(['Schließen']);
+  });
+
+  test('parts the service did not reach are "Nicht gesendet" and stay checked for another try', async ({ page, api }) => {
+    api.requestSheets.batch = { 8008: 'skipped' };
+    const dlg = await openFromDetail(page, api);
+    await dlg.getByRole('button', { name: '2 Filme anfragen' }).click();
+    await expect(dlg.getByText('1 von 2 angefragt. 1 nicht gesendet: Der Dienst antwortet nicht oder es dauerte zu lange. Bitte erneut versuchen.')).toBeVisible();
+    await expect(dlg.locator('li').nth(4)).toContainText('Nicht gesendet');
+    await expect(dlg.getByRole('checkbox', { name: 'Kometen' })).toBeChecked();
+    api.requestSheets.batch = {};
+    await dlg.getByRole('button', { name: 'Erneut versuchen' }).click();
+    await expect(dlg.getByText('2 von 2 angefragt.')).toBeVisible();
+  });
+
+  test('a used-up quota: sending is off before anything is sent, and the sheet says until when', async ({ page, api }) => {
+    api.newPage.quota = { limit: 2, used: 2, resetsAt: '2026-12-01T00:00:00Z' };
+    const dlg = await openFromDetail(page, api);
+    await expect(dlg.getByText('Kontingent erschöpft. Neues Kontingent ab 1. Dezember')).toBeVisible();
+    await expect(dlg.getByRole('button', { name: '2 Filme anfragen' })).toBeDisabled();
+    expect(api.requestSheets.batches).toEqual([]);
+  });
+
+  test('in the search: after a movie wish the offer fills its reserved row; nothing below moves', async ({ page, api }) => {
+    api.newPage.search = [{ tmdbId: 8002, mediaType: 'movie', title: 'Sternwarte 24: Funkstille', year: '2014', status: 'nicht_angefragt' }];
+    api.requestSheets.movieCollection[8002] = { id: 900, name: 'Sternwarte 24 – Die Reihe' };
+    api.requestSheets.collections[8002] = COLLECTION;
+    await page.route('**/api/seerr/image/**', (r) => r.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"/>' }));
+    await page.goto('/search?q=Sternwarte');
+    const section = page.locator('section.wishes');
+    await expect(section).toBeVisible();
+    // the reserved row keeps its place and size; the link under it keeps its distance (the wished row's own button may change)
+    const row = section.locator('.offer'), link = section.locator('.note a');
+    const gap = async () => (await link.boundingBox())!.y - (await row.boundingBox())!.y;
+    const [r0, g0] = [(await row.boundingBox())!, await gap()];
+    expect(r0.height).toBe(44);
+    await section.getByRole('button', { name: /Funkstille/ }).click();
+    const offer = section.getByRole('button', { name: 'Ganze Reihe anfragen: Sternwarte 24 – Die Reihe' });
+    await expect(offer).toBeVisible();
+    expect((await row.boundingBox())!.height).toBe(44);
+    expect(await gap()).toBe(g0);
+    await offer.click();
+    await expect(page.getByRole('dialog', { name: 'Ganze Reihe anfragen' })).toBeVisible();
   });
 
   test.describe('failure', () => {

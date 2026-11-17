@@ -89,7 +89,8 @@
 </form>
 {#if quota && quota.limit !== null}<p class:warn={full} class:muted={!full}>{#if full}{limitMsg(quota.resetsAt)}{:else}{$t('social.requests.quota', { remaining: quota.remaining, limit: quota.limit })}{/if}</p>{/if}
 <div role="status">{#if msg && !(full && msgIsLimit)}<p class="warn">{msg}</p>{/if}</div>
-{#if offer}<p class="offer"><span>{$t('home.wish.collection.partOf', { title: offer.title, name: offer.name })}</span> <button type="button" class="sec" on:click={wholeSeries}>{$t('home.wish.collection.open')}</button></p>{/if}
+<!-- "Ganze Reihe anfragen…" after a movie wish: a reserved one-line row while results are shown, so the grid never moves -->
+{#if results.length}<div class="offer">{#if offer}<button type="button" class="sec" title={$t('home.wish.collection.openNamed', { name: offer.name })} on:click={wholeSeries}>{$t('home.wish.collection.openNamed', { name: offer.name })}</button>{/if}</div>{/if}
 <div class="grid" style="margin-top:1rem">
   {#each results as r}
     <div class="card">
@@ -111,7 +112,7 @@
 <table><tbody>{#each reminders as r (r.id)}<tr><td>{r.title}</td><td>{r.kind === 'episode' ? $t('social.kind.episode') : kindLabel(r.mediaType)}</td><td class="muted">{r.releaseDate ? day(r.releaseDate) : $t('social.requests.dateOpen')}</td><td><button class="sec" aria-label={$t('social.requests.removeReminder', { title: r.title })} on:click={() => unremind(r)}>{$t('social.remove')}</button></td></tr>{/each}</tbody></table>
 
 <style>
-  .offer { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; margin: .4rem 0 0; }
-  .offer button { min-height: 44px; }
+  .offer { display: flex; align-items: center; height: 44px; margin: .4rem 0 0; min-width: 0; }
+  .offer button { height: 44px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .seas { display: block; }
 </style>

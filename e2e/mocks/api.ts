@@ -130,7 +130,7 @@ export interface MockState {
   requestSheets: {
     seasons: Record<number, { title: string; seasons: unknown[] }>; seasonsFail: boolean;
     collections: Record<number, unknown>; movieCollection: Record<number, { id: number; name: string }>;
-    batch: Record<number, 'requested' | 'exists' | 'limit' | 'failed'>; batches: unknown[]; batchFail: boolean;
+    batch: Record<number, 'requested' | 'exists' | 'limit' | 'failed' | 'skipped'>; batches: unknown[]; batchFail: boolean;
   };
   /** the setup wizard (mocks/setup.ts); while it is not complete, /api/me answers 503 setup_required */
   setup?: SetupMock;

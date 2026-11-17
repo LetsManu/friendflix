@@ -31,11 +31,15 @@
   $: view = wishView({ server: state, local, wished: $wished.has(wishKey(mediaType, tmdbId)), exhausted: quotaExhausted($quota) });
   $: resets = $quota?.resetsAt ? fmtDate($quota.resetsAt, { day: 'numeric', month: 'long' }) : '';
 
+  let picking = false;
   async function wish() {
-    if (local === 'pending') return;
+    if (local === 'pending' || picking) return;
     const had = root.contains(document.activeElement);
-    local = 'pending'; said = '';
-    const r = mediaType === 'tv' ? await pickSeasons({ tmdbId, title }) : await submitWish(mediaType, tmdbId);
+    said = '';
+    // a series: the picker shows its own busy send; the button stays as it is while seasons are chosen (not "Wird gewünscht …")
+    let r;
+    if (mediaType === 'tv') { picking = true; r = await pickSeasons({ tmdbId, title }); picking = false; }
+    else { local = 'pending'; r = await submitWish(mediaType, tmdbId); }
     if (!r) { local = 'idle'; return; } // the picker was closed without a wish
     if (r.kind === 'requested') { local = 'idle'; said = $t('home.wish.done', { title }); }
     else if (r.kind === 'exists') { local = 'idle'; said = $t('home.wish.already', { title }); }

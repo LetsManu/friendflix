@@ -20,9 +20,9 @@
   import { uid } from '#lib/ui/ids';
   import type { Tone } from '#lib/ui/StatusPill.svelte';
   import { isBackKey } from '#lib/spatial';
-  import { quotaLeft } from '#lib/newpage';
+  import { quotaExhausted, quotaLeft } from '#lib/newpage';
   import PickRow from './PickRow.svelte';
-  import { batchSummary, closeSheet, defaultParts, partOpen, toggleParts, type Collection, type Part, type PartState } from './picker';
+  import { batchSummary, choosable, closeSheet, defaultParts, toggleParts, type Collection, type Part, type PartState } from './picker';
   import { loadQuota, quota, submitBatch, type PartResult } from './wish';
 
   export let tmdbId: number;
@@ -36,18 +36,17 @@
   /** tmdb ids that are asked for now (answered to the caller on close) */
   const asked = new Set<number>();
 
-  /** a part that can be checked: requestable and not sent yet, or sent and failed */
-  const choosable = (p: Part, res: Map<number, PartResult['result']>) => (partOpen(p) && !res.has(p.tmdbId)) || res.get(p.tmdbId) === 'failed';
   $: open = parts.filter((p) => choosable(p, results));
   $: allOn = open.length > 0 && open.every((p) => chosen.has(p.tmdbId));
   $: someOn = open.some((p) => chosen.has(p.tmdbId));
   $: left = quotaLeft($quota);
+  $: exhausted = quotaExhausted($quota);
   $: sum = results.size ? batchSummary([...results].map(([k, result]) => ({ tmdbId: k, result }))) : null;
 
   const TONE: Record<PartState, Tone> = { available: 'ok', processing: 'info', requested: 'warn', declined: 'muted', none: 'muted', unreleased: 'muted' };
   const ICON: Record<PartState, string> = { available: 'check', processing: 'download', requested: 'clock', declined: 'x', none: 'plus', unreleased: 'clock' };
-  const RTONE: Record<PartResult['result'], Tone> = { requested: 'ok', exists: 'info', limit: 'warn', failed: 'err' };
-  const RICON: Record<PartResult['result'], string> = { requested: 'check', exists: 'check', limit: 'clock', failed: 'alert' };
+  const RTONE: Record<PartResult['result'], Tone> = { requested: 'ok', exists: 'info', limit: 'warn', failed: 'err', skipped: 'warn' };
+  const RICON: Record<PartResult['result'], string> = { requested: 'check', exists: 'check', limit: 'clock', failed: 'alert', skipped: 'alert' };
   function pill(p: Part, res: Map<number, PartResult['result']>) {
     const r = res.get(p.tmdbId);
     if (r) return { tone: RTONE[r], icon: RICON[r], label: $t(`home.wish.collection.result.${r}` as TKey) };
@@ -81,6 +80,7 @@
   async function submit() {
     if (busy || phase !== 'ready') return;
     if (!chosen.size) { if (results.size) closeSheet({ requested: [...asked] }); return; }
+    if (exhausted) return; // the quota is used up: the note says until when
     // in the order of the list (release order): the quota stops it after the first ones
     const ids = parts.filter((p) => chosen.has(p.tmdbId)).map((p) => p.tmdbId);
     busy = true; error = '';
@@ -93,8 +93,8 @@
       if (x.result === 'requested' || x.result === 'exists') asked.add(x.tmdbId);
     }
     results = next; resetsAt = r.resetsAt;
-    // failed parts stay checked (another try is one press away), everything else is done
-    chosen = new Set(r.results.filter((x) => x.result === 'failed').map((x) => x.tmdbId));
+    // failed and not reached (skipped) parts stay checked: another try is one press away; everything else is done
+    chosen = new Set(r.results.filter((x) => x.result === 'failed' || x.result === 'skipped').map((x) => x.tmdbId));
   }
   const cancel = () => { if (!busy) closeSheet(asked.size ? { requested: [...asked] } : null); };
   const tvMode = () => document.documentElement.classList.contains('tv');
@@ -109,9 +109,10 @@
     $t('home.wish.collection.summary', { ok: sum.requested + sum.exists, n: sum.total }),
     sum.limit ? $t('home.wish.collection.stopped', { n: sum.limit, date: resetsAt ? fmtDate(resetsAt, { day: 'numeric', month: 'long' }) : '' }) : '',
     sum.failed ? $t('home.wish.collection.failedSome', { n: sum.failed }) : '',
+    sum.skipped ? $t('home.wish.collection.skippedSome', { n: sum.skipped }) : '',
   ].filter(Boolean).join(' ');
-  $: over = left !== null && chosen.size > left && !results.size;
-  $: primary = results.size && !chosen.size ? $t('home.wish.collection.done') : results.size ? $t('home.wish.collection.retryFailed') : $t('home.wish.collection.submit', { n: chosen.size });
+  $: over = left !== null && left > 0 && chosen.size > left && !results.size;
+  $: primary = results.size && !chosen.size ? $t('home.wish.collection.done') : results.size ? $t('home.wish.retry') : $t('home.wish.collection.submit', { n: chosen.size });
 </script>
 
 <ModalShell bind:this={shell} bind:box labelledby="{id}-t" describedby="{id}-b" focus=".cancel" locked={busy} width={560} layer={120} on:close={cancel}>
@@ -140,13 +141,13 @@
         </ul>
       {/if}
     </div>
-    <p class="note">{#if over}{$t('home.wish.collection.tooMany', { n: left ?? 0 })}{:else if phase === 'ready' && !results.size && open.length}{$t('home.wish.collection.eachWish')}{#if left !== null}{' '}{$t('home.wish.seasons.left', { n: left })}{/if}{/if}</p>
+    <p class="note">{#if exhausted && $quota && phase === 'ready' && open.length}{$t('home.wish.exhausted')}. {$t('home.wish.resetsAt', { date: fmtDate($quota.resetsAt, { day: 'numeric', month: 'long' }) })}{:else if over}{$t('home.wish.collection.tooMany', { n: left ?? 0 })}{:else if phase === 'ready' && !results.size && open.length}{$t('home.wish.collection.eachWish')}{#if left !== null}{' '}{$t('home.wish.seasons.left', { n: left })}{/if}{/if}</p>
     <!-- the reserved line: the per-send summary (polite) or a refusal; the buttons never move -->
-    <p class="dlg-err" class:ok={!error && sum && !sum.failed && !sum.limit} role="status" aria-live="polite">{error || summary}</p>
+    <p class="dlg-err" class:ok={!error && sum && !sum.failed && !sum.limit && !sum.skipped} role="status" aria-live="polite">{error || summary}</p>
     <div class="dlg-acts">
       <Button variant="glass" class="cancel" disabled={busy} on:click={() => shell.dismiss()}>{results.size || phase === 'none' || (phase === 'ready' && !open.length) ? $t('common.close') : $t('common.cancel')}</Button>
       {#if phase === 'loading' || phase === 'error' || (phase === 'ready' && (open.length || results.size))}
-        <Button type="submit" pending={busy} disabled={phase !== 'ready' || (!chosen.size && !results.size)}>{primary}</Button>
+        <Button type="submit" pending={busy} disabled={phase !== 'ready' || (!chosen.size && !results.size) || (chosen.size > 0 && exhausted)}>{primary}</Button>
       {/if}
     </div>
   </form>

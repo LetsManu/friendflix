@@ -221,7 +221,8 @@
         {:else}<button type="button" disabled={sending !== '' || quotaFull !== ''} aria-label={$t('home.search.wishName', { title: w.title })} on:click={() => wish(w)}>{$t('home.search.wish')}</button>{/if}
       </li>
     {/each}</ul>
-    {#if offer}<p class="offer"><span>{$t('home.wish.collection.partOf', { title: offer.title, name: offer.name })}</span><button type="button" class="sec" on:click={wholeSeries}>{$t('home.wish.collection.open')}</button></p>{/if}
+    <!-- "Ganze Reihe anfragen…" after a movie wish: a reserved one-line row, so nothing below moves when it shows -->
+    <div class="offer">{#if offer}<button type="button" class="sec" title={$t('home.wish.collection.openNamed', { name: offer.name })} on:click={wholeSeries}>{$t('home.wish.collection.openNamed', { name: offer.name })}</button>{/if}</div>
     <p class="muted note"><a href="/requests?q={encodeURIComponent(term)}">{$t('home.search.moreWishes')}</a></p>
   </section>
 {/if}
@@ -248,8 +249,8 @@
   @media (max-width: 720px) { .big { min-height: 44px; border-radius: 12px; margin-bottom: 1rem; } }
   .empty { text-align: center; padding: 4rem 0; }
   .wishmsg { min-height: 1.4em; margin: 0 0 .5rem; color: var(--mut); }
-  .offer { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; margin: .6rem 0 0; }
-  .offer button { min-height: 44px; }
+  .offer { display: flex; align-items: center; height: 44px; margin: .6rem 0 0; min-width: 0; }
+  .offer button { height: 44px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wl { display: grid; gap: .6rem; max-width: 640px; }
   .wl li { display: flex; align-items: center; gap: .8rem; background: var(--surface-2); border-radius: 6px; padding: .5rem; }
   .wl img, .ph { width: 56px; height: 84px; flex: none; object-fit: cover; border-radius: 4px; background: #2b333c; }

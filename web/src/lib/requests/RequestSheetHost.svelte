@@ -4,14 +4,17 @@
   /**
    * Renders the open sheet of lib/requests/picker.ts: the season picker of a series or the collection sheet of a movie. Mounted once
    * in the root layout. The control that opened a sheet gets the focus back when it closes (when it still exists: a wish button
-   * that turned into its new state moves the focus itself).
+   * that turned into its new state moves the focus itself). A navigation (a link, browser or phone Back) closes it without a result:
+   * the sheet never stays over a page that did not open it.
    */
   import { onMount, tick } from 'svelte';
+  import { beforeNavigate } from '$app/navigation';
   import CollectionSheet from './CollectionSheet.svelte';
   import SeasonSheet from './SeasonSheet.svelte';
-  import { registerSheetHost, sheetRequest } from './picker';
+  import { closeSheet, registerSheetHost, sheetRequest } from './picker';
 
   onMount(registerSheetHost);
+  beforeNavigate(() => { if (req) closeSheet(null); });
   let back: HTMLElement | null = null, shown = 0;
   $: req = $sheetRequest;
   $: if (req && req.id !== shown) opened(req.id);

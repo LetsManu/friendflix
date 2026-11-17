@@ -58,7 +58,7 @@ test('collection sheet on a phone', async ({ page, api }) => {
   await page.route('**/api/seerr/image/**', (r) => r.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"/>' }));
   await page.goto('/requests?q=Sternwarte');
   await page.locator('.card', { hasText: 'Funkstille' }).getByRole('button', { name: 'Wünschen' }).tap();
-  await page.getByRole('button', { name: 'Ganze Reihe anfragen…' }).tap();
+  await page.getByRole('button', { name: 'Ganze Reihe anfragen: Sternwarte 24 – Die Reihe' }).tap();
   const dlg = page.getByRole('dialog', { name: 'Ganze Reihe anfragen' });
   await expect(dlg.getByRole('checkbox', { name: 'Kometen' })).toBeChecked();
   await fits(page, dlg);

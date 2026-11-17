@@ -47,13 +47,14 @@ export function seasonStates(details: unknown): SeasonView[] {
   }
   for (const r of list(info?.requests)) {
     const req = obj(r);
-    if (!req) continue;
+    if (!req || req.is4k === true) continue; // 4K requests are not wishes (FriendFlix never makes them): they close no season
     for (const s of list(req.seasons)) {
       const o = obj(s), n = seasonNo(o?.seasonNumber);
       if (n === null) continue;
-      // a season's own request status wins over its request's (the service declines seasons one by one, too)
-      const st = typeof o!.status === 'number' ? o!.status : req.status;
-      raise(n, st === 3 ? 'declined' : st === 2 ? 'processing' : 'requested');
+      // the service decides by the request: a declined request declines all its seasons (it leaves their rows pending), and a
+      // season row marked declined under an open request still counts as asked for (its duplicate check drops that season).
+      // Only "approved" is written down to the rows, so a row at 2 means in progress.
+      raise(n, req.status === 3 ? 'declined' : req.status === 2 || o!.status === 2 ? 'processing' : 'requested');
     }
   }
   return [...out.values()].sort((a, b) => a.number - b.number);
@@ -62,10 +63,14 @@ export function seasonStates(details: unknown): SeasonView[] {
 /** in the library (fully or partly), in progress, asked for, declined, requestable, or not released yet (no date or a later one) */
 export type PartState = 'available' | 'processing' | 'requested' | 'declined' | 'none' | 'unreleased';
 
-/** State of one movie from its media record; `today` is YYYY-MM-DD. What the service already has or works on wins over the date. */
+/**
+ * State of one movie from its media record; `today` is YYYY-MM-DD. What the service already has or works on wins over the date.
+ * The service's collection answer carries the parts' media records without their requests, and a declined movie goes back to media
+ * status 1: there `declined` does not show (the part reads `none`); it does where a record comes with its requests.
+ */
 export function partState(mediaInfo: unknown, releaseDate: string | undefined, today: string): PartState {
   const m = obj(mediaInfo);
-  const reqs = list(m?.requests).map(obj).filter((x): x is Record<string, any> => x !== null);
+  const reqs = list(m?.requests).map(obj).filter((x): x is Record<string, any> => x !== null && x.is4k !== true);
   const st = m?.status;
   if (st === 5 || st === 4) return 'available';
   if (st === 3 || reqs.some((r) => r.status === 2)) return 'processing';

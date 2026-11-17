@@ -85,8 +85,8 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     // a series: the season picker first (both seasons open, both chosen)
     const dlg = page.getByRole('dialog', { name: 'Staffeln wählen' });
     await dlg.getByRole('button', { name: '2 Staffeln anfragen' }).click();
-    await expect(card.getByRole('button', { name: 'Wird gewünscht …' })).toBeDisabled(); // not "requested" before the answer
-    await expect(card.getByText('Angefragt')).toHaveCount(0);
+    await expect(dlg.getByRole('button', { name: '2 Staffeln anfragen' })).toHaveAttribute('aria-busy', 'true'); // the picker shows the send
+    await expect(card.getByText('Angefragt')).toHaveCount(0); // not "requested" before the answer
     release();
     await expect(dlg).toHaveCount(0);
     await expect(card.getByText('Angefragt')).toBeVisible();

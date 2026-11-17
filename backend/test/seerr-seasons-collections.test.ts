@@ -3,6 +3,7 @@
 // Wishes for chosen seasons of a series and for the parts of a film collection (request service; fictional titles).
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { collectionOf, partState, seasonStates } from '../src/seerr/states.js';
+import { BATCH_LIMITS } from '../src/routes/seerr.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
@@ -10,8 +11,12 @@ let env: TestEnv;
 let admin: Sess, friend: Sess;
 let rid = 500;
 const imported = new Set<string>();
-/** tmdb ids whose request POST fails upstream */
+/** tmdb ids whose request POST fails upstream (500), answers 409, answers 202 without an id, or whose details never connect */
 const failing = new Set<number>();
+const conflict = new Set<number>();
+const noId = new Set<number>();
+const unreachable = new Set<number>();
+const refused = new Set<number>();
 
 const NORDLICHT = {
   id: 7001, name: 'Nordlicht', posterPath: '/nordlicht.jpg',
@@ -60,12 +65,15 @@ beforeAll(async () => {
       'GET /api/v1/movie/8009': () => ({ json: { id: 8009, title: 'Allein am Kai' } }),
       'GET /api/v1/movie/\\d+': (u) => {
         const id = Number(u.pathname.split('/').pop());
+        if (unreachable.has(id)) throw new TypeError('fetch failed');
         const p = STERNWARTE.parts.find((x) => x.id === id);
         const st = PART_STATUS[id];
         return { json: { id, title: p?.title ?? `#${id}`, posterPath: p?.posterPath, collection: { id: 900, name: STERNWARTE.name }, mediaInfo: st ? { status: st } : undefined } };
       },
       'GET /api/v1/collection/900': () => ({ json: STERNWARTE }),
-      'POST /api/v1/request': (_u, _i, b) => (failing.has(b.mediaId) ? { status: 500, json: {} } : { json: { id: ++rid, status: 1, media: { status: 2 } } }),
+      'POST /api/v1/request': (_u, _i, b) => (failing.has(b.mediaId) ? { status: 500, json: {} } : conflict.has(b.mediaId) ? { status: 409, json: { message: 'duplicate' } }
+        : refused.has(b.mediaId) ? { status: 403, json: { message: 'Movie Quota Exceeded' } } : noId.has(b.mediaId) ? { status: 202, json: { message: 'No seasons available to request' } } : { json: { id: ++rid, status: 1, media: { status: 2 } } }),
+      'GET /api/v1/request/\\d+': () => ({ json: { id: 1, status: 1, media: { status: 2 } } }),
       'GET /api/v1/request': () => ({ json: { results: [{ id: 70, type: 'tv', status: 1, seasons: [{ seasonNumber: 2 }, { seasonNumber: 3 }], media: { status: 2, tmdbId: 7002, mediaType: 'tv' }, requestedBy: { displayName: 'x' }, createdAt: '2026-01-01' }], pageInfo: {} } }),
     },
   });
@@ -81,7 +89,8 @@ beforeAll(async () => {
 });
 afterAll(() => env.close());
 beforeEach(async () => {
-  failing.clear();
+  failing.clear(); conflict.clear(); noId.clear(); unreachable.clear(); refused.clear();
+  BATCH_LIMITS.startWindowMs = 25_000; BATCH_LIMITS.now = () => Date.now();
   await env.pool.query('delete from seerr_requests; delete from request_reservations');
 });
 
@@ -99,6 +108,14 @@ describe('state mapping (pure)', () => {
     expect(seasonStates({ seasons: 'x', mediaInfo: { seasons: [{ seasonNumber: 2, status: 5 }, { seasonNumber: -1, status: 5 }, null] } }).map((x) => [x.number, x.state])).toEqual([[2, 'available']]);
     expect(seasonStates({})).toEqual([]);
   });
+  it('a declined request declines its seasons (the service leaves the season rows pending); a declined row under an open request is not open', () => {
+    const d = (requests: unknown[]) => seasonStates({ seasons: [{ seasonNumber: 1 }, { seasonNumber: 2 }], mediaInfo: { status: 1, requests } }).map((x) => x.state);
+    expect(d([{ status: 3, seasons: [{ seasonNumber: 1, status: 1 }, { seasonNumber: 2, status: 1 }] }])).toEqual(['declined', 'declined']);
+    expect(d([{ status: 1, seasons: [{ seasonNumber: 1, status: 3 }, { seasonNumber: 2, status: 1 }] }])).toEqual(['requested', 'requested']);
+    expect(d([{ status: 1, seasons: [{ seasonNumber: 1, status: 2 }] }])).toEqual(['processing', 'none']);
+    // 4K requests are not FriendFlix wishes: they never close a season
+    expect(d([{ status: 1, is4k: true, seasons: [{ seasonNumber: 1, status: 1 }] }])).toEqual(['none', 'none']);
+  });
   it('part states: in the library, in progress, requested, declined, requestable, not released yet', () => {
     const today = '2026-11-17';
     expect(partState({ status: 5 }, '2012-01-01', today)).toBe('available');
@@ -111,6 +128,7 @@ describe('state mapping (pure)', () => {
     expect(partState(undefined, '2026-11-18', today)).toBe('unreleased');
     expect(partState(undefined, undefined, today)).toBe('unreleased');
     expect(partState({ status: 2 }, '2099-01-01', today)).toBe('requested'); // asked for already: that wins over the date
+    expect(partState({ status: 1, requests: [{ status: 1, is4k: true }] }, '2012-01-01', today)).toBe('none'); // a 4K request is not a wish
   });
   it('collectionOf reads collection or belongsToCollection, ignores junk', () => {
     expect(collectionOf({ collection: { id: 900, name: 'Reihe' } })).toEqual({ id: 900, name: 'Reihe' });
@@ -200,6 +218,33 @@ describe('collections', () => {
   });
 });
 
+describe('single wish edge cases', () => {
+  it('a 2xx answer without a request id (nothing left to ask for) is "already requested", never a 500; the slot is freed', async () => {
+    noId.add(8008);
+    const r = await call(friend, 'POST', '/api/requests', { mediaType: 'movie', tmdbId: 8008 });
+    expect([r.statusCode, r.json().error]).toEqual([409, 'already_requested']);
+    expect((await env.pool.query('select count(*) n from seerr_requests')).rows[0].n).toBe('0');
+    expect((await env.pool.query('select count(*) n from request_reservations')).rows[0].n).toBe('0');
+  });
+  it('a 409 from the service is "already requested"', async () => {
+    conflict.add(8008);
+    const r = await call(friend, 'POST', '/api/requests', { mediaType: 'movie', tmdbId: 8008 });
+    expect([r.statusCode, r.json().error]).toEqual([409, 'already_requested']);
+  });
+  it('a movie wish clears the cached collection it belongs to', async () => {
+    await call(friend, 'GET', '/api/seerr/movie/8001/collection');
+    const n = upstream('/api/v1/collection/900');
+    expect((await call(admin, 'POST', '/api/requests', { mediaType: 'movie', tmdbId: 8008 })).statusCode).toBe(200);
+    await call(friend, 'GET', '/api/seerr/movie/8001/collection');
+    expect(upstream('/api/v1/collection/900')).toBe(n + 1);
+  });
+  it('the data export lists the seasons of a wish', async () => {
+    expect((await call(admin, 'POST', '/api/requests', { mediaType: 'tv', tmdbId: 7002, seasons: [2] })).statusCode).toBe(200);
+    const doc = JSON.parse((await env.app.inject({ method: 'GET', url: '/api/account/export', cookies: admin.cookies })).body);
+    expect(doc.requests).toEqual([expect.objectContaining({ tmdbId: 7002, mediaType: 'tv', seasons: [2] })]);
+  });
+});
+
 describe('POST /api/requests/batch', () => {
   it('requests each part on its own, in order; one audit entry per request; per-movie results', async () => {
     const before = posts().length;
@@ -223,11 +268,30 @@ describe('POST /api/requests/batch', () => {
     expect(b.quota).toMatchObject({ limit: 2, used: 2, remaining: 0 });
     expect(typeof b.quota.resetsAt).toBe('string');
   });
-  it('already requested parts and upstream failures do not stop the rest', async () => {
-    failing.add(8002);
+  it('already requested parts and a refused part do not stop the rest', async () => {
+    refused.add(8002);
     const r = await batch(admin, [8003, 8002, 8008, 8001]);
     expect(r.json().results.map((x: any) => [x.tmdbId, x.result])).toEqual([[8003, 'exists'], [8002, 'failed'], [8008, 'requested'], [8001, 'exists']]);
     expect((await env.pool.query('select count(*) n from request_reservations')).rows[0].n).toBe('0'); // failures release their slot
+  });
+  it('a 409 from the service is "exists"; a 5xx or an unreachable service stops it: the rest is skipped without a call', async () => {
+    conflict.add(8002);
+    failing.add(8008);
+    const before = posts().length;
+    const r = await batch(admin, [8002, 8008, 8004, 8006]);
+    expect(r.json().results.map((x: any) => [x.tmdbId, x.result])).toEqual([[8002, 'exists'], [8008, 'failed'], [8004, 'skipped'], [8006, 'skipped']]);
+    expect(posts()).toHaveLength(before + 2);
+    unreachable.add(8004);
+    const r2 = await batch(admin, [8004, 8006]);
+    expect(r2.json().results.map((x: any) => [x.tmdbId, x.result])).toEqual([[8004, 'failed'], [8006, 'skipped']]);
+    expect((await env.pool.query('select count(*) n from request_reservations')).rows[0].n).toBe('0');
+  });
+  it('a time budget: parts not started within it answer "skipped"', async () => {
+    let t = 0;
+    BATCH_LIMITS.now = () => (t += 10_000); // every look at the clock: 10 s later
+    BATCH_LIMITS.startWindowMs = 25_000;
+    const r = await batch(admin, [8002, 8008, 8004, 8006]);
+    expect(r.json().results.map((x: any) => x.result)).toEqual(['requested', 'requested', 'skipped', 'skipped']);
   });
   it('a request with the collection id clears the cached collection', async () => {
     await call(friend, 'GET', '/api/seerr/movie/8001/collection');

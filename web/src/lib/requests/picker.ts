@@ -64,10 +64,15 @@ export const defaultParts = (parts: Part[]): Set<number> => new Set(parts.filter
 /** "Alle" on: every requestable part; off: none */
 export const toggleParts = (parts: Part[], on: boolean): Set<number> => new Set(on ? parts.filter(partOpen).map((p) => p.tmdbId) : []);
 
-export function batchSummary(results: PartResult[]): { total: number; requested: number; exists: number; limit: number; failed: number } {
+export function batchSummary(results: PartResult[]): { total: number; requested: number; exists: number; limit: number; failed: number; skipped: number } {
   const n = (k: PartResult['result']) => results.filter((r) => r.result === k).length;
-  return { total: results.length, requested: n('requested'), exists: n('exists'), limit: n('limit'), failed: n('failed') };
+  return { total: results.length, requested: n('requested'), exists: n('exists'), limit: n('limit'), failed: n('failed'), skipped: n('skipped') };
 }
+/** a part that can be checked: requestable and not sent yet, or sent and failed / not reached (skipped); never one the quota stopped */
+export const choosable = (p: Part, res: Map<number, PartResult['result']>): boolean => {
+  const r = res.get(p.tmdbId);
+  return r === undefined ? partOpen(p) : r === 'failed' || r === 'skipped';
+};
 
 // ---- the open sheet ----
 export interface CollectionOutcome { requested: number[] }

@@ -184,8 +184,8 @@ export async function* exportUserData(ctx: Ctx, user: UserRow): AsyncGenerator<s
 
   // request state from the request service (newest REQUEST_STATUS_MAX only); a removed request reads 'removed', an unreachable
   // service 'unknown' (not asked again), as does every request while no request service is set up
-  const reqs = await q<{ seerr_request_id: number; tmdb_id: number; media_type: string; title: string; created_at: Date }>(
-    'select seerr_request_id, tmdb_id, media_type, title, created_at from seerr_requests where user_id=$1 order by created_at desc');
+  const reqs = await q<{ seerr_request_id: number; tmdb_id: number; media_type: string; title: string; seasons: number[] | null; created_at: Date }>(
+    'select seerr_request_id, tmdb_id, media_type, title, seasons, created_at from seerr_requests where user_id=$1 order by created_at desc');
   const seerr = ctx.seerr;
   let reachable = seerr !== null;
   const requests = [];
@@ -200,7 +200,7 @@ export async function* exportUserData(ctx: Ctx, user: UserRow): AsyncGenerator<s
         else reachable = false;
       }
     }
-    requests.push({ tmdbId: r.tmdb_id, mediaType: r.media_type, title: r.title, status, createdAt: r.created_at });
+    requests.push({ tmdbId: r.tmdb_id, mediaType: r.media_type, title: r.title, ...(r.seasons ? { seasons: r.seasons } : {}), status, createdAt: r.created_at });
   }
   yield field('requests', requests);
 

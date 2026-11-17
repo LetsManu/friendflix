@@ -65,7 +65,8 @@ export async function submitWish(mediaType: 'movie' | 'tv', tmdbId: number, seas
 }
 
 /** one part's outcome of POST /api/requests/batch */
-export interface PartResult { tmdbId: number; result: 'requested' | 'exists' | 'limit' | 'failed' }
+/** `skipped`: not sent (the server's time budget ran out, or the service stopped answering): can be tried again */
+export interface PartResult { tmdbId: number; result: 'requested' | 'exists' | 'limit' | 'failed' | 'skipped' }
 export type BatchResult = { kind: 'done'; results: PartResult[]; resetsAt: string } | { kind: 'failed'; disabled?: boolean };
 
 /**

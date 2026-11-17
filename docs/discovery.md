@@ -142,11 +142,14 @@ Anfragedienst: 404 `requests_disabled`); schreibende Routen brauchen das CSRF-To
   `{ tmdbId, title, poster?, seasons: [{ number, name?, episodes?, airDate?, state }] }`. `state`: `available` (vorhanden), `partial`
   (teilweise vorhanden), `processing` (genehmigt / in Arbeit), `requested` (angefragt), `declined` (abgelehnt) oder `none`; Rangfolge
   in dieser Reihenfolge, wenn der Medieneintrag und mehrere Anfragen etwas über dieselbe Staffel sagen. Wählbar sind nur `none` und
-  `declined`. Nicht zwischengespeichert (einmal pro geöffneter Auswahl). Die Id ist eine positive Ganzzahl (sonst 400).
+  `declined`. Wie beim Anfragedienst selbst entscheidet der Status der **Anfrage**: Eine abgelehnte Anfrage lehnt alle ihre Staffeln
+  ab (der Dienst lässt deren Zeilen auf „ausstehend“), eine als abgelehnt markierte Staffelzeile unter einer offenen Anfrage gilt als
+  angefragt. 4K-Anfragen zählen nicht (FriendFlix stellt keine; Wünsche sind immer normale Anfragen). Nicht zwischengespeichert (einmal pro geöffneter Auswahl). Die Id ist eine positive Ganzzahl (sonst 400).
 - **`POST /api/requests`** nimmt bei Serien `seasons: number[]` (1–101 Einträge, je 0–100). Staffeln, die die Serie nicht hat, fallen
   weg (bleibt keine: 400 `bad_seasons`); von den übrigen wird nur angefragt, was noch offen ist (bleibt nichts: 409
-  `already_requested`). So bekommt eine teilweise angefragte Serie nur die fehlenden Staffeln. Die Antwort nennt sie (`seasons`), sie
-  stehen in `seerr_requests.seasons` (Migration 59) und erscheinen in `GET /api/requests/mine` und in der Admin-Liste
+  `already_requested`; ebenso, wenn der Dienst selbst 409 antwortet oder mit 2xx ohne Anfrage-Id, etwa 202 „keine Staffeln mehr
+  offen“). So bekommt eine teilweise angefragte Serie nur die fehlenden Staffeln. Die Antwort nennt sie (`seasons`), sie
+  stehen in `seerr_requests.seasons` (Migration 59) und erscheinen in `GET /api/requests/mine`, im Datenexport und in der Admin-Liste
   (`GET /api/admin/requests`, aus den `seasons` der Anfrage). Ein Wunsch zählt immer als **ein** Wunsch des Monatskontingents, egal
   wie viele Staffeln er enthält (wie bisher „ganze Serie“). Ohne `seasons` wird eine Serie wie bisher ganz angefragt. Bei Filmen
   nennt die Antwort die Filmreihe (`collection: { id, name } | null`), damit die Seite „Ganze Reihe anfragen…“ anbieten kann.
@@ -154,15 +157,20 @@ Anfragedienst: 404 `requests_disabled`); schreibende Routen brauchen das CSRF-To
   `/collection/:id` des Anfragedienstes): `{ collection: null }` oder `{ collection: { id, name, poster?, parts: [{ tmdbId, title,
   year?, releaseDate?, poster?, state }] } }`, Teile nach Erscheinungsdatum (ohne Datum zuletzt), höchstens 30. `state`: `available`
   (in der Bibliothek, auch teilweise), `processing`, `requested`, `declined`, `none` (anfragbar) oder `unreleased` (kein oder ein
-  späteres Datum; was schon angefragt ist, zählt vor dem Datum). Die Zuordnung Film → Reihe wird einen Tag gespeichert, die Reihe
-  selbst 30 Sekunden (je Sprache).
+  späteres Datum; was schon angefragt ist, zählt vor dem Datum). Die Teile der Reihe liefert der Dienst ohne ihre Anfragen, und ein
+  abgelehnter Film fällt dort auf Medienstatus 1 zurück: `declined` erscheint hier daher praktisch nicht (der Teil ist `none`). Die
+  Zuordnung Film → Reihe wird einen Tag gespeichert, die Reihe selbst 30 Sekunden (je Sprache); ein Filmwunsch und ein
+  Sammelwunsch mit `collectionId` leeren sie.
 - **`POST /api/requests/batch`** `{ items: [{ mediaType: 'movie', tmdbId }], collectionId? }` – 1 bis 30 verschiedene Filme, jeder
   ein eigener Filmwunsch mit denselben Regeln wie `POST /api/requests` (Kontingent mit Reservierung, Anfragedienst-Nutzer, Audit
   `request.create` je Anfrage, Hooks). Nacheinander in der gegebenen Reihenfolge: Ist das Kontingent erschöpft, antworten der Teil
   und alle folgenden `limit`, ohne den Dienst zu fragen. Antwort: `{ results: [{ tmdbId, result, status? }], quota }` mit `result`
-  `requested`, `exists` (schon angefragt oder vorhanden), `limit` oder `failed` (der Dienst hat abgelehnt; die anderen Teile laufen
-  weiter, das Kontingent bleibt unberührt). `collectionId` leert den Zwischenspeicher der Reihe. Höchstens 12 Aufrufe je Minute und
-  Konto. Eine Route statt 30 Einzelaufrufen: ein CSRF-Check, ein Treffer der Ratenbegrenzung, die Reihenfolge bestimmt der Server.
+  `requested`, `exists` (schon angefragt oder vorhanden, auch bei 409 des Dienstes), `limit`, `failed` (der Dienst hat diesen Teil
+  abgelehnt; die anderen laufen weiter, das Kontingent bleibt unberührt) oder `skipped` (nicht gesendet). Zeitbudget: Ein Teil startet
+  nur in den ersten 25 Sekunden des Aufrufs (jeder Dienstaufruf ist auf 15 s begrenzt, die Antwort kommt also vor dem üblichen
+  60-s-Timeout eines Proxys); spätere Teile antworten `skipped`. Ein Netzwerkfehler, ein Timeout oder eine 5xx-Antwort des Dienstes
+  beendet den Durchlauf ebenso: Der Teil ist `failed`, alle folgenden `skipped`, ohne weiteren Aufruf. `collectionId` leert den
+  Zwischenspeicher der Reihe. Höchstens 12 Aufrufe je Minute und Konto. Eine Route statt 30 Einzelaufrufen: ein CSRF-Check, ein Treffer der Ratenbegrenzung, die Reihenfolge bestimmt der Server.
 
 Web: `lib/requests/picker.ts` (`pickSeasons()`, `requestCollection()`; eine `RequestSheetHost` im Root-Layout zeigt das Glas-Sheet),
 `SeasonSheet.svelte`, `CollectionSheet.svelte`, `PickRow.svelte`. Die Staffelwahl öffnet sich bei jedem Serienwunsch (Neu &
@@ -171,7 +179,9 @@ regulären Staffeln, Specials (Staffel 0) nicht; „Alle Staffeln“ schaltet di
 steht in der Reihen-Zeile der Detailseite (Teile in der Bibliothek zählen dort als vorhanden, auch wenn der Anfragedienst sie noch
 nicht kennt) und erscheint auf der Wünsche-Seite und in der Suche nach einem Filmwunsch, wenn der Film zu einer Reihe gehört.
 Vorausgewählt sind alle anfragbaren Teile, abgelehnte nur von Hand. Nach dem Senden zeigt jede Zeile ihr Ergebnis und eine Zeile die
-Summe; fehlgeschlagene Teile bleiben angehakt („Fehlgeschlagene erneut anfragen“).
+Summe; fehlgeschlagene und nicht gesendete Teile bleiben angehakt („Erneut versuchen“). Ist das Kontingent schon erschöpft, ist
+Senden aus und das Sheet nennt das Datum des neuen Kontingents. Auf der Wünsche-Seite und in der Suche hat das Angebot eine eigene,
+reservierte Zeile, damit beim Erscheinen nichts verrutscht. Ein Seitenwechsel (Link, Zurück) schließt ein offenes Sheet.
 
 ## Reaktionen: `/api/items/:id/reactions`
 
