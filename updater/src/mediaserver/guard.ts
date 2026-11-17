@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { HelperVerb } from './template.js';
-import type { Kind } from './types.js';
+import type { Gpu, Kind } from './types.js';
 
 /**
  * The independent check of every create body (spec "The guard"): a second implementation that never calls the template and keeps its
@@ -34,6 +34,13 @@ function onlyKeys(o: Obj, known: readonly string[], path: string): void {
   for (const [k, v] of Object.entries(o)) if (!known.includes(k) && !unset(v)) fail(path + k);
 }
 const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+/**
+ * Docker fills in its default masked and read-only paths only when these are nil: an empty list is kept and unmasks /proc and /sys
+ * (`systempaths=unconfined`), so on a create body they must be absent, not merely "unset"
+ */
+function defaultSystemPaths(h: Obj): void {
+  for (const k of ['MaskedPaths', 'ReadonlyPaths']) need(h[k] === undefined || h[k] === null, `HostConfig.${k}`);
+}
 
 // --- the guard's own literals ---
 const PROJECT_RE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
@@ -159,16 +166,20 @@ function checkMounts(mounts: unknown, e: ManagedExpect): void {
 function checkHostConfig(hc: unknown, e: ManagedExpect): void {
   const h = obj(hc, 'HostConfig');
   onlyKeys(h, HOST_KEYS, 'HostConfig.');
+  defaultSystemPaths(h);
   need(h.NetworkMode === `${e.project}_media`, 'HostConfig.NetworkMode');
   for (const [k, v] of HARDENING) need(eq(h[k], v), `HostConfig.${k}`);
   need(eq(h.Tmpfs, { '/tmp': 'size=512m,mode=1777' }), 'HostConfig.Tmpfs');
   checkMounts(h.Mounts, e);
   need(unset(h.Devices) || eq(h.Devices, [DRI_DEVICE]), 'HostConfig.Devices');
   if (!unset(h.DeviceRequests)) {
-    need(unset(h.Devices) && Array.isArray(h.DeviceRequests) && h.DeviceRequests.length === 1, 'HostConfig.DeviceRequests');
+    need(unset(h.Devices), 'HostConfig.Devices');
+    need(Array.isArray(h.DeviceRequests) && h.DeviceRequests.length === 1, 'HostConfig.DeviceRequests');
     const r = obj((h.DeviceRequests as unknown[])[0], 'HostConfig.DeviceRequests');
     onlyKeys(r, ['Driver', 'Count', 'Capabilities'], 'HostConfig.DeviceRequests.');
-    need(r.Driver === 'nvidia' && r.Count === 1 && eq(r.Capabilities, [['gpu']]), 'HostConfig.DeviceRequests');
+    need(r.Driver === 'nvidia', 'HostConfig.DeviceRequests.Driver');
+    need(r.Count === 1, 'HostConfig.DeviceRequests.Count');
+    need(eq(r.Capabilities, [['gpu']]), 'HostConfig.DeviceRequests.Capabilities');
   }
   checkGroups(h.GroupAdd, 5);
   const rp = obj(h.RestartPolicy, 'HostConfig.RestartPolicy');
@@ -219,9 +230,10 @@ const ENGINE_DEFAULTS = ['CgroupnsMode', 'IpcMode', 'ShmSize', 'ConsoleSize', 'R
 /**
  * An existing container with our labels, before the updater adopts or acts on it: the same checks on `Config`, `HostConfig` and the
  * top-level `Mounts`, tolerating what the image brings (its environment entries, entrypoint, command, volumes, labels, exposed ports,
- * healthcheck) and the engine's defaults; the default masked and read-only paths must still be there.
+ * healthcheck) and the engine's defaults; the default masked and read-only paths must still be there. `gpu` is the expected spec's
+ * choice: a host whose default runtime is `nvidia` reports it on every container, so it is accepted only with the NVIDIA choice.
  */
-export function assertManagedInspect(inspect: unknown, e: ManagedExpect & { image: ImageFacts }): void {
+export function assertManagedInspect(inspect: unknown, e: ManagedExpect & { gpu?: Gpu; image: ImageFacts }): void {
   const i = obj(inspect, 'inspect');
   const c = obj(i.Config, 'Config');
   const h = obj(i.HostConfig, 'HostConfig');
@@ -239,9 +251,10 @@ export function assertManagedInspect(inspect: unknown, e: ManagedExpect & { imag
   const host = Object.fromEntries(Object.entries(h).filter(([k]) => !ENGINE_DEFAULTS.includes(k)));
   checkManaged({ Hostname: c.Hostname, User: c.User, Image: c.Image, Env: env, Labels: labels, StopTimeout: c.StopTimeout, HostConfig: host }, e, false);
 
-  need(h.CgroupnsMode === undefined || h.CgroupnsMode === '' || h.CgroupnsMode === 'private', 'HostConfig.CgroupnsMode');
+  // 'host' is the engine default on cgroup v1 hosts
+  need(h.CgroupnsMode === undefined || ['', 'private', 'host'].includes(h.CgroupnsMode as string), 'HostConfig.CgroupnsMode');
   need(h.IpcMode === undefined || ['', 'private', 'shareable'].includes(h.IpcMode as string), 'HostConfig.IpcMode');
-  need(h.Runtime === undefined || h.Runtime === '' || h.Runtime === 'runc', 'HostConfig.Runtime');
+  need(h.Runtime === undefined || h.Runtime === '' || h.Runtime === 'runc' || (h.Runtime === 'nvidia' && e.gpu === 'nvidia'), 'HostConfig.Runtime');
   need(h.ShmSize === undefined || (typeof h.ShmSize === 'number' && h.ShmSize >= 0), 'HostConfig.ShmSize');
   need(h.ConsoleSize === undefined || h.ConsoleSize === null || (Array.isArray(h.ConsoleSize) && h.ConsoleSize.every((n) => typeof n === 'number')), 'HostConfig.ConsoleSize');
   need(strings(h.MaskedPaths) && h.MaskedPaths.length > 0, 'HostConfig.MaskedPaths');
@@ -341,6 +354,7 @@ export function assertHelper(body: unknown, e: { project: string; uid: number; g
 
   const h = obj(b.HostConfig, 'HostConfig');
   onlyKeys(h, HELPER_HOST_KEYS, 'HostConfig.');
+  defaultSystemPaths(h);
   need(h.NetworkMode === 'none', 'HostConfig.NetworkMode');
   for (const [k, v] of HARDENING) need(eq(h[k], v), `HostConfig.${k}`);
   need(unset(h.AutoRemove), 'HostConfig.AutoRemove');

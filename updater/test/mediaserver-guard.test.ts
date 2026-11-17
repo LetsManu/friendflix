@@ -87,9 +87,7 @@ describe('managed container guard', () => {
     ['Devices with /dev/sda', (b) => { H(b).Devices = [{ PathOnHost: '/dev/sda', PathInContainer: '/dev/sda', CgroupPermissions: 'rwm' }]; }],
     ['Devices /dev/dri/../sda', (b) => { H(b).Devices[0].PathOnHost = '/dev/dri/../sda'; }],
     ['a second device', (b) => { H(b).Devices.push({ PathOnHost: '/dev/mem', PathInContainer: '/dev/mem', CgroupPermissions: 'rwm' }); }],
-    ['a second DeviceRequests entry', (b) => { H(b).DeviceRequests = [{ Driver: 'nvidia', Count: 1, Capabilities: [['gpu']] }, { Driver: 'nvidia', Count: 1, Capabilities: [['gpu']] }]; }],
-    ['DeviceRequests Count -1', (b) => { H(b).DeviceRequests = [{ Driver: 'nvidia', Count: -1, Capabilities: [['gpu']] }]; }],
-    ['DeviceRequests other driver', (b) => { H(b).DeviceRequests = [{ Driver: 'cdi', Count: 1, Capabilities: [['gpu']] }]; }],
+    ['DeviceRequests next to Devices', (b) => { H(b).DeviceRequests = [{ Driver: 'nvidia', Count: 1, Capabilities: [['gpu']] }]; }],
     ['HostConfig.ReadonlyRootfs=false', (b) => { H(b).ReadonlyRootfs = false; }],
     ['User=0:0', (b) => { b.User = '0:0'; }],
     ['User=1000:0', (b) => { b.User = '1000:0'; }],
@@ -154,6 +152,41 @@ describe('managed container guard', () => {
     refuses(() => assertManaged(b, E));
   });
 
+  // each refused for its own reason: [row, mutation, field]
+  const fields: [string, (b: Body) => void, string][] = [
+    ['HostConfig.MaskedPaths=[] (systempaths=unconfined)', (b) => { H(b).MaskedPaths = []; }, 'HostConfig.MaskedPaths'],
+    ['HostConfig.ReadonlyPaths=[] (systempaths=unconfined)', (b) => { H(b).ReadonlyPaths = []; }, 'HostConfig.ReadonlyPaths'],
+    ['HostConfig.MaskedPaths shortened', (b) => { H(b).MaskedPaths = ['/proc/acpi']; }, 'HostConfig.MaskedPaths'],
+    ['DeviceRequests next to Devices', (b) => { H(b).DeviceRequests = [{ Driver: 'nvidia', Count: 1, Capabilities: [['gpu']] }]; }, 'HostConfig.Devices'],
+  ];
+  it.each(fields)('widening field %s is refused for its own reason', (_name, mutate, field) => {
+    const b = ok();
+    mutate(b);
+    expect(() => assertManaged(b, E)).toThrow(expect.objectContaining({ field }));
+  });
+
+  // on the NVIDIA body (no Devices), so each row reaches the check it is named for
+  const J = { ...E, kind: 'jellyfin' as const };
+  const nvidia = (): Body => clone(containerSpec({ ...D, kind: 'jellyfin', gpu: 'nvidia', mediaGid: null }, { ...F, image: JIMG }).body) as Body;
+  const R = (b: Body): Body => H(b).DeviceRequests[0];
+  const deviceRequests: [string, (b: Body) => void, string][] = [
+    ['a second DeviceRequests entry', (b) => { H(b).DeviceRequests.push({ ...R(b) }); }, 'HostConfig.DeviceRequests'],
+    ['DeviceRequests not a list', (b) => { H(b).DeviceRequests = R(b); }, 'HostConfig.DeviceRequests'],
+    ['DeviceRequests Count -1 (all GPUs)', (b) => { R(b).Count = -1; }, 'HostConfig.DeviceRequests.Count'],
+    ['DeviceRequests Count 2', (b) => { R(b).Count = 2; }, 'HostConfig.DeviceRequests.Count'],
+    ['DeviceRequests other driver', (b) => { R(b).Driver = 'cdi'; }, 'HostConfig.DeviceRequests.Driver'],
+    ['DeviceRequests DeviceIDs all', (b) => { R(b).DeviceIDs = ['all']; }, 'HostConfig.DeviceRequests.DeviceIDs'],
+    ['DeviceRequests Options', (b) => { R(b).Options = { x: 'y' }; }, 'HostConfig.DeviceRequests.Options'],
+    ['DeviceRequests widened Capabilities', (b) => { R(b).Capabilities = [['gpu', 'compute', 'utility', 'video', 'display']]; }, 'HostConfig.DeviceRequests.Capabilities'],
+    ['DeviceRequests a second capability set', (b) => { R(b).Capabilities = [['gpu'], ['display']]; }, 'HostConfig.DeviceRequests.Capabilities'],
+  ];
+  it.each(deviceRequests)('widening field %s is refused for its own reason', (_name, mutate, field) => {
+    expect(() => assertManaged(nvidia(), J)).not.toThrow();
+    const b = nvidia();
+    mutate(b);
+    expect(() => assertManaged(b, J)).toThrow(expect.objectContaining({ field }));
+  });
+
   it('unset values of other keys are tolerated', () => {
     const b = ok();
     Object.assign(H(b), { Privileged: false, CapAdd: null, Binds: [], PortBindings: {}, PublishAllPorts: false, Dns: [], OomScoreAdj: 0, Runtime: '' });
@@ -194,7 +227,7 @@ describe('managed container guard on inspect', () => {
       ['an image env entry changed', (i) => { i.Config.Env.push('LD_PRELOAD=/x'); }],
       ['Entrypoint other than the image', (i) => { i.Config.Entrypoint = ['/bin/sh']; }],
       ['Cmd other than the image', (i) => { i.Config.Cmd = ['-c', 'id']; }],
-      ['CgroupnsMode host', (i) => { i.HostConfig.CgroupnsMode = 'host'; }],
+      ['CgroupnsMode other', (i) => { i.HostConfig.CgroupnsMode = 'shared'; }],
       ['IpcMode host', (i) => { i.HostConfig.IpcMode = 'host'; }],
       ['Runtime nvidia', (i) => { i.HostConfig.Runtime = 'nvidia'; }],
       ['host network', (i) => { i.NetworkSettings.Networks.host = {}; }],
@@ -209,6 +242,30 @@ describe('managed container guard on inspect', () => {
       t(i);
       expect(() => assertManagedInspect(i, X), name).toThrow(TemplateViolation);
     }
+  });
+
+  it('inspect accepts the cgroup v1 default and the nvidia runtime only with the NVIDIA choice', () => {
+    const v1 = inspect();
+    v1.HostConfig.CgroupnsMode = 'host';
+    expect(() => assertManagedInspect(v1, X)).not.toThrow();
+    for (const r of ['', 'runc']) {
+      const i = inspect();
+      i.HostConfig.Runtime = r;
+      expect(() => assertManagedInspect(i, X)).not.toThrow();
+    }
+    const nv = inspect();
+    delete nv.HostConfig.Devices;
+    nv.HostConfig.DeviceRequests = [{ Driver: 'nvidia', Count: 1, DeviceIDs: null, Capabilities: [['gpu']], Options: null }];
+    nv.HostConfig.GroupAdd = ['2000'];
+    nv.HostConfig.Runtime = 'nvidia';
+    nv.Config.Env.push('NVIDIA_DRIVER_CAPABILITIES=compute,video,utility');
+    expect(() => assertManagedInspect(nv, { ...X, gpu: 'nvidia' })).not.toThrow();
+    for (const gpu of [undefined, 'dri', 'off'] as const) {
+      expect(() => assertManagedInspect(nv, { ...X, gpu })).toThrow(expect.objectContaining({ field: 'HostConfig.Runtime' }));
+    }
+    const dri = inspect();
+    dri.HostConfig.Runtime = 'nvidia';
+    expect(() => assertManagedInspect(dri, { ...X, gpu: 'dri' })).toThrow(expect.objectContaining({ field: 'HostConfig.Runtime' }));
   });
 
   it('inspect tolerates an anonymous volume at an image volume and a jellyfin image env', () => {
@@ -296,6 +353,8 @@ describe('helper guard', () => {
       ['two mounts at one target', (b) => { b.HostConfig.Mounts.push({ ...b.HostConfig.Mounts[0] }); }],
       ['Hostname', (b) => { b.Hostname = 'x'; }],
       ['ExposedPorts', (b) => { b.ExposedPorts = { '80/tcp': {} }; }],
+      ['MaskedPaths=[]', (b) => { b.HostConfig.MaskedPaths = []; }],
+      ['ReadonlyPaths=[]', (b) => { b.HostConfig.ReadonlyPaths = []; }],
     ];
     for (const [name, m] of mut) {
       const b = req({});
