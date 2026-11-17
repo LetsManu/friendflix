@@ -82,6 +82,17 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
   const user = who.user;
   const ticks = Math.floor(b.positionTicks);
   let live = await getLive(ctx, user.id, b.playSessionId);
+  // the play session id is the client's: a live record of another device or title under it is another stream (review B). A start
+  // under that id is refused, a progress or stop report is forwarded but touches nothing of it.
+  if (live && ((live.deviceId && who.deviceId && live.deviceId !== who.deviceId) || live.itemId.toLowerCase() !== b.itemId.toLowerCase())) {
+    if (kind === 'Playing') return { error: 'max_streams', max: (await effectiveLimits(ctx, user))!.maxStreams };
+    await ctx.jf.report(who.jfUser, {
+      event: kind === 'Playing/Stopped' ? 'stop' : 'progress',
+      itemId: b.itemId, mediaSourceId: b.mediaSourceId, playSessionId: b.playSessionId, positionTicks: ticks, paused: b.isPaused,
+      audioIndex: b.audioIndex, subtitleIndex: b.subtitleIndex, playMethod: b.playMethod,
+    });
+    return { ok: true };
+  }
   const wasLive = live !== null;
   let elapsed = true;
   /** a progress report beyond the limit: forwarded (the position is kept), but no live record is rebuilt that the gateway would serve */

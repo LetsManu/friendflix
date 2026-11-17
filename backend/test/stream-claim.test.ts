@@ -190,6 +190,35 @@ describe('stream limit at the gateway (/internal/stream)', () => {
     expect((await claim(other, ITEMS[1]!, 'ps-p-0002')).statusCode).toBe(429);
   });
 
+  it('a play session id names no stream by itself: the same id for another title or device is a new stream (review B)', async () => {
+    await setUserLimits(env.ctx, userId, { ...NONE, maxStreams: 1 });
+    expect((await claim(me, ITEMS[0]!, 'ps-same-0001')).statusCode).toBe(200);
+    expect((await claim(me, ITEMS[1]!, 'ps-other-0001')).statusCode).toBe(429);
+    for (let i = 0; i < 3; i++) {
+      expect((await claim(me, ITEMS[1]!, 'ps-same-0001')).statusCode).toBe(429); // another title under the same id
+      expect((await claim(other, ITEMS[2]!, 'ps-same-0001')).statusCode).toBe(429); // another device under the same id
+    }
+    // a reported stream is matched the same way: a start report under its id from another device or title gets nothing
+    expect((await report(me, 'start', ITEMS[0]!, 'ps-same-0001')).statusCode).toBe(200);
+    expect((await report(other, 'start', ITEMS[2]!, 'ps-same-0001')).json()).toEqual({ error: 'max_streams', max: 1 });
+    expect((await report(me, 'start', ITEMS[1]!, 'ps-same-0001')).json()).toEqual({ error: 'max_streams', max: 1 });
+    expect((await claim(other, ITEMS[2]!, 'ps-same-0001')).statusCode).toBe(429);
+    expect((await claim(me, ITEMS[0]!, 'ps-same-0001')).statusCode).toBe(200); // the real one plays on
+    // a stop under its id from another device ends nothing of it
+    expect((await report(other, 'stop', ITEMS[0]!, 'ps-same-0001')).statusCode).toBe(200);
+    expect(await env.kv.get(`play:${userId}:ps-same-0001`)).toBeTruthy();
+    expect((await claim(other, ITEMS[2]!, 'ps-other-0002')).statusCode).toBe(429);
+  });
+
+  it('a drain belongs to the stopped stream\'s device and title, not to its play session id (review B)', async () => {
+    await setUserLimits(env.ctx, userId, { ...NONE, maxStreams: 1 });
+    expect((await claim(me, ITEMS[0]!, 'ps-dd-0001')).statusCode).toBe(200);
+    expect((await report(me, 'stop', ITEMS[0]!, 'ps-dd-0001')).statusCode).toBe(200);
+    // another device reusing the stopped id is a new stream: counted as one, not served as the old one's trailing requests
+    expect((await claim(other, ITEMS[2]!, 'ps-dd-0001')).statusCode).toBe(200);
+    expect((await claim(me, ITEMS[1]!, 'ps-dd-0002')).statusCode).toBe(429);
+  });
+
   it('a claim never waits for a start report\'s media server call (review 2: only the count and the write are queued)', async () => {
     await setUserLimits(env.ctx, userId, { ...NONE, maxStreams: 3 });
     let release!: () => void;
@@ -230,7 +259,7 @@ describe('stream limit at the gateway (/internal/stream)', () => {
     const nginx = (s: Sess, uri: string) => env.app.inject({ url: '/internal/authz-nginx', headers: { ...H, 'x-original-uri': uri }, cookies: s.cookies });
     expect((await nginx(me, `/media/Videos/${ITEMS[0]}/master.m3u8?PlaySessionId=ps-b-0001&MediaSourceId=ms1`)).statusCode).toBe(204);
     expect((await nginx(me, `/media/Videos/${ITEMS[0]}/hls1/main/0.ts?PlaySessionId=ps-b-0001`)).statusCode).toBe(204);
-    expect(await env.kv.get(`serve:${userId}:ps-b-0001`)).toBeTruthy();
+    expect((await env.kv.keys(`serve:${userId}:ps-b-0001~`)).length).toBe(1); // bound to device and title
     expect((await nginx(me, `/media/Items/${ITEMS[1]}/Images/Primary`)).statusCode).toBe(204); // images are no stream
     expect((await nginx(other, `/media/Videos/${ITEMS[1]}/master.m3u8?PlaySessionId=ps-b-0002`)).statusCode).toBe(403);
     expect((await nginx(other, `/media/Videos/${ITEMS[1]}/stream?static=true`)).statusCode).toBe(403);

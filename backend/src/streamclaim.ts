@@ -17,6 +17,7 @@
  * Claims run one at a time per account (an in-process queue: a single backend replica, docs/security.md), so two new streams can
  * never both take the last slot.
  */
+import { createHash } from 'node:crypto';
 import type { Ctx } from './ctx.js';
 import { unfetchedCastSessions } from './cast.js';
 import { effectiveLimits } from './limits.js';
@@ -31,7 +32,11 @@ export const DRAIN_S = 120;
 /** a draining stream counts while it was served this recently (the gateway re-asks every 10 s while it serves it) */
 export const DRAIN_SEEN_S = 20;
 
-/** `serve:<user>:<key>`: key = the play session, or `item-<itemId>` for a request that names none */
+/**
+ * `serve:<user>:<key>`: key = `<play session>~<stream>` (or `item-<itemId>~<stream>` for a request that names none), where `<stream>`
+ * is a short hash of the device and the title. The play session id comes from the client's URL, so it never names a stream by itself
+ * (review B): the same id from another device or for another title is another record, and counts as another stream.
+ */
 export const serveKey = (userId: string, key: string) => `serve:${userId}:${key}`;
 const drainKey = (userId: string, key: string) => `servedrain:${userId}:${key}`;
 interface ServeRec { deviceId: string; itemId: string; at: number }
@@ -42,8 +47,13 @@ interface Session { deviceId?: string; itemId?: string; draining?: boolean }
 export interface StreamExcept { ps?: Iterable<string>; deviceId?: string; itemId?: string }
 
 const PS = /^[\w-]{1,64}$/;
-/** the record key of a claim: the play session when it is a plain id, else the item */
-export const claimKey = (itemId: string, ps?: string | null) => (ps && PS.test(ps) ? ps : `item-${itemId.toLowerCase()}`);
+const streamTag = (deviceId: string, itemId: string) => createHash('sha256').update(`${deviceId}|${itemId.toLowerCase()}`).digest('hex').slice(0, 16);
+/** the record key of a claim: the play session when it is a plain id (else the item), bound to the device and title */
+export const claimKey = (deviceId: string, itemId: string, ps?: string | null) =>
+  `${ps && PS.test(ps) ? ps : `item-${itemId.toLowerCase()}`}~${streamTag(deviceId, itemId)}`;
+/** a reported stream (`play:` record) is this claim's own only for the same device and title */
+export const sameStream = (l: { deviceId?: string; itemId?: string } | null, deviceId: string | undefined, itemId: string): boolean =>
+  Boolean(l && deviceId && l.deviceId === deviceId && l.itemId?.toLowerCase() === itemId.toLowerCase());
 
 const parse = <T>(raw: string | null): T | null => {
   if (!raw) return null;
@@ -128,19 +138,22 @@ export function streamSerial<T>(userId: string, fn: () => Promise<T>): Promise<T
  * was running or served opens the DRAIN_S window for its trailing requests; a stop of anything else opens nothing.
  */
 export async function forgetServed(ctx: Pick<Ctx, 'kv'>, userId: string, s: { ps: string; deviceId?: string; itemId: string; running: boolean }): Promise<void> {
+  // only the stopping device's streams of this title (served records are bound to device and title): a stop never ends another's
+  if (!s.deviceId) return;
   const prefix = `serve:${userId}:`;
   const item = s.itemId.toLowerCase();
   const gone: string[] = [];
   for (const k of await ctx.kv.keys(prefix)) {
     const key = k.slice(prefix.length);
     const r = parse<ServeRec>(await ctx.kv.get(k));
-    if (!r || (key !== s.ps && !(s.deviceId && r.deviceId === s.deviceId && r.itemId === item))) continue;
+    if (!r || r.deviceId !== s.deviceId || r.itemId !== item) continue;
     gone.push(key);
     await ctx.kv.del(k);
   }
   if (!s.running && !gone.length) return;
-  const rec: DrainRec = { ...(s.deviceId ? { deviceId: s.deviceId } : {}), itemId: item, until: Date.now() + DRAIN_S * 1000 };
-  for (const key of new Set([s.ps, ...(s.deviceId ? [`item-${item}`] : []), ...gone])) await ctx.kv.set(drainKey(userId, key), JSON.stringify(rec), DRAIN_S);
+  const rec: DrainRec = { deviceId: s.deviceId, itemId: item, until: Date.now() + DRAIN_S * 1000 };
+  const keys = [claimKey(s.deviceId, item, s.ps), claimKey(s.deviceId, item, null), ...gone];
+  for (const key of new Set(keys)) await ctx.kv.set(drainKey(userId, key), JSON.stringify(rec), DRAIN_S);
 }
 
 export type ClaimResult = { ok: true } | { error: 'max_streams'; max: number };
@@ -152,7 +165,7 @@ export type ClaimResult = { ok: true } | { error: 'max_streams'; max: number };
 export function claimStream(ctx: Ctx, user: UserRow, a: { deviceId: string; itemId: string; ps?: string | null }): Promise<ClaimResult> {
   return streamSerial(user.id, async () => {
     const itemId = a.itemId.toLowerCase();
-    const key = claimKey(itemId, a.ps);
+    const key = claimKey(a.deviceId, itemId, a.ps);
     const rk = serveKey(user.id, key);
     const own = parse<ServeRec>(await ctx.kv.get(rk));
     const keep = async () => {
@@ -160,7 +173,9 @@ export function claimStream(ctx: Ctx, user: UserRow, a: { deviceId: string; item
       return { ok: true } as const;
     };
     // a reported stream (it passed the limit when it started) or one already counted: served on (seeking, the next segments)
-    if (own || (await ctx.kv.get(`play:${user.id}:${key}`))) return keep();
+    // (the record key carries device and title; a reported stream only counts as this one for the same device and title)
+    const ps = a.ps && PS.test(a.ps) ? a.ps : null;
+    if (own || (ps && sameStream(parse<{ deviceId?: string; itemId?: string }>(await ctx.kv.get(`play:${user.id}:${ps}`)), a.deviceId, itemId))) return keep();
     const max = (await effectiveLimits(ctx, user))!.maxStreams;
     const sessions = await sessionsOf(ctx, user.id);
     const others = { ps: [key], deviceId: a.deviceId, itemId };
