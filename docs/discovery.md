@@ -132,6 +132,47 @@ Die Seite setzt sich aus bestehenden und drei neuen Routen zusammen (die dritte,
 - **Diagnose:** jeder frische Bau schreibt eine Logzeile `request suggestions built` nur mit Zahlen (`anchors`, `seeds`, `seedsWithoutTmdb`, `seedsFoundByName`, `seedSearchFailures`, `recommendations`, `inLibrary` (davon `inLibraryByTvdb`), `lookupFailures`, `ageFiltered`, `final`, `type`), und Admins bekommen dieselben Zahlen als `debug` in der Antwort (Aufruf im Browser: `/api/library/request-suggestions?type=series`). `seeds: 0` mit `seedsWithoutTmdb` > 0 heißt: keine TMDB-Id gefunden; `final: 0` bei `recommendations` > 0: alles ist schon in der Bibliothek, verfügbar oder über der Altersgrenze.
 - Der Schlüssel des Anfragedienstes und Medienserver-Token verlassen den Server nie; Poster laufen über `/api/seerr/image/…`.
 
+## Staffeln und Filmreihen wünschen
+
+Wünsche gehen an den Anfragedienst (`backend/src/routes/seerr.ts`, Zustände: `backend/src/seerr/states.ts`). Alle Routen gelten nur für
+Erwachsenenprofile mit dem Recht *Wünsche* (Kinderprofile: 403 `kids_profile`, ohne Recht: 403 `requests_forbidden`, ohne
+Anfragedienst: 404 `requests_disabled`); schreibende Routen brauchen das CSRF-Token.
+
+- **`GET /api/seerr/tv/:id/seasons`** – jede Staffel einer Serie mit Zustand, für die Staffelwahl:
+  `{ tmdbId, title, poster?, seasons: [{ number, name?, episodes?, airDate?, state }] }`. `state`: `available` (vorhanden), `partial`
+  (teilweise vorhanden), `processing` (genehmigt / in Arbeit), `requested` (angefragt), `declined` (abgelehnt) oder `none`; Rangfolge
+  in dieser Reihenfolge, wenn der Medieneintrag und mehrere Anfragen etwas über dieselbe Staffel sagen. Wählbar sind nur `none` und
+  `declined`. Nicht zwischengespeichert (einmal pro geöffneter Auswahl). Die Id ist eine positive Ganzzahl (sonst 400).
+- **`POST /api/requests`** nimmt bei Serien `seasons: number[]` (1–101 Einträge, je 0–100). Staffeln, die die Serie nicht hat, fallen
+  weg (bleibt keine: 400 `bad_seasons`); von den übrigen wird nur angefragt, was noch offen ist (bleibt nichts: 409
+  `already_requested`). So bekommt eine teilweise angefragte Serie nur die fehlenden Staffeln. Die Antwort nennt sie (`seasons`), sie
+  stehen in `seerr_requests.seasons` (Migration 59) und erscheinen in `GET /api/requests/mine` und in der Admin-Liste
+  (`GET /api/admin/requests`, aus den `seasons` der Anfrage). Ein Wunsch zählt immer als **ein** Wunsch des Monatskontingents, egal
+  wie viele Staffeln er enthält (wie bisher „ganze Serie“). Ohne `seasons` wird eine Serie wie bisher ganz angefragt. Bei Filmen
+  nennt die Antwort die Filmreihe (`collection: { id, name } | null`), damit die Seite „Ganze Reihe anfragen…“ anbieten kann.
+- **`GET /api/seerr/movie/:id/collection`** – die TMDB-Filmreihe des Films (`collection`/`belongsToCollection` der Filmdetails, dann
+  `/collection/:id` des Anfragedienstes): `{ collection: null }` oder `{ collection: { id, name, poster?, parts: [{ tmdbId, title,
+  year?, releaseDate?, poster?, state }] } }`, Teile nach Erscheinungsdatum (ohne Datum zuletzt), höchstens 30. `state`: `available`
+  (in der Bibliothek, auch teilweise), `processing`, `requested`, `declined`, `none` (anfragbar) oder `unreleased` (kein oder ein
+  späteres Datum; was schon angefragt ist, zählt vor dem Datum). Die Zuordnung Film → Reihe wird einen Tag gespeichert, die Reihe
+  selbst 30 Sekunden (je Sprache).
+- **`POST /api/requests/batch`** `{ items: [{ mediaType: 'movie', tmdbId }], collectionId? }` – 1 bis 30 verschiedene Filme, jeder
+  ein eigener Filmwunsch mit denselben Regeln wie `POST /api/requests` (Kontingent mit Reservierung, Anfragedienst-Nutzer, Audit
+  `request.create` je Anfrage, Hooks). Nacheinander in der gegebenen Reihenfolge: Ist das Kontingent erschöpft, antworten der Teil
+  und alle folgenden `limit`, ohne den Dienst zu fragen. Antwort: `{ results: [{ tmdbId, result, status? }], quota }` mit `result`
+  `requested`, `exists` (schon angefragt oder vorhanden), `limit` oder `failed` (der Dienst hat abgelehnt; die anderen Teile laufen
+  weiter, das Kontingent bleibt unberührt). `collectionId` leert den Zwischenspeicher der Reihe. Höchstens 12 Aufrufe je Minute und
+  Konto. Eine Route statt 30 Einzelaufrufen: ein CSRF-Check, ein Treffer der Ratenbegrenzung, die Reihenfolge bestimmt der Server.
+
+Web: `lib/requests/picker.ts` (`pickSeasons()`, `requestCollection()`; eine `RequestSheetHost` im Root-Layout zeigt das Glas-Sheet),
+`SeasonSheet.svelte`, `CollectionSheet.svelte`, `PickRow.svelte`. Die Staffelwahl öffnet sich bei jedem Serienwunsch (Neu &
+demnächst, Suche, Wünsche-Seite, Demnächst, „Fehlende Staffel wünschen“ im Abspann-Bildschirm). Vorausgewählt sind alle offenen
+regulären Staffeln, Specials (Staffel 0) nicht; „Alle Staffeln“ schaltet die offenen regulären Staffeln. „Ganze Reihe anfragen…“
+steht in der Reihen-Zeile der Detailseite (Teile in der Bibliothek zählen dort als vorhanden, auch wenn der Anfragedienst sie noch
+nicht kennt) und erscheint auf der Wünsche-Seite und in der Suche nach einem Filmwunsch, wenn der Film zu einer Reihe gehört.
+Vorausgewählt sind alle anfragbaren Teile, abgelehnte nur von Hand. Nach dem Senden zeigt jede Zeile ihr Ergebnis und eine Zeile die
+Summe; fehlgeschlagene Teile bleiben angehakt („Fehlgeschlagene erneut anfragen“).
+
 ## Reaktionen: `/api/items/:id/reactions`
 
 Nur für Filme und Folgen (Serie: 400 `unsupported_type`, unsichtbar: 404). „Gesehen“ heißt `played` oder mindestens 85 %.
