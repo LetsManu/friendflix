@@ -568,6 +568,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
   const CLAIM_NO_MS = 2_000;
   const claimCache = new Map<string, { exp: number; v: Claim }>();
   const claimInflight = new Map<string, Promise<Claim | 'error'>>();
+  let claimRouteMissingNoted = false;
   function claimStream(sid: string, s: { itemId: string; ps: string | null }): Promise<Claim | 'error'> {
     const itemId = lc(s.itemId);
     const ps = s.ps && /^[\w-]{1,64}$/.test(s.ps) ? s.ps : undefined; // anything else: the item stands for the play session
@@ -585,6 +586,11 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
           body: JSON.stringify({ sid, itemId, ...(ps ? { ps } : {}) }),
           signal: AbortSignal.timeout(5000),
         });
+        if (r.status === 404 && !claimRouteMissingNoted) {
+          // fail-open while the backend is older than this gateway (an update in progress), but say so once
+          claimRouteMissingNoted = true;
+          console.warn('gateway: the backend has no /internal/stream (older version?): the stream limit is not checked for served streams until it is updated');
+        }
         if (r.ok || r.status === 404) v = true;
         else if (r.status === 401) v = 401;
         else if (r.status === 429) {

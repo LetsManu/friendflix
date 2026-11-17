@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createGateway } from '../src/gateway.js';
 import { jellyfinUpstream } from '../src/upstream/jellyfin.js';
 import { createPlexUpstream } from '../src/upstream/plex.js';
@@ -89,8 +89,18 @@ describe('gateway stream claims', () => {
     expect((await get(`/media/Videos/${ID}/master.m3u8?PlaySessionId=ps-g-0003`, sid)).status).toBe(200);
     expect(claims).toHaveLength(2);
     mode = '404';
-    expect((await get(`/media/Videos/${ID}/master.m3u8?PlaySessionId=ps-g-0004`, sid)).status).toBe(200);
-    expect(upstreamCalls).toBe(2);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect((await get(`/media/Videos/${ID}/master.m3u8?PlaySessionId=ps-g-0004`, sid)).status).toBe(200);
+      expect((await get(`/media/Videos/${ID2}/master.m3u8?PlaySessionId=ps-g-0005`, sid)).status).toBe(200);
+      // fail-open for an older backend, but said once (review 9), without any session or play session
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toMatch(/\/internal\/stream/);
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/stream-claim-session|ps-g-/);
+    } finally {
+      warn.mockRestore();
+    }
+    expect(upstreamCalls).toBe(3);
   });
 
   it('an unusable play session id is claimed by its item', async () => {
