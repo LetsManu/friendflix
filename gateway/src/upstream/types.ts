@@ -64,6 +64,12 @@ export interface Upstream {
    * `params` are written exactly as the media server spells them.
    */
   readonly requireBitrate?: { readonly path: RegExp; readonly params: readonly string[] };
+  /**
+   * The stream a cookie request belongs to (security audit G1): its item and the play session it names (null: none), for playlists,
+   * segments and streams; null for anything else (images, subtitles, trickplay). The gateway claims it at the backend before it
+   * forwards the request (/internal/stream), so the account's stream limit holds where streams are served. Absent = nothing is claimed.
+   */
+  streamOf?(path: string, query: URLSearchParams): { itemId: string; ps: string | null } | null;
   /** headers that authenticate an upstream request as the user */
   authHeaders(cred: UpstreamCredentials): Record<string, string>;
   /**

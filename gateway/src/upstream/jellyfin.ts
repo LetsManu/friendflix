@@ -3,6 +3,8 @@
 import type { Upstream, UpstreamCredentials } from './types.js';
 
 const ID = '[0-9a-fA-F]{32}';
+/** playlists, segments and streams of a video (the backend's mediapath.ts streamOfUri has the same shape for Plan B) */
+const STREAM_REQUEST = new RegExp(`^/Videos/(${ID})/((master|main)\\.m3u8|(hls1?|hls)/[\\w.-]+/[\\w.-]+|stream(\\.\\w{2,5})?)$`);
 
 /** Jellyfin authorization header (the backend's Plan B variant lives in backend/src/jellyfin/client.ts). */
 export function mediaBrowserHeader(deviceId: string, token: string) {
@@ -48,5 +50,13 @@ export const jellyfinUpstream: Upstream = {
   clampBitrate: ['maxstreamingbitrate', 'videobitrate'],
   // HLS playlists and segments: Jellyfin falls back to the source bitrate (or stream copy) when these are missing
   requireBitrate: { path: new RegExp(`^/Videos/${ID}/((master|main)\\.m3u8|(hls1?|hls)/[\\w.-]+/[\\w.-]+)$`), params: ['MaxStreamingBitrate', 'VideoBitrate'] },
+  // playlists, segments and streams count against the stream limit, by the PlaySessionId they carry (any letter case)
+  streamOf: (path: string, query: URLSearchParams) => {
+    const m = STREAM_REQUEST.exec(path);
+    if (!m) return null;
+    let ps: string | null = null;
+    for (const [k, v] of query) if (k.toLowerCase() === 'playsessionid') ps = v;
+    return { itemId: m[1]!.toLowerCase(), ps };
+  },
   authHeaders: (c: UpstreamCredentials) => ({ Authorization: mediaBrowserHeader(c.deviceId, c.token) }),
 };

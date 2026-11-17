@@ -7,7 +7,7 @@ import { parseClientCaps } from '../media/clientCaps.js';
 import { MediaError, type CapReason, type ItemDto, type PlaybackDto, type TranscodeReason } from '../media/types.js';
 import type { JfUser, ProfileRow, UserRow } from '../types.js';
 import { methodOf } from '../playstats.js';
-import { countStreams } from '../livetv/tokens.js';
+import { countStreams, forgetServed, streamSerial } from '../streamclaim.js';
 import { clearLive, clearStopped, getLive, listLive, markStopped, setLive } from '../live.js';
 import { noteHandoff, REC_ITEM_RE, selectHandoff, type HandoffVia } from '../handoff.js';
 import { isHomeRequest } from '../netaddr.js';
@@ -78,17 +78,29 @@ export const abilityOf = (st: HevcState): 'ready' | 'off' | 'unproven' | 'unheal
  * `opts.elapsedMs`: the watch time this report closes, when the caller knows it better than the live record's last update (continuous
  * AirPlay: the server is the only reporter and the token refresh moves `updatedAt` every 20 s). Absent = since the last update, at most 30 s.
  */
-export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackReportBody, who: PlaybackReporter, opts: { elapsedMs?: number } = {}): Promise<{ ok: true } | { error: 'max_streams'; max: number }> {
+export function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackReportBody, who: PlaybackReporter, opts: { elapsedMs?: number } = {}): Promise<{ ok: true } | { error: 'max_streams'; max: number }> {
+  // one at a time per account, with the gateway's stream claims (streamclaim.ts): a start and a claim never both take the last slot
+  return streamSerial(who.user.id, () => reportNow(ctx, kind, b, who, opts));
+}
+
+async function reportNow(ctx: Ctx, kind: PlaybackKind, b: PlaybackReportBody, who: PlaybackReporter, opts: { elapsedMs?: number }): Promise<{ ok: true } | { error: 'max_streams'; max: number }> {
   const user = who.user;
   const ticks = Math.floor(b.positionTicks);
   let live = await getLive(ctx, user.id, b.playSessionId);
+  const wasLive = live !== null;
   let elapsed = true;
+  /** a progress report beyond the limit: forwarded (the position is kept), but no live record is rebuilt that the gateway would serve */
+  let untracked = false;
   if (!live) {
-    // Start takes a stream slot. Progress/Stopped after TTL expiry are still forwarded (a sleeping tab must not lose its position)
-    // and rebuild the live record without counting against maxStreams.
-    if (kind === 'Playing') {
+    // Start takes a stream slot; so does a progress report that would rebuild an expired live record (security audit G1: a record
+    // the client builds by reports alone must not open a stream beyond the limit). Not counted: the caller's own play session and its
+    // own stream (same device and item: a quality switch, a resume). Progress / Stopped after TTL expiry are always forwarded, so a
+    // sleeping tab does not lose its position.
+    if (kind !== 'Playing/Stopped') {
       const role = (await effectiveLimits(ctx, user))!;
-      if ((await countStreams(ctx, user.id)) >= role.maxStreams) return { error: 'max_streams', max: role.maxStreams };
+      const over = (await countStreams(ctx, user.id, { ps: [b.playSessionId], deviceId: who.deviceId, itemId: b.itemId })) >= role.maxStreams;
+      if (over && kind === 'Playing') return { error: 'max_streams', max: role.maxStreams };
+      untracked = over;
     }
     const item = await ctx.jf.item(who.jfUser, b.itemId); // access check: the user must be able to see the item
     elapsed = false;
@@ -128,11 +140,12 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
   }
   if (kind === 'Playing/Stopped') {
     await clearLive(ctx, user.id, b.playSessionId);
+    await forgetServed(ctx, user.id, { ps: b.playSessionId, deviceId: who.deviceId, itemId: b.itemId, running: wasLive });
     await markStopped(ctx, user.id, b.playSessionId);
     // a stream stopped within its first 30 s: its grants go now (only the caller's own play session: /api/playback/info or cast wrote its record)
     if (await ctx.kv.get(`pbinfo:${user.id}:${b.playSessionId}`).catch(() => null)) await releaseGrants(ctx, b.playSessionId);
   }
-  else { if (kind === 'Playing') await clearStopped(ctx, user.id, b.playSessionId); await setLive(ctx, live); }
+  else if (!untracked) { if (kind === 'Playing') await clearStopped(ctx, user.id, b.playSessionId); await setLive(ctx, live); }
   await playbackHooks.run(ctx, { kind, user, live, elapsedMs: opts.elapsedMs ?? (elapsed ? Math.min(Date.now() - prev, 30_000) : 0) });
   return { ok: true };
 }
@@ -388,7 +401,9 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     }).parse(req.body);
     const clientCaps = parseClientCaps(b.caps);
     const role = (await effectiveLimits(ctx, req.user!))!;
-    if ((await countStreams(ctx, req.user!.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
+    // running streams: reported, served by the gateway (security audit G1) and unfetched live tokens; the same item on this device is
+    // the same stream (the player asks again for a quality or audio switch, or a resume)
+    if ((await countStreams(ctx, req.user!.id, { deviceId: req.session?.deviceId, itemId: b.itemId })) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
     // outside the home networks the role's remote cap applies on top; the viewer may lower the quality, never raise it above the limit
     const remote = !isHomeRequest(req, ctx.cfg.HOME_NETWORKS);
     const ceiling = remote ? remoteBitrateCap(role) : role.maxBitrate; // the quality menu's upper bound (the client's own pick is not a ceiling)

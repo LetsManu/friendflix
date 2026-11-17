@@ -557,6 +557,51 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
    */
   const authInflight = new Map<string, Promise<Authz | null | 'error'>>();
 
+  /**
+   * Stream claims (security audit G1): before a playlist, segment or stream of a play session is forwarded, the backend counts it
+   * against the account's stream limit (POST /internal/stream). Keyed `sha256(sid)|item|play session` (never the raw session id);
+   * a grant is memoised CLAIM_OK_MS (the backend keeps the stream 60 s after its last claim), a refusal CLAIM_NO_MS, backend trouble
+   * never (503). An older backend without the route (404) serves as before.
+   */
+  type Claim = true | { error: 'max_streams'; max: number } | 401;
+  const CLAIM_OK_MS = 10_000;
+  const CLAIM_NO_MS = 2_000;
+  const claimCache = new Map<string, { exp: number; v: Claim }>();
+  const claimInflight = new Map<string, Promise<Claim | 'error'>>();
+  function claimStream(sid: string, s: { itemId: string; ps: string | null }): Promise<Claim | 'error'> {
+    const itemId = lc(s.itemId);
+    const ps = s.ps && /^[\w-]{1,64}$/.test(s.ps) ? s.ps : undefined; // anything else: the item stands for the play session
+    const key = `${sha256(sid)}|${itemId}|${ps ?? ''}`;
+    const hit = claimCache.get(key);
+    if (hit && hit.exp > Date.now()) return Promise.resolve(hit.v);
+    const running = claimInflight.get(key);
+    if (running) return running;
+    const p = (async (): Promise<Claim | 'error'> => {
+      let v: Claim;
+      try {
+        const r = await f(new URL('/internal/stream', opts.backendUrl), {
+          method: 'POST',
+          headers: { 'x-internal-secret': opts.internalSecret, 'content-type': 'application/json' },
+          body: JSON.stringify({ sid, itemId, ...(ps ? { ps } : {}) }),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (r.ok || r.status === 404) v = true;
+        else if (r.status === 401) v = 401;
+        else if (r.status === 429) {
+          const b = (await r.json().catch(() => ({}))) as { max?: unknown };
+          v = { error: 'max_streams', max: typeof b.max === 'number' && Number.isInteger(b.max) && b.max >= 0 ? b.max : 0 };
+        } else return 'error';
+      } catch {
+        return 'error';
+      }
+      claimCache.set(key, { exp: Date.now() + (v === true ? CLAIM_OK_MS : CLAIM_NO_MS), v });
+      if (claimCache.size > 5000) claimCache.clear();
+      return v;
+    })().finally(() => claimInflight.delete(key));
+    claimInflight.set(key, p);
+    return p;
+  }
+
   /** Upstream.authorize helper: item visibility of the session's active profile (backend /internal/authz/item), memoised 5 s. */
   const itemCache = new Map<string, { exp: number; v: boolean }>();
   async function checkItem(sid: string, itemId: string, kind: 'media' | 'image' | 'subtitle'): Promise<boolean> {
@@ -689,6 +734,24 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       if (ok !== true) {
         count(ok === 'error' ? '503' : '403');
         return ok === 'error' ? end(res, 503, 'unavailable') : end(res, 403, 'forbidden');
+      }
+    }
+    // the stream limit where streams are served (security audit G1): a new stream beyond it gets the body /api/playback/info answers
+    const stream = up.streamOf?.(path, url.searchParams);
+    if (stream) {
+      const sid = /(?:^|;\s*)ff_sid=([\w-]+)/.exec(req.headers.cookie ?? '')![1]!;
+      const c = await claimStream(sid, stream);
+      if (c === 'error') {
+        count('503');
+        return end(res, 503, 'unavailable', 'text/plain', { 'cache-control': 'no-store' });
+      }
+      if (c === 401) {
+        count('401');
+        return end(res, 401, 'unauthorized');
+      }
+      if (c !== true) {
+        count('429');
+        return end(res, 429, JSON.stringify(c), 'application/json', { 'cache-control': 'no-store', 'retry-after': '10' });
       }
     }
     return forward(req, res, url, path, auth, count, false, false, authzMs);

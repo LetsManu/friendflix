@@ -123,6 +123,8 @@ beforeAll(async () => {
     req.on('data', (c) => (b += c));
     req.on('end', () => {
       if (req.headers['x-internal-secret'] !== 's3cret-s3cret-s3cret') return void res.writeHead(403).end();
+      // the stream limit's claims (security audit G1; tested in stream-claim.test.ts): always granted here
+      if (req.url === '/internal/stream') return void res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
       const j = JSON.parse(b);
       authzBodies.push(b);
       if (j.ct !== undefined) {

@@ -266,6 +266,13 @@ export function createPlexUpstream(o: PlexUpstreamOptions = {}): Upstream {
     // Chromecast: HLS + poster/backdrop only (no direct streams, no trickplay); subtitles are served by the backend
     castPaths: [HLS, CAST_IMAGE],
     directStream: STREAM,
+    // HLS by its session (the play session of /api/playback/info), direct streams by their item
+    streamOf: (path: string) => {
+      const h = HLS.exec(path);
+      if (h) return { itemId: h[1]!, ps: h[2]! };
+      const st = STREAM.exec(path);
+      return st ? { itemId: st[1]!, ps: null } : null;
+    },
     image: /^\/Items\//,
     stripQuery: new Set(['x-plex-token', 'token', 'api_key', 'apikey']),
     castDropQuery: new Set(['x-plex-client-identifier', 'deviceid']),

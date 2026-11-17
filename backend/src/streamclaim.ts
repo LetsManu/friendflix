@@ -1,0 +1,146 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
+/**
+ * The per-role stream limit (`maxStreams`) where streams are really served (security audit G1). The client's own playback reports
+ * (`play:` records) are no longer the only source: the gateway asks `/internal/stream` before it serves a playlist, segment or stream of
+ * a play session, and the backend keeps a `serve:<user>:<key>` record per served stream that lives SERVE_TTL_S after its last request.
+ *
+ * What counts as one stream: a play session (`play:` or `serve:`, the same play session once) or a live token minted but not fetched yet.
+ * Sessions of the same device and the same item are ONE stream (seeking, a new play session for a quality or audio switch, a resume).
+ * A running stream whose stop was reported may fetch its last segments for DRAIN_S without counting, so the next episode the player
+ * starts after that stop is not refused by the old one's trailing requests; only a stop of a stream that was running opens that window,
+ * and only once (a stop report for anything else, or a second one, does not), so stop reports are no way to stream uncounted. /api/playback/info counts the same set, so a
+ * stream whose info was granted (the next episode prepared during the autoplay countdown included) also fits when it is first served,
+ * unless another stream started meanwhile.
+ *
+ * Claims run one at a time per account (an in-process queue: a single backend replica, docs/security.md), so two new streams can
+ * never both take the last slot.
+ */
+import type { Ctx } from './ctx.js';
+import { effectiveLimits } from './limits.js';
+import { unfetchedLiveSessions } from './livetv/tokens.js';
+import type { UserRow } from './types.js';
+
+/** a served stream is forgotten this long after its last request (a paused player keeps its slot through its progress reports) */
+export const SERVE_TTL_S = 60;
+
+/** after a running stream's stop: how long its trailing requests are served without counting */
+export const DRAIN_S = 120;
+
+/** `serve:<user>:<key>`: key = the play session, or `item-<itemId>` for a request that names none */
+export const serveKey = (userId: string, key: string) => `serve:${userId}:${key}`;
+const drainKey = (userId: string, key: string) => `servedrain:${userId}:${key}`;
+interface ServeRec { deviceId: string; itemId: string; at: number }
+interface Session { deviceId?: string; itemId?: string }
+/** what is never counted for a check: its own play sessions, and its own stream (same device and item) */
+export interface StreamExcept { ps?: Iterable<string>; deviceId?: string; itemId?: string }
+
+const PS = /^[\w-]{1,64}$/;
+/** the record key of a claim: the play session when it is a plain id, else the item */
+export const claimKey = (itemId: string, ps?: string | null) => (ps && PS.test(ps) ? ps : `item-${itemId.toLowerCase()}`);
+
+const parse = <T>(raw: string | null): T | null => {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as T; } catch { return null; }
+};
+
+/** the account's running streams by play session: reported (`play:`), served (`serve:`) and minted-but-unfetched live tokens */
+async function sessionsOf(ctx: Ctx, userId: string): Promise<Map<string, Session>> {
+  const out = new Map<string, Session>();
+  const playPrefix = `play:${userId}:`;
+  for (const k of await ctx.kv.keys(playPrefix)) {
+    const l = parse<{ deviceId?: string; itemId?: string }>(await ctx.kv.get(k));
+    out.set(k.slice(playPrefix.length), { deviceId: l?.deviceId, itemId: l?.itemId });
+  }
+  const servePrefix = `serve:${userId}:`;
+  for (const k of await ctx.kv.keys(servePrefix)) {
+    const ps = k.slice(servePrefix.length);
+    const r = parse<ServeRec>(await ctx.kv.get(k));
+    if (!r) continue;
+    const known = out.get(ps);
+    // a reported stream keeps counting; the served record adds the device a report may not name
+    out.set(ps, { deviceId: known?.deviceId ?? r.deviceId, itemId: known?.itemId ?? r.itemId });
+  }
+  for (const ps of await unfetchedLiveSessions(ctx, userId)) if (!out.has(ps)) out.set(ps, {});
+  return out;
+}
+
+/** one stream per device and item; a session that names neither is a stream of its own */
+const identity = (ps: string, s: Session) => (s.deviceId && s.itemId ? `d|${s.deviceId}|${s.itemId.toLowerCase()}` : `p|${ps}`);
+
+function countOf(sessions: Map<string, Session>, except: StreamExcept = {}): number {
+  const skipPs = new Set(except.ps ?? []);
+  const mine = except.deviceId && except.itemId ? identity('', { deviceId: except.deviceId, itemId: except.itemId }) : null;
+  const ids = new Set<string>();
+  for (const [ps, s] of sessions) {
+    if (skipPs.has(ps)) continue;
+    const id = identity(ps, s);
+    if (id !== mine) ids.add(id);
+  }
+  return ids.size;
+}
+
+/**
+ * The account's running streams for a new playback (VOD info and start report, cast, Live TV and recordings): reported, served and
+ * minted-but-unfetched ones, without `except` (the caller's own play sessions and its own device + item).
+ */
+export async function countStreams(ctx: Ctx, userId: string, except: StreamExcept = {}): Promise<number> {
+  return countOf(await sessionsOf(ctx, userId), except);
+}
+
+const queues = new Map<string, Promise<unknown>>();
+/** runs `fn` after every earlier one of this account (claims and stream starts), in this process */
+export function streamSerial<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = queues.get(userId) ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  const tail = run.catch(() => undefined);
+  queues.set(userId, tail);
+  void tail.then(() => { if (queues.get(userId) === tail) queues.delete(userId); });
+  return run;
+}
+
+/**
+ * A stream's stop was reported: its served records go at once (the play session's, and any other of the same device and item, e.g.
+ * requests that named no play session). `running`: the caller knew the stream as running (its live record existed). Only a stream that
+ * was running or served opens the DRAIN_S window for its trailing requests; a stop of anything else opens nothing.
+ */
+export async function forgetServed(ctx: Pick<Ctx, 'kv'>, userId: string, s: { ps: string; deviceId?: string; itemId: string; running: boolean }): Promise<void> {
+  const prefix = `serve:${userId}:`;
+  const item = s.itemId.toLowerCase();
+  const gone: string[] = [];
+  for (const k of await ctx.kv.keys(prefix)) {
+    const key = k.slice(prefix.length);
+    const r = parse<ServeRec>(await ctx.kv.get(k));
+    if (!r || (key !== s.ps && !(s.deviceId && r.deviceId === s.deviceId && r.itemId === item))) continue;
+    gone.push(key);
+    await ctx.kv.del(k);
+  }
+  if (!s.running && !gone.length) return;
+  for (const key of new Set([s.ps, `item-${item}`, ...gone])) await ctx.kv.set(drainKey(userId, key), '1', DRAIN_S);
+}
+
+export type ClaimResult = { ok: true } | { error: 'max_streams'; max: number };
+
+/**
+ * The gateway is about to serve a request of a stream: `ok` keeps (or starts) the stream's served record; `max_streams` = a new stream
+ * beyond the account's limit (the gateway answers 429 with the same body as /api/playback/info).
+ */
+export function claimStream(ctx: Ctx, user: UserRow, a: { deviceId: string; itemId: string; ps?: string | null }): Promise<ClaimResult> {
+  return streamSerial(user.id, async () => {
+    const itemId = a.itemId.toLowerCase();
+    const key = claimKey(itemId, a.ps);
+    const rk = serveKey(user.id, key);
+    const own = parse<ServeRec>(await ctx.kv.get(rk));
+    const keep = async () => {
+      await ctx.kv.set(rk, JSON.stringify({ deviceId: a.deviceId, itemId, at: own?.at ?? Date.now() } satisfies ServeRec), SERVE_TTL_S);
+      return { ok: true } as const;
+    };
+    // a reported stream (it passed the limit when it started) or one already counted: served on (seeking, the next segments)
+    if (own || (await ctx.kv.get(`play:${user.id}:${key}`))) return keep();
+    // a running stream's stop was reported a moment ago: the player may still fetch what it buffered, without counting again
+    if (await ctx.kv.get(drainKey(user.id, key))) return { ok: true };
+    const max = (await effectiveLimits(ctx, user))!.maxStreams;
+    if (countOf(await sessionsOf(ctx, user.id), { ps: [key], deviceId: a.deviceId, itemId }) >= max) return { error: 'max_streams', max };
+    return keep();
+  });
+}

@@ -411,10 +411,11 @@ describe('profiles', () => {
     const admin = await mk();
     const guest = await invitedLogin(admin, 'guest', 'sub-gina'); // maxStreams 1
     const p = await mkProfile(guest, 'Kind');
-    const body = (ps: string) => ({ itemId: ITEM, playSessionId: ps, mediaSourceId: 'ms1', positionTicks: 0 });
+    const body = (ps: string, itemId = ITEM) => ({ itemId, playSessionId: ps, mediaSourceId: 'ms1', positionTicks: 0 });
     expect((await call(guest, 'POST', '/api/playback/start', body('ps-aaaaaaaa'))).statusCode).toBe(200);
     const kid = sessOf(await call(guest, 'POST', `/api/profiles/${p.id}/select`, {}), guest);
-    const r = await call(kid, 'POST', '/api/playback/start', body('ps-bbbbbbbb'));
+    // another title (the same title on the same device is the same stream)
+    const r = await call(kid, 'POST', '/api/playback/start', body('ps-bbbbbbbb', 'c'.repeat(32)));
     expect(r.statusCode).toBe(429);
     expect(r.json().error).toBe('max_streams');
   });
