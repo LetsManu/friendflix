@@ -28,17 +28,19 @@
 ## Controller's calls
 
 1. **Image commit = first-parent**, matched in JS (one matcher, no pathspec translation): `git log --first-parent --diff-merges=first-parent --no-renames --name-only`. A merged branch counts as its merge commit; `--no-renames` makes a file moved out of an input folder count.
-2. **Map shape:** `exclude`, `groups`, `full`, `images.<name>.{dockerfile, groups, inputs, argsFrom, required, reproducible}`; `!glob` excludes, `@<image>` includes that image's `inputs`; `.dockerignore` drops apply automatically.
+2. **Map shape:** `exclude`, `groups`, `full`, `images.<name>.{dockerfile, groups, inputs, argsFrom, required, reproducible}`; `!glob` excludes, `@<image>` includes that image's `inputs`; `.dockerignore` drops apply only to an image's own `inputs`, never to `groups.*`, `full` or `argsFrom` (`.dockerignore` drops `.github`, yet the build action is an input of every image).
 3. **BuildKit pin** = `default:` of input `buildkit-image` in `.github/actions/build-image/action.yml` (in the *all images* group); `reproduce-image.sh` falls back to `ci.yml`'s `BUILDKIT_IMAGE:` for old refs.
 4. **Labels written by the build action** from git only (title, source, url, licenses, revision, created); `metadata-action` leaves `ci.yml` (it read the repository description and stamped `.version`).
 5. **Updater registry digests by `fetch`** (anonymous pull token, `HEAD …/manifests/<tag>`): no new program; the token is never logged or returned.
 6. **Installed build ordering** by commit time from GitHub (`/repos/{repo}/commits/{sha}`, cached 7 days); any unknown time → the backend's own image commit.
-7. **Service identity fields:** gateway `/health` and livetv `/healthz` gain `image`; livetv `version` stays as `null`; web's `/_app/version.json` `version` = its image commit.
+7. **Service identity fields:** gateway `/health` and livetv `/healthz` gain `image`; livetv `version` = its image commit (spec table); web's `/_app/version.json` `version` = its image commit.
 8. **Keep if equal:** a push build whose base has the same image commit (`full`, weekly, Trivy rebuild) compares linux/amd64 manifests and, when equal, points `ci-<sha>` back at the carried index.
 9. **Publish knows "built" by digest:** on `main` a leg signs only when `ci-<sha>` ≠ the plan's base digest.
 10. **Burn-in** annotates from the `reproducible (x)` legs and never fails them (a red non-required job would hide the run from `updates.ts`, which reads `status=success` runs); `scripts/burnin-status.sh` prints the streak.
 11. **`docker` keeps waiting for `docker (mediaserver)`** (the backend pins its digest); the media plan's comment "the ci-changed-only project removes this wait" is corrected at the merge.
-12. **Release refusal text** (German, spec): `Release abgebrochen: main (<sha7>) ist nicht veröffentlicht (<Grund>). Erst main grün machen, dann den Release neu starten.`; Grund `CI-Lauf fehlgeschlagen` / `nach 60 Minuten noch nicht fertig`.
+12. **Image-affecting settings live only in `build-image`** (preflight F8): label keys and formats, including the media server pin label, are composed there; `ci.yml` and `image-leg` pass values only (a digest, the pin script's output). This keeps `groups.all` at `.dockerignore` + `build-image/**`.
+13. **Report mode never blocks:** a registry or cosign error while planning gives `base: null` (`keine Basis` → build) and a `::warning`; the plan fails only on git, map or parse errors.
+14. **Release refusal text** (German, spec): `Release abgebrochen: main (<sha7>) ist nicht veröffentlicht (<Grund>). Erst main grün machen, dann den Release neu starten.`; Grund `CI-Lauf fehlgeschlagen` / `nach 60 Minuten noch nicht fertig`.
 
 ## Global Constraints
 
@@ -47,6 +49,7 @@
 - **Actions:** only those already in `.github/workflows/*.yml`, at their full SHAs; anything new needs a full-SHA pin (none planned).
 - **Fail closed:** a plan that is missing, failed or does not parse turns required checks red, never "skipped" or green.
 - **Secrets never logged:** `GITHUB_TOKEN`, `RELEASE_TOKEN`, GHCR pull tokens, `INTERNAL_SECRET`. Updater job log and state carry fixed codes and digests only.
+- **Temp git repos in tests** (A1's helper, reused by A3, C6, D1): git runs with `-c user.name=ci -c user.email=ci@example.com -c commit.gpgsign=false -c tag.gpgsign=false -c init.defaultBranch=main` (CI runners have no identity, local config signs). Scripts use only Node ≥ 22 APIs (`test:scripts` also runs in `test (22)`).
 - **Fixtures:** hosts under `example.com`, repository `example/friendflix`, digests `sha256:` + 64 × one hex digit, commits 40 × one digit; code keeps the fixed registry `ghcr.io`.
 - **Texts:** German first ("du"), then en, es, fr, it, pl, tr, identical key order (`web/src/lib/i18n/locales/<lang>/admin.ts`); "…" not "..."; never "Netflix" or "Seerr".
 - **Git:** merge only (no rebase, no force-push, never `git stash`, never `git add -f .superpowers`); stage only the task's files. Every commit ends with:
@@ -83,7 +86,7 @@ The branch merging second merges the other in (no rebase). Shared regions:
 
 | This plan | Media plan | Region | How the merge resolves it |
 |---|---|---|---|
-| A3 | Task 10 | `docker` build steps → composite action; backend *OCI labels* step | the pin label goes in through the action's `labels` input from the backend leg; `docker` keeps `needs: mediaserver-image` until D3 |
+| A3 | Task 10 | `docker` build steps → composite action; backend *OCI labels* step | `build-image` composes the pin label (input `mediaserver-pins` = the script's output); `ci.yml` passes the value only; `docker` keeps `needs: mediaserver-image` until D3 |
 | A3, D3 | Task 10, 11 | `mediaserver-image` job (outputs `digest`, smoke step) | D3 renames it `docker-mediaserver` / `docker (mediaserver)`; `outputs.digest` is the built or carried digest; the smoke step runs only when built |
 | C4 | Task 11 | `mediaserver/Dockerfile` labels (`:85-93`), `ARG GIT_SHA` | keep 0003/0004 and the `changes` label; revision becomes `${FF_IMAGE_COMMIT}` |
 | D4 | Task 10 | `publish-mediaserver` | removed; `publish` covers six images |
@@ -108,14 +111,14 @@ Ends green: every job as today, plus a `changes` job printing its plan.
   - `version.json` is in every Node image until Task C4 (today all bake `APP_VERSION`); a `$comment` says so and that, until Stage C, every image also bakes the run commit (stage A's carry calls are a report).
 - Produces (`scripts/changed-images.mjs`, ESM, Node built-ins only, exports):
   - `loadMap(root = ROOT): ImageMap`; `IMAGES` (names in map order)
-  - `isInput(map, image, path, root = ROOT): boolean` — globs (`**` any depth, `*` one segment), `!`, `@image`, minus `map.exclude`, minus `.dockerignore` drops (a pattern drops a path it or a parent folder matches; a later `!pattern` re-includes; leading `/` ignored)
+  - `isInput(map, image, path, root = ROOT): boolean` — globs (`**` any depth, `*` one segment), `!`, `@image`, minus `map.exclude`; `.dockerignore` drops (a pattern drops a path it or a parent folder matches; a later `!pattern` re-includes; leading `/` ignored) are subtracted from the image's own `inputs` only, never from `groups.*`, `full` or `argsFrom` (Controller's call 2)
   - `imageCommits(root, map, rev): Record<image, { commit: string, time: number }>` — one `git log --first-parent --diff-merges=first-parent --no-renames --name-only --format=%x00%H %ct <rev>` pass, stops when every image has its commit; throws `no commit touches the inputs of <image>`
   - `changedFiles(root, from, to): string[]` — `git diff --name-only --no-renames <from> <to>`
   - `classify(map, files, built: Set<string>): Classes` (spec table): a `full` file → all full; only docs (or docs + `version.json`) → tests `docs`, no e2e/dast; else tests `full`, e2e = web built or a file under `e2e/`, `.github/workflows/`, `.github/actions/`; dast likewise with `.zap/`
-  - `plan({ root, map, event, sha, prBase?, full? }): Plan` — `pull_request`: carry iff the image commits at `sha` and `prBase` are equal (reasons `unverändert seit <c7>` / `Eingaben geändert`), classes from `changedFiles(prBase, sha)`; other events: mode `report`, all `build` (`kein Vergleich (nur Bericht)`), classes full
-  - CLI `plan --event <e> --sha <s> [--pr-base <s>] [--full] [--summary <file>]` (JSON on one line; summary table `| Image | Aktion | Image-Commit | Grund |`); `image-commit <image> [--ref <r>]` prints `<sha> <epoch>`.
+  - `plan({ root, map, event, sha, prBase?, full? }): Plan` (D1 adds `ref`) — `pull_request`: carry iff the image commits at `sha` and `prBase` are equal (reasons `unverändert seit <c7>` / `Eingaben geändert`), classes from `changedFiles(prBase, sha)`; other events: mode `report`, all `build` (`kein Vergleich (nur Bericht)`), classes full
+  - CLI `plan --event <e> --sha <s> [--pr-base <s>] [--full] [--summary <file>]` (JSON on one line; summary table `| Image | Aktion | Image-Commit | Grund |`); `image-commit <image> [--ref <r>]` prints `<sha> <epoch>`. An empty `--pr-base` counts as absent; `pull_request` without one exits 1 (`--pr-base fehlt`).
 
-- [ ] **Step 1: Write the failing tests** (helper: throwaway repo in `mkdtempSync` with commit, branch, `merge --no-ff`, `git mv`; a two-image test map):
+- [ ] **Step 1: Write the failing tests** (exported helper `tmpRepo()`: throwaway repo in `mkdtempSync`, git with the Global Constraints `-c` identity and no signing; commit, branch, `merge --no-ff`, `git mv`; a two-image test map):
   - `isInput: globs, ! excludes, @image, **/*.md, .dockerignore drop and re-include`
   - `image commit: the newest first-parent commit touching the inputs`
   - `a merge counts as the merge commit; the side branch's own commits do not`
@@ -124,9 +127,11 @@ Ends green: every job as today, plus a `changes` job printing its plan.
   - `classify: docs, version.json, code; e2e and dast triggers; map change → full`
   - `plan (pull_request): carry when the image commits at base and head are equal, build otherwise`
   - `real map: every image has a commit at HEAD; node-common reaches all five Node images and not mediaserver`
+  - `real map: .dockerignore and .github/actions/build-image/action.yml are inputs of all six images` (preflight F1)
+  - `CLI: an empty --pr-base on push is absent; pull_request without one fails`
 - [ ] **Step 2: Run** `node --test scripts/changed-images.test.mjs`. Expected: FAIL (module missing).
 - [ ] **Step 3: Implement** the map and the module.
-- [ ] **Step 4: Run** the tests and `node scripts/changed-images.mjs plan --event pull_request --sha HEAD --pr-base HEAD~1`. Expected: PASS; one JSON line with six images.
+- [ ] **Step 4: Run** the tests, `node scripts/changed-images.mjs plan --event pull_request --sha HEAD --pr-base HEAD~1` and `… plan --event push --sha HEAD --pr-base ""`. Expected: PASS; one JSON line with six images each.
 - [ ] **Step 5: Commit** `ci: change map, image commits and change classes (report only)`.
 
 ### Task A2: COPY and docs-reader guards, `.dockerignore`, `test:docs`
@@ -136,30 +141,30 @@ Ends green: every job as today, plus a `changes` job printing its plan.
 
 **Interfaces:**
 - Consumes: `loadMap`, `isInput` (A1).
-- Produces: `copyGuard(root, map): string[]` (problems as `<dockerfile>: <source> → <file> is not an input`, empty = ok): each `COPY`/`ADD` (continuation lines joined; `--from=` skipped; URL sources skipped; `--flags` dropped; last argument = destination), each source expanded over `git ls-files` (a folder = everything under it, a glob by `isInput`'s rules) minus `.dockerignore` drops, every file must satisfy `isInput`; every `argsFrom` file must be an input of its image; every tracked repository path named in `.github/actions/build-image/action.yml` (Task A3) must be in some image's `argsFrom`.
+- Produces: `copyGuard(root, map): string[]` (problems as `<dockerfile>: <source> → <file> is not an input`, empty = ok): each `COPY`/`ADD` (continuation lines joined; `--from=` skipped; URL sources skipped; `--flags` dropped; last argument = destination), each source expanded over `git ls-files` (a folder = everything under it, a glob by `isInput`'s rules) minus `.dockerignore` drops, every file must satisfy `isInput`; every `argsFrom` file must be an input of its image; every tracked repository file the build action **reads** must be in some image's `argsFrom` — reads = operands of non-comment `run:` lines and `with:` file/context values in `.github/actions/build-image/action.yml`; YAML comments and label strings are out of scope (preflight F2).
 - Produces: `docsReaders(root): string[]` — `*.test.ts` under `backend/test`, `gateway/test`, `updater/test`, `livetv/test`, `web/src` whose source has a string literal containing `docs/` or a file name ending `.md`; `docsGuard(root): string[]` — readers missing from their workspace's `test:docs` file list. `scripts/*.test.mjs` all run in docs mode through `test:scripts`.
 
-- [ ] **Step 1: Write the failing tests:** `COPY guard: the real Dockerfiles are covered` (`[]`); `COPY guard: an uncovered COPY source fails` (map copy without `codenames.json` in web → names `web/Dockerfile`); `COPY guard: a file the build action reads must be in argsFrom`; `docs-reader guard: every docs-reading test is in test:docs` (`[]`); `docs/operations.md lists docker (x) for every required image and reproducible (x) for every required reproducible one`.
+- [ ] **Step 1: Write the failing tests:** `COPY guard: the real Dockerfiles are covered` (`[]`); `COPY guard: an uncovered COPY source fails` (map copy without `codenames.json` in web → names `web/Dockerfile`); `COPY guard: a file the build action reads must be in argsFrom` (fixture `action.yml` in a `tmpRepo()`, since A3 creates the real one; a comment or label naming a file does not count); `docs-reader guard: every docs-reading test is in test:docs` (`[]`); `docs/operations.md lists docker (x) for every required image and reproducible (x) for every required reproducible one`.
 - [ ] **Step 2: Run** `node --test scripts/changed-images.test.mjs`. Expected: FAIL.
 - [ ] **Step 3: Implement** the guards; add the `.dockerignore` lines (keep every existing line); write the `test:docs` lists exactly as `docsReaders` reports them.
-- [ ] **Step 4: Run** the tests, `npm run test:docs`, `npm run build -w web`, `npm run build -w gateway`. Expected: PASS.
+- [ ] **Step 4: Run** the tests and `TEST_DATABASE_URL=… npm run test:docs`. Expected: PASS. Local `npm run build` never reads `.dockerignore`: the proof for the leaner contexts is `docker build -f <ws>/Dockerfile .` for web and gateway when Docker is available, else the PR's `docker (x)` and `reproducible (x)` legs (say which).
 - [ ] **Step 5: Commit** `ci: COPY and docs-reader guards, test:docs, leaner build contexts`.
 
 ### Task A3: Composite build action and the `changes` job
 
 **Files:**
 - Create: `.github/actions/build-image/action.yml`
-- Modify: `.github/workflows/ci.yml` (drop `env.BUILDKIT_IMAGE`; new first job `changes`; `docker` and `mediaserver-image` build via the action; header comment), `scripts/reproduce-image.sh` (pin lookup, `--buildkit-image`), `scripts/changed-images.test.mjs`
+- Modify: `.github/workflows/ci.yml` (drop `env.BUILDKIT_IMAGE`; new first job `changes`; `docker` and `mediaserver-image` build via the action; header comment), `scripts/reproduce-image.sh` (pin lookup, `--buildkit-image`), `scripts/changed-images.test.mjs`, `.github/dependabot.yml` (`github-actions` entry: `directories: ["/", "/.github/actions/*"]`, so the pins moved into the action keep their updates), `docs/reproducible-builds.md:31,43` (the pin now lives in the action)
 
 **Interfaces:**
-- Produces (action): inputs `service`, `publish` (`'true'|'false'`), `image` (no tag), `tag` (`ci-<sha>`), `labels` (extra lines, publish only), `buildkit-image` (`default:` = the pin, moved with its comment); outputs `digest`, `ref` (`<image>@<digest>` or `friendflix-<service>:ci`). Today's work, byte-identical: setup-buildx with the pin; build args per service (mediaserver `SOURCE_DATE_EPOCH`, `GIT_SHA`; others also `BUILD_TIME`, `APP_VERSION`, `APP_CODENAME`); labels via `metadata-action` (mediaserver's title/description/licence lines move in); PR `load` + `gha` cache; publish: today's outputs, `no-cache`, `cache-to`, `sbom`, `provenance: mode=max`.
-- Produces (job `changes`): `permissions: { contents: read }`, `timeout-minutes: 5`, checkout `fetch-depth: 0`, `persist-credentials: false`, setup-node 26, step `plan`: the CLI with `--event "$GITHUB_EVENT_NAME" --sha "$GITHUB_SHA" --pr-base "$PR_BASE"` (env from `github.event.pull_request.base.sha`), `--summary "$GITHUB_STEP_SUMMARY"`; job output `plan`. Nothing needs it yet.
+- Produces (action): inputs `service`, `publish` (`'true'|'false'`), `image` (no tag), `tag` (`ci-<sha>`), `mediaserver-pins` (value only, default empty; when set for backend the action adds the label `io.github.letsmanu.friendflix.mediaserver.pins=<value>`; unused until D6), `buildkit-image` (`default:` = the pin, moved with its comment); outputs `digest`, `ref` (`<image>@<digest>` or `friendflix-<service>:ci`). Today's work, byte-identical: setup-buildx with the pin; build args per service (mediaserver `SOURCE_DATE_EPOCH`, `GIT_SHA`; others also `BUILD_TIME`, `APP_VERSION`, `APP_CODENAME`); labels via `metadata-action` (mediaserver's title/description/licence lines move in byte-identical, even where they name a file); PR `load` + `gha` cache; publish: today's outputs, `no-cache`, `cache-to`, `sbom`, `provenance: mode=max`.
+- Produces (job `changes`): `permissions: { contents: read }`, `timeout-minutes: 5`, checkout `fetch-depth: 0`, `persist-credentials: false`, setup-node 26, step `plan`: the CLI with `--event "$GITHUB_EVENT_NAME" --sha "$GITHUB_SHA" --pr-base "$PR_BASE"` (env from `github.event.pull_request.base.sha`, empty outside PRs = absent), `--summary "$GITHUB_STEP_SUMMARY"`; job output `plan`. Nothing needs it yet.
 - Produces (`reproduce-image.sh`): pin = the `default:` value under `buildkit-image:` in `.github/actions/build-image/action.yml` at the ref, else the `BUILDKIT_IMAGE:` line of `ci.yml`; `scripts/reproduce-image.sh --buildkit-image [--ref R]` prints it and exits.
 
-- [ ] **Step 1: Write the failing tests:** `reproduce-image.sh --buildkit-image reads the action's pin` (real repo; equals the `default:` in `action.yml`, starts `moby/buildkit:v`) and `… falls back to ci.yml on an old ref` (temp repo holding only `.github/workflows/ci.yml` with a `BUILDKIT_IMAGE:` line).
+- [ ] **Step 1: Write the failing tests:** `reproduce-image.sh --buildkit-image reads the action's pin` (real repo; equals the `default:` in `action.yml`, starts `moby/buildkit:v`) and `… falls back to ci.yml on an old ref` (A1's `tmpRepo()` holding only `.github/workflows/ci.yml` with a `BUILDKIT_IMAGE:` line).
 - [ ] **Step 2: Run** `node --test scripts/changed-images.test.mjs`. Expected: FAIL.
 - [ ] **Step 3: Implement** the action, the job, the script change; rewrite the `ci.yml` header lines on BuildKit and the build.
-- [ ] **Step 4: Run** the tests, the workflow lint, `bash -n scripts/reproduce-image.sh`, and the A2 guard (the action reads only `version.json`). Expected: PASS.
+- [ ] **Step 4: Run** the tests, the workflow lint, `bash -n scripts/reproduce-image.sh`, and assert `copyGuard()` on the real action is `[]` (it reads only `version.json`). Expected: PASS.
 - [ ] **Step 5: Commit** `ci: composite build action and the changes job (report only)`.
 
 ---
@@ -172,12 +177,12 @@ Works with today's images (every image changes every commit, so it finds everyth
 
 **Files:**
 - Create: `updater/src/registry.ts`, `updater/test/registry.test.ts`
-- Modify: `updater/src/policy.ts`, `updater/src/docker.ts`, `updater/test/docker.test.ts`, `updater/test/policy.test.ts`
+- Modify: `updater/src/policy.ts`, `updater/src/docker.ts`, `updater/src/job.ts` + `updater/src/server.ts` (only the mechanical `gitSha` → `commit` rename at `job.ts:222,320,377`, `server.ts:156`; behaviour is B2's), `updater/test/docker.test.ts`, `updater/test/policy.test.ts`
 
 **Interfaces:**
 - Produces (`policy.ts`): `isDigest(v): v is string` (`/^sha256:[0-9a-f]{64}$/`); `digestRef(repo, service, digest): string` → `ghcr.io/<owner lc>/<name lc>-<IMAGE_OF[service]>@<digest>` (throws on a bad digest); `isOwnDigestRef(repo, service, ref): boolean`.
 - Produces (`registry.ts`): `registryDigest(repo, service, tag, fetchImpl = fetch): Promise<string>` — `isTag(tag)` first; `GET https://ghcr.io/token?scope=repository:<owner>/<name>-<image>:pull&service=ghcr.io` → `{ token }`; `HEAD https://ghcr.io/v2/<owner>/<name>-<image>/manifests/<tag>`, `authorization: Bearer <token>`, `accept:` OCI index, Docker manifest list, OCI manifest, Docker manifest v2 media types; `redirect: 'error'`, 15 s; returns `docker-content-digest` when `isDigest`, else `StepError('registry_failed')` (never the token or a body). `cachedRegistry(repo, ttlMs = 600_000, errTtlMs = 60_000, now = Date.now, fetchImpl?)` → `(service, tag) => Promise<string | null>`.
-- Produces (`docker.ts`): `ImageInfo = { repoDigests: string[]; commit: string | null; version: string | null }` (`commit` = env `FF_IMAGE_COMMIT`, else `GIT_SHA`, 40 hex only; `gitSha` renamed everywhere); `Running = ImageInfo & { container: string }` (`running(service)` adds the container id from `docker container inspect --format '{{.Id}}\t{{.Image}}'`); `pullDigest(ref)` → `docker pull --quiet <ref>` (`isOwnDigestRef` for some service, else `Error('invalid image')`; exit ≠ 0 → `pull_failed`); `tag(ref, image)` → `docker image tag <ref> <image>` (image = `expectedImage(repo, svc, tag)` of the same service as `ref`; exit ≠ 0 → `tag_failed`); `verify(ref)` takes the digest ref directly (anything not `isOwnDigestRef` → `false`, no cosign call), cosign arguments as today.
+- Produces (`docker.ts`): `ImageInfo = { repoDigests: string[]; commit: string | null; version: string | null }` (`commit` = env `FF_IMAGE_COMMIT`, else `GIT_SHA`, 40 hex only; `ImageInfo.gitSha` renamed in every reader; `UpdaterConfig.gitSha` stays, C1 owns it); `Running = ImageInfo & { container: string }` (`running(service)` adds the container id from `docker container inspect --format '{{.Id}}\t{{.Image}}'`); `pullDigest(ref)` → `docker pull --quiet <ref>` (`isOwnDigestRef` for some service, else `Error('invalid image')`; exit ≠ 0 → `pull_failed`); `tag(ref, image)` → `docker image tag <ref> <image>` (image = `expectedImage(repo, svc, tag)` of the same service as `ref`; exit ≠ 0 → `tag_failed`); `verify(ref)` takes the digest ref directly (anything not `isOwnDigestRef` → `false`, no cosign call), cosign arguments as today.
 
 - [ ] **Step 1: Write the failing tests:** `registry: pull token, then HEAD with the accept list; returns the digest`; `401, 404, redirect, non-digest header → registry_failed; no token in the error`; `a bad tag never reaches fetch`; `cache: one HEAD per 10 min, errors retried after 60 s`; docker (fake `Runner`) `pullDigest and tag run exactly these argv`; `another repository, a tag ref, a backend digest tagged as web are refused before any command`; `imageInfo reads FF_IMAGE_COMMIT, else GIT_SHA`; `verify takes only own digest refs`.
 - [ ] **Step 2: Run** `cd updater && npx vitest run test/registry.test.ts test/docker.test.ts test/policy.test.ts`. Expected: FAIL.
@@ -254,10 +259,10 @@ Still builds everything; each image now carries its image commit. Readers first 
 
 **Interfaces:**
 - Produces: `imageCommit(cfg): string` in `backend/src/version.ts` — `FF_IMAGE_COMMIT` if 40 hex, else `GIT_SHA`, else `'dev'`; `/health` → `{ status: 'ok', version: imageCommit(cfg).slice(0, 7) }`; error log release `APP_VERSION ?? imageCommit7`.
-- Produces: gateway `/health` → `{"status":"ok","image":<40 hex or null>}`; livetv `/healthz` → `version: null`, `image: <40 hex or null>`; backend `LivetvState.image` (40 hex or null); `web/src/lib/admin/livetv/StatusTab.svelte:233` shows `image7` when `version` is null (one-line web change folded in here).
+- Produces: gateway `/health` → `{"status":"ok","image":<40 hex or null>}`; livetv `/healthz` → `version` and `image` both = its image commit (40 hex or null; spec table); `backend/src/livetv/client.ts` accepts `version` as SemVer (older livetv) or 40 hex; backend `LivetvState.image`; `web/src/lib/admin/livetv/StatusTab.svelte:233` shows a 40-hex version as its first 7 characters (one-line web change folded in here).
 - Produces: updater `UpdaterConfig` → `version: null`, `gitSha` = `FF_IMAGE_COMMIT` else `GIT_SHA` (40 hex), so `/v1/status` `updater.sha` is its image commit.
 
-- [ ] **Step 1: Write the failing tests:** `/health answers FF_IMAGE_COMMIT[0:7], else GIT_SHA[0:7]`; `gateway /health names its image commit`; `livetv healthz: version null, image`; `backend livetv detect keeps image`; `updater config: no version, sha from FF_IMAGE_COMMIT`.
+- [ ] **Step 1: Write the failing tests:** `/health answers FF_IMAGE_COMMIT[0:7], else GIT_SHA[0:7]`; `gateway /health names its image commit`; `livetv healthz: version and image are the image commit`; `backend livetv client keeps a 40-hex version`; `backend livetv detect keeps image`; `updater config: no version, sha from FF_IMAGE_COMMIT`.
 - [ ] **Step 2: Run** each workspace's file. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the tests and the four typechecks. Expected: PASS.
@@ -308,7 +313,7 @@ Still builds everything; each image now carries its image commit. Readers first 
 - Produces (Dockerfiles): final stage `ARG FF_IMAGE_COMMIT=dev` + `ENV FF_IMAGE_COMMIT=$FF_IMAGE_COMMIT`; backend also `ARG APP_VERSION=`, `ARG APP_CODENAME=` → `ENV`; no `GIT_SHA`, `BUILD_TIME` anywhere; web build stage `ARG FF_IMAGE_COMMIT=dev` + `ARG SOURCE_DATE_EPOCH`, `COPY codenames.json ./` only; mediaserver `ARG FF_IMAGE_COMMIT=dev`, revision label `${FF_IMAGE_COMMIT}`.
 - Produces: `kitVersionName(env)` → `FF_IMAGE_COMMIT` (not `dev`), else `SOURCE_DATE_EPOCH`, else the clock.
 - Produces (action): new required inputs `commit`, `time`; build args `SOURCE_DATE_EPOCH=<time>`, `FF_IMAGE_COMMIT=<commit>`, backend also `APP_VERSION`/`APP_CODENAME` from `version.json`; labels written directly (no `metadata-action`): `title=friendflix-<service>`, `source`/`url=https://github.com/<repository>`, `licenses=AGPL-3.0-or-later`, `revision=<commit>`, `created=<time as ISO Z>`, mediaserver's title/description/`GPL-3.0-only` as today; no `.version`.
-- Produces (`ci.yml`): `docker`, `mediaserver-image`, `reproducible` add `changes` to `needs`, `if: ${{ !cancelled() }}`, first step `Plan` failing with `::error::kein gültiger Plan (changes: <result>)` unless the result is `success` and `jq -e '.images'` parses; legs pass `commit`/`time`.
+- Produces (`ci.yml`): `docker`, `mediaserver-image`, `reproducible` add `changes` to `needs`, `if: ${{ !cancelled() }}`, first step `Plan` failing with `::error::kein gültiger Plan (changes: <result>)` unless the result is `success` and `jq -e '.images'` parses; legs pass `commit`/`time`. The `Plan` step stays inline (it runs before checkout) and byte-identical in every job; D2's test enforces that.
 - Produces (`reproduce-image.sh`): build args `FF_IMAGE_COMMIT`, `APP_VERSION`, `APP_CODENAME` (+ `GIT_SHA`, `BUILD_TIME` for old refs); `--compare`: `--ref` defaults to the image's `revision` label, env and labels copied as today (old images via `GIT_SHA`); otherwise `FF_IMAGE_COMMIT` = `image-commit` from the ref's own script if present, else REF; `SOURCE_DATE_EPOCH` = its commit time.
 - `CHANGELOG.md` `### Upgrade notes`: **Update the updater first** (*Admin → Update → Updater aktualisieren*; an older updater cannot roll back the next update). `### Admin`: **One version, per-service images** (the version lives in the backend; the nightly label names the newest service).
 
@@ -339,14 +344,14 @@ Still builds everything; each image now carries its image commit. Readers first 
 - Modify: `scripts/changed-images.mjs`, `scripts/changed-images.test.mjs`, `scripts/reproduce-image.sh` (`--diff`), `.github/workflows/ci.yml` (`changes` registry access; `reproducible` burn-in step)
 
 **Interfaces:**
-- Produces: `findBase({ ancestors: string[], published: (sha) => Promise<boolean>, max = 50 }): Promise<string | null>` (`ancestors` = run commit first, then `git rev-list --first-parent`); `identityRegexp(repo): string` (Global Constraints rule); `plan(opts)` gains `registry = { digest(image, tag): Promise<string | null>, revision(ref): Promise<string | null>, verify(ref): Promise<boolean> }` and replaces A1's push branch: `published(c)` = every image has `sha-<c7>`; per image `base = { digest, revision, verified }`; `carry` iff verified and `revision === commit` (reason `unverändert seit <c7>`), else `build` (`Eingaben geändert` / `Basis nicht signiert` / `keine Basis`). Mode stays `report`: nothing acts on it yet.
+- Produces: `findBase({ ancestors: string[], published: (sha) => Promise<boolean>, max = 50 }): Promise<string | null>` (`ancestors` = run commit first, then `git rev-list --first-parent`); `identityRegexp(repo): string` (Global Constraints rule); `plan(opts)` gains `registry = { digest(image, tag): Promise<string | null>, revision(ref): Promise<string | null>, verify(ref): Promise<boolean> }` and replaces A1's push branch: `published(c)` = every image has `sha-<c7>`; per image `base = { digest, revision, verified }`; `carry` iff verified and `revision === commit` (reason `unverändert seit <c7>`), else `build` (`Eingaben geändert` / `Basis nicht signiert` / `keine Basis`). Mode stays `report`: nothing acts on it yet. A registry or cosign error gives `base: null` (`keine Basis`) plus `::warning`, never a failed plan (Controller's call 13).
 - CLI: `--registry ghcr.io/<owner lc>/<repo lc>` (digests and the `revision` label via `docker buildx imagetools inspect`, `cosign verify` with `identityRegexp` and the issuer); `identity --repo <owner/repo>` prints the regexp.
 - `changes` job on publishable runs: `permissions: { contents: read, packages: read }`, GHCR login, `sigstore/cosign-installer` at publish.yml's SHA.
 - `reproduce-image.sh --diff A B`: accepts `docker save` archives (descends a nested index to linux/amd64; layers with or without gzip by magic bytes); last line `verdict: equal|os-only|app` — `app` when `config` (Env, Labels, Cmd, Entrypoint, WorkingDir, User) differs or a differing path starts with `app/`.
 - Burn-in step in `reproducible (x)` (publishable runs, `continue-on-error: true`, plan says `carry`): the compare step adds `--out "$RUNNER_TEMP/rebuilt.tar"`; equal amd64 manifests of `ci-<sha>` and base → `::notice title=burn-in::<x> gleich <digest>`; else `docker pull` + `docker save` the base and `--diff`: `os-only` → `::notice title=burn-in::<x> zählt (nur OS-Pakete)`, `app` → `::warning title=burn-in::<x> setzt zurück: <first path or config>`.
 - `scripts/burnin-status.sh [N=30]`: last N push runs on `main` (`gh run list`), their `reproducible (…)` annotations (`gh api …/check-runs/<job id>/annotations`); prints `<sha7> zählt|setzt zurück|kein Burn-in` and the streak (Stage D merges at 20).
 
-- [ ] **Step 1: Write the failing tests:** `findBase: the run commit itself first, then the newest published ancestor, null after 50`; `an unverified base is built, reason "Basis nicht signiert"` (Review Focus 4); `push plan: carry only when the verified revision equals the image commit`; `identityRegexp("example/friendflix") equals the updater rule`; `--diff verdicts: a changed file under app/ is "app", under usr/ "os-only", an Env change "app"` (two tiny OCI layouts built in a temp dir with `tar -czf`).
+- [ ] **Step 1: Write the failing tests:** `findBase: the run commit itself first, then the newest published ancestor, null after 50`; `an unverified base is built, reason "Basis nicht signiert"` (Review Focus 4); `push plan: carry only when the verified revision equals the image commit`; `identityRegexp("example/friendflix") equals the updater rule`; `a registry error gives base null and build, the plan still succeeds`; `--diff verdicts: a changed file under app/ is "app", under usr/ "os-only", an Env change "app"` (two tiny OCI layouts built in a temp dir with `tar -czf`; any git use through A1's `tmpRepo()`).
 - [ ] **Step 2: Run** `node --test scripts/changed-images.test.mjs`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the tests, workflow lint, `bash -n` on both scripts. Expected: PASS.
@@ -365,11 +370,11 @@ Starts once `scripts/burnin-status.sh` shows 20 consecutive counting `main` runs
 
 **Interfaces:**
 - Consumes: C6.
-- Produces (`plan`): push mode `compare` (was `report`), classes from `changedFiles(base.commit, sha)` (no base → full); mode `full` for `--full` (honoured only on `refs/heads/main`) or a `full` file changed → every image `build`, reason `alles bauen`; mode `weekly` (event `schedule`) → backend gateway web updater `build`, reason `wöchentliche Prüfung`, livetv/mediaserver compared, classes full; mode `tag` (`refs/tags/v*`): tagged commit an ancestor of `origin/main` → `waitPublished` (45 min), base = the tagged commit, every image `carry`; any `build` there throws `ein Tag-Lauf baut nie einen Commit, den main veröffentlicht hat`; not an ancestor → backport: `findBase`, compare, reason `Backport`, logged. A dispatch on any other ref → `full`. Empty change set → docs class.
+- Produces (`plan`): opts gain `ref` (`GITHUB_REF`; CLI `--ref <ref>`, which D2 passes) and every mode below keys on it; push mode `compare` (was `report`), classes from `changedFiles(base.commit, sha)` (no base → full); mode `full` for `--full` (honoured only on `refs/heads/main`) or a `full` file changed → every image `build`, reason `alles bauen`; mode `weekly` (event `schedule`) → backend gateway web updater `build`, reason `wöchentliche Prüfung`, livetv/mediaserver compared, classes full; mode `tag` (`refs/tags/v*`): tagged commit an ancestor of `origin/main` → `waitPublished` (45 min), base = the tagged commit, every image `carry`; any `build` there throws `ein Tag-Lauf baut nie einen Commit, den main veröffentlicht hat`; not an ancestor → backport: `findBase`, compare, reason `Backport`, logged. A dispatch on any other ref → `full`. Empty change set → docs class.
 - Produces: `waitPublished({ published: () => Promise<boolean>, runState: () => Promise<'running' | 'failed' | 'none'>, timeoutMs, intervalMs = 30_000, sleep, now }): Promise<'published' | 'failed' | 'timeout'>`; CLI `wait-published --sha <s> --timeout-min <n>` (`runState` via `gh api repos/<repo>/actions/runs?head_sha=<s>&branch=main&event=push`), exit 0 only for `published`; the tag-run message on `failed`: `der main-Lauf für <sha7> ist fehlgeschlagen: dort neu starten, dann diesen Lauf`.
 - Produces: `publishTags({ ref, sha, tags }): string[]` — main → `nightly`, `sha-<7>`; `vX.Y.Z` → `X.Y.Z`, `X.Y`, `X`, `sha-<7>`, plus `latest` when it is the highest plain `vX.Y.Z` in `tags`; `vX.Y.Z-rc.N` → `X.Y.Z-rc.N`, `sha-<7>`.
 
-- [ ] **Step 1: Write the failing tests:** `a docs commit after an unpublished code commit runs full` (Review Focus 2); `map or script change → full`; `--full is ignored off main`; `weekly rebuilds the four reproducible images and compares livetv and mediaserver`; `tag run waits for sha-<7> and carries everything; a build throws`; `a tag outside main compares with the nearest published ancestor`; `waitPublished: published, failed, timeout (fake clock)`; `publishTags: main, highest release, backport without latest, rc`.
+- [ ] **Step 1: Write the failing tests:** `a docs commit after an unpublished code commit runs full` (Review Focus 2); `map or script change → full`; `--full is ignored on a refs/tags/v* ref and on a pull_request`; `weekly rebuilds the four reproducible images and compares livetv and mediaserver`; `tag run waits for sha-<7> and carries everything; a build throws`; `a tag outside main compares with the nearest published ancestor`; `waitPublished: published, failed, timeout (fake clock)`; `publishTags: main, highest release, backport without latest, rc` (git through A1's `tmpRepo()`).
 - [ ] **Step 2: Run** `node --test scripts/changed-images.test.mjs`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the tests. Expected: PASS.
@@ -381,10 +386,11 @@ Starts once `scripts/burnin-status.sh` shows 20 consecutive counting `main` runs
 - Modify: `.github/workflows/ci.yml` (`on`, `test`, `e2e`, `dast`), `scripts/changed-images.test.mjs`
 
 **Interfaces:**
-- Produces (`on`): `workflow_dispatch.inputs.full` (boolean, default false), `schedule` (Global Constraints); `PUBLISHABLE` and the `changes` CLI cover `schedule`.
+- Produces (`on`): `workflow_dispatch.inputs.full` (boolean, default false), `schedule` (Global Constraints); every `PUBLISHABLE` copy and the `publish` `if` cover `schedule`.
+- Produces (`changes` job, preflight F7): CLI gets `--ref "$GITHUB_REF"` and `--full` from the dispatch input; `timeout-minutes: ${{ startsWith(github.ref, 'refs/tags/v') && 50 || 5 }}`; permissions `{ contents: read, packages: read, actions: read }`; `env: { GH_TOKEN: ${{ github.token }} }` for `runState`.
 - Produces: `test`, `e2e`, `dast` get `needs: changes`, `if: ${{ !cancelled() }}`, first step `Plan` (fail closed as C4, exports `TESTS`, `RUN_E2E`, `RUN_DAST`). `test` docs mode: checkout, setup-node, `npm ci`, `npm run spdx:check`, `npm run test:docs`, `npm run test:scripts`; full mode as today. `e2e`/`dast` off: the leg log line naming the web image commit, then every other step `if: env.RUN_E2E == 'true'` (resp. `RUN_DAST`). `secrets` unchanged.
 
-- [ ] **Step 1: Write the failing test** `every required job needs changes, runs if !cancelled() and checks the plan first` (`ci.yml` as text; jobs `test e2e dast docker reproducible`, from D3 `docker-mediaserver`: `needs:` names `changes`, `if: ${{ !cancelled() }}`, first step `Plan`) (Review Focus 3).
+- [ ] **Step 1: Write the failing test** `every required job needs changes, runs if !cancelled() and checks the plan first` (`ci.yml` as text; jobs `test e2e dast docker reproducible`, from D3 `docker-mediaserver`: `needs:` names `changes`, `if: ${{ !cancelled() }}`, first step `Plan`) (Review Focus 3); same file: `every Plan step is byte-identical` and `every PUBLISHABLE expression covers schedule`.
 - [ ] **Step 2: Run** `node --test scripts/changed-images.test.mjs`. Expected: FAIL (test/e2e/dast lack it).
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the test and the workflow lint. Expected: PASS.
@@ -398,7 +404,7 @@ Starts once `scripts/burnin-status.sh` shows 20 consecutive counting `main` runs
 
 **Interfaces:**
 - Consumes: plan, `build-image` action.
-- Produces (`image-leg`): inputs `service`, `plan`, `publish`, `gate` (`'true'` blocks on CRITICAL/HIGH, `'false'` reports), `labels`; outputs `digest`, `built`. Behaviour:
+- Produces (`image-leg`): inputs `service`, `plan`, `publish`, `gate` (`'true'` blocks on CRITICAL/HIGH, `'false'` reports), `mediaserver-pins` (value only, passed through to `build-image`, which composes the label; Controller's call 12); outputs `digest`, `built`. Behaviour:
 
   | Plan | Event | Leg |
   |---|---|---|
@@ -409,9 +415,9 @@ Starts once `scripts/burnin-status.sh` shows 20 consecutive counting `main` runs
 
 - `docker`: `needs: [changes, docker-mediaserver]`, `if: ${{ !cancelled() }}`, Plan step, `image-leg`; smoke tests only `if: steps.leg.outputs.built == 'true'`.
 - `docker-mediaserver`: `name: docker (mediaserver)`, Plan step, the base-pin step, `image-leg` with `gate: 'false'`, job output `digest`.
-- `reproducible`: carried → the leg log line; built → today's compare (and the C6 burn-in step goes).
+- `reproducible`: decides by digest, not by plan action (preflight F9): `ci-<sha>`'s digest = `plan.images[x].base.digest` → the leg log line; otherwise (built, Trivy rebuild, keep-if-equal miss) → today's compare. The C6 burn-in step goes.
 
-- [ ] **Step 1: Extend the D2 structure test** to `docker-mediaserver`; add `no leg pushes on pull_request` (`publish: 'true'` only under `PUBLISHABLE`).
+- [ ] **Step 1: Extend the D2 structure test** to `docker-mediaserver`; add `no leg pushes on pull_request` (`publish: 'true'` only under `PUBLISHABLE`) and `reproducible compares whenever ci-<sha> differs from the base digest`.
 - [ ] **Step 2: Run** `node --test scripts/changed-images.test.mjs`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the tests and the workflow lint. Expected: PASS.
@@ -440,7 +446,7 @@ Starts once `scripts/burnin-status.sh` shows 20 consecutive counting `main` runs
 
 **Interfaces:**
 - Consumes: `wait-published` (D1).
-- Produces: `timeout-minutes: 75`; permissions + `packages: read`, `actions: read`; before *Bump version* (not on resume): GHCR login, cosign-installer, `node scripts/changed-images.mjs wait-published --sha "$(git rev-parse HEAD)" --timeout-min 60` (`GH_TOKEN: github.token`); non-zero → refusal text (call 12), nothing committed. Header and summary: two files change; the `main` run builds the backend, the tag run carries everything.
+- Produces: `timeout-minutes: 75`; permissions + `packages: read`, `actions: read`; before *Bump version* (not on resume): GHCR login, cosign-installer, `node scripts/changed-images.mjs wait-published --sha "$(git rev-parse HEAD)" --timeout-min 60` (`GH_TOKEN: github.token`); non-zero → refusal text (call 14), nothing committed. Header and summary: two files change; the `main` run builds the backend, the tag run carries everything.
 
 - [ ] **Step 1: Run** the workflow lint on the current file (baseline). Expected: PASS.
 - [ ] **Step 2: Implement.**
@@ -450,11 +456,11 @@ Starts once `scripts/burnin-status.sh` shows 20 consecutive counting `main` runs
 ### Task D6: Media server pin wiring (once media stage 1 is merged in)
 
 **Files:**
-- Modify: `.github/workflows/ci.yml` (backend leg labels), `.github/images.json` (backend `argsFrom` + `mediaserver/pins/jellyfin/Dockerfile`, `scripts/mediaserver-pins.sh`), `.github/actions/image-leg/action.yml`
+- Modify: `.github/workflows/ci.yml` (backend leg runs the pin script), `.github/images.json` (backend `argsFrom` + `mediaserver/pins/jellyfin/Dockerfile`, `scripts/mediaserver-pins.sh`), `.github/actions/image-leg/action.yml` (pin compare)
 
 **Interfaces:**
 - Consumes: media Task 10 `scripts/mediaserver-pins.sh <repository> [<ferrofin digest>]`, `needs.docker-mediaserver.outputs.digest`.
-- Produces: the backend leg passes `io.github.letsmanu.friendflix.mediaserver.pins=<script output>` via `labels`; a publishable backend build without a mediaserver digest fails (`::error::kein Medienserver-Digest für den Pin`); a carried backend whose pin label's `ferrofin=` digest ≠ the current one is built.
+- Produces: the backend leg passes the script output as `mediaserver-pins` (value only; `build-image` from A3 composes `io.github.letsmanu.friendflix.mediaserver.pins=<value>`, Controller's call 12); a publishable backend build without a mediaserver digest fails (`::error::kein Medienserver-Digest für den Pin`); a carried backend whose pin label's `ferrofin=` digest ≠ the current one is built.
 
 - [ ] **Step 1: Write the failing test** `COPY guard: the pin file and script are backend argsFrom` (A2 guard with the real files present). Expected: FAIL.
 - [ ] **Step 2: Implement.**
