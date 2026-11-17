@@ -7,7 +7,7 @@ import { parseClientCaps } from '../media/clientCaps.js';
 import { MediaError, type CapReason, type ItemDto, type PlaybackDto, type TranscodeReason } from '../media/types.js';
 import type { JfUser, ProfileRow, UserRow } from '../types.js';
 import { methodOf } from '../playstats.js';
-import { countStreams, forgetServed, streamSerial } from '../streamclaim.js';
+import { countStreams, forgetServed, streamDeviceOf, streamSerial } from '../streamclaim.js';
 import { clearLive, clearStopped, getLive, listLive, markStopped, setLive, type Live } from '../live.js';
 import { noteHandoff, REC_ITEM_RE, selectHandoff, type HandoffVia } from '../handoff.js';
 import { isHomeRequest } from '../netaddr.js';
@@ -64,7 +64,11 @@ const reportBody = z.object({
 export type PlaybackKind = 'Playing' | 'Playing/Progress' | 'Playing/Stopped';
 export type PlaybackReportBody = z.infer<typeof reportBody>;
 /** who reports: a signed-in session, or a cast receiver's report token (routes/cast.ts, resolved to the same identity) */
-export interface PlaybackReporter { user: UserRow; jfUser: JfUser; profile?: ProfileRow; deviceId?: string; via?: HandoffVia }
+export interface PlaybackReporter {
+  user: UserRow; jfUser: JfUser; profile?: ProfileRow; deviceId?: string; via?: HandoffVia;
+  /** the device the gateway counts this session's streams under (streamclaim.ts streamDeviceOf); a stop ends those served records */
+  streamDevice?: string;
+}
 
 /**
  * start / progress / stop of a play session: live record (stream limit), media server report, statistics hooks.
@@ -163,7 +167,7 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
   }
   if (kind === 'Playing/Stopped') {
     await clearLive(ctx, user.id, b.playSessionId);
-    await forgetServed(ctx, user.id, { ps: b.playSessionId, deviceId: who.deviceId, itemId: b.itemId, running: wasLive });
+    await forgetServed(ctx, user.id, { ps: b.playSessionId, deviceId: who.deviceId ?? who.streamDevice, itemId: b.itemId, running: wasLive });
     // the cast drain mark (live.ts draining) only for a stream that was running, so once per run (review round 2 A): a stop report
     // for anything else, or a second one, opens no window in which a cast is served uncounted
     if (wasLive) await markStopped(ctx, user.id, b.playSessionId);
@@ -515,7 +519,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   const report = (kind: PlaybackKind) =>
     wrap(async (req: any, reply: any) => {
       const b = reportBody.parse(req.body);
-      const r = await playbackReport(ctx, kind, b, { user: req.user!, jfUser: req.jfUser!, profile: req.profile, deviceId: req.session?.deviceId, via: b.via });
+      const r = await playbackReport(ctx, kind, b, { user: req.user!, jfUser: req.jfUser!, profile: req.profile, deviceId: req.session?.deviceId, via: b.via, ...(req.sid ? { streamDevice: streamDeviceOf(req.session?.deviceId, req.sid) } : {}) });
       return 'error' in r ? reply.code(429).send(r) : r;
     });
   // the next episode's transcode the web player warmed during the autoplay countdown (web/src/lib/player/prefetch.ts) and nobody took:

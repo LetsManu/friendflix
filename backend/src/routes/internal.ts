@@ -18,7 +18,7 @@ import { jfUserFor, resolveProfile } from '../profiles.js';
 import { isHomeAddress } from '../netaddr.js';
 import { effectiveRole, remoteBitrateCap } from '../roles.js';
 import { loadSession, sessionHash } from '../session.js';
-import { claimStream } from '../streamclaim.js';
+import { claimStream, streamDeviceOf } from '../streamclaim.js';
 import { streamOfUri, upstreamUri } from '../mediapath.js';
 import { authzNginx } from '../metrics.js';
 import { getUserById } from '../users.js';
@@ -170,7 +170,7 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     const id = await sessionIdentity(b.data.sid);
     if (!id) return reply.code(401).send({ error: 'unauthenticated' });
     reply.header('cache-control', 'no-store');
-    const r = await claimStream(ctx, id.user, { deviceId: id.session.deviceId ?? `sid-${sessionHash(b.data.sid).slice(0, 16)}`, itemId: b.data.itemId, ps: b.data.ps });
+    const r = await claimStream(ctx, id.user, { deviceId: streamDeviceOf(id.session.deviceId, b.data.sid), itemId: b.data.itemId, ps: b.data.ps });
     return 'error' in r ? reply.code(429).send(r) : r;
   });
 
@@ -270,7 +270,7 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     const stream = streamOfUri(uri);
     if (stream) {
       const id = await sessionIdentity(sid);
-      const r = id ? await claimStream(ctx, id.user, { deviceId: id.session.deviceId ?? `sid-${sessionHash(sid).slice(0, 16)}`, itemId: stream.itemId, ps: stream.ps }) : null;
+      const r = id ? await claimStream(ctx, id.user, { deviceId: streamDeviceOf(id.session.deviceId, sid), itemId: stream.itemId, ps: stream.ps }) : null;
       if (!r || 'error' in r) {
         authzNginx.inc({ result: r ? 'max_streams' : 'unauthenticated' });
         return reply.code(r ? 403 : 401).send();

@@ -219,6 +219,24 @@ describe('stream limit at the gateway (/internal/stream)', () => {
     expect((await claim(me, ITEMS[1]!, 'ps-dd-0002')).statusCode).toBe(429);
   });
 
+  it('a session stored without a device id can start, report and stop its own stream on limit 1 (round 3)', async () => {
+    await setUserLimits(env.ctx, userId, { ...NONE, maxStreams: 1 });
+    // a session from before the device id was stored: the gateway's claims name it by a fallback device
+    const raw = JSON.parse((await env.kv.get(sessionKey(me.cookies.ff_sid!)))!) as Record<string, unknown>;
+    const { deviceId: _d, ...legacy } = raw;
+    const sid = rand();
+    await env.kv.set(sessionKey(sid), JSON.stringify(legacy), 600);
+    const old: Sess = { cookies: { ff_sid: sid }, csrf: raw.csrf as string };
+    expect((await claim(old, ITEMS[0]!, 'ps-l-0101')).statusCode).toBe(200);
+    expect((await report(old, 'start', ITEMS[0]!, 'ps-l-0101')).statusCode).toBe(200); // its own served stream does not count twice
+    expect((await claim(old, ITEMS[0]!, 'ps-l-0101')).statusCode).toBe(200);
+    expect((await report(old, 'progress', ITEMS[0]!, 'ps-l-0101')).statusCode).toBe(200);
+    expect((await claim(other, ITEMS[1]!, 'ps-l-0102')).statusCode).toBe(429);
+    expect((await report(old, 'stop', ITEMS[0]!, 'ps-l-0101')).statusCode).toBe(200);
+    expect(await env.kv.keys(`serve:${userId}:`)).toEqual([]); // the stop ended its served record too
+    expect((await claim(other, ITEMS[1]!, 'ps-l-0102')).statusCode).toBe(200);
+  });
+
   it('a claim never waits for a start report\'s media server call (review 2: only the count and the write are queued)', async () => {
     await setUserLimits(env.ctx, userId, { ...NONE, maxStreams: 3 });
     let release!: () => void;

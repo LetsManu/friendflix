@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto';
 import type { Ctx } from './ctx.js';
 import { unfetchedCastSessions } from './cast.js';
 import { effectiveLimits } from './limits.js';
+import { sessionHash } from './session.js';
 import { unfetchedLiveSessions } from './livetv/tokens.js';
 import type { UserRow } from './types.js';
 
@@ -100,11 +101,14 @@ const identity = (ps: string, s: Session) => (s.deviceId && s.itemId ? `d|${s.de
  */
 function countOf(sessions: Map<string, Session>, except: StreamExcept = {}, spare = true): number {
   const skipPs = new Set(except.ps ?? []);
+  // a left-out play session also leaves out its served records (`<ps>~<stream>`): a report without a device (a session stored before
+  // device ids) must not meet its own stream again under the gateway's fallback device
+  const skipped = (ps: string) => skipPs.has(ps) || (ps.includes('~') && skipPs.has(ps.slice(0, ps.indexOf('~'))));
   const mine = except.deviceId && except.itemId ? identity('', { deviceId: except.deviceId, itemId: except.itemId }) : null;
   const ids = new Set<string>();
   let spared: string | null = null;
   for (const [ps, s] of sessions) {
-    if (skipPs.has(ps)) continue;
+    if (skipped(ps)) continue;
     const id = identity(ps, s);
     if (id === mine) continue;
     if (spare && s.draining && except.deviceId && s.deviceId === except.deviceId && (spared === null || spared === id)) { spared = id; continue; }
@@ -138,7 +142,8 @@ export function streamSerial<T>(userId: string, fn: () => Promise<T>): Promise<T
  * was running or served opens the DRAIN_S window for its trailing requests; a stop of anything else opens nothing.
  */
 export async function forgetServed(ctx: Pick<Ctx, 'kv'>, userId: string, s: { ps: string; deviceId?: string; itemId: string; running: boolean }): Promise<void> {
-  // only the stopping device's streams of this title (served records are bound to device and title): a stop never ends another's
+  // only the stopping device's streams of this title (served records are bound to device and title): a stop never ends another's.
+  // A session without a device id (stored before them) passes the same fallback device the gateway's claims use (streamDeviceOf).
   if (!s.deviceId) return;
   const prefix = `serve:${userId}:`;
   const item = s.itemId.toLowerCase();
@@ -155,6 +160,9 @@ export async function forgetServed(ctx: Pick<Ctx, 'kv'>, userId: string, s: { ps
   const keys = [claimKey(s.deviceId, item, s.ps), claimKey(s.deviceId, item, null), ...gone];
   for (const key of new Set(keys)) await ctx.kv.set(drainKey(userId, key), JSON.stringify(rec), DRAIN_S);
 }
+
+/** the device a session's streams are counted under: its device id, else (a session stored before device ids) one derived from it */
+export const streamDeviceOf = (deviceId: string | undefined, sid: string): string => deviceId ?? `sid-${sessionHash(sid).slice(0, 16)}`;
 
 export type ClaimResult = { ok: true } | { error: 'max_streams'; max: number };
 
