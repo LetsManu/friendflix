@@ -14,7 +14,8 @@ const LOCALES = { de, en, es, fr, it: it_, pl, tr };
 
 describe('PIN lock text', () => {
   it.each(Object.entries(LOCALES))('%s: "try again later" points to the forgotten-PIN link by its own label', (_code, d) => {
-    const label = d.account.profiles.forgotPin;
-    expect(d.account.profiles.pinLockedLater).toContain(label);
+    const profiles = d.account?.profiles;
+    expect(profiles?.forgotPin).toBeTruthy();
+    expect(profiles?.pinLockedLater).toContain(profiles?.forgotPin);
   });
 });
