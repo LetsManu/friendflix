@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomBytes } from 'node:crypto';
+import { Readable } from 'node:stream';
+import type { ReadableStream as WebReadable } from 'node:stream/web';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { addressOnly } from '../media/address.js';
 import { MediaSetupError } from '../media/types.js';
-import { BACKUP_ID, mediaOp, startMediaJob, type MediaStatus } from '../mediaserver/client.js';
+import { BACKUP_ID, decodePassphrase, mediaDownload, mediaOp, mediaUpload, parseMediaStatus, startMediaJob, type MediaBackup, type MediaStatus } from '../mediaserver/client.js';
 import { recordApplyFirstRun } from '../mediaserver/firstRun.js';
 import { libraryReferences, referenced } from '../mediaserver/references.js';
 import { deleteLibrary, managedKey, MANAGED_URL, renameLibrary } from '../mediaserver/serverApi.js';
@@ -57,6 +59,9 @@ const NAME = /^[^/\p{Cc}]+$/u;
 const RENDER_NODE = /^renderD[0-9]{1,4}$/;
 const MAX_LINES = 500;
 const MAX_ENTRIES = 300;
+const PASSPHRASE_HEADER = 'x-ff-backup-passphrase';
+/** the largest encrypted backup an upload may carry (spec "Backup and restore": 20 GiB) */
+const UPLOAD_MAX = 20 * 1024 ** 3;
 
 /** the server's time zone for the container: TZ when it is an IANA name the updater accepts, else Etc/UTC */
 export function containerTz(tz = process.env.TZ): string {
@@ -388,6 +393,7 @@ const LIMITS = {
   base: limit(3, '10 minutes', 'base'), confirm: limit(10, '10 minutes', 'confirm'), browse: limit(30, '1 minute', 'browse'), gpu: limit(30, '1 minute', 'gpu'),
   apply: limit(3, '2 minutes', 'apply'), action: limit(3, '2 minutes', 'action'), clear: limit(3, '2 minutes', 'base-clear'), logs: limit(20, '1 minute', 'logs'),
   libraries: limit(20, '1 minute', 'libraries'), libraryDelete: limit(3, '2 minutes', 'library-delete'), mode: limit(3, '2 minutes', 'mode'),
+  download: limit(3, '2 minutes', 'backup-download'), upload: limit(3, '10 minutes', 'backup-upload'),
 };
 
 type Hook = (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
@@ -403,6 +409,88 @@ function route<T>(guard: Hook, o: Op<T>, config: object, actor: (req: FastifyReq
     if (reauth && o.reauth?.(p.data) && !recentlyAuthenticated(req.session!)) return reply.code(401).send({ error: 'reauth_required' });
   };
   return { opts: { preHandler: [guard, check], config }, handler: async (req: FastifyRequest, reply: FastifyReply) => o.run(req.body as T, reply, actor(req), req) };
+}
+
+/** an updater answer to a backup stream as a code: its 400/404/409/413 codes keep their status, anything else is a fixed code */
+function streamRefusal(r: Answer): { status: number; error: string } {
+  if (!r) return { status: 502, error: 'updater_error' };
+  const e = (r.json as { error?: unknown } | null)?.error;
+  const code = typeof e === 'string' && CODE_RE.test(e) ? e : null;
+  if ([400, 404, 409, 413].includes(r.status) && code) return { status: r.status, error: code };
+  if (r.status === 429) return { status: 429, error: 'rate_limited' };
+  return { status: 502, error: 'updater_error' };
+}
+/** the passphrase header exactly as the browser sent it (base64url), when it holds a passphrase of 12–1024 code points */
+const passphraseHeader = (req: FastifyRequest): string | null => {
+  const h = req.headers[PASSPHRASE_HEADER];
+  return typeof h === 'string' && decodePassphrase(h) !== null ? h : null;
+};
+/** the uploaded backup as the updater recorded it, checked like a listed one */
+const uploadedBackup = (json: unknown): MediaBackup | null => parseMediaStatus({ backups: [obj(json).backup] })?.backups[0] ?? null;
+
+/**
+ * The encrypted backup download and the upload that restores one (spec "Backup and restore"): admin, a recent re-authentication, the
+ * passphrase header, and the route's own checks before the limiter counts the request and before a byte is read or sent. The header is
+ * passed on as sent (the updater verifies the signature over it); neither it nor the passphrase reaches an answer, an audit row or a log
+ * (app.ts redacts the header). Both streams go through without being buffered; a client that goes away aborts the updater request.
+ */
+function backupStreamRoutes(app: FastifyInstance, ctx: Ctx, guard: Hook, P: string) {
+  const check = (own: (req: FastifyRequest) => { status: number; error: string } | null): Hook => async (req, reply) => {
+    const f = !recentlyAuthenticated(req.session!) ? { status: 401, error: 'reauth_required' }
+      : own(req) ?? (passphraseHeader(req) === null ? { status: 400, error: 'invalid_passphrase' } : null);
+    if (f) return reply.code(f.status).send({ error: f.error });
+  };
+  /** aborted once the client's connection is gone (or the answer is complete) */
+  const clientGone = (reply: FastifyReply): AbortSignal => {
+    const ac = new AbortController();
+    reply.raw.once('close', () => ac.abort());
+    return ac.signal;
+  };
+
+  const downloadCheck = check((req) => (BACKUP_ID.test((req.params as { id: string }).id) ? null : { status: 404, error: 'not_found' }));
+  app.get(`${P}/backups/:id/download`, { preHandler: [guard, downloadCheck], config: LIMITS.download }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const r = await mediaDownload(ctx, id, passphraseHeader(req)!, clientGone(reply));
+    if (r?.status !== 200 || !r.body) {
+      const f = streamRefusal(r && { status: r.status, json: await r.json().catch(() => null) });
+      return reply.code(f.status).send({ error: f.error });
+    }
+    await audit(ctx, req.user!.id, 'mediaserver.backup_download', undefined, { id });
+    // the file name is built from the checked id, never taken from the updater
+    return reply.code(200).headers({ 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="${id}.tar.gz.age"`, 'cache-control': 'no-store' })
+      .send(Readable.fromWeb(r.body as unknown as WebReadable<Uint8Array>));
+  });
+
+  const uploadCheck = check((req) => {
+    const type = String(req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+    if (type !== 'application/octet-stream') return { status: 415, error: 'unsupported_media_type' };
+    const len = req.headers['content-length'];
+    if (typeof len !== 'string' || !/^[0-9]{1,15}$/.test(len)) return { status: 411, error: 'length_required' };
+    return Number(len) > UPLOAD_MAX ? { status: 413, error: 'too_large' } : null;
+  });
+  void app.register(async (sub) => {
+    // the body stays a stream, whatever its type: nothing reads it before the checks, then it goes to the updater as it arrives
+    sub.removeAllContentTypeParsers();
+    sub.addContentTypeParser('*', (_req, payload, done) => done(null, payload));
+    // every answer closes the connection: the rest of a refused body (up to 20 GiB) is never read
+    const close = async (_req: FastifyRequest, reply: FastifyReply) => { reply.header('connection', 'close'); };
+    sub.post(`${P}/backups/upload`, { onRequest: close, preHandler: [guard, uploadCheck], config: LIMITS.upload }, async (req, reply) => {
+      const size = Number(req.headers['content-length']);
+      const r = await mediaUpload(ctx, req.raw, size, passphraseHeader(req)!, clientGone(reply));
+      // a connection the updater cut while the body was sent (its 20-GiB limit) is null: a failure, never a restore
+      const backup = r?.status === 200 ? uploadedBackup(r.json) : null;
+      if (!backup) {
+        const f = r?.status === 200 ? { status: 502, error: 'updater_error' } : streamRefusal(r);
+        return reply.code(f.status).send({ error: f.error });
+      }
+      const actor = req.user!.id;
+      await audit(ctx, actor, 'mediaserver.backup_upload', undefined, { size });
+      const started = await startMediaJob(ctx, { op: 'restore', id: backup.id }, actor, {});
+      // the upload is kept as a backup either way: a refused restore (busy, no_target) can be started from the list later
+      if (!started.ok) return reply.code(started.status).send({ error: started.error, backup });
+      return reply.code(202).send({ backup, job: 'job' in started ? started.job : null });
+    });
+  });
 }
 
 export function adminMediaserverRoutes(app: FastifyInstance, ctx: Ctx) {
@@ -436,6 +524,7 @@ export function adminMediaserverRoutes(app: FastifyInstance, ctx: Ctx) {
     const { status } = await load(ctx);
     return { backups: status?.backups ?? [] };
   });
+  backupStreamRoutes(app, ctx, guard, P);
 
   // references: null while the server cannot list the library's items
   app.get(`${P}/libraries`, { preHandler: guard, config: LIMITS.libraries }, async () => {
