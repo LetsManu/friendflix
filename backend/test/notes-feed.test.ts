@@ -77,6 +77,24 @@ describe('notifications feed', () => {
     expect(sectionOf(await feed(env.ctx, ua, 'de', opts({ tz: 'Mars/Base' }), noon), 'Früh')).toBe('today');
   });
 
+  it('zones Intl and Postgres both know are used as given; anything else falls back to the server TZ', async () => {
+    // now = 12:00Z on the 17th. 18:45Z on the 16th is 00:15 on the 17th at +05:30 (but 23:45 at +05:00), 18:15Z is 23:45 on the 16th
+    // at +05:30 (but 00:15 at +06:00): only an offset of +05:30 puts the first today and the second in the week
+    await seed([{ title: 'Spät', at: '2026-11-16T18:45:00Z' }, { title: 'Früher', at: '2026-11-16T18:15:00Z' }]);
+    const noon = new Date('2026-11-17T12:00:00Z');
+    vi.stubEnv('TZ', 'Asia/Tokyo'); // +09:00: both rows and now are on the 17th there
+    const at = async (tz: string) => { const f = await feed(env.ctx, ua, 'de', opts({ tz }), noon); return [sectionOf(f, 'Spät'), sectionOf(f, 'Früher')]; };
+    expect(await at('Asia/Kolkata')).toEqual(['today', 'week']);
+    expect(await at('UTC')).toEqual(['week', 'week']);
+    for (const bad of ['Mars/Base', '../etc', '+05', 'x'.repeat(65), '']) expect(await at(bad), bad).toEqual(['today', 'today']);
+    // an unusable server TZ ends at UTC
+    vi.stubEnv('TZ', ':/etc/localtime');
+    expect(await at('Mars/Base')).toEqual(['week', 'week']);
+    // through the route
+    const r = await get(a, '/api/notifications/feed?tz=Asia%2FKolkata');
+    expect(r.statusCode, r.body).toBe(200);
+  });
+
   it('an earlier month keeps the days before the week as its own section', async () => {
     // 2026-11-17 Berlin: week = 11th..16th, so the 2nd of November is in "2026-11"
     await seed([{ title: 'Anfang November', at: '2026-11-02T12:00:00Z' }]);
@@ -238,19 +256,26 @@ describe('notifications feed', () => {
   });
 
   it('group ids are signed for one person and name the section range', async () => {
-    await seed([{ title: 'TV', key: 'tv_paired|tv', at: minutesAgo(1) }, { title: 'TV', key: 'tv_paired|tv', at: '2026-11-12T12:00:00Z' }]);
+    const [newest, , weekId] = await seed([
+      { title: 'TV', key: 'tv_paired|tv', at: minutesAgo(1) }, { title: 'TV', key: 'tv_paired|tv', at: minutesAgo(2) },
+      { title: 'TV', key: 'tv_paired|tv', at: '2026-11-12T12:00:00Z' },
+    ]);
     const [today, week] = groups(await feed(env.ctx, ua, 'de', opts(), NOW));
     // Berlin: today = 16th 23:00Z .. 17th 23:00Z, week = 10th 23:00Z .. 16th 23:00Z
-    expect(parseGroupId(env.ctx, ua, today!.id)).toEqual({ groupKey: 'tv_paired|tv', from: new Date('2026-11-16T23:00:00Z'), to: new Date('2026-11-17T23:00:00Z') });
-    expect(parseGroupId(env.ctx, ua, week!.id)).toEqual({ groupKey: 'tv_paired|tv', from: new Date('2026-11-10T23:00:00Z'), to: new Date('2026-11-16T23:00:00Z') });
+    expect(parseGroupId(env.ctx, ua, today!.id)).toEqual({ groupKey: 'tv_paired|tv', from: new Date('2026-11-16T23:00:00Z'), to: new Date('2026-11-17T23:00:00Z'), maxId: newest! + 1 });
+    expect(parseGroupId(env.ctx, ua, week!.id)).toEqual({ groupKey: 'tv_paired|tv', from: new Date('2026-11-10T23:00:00Z'), to: new Date('2026-11-16T23:00:00Z'), maxId: weekId });
     expect(parseGroupId(env.ctx, ub, today!.id)).toBeNull();
     const [body, sig] = today!.id.split('.');
-    const forged = Buffer.from(JSON.stringify(['tv_paired|other', 0, Date.now()])).toString('base64url');
+    const forged = Buffer.from(JSON.stringify(['tv_paired|other', 0, Date.now(), 1])).toString('base64url');
     expect(parseGroupId(env.ctx, ua, `${forged}.${sig}`)).toBeNull();
+    // a raised maxId (to reach entries that arrived later) breaks the signature
+    const [k, f, t, max] = JSON.parse(Buffer.from(body!, 'base64url').toString()) as [string, number, number, number];
+    expect(max).toBe(newest! + 1);
+    expect(parseGroupId(env.ctx, ua, `${Buffer.from(JSON.stringify([k, f, t, max + 5])).toString('base64url')}.${sig}`)).toBeNull();
     expect(parseGroupId(env.ctx, ua, `${body}.${sig!.slice(0, -2)}AA`)).toBeNull();
     expect(parseGroupId(env.ctx, ua, 'garbage')).toBeNull();
-    const own = groupId(env.ctx, ub, 'x|y', new Date(1000), new Date(2000));
-    expect(parseGroupId(env.ctx, ub, own)).toEqual({ groupKey: 'x|y', from: new Date(1000), to: new Date(2000) });
+    const own = groupId(env.ctx, ub, 'x|y', new Date(1000), new Date(2000), 42);
+    expect(parseGroupId(env.ctx, ub, own)).toEqual({ groupKey: 'x|y', from: new Date(1000), to: new Date(2000), maxId: 42 });
   });
 
   it('a month section ends where the week begins', async () => {

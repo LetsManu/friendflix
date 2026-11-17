@@ -38,11 +38,32 @@ export function readSql(): string {
 
 export const isFeedFilter = (f: string): f is FeedFilter => f === 'all' || f === 'unread' || (CATEGORIES as readonly string[]).includes(f);
 
-let zones: Set<string> | undefined;
-/** The viewer's IANA zone when known, else the server's TZ (UTC without one). */
-export function viewerTz(tz: string | null | undefined): string {
-  zones ??= new Set(Intl.supportedValuesOf('timeZone'));
-  return tz && zones.has(tz) ? tz : process.env.TZ || 'UTC';
+// Postgres' zone names, read once per pool: Intl also accepts offsets such as "+05", which Postgres reads as POSIX (sign inverted)
+const pgZones = new WeakMap<object, Promise<Set<string>>>();
+const zonesOf = (ctx: Pick<Ctx, 'db'>) => {
+  let z = pgZones.get(ctx.db);
+  if (!z) {
+    z = ctx.db.query<{ name: string }>('select name from pg_timezone_names').then((r) => new Set(r.rows.map((x) => x.name)));
+    z.catch(() => pgZones.delete(ctx.db)); // a failed read is retried next time
+    pgZones.set(ctx.db, z);
+  }
+  return z;
+};
+const ZONE_RE = /^[A-Za-z0-9_+\-/]{1,64}$/;
+const knownZone = (zones: Set<string>, tz: string | null | undefined): tz is string => {
+  if (!tz || !ZONE_RE.test(tz) || !zones.has(tz)) return false;
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+};
+/** The viewer's IANA zone when both Intl and Postgres know it, else the server's TZ (UTC without a usable one). */
+export async function viewerTz(ctx: Pick<Ctx, 'db'>, tz: string | null | undefined): Promise<string> {
+  const zones = await zonesOf(ctx);
+  if (knownZone(zones, tz)) return tz;
+  return knownZone(zones, process.env.TZ) ? process.env.TZ : 'UTC';
 }
 
 // ---- cursor: opaque base64url JSON of the last group on the page ----
@@ -59,21 +80,25 @@ export function decodeCursor(c: string): Cursor | null {
 }
 const encodeCursor = (c: Cursor) => Buffer.from(JSON.stringify(c)).toString('base64url');
 
-// ---- group ids: `<base64url JSON [groupKey, from ms, to ms]>.<HMAC>`, bound to the person ----
+// ---- group ids: `<base64url JSON [groupKey, from ms, to ms, maxId]>.<HMAC>`, bound to the person ----
 const groupMacKey = (ctx: Pick<Ctx, 'encKey'>) => createHmac('sha256', ctx.encKey).update('friendflix notes group v1').digest();
-// userId is a uuid and from/to are numbers, so `|` separates the parts unambiguously even though the group key contains `|`
-const groupSig = (ctx: Pick<Ctx, 'encKey'>, userId: string, key: string, from: number, to: number) =>
-  createHmac('sha256', groupMacKey(ctx)).update([userId, key, from, to].join('|')).digest().subarray(0, 16);
-const groupBody = z.tuple([z.string().min(1), z.number().int(), z.number().int()]);
+// userId is a uuid and from/to/maxId are numbers, so `|` separates the parts unambiguously even though the group key contains `|`
+const groupSig = (ctx: Pick<Ctx, 'encKey'>, userId: string, key: string, from: number, to: number, maxId: number) =>
+  createHmac('sha256', groupMacKey(ctx)).update([userId, key, from, to, maxId].join('|')).digest().subarray(0, 16);
+const groupBody = z.tuple([z.string().min(1), z.number().int(), z.number().int(), z.number().int().positive()]);
+export interface GroupRef { groupKey: string; from: Date; to: Date; maxId: number }
 
-/** Opaque id of a group for one person: its group key and its section's time range [from, to). */
-export function groupId(ctx: Pick<Ctx, 'encKey'>, userId: string, groupKey: string, from: Date, to: Date): string {
-  const body = Buffer.from(JSON.stringify([groupKey, from.getTime(), to.getTime()])).toString('base64url');
-  return `${body}.${groupSig(ctx, userId, groupKey, from.getTime(), to.getTime()).toString('base64url')}`;
+/**
+ * Opaque id of a group for one person: its group key, its section's time range [from, to) and the newest row id of the group when
+ * the page was loaded (maxId). Acting on a group touches only rows with id <= maxId, never entries that arrived later.
+ */
+export function groupId(ctx: Pick<Ctx, 'encKey'>, userId: string, groupKey: string, from: Date, to: Date, maxId: number): string {
+  const body = Buffer.from(JSON.stringify([groupKey, from.getTime(), to.getTime(), maxId])).toString('base64url');
+  return `${body}.${groupSig(ctx, userId, groupKey, from.getTime(), to.getTime(), maxId).toString('base64url')}`;
 }
 
 /** The group a groupId names, or null for a tampered id or one handed out to another person. */
-export function parseGroupId(ctx: Pick<Ctx, 'encKey'>, userId: string, id: string): { groupKey: string; from: Date; to: Date } | null {
+export function parseGroupId(ctx: Pick<Ctx, 'encKey'>, userId: string, id: string): GroupRef | null {
   const dot = id.lastIndexOf('.');
   if (dot < 0) return null;
   let parsed: z.infer<typeof groupBody>;
@@ -84,11 +109,11 @@ export function parseGroupId(ctx: Pick<Ctx, 'encKey'>, userId: string, id: strin
   } catch {
     return null;
   }
-  const [groupKey, from, to] = parsed;
+  const [groupKey, from, to, maxId] = parsed;
   const sig = Buffer.from(id.slice(dot + 1), 'base64url');
-  const want = groupSig(ctx, userId, groupKey, from, to);
+  const want = groupSig(ctx, userId, groupKey, from, to, maxId);
   if (sig.length !== want.length || !timingSafeEqual(sig, want)) return null;
-  return { groupKey, from: new Date(from), to: new Date(to) };
+  return { groupKey, from: new Date(from), to: new Date(to), maxId };
 }
 
 type KindCount = { kind: string; n: number; unread: number };
@@ -129,7 +154,7 @@ export async function feed(
   const cursor = o.cursor ? decodeCursor(o.cursor) : null;
   if (o.cursor && !cursor) throw new Error('invalid_cursor');
   const limit = Math.min(Math.max(1, Math.floor(o.limit)), FEED_PAGE);
-  const tz = viewerTz(o.tz);
+  const tz = await viewerTz(ctx, o.tz);
   const perKind = await kindCounts(ctx, userId);
   // a category filter is the set of the person's visible kinds that map to it
   const kinds = o.filter === 'all' || o.filter === 'unread' ? null : perKind.map((x) => x.kind).filter((k) => categoryOf(k) === o.filter);
@@ -175,7 +200,7 @@ export async function feed(
     const newest = shown[0];
     if (!newest) continue; // deleted between the two queries (retention)
     const group: FeedGroup = {
-      id: groupId(ctx, userId, row.gk, row.range_from, row.range_to),
+      id: groupId(ctx, userId, row.gk, row.range_from, row.range_to, Number(row.last_id)),
       kind: newest.kind, category: categoryOf(newest.kind), title: newest.title, body: newest.body, link: newest.link,
       at: row.at.toISOString(), count: row.count, unread: row.unread,
       items: shown.map((x) => ({ id: x.id, title: x.title, body: x.body, at: x.at })),
