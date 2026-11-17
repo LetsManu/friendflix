@@ -489,6 +489,14 @@ jobs:
             if (missing.length) { console.error('::error::backend image cannot resolve: ' + missing.join(', ')); process.exit(1); }
             console.log('all ' + Object.keys(pkg.dependencies ?? {}).length + ' backend dependencies resolve');
           "
+      # updater only: the media server helper in this image (busybox tar) backs up and restores byte-equal, stops cleanly at the end
+      # of the archive, refuses a hostile archive without writing anything, and runs when started through a symlink
+      # (scripts/mediahelper-smoke.sh)
+      - name: Smoke test (updater image media helper backup and restore)
+        if: matrix.service == 'updater'
+        env:
+          IMAGE: ${{ steps.build.outputs.ref }}
+        run: bash scripts/mediahelper-smoke.sh "$IMAGE"
       # web only: the image starts without any backend and serves its static files with the security headers (web/server/index.js)
       - name: Smoke test (web image serves static files with security headers)
         if: matrix.service == 'web'
@@ -515,9 +523,10 @@ jobs:
   # Not a required status check (docs/operations.md) and exempt from `reproducible` (docs/reproducible-builds.md).
   mediaserver-image:
     runs-on: ubuntu-latest
-    # the pushed digest (publishable runs only; empty otherwise): the backend image's pin label names it
+    # the pushed digest (publishable runs only; empty otherwise, and empty when the smoke test failed): the backend image's pin
+    # label names it
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.smoke.outcome == 'success' && steps.build.outputs.digest || '' }}
     permissions:
       contents: read
       packages: write # same reasoning as `docker`: PRs never push, fork PRs get a read-only token
@@ -565,6 +574,15 @@ jobs:
           publish: ${{ env.PUBLISHABLE }}
           image: ${{ steps.img.outputs.name }}
           tag: ci-${{ github.sha }}
+      # Runs the image as the updater's container template does (read-only root, no capabilities, fresh named volumes, a uid other
+      # than the image's): the API answers, /web/ is 404 (change 0004), health turns healthy (0003), /data and /cache are
+      # writable (0005); compares its `docker inspect` with the updater's inspect fixture (scripts/mediaserver-smoke.sh).
+      # Fails the job (and so the publish of this image), on PRs and pushes alike.
+      - name: Smoke test (runs as the managed media server)
+        id: smoke
+        env:
+          IMAGE: ${{ steps.build.outputs.ref }}
+        run: bash scripts/mediaserver-smoke.sh "$IMAGE"
       # ---- pull_request / other dispatch: report on the local image, discard ----
       - name: Scan (PR / other dispatch, report only)
         if: env.PUBLISHABLE != 'true'

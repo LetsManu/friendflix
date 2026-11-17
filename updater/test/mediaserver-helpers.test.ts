@@ -4,13 +4,14 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { StepError } from '../src/docker.js';
 import { EngineError, type Engine } from '../src/mediaserver/engine.js';
 import { TemplateViolation } from '../src/mediaserver/guard.js';
 import { cleanupHelpers, runHdr, runHelper } from '../src/mediaserver/helpers.js';
 import { hdrSpec, helperSpec } from '../src/mediaserver/template.js';
-import { browseDir, checkBase, checkData, checkFolders, detectGpu, main } from '../src/mediaHelper.js';
+import { browseDir, checkBase, checkData, checkFolders, detectGpu, isMain, main } from '../src/mediaHelper.js';
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'ff-helper-')); });
@@ -115,6 +116,20 @@ describe('mediaHelper functions', () => {
     } finally { process.stdout.write = w; }
     expect(out.slice(0, bad.length)).toEqual(Array(bad.length).fill('{"error":"invalid_body"}\n'));
     expect(JSON.parse(out[bad.length]!)).toEqual({ nodes: expect.any(Array) });
+  });
+
+  it('runs as the main program also when started through a symlink', () => {
+    // Node gives the main module its real path as import.meta.url, but process.argv[1] as typed
+    const real = join(root, 'dist', 'mediaHelper.js');
+    mkdirSync(join(root, 'dist'));
+    writeFileSync(real, '');
+    symlinkSync(real, join(root, 'helper.js'));
+    const url = pathToFileURL(real).href;
+    expect(isMain(real, url)).toBe(true);
+    expect(isMain(join(root, 'helper.js'), url)).toBe(true);
+    expect(isMain(join(root, 'dist', '..', 'dist', 'mediaHelper.js'), url)).toBe(true);
+    expect(isMain(join(root, 'other.js'), url)).toBe(false);
+    expect(isMain(undefined, url)).toBe(false);
   });
 });
 

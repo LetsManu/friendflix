@@ -126,10 +126,10 @@
       "FERROFIN_DATA_DIR=/data",
       "FERROFIN_BIND_ADDR=0.0.0.0",
       "FERROFIN_PORT=8096",
-      "FERROFIN_WEB_DIR=/usr/share/ferrofin/web"
+      "FERROFIN_WEB_DIR=/nonexistent"
     ],
     "Cmd": null,
-    "Healthcheck": { "Test": ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8096/health"], "Interval": 30000000000, "Timeout": 5000000000, "StartPeriod": 60000000000, "Retries": 3 },
+    "Healthcheck": { "Test": ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8096 && printf 'GET /health HTTP/1.0\\r\\nHost: 127.0.0.1\\r\\n\\r\\n' >&3 && IFS= read -r -t 4 status <&3 && [[ $status == 'HTTP/1.'[01]' 200 '* ]] || exit 1"], "Interval": 30000000000, "Timeout": 5000000000, "StartPeriod": 60000000000, "Retries": 3 },
     "Image": "ghcr.io/letsmanu/friendflix-mediaserver@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "Volumes": { "/data": {} },
     "WorkingDir": "",
@@ -142,7 +142,7 @@
       "friendflix.project": "friendflix",
       "friendflix.spec": "5d41402abc4b2a76b9719d911017c5925d41402abc4b2a76b9719d911017c592",
       "friendflix.template": "1",
-      "io.github.letsmanu.friendflix.mediaserver.changes": "0001,0003,0004",
+      "io.github.letsmanu.friendflix.mediaserver.changes": "0001,0003,0004,0005",
       "io.github.letsmanu.friendflix.mediaserver.ferrofin": "v1.5.1",
       "org.opencontainers.image.base.digest": "sha256:5980a3c29c0bab564793f4fcf786e737b91a9eba26e9fb1d6f1c203ccb56580a",
       "org.opencontainers.image.base.name": "ghcr.io/mangoleaf/ferrofin:v1.5.1",

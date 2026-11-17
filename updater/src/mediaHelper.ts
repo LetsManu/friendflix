@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn } from 'node:child_process';
-import { closeSync, createReadStream, createWriteStream, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, statSync, watch } from 'node:fs';
+import { closeSync, createReadStream, createWriteStream, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync, watch } from 'node:fs';
 import { chmod, rename, rm, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
 import { createGunzip, createGzip } from 'node:zlib';
-import { BACKUP_EXCLUDE, BACKUP_UPSTREAM_RE, metaEntry, readFileMeta } from './mediaserver/archive.js';
+import { BACKUP_EXCLUDE, BACKUP_UPSTREAM_RE, entryCheck, metaEntry, readFileMeta } from './mediaserver/archive.js';
 import { isRel } from './mediaserver/paths.js';
 import { BACKUP_ID_RE, KINDS, type Kind } from './mediaserver/types.js';
 
@@ -237,14 +237,17 @@ function into(stdin: Writable): Writable {
   });
 }
 
-/** gunzip (to its end) → skip `skipBytes` → `tar <args> -f -`: true when both the stream and tar succeeded; the bytes tar was given */
-async function throughTar(tar: string, file: string, skipBytes: number, args: string[]): Promise<{ ok: boolean; total: number }> {
+/**
+ * gunzip (to its end) → skip `skipBytes` → [`check`] → `tar <args> -f -`: true when the stream, the check and tar succeeded; the
+ * bytes tar was given
+ */
+async function throughTar(tar: string, file: string, skipBytes: number, args: string[], check?: Transform): Promise<{ ok: boolean; total: number }> {
   const child = spawn(tar, [...args, '-f', '-'], { stdio: ['pipe', 'ignore', 'ignore'] });
   const code = exited(child);
   code.catch(() => undefined);
   const count = counter();
   try {
-    await pipeline(createReadStream(file), createGunzip(), skip(skipBytes), count, into(child.stdin!));
+    await pipeline(createReadStream(file), createGunzip(), skip(skipBytes), ...(check ? [check] : []), count, into(child.stdin!));
   } catch {
     child.kill();
     await code.catch(() => undefined);
@@ -272,15 +275,16 @@ async function room(dir: string): Promise<number> {
 
 /**
  * helper `restore`: the archive is checked completely before anything changes: its metadata (this kind), the whole gzip stream,
- * a `tar -t` of all of it, and that its unpacked size fits the data folder (else `backup_invalid`, nothing touched). Then the
- * data folder is emptied and the archive extracted into it without its metadata entry (a failure now is `restore_failed`).
+ * a `tar -t` of all of it, that no entry leads out of the data folder (`entryCheck`), and that its unpacked size fits the data
+ * folder (else `backup_invalid`, nothing touched). Then the data folder is emptied and the archive extracted into it without its
+ * metadata entry (a failure now is `restore_failed`).
  */
 export async function restoreBackup(dirs: { data: string; backups: string }, a: { id: string; kind: Kind }, o: { tar?: string; room?(): Promise<number> } = {}): Promise<{ ok: true }> {
   const tar = o.tar ?? 'tar';
   const file = join(dirs.backups, `${a.id}.tar.gz`);
   const head = await readFileMeta(file);
   if (!head || head.meta.kind !== a.kind) throw new HelperError('backup_invalid');
-  const listed = await throughTar(tar, file, head.length, ['-t']);
+  const listed = await throughTar(tar, file, head.length, ['-t'], entryCheck());
   if (!listed.ok) throw new HelperError('backup_invalid');
   let space: number;
   try { space = await (o.room ?? (() => room(dirs.data)))(); } catch { throw new HelperError('backup_invalid'); }
@@ -334,4 +338,10 @@ export async function main(args: string[]): Promise<number> {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) void main(process.argv.slice(2)).then((code) => { process.exitCode = code; });
+/** whether `argv1` started the module at `url`: Node gives the main module its real path, so a symlinked start path is resolved */
+export function isMain(argv1: string | undefined, url: string): boolean {
+  if (!argv1) return false;
+  try { return url === pathToFileURL(realpathSync(argv1)).href; } catch { return false; }
+}
+
+if (isMain(process.argv[1], import.meta.url)) void main(process.argv.slice(2)).then((code) => { process.exitCode = code; });

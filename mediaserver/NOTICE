@@ -16,8 +16,9 @@ Ferrofin
   ferrofin-server binary is the one in the image above, built by the Ferrofin project from that tag.
 
 Also in the base image (unchanged, licences as shipped by their projects)
-  jellyfin-ffmpeg8 (GPL-3.0, /usr/lib/jellyfin-ffmpeg), jellyfin-web (GPL-2.0, /usr/share/ferrofin/web),
-  Debian trixie packages (each under /usr/share/doc/<package>/copyright).
+  jellyfin-ffmpeg8 (GPL-3.0, /usr/lib/jellyfin-ffmpeg), Debian trixie packages (each under
+  /usr/share/doc/<package>/copyright), and jellyfin-web (GPL-2.0): change 0004 removes it from the image's file system
+  (/usr/share/ferrofin/web), but its files are still in the base image's layer.
 
 Added by FriendFlix, change 0001 (Intel OpenCL runtime, amd64 only)
   Intel compute-runtime (NEO) 26.35.39758.10 and 24.35.30872.36 (legacy) - MIT, https://github.com/intel/compute-runtime

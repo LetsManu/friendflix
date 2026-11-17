@@ -688,6 +688,92 @@ describe('helper verbs', () => {
     expect(readdirSync(target)).toEqual(['library.db']);
   });
 
+  /** one tar entry (ustar header + content padded to whole blocks) */
+  function tarEntry(name: string, body = '', o: { type?: string; link?: string; prefix?: string } = {}): Buffer {
+    const content = Buffer.from(body, 'utf8');
+    const h = Buffer.alloc(512);
+    h.write(name, 0, 'utf8');
+    h.write('0000644\0', 100, 'latin1');
+    h.write('0000000\0', 108, 'latin1');
+    h.write('0000000\0', 116, 'latin1');
+    h.write(content.length.toString(8).padStart(11, '0') + '\0', 124, 'latin1');
+    h.write('00000000000\0', 136, 'latin1');
+    h.write(o.type ?? '0', 156, 'latin1');
+    h.write(o.link ?? '', 157, 'utf8');
+    h.write('ustar\0', 257, 'latin1');
+    h.write('00', 263, 'latin1');
+    h.write(o.prefix ?? '', 345, 'utf8');
+    h.fill(' ', 148, 156);
+    let sum = 0;
+    for (const b of h) sum += b;
+    h.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 'latin1');
+    return Buffer.concat([h, content, Buffer.alloc((512 - (content.length % 512)) % 512)]);
+  }
+  /** the header checksum again after a change */
+  function fixSum(e: Buffer): Buffer {
+    e.fill(' ', 148, 156);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += e[i]!;
+    e.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 'latin1');
+    return e;
+  }
+  /** a pax extended header record set (`<len> key=value\n`) */
+  const pax = (kv: Record<string, string>): string => Object.entries(kv).map(([k, v]) => {
+    const rec = ` ${k}=${v}\n`;
+    let len = rec.length + 1;
+    while (`${len}${rec}`.length !== len) len++;
+    return `${len}${rec}`;
+  }).join('');
+
+  it('restore refuses an archive whose entries leave the data folder, before anything changes', async () => {
+    const out = tempDir();
+    const parent = tempDir();
+    const target = join(parent, 'data');
+    mkdirSync(target);
+    writeFileSync(join(target, 'library.db'), 'keep');
+    const meta: ArchiveMeta = { v: 1, kind: 'ferrofin', upstream: 'v1.5.1', createdAt: new Date(T0).toISOString() };
+    const end = Buffer.alloc(1024);
+    const hostile: Record<string, Buffer[]> = {
+      'a relative path out': [tarEntry('ok.txt', 'ok'), tarEntry('../escaped.txt', 'x')],
+      'a path out further down': [tarEntry('metadata/../../escaped.txt', 'x')],
+      'an absolute path': [tarEntry('/tmp/escaped.txt', 'x')],
+      'a ustar prefix out': [tarEntry('escaped.txt', 'x', { prefix: '..' })],
+      'a GNU long name out': [tarEntry('././@LongLink', '../escaped.txt\0', { type: 'L' }), tarEntry('placeholder', 'x')],
+      'a pax path out': [tarEntry('PaxHeaders/x', pax({ path: '/escaped.txt' }), { type: 'x' }), tarEntry('placeholder', 'x')],
+      'a global pax path out': [tarEntry('GlobalHead', pax({ path: '../escaped.txt' }), { type: 'g' }), tarEntry('ok.txt', 'x')],
+      'a hard link out': [tarEntry('passwd', '', { type: '1', link: '/etc/passwd' })],
+      'a GNU long link out': [tarEntry('././@LongLink', '../../etc/passwd\0', { type: 'K' }), tarEntry('passwd', '', { type: '1', link: 'placeholder' })],
+      'a symlink out': [tarEntry('up', '', { type: '2', link: '../..' })],
+      'an absolute symlink': [tarEntry('etc', '', { type: '2', link: '/etc' })],
+      'a broken header': [tarEntry('ok.txt', 'ok').fill(7, 148, 150)],
+      // busybox ends the archive only at two empty blocks in a row: one is skipped and the next entry still extracted
+      'an entry after one empty block': [tarEntry('ok.txt', 'ok'), Buffer.alloc(512), tarEntry('../escaped.txt', 'x')],
+      'a pax path for an empty block': [tarEntry('PaxHeaders/x', pax({ path: 'fine.txt' }), { type: 'x' }), Buffer.alloc(512), tarEntry('../escaped.txt', 'x')],
+      'a prefix without the ustar magic': [(() => { const e = tarEntry('escaped.txt', 'x', { prefix: '..' }); e.write('xxxxx', 257, 'latin1'); return fixSum(e); })()],
+    };
+    let n = 0;
+    for (const [what, entries] of Object.entries(hostile)) {
+      const id = `ferrofin-20261117-${String(1000 + n++)}-v1.5.1`;
+      writeFileSync(join(out, `${id}.tar.gz`), gzipSync(Buffer.concat([metaEntry(meta), ...entries, end])));
+      const r = await restoreBackup({ data: target, backups: out }, { id, kind: 'ferrofin' }).then(() => 'restored', (e: { code?: string }) => e.code);
+      expect([what, r]).toEqual([what, 'backup_invalid']);
+      expect(readdirSync(parent)).toEqual(['data']);
+      expect(readdirSync(target)).toEqual(['library.db']);
+    }
+    // the same layout with safe names restores, long names (GNU tar's own long-name entries) included
+    const src = tempDir();
+    const deep = join('metadata', 'a'.repeat(90), 'b'.repeat(90));
+    mkdirSync(join(src, deep), { recursive: true });
+    writeFileSync(join(src, deep, 'poster.jpg'), 'p');
+    writeFileSync(join(src, 'library.db'), 'db');
+    const id = 'ferrofin-20261117-1500-v1.5.1';
+    const body = execFileSync('tar', ['--format=gnu', '-c', '-f', '-', '-C', src, 'library.db', 'metadata']);
+    writeFileSync(join(out, `${id}.tar.gz`), gzipSync(Buffer.concat([metaEntry(meta), tarEntry('PaxHeaders/y', pax({ comment: 'fine' }), { type: 'x' }), body])));
+    expect(await restoreBackup({ data: target, backups: out }, { id, kind: 'ferrofin' })).toEqual({ ok: true });
+    expect(readFileSync(join(target, deep, 'poster.jpg'), 'utf8')).toBe('p');
+    expect(readdirSync(parent)).toEqual(['data']);
+  });
+
   it('a failing tar leaves no part file', async () => {
     const data = dataDir();
     const out = tempDir();
