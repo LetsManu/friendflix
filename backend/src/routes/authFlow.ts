@@ -150,6 +150,10 @@ const EMAIL_CONFIRMED = '/confirm-email?ok=1';
 /** the pending e-mail change shown on the account page (encrypted, 30 minutes like Authentik's link) */
 export const EMAIL_CHANGE_TTL_S = 1800;
 export const emailChangeKey = (userId: string) => `emailchange:${userId}`;
+/** e-mail change requests (a plausible new address, taken or free) per account in EMAIL_CHANGE_WINDOW_S (security audit G8) */
+export const MAX_EMAIL_CHANGES = 5;
+export const EMAIL_CHANGE_WINDOW_S = 3600;
+const emailChangeTryKey = (userId: string) => `emailchangetry:${userId}`;
 /** what an e-mail link token may look like (Authentik's FlowToken key: 60 letters and digits); anything else never reaches Authentik */
 const LINK_TOKEN = /^[A-Za-z0-9_-]{16,256}$/;
 /** a link Authentik no longer knows (used, expired, unknown): it starts a new plan (identification) or denies the flow */
@@ -789,11 +793,20 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
       clearCookie(reply);
       return { stage: 'expired' };
     }
-    // e-mail change: the new address is checked before Authentik or a mail budget is touched (a refused address uses up nothing but the step)
+    // e-mail change: a malformed, empty or unchanged address is named before Authentik or a budget is touched (it uses up nothing but the
+    // step). A plausible one counts against the account's budget; whether another account holds it is NOT told (security audit G8): such
+    // an address is answered like a free one further down, but never sent to Authentik, so no mail goes out.
     let newEmail: string | undefined;
+    let taken = false;
     if (jar.kind === 'change-email' && shown.stage === 'prompt') {
       const bad = await checkNewEmail(jar, (answer as { email?: unknown }).email);
-      if (bad) return { ...jar.last.step, errors: [bad] };
+      if (bad && bad !== 'email_in_use') return { ...jar.last.step, errors: [bad] };
+      const tries = emailChangeTryKey(jar.userId!);
+      if ((await ctx.kv.incr(tries, EMAIL_CHANGE_WINDOW_S)) > MAX_EMAIL_CHANGES) {
+        await ctx.kv.decr(tries);
+        return { ...jar.last.step, errors: ['rate_limited'] };
+      }
+      taken = bad === 'email_in_use';
       newEmail = String((answer as { email: string }).email).trim();
       answer = { ...answer, email: newEmail };
     }
@@ -818,6 +831,12 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
       const taken = await takeMailBudget(identifier, req.ip, await mailAddressOf(jar.kind === 'change-email' ? undefined : identifier, newEmail));
       if (!taken) return limited();
       budget = taken;
+    }
+    if (taken && newEmail !== undefined) {
+      // an address another account holds: Authentik is asked about the flow (a comparable round trip, nothing is answered, so nothing is
+      // sent) and the attempt ends exactly like a sent mail. The budgets stay taken, as for a sent mail.
+      await akExec(ctx, jar, 'GET', undefined, req.ip).catch(() => undefined);
+      return emailRequested(reply, flowId, jar, DECOY_EMAIL, newEmail);
     }
     let challenge: RawChallenge;
     try {
@@ -852,7 +871,8 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /**
    * The new address of an e-mail change: a plausible address (zod, ≤ 254) that differs from the current one → `invalid`, and that no
-   * other FriendFlix account (`users.email`, case-insensitive) or Authentik user has → `email_in_use`. Null when it is fine.
+   * other FriendFlix account (`users.email`, case-insensitive) or Authentik user has → `email_in_use`. Null when it is fine. The caller
+   * never shows `email_in_use` to the person (it answers like a sent mail and sends none).
    */
   async function checkNewEmail(jar: Jar, typed: unknown): Promise<FlowError | null> {
     if (typeof typed !== 'string' || !typed.trim()) return 'required';

@@ -60,7 +60,7 @@ describe('e-mail change', () => {
     env.ctx.oidc = oidc;
     env.claims.current = { sub: 'sub-admin', email: 'admin@example.com', name: 'Admin', groups: ['friendflix-admins'] };
     world();
-    for (const p of ['flowfail:', 'akflow', 'akmfa:', 'akuser:', 'emailchange:', 'recoverymail:']) for (const k of await env.kv.keys(p)) await env.kv.del(k);
+    for (const p of ['flowfail:', 'akflow', 'akmfa:', 'akuser:', 'emailchange:', 'emailchangetry:', 'recoverymail:']) for (const k of await env.kv.keys(p)) await env.kv.del(k);
     await env.pool.query("delete from audit_log where action like 'account.%'");
     await env.pool.query("update users set email='admin@example.com' where authentik_sub='sub-admin'");
     await env.pool.query("delete from users where authentik_sub='sub-carl'");
@@ -91,10 +91,39 @@ describe('e-mail change', () => {
     expect([r.statusCode, r.json()]).toEqual([409, { error: 'flow_not_configured' }]);
   });
 
-  it('an address used by another user → email_in_use, no Authentik call; invalid and unchanged addresses too', async () => {
-    const { b, step } = await prompted();
+  // security audit G8: the step is no oracle for which addresses have an account (here or on the same Authentik). A taken address gets
+  // the same answer as a free one, through a comparable Authentik round trip, but no mail goes out; the change can only happen through
+  // the link, whose confirmation refuses an address another account holds.
+  it('an address used by another user answers like a free one: email-sent, nothing sent, the attempt ends the same way', async () => {
     await provisionUser(env.ctx, { sub: 'sub-carl', email: 'carl@example.com', name: 'Carl', groups: [] }, 'friend', null);
-    const before = w.calls.length;
+    const userId = (await env.pool.query<{ id: string }>("select id from users where authentik_sub='sub-admin'")).rows[0]!.id;
+    const answers: unknown[] = [];
+    for (const [email, masked] of [['CARL@example.com', 'C•••@example.com'], ['ben@ELSEWHERE.example.com', 'b•••@elsewhere.example.com'], ['Free@Example.com', 'F•••@example.com']] as const) {
+      world();
+      const { s, b, step } = await prompted();
+      const before = w.calls.length;
+      const r = await b.post('answer', { step: step.step, stage: 'prompt', email });
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toEqual({ stage: 'email-sent', step: expect.any(String), to: masked });
+      answers.push(Object.keys(r.json() as object));
+      // every case asks Authentik once more about the flow and ends its session: the taken ones never POST the address (no mail)
+      expect(w.calls.slice(before).some((c) => c.path === `/api/v3/flows/executor/${SLUG}/`)).toBe(true);
+      expect(w.calls.some((c) => c.path === INVALIDATION && /authentik_session=/.test(c.headers.cookie ?? ''))).toBe(true);
+      expect(executorPosts(w, SLUG).map((c) => c.body)).toEqual(email.startsWith('Free') ? [{ email }] : []);
+      expect(b.cookies.ff_flow).toBeUndefined();
+      // the account page shows the same pending note, and the mail budgets count the same
+      expect((await env.app.inject({ url: '/api/account', cookies: s.cookies })).json().emailChangePending).toBe(masked);
+      expect(await env.kv.get(`recoverymail:ip:${sha256(b.ip)}`)).toBe('1');
+      await env.kv.del(`emailchange:${userId}`);
+    }
+    expect(new Set(answers.map((a) => JSON.stringify(a))).size).toBe(1);
+    expect(await audits('account.email_requested')).toHaveLength(3);
+    expect(await emailOf()).toBe('admin@example.com');
+    expect(logs.join('\n')).not.toMatch(/carl@|ben@elsewhere/i);
+  });
+
+  it('invalid, empty and unchanged addresses are still named (they reveal nothing about other accounts)', async () => {
+    const { b, step } = await prompted();
     let cur = step.step;
     const ask = async (email: string) => {
       const r = await b.post('answer', { step: cur, stage: 'prompt', email });
@@ -103,10 +132,6 @@ describe('e-mail change', () => {
       cur = j.step;
       return j;
     };
-    expect(await ask('CARL@example.com')).toMatchObject({ stage: 'prompt', errors: ['email_in_use'] }); // another FriendFlix user, any case
-    expect(w.calls.length).toBe(before); // no Authentik call at all
-    expect(await ask('ben@ELSEWHERE.example.com')).toMatchObject({ errors: ['email_in_use'] }); // an Authentik user (looked up, nothing sent)
-    expect(executorPosts(w, SLUG)).toHaveLength(0);
     expect(await ask('not an address')).toMatchObject({ errors: ['invalid'] });
     expect(await ask('a@b')).toMatchObject({ errors: ['invalid'] });
     expect(await ask('Admin@Example.com')).toMatchObject({ errors: ['invalid'] }); // the current address
@@ -117,6 +142,23 @@ describe('e-mail change', () => {
     expect(executorPosts(w, SLUG)).toHaveLength(0);
     // none of the refusals used a mail
     expect(await env.kv.get(`recoverymail:ip:${sha256(b.ip)}`)).toBeNull();
+  });
+
+  it('at most 5 e-mail change requests an hour per account (taken or free, from any address)', async () => {
+    await provisionUser(env.ctx, { sub: 'sub-carl', email: 'carl@example.com', name: 'Carl', groups: [] }, 'friend', null);
+    for (let i = 0; i < 5; i++) {
+      world();
+      const { b, step } = await prompted();
+      const email = i % 2 ? 'carl@example.com' : `free${i}@example.com`;
+      expect((await b.post('answer', { step: step.step, stage: 'prompt', email })).json()).toMatchObject({ stage: 'email-sent' });
+    }
+    world();
+    const { b, step } = await prompted();
+    const r = await b.post('answer', { step: step.step, stage: 'prompt', email: 'free9@example.com' });
+    expect(r.json()).toMatchObject({ stage: 'prompt', errors: ['rate_limited'] });
+    expect(executorPosts(w, SLUG)).toHaveLength(0);
+    // a format error is named before the budget and uses nothing up
+    expect((await b.post('answer', { step: (r.json() as { step: string }).step, stage: 'prompt', email: 'nope' })).json()).toMatchObject({ errors: ['invalid'] });
   });
 
   it('answer → email-sent masked to the NEW address, Authentik session ended, audit without addresses', async () => {

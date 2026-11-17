@@ -166,8 +166,8 @@ const login: Translation<typeof de> = {
     },
     emailSent: {
       title: 'Enlace de confirmación enviado',
-      text: 'Hemos enviado un enlace de confirmación a {to}. La dirección solo cambia cuando abras el enlace.',
-      textNoTo: 'Hemos enviado un enlace de confirmación a la nueva dirección. La dirección solo cambia cuando abras el enlace.',
+      text: 'Si {to} no pertenece a otra cuenta, hemos enviado allí un enlace de confirmación. La dirección solo cambia cuando abras el enlace.',
+      textNoTo: 'Si la nueva dirección no pertenece a otra cuenta, hemos enviado allí un enlace de confirmación. La dirección solo cambia cuando abras el enlace.',
     },
     passkey: {
       title: 'Añadir una passkey',

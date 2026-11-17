@@ -166,8 +166,8 @@ const login: Translation<typeof de> = {
     },
     emailSent: {
       title: 'Lien de confirmation envoyé',
-      text: 'Nous avons envoyé un lien de confirmation à {to}. L’adresse ne change qu’une fois le lien ouvert.',
-      textNoTo: 'Nous avons envoyé un lien de confirmation à la nouvelle adresse. L’adresse ne change qu’une fois le lien ouvert.',
+      text: 'Si {to} n’appartient pas déjà à un autre compte, nous y avons envoyé un lien de confirmation. L’adresse ne change qu’une fois le lien ouvert.',
+      textNoTo: 'Si la nouvelle adresse n’appartient pas déjà à un autre compte, nous y avons envoyé un lien de confirmation. L’adresse ne change qu’une fois le lien ouvert.',
     },
     passkey: {
       title: 'Ajouter une passkey',
