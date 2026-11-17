@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
-import { PENDING, signUpdater, startedJob, updaterCall, updaterKey, type StartResult } from '../updater.js';
+import { PENDING, signUpdater, startedJob, streamBinding, updaterCall, updaterKey, type StartResult } from '../updater.js';
 
 /**
  * The backend's side of the updater's managed media server API (updater/src/mediaserver/: signed POST /v1/mediaserver, the two backup
- * streams, `mediaserver` inside GET /v1/status), signed exactly like every other updater call (updater.ts signUpdater). The updater's
+ * streams, `mediaserver` inside GET /v1/status), signed exactly like every other updater call (updater.ts signUpdater; the streams over
+ * updater.ts streamBinding of the passphrase header). The updater's
  * answers carry codes only and are input like any other: every field is checked here before it goes further.
  */
 
@@ -150,9 +151,9 @@ export function decodePassphrase(h: string | undefined): string | null {
   return codePoints(s) >= 12 && codePoints(s) <= 1024 ? s : null;
 }
 
-/** the stream calls sign the header string in place of the body (updater/src/server.ts stream()) */
+/** the stream calls sign a scrypt derivation of the header string in place of the body (updater.ts streamBinding, updater/src/server.ts stream()) */
 function streamHeaders(ctx: Ctx, method: 'GET' | 'POST', path: string, passphraseHeader: string): Record<string, string> {
-  return { ...signUpdater(updaterKey(ctx.cfg.INTERNAL_SECRET), method, path, passphraseHeader), [PASSPHRASE_HEADER]: passphraseHeader };
+  return { ...signUpdater(updaterKey(ctx.cfg.INTERNAL_SECRET), method, path, streamBinding(passphraseHeader)), [PASSPHRASE_HEADER]: passphraseHeader };
 }
 
 /** the encrypted backup as the updater streams it (`<id>.tar.gz.age`); null = the updater is not there. The caller checks `id` against BACKUP_ID first. */

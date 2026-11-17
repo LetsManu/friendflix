@@ -4,7 +4,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { decodePassphrase, encodePassphrase, mediaDownload, mediaOp, mediaUpload, parseMediaStatus, startMediaJob } from '../src/mediaserver/client.js';
-import { parseStatus, updaterView } from '../src/updater.js';
+import { parseStatus, streamBinding, updaterView } from '../src/updater.js';
 import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const SECRET = cfg.INTERNAL_SECRET;
@@ -32,7 +32,8 @@ const fake = {
   state: 'running', error: null as string | null, answer: undefined as { status: number; json: unknown } | undefined, reset: false,
   calls: [] as Array<{ method: string; path: string; body: string; signed: string; sigOk: boolean; headers: Record<string, string> }>,
 };
-/** the verify semantics of updater/src/protocol.ts (test-vectors/updater-hmac.json), over the string that is signed in place of the body */
+/** the verify semantics of updater/src/protocol.ts (test-vectors/updater-hmac.json), over the string that is signed in place of the body
+ * (the body, or for a stream streamBinding of the passphrase header as sent) */
 function sigOk(method: string, path: string, signed: string, h: Record<string, string>): boolean {
   const key = createHmac('sha256', SECRET).update('friendflix-updater/v1').digest();
   const canon = [method, path, h['x-ff-updater-ts'], h['x-ff-updater-nonce'], createHash('sha256').update(signed).digest('hex')].join('\n');
@@ -44,7 +45,7 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
   const h = init?.headers as Record<string, string>;
   const body = typeof init?.body === 'string' ? init.body : '';
   const stream = u.pathname.startsWith('/v1/mediaserver/backups/');
-  const signed = stream ? (h['x-ff-backup-passphrase'] ?? '') : body;
+  const signed = stream ? streamBinding(h['x-ff-backup-passphrase'] ?? '') : body;
   fake.calls.push({ method, path: u.pathname, body, signed, sigOk: sigOk(method, u.pathname, signed, h), headers: h });
   if (fake.reset) throw new TypeError('fetch failed');
   const j = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
@@ -145,13 +146,15 @@ describe('signed calls', () => {
     const dl = await mediaDownload(env.ctx, 'ferrofin-20261117-1000-1.2.3', header, ac.signal);
     expect(await dl!.text()).toBe('age-bytes');
     const d = fake.calls[1]!;
-    expect(d).toMatchObject({ method: 'GET', path: '/v1/mediaserver/backups/ferrofin-20261117-1000-1.2.3/download', signed: header, sigOk: true });
+    expect(d).toMatchObject({ method: 'GET', path: '/v1/mediaserver/backups/ferrofin-20261117-1000-1.2.3/download', signed: streamBinding(header), sigOk: true });
+    // a tampered header fails verification
+    expect(sigOk(d.method, d.path, streamBinding(`${header.slice(0, -1)}${header.endsWith('A') ? 'B' : 'A'}`), d.headers)).toBe(false);
     expect(d.headers['x-ff-backup-passphrase']).toBe(header);
 
     const up = await mediaUpload(env.ctx, Readable.from([Buffer.from('abc')]), 3, header, ac.signal);
     expect(up?.status).toBe(200);
     const u = fake.calls[2]!;
-    expect(u).toMatchObject({ method: 'POST', path: '/v1/mediaserver/backups/upload', signed: header, sigOk: true });
+    expect(u).toMatchObject({ method: 'POST', path: '/v1/mediaserver/backups/upload', signed: streamBinding(header), sigOk: true });
     expect(u.headers['content-length']).toBe('3');
     // a bad id never leaves the process
     expect(await mediaDownload(env.ctx, '../x', header, ac.signal)).toBeNull();

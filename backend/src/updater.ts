@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, scryptSync } from 'node:crypto';
 import { portainerFailedAlert, updateFailedAlert, updateStartFailedAlert, type StartFailReason } from './adminAlerts.js';
 import { audit } from './audit.js';
 import type { Ctx } from './ctx.js';
@@ -14,6 +14,7 @@ import { portainerMode, portainerSetup, redeployViaPortainer, updateInfo, type U
  * updater/src/protocol.ts byte for byte (test-vectors/updater-hmac.json).
  */
 const KEY_LABEL = 'friendflix-updater/v1';
+const STREAM_SALT = 'friendflix-updater-stream/v1';
 /** what an audit entry names: the three jobs of Admin -> Update, and livetv (enable / disable / remove, spec §4.2) */
 export type UpdaterAction = 'update' | 'rollback' | 'self-update' | 'livetv';
 /** the jobs POST /api/admin/updater/:action starts (livetv has its own routes and body) */
@@ -45,6 +46,14 @@ export function updaterKey(secret: string): Buffer {
 export function signUpdater(key: Buffer, method: string, path: string, body = '', ts = String(Date.now()), nonce = randomBytes(16).toString('hex')): Record<string, string> {
   const canonical = [method.toUpperCase(), path, ts, nonce, createHash('sha256').update(body).digest('hex')].join('\n');
   return { 'x-ff-updater-ts': ts, 'x-ff-updater-nonce': nonce, 'x-ff-updater-signature': `v1=${createHmac('sha256', key).update(canonical).digest('hex')}` };
+}
+
+/**
+ * What the two media server backup streams sign in place of the body: a scrypt derivation of the `x-ff-backup-passphrase` header
+ * as sent (hex), never a fast hash of it. Must match updater/src/protocol.ts streamBinding (test-vectors/updater-hmac.json).
+ */
+export function streamBinding(passphraseHeader: string): string {
+  return scryptSync(passphraseHeader, STREAM_SALT, 32, { N: 2 ** 14, r: 8, p: 1 }).toString('hex');
 }
 
 export interface UpdaterJob {

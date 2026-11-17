@@ -1,5 +1,5 @@
 {
-  "_comment": "Shared by the updater and backend tests so both ends of the backend -> updater signing (updater/src/protocol.ts, backend/src/updater.ts) can never drift apart. key = HMAC-SHA256(secret, 'friendflix-updater/v1'); signature = 'v1=' + hex HMAC-SHA256(key, METHOD\\nPATH\\nTS\\nNONCE\\nhex(SHA256(body))).",
+  "_comment": "Shared by the updater and backend tests so both ends of the backend -> updater signing (updater/src/protocol.ts, backend/src/updater.ts) can never drift apart. key = HMAC-SHA256(secret, 'friendflix-updater/v1'); signature = 'v1=' + hex HMAC-SHA256(key, METHOD\\nPATH\\nTS\\nNONCE\\nhex(SHA256(body))). The backup streams sign streamBinding(header) in place of the body: hex scrypt(header as sent, 'friendflix-updater-stream/v1', N=2^14, r=8, p=1, 32 bytes).",
   "secret": "test-internal-secret-0123456789",
   "key": "9c19d5648b8a3f8956d76d75602e905d9140350ed4a87b90a306a1a4073f9c71",
   "cases": [
@@ -26,6 +26,16 @@
       "ts": "1760800005000",
       "nonce": "0123456789abcdef0123456789abcdef",
       "signature": "v1=3b37b5dc4ecddbdd95e8cefc2b3d9429deb098534aa84b924b028a58ae39fd7b"
+    }
+  ],
+  "streamBindings": [
+    {
+      "header": "emHFvMOzxYLEhyBnxJnFm2zEhSBqYcW6xYQ",
+      "binding": "daf1d63a0ce6bd873b84a2e7062be7d4b4398076e4db67278a1c2b638699dac1"
+    },
+    {
+      "header": "",
+      "binding": "ed550aac19d01de86c23ab8000b38b0e7457a7233ccd27893ba897133ae27d6d"
     }
   ]
 }

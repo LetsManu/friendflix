@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
 /**
  * Request signing between the backend and the updater (docs/security.md "Updater"). The backend keeps a copy of `sign` in
@@ -14,8 +14,9 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
  * cache cannot outlive the process), and every nonce once.
  *
  * The two media server backup streams (`GET /v1/mediaserver/backups/<id>/download`, `POST /v1/mediaserver/backups/upload`) sign the
- * `x-ff-backup-passphrase` header value exactly as sent (base64url of the UTF-8 passphrase; empty when absent) in place of the body,
- * so the request is verified before a byte of the stream is read or written.
+ * `streamBinding` of the `x-ff-backup-passphrase` header value exactly as sent (base64url of the UTF-8 passphrase; empty when
+ * absent) in place of the body: a scrypt derivation, never a fast hash of the passphrase. The request is verified before a byte of
+ * the stream is read or written.
  */
 export const KEY_LABEL = 'friendflix-updater/v1';
 export const HEADER_TS = 'x-ff-updater-ts';
@@ -25,6 +26,13 @@ export const WINDOW_MS = 60_000;
 const NONCE_RE = /^[0-9a-f]{32}$/;
 const SIG_RE = /^v1=[0-9a-f]{64}$/;
 const TS_RE = /^[0-9]{13}$/;
+
+const STREAM_SALT = 'friendflix-updater-stream/v1';
+
+/** what the backup streams sign in place of the body: scrypt of the passphrase header as sent (hex); backend/src/updater.ts has the same */
+export function streamBinding(passphraseHeader: string): string {
+  return scryptSync(passphraseHeader, STREAM_SALT, 32, { N: 2 ** 14, r: 8, p: 1 }).toString('hex');
+}
 
 export function deriveKey(secret: string): Buffer {
   return createHmac('sha256', secret).update(KEY_LABEL).digest();

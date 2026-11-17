@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { HEADER_NONCE, HEADER_SIG, HEADER_TS, ReplayCache, WINDOW_MS, deriveKey, sign, verify, type Verifier } from '../src/protocol.js';
+import { HEADER_NONCE, HEADER_SIG, HEADER_TS, ReplayCache, WINDOW_MS, deriveKey, sign, streamBinding, verify, type Verifier } from '../src/protocol.js';
 
 const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/updater-hmac.json', import.meta.url), 'utf8')) as {
   secret: string; key: string; cases: Array<{ method: string; path: string; body: string; ts: string; nonce: string; signature: string }>;
+  streamBindings: Array<{ header: string; binding: string }>;
 };
 const NOW = 1_760_800_000_000;
 const key = deriveKey('a-long-internal-secret-value');
@@ -21,6 +22,19 @@ describe('updater request signing', () => {
       const v = mk({ key: k, now: () => Number(c.ts), notBefore: 0 });
       expect(verify(v, req(sign(k, c.method, c.path, c.body, c.ts, c.nonce), c.body, c.method, c.path))).toEqual({ ok: true });
     }
+  });
+
+  it('the backup streams sign a scrypt derivation of the passphrase header (shared vectors), and only that header verifies', () => {
+    for (const c of vectors.streamBindings) expect(streamBinding(c.header)).toBe(c.binding);
+    const v = mk();
+    const path = '/v1/mediaserver/backups/upload';
+    const header = vectors.streamBindings[0]!.header;
+    const h = sign(key, 'POST', path, streamBinding(header), String(NOW));
+    // a tampered header (one character changed) derives another binding: refused, and no nonce burnt
+    expect(verify(v, req(h, streamBinding(`${header.slice(0, -1)}A`), 'POST', path))).toEqual({ ok: false, error: 'bad_signature' });
+    // the header itself in place of the binding no longer verifies
+    expect(verify(v, req(h, header, 'POST', path))).toEqual({ ok: false, error: 'bad_signature' });
+    expect(verify(v, req(h, streamBinding(header), 'POST', path))).toEqual({ ok: true });
   });
 
   it('accepts a fresh signed request once; the same nonce again is a replay', () => {

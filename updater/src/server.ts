@@ -18,7 +18,7 @@ import { STARTING_VIEW, mediaStatusView, type MediaStatusView } from './mediaser
 import { Supervisor } from './mediaserver/supervise.js';
 import { BACKUP_ID_RE, type MediaOp } from './mediaserver/types.js';
 import { FF_SERVICES, HEALTH_SERVICES, SELF_SERVICE, channelTag, parseChannelBody, parseLivetvBody, shaTag } from './policy.js';
-import { ReplayCache, deriveKey, verify, type Verifier } from './protocol.js';
+import { ReplayCache, deriveKey, streamBinding, verify, type Verifier } from './protocol.js';
 import { fileStore } from './state.js';
 
 type Route = 'status' | 'channel' | 'update' | 'rollback' | 'self-update' | 'livetv' | 'mediaserver';
@@ -197,8 +197,9 @@ async function mediaOp(m: MediaApi, op: MediaOp): Promise<{ status: number; body
 }
 
 /**
- * The two backup streams (spec "Backup and restore"): the signature covers the `x-ff-backup-passphrase` header as sent (base64url)
- * in place of the body, so it is checked before a byte of the stream is read or written. Answers carry codes only.
+ * The two backup streams (spec "Backup and restore"): the signature covers a scrypt derivation of the `x-ff-backup-passphrase`
+ * header as sent (base64url; protocol.ts streamBinding) in place of the body, so it is checked before a byte of the stream is read
+ * or written. Answers carry codes only.
  */
 async function stream(d: AppDeps, req: IncomingMessage, res: ServerResponse, path: string, id: string | null): Promise<void> {
   const want = id === null ? 'POST' : 'GET';
@@ -207,7 +208,7 @@ async function stream(d: AppDeps, req: IncomingMessage, res: ServerResponse, pat
   if (req.method !== want) return refuse(405, 'method_not_allowed');
   const raw = req.headers[PASSPHRASE_HEADER];
   const header = typeof raw === 'string' ? raw : '';
-  const auth = verify(d.verifier, { method: want, path, headers: req.headers, body: header });
+  const auth = verify(d.verifier, { method: want, path, headers: req.headers, body: streamBinding(header) });
   if (!auth.ok) {
     d.warn?.(`refused mediaserver-backup: ${auth.error}`);
     return refuse(401, auth.error);

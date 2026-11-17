@@ -4,6 +4,7 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodePassphrase } from '../src/mediaserver/client.js';
+import { streamBinding } from '../src/updater.js';
 import { sessionKey } from '../src/session.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 
@@ -26,7 +27,7 @@ const job = (action: string) => ({ id: '00000000000000a1', action, state: 'runni
   steps: { pull: 'skipped', verify: 'skipped', restart: 'skipped', health: 'skipped', rollback: 'skipped' }, startedAt: '2026-11-17T10:00:00.000Z', finishedAt: null, error: null,
   media: { step: 'check', steps: {} } });
 
-/** the verify semantics of updater/src/protocol.ts, over the passphrase header that the stream routes sign in place of the body */
+/** the verify semantics of updater/src/protocol.ts, over the scrypt derivation of the passphrase header (streamBinding) that the stream routes sign in place of the body */
 function sigOk(method: string, path: string, signed: string, h: Record<string, string>): boolean {
   const key = createHmac('sha256', SECRET).update('friendflix-updater/v1').digest();
   const canon = [method, path, h['x-ff-updater-ts'], h['x-ff-updater-nonce'], createHash('sha256').update(signed).digest('hex')].join('\n');
@@ -62,7 +63,7 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
   }
   const h = init?.headers as Record<string, string>;
   const method = init?.method ?? 'GET';
-  fake.streams.push({ method, path: u.pathname, headers: h, sigOk: sigOk(method, u.pathname, h['x-ff-backup-passphrase'] ?? '', h), signal: init?.signal ?? undefined });
+  fake.streams.push({ method, path: u.pathname, headers: h, sigOk: sigOk(method, u.pathname, streamBinding(h['x-ff-backup-passphrase'] ?? ''), h), signal: init?.signal ?? undefined });
   if (u.pathname === `/v1/mediaserver/backups/${ID}/download`) {
     if (fake.download) return j(fake.download.json, fake.download.status);
     const released = new Promise<void>((resolve) => { fake.release = resolve; });
@@ -158,6 +159,9 @@ describe('media server backup streams', () => {
     expect(fake.streams).toHaveLength(1);
     expect(fake.streams[0]).toMatchObject({ method: 'GET', path: `/v1/mediaserver/backups/${ID}/download`, sigOk: true });
     expect(fake.streams[0]!.headers['x-ff-backup-passphrase']).toBe(ENC);
+    // the fake refuses a tampered header: the signature binds the header as sent
+    const s0 = fake.streams[0]!;
+    expect(sigOk(s0.method, s0.path, streamBinding(encodePassphrase(`${PASS}!`)), s0.headers)).toBe(false);
     expect(await audits('mediaserver.backup_download')).toEqual([{ id: ID }]);
     await noSecret();
   });

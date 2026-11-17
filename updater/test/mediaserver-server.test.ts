@@ -8,7 +8,7 @@ import { Updater } from '../src/job.js';
 import type { MediaOp } from '../src/mediaserver/types.js';
 import { MediaService } from '../src/mediaserver/service.js';
 import { STARTING_VIEW, mediaStatusView, type MediaStatusView } from '../src/mediaserver/status.js';
-import { ReplayCache, deriveKey, sign, type Verifier } from '../src/protocol.js';
+import { ReplayCache, deriveKey, sign, streamBinding, type Verifier } from '../src/protocol.js';
 import { handler, warmMediaStatus, type AppDeps } from '../src/server.js';
 import { DEFAULT_STATE, memoryStore, type Job } from '../src/state.js';
 import { FACTS, PASSWORD, SOURCE, SPEC, ferroPin, world } from './media-world.js';
@@ -335,16 +335,21 @@ describe('the media status warm-up', () => {
 });
 
 describe('the backup streams', () => {
-  const download = (base: string, id: string, header: string, signedOver = header) => {
+  /** signed over streamBinding(signedOver); `raw` signs the string itself (the old scheme, refused) */
+  const download = (base: string, id: string, header: string, signedOver = header, raw = false) => {
     const path = `/v1/mediaserver/backups/${id}/download`;
-    return fetch(base + path, { headers: { ...sign(key, 'GET', path, signedOver), 'x-ff-backup-passphrase': header } });
+    return fetch(base + path, { headers: { ...sign(key, 'GET', path, raw ? signedOver : streamBinding(signedOver)), 'x-ff-backup-passphrase': header } });
   };
 
-  it('stream routes: signed over the passphrase header', async () => {
+  it('stream routes: signed over a scrypt derivation of the passphrase header', async () => {
     const t = fake();
     const base = await listen(t.deps);
     const h = b64(POLISH);
     expect((await download(base, BACKUP, h, b64('something else entirely'))).status).toBe(401);
+    // a tampered header (one character changed after signing) is refused
+    expect((await download(base, BACKUP, `${h.slice(0, -1)}A`, h)).status).toBe(401);
+    // a signature over the header itself instead of its derivation is refused
+    expect((await download(base, BACKUP, h, h, true)).status).toBe(401);
     expect(t.downloaded).toEqual([]);
 
     const ok = await download(base, BACKUP, h);
@@ -369,7 +374,7 @@ describe('the backup streams', () => {
     expect(t.downloaded).toHaveLength(1);
 
     const path = '/v1/mediaserver/backups/upload';
-    const up = await fetch(base + path, { method: 'POST', body: 'age-bytes', headers: { ...sign(key, 'POST', path, h), 'x-ff-backup-passphrase': h, 'content-type': 'application/octet-stream' } });
+    const up = await fetch(base + path, { method: 'POST', body: 'age-bytes', headers: { ...sign(key, 'POST', path, streamBinding(h)), 'x-ff-backup-passphrase': h, 'content-type': 'application/octet-stream' } });
     expect(up.status).toBe(200);
     expect(await up.json()).toEqual({ backup: { id: BACKUP, kind: 'jellyfin', upstream: '10.11.3', at: '2026-11-17T14:02:00.000Z', tag: 'upload', size: 3 } });
     expect(t.uploaded).toEqual([POLISH]);
@@ -384,10 +389,10 @@ describe('the backup streams', () => {
     const send = (headers: Record<string, string>) => fetch(base + path, { method: 'POST', body: 'x'.repeat(1000), headers: { 'x-ff-backup-passphrase': h, ...headers } });
     const unsigned = await send({});
     expect([unsigned.status, await unsigned.json(), unsigned.headers.get('connection')]).toEqual([401, { error: 'missing' }, 'close']);
-    const busy = await send(sign(key, 'POST', path, h));
+    const busy = await send(sign(key, 'POST', path, streamBinding(h)));
     expect([busy.status, await busy.json()]).toEqual([409, { error: 'busy' }]);
     const bad = b64('a'.repeat(5));
-    const short = await fetch(base + path, { method: 'POST', body: 'x', headers: { ...sign(key, 'POST', path, bad), 'x-ff-backup-passphrase': bad } });
+    const short = await fetch(base + path, { method: 'POST', body: 'x', headers: { ...sign(key, 'POST', path, streamBinding(bad)), 'x-ff-backup-passphrase': bad } });
     expect([short.status, await short.json()]).toEqual([400, { error: 'invalid_passphrase' }]);
     expect((await fetch(base + path)).status).toBe(405);
   });
@@ -397,7 +402,7 @@ describe('the backup streams', () => {
     const base = await listen(t.deps);
     const path = '/v1/mediaserver/backups/upload';
     const h = b64(POLISH);
-    const head = Object.entries({ ...sign(key, 'POST', path, h), 'x-ff-backup-passphrase': h }).map(([k, v]) => `${k}: ${v}\r\n`).join('');
+    const head = Object.entries({ ...sign(key, 'POST', path, streamBinding(h)), 'x-ff-backup-passphrase': h }).map(([k, v]) => `${k}: ${v}\r\n`).join('');
     const answer = await new Promise<string>((resolve) => {
       const s = connect(Number(new URL(base).port), '127.0.0.1', () => {
         s.write(`POST ${path} HTTP/1.1\r\nhost: x\r\ncontent-length: ${20 * 1024 ** 3 + 1}\r\n${head}\r\nage`);
@@ -422,7 +427,7 @@ describe('the backup streams', () => {
     const base = await listen({ ...t.deps, limits: { streamIdleMs: 200 } });
     const path = '/v1/mediaserver/backups/upload';
     const h = b64(POLISH);
-    const head = Object.entries({ ...sign(key, 'POST', path, h), 'x-ff-backup-passphrase': h }).map(([k, v]) => `${k}: ${v}\r\n`).join('');
+    const head = Object.entries({ ...sign(key, 'POST', path, streamBinding(h)), 'x-ff-backup-passphrase': h }).map(([k, v]) => `${k}: ${v}\r\n`).join('');
     const closed = await new Promise<boolean>((resolve) => {
       const s = connect(Number(new URL(base).port), '127.0.0.1', () => { s.write(`POST ${path} HTTP/1.1\r\nhost: x\r\ncontent-length: 1000\r\n${head}\r\nage`); });
       s.on('data', () => undefined);
