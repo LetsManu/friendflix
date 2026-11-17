@@ -5,10 +5,11 @@ import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
-import { effectiveLanguage, m } from '../i18n.js';
+import { effectiveLanguage, LANGUAGES, m } from '../i18n.js';
 import { localizeStored, notify } from '../notify.js';
 import { portalStatus, RequestsDisabledError, requestsClient, requestsEnabled, requestStateKey, SeerrError, viewerLanguage } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
+import { collectionOf, partState, seasonRequestable, seasonStates } from '../seerr/states.js';
 import { requireGrownUp } from '../kids.js';
 import { requirePerm } from '../permGuard.js';
 import { requireAdmin } from '../session.js';
@@ -32,12 +33,66 @@ function mapResult(r: any) {
   };
 }
 
+/** the season numbers of a request (the service's `seasons: [{ seasonNumber }]`), sorted; undefined for none */
+const seasonList = (v: unknown): number[] | undefined => {
+  const n = (Array.isArray(v) ? v : []).map((x) => x?.seasonNumber).filter((x): x is number => Number.isInteger(x) && x >= 0);
+  return n.length ? [...new Set(n)].sort((a, b) => a - b) : undefined;
+};
+
 const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(fn, { zod: 'plain', jellyfin: false, seerr: true });
 
 /** preHandler after the sign-in checks: without a request service its routes answer 404 {error:'requests_disabled'} */
 const requestsOn = (ctx: Ctx) => async () => {
   if (!requestsEnabled(ctx)) throw new RequestsDisabledError();
 };
+
+/** a TMDB poster path through the image proxy (same rule as the proxy: one file name), else undefined */
+const posterOf = (p: unknown): string | undefined => (typeof p === 'string' && /^\/[A-Za-z0-9_-]{5,60}\.(jpg|png|webp)$/.test(p) ? `/api/seerr/image${p}` : undefined);
+
+type WishOutcome =
+  | { kind: 'ok'; id: number; status: string; seasons?: number[]; collection: { id: number; name: string } | null }
+  | { kind: 'exists'; status: string }
+  | { kind: 'bad_seasons' }
+  | { kind: 'limit'; limit: number | null; used: number; resetsAt: string };
+
+/**
+ * One wish in the viewer's name (POST /api/requests and each part of POST /api/requests/batch): the title must still be open
+ * (else `exists`); chosen seasons are cut to the ones the series has (none: `bad_seasons`) and that are still open (none: `exists`);
+ * then a quota slot is held while the service is asked. A service failure throws (SeerrError) and frees the slot.
+ */
+async function createWish(ctx: Ctx, req: FastifyRequest, b: { mediaType: 'movie' | 'tv'; tmdbId: number; seasons?: number[] }): Promise<WishOutcome> {
+  const d = await requestsClient(ctx).details(b.mediaType, b.tmdbId, await viewerLanguage(ctx, req)); // the title is stored for the account's request list
+  const st = portalStatus(d.mediaInfo?.status, d.mediaInfo?.requests?.[0]?.status);
+  let seasons: number[] | undefined;
+  if (b.mediaType === 'tv' && b.seasons) {
+    const all = seasonStates(d);
+    const known = new Map(all.map((x) => [x.number, x.state]));
+    const asked = [...new Set(b.seasons)].filter((n) => known.has(n)).sort((x, y) => x - y);
+    if (!asked.length) return { kind: 'bad_seasons' };
+    seasons = asked.filter((n) => seasonRequestable(known.get(n)!));
+    if (!seasons.length) return { kind: 'exists', status: st };
+  } else if (st !== 'nicht_angefragt' && st !== 'abgelehnt') return { kind: 'exists', status: st };
+  const user = req.user!;
+  const limit = await limitFor(ctx, user);
+  const slot = await reserve(ctx, user.id, limit); // atomic check + hold; a failure below must not burn it
+  if (slot === null) return { kind: 'limit', limit, used: await usage(ctx, user.id), resetsAt: await resetsAt(ctx) };
+  let created;
+  const title = String(d.title ?? d.name ?? `#${b.tmdbId}`);
+  try {
+    const seerrUserId = await ensureSeerrUser(ctx, user);
+    created = await requestsClient(ctx).createRequest({ mediaType: b.mediaType, mediaId: b.tmdbId, seasons: b.mediaType === 'tv' ? (seasons ?? 'all') : undefined, userId: seerrUserId });
+    await ctx.db.query(
+      'insert into seerr_requests(seerr_request_id, user_id, media_type, tmdb_id, title, poster, seasons) values ($1,$2,$3,$4,$5,$6,$7) on conflict (seerr_request_id) do nothing',
+      [created.id, user.id, b.mediaType, b.tmdbId, title, d.posterPath ?? null, seasons ?? null],
+    );
+  } finally {
+    await release(ctx, slot);
+  }
+  await ctx.kv.del(`reqmine:${user.id}`).catch(() => undefined);
+  await audit(ctx, user.id, 'request.create', String(created.id), { title, ...(seasons ? { seasons } : {}) });
+  await seerrHooks.run(ctx, { type: 'requested', user, tmdbId: b.tmdbId, mediaType: b.mediaType });
+  return { kind: 'ok', id: created.id, status: portalStatus(created.media?.status, created.status), ...(seasons ? { seasons } : {}), collection: b.mediaType === 'movie' ? collectionOf(d) : null };
+}
 
 export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
   const on = requestsOn(ctx);
@@ -89,30 +144,91 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     return { key };
   }));
 
+  // a wish: a movie, a whole series (no `seasons`, older clients) or the chosen seasons of a series. Of the chosen seasons only the
+  // ones still open are asked for (a partly requested series can get more); one request is one wish of the monthly quota.
   app.post('/api/requests', pre, wrap(async (req, reply) => {
-    const b = z.object({ mediaType, tmdbId: z.number().int().positive(), seasons: z.array(z.number().int().min(0).max(100)).optional() }).parse(req.body);
-    const d = await requestsClient(ctx).details(b.mediaType, b.tmdbId, await viewerLanguage(ctx, req)); // the title is stored for the account's request list
-    const st = portalStatus(d.mediaInfo?.status, d.mediaInfo?.requests?.[0]?.status);
-    if (st !== 'nicht_angefragt' && st !== 'abgelehnt') return reply.code(409).send({ error: 'already_requested', status: st });
-    const limit = await limitFor(ctx, req.user!);
-    const slot = await reserve(ctx, req.user!.id, limit); // atomic check + hold; a failure below must not burn it
-    if (slot === null) return reply.code(429).send({ error: 'request_limit', limit, used: await usage(ctx, req.user!.id), resetsAt: await resetsAt(ctx) });
-    let created;
-    const title = String(d.title ?? d.name ?? `#${b.tmdbId}`);
-    try {
-      const seerrUserId = await ensureSeerrUser(ctx, req.user!);
-      created = await requestsClient(ctx).createRequest({ mediaType: b.mediaType, mediaId: b.tmdbId, seasons: b.mediaType === 'tv' ? (b.seasons ?? 'all') : undefined, userId: seerrUserId });
-      await ctx.db.query(
-        'insert into seerr_requests(seerr_request_id, user_id, media_type, tmdb_id, title, poster) values ($1,$2,$3,$4,$5,$6) on conflict (seerr_request_id) do nothing',
-        [created.id, req.user!.id, b.mediaType, b.tmdbId, title, d.posterPath ?? null],
-      );
-    } finally {
-      await release(ctx, slot);
+    const b = z.object({ mediaType, tmdbId: z.number().int().positive(), seasons: z.array(z.number().int().min(0).max(100)).min(1).max(101).optional() }).parse(req.body);
+    const r = await createWish(ctx, req, b);
+    if (r.kind === 'exists') return reply.code(409).send({ error: 'already_requested', status: r.status });
+    if (r.kind === 'bad_seasons') return reply.code(400).send({ error: 'bad_seasons' });
+    if (r.kind === 'limit') return reply.code(429).send({ error: 'request_limit', limit: r.limit, used: r.used, resetsAt: r.resetsAt });
+    return { id: r.id, status: r.status, ...(r.seasons ? { seasons: r.seasons } : {}), ...(b.mediaType === 'movie' ? { collection: r.collection } : {}) };
+  }));
+
+  // the parts of a collection, each its own movie wish: one call (one CSRF check, one rate-limit hit) instead of up to 30. In the
+  // given order, one after the other: the quota stops it part-way deterministically (the first ones go through, the rest answer
+  // `limit` without a call); an upstream failure fails only that part. Every created request is audited like a single one.
+  const BATCH_MAX = 30;
+  const perUser = (max: number) => ({ rateLimit: { max, timeWindow: '1 minute', hook: 'preHandler' as const, keyGenerator: (req: FastifyRequest) => `reqbatch:${req.user?.id ?? req.ip}` } });
+  app.post('/api/requests/batch', { ...pre, config: perUser(12) }, wrap(async (req) => {
+    const b = z.object({
+      items: z.array(z.object({ mediaType: z.literal('movie'), tmdbId: z.number().int().positive() })).min(1).max(BATCH_MAX)
+        .refine((a) => new Set(a.map((x) => x.tmdbId)).size === a.length, 'duplicate'),
+      collectionId: z.number().int().positive().optional(),
+    }).parse(req.body);
+    const results: Array<{ tmdbId: number; result: 'requested' | 'exists' | 'limit' | 'failed'; status?: string }> = [];
+    let stopped = false;
+    for (const it of b.items) {
+      if (stopped) { results.push({ tmdbId: it.tmdbId, result: 'limit' }); continue; }
+      try {
+        const r = await createWish(ctx, req, { mediaType: 'movie', tmdbId: it.tmdbId });
+        if (r.kind === 'ok') results.push({ tmdbId: it.tmdbId, result: 'requested', status: r.status });
+        else if (r.kind === 'exists') results.push({ tmdbId: it.tmdbId, result: 'exists', status: r.status });
+        else { stopped = true; results.push({ tmdbId: it.tmdbId, result: 'limit' }); }
+      } catch (e) {
+        req.log.warn({ err: e instanceof Error ? e.message : String(e), tmdbId: it.tmdbId }, 'batch wish failed');
+        results.push({ tmdbId: it.tmdbId, result: 'failed' });
+      }
     }
-    await ctx.kv.del(`reqmine:${req.user!.id}`).catch(() => undefined);
-    await audit(ctx, req.user!.id, 'request.create', String(created.id), { title });
-    await seerrHooks.run(ctx, { type: 'requested', user: req.user!, tmdbId: b.tmdbId, mediaType: b.mediaType });
-    return { id: created.id, status: portalStatus(created.media?.status, created.status) };
+    if (b.collectionId) await dropCollectionCache(b.collectionId);
+    return { results, quota: await quota(ctx, req.user!) };
+  }));
+
+  // every season with its state, for the season picker (not cached: it is read once per opened picker and must be current)
+  app.get('/api/seerr/tv/:id/seasons', pre, wrap(async (req) => {
+    const p = z.object({ id: z.coerce.number().int().positive().max(2 ** 31 - 1) }).parse(req.params);
+    const d = await requestsClient(ctx).details('tv', p.id, await viewerLanguage(ctx, req));
+    return { tmdbId: p.id, title: String(d.name ?? d.title ?? `#${p.id}`), ...(posterOf(d.posterPath) ? { poster: posterOf(d.posterPath) } : {}), seasons: seasonStates(d) };
+  }));
+
+  // the collection a movie belongs to, its parts in release order (undated last) with their state. The movie -> collection link is
+  // kept for a day, the collection itself (titles and states) for COLLECTION_TTL seconds; a batch wish with its id clears it.
+  const COLLECTION_TTL = 30, COLLECTION_OF_TTL = 24 * 3600, PARTS_MAX = 30;
+  const colKey = (id: number, lang: string) => `seerrcol:${id}:${lang}`;
+  async function dropCollectionCache(id: number) {
+    for (const l of LANGUAGES) await ctx.kv.del(colKey(id, l)).catch(() => undefined);
+  }
+  app.get('/api/seerr/movie/:id/collection', pre, wrap(async (req) => {
+    const p = z.object({ id: z.string().regex(/^\d{1,10}$/).transform(Number).pipe(z.number().int().positive().max(2 ** 31 - 1)) }).parse(req.params);
+    const lang = await viewerLanguage(ctx, req);
+    const ofKey = `seerrcolof:${p.id}`;
+    let colId: number | null;
+    const hit = await ctx.kv.get(ofKey).catch(() => null);
+    if (hit !== null) colId = hit ? Number(hit) : null;
+    else {
+      colId = collectionOf(await requestsClient(ctx).details('movie', p.id, lang))?.id ?? null;
+      await ctx.kv.set(ofKey, colId ? String(colId) : '', COLLECTION_OF_TTL).catch(() => undefined);
+    }
+    if (!colId) return { collection: null };
+    const ck = colKey(colId, lang);
+    const cached = await ctx.kv.get(ck).catch(() => null);
+    if (cached) { try { return JSON.parse(cached); } catch { /* recompute */ } }
+    const c: any = await requestsClient(ctx).collection(colId, lang);
+    const today = new Date().toISOString().slice(0, 10);
+    const parts = (Array.isArray(c?.parts) ? c.parts : [])
+      .filter((x: any) => x && Number.isInteger(x.id) && x.id > 0 && (x.mediaType === undefined || x.mediaType === 'movie'))
+      .map((x: any) => {
+        const releaseDate = /^\d{4}-\d{2}-\d{2}/.test(String(x.releaseDate ?? '')) ? String(x.releaseDate).slice(0, 10) : undefined;
+        return {
+          tmdbId: x.id as number, title: String(x.title ?? x.name ?? `#${x.id}`), ...(releaseDate ? { year: releaseDate.slice(0, 4), releaseDate } : {}),
+          ...(posterOf(x.posterPath) ? { poster: posterOf(x.posterPath) } : {}), state: partState(x.mediaInfo, releaseDate, today),
+        };
+      })
+      .sort((a: any, b: any) => (a.releaseDate ?? '9999').localeCompare(b.releaseDate ?? '9999') || a.title.localeCompare(b.title))
+      .slice(0, PARTS_MAX);
+    const body = { collection: { id: colId, name: String(c?.name ?? ''), ...(posterOf(c?.posterPath) ? { poster: posterOf(c.posterPath) } : {}), parts } };
+    await ctx.kv.set(ck, JSON.stringify(body), COLLECTION_TTL).catch(() => undefined);
+    return body;
   }));
 
   app.get('/api/requests/quota', pre, wrap(async (req) => quota(ctx, req.user!)));
@@ -132,7 +248,7 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
       } catch (e) {
         if (e instanceof SeerrError && e.status === 404) status = 'entfernt';
       }
-      return { id: r.seerr_request_id, title: r.title, mediaType: r.media_type, tmdbId: r.tmdb_id, poster: r.poster ? `/api/seerr/image${r.poster}` : undefined, status, createdAt: r.created_at };
+      return { id: r.seerr_request_id, title: r.title, mediaType: r.media_type, tmdbId: r.tmdb_id, poster: r.poster ? `/api/seerr/image${r.poster}` : undefined, ...(r.seasons ? { seasons: r.seasons } : {}), status, createdAt: r.created_at };
     });
     const body = { requests: out };
     await ctx.kv.set(ck, JSON.stringify(body), MINE_TTL).catch(() => undefined);
@@ -163,7 +279,7 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     return {
       // `status` is the legacy portal literal (German); `statusKey` is the language-neutral key the admin UI translates
       requests: r.results.map((x: any, i: number) => ({
-        id: x.id, title: titles[i], mediaType: x.type, requestedBy: byId.get(x.id) ?? x.requestedBy?.displayName ?? '?',
+        id: x.id, title: titles[i], mediaType: x.type, ...(seasonList(x.seasons) ? { seasons: seasonList(x.seasons) } : {}), requestedBy: byId.get(x.id) ?? x.requestedBy?.displayName ?? '?',
         status: portalStatus(x.media?.status, x.status), statusKey: requestStateKey(x.media?.status, x.status), createdAt: x.createdAt,
       })),
       total: Number(r.pageInfo?.results ?? r.results.length),
