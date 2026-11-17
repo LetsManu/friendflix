@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { setLocale } from '#lib/i18n';
+import { setLocale, tr } from '#lib/i18n';
 import de from '#lib/i18n/locales/de/index';
 import en from '#lib/i18n/locales/en/index';
 import es from '#lib/i18n/locales/es/index';
@@ -299,6 +299,18 @@ describe('error texts', () => {
     expect(mediaErrorText('<b>x</b>')).not.toContain('<b>');
     expect(mediaErrorText(null)).not.toContain('null');
     expect(mediaErrorText('verify_failed')).not.toContain('verify_failed');
+  });
+});
+
+describe('admin_missing names the way that is offered', () => {
+  it('*Entfernen*, then *Einrichten* (never *Neu anlegen*, which the cases giving this code do not show), in all 7 locales', async () => {
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
+      await setLocale(l);
+      const text = mediaErrorText('admin_missing');
+      expect(text, l).toContain(tr('mediaserver.action.remove'));
+      expect(text, l).toContain(tr('mediaserver.apply.setup'));
+      expect(text, l).not.toContain(tr('mediaserver.status.recreate'));
+    }
   });
 });
 

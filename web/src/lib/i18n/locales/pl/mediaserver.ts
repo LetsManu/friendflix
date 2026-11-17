@@ -288,7 +288,7 @@ const dict: Translation<typeof de> = {
     no_project: 'Program aktualizujący nie znajduje swojego projektu compose.',
     helper_timeout: 'Kontener pomocniczy działał za długo.',
     helper_failed: 'Kontener pomocniczy się nie powiódł.',
-    admin_missing: 'Ferrofin nie ma jeszcze danych i nie dostał hasła administratora; FriendFlix nigdy nie tworzy go bez hasła. Użyj „Utwórz ponownie”.',
+    admin_missing: 'Ferrofin nie ma jeszcze danych i nie dostał hasła administratora; FriendFlix nigdy nie tworzy go bez hasła. Usuń serwer multimediów przyciskiem „Usuń” i skonfiguruj go ponownie przyciskiem „Skonfiguruj”.',
     invalid: 'Dane są nieprawidłowe.',
     wizard_pending: 'Serwer jeszcze nie skończył się uruchamiać.',
     wizard_taken: 'Ktoś inny już skonfigurował serwer.',

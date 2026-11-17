@@ -288,7 +288,7 @@ const dict: Translation<typeof de> = {
     no_project: 'Güncelleyici compose projesini bulamıyor.',
     helper_timeout: 'Bir yardımcı kapsayıcı çok uzun sürdü.',
     helper_failed: 'Bir yardımcı kapsayıcı başarısız oldu.',
-    admin_missing: 'Ferrofin’in henüz verisi yok ve yönetici parolası almadı; FriendFlix onu asla parolasız oluşturmaz. “Yeniden oluştur”u kullan.',
+    admin_missing: 'Ferrofin’in henüz verisi yok ve yönetici parolası almadı; FriendFlix onu asla parolasız oluşturmaz. Medya sunucusunu “Kaldır” ile kaldır ve “Kur” ile yeniden kur.',
     invalid: 'Bilgiler geçersiz.',
     wizard_pending: 'Sunucu henüz başlamayı bitirmedi.',
     wizard_taken: 'Sunucuyu başka biri zaten kurmuş.',

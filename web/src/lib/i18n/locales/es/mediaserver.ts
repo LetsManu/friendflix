@@ -288,7 +288,7 @@ const dict: Translation<typeof de> = {
     no_project: 'El actualizador no encuentra su proyecto compose.',
     helper_timeout: 'Un contenedor auxiliar tardó demasiado.',
     helper_failed: 'Falló un contenedor auxiliar.',
-    admin_missing: 'Ferrofin aún no tiene datos y no recibió contraseña de administrador; FriendFlix nunca lo crea sin ella. Usa «Volver a crear».',
+    admin_missing: 'Ferrofin aún no tiene datos y no recibió contraseña de administrador; FriendFlix nunca lo crea sin ella. Quita el servidor multimedia con «Quitar» y vuelve a configurarlo con «Configurar».',
     invalid: 'Los datos no son válidos.',
     wizard_pending: 'El servidor aún no ha terminado de iniciarse.',
     wizard_taken: 'Otra persona ya ha configurado el servidor.',
