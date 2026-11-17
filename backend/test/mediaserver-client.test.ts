@@ -185,6 +185,12 @@ describe('media jobs', () => {
     expect((await startMediaJob(env.ctx, { op: 'finish-setup' }, adminId, {})).ok).toBe(false);
   });
 
+  it('the audited op is the one started, whatever auditMeta carries', async () => {
+    fake.answer = { status: 202, json: { job: { ...mediaJob('running'), action: 'mediaserver-stop' } } };
+    expect((await startMediaJob(env.ctx, { op: 'stop' }, adminId, { op: 'remove', auto: true })).ok).toBe(true);
+    expect((await audits('mediaserver.action')).map((a) => a.meta)).toEqual([{ op: 'stop', auto: true }]);
+  });
+
   it('the result of a media job is audited as mediaserver.result once', async () => {
     await startMediaJob(env.ctx, { op: 'apply', spec: {} }, adminId, { kind: 'ferrofin', folders: 0, gpu: 'off', egress: false });
     fake.state = 'failed'; fake.error = 'helper_failed';

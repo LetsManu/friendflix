@@ -128,7 +128,7 @@ export async function startMediaJob(ctx: Ctx, body: Record<string, unknown>, act
   const started = startedJob(r, jobAction(op) as Parameters<typeof startedJob>[1]);
   if (!started.ok) return started;
   await ctx.kv.set(`${PENDING}${started.job.id}`, JSON.stringify({ actor, action: 'mediaserver', op }), 7 * 86_400).catch(() => undefined);
-  await audit(ctx, actor, op === 'apply' ? 'mediaserver.apply' : 'mediaserver.action', undefined, op === 'apply' ? auditMeta : { op, ...auditMeta });
+  await audit(ctx, actor, op === 'apply' ? 'mediaserver.apply' : 'mediaserver.action', undefined, op === 'apply' ? auditMeta : { ...auditMeta, op });
   return started;
 }
 
