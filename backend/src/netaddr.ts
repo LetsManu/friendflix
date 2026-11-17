@@ -33,6 +33,18 @@ function toBytes(raw: string): Uint8Array | null {
   return out;
 }
 
+/**
+ * The key of a per-client budget (rate limits, mail budgets): an IPv4 address (also IPv4-mapped) as it is, an IPv6 address as its /64,
+ * because one subscriber gets a whole /64 and could take a fresh budget with every address in it. Anything else is returned unchanged.
+ */
+export function ipBucket(raw: string): string {
+  const b = toBytes(raw);
+  if (!b) return raw;
+  if (b.slice(0, 10).every((x) => x === 0) && b[10] === 0xff && b[11] === 0xff) return `${b[12]}.${b[13]}.${b[14]}.${b[15]}`;
+  const g = [0, 1, 2, 3].map((i) => ((b[i * 2]! << 8) | b[i * 2 + 1]!).toString(16));
+  return `${g.join(':')}::/64`;
+}
+
 function inCidr(ip: Uint8Array, cidr: string): boolean {
   const [base, lenRaw] = cidr.trim().split('/');
   const b = toBytes(base ?? '');

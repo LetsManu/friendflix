@@ -46,6 +46,7 @@ import {
 } from '../flowSteps.js';
 import { revokeSessions } from '../devices.js';
 import { lookupInvite } from '../invites.js';
+import { ipBucket } from '../netaddr.js';
 import { type LoginOutcome, resolveLogin } from '../loginFinish.js';
 import type { OidcClaims } from '../oidc.js';
 import { stampReauth } from '../reauth.js';
@@ -77,6 +78,15 @@ export const RESEND_GAP_S = 60;
 export const MAX_RECOVERY_MAILS_ACCOUNT = 5;
 export const MAX_RECOVERY_MAILS_IP = 10;
 export const RECOVERY_MAIL_WINDOW_S = 3600;
+/**
+ * Daily caps on top (security audit G4): per recipient address (a typed username counts against its account's address, so alternating
+ * name and address does not double the mails), and for the whole instance (protects the sender's reputation and quota). The window is one
+ * day from the first mail it counts.
+ */
+export const MAX_FLOW_MAILS_ADDRESS_DAY = 10;
+export const MAX_FLOW_MAILS_DAY = 100;
+export const FLOW_MAILS_DAY_S = 86_400;
+export const FLOW_MAILS_GLOBAL_KEY = 'recoverymail:global';
 
 type AnswerableStep = Extract<FlowStep, { step: string }>;
 type Reply = AnswerableStep & { errors?: FlowError[] } | FlowStep;
@@ -86,7 +96,10 @@ export const flowFailKey = (identifier: string) => `flowfail:${sha256(identifier
 const usedStepKey = (flowId: string, step: string) => `akflow:used:${sha256(`${flowId}|${step}`)}`;
 /** the recovery e-mail budgets: per typed identifier (case-insensitive, like flowFailKey) and per client IP */
 export const recoveryMailKey = (identifier: string) => `recoverymail:${sha256(identifier.trim().toLowerCase())}`;
-const recoveryMailIpKey = (ip: string) => `recoverymail:ip:${sha256(ip)}`;
+/** per client: an IPv6 address counts as its /64 (ipBucket), so rotating addresses inside one subscriber's prefix gives no fresh budget */
+const recoveryMailIpKey = (ip: string) => `recoverymail:ip:${sha256(ipBucket(ip))}`;
+/** per recipient address, case-insensitive */
+const recoveryMailAddrKey = (address: string) => `recoverymail:addr:${sha256(address.trim().toLowerCase())}`;
 const resendKey = (flowId: string) => `akflow:resend:${sha256(flowId)}`;
 
 const sameToken = (a: string, b: string) => {
@@ -802,7 +815,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     let budget: string[] = [];
     if (mails) {
       if (shown.stage === 'email-sent' && !(await ctx.kv.setnx(resendKey(flowId), '1', RESEND_GAP_S))) return limited();
-      const taken = await takeMailBudget(identifier, req.ip);
+      const taken = await takeMailBudget(identifier, req.ip, await mailAddressOf(jar.kind === 'change-email' ? undefined : identifier, newEmail));
       if (!taken) return limited();
       budget = taken;
     }
@@ -872,17 +885,36 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
   }
 
   /**
-   * Takes one recovery e-mail from the per-IP budget and, when a name was typed, from that name's budget. Null when either is used up
-   * (nothing is taken then); otherwise the keys taken, to give back when the mail could not be sent.
+   * Where a flow mail goes: the new address of an e-mail change; for a recovery the typed address, or the address of the account a typed
+   * username names (looked up in Authentik; when there is none or the lookup fails, the typed name itself stands for it, so an unknown
+   * name is budgeted exactly like a known one).
    */
-  async function takeMailBudget(identifier: string | undefined, ip: string): Promise<string[] | null> {
-    const budgets: Array<[string, number]> = [[recoveryMailIpKey(ip), MAX_RECOVERY_MAILS_IP]];
-    if (identifier) budgets.push([recoveryMailKey(identifier), MAX_RECOVERY_MAILS_ACCOUNT]);
+  async function mailAddressOf(identifier: string | undefined, newEmail: string | undefined): Promise<string | undefined> {
+    if (newEmail) return newEmail;
+    const id = identifier?.trim();
+    if (!id) return undefined;
+    if (id.includes('@')) return id;
+    const user = await akUserByUsername(ctx, id).catch(() => null);
+    return user?.email || id;
+  }
+
+  /**
+   * Takes one flow e-mail from every budget that applies: per IP (/64 for IPv6) and per typed name for an hour, per recipient address and
+   * for the whole instance for a day. Null when one is used up (nothing is taken then); otherwise the keys taken, to give back when the
+   * mail could not be sent.
+   */
+  async function takeMailBudget(identifier: string | undefined, ip: string, address: string | undefined): Promise<string[] | null> {
+    const budgets: Array<[string, number, number]> = [[recoveryMailIpKey(ip), MAX_RECOVERY_MAILS_IP, RECOVERY_MAIL_WINDOW_S]];
+    if (identifier) budgets.push([recoveryMailKey(identifier), MAX_RECOVERY_MAILS_ACCOUNT, RECOVERY_MAIL_WINDOW_S]);
+    if (address) budgets.push([recoveryMailAddrKey(address), MAX_FLOW_MAILS_ADDRESS_DAY, FLOW_MAILS_DAY_S]);
+    budgets.push([FLOW_MAILS_GLOBAL_KEY, MAX_FLOW_MAILS_DAY, FLOW_MAILS_DAY_S]);
     const taken: string[] = [];
-    for (const [key, max] of budgets) {
+    for (const [key, max, ttl] of budgets) {
       taken.push(key);
-      if ((await ctx.kv.incr(key, RECOVERY_MAIL_WINDOW_S)) > max) {
+      if ((await ctx.kv.incr(key, ttl)) > max) {
         for (const k of taken) await ctx.kv.decr(k);
+        // the instance-wide cap is an operator matter (a flood, or a too small cap): logged by code, never with a name or address
+        if (key === FLOW_MAILS_GLOBAL_KEY) app.log.warn({ code: 'flow_mail_daily_cap' }, 'flow e-mail daily cap reached: recovery and confirmation mails are refused until the window ends');
         return null;
       }
     }

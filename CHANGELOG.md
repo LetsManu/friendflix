@@ -39,6 +39,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 - **Behind Nginx Proxy Manager: paste the portal's advanced configuration again (optional).** The `/auth/` and `/ws/` locations of [`deploy/npm/portal.advanced.conf`](deploy/npm/portal.advanced.conf) now overwrite `X-Real-IP` like all the others. Nothing reads the client address on those paths today, so this only keeps a later change safe.
 - **Only the reverse proxy may name the client address.** The backend and the gateway took `X-Forwarded-For` and `X-Real-IP` from every private address except Live TV; the bundled Jellyfin (or Plex) and the request service sit on private addresses too, and are now never believed either. They are recognised by the host names in their URLs when those are container names (`jellyfin`, `requests`, …).
 - **The Jellyfin and request-service connections never follow a redirect.** A redirect answer is now an error instead of being followed, so the admin key or a user's media token can never be sent on to another host.
+- **Fewer mails someone else can trigger.** *Forgot password* and the e-mail change's confirmation now also stop at 10 mails a day to one address (typing the name and the address in turn no longer doubles them) and at 100 a day for the whole server (the server log says when that is reached). The per-connection limit counts an IPv6 network (/64) as one client, so changing addresses within it no longer gives a fresh budget.
 
 ## [3.5.0] – Churros – 2026-11-16
 

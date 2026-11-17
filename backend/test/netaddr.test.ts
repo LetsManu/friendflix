@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { clientAddress, isHomeAddress, isHomeRequest, isTrustedPeer, isValidCidr, noteUntrustedForwarding, resetUntrustedForwardingNote, serviceHosts, setUntrustedPeers, watchUntrustedHost, watchUntrustedHosts } from '../src/netaddr.js';
+import { clientAddress, ipBucket, isHomeAddress, isHomeRequest, isTrustedPeer, isValidCidr, noteUntrustedForwarding, resetUntrustedForwardingNote, serviceHosts, setUntrustedPeers, watchUntrustedHost, watchUntrustedHosts } from '../src/netaddr.js';
 import { loadConfig } from '../src/config.js';
 
 const HOME = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '::1/128', 'fc00::/7', 'fe80::/10'];
@@ -229,5 +229,17 @@ describe('review L3: the livetv container is no trusted proxy', () => {
   });
   it('serviceHosts keeps the single-label hosts of the configured URLs', () => {
     expect(serviceHosts(['http://livetv:8090', 'http://jellyfin:8096', 'http://requests:5055', undefined, '', 'nope', 'https://media.example.com', 'http://192.0.2.10:8096', 'http://[fd00::5]:8096', 'http://Jellyfin:8096'])).toEqual(['livetv', 'jellyfin', 'requests']);
+  });
+});
+
+describe('ipBucket (budgets per client)', () => {
+  it('keeps IPv4 as is and folds IPv6 to its /64', () => {
+    expect(ipBucket('192.0.2.7')).toBe('192.0.2.7');
+    expect(ipBucket('::ffff:192.0.2.7')).toBe('192.0.2.7');
+    expect(ipBucket('2001:db8:1:2::a')).toBe('2001:db8:1:2::/64');
+    expect(ipBucket('2001:DB8:1:2:ffff:ffff:ffff:fffe')).toBe('2001:db8:1:2::/64');
+    expect(ipBucket('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(ipBucket('fe80::1%eth0')).toBe('fe80:0:0:0::/64');
+    expect(ipBucket('unknown')).toBe('unknown');
   });
 });

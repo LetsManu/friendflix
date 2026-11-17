@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { Config } from '../src/config.js';
 import { sha256 } from '../src/crypto.js';
 import { createInvite } from '../src/invites.js';
-import { flowFailKey } from '../src/routes/authFlow.js';
+import { FLOW_MAILS_GLOBAL_KEY, flowFailKey, MAX_FLOW_MAILS_DAY } from '../src/routes/authFlow.js';
 import { issueSetupCode } from '../src/setup/code.js';
 import { isSetupComplete } from '../src/setup/state.js';
 import { AK_URL, type AkCall, type FakeAuthentik, fakeAuthentik, type FakeStage, fixture } from './akflow-fake.js';
@@ -727,6 +727,59 @@ describe('/auth/flow recovery (Task 5)', () => {
     expect(await send('person10@example.com', one)).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
     // the budget does not depend on whether the account exists: nothing to learn from it
     expect(await env.kv.get(flowFailKey('person10@example.com'))).toBeNull();
+  });
+
+  // security audit G4: a daily cap per recipient address (a typed username counts against its account's address), a daily cap in all,
+  // and the per-IP budget keyed by the /64 for IPv6
+  it('recovery e-mails: at most 10 a day to one address, whichever name or address is typed', async () => {
+    const users = { 'GET /api/v3/core/users/': (c: AkCall) => new Response(JSON.stringify({ results: new URLSearchParams(c.search).get('username') === 'emil' ? [{ pk: 7, username: 'emil', email: 'Emil@Example.com', uid: 'u7', is_active: true }] : [] }), { headers: { 'content-type': 'application/json' } }) };
+    const send = async (identifier: string) => {
+      ak = fakeAuthentik(recoveryStages(), { ...flowsRoute, ...users });
+      env.ctx.fetchImpl = ak.fetch;
+      const b = browser(env);
+      await b.config();
+      return (await b.post('start', { kind: 'recovery', identifier })).json() as { stage: string; errors?: string[] };
+    };
+    for (let i = 0; i < 5; i++) expect(await send('emil@example.com')).toMatchObject({ stage: 'email-sent' });
+    for (let i = 0; i < 5; i++) expect(await send('emil')).toMatchObject({ stage: 'email-sent' });
+    // an hour later the per-name budgets are free again, the address's day is not
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 3_601_000);
+    expect(await send('emil')).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
+    expect(await send('EMIL@example.com')).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
+    expect(executorPosts(ak)).toHaveLength(0);
+    // another address is not affected
+    expect(await send('fritz@example.com')).toMatchObject({ stage: 'email-sent' });
+  });
+
+  it('recovery e-mails: a daily cap for the whole instance', async () => {
+    const send = async (identifier: string) => {
+      useFake(recoveryStages());
+      const b = browser(env);
+      await b.config();
+      return (await b.post('start', { kind: 'recovery', identifier })).json() as { stage: string; errors?: string[] };
+    };
+    expect(MAX_FLOW_MAILS_DAY).toBe(100);
+    for (let i = 0; i < MAX_FLOW_MAILS_DAY - 1; i++) await env.kv.incr(FLOW_MAILS_GLOBAL_KEY, 86_400);
+    expect(await send('hanna@example.com')).toMatchObject({ stage: 'email-sent' });
+    expect(await send('ida@example.com')).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
+    expect(executorPosts(ak)).toHaveLength(0);
+    // a refused mail takes nothing from the other budgets
+    await clearKeys(FLOW_MAILS_GLOBAL_KEY);
+    for (let i = 0; i < 5; i++) expect(await send('ida@example.com')).toMatchObject({ stage: 'email-sent' });
+  });
+
+  it('recovery e-mails: the per-IP budget counts an IPv6 /64 as one client', async () => {
+    const send = async (identifier: string, ip: string) => {
+      useFake(recoveryStages());
+      const cfg = await env.app.inject({ url: '/auth/flow/config', remoteAddress: ip });
+      const cookies = Object.fromEntries(cfg.cookies.map((c) => [c.name, c.value]));
+      const r = await env.app.inject({ method: 'POST', url: '/auth/flow/start', payload: { kind: 'recovery', identifier }, cookies, remoteAddress: ip, headers: { 'x-ff-flow-csrf': cookies.ff_flow_csrf! } });
+      return r.json() as { stage: string; errors?: string[] };
+    };
+    for (let i = 0; i < 10; i++) expect(await send(`v6-${i}@example.com`, `2001:db8:1:2:${(i + 1).toString(16)}::${i + 1}`)).toMatchObject({ stage: 'email-sent' });
+    expect(await send('v6-10@example.com', '2001:db8:1:2:ffff:ffff:ffff:fffe')).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
+    expect(await send('v6-11@example.com', '2001:db8:1:3::1')).toMatchObject({ stage: 'email-sent' });
   });
 
   it('resume with token restores the plan (fake checks query=flow_token%3D…), answers the link interstitial with its token, and returns prompt with two password fields', async () => {
