@@ -10,7 +10,7 @@
  */
 import { fmtDateTime, fmtDuration, trDynamic } from '#lib/i18n';
 import {
-  MEDIA_TAB, REDEPLOY_STEPS, failReason, isMediaJob, jobTone, mediaFailedText, redeployResult, redeploySteps, visibleMediaSteps, visibleSteps,
+  MEDIA_STEPS, MEDIA_TAB, REDEPLOY_STEPS, failReason, isMediaJob, jobTone, mediaFailedText, redeployResult, redeploySteps, visibleMediaSteps, visibleSteps,
   type Redeploy, type StepName, type StepState, type UpdaterJob,
 } from './updater';
 
@@ -82,12 +82,24 @@ function frame(rows: StepRow[], outcome: FlowOutcome, partial?: number): Pick<St
 export interface FlowOpts { reconnecting?: boolean; now?: number }
 
 /**
- * an updater job; `steps`: which to list (Live TV passes its own, default the update's). A media job lists its media steps only; an
- * update with a media server phase adds that phase's steps after its own (keys `media-<step>`).
+ * The media server phase of an update before it started (`job.media` null): its steps waiting while the job runs, skipped once it
+ * ended without one (nothing to move, the server stopped on purpose, or FriendFlix itself failed). The rollback is not listed: it
+ * takes the update's reserved slot when it starts.
  */
-export function jobFlow(job: UpdaterJob, o: FlowOpts & { steps?: readonly StepName[] | null } = {}): StepFlow {
+function pendingPhase(job: UpdaterJob): NonNullable<UpdaterJob['media']> {
+  const st: StepState = job.state === 'running' ? 'pending' : 'skipped';
+  return { step: null, steps: Object.fromEntries(MEDIA_STEPS.map((k) => [k, k === 'rollback' ? 'skipped' : st])) as NonNullable<UpdaterJob['media']>['steps'] };
+}
+
+/**
+ * an updater job; `steps`: which to list (Live TV passes its own, default the update's). A media job lists its media steps only; an
+ * update with a media server phase adds that phase's steps after its own (keys `media-<step>`). `mediaPhase`: a managed media server
+ * exists, so an update lists its phase's steps from the start (nothing jumps when the phase begins), skipped when it never ran.
+ */
+export function jobFlow(job: UpdaterJob, o: FlowOpts & { steps?: readonly StepName[] | null; mediaPhase?: boolean } = {}): StepFlow {
   const list = isMediaJob(job.action) ? [] : o.steps ?? visibleSteps(job);
-  const media = job.media ?? null;
+  // only an update runs the phase (never a rollback or a self-update: updater/src/job.ts)
+  const media = job.media ?? (o.mediaPhase && job.action === 'update' ? pendingPhase(job) : null);
   const rows: StepRow[] = [
     ...list.map((st): StepRow => ({ key: st, label: trDynamic(`${U}.step.${st}`), state: rowState(job.steps[st]) })),
     ...(media ? visibleMediaSteps(media).map((st): StepRow => ({ key: `media-${st}`, label: trDynamic(`${U}.mediaStep.${st}`), state: rowState(media.steps[st]) })) : []),

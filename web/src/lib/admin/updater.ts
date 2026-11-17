@@ -37,6 +37,8 @@ export interface UpdaterStatus {
   stackReason?: 'own' | 'working_dir' | 'portainer' | 'no_labels' | null;
   stackDir?: string | null;
   projectDir?: string | null;
+  /** the managed media server as the updater sees it (only what this page reads); absent/null = none, or an older backend */
+  mediaserver?: { container: object | null; desired: object | null } | null;
 }
 export interface AutoUpdate { mode: 'off' | 'nightly-window'; time: string; locked: string[] }
 /**
@@ -139,6 +141,12 @@ export const isMediaJob = (action: string): action is MediaJobAction => (MEDIA_J
 export function visibleMediaSteps(m: NonNullable<UpdaterJob['media']>): MediaStepName[] {
   return MEDIA_STEPS.filter((s) => s !== 'rollback' || (m.steps.rollback !== 'skipped' && m.steps.rollback !== 'pending'));
 }
+
+/**
+ * a managed media server exists (a container, or one wanted): an update job then may end with a media server phase, so its steps
+ * are listed from the start (steps.ts jobFlow `mediaPhase`)
+ */
+export const hasManagedMedia = (s: UpdaterStatus | null | undefined): boolean => Boolean(s?.mediaserver && (s.mediaserver.container || s.mediaserver.desired));
 
 /** a job state's tone: an update whose media server phase failed is a warning (FriendFlix runs the new build), never red */
 export type JobTone = 'running' | 'ok' | 'warn' | 'bad';

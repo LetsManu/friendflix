@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import { catchUp, jobFlow, progressOf, redeployFlow, type StepRow } from './steps';
-import { installedOf, mergeView, shownActivity, tagText, type Redeploy, type UpdaterJob, type UpdaterStatus, type UpdaterView } from './updater';
+import { hasManagedMedia, installedOf, mergeView, shownActivity, tagText, type Redeploy, type UpdaterJob, type UpdaterStatus, type UpdaterView } from './updater';
 
 // The one step list of Admin -> Update (StepList.svelte) is driven by these mappings only: an updater job, a Portainer redeploy
 // followed in the updater card, and the same redeploy record followed by the page without an updater.
@@ -135,6 +135,46 @@ describe('media server steps', () => {
     expect(f).toMatchObject({ outcome: 'running', count: 'Step 5 of 11' });
     // without a media server phase: the four only
     expect(jobFlow(job({ media: null })).rows).toHaveLength(4);
+  });
+
+  describe('a managed media server: an update lists its phase from the start (nothing jumps when it begins)', () => {
+    const MEDIA_KEYS = ['media-check', 'media-pull', 'media-verify', 'media-snapshot', 'media-create', 'media-start', 'media-health'];
+    const managed = status({ mediaserver: { container: { state: 'running' }, desired: { run: true } } });
+
+    it('(a) running before the phase: the seven media rows are already listed, waiting', () => {
+      expect(hasManagedMedia(managed)).toBe(true);
+      const f = jobFlow(job({ step: 'restart', steps: { pull: 'ok', verify: 'ok', restart: 'running', health: 'pending', rollback: 'skipped' } }), { mediaPhase: hasManagedMedia(managed) });
+      expect(f.rows.map((r) => r.key)).toEqual(['pull', 'verify', 'restart', 'health', ...MEDIA_KEYS]);
+      expect(f.rows.slice(4).every((r) => r.state === 'waiting')).toBe(true);
+      expect(f).toMatchObject({ outcome: 'running', count: 'Step 3 of 11', reserve: 1 });
+      // the phase starts: the same rows, now with the updater's states (no row added, none removed)
+      const started = jobFlow(job({ step: null, steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'ok', rollback: 'skipped' }, media: media({ check: 'running' }, 'check') }), { mediaPhase: true });
+      expect(started.rows.map((r) => r.key)).toEqual(f.rows.map((r) => r.key));
+      expect(started.reserve).toBe(1);
+    });
+
+    it('(b) finished without the phase: the media rows read skipped', () => {
+      const ok = jobFlow(job({ state: 'succeeded', step: null, finishedAt: iso(30_000), steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'ok', rollback: 'skipped' } }), { mediaPhase: true });
+      expect(ok.rows.map((r) => r.key)).toEqual(['pull', 'verify', 'restart', 'health', ...MEDIA_KEYS]);
+      expect(ok.rows.slice(4).map((r) => r.state)).toEqual(Array(7).fill('skipped'));
+      expect(ok).toMatchObject({ outcome: 'ok', progress: 1, count: 'Finished' });
+      expect(ok.note).toMatchObject({ tone: 'ok', result: 'succeeded' });
+      // FriendFlix itself rolled back: the phase never ran either
+      const rb = jobFlow(job({ state: 'rolled_back', error: 'unhealthy', finishedAt: iso(80_000), steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'failed', rollback: 'ok' } }), { mediaPhase: true });
+      expect(rb.rows.map((r) => r.key)).toEqual(['pull', 'verify', 'restart', 'health', 'rollback', ...MEDIA_KEYS]);
+      expect(rb.rows.slice(5).every((r) => r.state === 'skipped')).toBe(true);
+      expect(rb).toMatchObject({ outcome: 'failed', count: 'Stopped at step 4 of 11', reserve: 0 });
+    });
+
+    it('(c) no managed media server: no media rows at all; never for a rollback or a self-update', () => {
+      for (const s of [status(), status({ mediaserver: null }), status({ mediaserver: { container: null, desired: null } })]) {
+        expect(hasManagedMedia(s)).toBe(false);
+        expect(jobFlow(job(), { mediaPhase: hasManagedMedia(s) }).rows.map((r) => r.key)).toEqual(['pull', 'verify', 'restart', 'health']);
+      }
+      expect(hasManagedMedia(null)).toBe(false);
+      expect(jobFlow(job({ action: 'rollback' }), { mediaPhase: true }).rows).toHaveLength(4);
+      expect(jobFlow(job({ action: 'self-update' }), { mediaPhase: true }).rows).toHaveLength(3);
+    });
   });
 
   it('succeeded_mediaserver_failed: its own warn result, "try again" links to the media tab', () => {
