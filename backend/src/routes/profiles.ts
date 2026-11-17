@@ -30,11 +30,11 @@ const ACCOUNT_MAX_FAILS = 15;
  * PIN_LOCK_BASE_S · 2^(level-1), at most PIN_LOCK_MAX_S; the level is kept PIN_LEVEL_TTL_S after the last lockout and reset by a right PIN.
  * From PIN_ALERT_LEVEL on, every admin gets a notice (once a day per profile).
  */
-export const PIN_LOCK_BASE_S = 60;
+export const PIN_LOCK_BASE_S = 900; // 15 minutes: every level outlasts the window of the floor, so each one has an effect (review 6)
 export const PIN_LOCK_MAX_S = 86_400;
 const PIN_LEVEL_TTL_S = 2 * 86_400;
 export const PIN_ALERT_LEVEL = 3;
-/** the lockout delay of `level` (1, 2, 4 … minutes, at most 24 hours) */
+/** the lockout delay of `level` (15, 30, 60 … minutes, at most 24 hours) */
 export const pinLockSeconds = (level: number) => Math.min(PIN_LOCK_MAX_S, PIN_LOCK_BASE_S * 2 ** Math.min(Math.max(level, 1) - 1, 20));
 /** old sid stays valid this long after a profile switch so in-flight requests of the tab do not 401 */
 const OLD_SID_GRACE = 15;
@@ -224,7 +224,7 @@ export function profileRoutes(app: FastifyInstance, ctx: Ctx) {
   /**
    * Checks a PIN. The attempt is counted atomically BEFORE verifying (concurrent guesses cannot race past the limit):
    * 5 attempts per profile and 15 per account within 15 minutes; beyond that the PIN is not even verified (the floor). On top, each
-   * time a profile reaches the 5th wrong attempt its lock escalates (1 min, then doubling up to 24 h, see escalate); while that lock
+   * time a profile reaches the 5th wrong attempt its lock escalates (15 min, then doubling up to 24 h, see escalate); while that lock
    * runs nothing is counted or verified. The 5th wrong attempt already answers 429. A correct PIN resets the profile's counter and level.
    */
   type PinResult = 'ok' | 'wrong' | 'missing' | { locked: number };
