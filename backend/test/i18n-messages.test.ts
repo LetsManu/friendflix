@@ -19,6 +19,13 @@ vi.mock('web-push', async (orig) => {
 const placeholders = (v: Message) => new Set((typeof v === 'string' ? [v] : Object.values(v)).flatMap((s) => [...(s as string).matchAll(/\{(\w+)\}/g)].map((x) => x[1])));
 
 describe('backend message catalogs', () => {
+  it('the mail cap notice names the 24-hour window, not "tomorrow" (review round 2, c)', () => {
+    for (const lang of LANGUAGES) {
+      const v = String((CATALOGS[lang] as Record<string, Message>)['notify.mailcap.body']);
+      expect(v, lang).toMatch(/24/);
+      expect(v, lang).not.toMatch(/morgen|tomorrow|demain|mañana|domani|yarın|jutra/i);
+    }
+  });
   const de = CATALOGS.de as Record<string, Message>;
   for (const lang of LANGUAGES) {
     it(`${lang}: every key, same placeholders, valid plural forms`, () => {
