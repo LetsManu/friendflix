@@ -4,6 +4,7 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { portainerFailedAlert, updateFailedAlert, updateStartFailedAlert, type StartFailReason } from './adminAlerts.js';
 import { audit } from './audit.js';
 import type { Ctx } from './ctx.js';
+import { parseMediaStatus, type MediaStatus } from './mediaserver/client.js';
 import { portainerMode, portainerSetup, redeployViaPortainer, updateInfo, type UpdateInfo } from './updates.js';
 
 /**
@@ -19,15 +20,22 @@ export type UpdaterAction = 'update' | 'rollback' | 'self-update' | 'livetv';
 export type UpdateJobAction = Exclude<UpdaterAction, 'livetv'>;
 export const UPDATER_ACTIONS: readonly UpdateJobAction[] = ['update', 'rollback', 'self-update'];
 /** the action of a job as the updater reports it */
-export type UpdaterJobAction = UpdateJobAction | 'livetv-enable' | 'livetv-disable' | 'livetv-remove';
-const JOB_ACTIONS: readonly UpdaterJobAction[] = [...UPDATER_ACTIONS, 'livetv-enable', 'livetv-disable', 'livetv-remove'];
+export const MEDIA_JOB_ACTIONS = ['mediaserver-apply', 'mediaserver-finish', 'mediaserver-start', 'mediaserver-stop', 'mediaserver-restart', 'mediaserver-update', 'mediaserver-hdr-test', 'mediaserver-backup', 'mediaserver-restore', 'mediaserver-remove', 'mediaserver-recover'] as const;
+export type MediaJobAction = (typeof MEDIA_JOB_ACTIONS)[number];
+export type UpdaterJobAction = UpdateJobAction | 'livetv-enable' | 'livetv-disable' | 'livetv-remove' | MediaJobAction;
+const JOB_ACTIONS: readonly UpdaterJobAction[] = [...UPDATER_ACTIONS, 'livetv-enable', 'livetv-disable', 'livetv-remove', ...MEDIA_JOB_ACTIONS];
 /** the optional livetv service: the body of POST /v1/livetv (the updater refuses anything else, updater/src/policy.ts parseLivetvBody) */
 export type LivetvOp = { op: 'enable' } | { op: 'disable' } | { op: 'remove'; data: boolean };
 const LIVETV_ERRORS = ['pull_failed', 'unexpected_image', 'config_mismatch', 'compose_config', 'compose_outdated', 'verify_failed', 'restart_failed', 'unhealthy'] as const;
 export type LivetvError = (typeof LIVETV_ERRORS)[number];
 const STEP_NAMES = ['pull', 'verify', 'restart', 'health', 'rollback'] as const;
 const STEP_STATES = ['pending', 'running', 'ok', 'failed', 'skipped'] as const;
-const JOB_STATES = ['running', 'succeeded', 'failed', 'rolled_back'] as const;
+/** the steps of a media job (updater/src/mediaserver/types.ts MEDIA_STEPS), also the media phase of an update job */
+export const MEDIA_STEPS = ['check', 'pull', 'verify', 'snapshot', 'create', 'start', 'health', 'rollback'] as const;
+export type MediaStep = (typeof MEDIA_STEPS)[number];
+export type StepState = (typeof STEP_STATES)[number];
+/** succeeded_mediaserver_failed: an update that succeeded, whose media server phase failed (and was rolled back on its own) */
+const JOB_STATES = ['running', 'succeeded', 'failed', 'rolled_back', 'succeeded_mediaserver_failed'] as const;
 const TAG_RE = /^(latest|nightly|[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}|sha-[0-9a-f]{7})$/;
 
 export function updaterKey(secret: string): Buffer {
@@ -43,6 +51,8 @@ export interface UpdaterJob {
   id: string; action: UpdaterJobAction; state: (typeof JOB_STATES)[number]; step: (typeof STEP_NAMES)[number] | null;
   steps: Record<(typeof STEP_NAMES)[number], (typeof STEP_STATES)[number]>; from: string | null; to: string;
   startedAt: string; finishedAt: string | null; error: string | null;
+  /** a media job (and the media phase of an update): its own steps; null for every other job and an updater from before the media server */
+  media: { step: MediaStep | null; steps: Record<MediaStep, StepState> } | null;
 }
 export interface UpdaterStatus {
   updater: { version: string | null; sha: string | null };
@@ -66,6 +76,8 @@ export interface UpdaterStatus {
    * as expected or unverified for that build, it did not start or get healthy). null = an updater from before livetv.
    */
   livetv: { state: 'enabled' | 'disabled' | 'absent' | 'stop_failed'; container: 'running' | 'exited' | null; error: LivetvError | null } | null;
+  /** the managed media server as the updater sees it (client.ts parseMediaStatus); null = an updater from before it */
+  mediaserver: MediaStatus | null;
 }
 export type UpdaterView = { present: false } | { present: true; error: 'unauthorized' | 'invalid_answer' } | { present: true; status: UpdaterStatus };
 
@@ -84,7 +96,15 @@ function parseJob(raw: unknown): UpdaterJob | null {
   return {
     id: j.id, action, state, step: pick(j.step, STEP_NAMES), steps, from: tagOrNull(j.from), to,
     startedAt: short(j.startedAt, ISO) ?? '', finishedAt: short(j.finishedAt, ISO), error: short(j.error, /^[a-z_]{1,40}$/),
+    media: parseJobMedia(j.media),
   };
+}
+
+function parseJobMedia(raw: unknown): UpdaterJob['media'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const m = raw as Record<string, unknown>;
+  const steps = (m.steps && typeof m.steps === 'object' ? m.steps : {}) as Record<string, unknown>;
+  return { step: pick(m.step, MEDIA_STEPS), steps: Object.fromEntries(MEDIA_STEPS.map((k) => [k, pick(steps[k], STEP_STATES) ?? 'pending'])) as Record<MediaStep, StepState> };
 }
 
 /** Only known fields with checked values reach the browser (the updater is a separate container: its answer is input too). */
@@ -108,6 +128,7 @@ export function parseStatus(raw: unknown): UpdaterStatus | null {
     stackReason: pick(o.stackReason, ['own', 'working_dir', 'portainer', 'no_labels'] as const),
     stackDir: short(o.stackDir, PATH_RE), projectDir: short(o.projectDir, PATH_RE),
     livetv: parseLivetv(o.livetv),
+    mediaserver: parseMediaStatus(o.mediaserver),
   };
 }
 
@@ -117,16 +138,16 @@ function parseLivetv(raw: unknown): UpdaterStatus['livetv'] {
   return { state: pick(l.state, ['enabled', 'disabled', 'absent', 'stop_failed'] as const) ?? 'absent', container: pick(l.container, ['running', 'exited'] as const), error: pick(l.error, LIVETV_ERRORS) };
 }
 
-type Answer = { status: number; json: unknown } | null;
+export type Answer = { status: number; json: unknown } | null;
 
 /** one signed request; null = the updater is not there (profile off, DNS, refused, timeout) */
-async function call(ctx: Ctx, method: 'GET' | 'POST', path: string, body = ''): Promise<Answer> {
+export async function updaterCall(ctx: Ctx, method: 'GET' | 'POST', path: string, body = '', timeoutMs = 5_000): Promise<Answer> {
   const base = ctx.cfg.UPDATER_URL;
   if (!base) return null;
   const headers: Record<string, string> = signUpdater(updaterKey(ctx.cfg.INTERNAL_SECRET), method, path, body);
   if (body) headers['content-type'] = 'application/json';
   try {
-    const r = await ctx.fetchImpl(`${base}${path}`, { method, headers, body: method === 'POST' ? body : undefined, signal: AbortSignal.timeout(5_000), redirect: 'error' });
+    const r = await ctx.fetchImpl(`${base}${path}`, { method, headers, body: method === 'POST' ? body : undefined, signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
     return { status: r.status, json: await r.json().catch(() => null) };
   } catch {
     return null;
@@ -140,7 +161,7 @@ const ABSENT_MS = 30_000;
 export async function updaterView(ctx: Ctx): Promise<UpdaterView> {
   if (!ctx.cfg.UPDATER_URL) return { present: false };
   if ((absentUntil.get(ctx) ?? 0) > Date.now()) return { present: false };
-  const r = await call(ctx, 'GET', '/v1/status');
+  const r = await updaterCall(ctx, 'GET', '/v1/status');
   if (!r) { absentUntil.set(ctx, Date.now() + ABSENT_MS); return { present: false }; }
   absentUntil.delete(ctx);
   if (r.status === 401) return { present: true, error: 'unauthorized' };
@@ -155,14 +176,14 @@ export async function syncChannel(ctx: Ctx): Promise<boolean> {
   const channel = ctx.cfg.UPDATE_CHANNEL;
   if (channel === 'pinned' && !ctx.cfg.UPDATE_VERSION) return false;
   const body = JSON.stringify(channel === 'pinned' ? { channel, version: ctx.cfg.UPDATE_VERSION } : { channel });
-  const r = await call(ctx, 'POST', '/v1/channel', body);
+  const r = await updaterCall(ctx, 'POST', '/v1/channel', body);
   return r?.status === 200;
 }
 
 /** `portainer`: the stack is Portainer's, the update was handed to Portainer (webhook / API redeploy) instead of the updater */
 export type StartResult = { ok: true; job: UpdaterJob } | { ok: true; portainer: 'webhook' | 'api' }
   | { ok: false; status: number; error: string; portainer?: { status: number | null; step: string; code?: string } };
-const PENDING = 'updater:pending:';
+export const PENDING = 'updater:pending:';
 
 /**
  * Starts a job and audits it (who, from -> to); the result is audited once the job is finished (reconcileAudit, from the next
@@ -201,7 +222,7 @@ export async function startJob(ctx: Ctx, action: UpdateJobAction, actor: string 
     if (ctx.cfg.UPDATE_CHANNEL === 'pinned' && !ctx.cfg.UPDATE_VERSION) return { ok: false, status: 409, error: 'no_target' };
     return { ok: false, status: 502, error: 'channel_sync_failed' };
   }
-  const r = await call(ctx, 'POST', `/v1/${action}`);
+  const r = await updaterCall(ctx, 'POST', `/v1/${action}`);
   const job = startedJob(r, action);
   if (!job.ok) return job;
   const meta = { action, from: job.job.from, to: job.job.to, ...(actor ? {} : { auto: true }) };
@@ -211,7 +232,7 @@ export async function startJob(ctx: Ctx, action: UpdateJobAction, actor: string 
 }
 
 /** the job of a 202 answer for `action`; the updater's refusal otherwise (409 for busy / no target, 502 for anything else) */
-function startedJob(r: Answer, action: UpdaterJobAction): { ok: true; job: UpdaterJob } | { ok: false; status: number; error: string } {
+export function startedJob(r: Answer, action: UpdaterJobAction): { ok: true; job: UpdaterJob } | { ok: false; status: number; error: string } {
   if (!r) return { ok: false, status: 409, error: 'not_available' };
   const job = r.status === 202 ? parseJob((r.json as { job?: unknown } | null)?.job) : null;
   if (job && job.action === action) return { ok: true, job };
@@ -241,7 +262,7 @@ export async function startLivetvJob(ctx: Ctx, op: LivetvOp, actor: string, view
   if ('status' in pre && portainerStack(ctx, pre.status)) return { ok: false, status: 409, error: 'foreign_stack' };
   if ('status' in pre && pre.status.livetv === null) return { ok: false, status: 409, error: 'updater_outdated' };
   const action = `livetv-${op.op}` as const;
-  const r = await call(ctx, 'POST', '/v1/livetv', body);
+  const r = await updaterCall(ctx, 'POST', '/v1/livetv', body);
   if (r?.status === 404) return { ok: false, status: 409, error: 'updater_outdated' };
   const job = startedJob(r, action);
   if (!job.ok) return job;
@@ -260,7 +281,12 @@ export async function reconcileAudit(ctx: Ctx, s: UpdaterStatus): Promise<void> 
   if (!j || j.state === 'running') return;
   const raw = await ctx.kv.take(`${PENDING}${j.id}`);
   if (!raw) return;
-  const p = JSON.parse(raw) as { actor: string | null; action: UpdaterAction; auto?: true };
+  const p = JSON.parse(raw) as { actor: string | null; action: UpdaterAction | 'mediaserver'; auto?: true };
+  if (p.action === 'mediaserver') {
+    // a managed media server job: no update alert, its own audit (a code, never server output)
+    await audit(ctx, p.actor, 'mediaserver.result', undefined, { action: j.action, result: j.state, error: j.error });
+    return;
+  }
   await audit(ctx, p.actor, 'system.updater_result', undefined, { action: j.action, from: j.from, to: j.to, result: j.state, error: j.error, ...(p.auto ? { auto: true } : {}) });
   await updateFailedAlert(ctx, j).catch(() => 0);
 }
@@ -272,7 +298,7 @@ const WINDOW_MIN = 30;
 /** an updater that does not answer is told from this minute of the window on (it may only be restarting at the window's start) */
 const ABSENT_ALERT_MIN = 10;
 
-type TickLog = { warn(o: object, m: string): void };
+export type TickLog = { warn(o: object, m: string): void };
 
 /** the window could not start a newer version: alert the admins (adminAlerts.ts; once per version and day, nothing when up to date) */
 async function startFailed(ctx: Ctx, reason: StartFailReason, now: Date, log?: TickLog): Promise<void> {
