@@ -103,7 +103,9 @@ Wähle *Ferrofin (eigener)* oder *Jellyfin (offiziell, verwaltet)*, dann:
    Passwort des Administrators als Umgebungsvariablen; ist die Einrichtung fertig, wird der Container ohne das Passwort neu
    erstellt. Bei Jellyfin wird der Start-Assistent über seine API abgeschlossen. Hatte jemand anderes diesen Assistenten schon
    abgeschlossen (ein anderer Container im Netz `media` war schneller), endet die Einrichtung mit `wizard_taken`: Nimm *Neu anlegen*
-   (mit Daten entfernen, dann neu einrichten).
+   (mit Daten entfernen, dann neu einrichten). Findet ein Neuanlegen von Ferrofin weder seine Daten noch ein gespeichertes
+   Administratorkennwort, endet es mit `admin_missing` (ohne Kennwort legt FriendFlix Ferrofin nie an): Entferne den Medienserver
+   mit *Entfernen* und richte ihn mit *Einrichten* neu ein.
 
 Der Medien-Schritt des Assistenten bietet denselben Weg unter der Einrichtungssitzung; er endet, wenn der Server bereit ist und der
 Assistent weitergeht.
@@ -128,7 +130,10 @@ Assistent weitergeht.
   fehlgeschlagenen Auftrag (`managed_job_failed`), ein Image, das länger als 7 Tage vom festgelegten Stand abweicht, und eine
   Sicherung, die älter als 30 Tage ist. Ein Container, dessen Labels stimmen, dessen Konfiguration aber außerhalb von FriendFlix
   geändert wurde (in Portainer kam ein Port oder ein Recht hinzu), ist `managed_tampered`: Er wird nie gestartet oder übernommen;
-  *Neu anlegen* ersetzt ihn aus der Vorlage.
+  *Neu anlegen* ersetzt ihn aus der Vorlage. Direkt nach dem Start des Updaters, bis er den Status des Medienservers einmal gelesen
+  hat (die Prüfung der Image-Signatur kann bis zu 2 Minuten dauern), bleibt die Zeile neutral (`not_set_up` / `managed_starting`);
+  die Karte und der Medien-Schritt der Einrichtung zeigen *Medienserver-Status wird gelesen…* ohne Auswahl und Aktionen
+  (Angebotsgrund `starting`) und lesen alle 2 Sekunden neu.
 
 ## Updates
 

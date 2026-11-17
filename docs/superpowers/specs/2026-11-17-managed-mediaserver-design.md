@@ -425,7 +425,9 @@ answer 202 with the job like `/v1/livetv`; `busy` 409.
 container: {state, health, kind, image: {digest, upstream}, template, tampered} | null, pin: {image, upstream, changed} | null,
 engine: {api, logs, arch, nvidia}, error}`. `available` is false with `reason` `engine_old` (API below 1.45), `no_logs`
 (`proxy_outdated`), `no_project`,
-`no_network` (no `<project>_media`, or backend and gateway not attached to it).
+`no_network` (no `<project>_media`, or backend and gateway not attached to it), `starting` (no media status read yet since the
+updater started: answered past the 2-s bound until the first read ends, instead of `mediaserver: null`, which means an updater from
+before the media server; the backend's offer reason is then `starting`, not `updater_outdated`).
 
 Job actions extend `state.ts` `JobAction`: `mediaserver-apply`, `-finish`, `-start`, `-stop`, `-restart`, `-update`, `-hdr-test`,
 `-backup`, `-restore`, `-remove`, `-recover`. Job log lines are fixed messages and codes (never a path below the base, never a
@@ -440,7 +442,8 @@ another upstream version) → `create` → `start` → `health` (Docker health `
 `folder_*`, `gpu_missing`, `nvidia_missing`, `no_network`, `name_taken` (a container named `<project>-mediaserver` without our labels:
 never touched), `pull_failed`, `image_missing` (no media server image for this build), `arch_unsupported` (Ferrofin on a non-amd64
 engine), `verify_failed`, `snapshot_failed`, `downgrade_refused`, `template_violation`, `uid_unsupported`, `uid_mismatch`,
-`library_referenced`, `engine_old`, `create_failed`, `start_failed`, `unhealthy`.
+`library_referenced`, `engine_old`, `create_failed`, `start_failed`, `unhealthy`, `admin_missing` (a Ferrofin create without data
+and without a stored administrator password: remove with *Entfernen*, set up again with *Einrichten*).
 
 - **Recreate** (Controller's call): stop the old container and rename it aside (`<project>-mediaserver-old`), create and start the
   new one under the real name, and remove the old one **only after the new one is healthy**. On any failure: stop the new one;
@@ -645,6 +648,7 @@ New line **`media.managed`** (*Verwalteter Medienserver*), after `media.server` 
 |---|---|
 | external server in use | `not_set_up` / `managed_off` (neutral) |
 | updater missing | `warning` / `managed_no_updater` (when a managed container exists), else `not_set_up` |
+| updater started, media status not read yet (reason `starting`) | `not_set_up` / `managed_starting` (pending, never a warning) |
 | proxy without logs | `warning` / `managed_proxy_outdated` (docs link) |
 | container missing or stopped while desired running | `problem` / `managed_down` |
 | unhealthy | `problem` / `managed_unhealthy` |

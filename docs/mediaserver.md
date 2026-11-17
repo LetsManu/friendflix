@@ -96,7 +96,9 @@ Choose *Ferrofin (eigener)* or *Jellyfin (offiziell, verwaltet)*, then:
    scans. On Ferrofin the first create carries the administrator's name and password as environment variables; once the setup is
    done the container is recreated without the password. On Jellyfin the startup wizard is completed through its API. If that
    wizard had already been completed by someone else (another container on the `media` network was faster) the setup ends with
-   `wizard_taken`: use *Neu anlegen* (remove with data, then set up again).
+   `wizard_taken`: use *Neu anlegen* (remove with data, then set up again). A Ferrofin recreate that finds neither its data nor a
+   stored administrator password stops with `admin_missing` (FriendFlix never creates Ferrofin without one): remove the media
+   server with *Entfernen* and set it up again with *Einrichten*.
 
 The wizard's media step offers the same path under the setup session; it ends when the server is ready and the wizard goes on.
 
@@ -117,7 +119,10 @@ The wizard's media step offers the same path under the setup session; it ends wh
   that disappeared (for example an unmounted NAS share), a missing GPU, a failed job (`managed_job_failed`), an image that
   differs from its pin for more than 7 days and a backup older than 30 days. A container whose labels are right but whose
   configuration was changed outside FriendFlix (a port or privileges added in Portainer) is `managed_tampered`: it is never
-  started or adopted; *Neu anlegen* replaces it from the template.
+  started or adopted; *Neu anlegen* replaces it from the template. Right after the updater starts, until it has read the media
+  server's status once (checking the image signature can take up to 2 minutes), the line stays neutral (`not_set_up` /
+  `managed_starting`), the card and the wizard's media step show *Medienserver-Status wird gelesen…* without choices or actions
+  (offer reason `starting`) and read again every 2 seconds.
 
 ## Updates
 
