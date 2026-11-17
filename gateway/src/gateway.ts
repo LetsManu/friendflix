@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { constants as fsc } from 'node:fs';
 import { open, realpath } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
@@ -12,6 +12,13 @@ import { joinPlaylists, joinedMaster, joinedPrefix, readMaster, type PartMaster 
 import { isTrustedPeer } from './peers.js';
 
 export { hlsAttrs };
+
+/** /metrics answers per client and minute (a scraper asks every 15 to 60 s; the limit only stops guessing and hammering) */
+export const METRICS_PER_MINUTE = 60;
+const digest = (s: string) => createHash('sha256').update(s).digest();
+/** `Authorization: Bearer <token>`, compared in constant time over SHA-256 digests (neither content nor length leaks) */
+export const bearerMatches = (header: unknown, token: string): boolean =>
+  token.length > 0 && timingSafeEqual(digest(typeof header === 'string' ? header : ''), digest(`Bearer ${token}`));
 
 export interface GatewayOptions {
   /** media server adapter (allowlist, credential params, auth header); default Jellyfin */
@@ -630,7 +637,8 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     const url = new URL(req.url ?? '/', 'http://x');
     if (url.pathname === '/health') return end(res, 200, '{"status":"ok"}', 'application/json');
     if (url.pathname === '/metrics') {
-      if (opts.metricsToken && req.headers.authorization !== `Bearer ${opts.metricsToken}`) return end(res, 401, 'unauthorized');
+      if (!metricsAllowed(clientKey(req))) return end(res, 429, 'too many requests', 'text/plain', { 'retry-after': '60' });
+      if (opts.metricsToken && !bearerMatches(req.headers.authorization, opts.metricsToken)) return end(res, 401, 'unauthorized');
       return end(res, 200, metrics(), 'text/plain; version=0.0.4');
     }
     // live TV does not need the media server: before the "no media server yet" answer. Dispatched on the raw path too, so a
@@ -848,6 +856,17 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
   /** the client of a request (token pin, failure limiter): what a trusted proxy names, else the socket address (review L2) */
   const clientKey = (req: IncomingMessage) => (forwardedClient(req.headers, req.socket.remoteAddress) || req.socket.remoteAddress || 'unknown').slice(0, 64);
   const isBlocked = (ip: string) => (castFails.get(ip)?.blockedUntil ?? 0) > Date.now();
+  /** fixed one-minute window per client for /metrics (bounded memory like castFails) */
+  const metricsHits = new Map<string, { start: number; n: number }>();
+  function metricsAllowed(ip: string): boolean {
+    const now = Date.now();
+    let e = metricsHits.get(ip);
+    if (!e || now - e.start >= 60_000) e = { start: now, n: 0 };
+    e.n++;
+    if (metricsHits.size > 5000) metricsHits.clear();
+    metricsHits.set(ip, e);
+    return e.n <= METRICS_PER_MINUTE;
+  }
   /** counts DISTINCT failing token hashes per window: one stale/revoked token retried by a receiver is not an attack, guessing is */
   function noteFail(ip: string, tokenHash: string) {
     const now = Date.now();

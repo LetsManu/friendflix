@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
 import type { Ctx } from './ctx.js';
@@ -56,14 +57,23 @@ const recoIndexAge = new Gauge({ name: 'friendflix_reco_index_age_seconds', help
 export const recoIndexRuns = new Counter({ name: 'friendflix_reco_index_runs_total', help: 'Recommendation item index passes', labelNames: ['mode', 'result'], registers: [registry] });
 const up = new Gauge({ name: 'friendflix_dependency_up', help: '1 if dependency reachable', labelNames: ['dependency'], registers: [registry] });
 
+/** scrapes per client and minute (a scraper asks every 15 to 60 s; the limit only stops guessing and hammering) */
+export const METRICS_PER_MINUTE = 60;
+const digest = (s: string) => createHash('sha256').update(s).digest();
+/** `Authorization: Bearer <token>`, compared in constant time over SHA-256 digests (so neither content nor length leaks) */
+export function bearerMatches(header: unknown, token: string): boolean {
+  if (!token) return false;
+  return timingSafeEqual(digest(typeof header === 'string' ? header : ''), digest(`Bearer ${token}`));
+}
+
 /** Prometheus endpoint for Icinga. Also blocked in NPM; protected by a bearer token when METRICS_TOKEN is set. */
 export async function metricsPlugin(app: FastifyInstance, opts: { ctx: Ctx }) {
   app.addHook('onResponse', async (req, reply) => {
     httpRequests.inc({ method: req.method, status: String(Math.floor(reply.statusCode / 100)) + 'xx' });
   });
-  app.get('/metrics', { config: { rateLimit: false } }, async (req, reply) => {
+  app.get('/metrics', { config: { rateLimit: { max: METRICS_PER_MINUTE, timeWindow: '1 minute', keyGenerator: (req: { ip: string }) => `metrics:${req.ip}` } } }, async (req, reply) => {
     const t = opts.ctx.cfg.METRICS_TOKEN;
-    if (t && req.headers.authorization !== `Bearer ${t}`) return reply.code(401).send('unauthorized');
+    if (t && !bearerMatches(req.headers.authorization, t)) return reply.code(401).send('unauthorized');
     const c = opts.ctx;
     activeStreams.set((await listLive(c).catch(() => [])).length);
     partyRooms.set(parties.rooms.size);

@@ -34,6 +34,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ### Security
 - **No more redirect to another site after choosing a profile.** A link like `/profiles?next=/%09/evil.example.com` passed the old check (the browser drops the tab and reads `//evil.example.com`), so after the profile click the browser could land on a foreign page. Every `next` target (profile picker, onboarding, the in-app sign-in) now goes through one shared check that reads the value the way the browser will and accepts only a path on this site; anything else goes to the start page.
+- **`/metrics` token checked in constant time, and rate limited.** The backend and the gateway compared `METRICS_TOKEN` as a plain string, although the docs promised a constant-time check; both now compare it in constant time, and `/metrics` answers at most 60 requests a minute per client (a scraper every 15 to 60 seconds is far below). Nothing to change in your monitoring.
 
 ## [3.5.0] – Churros – 2026-11-16
 
