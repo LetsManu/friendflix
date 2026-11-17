@@ -389,9 +389,10 @@ describe('start and join', () => {
   it('max_streams: two film records → 429; the same device switching channel → 200 and its old token 410', async () => {
     const a = await addChannel('Nordlicht TV');
     const b = await addChannel('Hafenkanal');
-    const film = (ps: string) => setLive(env.ctx, { userId: benId, userName: 'Ben Muster', itemId: 'a'.repeat(32), title: 'Dunmoor', positionTicks: 0, isPaused: false, playSessionId: ps, updatedAt: Date.now(), source: 'portal', deviceId: 'tv-elsewhere' });
-    await film('ps-film-1');
-    await film('ps-film-2');
+    // two different films (the same film on the same device would be one stream: a quality switch or a resume)
+    const film = (ps: string, item: string) => setLive(env.ctx, { userId: benId, userName: 'Ben Muster', itemId: item, title: 'Dunmoor', positionTicks: 0, isPaused: false, playSessionId: ps, updatedAt: Date.now(), source: 'portal', deviceId: 'tv-elsewhere' });
+    await film('ps-film-1', 'a'.repeat(32));
+    await film('ps-film-2', 'b'.repeat(32));
     const r = await watch(ben, a);
     expect(r.statusCode).toBe(429);
     expect(r.json()).toEqual({ error: 'max_streams', max: 2 });

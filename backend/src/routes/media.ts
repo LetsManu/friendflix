@@ -7,8 +7,8 @@ import { parseClientCaps } from '../media/clientCaps.js';
 import { MediaError, type CapReason, type ItemDto, type PlaybackDto, type TranscodeReason } from '../media/types.js';
 import type { JfUser, ProfileRow, UserRow } from '../types.js';
 import { methodOf } from '../playstats.js';
-import { countStreams } from '../livetv/tokens.js';
-import { clearLive, clearStopped, getLive, listLive, markStopped, setLive } from '../live.js';
+import { countStreams, forgetServed, streamDeviceOf, streamSerial } from '../streamclaim.js';
+import { clearLive, clearStopped, getLive, listLive, markStopped, setLive, type Live } from '../live.js';
 import { noteHandoff, REC_ITEM_RE, selectHandoff, type HandoffVia } from '../handoff.js';
 import { isHomeRequest } from '../netaddr.js';
 import { effectiveLimits } from '../limits.js';
@@ -64,7 +64,11 @@ const reportBody = z.object({
 export type PlaybackKind = 'Playing' | 'Playing/Progress' | 'Playing/Stopped';
 export type PlaybackReportBody = z.infer<typeof reportBody>;
 /** who reports: a signed-in session, or a cast receiver's report token (routes/cast.ts, resolved to the same identity) */
-export interface PlaybackReporter { user: UserRow; jfUser: JfUser; profile?: ProfileRow; deviceId?: string; via?: HandoffVia }
+export interface PlaybackReporter {
+  user: UserRow; jfUser: JfUser; profile?: ProfileRow; deviceId?: string; via?: HandoffVia;
+  /** the device the gateway counts this session's streams under (streamclaim.ts streamDeviceOf); a stop ends those served records */
+  streamDevice?: string;
+}
 
 /**
  * start / progress / stop of a play session: live record (stream limit), media server report, statistics hooks.
@@ -82,20 +86,50 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
   const user = who.user;
   const ticks = Math.floor(b.positionTicks);
   let live = await getLive(ctx, user.id, b.playSessionId);
+  // the play session id is the client's: a live record of another device or title under it is another stream (review B). A start
+  // under that id is refused, a progress or stop report is forwarded but touches nothing of it.
+  if (live && ((live.deviceId && who.deviceId && live.deviceId !== who.deviceId) || live.itemId.toLowerCase() !== b.itemId.toLowerCase())) {
+    if (kind === 'Playing') return { error: 'max_streams', max: (await effectiveLimits(ctx, user))!.maxStreams };
+    await ctx.jf.report(who.jfUser, {
+      event: kind === 'Playing/Stopped' ? 'stop' : 'progress',
+      itemId: b.itemId, mediaSourceId: b.mediaSourceId, playSessionId: b.playSessionId, positionTicks: ticks, paused: b.isPaused,
+      audioIndex: b.audioIndex, subtitleIndex: b.subtitleIndex, playMethod: b.playMethod,
+    });
+    return { ok: true };
+  }
+  const wasLive = live !== null;
   let elapsed = true;
+  /** a progress report beyond the limit: forwarded (the position is kept), but no live record is rebuilt that the gateway would serve */
+  let untracked = false;
+  /** this report wrote the live record that takes the slot: given back when the media server report fails (review round 2, a) */
+  let reserved = false;
   if (!live) {
-    // Start takes a stream slot. Progress/Stopped after TTL expiry are still forwarded (a sleeping tab must not lose its position)
-    // and rebuild the live record without counting against maxStreams.
-    if (kind === 'Playing') {
-      const role = (await effectiveLimits(ctx, user))!;
-      if ((await countStreams(ctx, user.id)) >= role.maxStreams) return { error: 'max_streams', max: role.maxStreams };
-    }
+    // Start takes a stream slot; so does a progress report that would rebuild an expired live record (security audit G1: a record
+    // the client builds by reports alone must not open a stream beyond the limit). Not counted: the caller's own play session and its
+    // own stream (same device and item: a quality switch, a resume). Progress / Stopped after TTL expiry are always forwarded, so a
+    // sleeping tab does not lose its position.
     const item = await ctx.jf.item(who.jfUser, b.itemId); // access check: the user must be able to see the item
     elapsed = false;
-    live = {
+    const fresh: Live = {
       userId: user.id, userName: user.name, profileName: who.profile?.is_owner ? undefined : who.profile?.name, itemId: b.itemId, title: item.name, seriesName: item.seriesName, seriesId: item.seriesId, type: item.type ?? 'Unknown',
-      positionTicks: ticks, runtimeTicks: item.runtimeTicks, isPaused: false, playSessionId: b.playSessionId, updatedAt: Date.now(), source: 'portal',
+      positionTicks: ticks, runtimeTicks: item.runtimeTicks, isPaused: false, playSessionId: b.playSessionId, updatedAt: Date.now(), source: 'portal', deviceId: who.deviceId,
     };
+    live = fresh;
+    if (kind !== 'Playing/Stopped') {
+      // only the count and the write that takes the slot are queued with the gateway's claims (streamclaim.ts), never a media server
+      // call: a start and a claim never both take the last slot, and no claim waits for the media server
+      const r = await streamSerial(user.id, async () => {
+        if (await getLive(ctx, user.id, b.playSessionId)) return 'ok' as const; // a parallel report of the same play session took it
+        const role = (await effectiveLimits(ctx, user))!;
+        const over = (await countStreams(ctx, user.id, { ps: [b.playSessionId], deviceId: who.deviceId, itemId: b.itemId })) >= role.maxStreams;
+        if (over) return kind === 'Playing' ? { error: 'max_streams' as const, max: role.maxStreams } : 'untracked' as const;
+        await setLive(ctx, fresh);
+        return 'reserved' as const;
+      });
+      if (typeof r === 'object') return r;
+      untracked = r === 'untracked';
+      reserved = r === 'reserved';
+    }
   } else if (live.type === undefined && live.itemId === b.itemId) {
     // a live record the cast token's touch made before the first report (cast.ts touch: item id and title only): the item's facts
     // once (hand-off series and runtime). The token's creation already checked access, so a failed lookup keeps the record as it is.
@@ -114,11 +148,16 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
     const load = typeof rec.bitrate === 'number' && rec.bitrate > 0 && typeof rec.remote === 'boolean' ? { bitrate: rec.bitrate, remote: rec.remote } : {};
     live = { ...live, playMethod, ...(playMethod === 'transcode' && reason ? { transcodeReason: reason } : {}), deviceId: who.deviceId, serverUserId: who.jfUser.jellyfin_user_id, ...load };
   }
-  await ctx.jf.report(who.jfUser, {
-    event: kind === 'Playing' ? 'start' : kind === 'Playing/Stopped' ? 'stop' : 'progress',
-    itemId: b.itemId, mediaSourceId: b.mediaSourceId, playSessionId: b.playSessionId, positionTicks: ticks, paused: b.isPaused,
-    audioIndex: b.audioIndex, subtitleIndex: b.subtitleIndex, playMethod: b.playMethod,
-  });
+  try {
+    await ctx.jf.report(who.jfUser, {
+      event: kind === 'Playing' ? 'start' : kind === 'Playing/Stopped' ? 'stop' : 'progress',
+      itemId: b.itemId, mediaSourceId: b.mediaSourceId, playSessionId: b.playSessionId, positionTicks: ticks, paused: b.isPaused,
+      audioIndex: b.audioIndex, subtitleIndex: b.subtitleIndex, playMethod: b.playMethod,
+    });
+  } catch (e) {
+    if (reserved) await clearLive(ctx, user.id, b.playSessionId);
+    throw e;
+  }
   // device hand-off: what this device played for the profile, how far and when (best effort, never fails the report)
   if (who.profile && who.deviceId && !b.probe) {
     await noteHandoff(ctx, {
@@ -128,11 +167,14 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
   }
   if (kind === 'Playing/Stopped') {
     await clearLive(ctx, user.id, b.playSessionId);
-    await markStopped(ctx, user.id, b.playSessionId);
+    await forgetServed(ctx, user.id, { ps: b.playSessionId, deviceId: who.deviceId ?? who.streamDevice, itemId: b.itemId, running: wasLive });
+    // the cast drain mark (live.ts draining) only for a stream that was running, so once per run (review round 2 A): a stop report
+    // for anything else, or a second one, opens no window in which a cast is served uncounted
+    if (wasLive) await markStopped(ctx, user.id, b.playSessionId);
     // a stream stopped within its first 30 s: its grants go now (only the caller's own play session: /api/playback/info or cast wrote its record)
     if (await ctx.kv.get(`pbinfo:${user.id}:${b.playSessionId}`).catch(() => null)) await releaseGrants(ctx, b.playSessionId);
   }
-  else { if (kind === 'Playing') await clearStopped(ctx, user.id, b.playSessionId); await setLive(ctx, live); }
+  else if (!untracked) { if (kind === 'Playing') await clearStopped(ctx, user.id, b.playSessionId); await setLive(ctx, live); }
   await playbackHooks.run(ctx, { kind, user, live, elapsedMs: opts.elapsedMs ?? (elapsed ? Math.min(Date.now() - prev, 30_000) : 0) });
   return { ok: true };
 }
@@ -388,7 +430,9 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     }).parse(req.body);
     const clientCaps = parseClientCaps(b.caps);
     const role = (await effectiveLimits(ctx, req.user!))!;
-    if ((await countStreams(ctx, req.user!.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
+    // running streams: reported, served by the gateway (security audit G1) and unfetched live tokens; the same item on this device is
+    // the same stream (the player asks again for a quality or audio switch, or a resume)
+    if ((await countStreams(ctx, req.user!.id, { deviceId: req.session?.deviceId, itemId: b.itemId })) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
     // outside the home networks the role's remote cap applies on top; the viewer may lower the quality, never raise it above the limit
     const remote = !isHomeRequest(req, ctx.cfg.HOME_NETWORKS);
     const ceiling = remote ? remoteBitrateCap(role) : role.maxBitrate; // the quality menu's upper bound (the client's own pick is not a ceiling)
@@ -475,7 +519,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   const report = (kind: PlaybackKind) =>
     wrap(async (req: any, reply: any) => {
       const b = reportBody.parse(req.body);
-      const r = await playbackReport(ctx, kind, b, { user: req.user!, jfUser: req.jfUser!, profile: req.profile, deviceId: req.session?.deviceId, via: b.via });
+      const r = await playbackReport(ctx, kind, b, { user: req.user!, jfUser: req.jfUser!, profile: req.profile, deviceId: req.session?.deviceId, via: b.via, ...(req.sid ? { streamDevice: streamDeviceOf(req.session?.deviceId, req.sid) } : {}) });
       return 'error' in r ? reply.code(429).send(r) : r;
     });
   // the next episode's transcode the web player warmed during the autoplay countdown (web/src/lib/player/prefetch.ts) and nobody took:

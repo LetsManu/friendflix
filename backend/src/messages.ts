@@ -74,6 +74,12 @@ const de = {
   'notify.deletion.done': 'Das Konto {pseudonym} wurde endgültig gelöscht',
   // approval queue (login without an invite)
   'notify.approval.new': 'Neue Zugangsanfrage von {name}',
+  // a profile PIN locked for the third time or more (admins)
+  'notify.pin.locked.title': 'Viele falsche PINs für das Profil {profile} von {name}',
+  'notify.pin.locked.body': 'Das Profil ist jetzt zum dritten Mal oder öfter gesperrt; jede weitere Sperre dauert doppelt so lange, bis zu 24 Stunden. Die Versuche stehen im Audit-Log der Person.',
+  // the instance's daily cap of sign-in flow mails was reached (admins)
+  'notify.mailcap.title': 'Tageslimit für Anmelde-Mails erreicht',
+  'notify.mailcap.body': '{n} Mails zum Zurücksetzen des Passworts und zur Bestätigung neuer Adressen sind verschickt, gezählt seit der ersten davon. Weitere gehen erst raus, wenn 24 Stunden seit dieser ersten Mail vergangen sind. Häufen sich solche Anfragen, prüfe das Server-Log.',
   // Live TV: a provider list failed three refreshes in a row (admins)
   'livetv.source.failed.title': 'Senderliste lässt sich nicht aktualisieren',
   'livetv.source.failed.body': 'Senderliste {source} lässt sich nicht aktualisieren',
@@ -260,6 +266,12 @@ const en: Catalog = {
   'notify.deletion.done': 'Account {pseudonym} has been permanently deleted',
   // approval queue (login without an invite)
   'notify.approval.new': 'New access request from {name}',
+  // a profile PIN locked for the third time or more (admins)
+  'notify.pin.locked.title': 'Many wrong PINs for the profile {profile} of {name}',
+  'notify.pin.locked.body': 'The profile is now locked for the third time or more; each further lock lasts twice as long, up to 24 hours. The attempts are in the person’s audit log.',
+  // the instance's daily cap of sign-in flow mails was reached (admins)
+  'notify.mailcap.title': 'Daily limit for sign-in mails reached',
+  'notify.mailcap.body': '{n} password reset and address confirmation mails have been sent, counted from the first of them. No more go out until 24 hours have passed since that first mail. If such requests pile up, check the server log.',
   'livetv.source.failed.title': 'Channel list cannot be updated',
   'livetv.source.failed.body': 'Channel list {source} cannot be updated',
   // Live TV recordings (Phase 3, spec §16): the owner's own notices (titles only there), the admins' storage notice
@@ -439,6 +451,12 @@ const fr: Catalog = {
   'notify.deletion.done': 'Le compte {pseudonym} a été définitivement supprimé',
   // approval queue (login without an invite)
   'notify.approval.new': 'Nouvelle demande d’accès de {name}',
+  // a profile PIN locked for the third time or more (admins)
+  'notify.pin.locked.title': 'Nombreux codes PIN erronés pour le profil {profile} de {name}',
+  'notify.pin.locked.body': 'Le profil est maintenant verrouillé pour la troisième fois ou plus ; chaque nouveau verrouillage dure deux fois plus longtemps, jusqu’à 24 heures. Les tentatives figurent dans le journal d’audit de la personne.',
+  // the instance's daily cap of sign-in flow mails was reached (admins)
+  'notify.mailcap.title': 'Limite quotidienne des e-mails de connexion atteinte',
+  'notify.mailcap.body': '{n} e-mails de réinitialisation du mot de passe et de confirmation d’adresse ont été envoyés, comptés depuis le premier d’entre eux. Plus aucun ne part avant que 24 heures se soient écoulées depuis ce premier e-mail. Si ces demandes s’accumulent, consulte le journal du serveur.',
   'livetv.source.failed.title': 'Impossible de mettre à jour la liste des chaînes',
   'livetv.source.failed.body': 'Impossible de mettre à jour la liste des chaînes {source}',
   // Live TV recordings (Phase 3, spec §16): the owner's own notices (titles only there), the admins' storage notice
@@ -618,6 +636,12 @@ const es: Catalog = {
   'notify.deletion.done': 'La cuenta {pseudonym} se eliminó definitivamente',
   // approval queue (login without an invite)
   'notify.approval.new': 'Nueva solicitud de acceso de {name}',
+  // a profile PIN locked for the third time or more (admins)
+  'notify.pin.locked.title': 'Muchos PIN incorrectos para el perfil {profile} de {name}',
+  'notify.pin.locked.body': 'El perfil está bloqueado ahora por tercera vez o más; cada nuevo bloqueo dura el doble, hasta 24 horas. Los intentos figuran en el registro de auditoría de la persona.',
+  // the instance's daily cap of sign-in flow mails was reached (admins)
+  'notify.mailcap.title': 'Límite diario de correos de inicio de sesión alcanzado',
+  'notify.mailcap.body': 'Se han enviado {n} correos para restablecer la contraseña y confirmar direcciones, contados desde el primero de ellos. No se enviarán más hasta que hayan pasado 24 horas desde ese primer correo. Si estas solicitudes se acumulan, revisa el registro del servidor.',
   'livetv.source.failed.title': 'No se puede actualizar la lista de canales',
   'livetv.source.failed.body': 'No se puede actualizar la lista de canales {source}',
   // Live TV recordings (Phase 3, spec §16): the owner's own notices (titles only there), the admins' storage notice
@@ -797,6 +821,12 @@ const it: Catalog = {
   'notify.deletion.done': 'L’account {pseudonym} è stato eliminato definitivamente',
   // approval queue (login without an invite)
   'notify.approval.new': 'Nuova richiesta di accesso da {name}',
+  // a profile PIN locked for the third time or more (admins)
+  'notify.pin.locked.title': 'Molti PIN errati per il profilo {profile} di {name}',
+  'notify.pin.locked.body': 'Il profilo è ora bloccato per la terza volta o più; ogni nuovo blocco dura il doppio, fino a 24 ore. I tentativi sono nel registro di audit della persona.',
+  // the instance's daily cap of sign-in flow mails was reached (admins)
+  'notify.mailcap.title': 'Limite giornaliero delle e-mail di accesso raggiunto',
+  'notify.mailcap.body': 'Sono state inviate {n} e-mail per reimpostare la password e confermare indirizzi, contate dalla prima. Non ne partono altre finché non sono passate 24 ore da quella prima e-mail. Se queste richieste si accumulano, controlla il log del server.',
   'livetv.source.failed.title': 'Impossibile aggiornare l’elenco dei canali',
   'livetv.source.failed.body': 'Impossibile aggiornare l’elenco dei canali {source}',
   // Live TV recordings (Phase 3, spec §16): the owner's own notices (titles only there), the admins' storage notice
@@ -976,6 +1006,12 @@ const tr: Catalog = {
   'notify.deletion.done': '{pseudonym} hesabı kalıcı olarak silindi',
   // approval queue (login without an invite)
   'notify.approval.new': '{name} erişim talep ediyor',
+  // a profile PIN locked for the third time or more (admins)
+  'notify.pin.locked.title': '{name} hesabının {profile} profili için çok sayıda yanlış PIN',
+  'notify.pin.locked.body': 'Profil şimdi üçüncü kez veya daha fazla kilitlendi; her yeni kilit iki kat uzun sürer, en fazla 24 saat. Denemeler kişinin denetim kaydında görünür.',
+  // the instance's daily cap of sign-in flow mails was reached (admins)
+  'notify.mailcap.title': 'Oturum açma e-postaları için günlük sınıra ulaşıldı',
+  'notify.mailcap.body': 'İlkinden itibaren sayılarak parola sıfırlama ve adres onayı için {n} e-posta gönderildi. O ilk e-postanın üzerinden 24 saat geçene kadar başka e-posta gönderilmeyecek. Bu istekler artarsa sunucu günlüğünü kontrol et.',
   'livetv.source.failed.title': 'Kanal listesi güncellenemiyor',
   'livetv.source.failed.body': '{source} kanal listesi güncellenemiyor',
   // Live TV recordings (Phase 3, spec §16): the owner's own notices (titles only there), the admins' storage notice
@@ -1160,6 +1196,12 @@ const pl: Catalog = {
   'notify.deletion.done': 'Konto {pseudonym} zostało trwale usunięte',
   // approval queue (login without an invite)
   'notify.approval.new': 'Nowa prośba o dostęp od {name}',
+  // a profile PIN locked for the third time or more (admins)
+  'notify.pin.locked.title': 'Wiele błędnych PIN-ów dla profilu {profile} użytkownika {name}',
+  'notify.pin.locked.body': 'Profil jest teraz zablokowany po raz trzeci lub kolejny; każda następna blokada trwa dwa razy dłużej, do 24 godzin. Próby są w dzienniku audytu tej osoby.',
+  // the instance's daily cap of sign-in flow mails was reached (admins)
+  'notify.mailcap.title': 'Osiągnięto dzienny limit e-maili logowania',
+  'notify.mailcap.body': 'Wysłano {n} e-maili do resetu hasła i potwierdzenia adresu, licząc od pierwszego z nich. Kolejne zostaną wysłane dopiero po 24 godzinach od tego pierwszego e-maila. Jeśli takich próśb przybywa, sprawdź dziennik serwera.',
   'livetv.source.failed.title': 'Nie można zaktualizować listy kanałów',
   'livetv.source.failed.body': 'Nie można zaktualizować listy kanałów {source}',
   // Live TV recordings (Phase 3, spec §16): the owner's own notices (titles only there), the admins' storage notice

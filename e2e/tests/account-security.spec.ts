@@ -187,7 +187,7 @@ test.describe('security section (/me/account)', () => {
     await dialog(page).getByLabel('Neue E-Mail-Adresse').fill('neu@example.com');
     await dialog(page).getByRole('button', { name: 'Speichern' }).click();
     await expect(dialog(page).getByRole('heading', { name: 'Bestätigungslink gesendet' })).toBeVisible();
-    await expect(dialog(page)).toContainText('Wir haben einen Bestätigungslink an n•••@example.com geschickt. Die Adresse ändert sich erst, wenn du den Link öffnest.');
+    await expect(dialog(page)).toContainText('Wenn n•••@example.com nicht schon zu einem anderen Konto gehört, haben wir einen Bestätigungslink dorthin geschickt. Die Adresse ändert sich erst, wenn du den Link öffnest.');
     await expect(dialog(page).getByRole('button', { name: /erneut senden|resend/i })).toHaveCount(0); // the attempt is over on the server
     expect(startBodies(st)).toEqual([{ kind: 'reauth', then: 'change-email' }]);
     api.security.emailChangePending = 'n•••@example.com';

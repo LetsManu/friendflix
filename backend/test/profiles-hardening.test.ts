@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { freshAuth, SIGNIN_MAX_AGE } from '../src/oidc.js';
 import { ownerProfile } from '../src/profiles.js';
 import { makeEnv, type Handler, type TestEnv } from './helpers.js';
@@ -78,6 +78,58 @@ describe('profile hardening', () => {
     const r = await call(s, 'POST', url, { pin: '4321' });
     expect(r.statusCode).toBe(429);
     expect(r.json().error).toBe('pin_locked');
+  });
+
+  // security audit G3: the lockout escalates per profile (15 min after 5 wrong PINs, then doubling up to 24 h) on top of the 15-minute
+  // windows, admins hear of it from the third lockout on, and a right PIN resets everything
+  it('PIN lockout escalates per profile, is audited, alerts admins at the third lockout and resets on success', async () => {
+    const s = await mk();
+    const p = await mkProfile(s, 'Kind', { pin: '4321' });
+    const url = `/api/profiles/${p.id}/select`;
+    let ip = 0;
+    const select = (pin: string) => env.app.inject({ method: 'POST', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: { pin }, remoteAddress: `192.0.2.${++ip}` });
+    const userId = await ownerId();
+    /** the 15-minute windows (the floor) have passed */
+    const windowsOver = async () => { await env.kv.del(`pinfail:${p.id}`); await env.kv.del(`pinfail-acct:${userId}`); };
+    const wrongFive = async () => {
+      for (let i = 0; i < 4; i++) expect((await select('0000')).json().error).toBe('pin_wrong');
+      const fifth = await select('0000');
+      expect(fifth.statusCode).toBe(429);
+      return fifth.json() as { error: string; retryAfter?: number };
+    };
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      expect(await wrongFive()).toEqual({ error: 'pin_locked', retryAfter: 900 }); // the first lock already outlasts the 15-minute window (review 6)
+      // the window is over but the escalated lock is not: the right PIN is not even checked
+      await windowsOver();
+      expect((await select('4321')).json()).toEqual({ error: 'pin_locked', retryAfter: 900 });
+      await env.kv.del(`pinlock:${p.id}`); // the lock is over (the test session would not outlive 15 real minutes)
+      expect(await wrongFive()).toEqual({ error: 'pin_locked', retryAfter: 1800 });
+      await windowsOver();
+      await env.kv.del(`pinlock:${p.id}`);
+      const notices = async () => (await env.pool.query("select user_id, link from notifications where kind='pin_locked'")).rows;
+      expect(await notices()).toHaveLength(0);
+      expect(await wrongFive()).toEqual({ error: 'pin_locked', retryAfter: 3600 });
+      // the third lockout: every admin is told (once a day per profile), with a link to the person
+      expect(await notices()).toEqual([{ user_id: userId, link: `/admin/users/${userId}` }]);
+      const audits = (await env.pool.query("select actor, target, meta from audit_log where action='profile.pin_locked' order by id")).rows;
+      expect(audits.map((a) => a.meta)).toEqual([{ level: 1, minutes: 15 }, { level: 2, minutes: 30 }, { level: 3, minutes: 60 }]);
+      expect(audits.every((a) => a.actor === userId && a.target === p.id)).toBe(true);
+      // capped at 24 hours
+      await windowsOver();
+      await env.kv.del(`pinlock:${p.id}`);
+      await env.kv.set(`pinlevel:${p.id}`, '15', 172_800);
+      expect(await wrongFive()).toEqual({ error: 'pin_locked', retryAfter: 86_400 });
+      expect(await notices()).toHaveLength(1); // the same day: no second notice
+      // a right PIN once the lock is over resets the level: the next lockout is 15 minutes again
+      await windowsOver();
+      await env.kv.del(`pinlock:${p.id}`); // the 24-hour lock is over (the session would not outlive a real day here)
+      expect((await select('4321')).statusCode).toBe(200);
+      for (const k of ['pinfail', 'pinlock', 'pinlevel']) expect(await env.kv.get(`${k}:${p.id}`), k).toBeNull();
+      expect(await wrongFive()).toEqual({ error: 'pin_locked', retryAfter: 900 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('setting, changing, removing a PIN and deleting a profile drop it from other sessions of the account', async () => {
@@ -161,6 +213,8 @@ describe('profile hardening', () => {
     const oid = await ownerId();
     expect((await call(s, 'PUT', `/api/profiles/${oid}/pin`, { pin: '1234' })).statusCode).toBe(200);
     await env.kv.set(`pinfail:${oid}`, '5', 60);
+    await env.kv.set(`pinlock:${oid}`, String(Date.now() + 3_600_000), 3600);
+    await env.kv.set(`pinlevel:${oid}`, '7', 3600);
     const starts: Array<{ forceLogin?: boolean; maxAge?: number } | undefined> = [];
     const orig = env.ctx.oidc.start;
     env.ctx.oidc.start = (o) => { starts.push(o); return orig(o); };
@@ -175,7 +229,7 @@ describe('profile hardening', () => {
     const cb = await env.app.inject({ url: `/auth/callback?state=${st}&code=c`, cookies: { ff_oidc: st } });
     expect(cb.statusCode).toBe(302);
     expect((await env.pool.query('select pin_hash from profiles where id=$1', [oid])).rows[0].pin_hash).toBeNull();
-    expect(await env.kv.get(`pinfail:${oid}`)).toBeNull();
+    for (const k of ['pinfail', 'pinlock', 'pinlevel']) expect(await env.kv.get(`${k}:${oid}`), k).toBeNull();
     expect((await env.pool.query("select 1 from audit_log where action='profile.pin_reset'")).rowCount).toBe(1);
   });
 

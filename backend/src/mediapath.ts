@@ -34,6 +34,21 @@ export function normalizePath(raw: string): string | null {
   return ALLOWED_PATHS.some((re) => re.test(p)) ? p : null;
 }
 
+/** playlists, segments and streams of a video (what counts against the stream limit); images, subtitles and trickplay do not */
+const STREAM_REQUEST = /^\/Videos\/([0-9a-fA-F]{32})\/((master|main)\.m3u8|(hls1?|hls)\/[\w.-]+\/[\w.-]+|stream(\.\w{2,5})?)$/;
+/**
+ * The stream a Plan B request belongs to (security audit G1, streamclaim.ts): its item and the play session it names (`PlaySessionId`,
+ * any letter case); null for anything that is not a stream request.
+ */
+export function streamOfUri(upstream: string): { itemId: string; ps: string | null } | null {
+  const q = upstream.indexOf('?');
+  const m = STREAM_REQUEST.exec(q === -1 ? upstream : upstream.slice(0, q));
+  if (!m) return null;
+  let ps: string | null = null;
+  for (const [k, v] of new URLSearchParams(q === -1 ? '' : upstream.slice(q + 1))) if (k.toLowerCase() === 'playsessionid') ps = v;
+  return { itemId: m[1]!.toLowerCase(), ps };
+}
+
 /**
  * Turns the browser's request URI (/media/<path>?<query>) into the URI nginx may request from Jellyfin:
  * validated path, token-like params removed, bitrate clamped to the role limit, query re-encoded.

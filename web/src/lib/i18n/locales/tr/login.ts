@@ -166,8 +166,8 @@ const login: Translation<typeof de> = {
     },
     emailSent: {
       title: 'Onay bağlantısı gönderildi',
-      text: '{to} adresine bir onay bağlantısı gönderdik. Adres, bağlantıyı açtığında değişir.',
-      textNoTo: 'Yeni adrese bir onay bağlantısı gönderdik. Adres, bağlantıyı açtığında değişir.',
+      text: '{to} başka bir hesaba ait değilse oraya bir onay bağlantısı gönderdik. Adres, bağlantıyı açtığında değişir.',
+      textNoTo: 'Yeni adres başka bir hesaba ait değilse oraya bir onay bağlantısı gönderdik. Adres, bağlantıyı açtığında değişir.',
     },
     passkey: {
       title: 'Geçiş anahtarı ekle',

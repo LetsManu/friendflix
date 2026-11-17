@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { clientAddress, isHomeAddress, isHomeRequest, isTrustedPeer, isValidCidr, noteUntrustedForwarding, resetUntrustedForwardingNote, setUntrustedPeers, watchUntrustedHost } from '../src/netaddr.js';
+import { clientAddress, ipBucket, isHomeAddress, isHomeRequest, isTrustedPeer, isValidCidr, noteUntrustedForwarding, resetUntrustedForwardingNote, serviceHosts, setUntrustedPeers, watchUntrustedHost, watchUntrustedHosts } from '../src/netaddr.js';
 import { loadConfig } from '../src/config.js';
 
 const HOME = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '::1/128', 'fc00::/7', 'fe80::/10'];
@@ -198,5 +198,48 @@ describe('review L3: the livetv container is no trusted proxy', () => {
     await gone.ready;
     gone.stop();
     expect(isTrustedPeer('172.20.0.7')).toBe(true);
+  });
+
+  // security audit note: the bundled media server and request service sit on private addresses next to the backend but never proxy a
+  // client, so their X-Forwarded-For / X-Real-IP must not be believed either
+  it('the media server and the request service are never trusted proxies; each name is followed on its own', async () => {
+    const addrs: Record<string, string[] | Error> = { livetv: ['172.20.0.4'], jellyfin: ['172.21.0.5'], requests: ['172.21.0.6'] };
+    const lookup = async (h: string) => { const a = addrs[h]; if (!a) throw Object.assign(new Error('x'), { code: 'ENOTFOUND' }); if (a instanceof Error) throw a; return a; };
+    let hosts = ['livetv', 'jellyfin', 'requests'];
+    const w = watchUntrustedHosts(() => hosts, { lookup, intervalMs: 60_000 });
+    await w.ready;
+    for (const ip of ['172.20.0.4', '172.21.0.5', '172.21.0.6']) expect(isTrustedPeer(ip), ip).toBe(false);
+    expect(clientAddress(req({ 'x-real-ip': '203.0.113.9' }, '172.21.0.5'))).toBe('172.21.0.5');
+    expect(clientAddress(req({ 'x-real-ip': '203.0.113.9' }, '172.18.0.1'))).toBe('203.0.113.9'); // the reverse proxy still is
+    // one name vanishes (ENOTFOUND): only its addresses become trusted again; a timeout keeps the last answer of its name
+    addrs.requests = Object.assign(new Error('t'), { code: 'ETIMEOUT' });
+    delete addrs.jellyfin;
+    await w.refresh();
+    expect(isTrustedPeer('172.21.0.5')).toBe(true);
+    expect(isTrustedPeer('172.21.0.6')).toBe(false);
+    expect(isTrustedPeer('172.20.0.4')).toBe(false);
+    // the settings change (another media server host): the list is read again on every refresh
+    hosts = ['livetv', 'plex'];
+    addrs.plex = ['172.21.0.9'];
+    await w.refresh();
+    expect(isTrustedPeer('172.21.0.9')).toBe(false);
+    expect(isTrustedPeer('172.21.0.6')).toBe(true);
+    w.stop();
+    setUntrustedPeers([]);
+  });
+  it('serviceHosts keeps the single-label hosts of the configured URLs', () => {
+    expect(serviceHosts(['http://livetv:8090', 'http://jellyfin:8096', 'http://requests:5055', undefined, '', 'nope', 'https://media.example.com', 'http://192.0.2.10:8096', 'http://[fd00::5]:8096', 'http://Jellyfin:8096'])).toEqual(['livetv', 'jellyfin', 'requests']);
+  });
+});
+
+describe('ipBucket (budgets per client)', () => {
+  it('keeps IPv4 as is and folds IPv6 to its /64', () => {
+    expect(ipBucket('192.0.2.7')).toBe('192.0.2.7');
+    expect(ipBucket('::ffff:192.0.2.7')).toBe('192.0.2.7');
+    expect(ipBucket('2001:db8:1:2::a')).toBe('2001:db8:1:2::/64');
+    expect(ipBucket('2001:DB8:1:2:ffff:ffff:ffff:fffe')).toBe('2001:db8:1:2::/64');
+    expect(ipBucket('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(ipBucket('fe80::1%eth0')).toBe('fe80:0:0:0::/64');
+    expect(ipBucket('unknown')).toBe('unknown');
   });
 });

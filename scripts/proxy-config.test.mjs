@@ -56,3 +56,16 @@ test('the operator docs keep /media/l/ and /media/r/ in Plan B, and the bug repo
   const bug = readFileSync(fileURLToPath(import.meta.resolve('../.github/ISSUE_TEMPLATE/bug_report.yml')), 'utf8');
   for (const p of ['/media/c/', '/media/l/', '/media/r/']) assert.ok(bug.includes(`\`${p}…\``), p);
 });
+
+test('every location that proxies sets X-Real-IP and X-Forwarded-For to the client address itself (a client cannot pick its own)', () => {
+  const re = /^location ([^{]+) \{\n([^}]*)\n\}/gm;
+  let n = 0;
+  for (const m of conf.matchAll(re)) {
+    const lines = m[2].split('\n').map((l) => l.replace(/#.*$/, '').trim()).filter(Boolean);
+    if (!lines.some((l) => l.startsWith('proxy_pass '))) continue;
+    n++;
+    assert.ok(lines.includes('proxy_set_header X-Real-IP $remote_addr;'), `${m[1].trim()}: X-Real-IP is overwritten`);
+    assert.ok(lines.includes('proxy_set_header X-Forwarded-For $remote_addr;'), `${m[1].trim()}: X-Forwarded-For is overwritten`);
+  }
+  assert.ok(n >= 10, `expected the proxied locations, found ${n}`);
+});

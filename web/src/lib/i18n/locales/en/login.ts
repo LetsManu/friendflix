@@ -166,8 +166,8 @@ const login: Translation<typeof de> = {
     },
     emailSent: {
       title: 'Confirmation link sent',
-      text: 'We sent a confirmation link to {to}. The address only changes once you open the link.',
-      textNoTo: 'We sent a confirmation link to the new address. The address only changes once you open the link.',
+      text: 'If {to} does not belong to another account, we sent a confirmation link there. The address only changes once you open the link.',
+      textNoTo: 'If the new address does not belong to another account, we sent a confirmation link there. The address only changes once you open the link.',
     },
     passkey: {
       title: 'Add a passkey',

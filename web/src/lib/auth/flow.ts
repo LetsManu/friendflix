@@ -19,6 +19,7 @@ import type { TKey } from '#lib/i18n';
 import { readCookie } from '#lib/setup/api';
 import { brandPalette } from '#lib/brand';
 import { DEFAULT_TOKENS } from '#lib/brandColors';
+import { safeRedirect } from '#lib/safeRedirect';
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // The step DTOs: a copy of backend/src/flowSteps.ts (Task 2), not an import (the web does not import backend code). flow.test.ts holds
@@ -249,8 +250,8 @@ export async function cancelFlow(): Promise<void> {
 /** Authentik's own sign-in page (the fallback, always reachable), keeping a portal invite */
 export const classicHref = (invite?: string | null): string => `/auth/login?classic=1${invite ? `&invite=${encodeURIComponent(invite)}` : ''}`;
 
-/** where `done` may send the browser: a same-origin path only (never `//host` or `/\host`) */
-export const safeNext = (next: unknown): string => (typeof next === 'string' && /^\/(?![/\\])/.test(next) ? next : '/');
+/** where `done` may send the browser: a same-origin path only (the shared rule in safeRedirect.ts) */
+export const safeNext = (next: unknown): string => safeRedirect(next);
 
 const INVITE_TOKEN = /^[A-Za-z0-9_-]{6,128}$/;
 /** an invite token from what someone pasted: the token itself or an invite link (`…/invite/<token>`) */
