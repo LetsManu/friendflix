@@ -287,6 +287,7 @@ const dict: Translation<typeof de> = {
     no_project: 'Le programme de mise à jour ne trouve pas son projet compose.',
     helper_timeout: 'Un conteneur auxiliaire a mis trop de temps.',
     helper_failed: 'Un conteneur auxiliaire a échoué.',
+    admin_missing: 'Ferrofin n’a pas encore de données et n’a reçu aucun mot de passe administrateur ; FriendFlix ne le crée jamais sans. Utilisez « Recréer ».',
     invalid: 'Les données ne sont pas valables.',
     wizard_pending: 'Le serveur n’a pas encore fini de démarrer.',
     wizard_taken: 'Quelqu’un d’autre a déjà configuré le serveur.',

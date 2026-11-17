@@ -385,6 +385,8 @@ export class MediaJobs {
 
     const data = names(project).data(d.kind);
     const dataExists = (await this.engine.inspectVolume(data)) !== null;
+    // a Ferrofin without data creates its administrator from the first-run password: never one without (an open server)
+    if (d.kind === 'ferrofin' && !dataExists && password === undefined) fail('admin_missing');
     if (dataExists) {
       const a = await this.helper(runner, user, 'check', ['data'], [{ kind: 'data', volume: data, rw: false }]);
       if (typeof a.owner === 'number' && a.owner !== d.uid) fail('uid_mismatch');

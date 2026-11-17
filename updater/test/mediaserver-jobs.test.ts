@@ -294,7 +294,7 @@ describe('apply', () => {
     const w = world();
     // a render node with gid 0 would hand the media server the root group
     w.cfg.answer = (c) => (c.verb === 'gpu' ? { nodes: [{ node: 'renderD128', gid: 0, vendor: 'intel' }] } : okFolders(c));
-    const job = await w.run({ op: 'apply', spec: { ...SPEC, gpu: 'dri' } });
+    const job = await w.run({ op: 'apply', spec: { ...SPEC, gpu: 'dri' }, firstRun: { password: PASSWORD } });
     expect(job).toMatchObject({ state: 'failed', error: 'template_violation' });
     expect(w.changes()).toEqual([]);
     expect(w.created).toEqual([]);
@@ -337,7 +337,7 @@ describe('apply', () => {
       if (c.verb === 'gpu') return { nodes: [{ node: 'renderD128', gid: gid++, vendor: 'intel' }] };
       return okFolders(c);
     };
-    const job = await w.run({ op: 'apply', spec: { ...SPEC, gpu: 'dri', egress: false } });
+    const job = await w.run({ op: 'apply', spec: { ...SPEC, gpu: 'dri', egress: false }, firstRun: { password: PASSWORD } });
     expect(job.state).toBe('succeeded');
     expect(w.helperCalls.filter((c) => c.verb === 'gpu')).toHaveLength(2);
     expect((w.find(N.container)!.body.HostConfig as Obj).GroupAdd).toEqual(['994']);
@@ -370,6 +370,8 @@ describe('codes from check', () => {
     ['image_missing', (w) => { w.cfg.pins = { error: 'no_backend' }; return SPEC; }],
     ['verify_failed', (w) => { w.cfg.pins = { error: 'verify_failed' }; return SPEC; }],
     ['uid_unsupported', () => ({ ...SPEC, uid: 0 })],
+    // a Ferrofin without data creates its administrator from the first-run password: never one without
+    ['admin_missing', () => SPEC],
     ['uid_mismatch', (w) => { w.existing(SPEC, ferroPin(), 'v1.5.1'); w.cfg.answer = (c) => (c.args[0] === 'data' ? { owner: 1234 } : okFolders(c)); return SPEC; }],
   ];
   for (const [code, setup] of cases) {
@@ -395,7 +397,7 @@ describe('codes from check', () => {
   it('ferrofin without a cosign signature is not created', async () => {
     const w = world();
     w.cfg.verify = false;
-    const job = await w.run({ op: 'apply', spec: SPEC });
+    const job = await w.run({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } });
     expect(job).toMatchObject({ state: 'failed', error: 'verify_failed' });
     expect(job.media!.steps).toMatchObject({ pull: 'ok', verify: 'failed' });
     expect(w.calls.filter((c) => c.startsWith('create'))).toEqual([]);
@@ -404,7 +406,7 @@ describe('codes from check', () => {
   it('a failed pull changes nothing', async () => {
     const w = world();
     w.cfg.pull = async () => { throw new EngineError(500, 'pull_failed'); };
-    const job = await w.run({ op: 'apply', spec: SPEC });
+    const job = await w.run({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } });
     expect(job).toMatchObject({ state: 'failed', error: 'pull_failed' });
     expect(w.media().pinSource).toBe(SOURCE);
   });
@@ -626,7 +628,7 @@ describe('base change and the job lock', () => {
     const w = world();
     let release!: () => void;
     w.cfg.pull = () => new Promise<void>((r) => { release = r; });
-    expect(w.jobs.start({ op: 'apply', spec: SPEC })).toMatchObject({ ok: true });
+    expect(w.jobs.start({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } })).toMatchObject({ ok: true });
     expect(w.jobs.start({ op: 'stop' })).toEqual({ ok: false, error: 'busy' });
     expect(w.jobs.start({ op: 'remove', data: false })).toEqual({ ok: false, error: 'busy' });
     await new Promise((r) => setTimeout(r, 0));

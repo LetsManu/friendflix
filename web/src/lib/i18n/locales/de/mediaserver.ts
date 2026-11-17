@@ -290,6 +290,7 @@ export default {
     no_project: 'Der Updater findet sein Compose-Projekt nicht.',
     helper_timeout: 'Ein Hilfscontainer brauchte zu lange.',
     helper_failed: 'Ein Hilfscontainer schlug fehl.',
+    admin_missing: 'Ferrofin hat noch keine Daten und bekam kein Administratorkennwort; ohne Kennwort legt FriendFlix ihn nie an. Nimm „Neu anlegen“.',
     // the first run (backend media/types.ts MediaSetupCode)
     invalid: 'Die Angaben sind ungültig.',
     wizard_pending: 'Der Server ist noch nicht fertig gestartet.',
