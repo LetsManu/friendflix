@@ -54,6 +54,9 @@ const setup: Translation<typeof de> = {
     textPlex: 'FriendFlix’in Plex sunucunun adresine ve FriendFlix’in kullandığı Plex hesabının token’ına ihtiyacı var; sunucu sahibinin token’ı tüm özelliklerin kilidini açar.',
     manualTextPlex: 'Adresi ve Plex token’ını gir. Test bağlantıyı denetler ve token’ın sunucu sahibine ait olup olmadığını bildirir.',
     noAuto: 'Bu medya sunucusu için otomatik kurulum yok. Değerleri elle gir.',
+    textChoice: 'Filmlerini, dizilerini ve müziğini hangi sunucunun sunacağını seç: FriendFlix’in senin için çalıştırdığı bir sunucu ya da mevcut sunucun.',
+    managedText: 'FriendFlix sunucuyu senin için çalıştırır: temel klasörü onayla, klasörleri ve ekran kartını seç, sonra “Kur”. Kullanıcı, grup ve yedekleri daha sonra Admin → Ayarlar → Medya sunucusu altında ayarlarsın.',
+    managedOff: 'FriendFlix’in senin için çalıştırdığı bir sunucu burada kullanılamıyor.',
   },
   signin: {
     title: 'Oturum açma',

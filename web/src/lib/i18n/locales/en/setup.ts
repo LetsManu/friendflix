@@ -54,6 +54,9 @@ const setup: Translation<typeof de> = {
     textPlex: 'FriendFlix needs the address of your Plex server and the token of the Plex account FriendFlix uses; the server owner’s token unlocks every feature.',
     manualTextPlex: 'Enter the address and the Plex token. The test checks the connection and tells you whether the token belongs to the server owner.',
     noAuto: 'This media server has no automatic setup. Enter the values by hand.',
+    textChoice: 'Choose which server delivers your movies, shows and music: one FriendFlix runs for you, or your existing one.',
+    managedText: 'FriendFlix runs the server for you: confirm the base folder, choose the folders and the graphics card, then “Set up”. User, group and backups are set afterwards in Admin → Settings → Media server.',
+    managedOff: 'A server run by FriendFlix for you is not available here.',
   },
   signin: {
     title: 'Sign-in',

@@ -5,6 +5,7 @@
  * ff_setup + ff_setup_csrf), saves mark the steps done. Every write must carry x-ff-setup-csrf equal to the cookie, like the backend.
  * While `complete` is false, /api/me answers 503 setup_required (mocks/api.ts).
  */
+import { mediaManaged, mediaStatus } from './admin.js';
 import { plexUrlErrors } from './settings.js';
 
 type Step = 'todo' | 'done' | 'env';
@@ -46,6 +47,46 @@ export interface SetupMock {
   unlocks: string[];
   /** writes whose x-ff-setup-csrf did not match the cookie */
   badCsrf: number;
+  /** step 3's managed media server (GET/POST /api/setup/mediaserver…); null: a backend without these routes (404) */
+  mediaserver: SetupMediaMock | null;
+}
+
+/**
+ * The wizard's media server routes (backend routes/adminMediaserver.ts setupMediaserverRoutes): the view, the base code, the browser,
+ * the GPU, apply and the actions retry / hdr-test. Stateful like the Admin card's mock (mocks/admin.ts): an apply starts the first run,
+ * which walks `setupSeq` one step per GET of the view; `done` also marks the wizard's media step done (the first run saved the address).
+ */
+export interface SetupMediaMock {
+  mode: 'managed' | 'external';
+  offer: { managed: boolean; reason: string | null };
+  kinds: { ferrofin: boolean; jellyfin: boolean };
+  status: any;
+  managed: any;
+  /** the code the updater printed (case and dashes do not matter) */
+  code: string;
+  /** directories per rel ('' = the base) */
+  tree: Record<string, Array<{ name: string; symlink?: boolean; unreadable?: boolean }>>;
+  gpu: { dri: Array<{ node: string; gid: number; vendor: string }>; nvidia: boolean };
+  /** the first run's steps after an apply, one per GET of the view */
+  setupSeq: string[];
+  /** the next write answers this refusal once */
+  refuse: { status: number; error: string } | null;
+  calls: Array<{ p: string; body: any }>;
+}
+/** offered: an updater that reaches its engine (both images pinned); else the default of an install without one (no_updater) */
+export function setupMedia(offered: boolean): SetupMediaMock {
+  return {
+    mode: 'external',
+    offer: offered ? { managed: true, reason: null } : { managed: false, reason: 'no_updater' },
+    kinds: { ferrofin: offered, jellyfin: offered },
+    status: offered ? mediaStatus() : null,
+    managed: mediaManaged(),
+    code: 'ABCD-EFGH-JKMN',
+    tree: { '': [{ name: 'Filme' }, { name: 'Serien' }, { name: 'Musik' }], Filme: [{ name: 'Klassiker' }, { name: 'Neu' }], Serien: [], Musik: [] },
+    gpu: { dri: [{ node: 'renderD128', gid: 109, vendor: 'intel' }], nvidia: false },
+    setupSeq: ['first_run', 'api_key', 'libraries', 'hwaccel', 'finishing', 'done'],
+    refuse: null, calls: [],
+  };
 }
 
 export const SETUP_CODE = 'K7QM-3XA9-PT2D';
@@ -71,6 +112,7 @@ export function setupState(kind: 'jellyfin' | 'plex' = 'jellyfin'): SetupMock {
     testResults: {}, saveProbeFail: null, saveError: null, autoResult: { ok: true },
     planSteps: AK_PLAN, apply: { status: 200, body: { ok: true, steps: AK_APPLIED } }, applyDelayMs: 0,
     puts: [], tests: [], autos: [], plans: [], applies: [], unlocks: [], badCsrf: 0,
+    mediaserver: setupMedia(false),
   };
 }
 
@@ -97,7 +139,9 @@ export function setupRoute(st: SetupMock, m: string, p: string, body: any, heade
   // the session endpoints (requireSetupSession)
   if (st.complete) return J({ error: 'setup_complete' }, 409);
   if (!st.unlocked) return J({ error: 'setup_session_required' }, 401);
-  if (headers['x-ff-setup-csrf'] !== CSRF || !(headers.cookie ?? '').includes(`ff_setup_csrf=${CSRF}`)) { st.badCsrf++; return J({ error: 'csrf' }, 403); }
+  // reads need the session only (requireSetupSession)
+  if (m !== 'GET' && (headers['x-ff-setup-csrf'] !== CSRF || !(headers.cookie ?? '').includes(`ff_setup_csrf=${CSRF}`))) { st.badCsrf++; return J({ error: 'csrf' }, 403); }
+  if (p.startsWith('/api/setup/mediaserver')) return st.mediaserver ? setupMediaRoute(st, st.mediaserver, m, p, body, J) : J({ error: 'not_found' }, 404);
   if (p === '/api/setup/settings' && m === 'PUT') {
     const values: Record<string, unknown> = body.values ?? {};
     st.puts.push(body.force === undefined ? { values } : { values, force: body.force });
@@ -135,4 +179,48 @@ export function setupRoute(st: SetupMock, m: string, p: string, body: any, heade
     return st.applyDelayMs ? new Promise((r) => setTimeout(r, st.applyDelayMs)).then(done) : done();
   }
   return null;
+}
+
+function setupMediaRoute(st: SetupMock, ms: SetupMediaMock, m: string, p: string, body: any, J: Reply): Promise<void> | null {
+  const P = '/api/setup/mediaserver';
+  if (m !== 'GET') ms.calls.push({ p, body });
+  if (m !== 'GET' && ms.refuse) { const r = ms.refuse; ms.refuse = null; return J({ error: r.error }, r.status); }
+  if (p === P && m === 'GET') {
+    if (ms.mode === 'managed' && !['done', 'none', 'failed'].includes(ms.managed.setup) && !ms.managed.setupError && ms.setupSeq.length) {
+      ms.managed.setup = ms.setupSeq.shift();
+      if (ms.managed.setup === 'done') {
+        ms.managed.libraries = ms.managed.libraries.map((l: any) => ({ ...l, created: true }));
+        st.steps.media = 'done';
+      }
+    }
+    return J({ mode: ms.mode, offer: ms.offer, kinds: ms.kinds, status: ms.status, managed: ms.managed, external: { url: null, hasKey: false }, livetvLibraryPath: null });
+  }
+  if (p === `${P}/base` && m === 'POST') {
+    ms.status.base = { ...ms.status.base, pending: true, expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), requested: body.path };
+    return J({ pending: true, expiresAt: ms.status.base.expiresAt, warning: null });
+  }
+  if (p === `${P}/base/confirm` && m === 'POST') {
+    const norm = (c: string) => String(c).toUpperCase().replace(/[^0-9A-Z]/g, '');
+    if (!ms.status.base.pending) return J({ error: 'no_pending' }, 409);
+    if (norm(body.code) !== norm(ms.code)) return J({ error: 'wrong' }, 409);
+    const path = ms.status.base.requested;
+    ms.status.base = { set: true, path, pending: false, expiresAt: null };
+    return J({ result: 'ok', path, kept: [], dropped: [], job: null });
+  }
+  if (p === `${P}/browse` && m === 'POST') return J({ entries: (ms.tree[body.rel] ?? []).map((e) => ({ symlink: false, unreadable: false, ...e })), truncated: false });
+  if (p === `${P}/gpu` && m === 'POST') return J(ms.gpu);
+  if (p === `${P}/apply` && m === 'POST') {
+    const libs = body.folders.map((f: any) => ({ slug: f.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name: f.name, type: f.type, rel: f.rel, created: false }));
+    ms.mode = 'managed';
+    ms.managed = { ...ms.managed, kind: body.kind, libraries: libs, setup: 'applying', setupError: null, adminUser: 'friendflix-admin', hasPassword: true };
+    ms.status.desired = { kind: body.kind, folders: libs.map((l: any) => ({ rel: l.rel, target: `/media/${l.slug}` })), uid: body.uid, gid: body.gid, gpu: body.gpu, mediaGid: body.mediaGid, egress: body.egress, run: true };
+    ms.status.container = { state: 'running', health: 'starting', kind: body.kind, image: { digest: `sha256:${'a'.repeat(64)}`, upstream: '10.11.0' }, template: 'current', tampered: false, createdAt: new Date().toISOString() };
+    return J({ job: { id: '0123456789abcd05', action: 'mediaserver-apply', state: 'running' } }, 202);
+  }
+  if (p === `${P}/action` && m === 'POST') {
+    if (body.op === 'retry') { ms.managed.setupError = null; return J({ ok: true }); }
+    if (body.op === 'hdr-test') return J({ job: { id: '0123456789abcd08', action: 'mediaserver-hdr-test', state: 'running' } }, 202);
+    return J({ error: 'invalid_body' }, 400);
+  }
+  return J({ error: 'not_found' }, 404);
 }

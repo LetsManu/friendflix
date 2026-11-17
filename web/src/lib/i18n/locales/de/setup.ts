@@ -52,6 +52,9 @@ const setup = {
     textPlex: 'FriendFlix braucht die Adresse deines Plex-Servers und den Token des Plex-Kontos, das FriendFlix nutzt; der Token des Server-Besitzers schaltet alle Funktionen frei.',
     manualTextPlex: 'Trage die Adresse und den Plex-Token ein. Beim Test wird die Verbindung geprüft und gemeldet, ob der Token dem Server-Besitzer gehört.',
     noAuto: 'Für diesen Medienserver gibt es keine automatische Einrichtung. Trage die Werte von Hand ein.',
+    textChoice: 'Wähle, welcher Server deine Filme, Serien und Musik liefert: einer, den FriendFlix für dich betreibt, oder dein bestehender.',
+    managedText: 'FriendFlix betreibt den Server für dich: Basisordner bestätigen, Ordner und Grafikkarte wählen, dann „Einrichten“. Benutzer, Gruppe und Sicherungen stellst du danach unter Admin → Einstellungen → Medienserver ein.',
+    managedOff: 'Einen Server, den FriendFlix für dich betreibt, gibt es hier nicht.',
   },
   signin: {
     title: 'Anmeldung',

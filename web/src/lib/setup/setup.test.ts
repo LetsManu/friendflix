@@ -5,8 +5,9 @@ import { ApiError } from '#lib/api';
 import { hasKey, setLocale, tr } from '#lib/i18n';
 import { describeActivity } from '#lib/admin/activity';
 import {
-  akApply, akPlan, APPLY_TIMEOUT_MS, CSRF_HEADER, firstOpenStep, isPlainHttp, mediaAuto, readCookie, redirectUri, saveSetup, setupState, testSetup, unlock,
+  akApply, akPlan, APPLY_TIMEOUT_MS, CSRF_HEADER, firstOpenStep, initialChoice, isPlainHttp, mediaAuto, readCookie, redirectUri, saveSetup, setupState, testSetup, unlock,
 } from './api';
+import { DEFAULT_MANAGED } from '#lib/admin/mediaserver/model';
 import { akFailText, errorText, failedStep, failure, filled, isSecretKey, otherFieldErrors, passkeyDetailText, probeText } from './messages';
 
 const LOCALES = ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const;
@@ -90,6 +91,41 @@ describe('setup API', () => {
     expect(isPlainHttp('https://auth.example.com')).toBe(false);
     expect(redirectUri('https://tv.example.com/')).toBe('https://tv.example.com/auth/callback');
     expect(redirectUri(' https://tv.example.com ')).toBe('https://tv.example.com/auth/callback');
+  });
+});
+
+describe('step 3: the media server choice', () => {
+  const offer = (managed: boolean, kinds = { ferrofin: true, jellyfin: true }, reason: 'no_updater' | null = managed ? null : 'no_updater') =>
+    ({ offer: { managed, reason }, kinds });
+
+  it('managed is preselected when offered', () => {
+    expect(initialChoice({ mediaKind: 'jellyfin', mediaserver: offer(true) })).toBe(DEFAULT_MANAGED);
+    expect(DEFAULT_MANAGED).toBe('jellyfin');
+    // the default kind has no image in this build: the other managed one
+    expect(initialChoice({ mediaKind: 'jellyfin', mediaserver: offer(true, { ferrofin: true, jellyfin: false }) })).toBe('ferrofin');
+  });
+
+  it('external when not offered', () => {
+    expect(initialChoice({ mediaKind: 'jellyfin', mediaserver: offer(false) })).toBe('external');
+    // not read yet, or the backend has no media server routes
+    expect(initialChoice({ mediaKind: 'jellyfin' })).toBe('external');
+    // no image for either kind
+    expect(initialChoice({ mediaKind: 'jellyfin', mediaserver: offer(true, { ferrofin: false, jellyfin: false }) })).toBe('external');
+    // Plex keeps its step as it is, whatever the offer says
+    expect(initialChoice({ mediaKind: 'plex', mediaserver: offer(true) })).toBe('external');
+  });
+
+  it('the managed path has its texts in every language, without a product it must not name', async () => {
+    for (const l of LOCALES) {
+      await setLocale(l);
+      const keys = ['setup.media.textChoice', 'setup.media.managedText', 'setup.media.managedOff'] as const;
+      for (const k of keys) expect(hasKey(k), `${l} ${k}`).toBe(true);
+      const text = keys.map((k) => tr(k));
+      for (const x of text) expect(x, l).not.toBe('');
+      expect(text.join(' '), l).not.toMatch(/seerr|netflix|\.\.\./i);
+      // the choice's intro names no server: it stands above all three choices
+      expect(tr('setup.media.textChoice'), l).not.toMatch(/jellyfin|plex|ferrofin/i);
+    }
   });
 });
 
