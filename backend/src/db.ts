@@ -1364,6 +1364,7 @@ export const MIGRATIONS: string[] = [
   alter table seerr_requests add column if not exists seasons smallint[];
   `,
   // 60: notifications center. group_key folds repeated notices into one group (kind|message key, see notifications/categories.ts);
+  // A join title counts one level (a nested join adds an empty part), as groupKey() does.
   // hidden_at = cleared by the owner; notification_state holds read/hidden per person for broadcasts (user_id null). Rerunnable.
   `
   alter table notifications add column if not exists group_key text;
@@ -1372,7 +1373,7 @@ export const MIGRATIONS: string[] = [
     when kind in ('update_available','update_failed','syscheck_problem','pin_locked','deletion_requested','deletion_done','deletion_failed','deletion_restored','access_ended','access_soon') then 'id:' || id
     when msg->'title'->>'key' is not null then msg->'title'->>'key'
     when jsonb_typeof(msg->'title'->'join') = 'array' then (
-      select string_agg(coalesce(e.v->>'key', e.v #>> '{}'), '+' order by e.i)
+      select string_agg(case jsonb_typeof(e.v) when 'string' then e.v #>> '{}' when 'object' then coalesce(e.v->>'key', '') else '' end, '+' order by e.i)
       from jsonb_array_elements(msg->'title'->'join') with ordinality as e(v, i))
     else title end
   where group_key is null;

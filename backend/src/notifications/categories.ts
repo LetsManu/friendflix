@@ -30,17 +30,22 @@ export const NEVER_GROUPED: ReadonlySet<string> = new Set([
   'access_ended', 'access_soon',
 ]);
 
-const textKey = (t: Text): string => {
+/** Key part of a title: a plain text is itself, a message its key, a join its parts' keys joined by `+`.
+ *  Only one join level counts: a join inside a join contributes an empty part (the SQL backfill in migration 60 does the same). */
+const textKey = (t: Text, nested = false): string => {
   if (typeof t === 'string') return t;
-  if ('join' in t) return t.join.map(textKey).join('+');
+  if ('join' in t) return nested ? '' : t.join.map((x) => textKey(x, true)).join('+');
   return t.key;
 };
 
 /**
  * Group key of a notification: `<kind>|<message key>` (plain titles: the text; a join: the keys joined by `+`).
- * Never-grouped kinds get `<kind>|id:<id>`; without a known id this is `<kind>|id:pending` until the insert fills it in.
+ * Never-grouped kinds get `<kind>|id:<id>` and need the id of the row.
  */
 export function groupKey(kind: string, title: Text, id?: number): string {
-  if (NEVER_GROUPED.has(kind)) return `${kind}|id:${id ?? 'pending'}`;
+  if (NEVER_GROUPED.has(kind)) {
+    if (id === undefined) throw new Error(`groupKey: ${kind} needs the notification id`);
+    return `${kind}|id:${id}`;
+  }
   return `${kind}|${textKey(title)}`;
 }

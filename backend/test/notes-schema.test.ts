@@ -55,11 +55,13 @@ describe('groupKey', () => {
   it('groups by kind and message key, never for single kinds', () => {
     expect(groupKey('tv_paired', m('tv.paired.title', { name: 'Wohnzimmer' }))).toBe(groupKey('tv_paired', m('tv.paired.title', { name: 'Küche' })));
     expect(groupKey('update_available', 'x', 7)).toBe('update_available|id:7');
-    expect(groupKey('update_available', 'x')).toBe('update_available|id:pending');
+    expect(() => groupKey('update_available', 'x')).toThrow();
     expect(groupKey('available', 'Neu: A')).toBe('available|Neu: A');
     expect(groupKey('available', 'Neu: A')).not.toBe(groupKey('available', 'Neu: B'));
     expect(groupKey('episode', 'T')).not.toBe(groupKey('digest', 'T'));
     expect(groupKey('digest', { join: [m('tv.paired.title', { name: 'a' }), 'x'], sep: '\n' })).toBe('digest|tv.paired.title+x');
+    // a join inside a join contributes nothing (the SQL backfill does the same)
+    expect(groupKey('digest', { join: [m('tv.paired.title'), { join: ['a', 'b'] }, 'x'] })).toBe('digest|tv.paired.title++x');
   });
 });
 
@@ -69,14 +71,19 @@ describe('notify stores group_key', () => {
       `insert into notifications(user_id, kind, title, msg, dedupe) values
         (null, 'episode', 'Alt A', null, 'old-1'),
         (null, 'tv_paired', 'Alt B', '{"title":{"key":"tv.paired.title","params":{"name":"x"}}}', 'old-2'),
-        (null, 'update_failed', 'Alt C', null, 'old-3')`,
+        (null, 'update_failed', 'Alt C', null, 'old-3'),
+        (null, 'digest', 'Alt D', '{"title":{"join":[{"key":"tv.paired.title"},"x"],"sep":"\\n"}}', 'old-4'),
+        (null, 'digest', 'Alt E', '{"title":{"join":[{"key":"tv.paired.title"},{"join":["a","b"]},"x"]}}', 'old-5')`,
     );
-    const mig = MIGRATIONS[59]!;
-    await env.pool.query(mig);
+    // the notifications center migration is the last entry
+    expect(MIGRATIONS[MIGRATIONS.length - 1]).toContain('notification_state');
+    await env.pool.query(MIGRATIONS[MIGRATIONS.length - 1]!);
     const rows = (await env.pool.query<{ dedupe: string; group_key: string; id: string }>("select id, dedupe, group_key from notifications where dedupe like 'old-%' order by dedupe")).rows;
     expect(rows[0]!.group_key).toBe('episode|Alt A');
     expect(rows[1]!.group_key).toBe('tv_paired|tv.paired.title');
     expect(rows[2]!.group_key).toBe(`update_failed|id:${rows[2]!.id}`);
+    expect(rows[3]!.group_key).toBe('digest|tv.paired.title+x');
+    expect(rows[4]!.group_key).toBe('digest|tv.paired.title++x');
 
     await notify(env.ctx, { userId: null, kind: 'tv_paired', title: m('tv.paired.title', { name: 'Wohnzimmer' }), dedupe: 'new-1' });
     await notify(env.ctx, { userId: null, kind: 'tv_paired', title: m('tv.paired.title', { name: 'Küche' }), dedupe: 'new-2' });
@@ -85,6 +92,7 @@ describe('notify stores group_key', () => {
     expect(n[0]!.group_key).toBe('tv_paired|tv.paired.title');
     expect(n[1]!.group_key).toBe(n[0]!.group_key);
     expect(n[2]!.group_key).toBe(`update_failed|id:${n[2]!.id}`);
+    expect((await env.pool.query("select 1 from notifications where group_key like '%id:pending'")).rowCount).toBe(0);
   });
 });
 
