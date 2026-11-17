@@ -89,6 +89,7 @@ test.describe('post-play screen (phone)', () => {
     const wish = pp.getByRole('button', { name: 'Fehlende Staffel wünschen' });
     expect((await boxInViewport(page, wish)).ok).toBe(true);
     await wish.tap();
+    await page.getByRole('dialog', { name: 'Staffeln wählen' }).getByRole('button', { name: '2 Staffeln anfragen' }).tap();
     await expect(pp.getByRole('button', { name: 'Gewünscht' })).toBeVisible();
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });

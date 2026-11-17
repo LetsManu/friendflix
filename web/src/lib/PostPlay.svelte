@@ -15,6 +15,7 @@
   import { features } from '#lib/capabilities';
   import { motionAllowed } from '#lib/preview';
   import { episodeKey, loadReminders, remindKeys, toggleReminder } from '#lib/reminders';
+  import { pickSeasons } from '#lib/requests/picker';
   import { focusFirst, isBackKey } from '#lib/spatial';
   import { isSpoiler } from '#lib/spoiler';
   import { listIds, prefs, toggleList } from '#lib/stores';
@@ -56,6 +57,7 @@
   /** Esc / Back on the overlay: close it, stay on the title (capture phase, before the page's own "leave the player") */
   function onBack(e: KeyboardEvent) {
     if (variant !== 'overlay' || !(e.key === 'Escape' || (tvMode() && isBackKey(e)))) return;
+    if (e.target instanceof Element && e.target.closest('[aria-modal="true"]')) return; // a dialog over it (the season picker) closes itself
     e.preventDefault(); e.stopImmediatePropagation();
     close();
   }
@@ -121,6 +123,15 @@
   }
   async function wishSeason() {
     if (!wish || wishState) return;
+    if (wish.mediaType === 'tv') {
+      // the missing seasons: the season picker shows which are open and makes the wish (closed without one: nothing changes)
+      wishState = 'busy'; wishMsg = '';
+      const r = await pickSeasons({ tmdbId: wish.tmdbId, title });
+      wishState = r?.kind === 'requested' || r?.kind === 'exists' ? 'done' : '';
+      if (r?.kind === 'limit') wishMsg = tr('postplay.action.wishLimit');
+      else if (r?.kind === 'failed') wishMsg = tr('postplay.action.wishFailed');
+      return;
+    }
     wishState = 'busy'; wishMsg = '';
     try { await api('/api/requests', { method: 'POST', body: { mediaType: wish.mediaType, tmdbId: wish.tmdbId } }); wishState = 'done'; }
     catch (e) {

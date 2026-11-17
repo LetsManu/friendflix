@@ -13,9 +13,10 @@
   import Select from '#lib/ui/Select.svelte';
   import StatusPill, { type Tone } from '#lib/ui/StatusPill.svelte';
   import type { Column, Query } from '#lib/ui/table';
+  import { seasonRanges } from '#lib/requests/picker';
 
   type StateKey = 'pending' | 'approved' | 'processing' | 'available' | 'partial' | 'declined' | 'unknown';
-  interface Req { id: number; title: string; mediaType: string; requestedBy: string; statusKey: StateKey; createdAt?: string }
+  interface Req { id: number; title: string; mediaType: string; seasons?: number[]; requestedBy: string; statusKey: StateKey; createdAt?: string }
   const FILTERS = ['pending', 'approved', 'processing', 'available', 'all'] as const;
   type Filter = (typeof FILTERS)[number];
   const TONE: Record<StateKey, Tone> = { pending: 'warn', approved: 'info', processing: 'info', available: 'ok', partial: 'info', declined: 'muted', unknown: 'muted' };
@@ -83,7 +84,8 @@
   $: columns = [
     { key: 'title', label: $t('admin.requests.title'), value: (r) => r.title, primary: true },
     { key: 'by', label: $t('admin.requests.from'), value: (r) => r.requestedBy, sortable: false },
-    { key: 'type', label: $t('admin.requests.type'), value: (r) => (r.mediaType === 'tv' ? $t('admin.kind.series') : $t('admin.kind.movie')), sortable: false },
+    // a season wish names its seasons ("Serie · Staffeln 2–3"); a whole series just "Serie"
+    { key: 'type', label: $t('admin.requests.type'), value: (r) => (r.mediaType === 'tv' ? [$t('admin.kind.series'), r.seasons?.length ? $t('home.wish.seasons.list', { n: r.seasons.length, list: seasonRanges(r.seasons) }) : ''].filter(Boolean).join(' · ') : $t('admin.kind.movie')), sortable: false },
     { key: 'status', label: $t('admin.requests.status'), value: (r) => r.statusKey, sortable: false },
     { key: 'when', label: $t('adminContent.requests.when'), value: (r) => r.createdAt ?? '', sortable: false },
     { key: 'act', label: $t('ui.table.actions'), sortable: false, filter: false, align: 'end' },
