@@ -6,9 +6,9 @@ import { mediaManagedTick } from '../src/mediaserver/firstRun.js';
 import { libraryReferences } from '../src/mediaserver/references.js';
 import { libraryItemIds } from '../src/mediaserver/serverApi.js';
 import { readManaged, writeManaged, type LibraryEntry } from '../src/mediaserver/store.js';
-import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
+import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
 
-const SECRET = 'internal-secret-123456';
+const SECRET = cfg.INTERNAL_SECRET;
 const DIGEST = `sha256:${'a'.repeat(64)}`;
 const MANAGED = 'http://mediaserver:8096';
 /** token-shaped values from pieces (gitleaks) */

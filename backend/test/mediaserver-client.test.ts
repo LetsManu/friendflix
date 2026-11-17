@@ -5,9 +5,9 @@ import { Readable } from 'node:stream';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { decodePassphrase, encodePassphrase, mediaDownload, mediaOp, mediaUpload, parseMediaStatus, startMediaJob } from '../src/mediaserver/client.js';
 import { parseStatus, updaterView } from '../src/updater.js';
-import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
+import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
 
-const SECRET = 'internal-secret-123456';
+const SECRET = cfg.INTERNAL_SECRET;
 const JOB_ID = '0fedcba987654321';
 const DIGEST = `sha256:${'a'.repeat(64)}`;
 const fullStatus = () => ({

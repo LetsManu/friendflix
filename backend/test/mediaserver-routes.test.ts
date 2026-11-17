@@ -5,9 +5,9 @@ import { sessionKey } from '../src/session.js';
 import { issueSetupCode } from '../src/setup/code.js';
 import { decrypt, encrypt } from '../src/crypto.js';
 import { readManaged } from '../src/mediaserver/store.js';
-import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
+import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
 
-const SECRET = 'internal-secret-123456';
+const SECRET = cfg.INTERNAL_SECRET;
 const CODE = 'K7QM-2D9X-HT4R';
 const DIGEST = `sha256:${'a'.repeat(64)}`;
 const FRIEND = { sub: 'sub-ben', email: 'ben@friend.example.com', name: 'Ben Muster', groups: [] as string[] };
