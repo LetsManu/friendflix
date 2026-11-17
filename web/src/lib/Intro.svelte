@@ -4,7 +4,8 @@
   import { createEventDispatcher, onMount } from 'svelte';
   import { playSonicLogo, stopSonicLogo } from '#lib/sonic';
   import { t } from '#lib/i18n';
-  import { brand, brandInitial, brandPalette, builtInMark } from '#lib/brand';
+  import { brand, brandInitial, brandPalette } from '#lib/brand';
+  import { decideIntroMark, introMarkSource, preloadMarkCancelable, type IntroMark } from '#lib/intro';
 
   /** Play the sonic logo along with the animation (only sensible after a user gesture). */
   export let sound = false;
@@ -31,7 +32,13 @@
     if (last && last.sp === sp) last.chars.push({ ch, i }); else words.push({ sp, chars: [{ ch, i }] });
   });
   const stagger = Math.min(45, 405 / Math.max(1, letters.length - 1));
-  const own = !builtInMark(b);
+  /** the symbol is loaded before anything animates: until then the overlay is just its black ground (no default mark to flash,
+   *  nothing to pop in). Without a symbol (the default path included) the stage is there from the first frame, as before. */
+  const src = introMarkSource(b);
+  let mark: IntroMark = decideIntroMark(b, false);
+  let ready = !src;
+  let preload: { cancel: () => void } | null = null;
+  $: own = mark !== 'builtin';
   const pal = brandPalette(b.tokens);
 
   let root: HTMLElement;
@@ -73,27 +80,44 @@
     if (/(ff-out|ff-rm|ff-skip)$/.test(e.animationName)) finish();
   }
 
+  /** the stage is up: the timeline, its hard upper bound and the sonic logo start together */
+  function begin() {
+    fallback = setTimeout(finish, reduced ? FALLBACK_REDUCED_MS : FALLBACK_MS);
+    if (sound) void playSonicLogo();
+  }
+
   onMount(() => {
     const active = document.activeElement;
     returnFocus = active instanceof HTMLElement && active !== document.body ? active : null;
     returnFocus?.blur();
     addEventListener('keydown', onKey, true);
     addEventListener('pointerdown', onPointer, true);
-    fallback = setTimeout(finish, reduced ? FALLBACK_REDUCED_MS : FALLBACK_MS);
-    if (sound) void playSonicLogo();
-    return () => { if (!finished) { finished = true; clearTimeout(fallback); clearTimeout(skipTimer); removeEventListener('keydown', onKey, true); removeEventListener('pointerdown', onPointer, true); void stopSonicLogo(100); } };
+    if (src) {
+      const h = preloadMarkCancelable(src);
+      preload = h;
+      void h.promise.then((ok) => {
+        if (finished) return;
+        mark = decideIntroMark(b, ok);
+        ready = true;
+        begin();
+      });
+    } else begin();
+    return () => { preload?.cancel(); if (!finished) { finished = true; clearTimeout(fallback); clearTimeout(skipTimer); removeEventListener('keydown', onKey, true); removeEventListener('pointerdown', onPointer, true); void stopSonicLogo(100); } };
   });
 </script>
 
-<div class="intro" class:rm={reduced} class:leaving={skipping} class:own bind:this={root} role="presentation" on:animationend={onEnd} style:--flare-rgb={pal.flare}>
+<div class="intro" class:rm={reduced} class:go={ready} class:leaving={skipping} class:own bind:this={root} role="presentation" on:animationend={onEnd} style:--flare-rgb={pal.flare}>
   <p class="sr" role="status">{$t('home.intro.loading')}</p>
+  {#if ready}
   <div class="stage" aria-hidden="true">
-    <div class="tilewrap">
+    <div class="tilewrap" class:wide={mark === 'logo'}>
       <div class="glow"></div>
       <div class="flare"></div>
-      {#if b.images.symbol}
+      {#if mark === 'logo' && b.images.logo}
+        <img class="logo" src={b.images.logo} alt="" draggable="false" />
+      {:else if mark === 'image' && b.images.symbol}
         <img class="tile sym" src={b.images.symbol} alt="" draggable="false" />
-      {:else if own}
+      {:else if mark === 'initial'}
         <svg class="tile" viewBox="0 0 64 64" focusable="false">
           <rect x="2" y="2" width="60" height="60" rx="15" class="fill" />
           <text x="32" y="33" text-anchor="middle" dominant-baseline="central" font-size="34" font-weight="800" fill="#fff">{brandInitial(b.name)}</text>
@@ -115,8 +139,9 @@
       {/if}
       <div class="ring"></div>
     </div>
-    <div class="word">{#each words as w}<span class="wd">{#each w.chars as c}<span class="ch" style="--d:{c.i * stagger}ms">{c.ch}</span>{/each}</span>{/each}</div>
+    {#if mark !== 'logo'}<div class="word">{#each words as w}<span class="wd">{#each w.chars as c}<span class="ch" style="--d:{c.i * stagger}ms">{c.ch}</span>{/each}</span>{/each}</div>{/if}
   </div>
+  {/if}
 </div>
 
 <style>
@@ -124,7 +149,9 @@
      play mark + flare + sweep on the chord at 1.2 s, wordmark 1.3-2.1 s, then a soft accent ring expands once from the tile
      (1.9-3.0 s) while the overlay fades out (2.7-3.2 s). Only transform and opacity animate,
      and every phase overlaps the next so the motion never stops or jumps. */
-  .intro { position: fixed; inset: 0; z-index: 10000; background: #000; display: grid; place-items: center; overflow: hidden; cursor: pointer; animation: ff-out .5s cubic-bezier(.4, 0, .2, 1) 2.7s both; contain: strict; }
+  .intro { position: fixed; inset: 0; z-index: 10000; background: #000; display: grid; place-items: center; overflow: hidden; cursor: pointer; contain: strict; }
+  /* the overlay's own fade-out belongs to the timeline: it starts with the stage (after the symbol is loaded), not at mount */
+  .go { animation: ff-out .5s cubic-bezier(.4, 0, .2, 1) 2.7s both; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; margin: 0; }
   .stage { --tile: clamp(104px, 22vmin, 176px); position: relative; display: grid; justify-items: center; gap: clamp(.9rem, 3.2vmin, 1.7rem); }
   .glow { position: absolute; inset: -110%; border-radius: 50%; background: radial-gradient(circle, rgba(var(--acc-rgb), .45) 0%, rgba(var(--acc-rgb), .14) 38%, transparent 68%); opacity: 0; pointer-events: none; will-change: transform, opacity; animation: ff-bloom 3.2s cubic-bezier(.22, 1, .36, 1) .05s both; }
@@ -143,6 +170,10 @@
   .g0 { stop-color: var(--mark-from); }
   .g1 { stop-color: var(--mark-to); }
   .fill { fill: var(--acc-fill); }
+  /* the wide logo (no symbol): centred, in a box that grows with the screen; it already carries the name, so no lettering below */
+  .wide { width: min(80vw, calc(var(--tile) * 2.8)); aspect-ratio: auto; }
+  .logo { display: block; width: 100%; height: auto; max-height: calc(var(--tile) * 1.3); object-fit: contain; }
+  .wide .ring { display: none; }
   .sym { object-fit: cover; border-radius: 23%; }
   /* another brand's symbol (an upload or the initial on the accent fill) has no F to draw: it rises in (opacity and translation only) */
   .own .tilewrap { animation-name: ff-rise; }
@@ -163,10 +194,10 @@
   @keyframes ff-rm { 0% { opacity: 0; } 33% { opacity: 1; } 67% { opacity: 1; } 100% { opacity: 0; } }
 
   /* reduced motion: the finished logo, faded in and out over 300 ms each; no ring, no sweep, no drawing */
-  .rm { animation: ff-rm .9s linear both !important; }
+  .rm.go { animation: ff-rm .9s linear both !important; }
   .rm .stage, .rm .glow, .rm .tilewrap, .rm .tile, .rm .flare, .rm .fstroke, .rm .ffill, .rm .play, .rm .sweep, .rm .ring, .rm .word, .rm .ch { animation: none !important; }
   .rm .fstroke, .rm .flare, .rm .sweep, .rm .ring { display: none; }
   .rm .glow { opacity: .3; transform: none; }
 
-  .leaving { animation: ff-skip .15s linear both !important; pointer-events: none; }
+  .intro.leaving { animation: ff-skip .15s linear both !important; pointer-events: none; }
 </style>

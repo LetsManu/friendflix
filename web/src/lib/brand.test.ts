@@ -8,7 +8,7 @@ import { appName, setLocale, t, tr } from '#lib/i18n';
 import { markParams, richParts } from '#lib/i18n/rich';
 import {
   applyBrand, applyCached, brand, BRAND_CACHE_KEY, brandKnown, brandInitial, brandPalette, builtInMark, DEFAULT_LOADED, GLASS_TEXT_ON, headerParts, loadBrand, parseBrand,
-  refetchOnVisible, resetBrandForTests,
+  refetchOnVisible, resetBrandForTests, whenBrandKnown,
 } from './brand';
 import { ACC_FILL_ON, ACC_LIGHT_ON, ACC_LINE_ON, ACC_TEXT_ON, contrast, DEFAULT_TOKENS, deriveTokens, TOKENS_VERSION, type BrandTokens } from './brandColors';
 import { AMB_PEAK, contrast as rgbContrast, DARK_BASE, frostComposite, luminance, SCRIM_LIGHT, SCRIM_MENU, type RGB } from './glass/tone';
@@ -497,5 +497,30 @@ describe('the default glow follows the accent', () => {
       }
       expect(best, accent).toBeLessThanOrEqual(luminance(AMB_PEAK) + 1e-9);
     }
+  });
+});
+
+describe('whenBrandKnown (the intro waits for the brand)', () => {
+  beforeEach(() => resetBrandForTests());
+  it('resolves at once when the brand is already known and after the first answer otherwise', async () => {
+    let done = false;
+    void whenBrandKnown().then(() => { done = true; });
+    await Promise.resolve();
+    expect(done).toBe(false);
+    await loadBrand((async () => ({ ok: false })) as unknown as typeof fetch);
+    await whenBrandKnown();
+    expect(done).toBe(true);
+    await expect(whenBrandKnown()).resolves.toBeUndefined();
+  });
+  it('gives up after the cap and resolves with whatever is known', async () => {
+    vi.useFakeTimers();
+    try {
+      let done = false;
+      void whenBrandKnown(800).then(() => { done = true; });
+      await vi.advanceTimersByTimeAsync(799);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(done).toBe(true);
+    } finally { vi.useRealTimers(); }
   });
 });
