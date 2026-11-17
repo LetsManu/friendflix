@@ -52,7 +52,7 @@ const STATE: Record<Kind, { data: [string, string]; cache: [string, string] }> =
 const NVIDIA_CAPS = 'compute,video,utility';
 const ENV: Record<Kind, Record<string, (v: string) => boolean>> = {
   ferrofin: {
-    TZ: (v) => TZ_RE.test(v) && v.length <= 64, FERROFIN_ADMIN_USER: (v) => v === 'friendflix-admin',
+    TZ: (v) => TZ_RE.test(v) && v.length <= 64, FERROFIN_CACHE_DIR: (v) => v === '/cache', FERROFIN_ADMIN_USER: (v) => v === 'friendflix-admin',
     FERROFIN_ADMIN_PASSWORD: (v) => PASSWORD_RE.test(v), NVIDIA_DRIVER_CAPABILITIES: (v) => v === NVIDIA_CAPS,
   },
   jellyfin: { TZ: (v) => TZ_RE.test(v) && v.length <= 64, XDG_CACHE_HOME: (v) => v === '/cache/xdg', NVIDIA_DRIVER_CAPABILITIES: (v) => v === NVIDIA_CAPS },
@@ -64,7 +64,7 @@ const IMAGE_LABEL_PREFIXES = ['org.opencontainers.', 'io.github.letsmanu.friendf
 const FFMPEG_DIRS = ['/usr/local/bin', '/usr/lib/jellyfin-ffmpeg'];
 const HDR_TEST1 = ['-hide_banner', '-init_hw_device', null, '-init_hw_device', 'opencl=ocl@va', '-f', 'lavfi', '-i', 'nullsrc', '-frames', '1', '-f', 'null', '-'];
 const RENDER_NODE_RE = /^\/dev\/dri\/renderD[0-9]{1,4}$/;
-const SEED_TARGET: Record<Kind, string | null> = { ferrofin: null, jellyfin: '/tmp' };
+const SEED_TARGET: Record<Kind, string | null> = { ferrofin: '/tmp', jellyfin: '/tmp' };
 /** the media images a seed or HDR run may use: one of the two allowed repositories, pinned by digest */
 const MEDIA_IMAGE_RE: Record<Kind, RegExp> = {
   ferrofin: /^ghcr\.io\/[a-z0-9._-]+\/[a-z0-9._-]+-mediaserver@sha256:[0-9a-f]{64}$/,

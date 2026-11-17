@@ -120,6 +120,7 @@
     "StdinOnce": false,
     "Env": [
       "TZ=Europe/Berlin",
+      "FERROFIN_CACHE_DIR=/cache",
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       "SERVICE_VERSION=v1.5.1",
       "FERROFIN_DATA_DIR=/data",

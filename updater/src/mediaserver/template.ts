@@ -35,8 +35,8 @@ export const STATE_TARGETS: Record<Kind, { data: string; cache: string }> = {
 };
 
 /**
- * Ferrofin v1.5.1's first-run administrator name variable (read from the server binary: `FERROFIN_ADMIN_USER` next to
- * `FERROFIN_ADMIN_PASSWORD`; both only act on a fresh install without users).
+ * Ferrofin v1.5.1's first-run administrator name variable (its docs/CONFIG.md: `FERROFIN_ADMIN_USER`, default `admin`, next to
+ * `FERROFIN_ADMIN_PASSWORD`; both only act when the database is created. Without the password the admin is seeded passwordless).
  */
 export const FERROFIN_ADMIN_NAME = 'FERROFIN_ADMIN_USER';
 export const ADMIN_USER = 'friendflix-admin';
@@ -44,23 +44,25 @@ const NVIDIA_ENV = 'NVIDIA_DRIVER_CAPABILITIES=compute,video,utility';
 const PASSWORD_RE = /^[A-Za-z0-9_-]{43}$/;
 
 export const ENV_KEYS: Record<Kind, readonly string[]> = {
-  ferrofin: ['TZ', FERROFIN_ADMIN_NAME, 'FERROFIN_ADMIN_PASSWORD', 'NVIDIA_DRIVER_CAPABILITIES'],
+  ferrofin: ['TZ', 'FERROFIN_CACHE_DIR', FERROFIN_ADMIN_NAME, 'FERROFIN_ADMIN_PASSWORD', 'NVIDIA_DRIVER_CAPABILITIES'],
   jellyfin: ['TZ', 'XDG_CACHE_HOME', 'NVIDIA_DRIVER_CAPABILITIES'],
 };
 
-/** the owner of the state directories in the pinned images (Ferrofin: user `ferrofin`; Jellyfin: root, mode 0777) */
+/**
+ * the owner of the state directories in the pinned images (Ferrofin: user `ferrofin`; Jellyfin: root). Both make them mode 0777
+ * (Jellyfin upstream; our Ferrofin image by its own fork change, mediaserver/Dockerfile), so Docker's copy-up alone leaves a fresh
+ * volume writable for any non-root uid.
+ */
 export const IMAGE_OWNER: Record<Kind, string> = { ferrofin: '1000:1000', jellyfin: '0:0' };
 
 /**
  * Where a never-started seed container mounts a fresh state volume so Docker's copy-up gives it an owner and mode the uid can write
- * (Controller's call 15). Checked on the pinned images (image configs and layers from the registry; no engine here):
- * - jellyfin: `/tmp` is root 1777. (Its `/config` and `/cache` are root 0777 themselves, so the real create's copy-up also leaves
- *   the volume writable for any uid: the seed is harmless and keeps the rule uniform.)
- * - ferrofin: null. Its `/data` is 1000:1000 0755, and Docker copies the owner and mode of the image directory into an empty volume
- *   at every create that mounts it without NoCopy, so a seeded (still empty) volume is reset to 1000:1000 0755 by the real create:
- *   no seed directory gives another uid a writable `/data`.
+ * (Controller's call 15). `/tmp` is root 1777 in both images (checked on the pinned layers). Docker copies the owner and mode of the
+ * image directory into a still-empty volume again at every create that mounts it without NoCopy, so the real create then gives the
+ * volume its state directory's mode 0777: the seed is redundant for both kinds, harmless, and keeps the rule uniform. null would
+ * mean `uid_unsupported` for a uid that is not the owner.
  */
-export const SEED_DIR: Record<Kind, string | null> = { ferrofin: null, jellyfin: '/tmp' };
+export const SEED_DIR: Record<Kind, string | null> = { ferrofin: '/tmp', jellyfin: '/tmp' };
 
 /** a fresh state volume needs a seed when the container user is not the owner of the image's state directories */
 export function needsSeed(kind: Kind, uid: number, gid: number): boolean {
@@ -115,6 +117,7 @@ export function containerSpec(d: DesiredSpec, f: TemplateFacts, o: { password?: 
   const t = STATE_TARGETS[d.kind];
 
   const env = [`TZ=${d.tz}`];
+  if (d.kind === 'ferrofin') env.push('FERROFIN_CACHE_DIR=/cache'); // its default is /data/cache: keep the cache out of the data volume
   if (o.password !== undefined) {
     if (d.kind !== 'ferrofin' || !PASSWORD_RE.test(o.password)) throw new TemplateViolation('Env');
     env.push(`${FERROFIN_ADMIN_NAME}=${ADMIN_USER}`, `FERROFIN_ADMIN_PASSWORD=${o.password}`);

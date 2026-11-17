@@ -105,6 +105,7 @@ describe('managed container guard', () => {
     ['Env FERROFIN_DATA_DIR', (b) => { b.Env.push('FERROFIN_DATA_DIR=/x'); }],
     ['Env a key twice', (b) => { b.Env.push('TZ=UTC'); }],
     ['Env XDG_CACHE_HOME on ferrofin', (b) => { b.Env.push('XDG_CACHE_HOME=/cache/xdg'); }],
+    ['Env FERROFIN_CACHE_DIR elsewhere', (b) => { b.Env[1] = 'FERROFIN_CACHE_DIR=/media/filme'; }],
     ['Env a TZ with a newline', (b) => { b.Env[0] = 'TZ=UTC\nLD_PRELOAD=/x'; }],
     ['Env NVIDIA capabilities widened', (b) => { b.Env.push('NVIDIA_DRIVER_CAPABILITIES=all'); }],
     ['Env not an array', (b) => { b.Env = 'TZ=UTC'; }],
@@ -172,7 +173,7 @@ describe('managed container guard', () => {
 describe('managed container guard on inspect', () => {
   const fixture = JSON.parse(readFileSync(new URL('./fixtures/mediaserver-inspect.json', import.meta.url), 'utf8')) as Body;
   const image = {
-    env: (fixture.Config.Env as string[]).filter((e) => !e.startsWith('TZ=')),
+    env: (fixture.Config.Env as string[]).filter((e) => !e.startsWith('TZ=') && !e.startsWith('FERROFIN_CACHE_DIR=')),
     entrypoint: ['ferrofin-server'], cmd: null, volumes: ['/data'],
   };
   const X = { ...E, image };
@@ -357,6 +358,9 @@ describe('helper guard', () => {
     }
     refuses(() => assertHelper(seed(), { ...g, image: IMG }));
     refuses(() => assertHelper(seed(), { ...g, kind: 'ferrofin' }));
+    const fseed = clone(seedSpec('ferrofin', 'data', { ...D, uid: 1001 }, F).body) as Body;
+    expect(() => assertHelper(fseed, { ...g, uid: 1001, image: IMG, kind: 'ferrofin' })).not.toThrow();
+    refuses(() => assertHelper(fseed, { ...g, uid: 1001, image: JIMG, kind: 'ferrofin' }));
     refuses(() => assertHelper(seed(), { ...g, kind: undefined }));
     refuses(() => assertHelper(seed(), { ...g, image: 'docker.io/jellyfin/jellyfin:latest' }));
   });

@@ -30,7 +30,7 @@ describe('media server container template', () => {
     expect(req.name).toBe('friendflix-mediaserver');
     const { Labels, ...rest } = req.body as { Labels: Record<string, string> };
     expect(rest).toEqual({
-      Hostname: 'mediaserver', User: '1000:1000', Image: IMG, Env: ['TZ=Europe/Berlin'], StopTimeout: 30,
+      Hostname: 'mediaserver', User: '1000:1000', Image: IMG, Env: ['TZ=Europe/Berlin', 'FERROFIN_CACHE_DIR=/cache'], StopTimeout: 30,
       HostConfig: {
         NetworkMode: 'friendflix_media',
         Mounts: [
@@ -87,16 +87,16 @@ describe('media server container template', () => {
     expect(h).not.toHaveProperty('DeviceRequests');
     expect(h).not.toHaveProperty('GroupAdd');
     expect(body({ gpu: 'off' }).HostConfig.GroupAdd).toEqual(['2000']);
-    expect(body({ gpu: 'off' }).Env).toEqual(['TZ=Europe/Berlin']);
+    expect(body({ gpu: 'off' }).Env).toEqual(['TZ=Europe/Berlin', 'FERROFIN_CACHE_DIR=/cache']);
   });
 
   it('first run adds the administrator after TZ only when given', () => {
     expect(FERROFIN_ADMIN_NAME).toBe('FERROFIN_ADMIN_USER');
-    expect(body({}, {}, { password: pw }).Env).toEqual(['TZ=Europe/Berlin', 'FERROFIN_ADMIN_USER=friendflix-admin', 'FERROFIN_ADMIN_PASSWORD=' + pw]);
+    expect(body({}, {}, { password: pw }).Env).toEqual(['TZ=Europe/Berlin', 'FERROFIN_CACHE_DIR=/cache', 'FERROFIN_ADMIN_USER=friendflix-admin', 'FERROFIN_ADMIN_PASSWORD=' + pw]);
     expect(body({ gpu: 'nvidia' }, {}, { password: pw }).Env).toEqual([
-      'TZ=Europe/Berlin', 'FERROFIN_ADMIN_USER=friendflix-admin', 'FERROFIN_ADMIN_PASSWORD=' + pw, 'NVIDIA_DRIVER_CAPABILITIES=compute,video,utility',
+      'TZ=Europe/Berlin', 'FERROFIN_CACHE_DIR=/cache', 'FERROFIN_ADMIN_USER=friendflix-admin', 'FERROFIN_ADMIN_PASSWORD=' + pw, 'NVIDIA_DRIVER_CAPABILITIES=compute,video,utility',
     ]);
-    expect(body({}, {}, {}).Env).toEqual(['TZ=Europe/Berlin']);
+    expect(body({}, {}, {}).Env).toEqual(['TZ=Europe/Berlin', 'FERROFIN_CACHE_DIR=/cache']);
     expect(() => body({ kind: 'jellyfin' }, { image: JIMG }, { password: pw })).toThrow(TemplateViolation);
     expect(() => body({}, {}, { password: 'x\nLD_PRELOAD=/x' })).toThrow(TemplateViolation);
   });
@@ -176,10 +176,16 @@ describe('seed containers', () => {
     expect(uidSupported('jellyfin', 1000, 1000)).toBe(true);
     expect(uidSupported('jellyfin', 1000, 1000, { ...SEED_DIR, jellyfin: null })).toBe(false);
     expect(uidSupported('ferrofin', 1000, 1000)).toBe(true);
-    // the pinned Ferrofin image's /data is 1000:1000 0755 and is copied up again at the real create: a seed cannot help (report)
-    expect(SEED_DIR.ferrofin).toBeNull();
-    expect(uidSupported('ferrofin', 1001, 1001)).toBe(false);
-    expect(() => seedSpec('ferrofin', 'data', { ...D, uid: 1001 }, F)).toThrow(TemplateViolation);
+    expect(uidSupported('ferrofin', 1000, 1000, { ...SEED_DIR, ferrofin: null })).toBe(true);
+    // any non-root uid for both kinds: their state directories are mode 0777
+    expect(SEED_DIR).toEqual({ ferrofin: '/tmp', jellyfin: '/tmp' });
+    expect(uidSupported('ferrofin', 1001, 1001)).toBe(true);
+    expect(uidSupported('ferrofin', 1001, 1001, { ...SEED_DIR, ferrofin: null })).toBe(false);
+    expect(uidSupported('ferrofin', 0, 1000)).toBe(false);
+    const req = seedSpec('ferrofin', 'cache', { ...D, uid: 1001 }, F);
+    expect((req.body as Body).HostConfig.Mounts).toEqual([{ Type: 'volume', Source: 'friendflix_mediaserver-ferrofin-cache', Target: '/tmp', ReadOnly: false }]);
+    expect(() => assertHelper(req.body, { project: 'friendflix', uid: 1001, gid: 1000, image: IMG, verb: 'seed', kind: 'ferrofin' })).not.toThrow();
+    expect(() => seedSpec('jellyfin', 'data', D, F)).toThrow(TemplateViolation);
   });
 });
 
