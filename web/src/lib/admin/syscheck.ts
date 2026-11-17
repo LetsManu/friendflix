@@ -21,7 +21,7 @@ export type CheckGroup = (typeof CHECK_GROUPS)[number];
 export const CHECK_IDS = [
   'core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env', 'core.mail',
   'signin.oidc', 'signin.authentik', 'signin.flows', 'signin.issuerHost', 'signin.passkeys', 'signin.mail',
-  'media.server', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder',
+  'media.server', 'media.managed', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder',
   'livetv.container', 'livetv.encoder', 'livetv.sources', 'livetv.guides',
   'updates.updater', 'updates.path', 'updates.portainer',
   'proxy.forwardedProto', 'proxy.peer', 'proxy.websocket', 'proxy.buffering', 'proxy.upload', 'proxy.headers',
@@ -89,6 +89,8 @@ function textParams(l: CheckLine): TParams {
     keys: str(p.keys).split(',').filter(Boolean).join(', '), key: l.settingKey ?? '',
     // the mail line's last failure: the code's sentence with its SMTP status (an unknown code reads as the generic one)
     reason: l.id === 'core.mail' ? mailCodeText(str(p.code), num(p.smtp) || null) : '',
+    // the managed media server's last failed job: its error code as sent (a code, never server text)
+    code: l.id === 'media.managed' && CODE.test(str(p.code)) ? str(p.code) : '',
   };
 }
 const codeText = (kind: 'cause' | 'fix', code: string | undefined, params: TParams): string => {

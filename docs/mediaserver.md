@@ -71,3 +71,11 @@ and a newly added file.
 
 Set the address back to your Jellyfin address (e.g. `http://jellyfin:8096` or `http://192.0.2.10:8096`), then
 `bash try.sh remove`. The copied folder stays until you delete it. Watch state recorded during the trial stays in the copy.
+
+## Update the compose files
+
+The managed media server (*Admin → Einstellungen → Medienserver*) needs the compose file of this release: the `docker-proxy`
+service allows reading container logs (`ALLOW_LOGS: 1`), and the `updater` service mounts the `mediaserver-backup` volume. With
+an older file the Systemcheck shows *Verwalteter Medienserver* as a warning. Download the current
+[`compose.prod.yaml`](../compose.prod.yaml) next to your `.env` and run `docker compose -f compose.prod.yaml up -d` once; with
+Portainer, update the stack file and redeploy the stack.

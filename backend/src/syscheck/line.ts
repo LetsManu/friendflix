@@ -9,6 +9,8 @@ import { CHECK_STATUSES, type CheckGroup, type CheckId, type CheckLine, type Che
  * (the engine imports the checks). Everything a line carries is checked against a fixed form here: anything else is dropped, never passed on.
  */
 const NUMBER = /^-?\d+(\.\d+)?$/;
+/** a release version ('10.10.7', 'v1.5.1', '10.11.0-rc1'): three parts only, so never an IPv4 address */
+const VERSION = /^v?\d{1,4}\.\d{1,4}\.\d{1,4}([-+][0-9A-Za-z]{1,20})?$/;
 const CODES = /^[a-z_]{1,40}(,[a-z_]{1,40})*$/;
 const SETTING_NAMES = /^[A-Z][A-Z0-9_]{1,40}(,[A-Z][A-Z0-9_]{1,40})*$/;
 const PARAM_KEY = /^[a-z][a-zA-Z0-9]{0,30}$/;
@@ -18,8 +20,9 @@ const DOCS = /^[a-z-]+\.md(#[a-z0-9-]+)?$/;
 const HREF = /^\/(?!\/)[a-z0-9/-]*(\?[a-zA-Z0-9_=&-]*)?(#[a-z0-9-]+)?$/;
 
 /**
- * Keeps only values of the three allowed forms: numbers, fixed codes (lower-case words, a comma list of them for e.g. the encoder advice)
- * and setting names (one or a comma list). A URL, a path, free text or a secret never matches; undefined when nothing is left.
+ * Keeps only values of the allowed forms: numbers, fixed codes (lower-case words, a comma list of them for e.g. the encoder advice),
+ * setting names (one or a comma list) and release versions. A URL, a path, an address, free text or a secret never matches; undefined
+ * when nothing is left.
  */
 export function safeParams(p: Record<string, unknown> | undefined): CheckLine['params'] {
   if (!p) return undefined;
@@ -27,7 +30,7 @@ export function safeParams(p: Record<string, unknown> | undefined): CheckLine['p
   for (const [k, v] of Object.entries(p)) {
     if (!PARAM_KEY.test(k)) continue;
     if (typeof v === 'number' && Number.isFinite(v) && NUMBER.test(String(v))) out[k] = v;
-    else if (typeof v === 'string' && (NUMBER.test(v) || CODES.test(v) || SETTING_NAMES.test(v))) out[k] = v;
+    else if (typeof v === 'string' && (NUMBER.test(v) || CODES.test(v) || SETTING_NAMES.test(v) || VERSION.test(v))) out[k] = v;
   }
   return Object.keys(out).length ? out : undefined;
 }

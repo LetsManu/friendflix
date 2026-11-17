@@ -256,7 +256,7 @@ describe('Systemcheck lines', () => {
     expect([...CHECK_IDS]).toEqual([
       'core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env', 'core.mail',
       'signin.oidc', 'signin.authentik', 'signin.flows', 'signin.issuerHost', 'signin.passkeys', 'signin.mail',
-      'media.server', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder',
+      'media.server', 'media.managed', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder',
       'livetv.container', 'livetv.encoder', 'livetv.sources', 'livetv.guides',
       'updates.updater', 'updates.path', 'updates.portainer',
       'proxy.forwardedProto', 'proxy.peer', 'proxy.websocket', 'proxy.buffering', 'proxy.upload', 'proxy.headers',
@@ -312,6 +312,37 @@ describe('every backend code has a text', () => {
   });
   it('every fix has a text', () => {
     for (const f of fixes) expect(hasKey(`syscheck.fix.${f}`), f).toBe(true);
+  });
+});
+
+describe('media.managed (the managed media server)', () => {
+  // backend/src/syscheck/checks/media.ts managedLine: every cause it can send
+  const src = readFileSync(new URL('../../../../backend/src/syscheck/checks/media.ts', import.meta.url), 'utf8');
+  const managed = [...new Set([...src.matchAll(/'(managed_[a-z_]+)'/g)].map((m) => m[1]!))];
+
+  it('comes right after media.server', () => {
+    expect(CHECK_IDS.indexOf('media.managed')).toBe(CHECK_IDS.indexOf('media.server') + 1);
+  });
+
+  it('every managed_* cause has a label, cause and fix text in all 7 locales', async () => {
+    expect(managed).toHaveLength(13);
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
+      await setLocale(l);
+      expect(lineText(ln({ id: 'media.managed', status: 'ok' })).label, l).not.toBe('');
+      for (const c of managed) {
+        const t = lineText(ln({ id: 'media.managed', status: 'warning', cause: c, fix: c, params: { code: 'pull_failed' } }));
+        expect(t.cause, `${l} ${c}`).not.toBe('');
+        expect(t.fix, `${l} ${c}`).not.toBe('');
+        expect(`${t.cause} ${t.fix}`, `${l} ${c}`).not.toMatch(/\{\w+\}|\.\.\./);
+      }
+    }
+  });
+
+  it('a failed job names its code; anything else in params is not shown', () => {
+    expect(lineText(ln({ id: 'media.managed', status: 'warning', cause: 'managed_job_failed', fix: 'managed_job_failed', params: { code: 'verify_failed' } })).cause).toContain('verify_failed');
+    expect(lineText(ln({ id: 'media.managed', status: 'warning', cause: 'managed_job_failed', fix: 'managed_job_failed', params: { code: '/srv/media' } })).cause).not.toContain('/srv');
+    // Docker Engine 26 is named where the engine is too old
+    expect(lineText(ln({ id: 'media.managed', status: 'not_set_up', cause: 'managed_engine_old', fix: 'managed_engine_old' })).fix).toContain('26');
   });
 });
 

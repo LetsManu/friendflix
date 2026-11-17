@@ -88,14 +88,14 @@ async function offerReason(ctx: Ctx, view: UpdaterView, managed: MediaManaged, k
 }
 
 interface Loaded { view: UpdaterView; managed: MediaManaged; status: MediaStatus | null }
-async function load(ctx: Ctx): Promise<Loaded> {
-  const [view, managed] = await Promise.all([updaterView(ctx), readManaged(ctx.db)]);
+async function load(ctx: Ctx, read?: UpdaterView): Promise<Loaded> {
+  const [view, managed] = await Promise.all([read ?? updaterView(ctx), readManaged(ctx.db)]);
   return { view, managed, status: 'status' in view ? view.status.mediaserver : null };
 }
 
-/** the page's view: mode, offer, status and the stored half (no secret: only whether one is stored) */
-export async function mediaView(ctx: Ctx): Promise<MediaView> {
-  const { view, managed, status } = await load(ctx);
+/** the page's view: mode, offer, status and the stored half (no secret: only whether one is stored); `read`: a status the caller already read */
+export async function mediaView(ctx: Ctx, read?: UpdaterView): Promise<MediaView> {
+  const { view, managed, status } = await load(ctx, read);
   const reason = await offerReason(ctx, view, managed);
   return {
     mode: managed.kind ? 'managed' : 'external',

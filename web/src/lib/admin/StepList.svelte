@@ -93,10 +93,11 @@
         <div class="note n-{n.tone}" data-result={n.result}>
           <Icon name={n.tone === 'ok' ? 'check' : n.tone === 'neutral' ? 'info' : 'alert'} size={22} />
           <div class="body">
-            <p class="head" role={n.tone === 'bad' && seenRunning ? 'alert' : 'status'} data-headline><b>{n.text}</b>{#if n.detail}{' '}<span class="muted">{n.detail}</span>{/if}</p>
-            {#if n.retry || n.advice}
+            <p class="head" role={(n.tone === 'bad' || n.tone === 'warn') && seenRunning ? 'alert' : 'status'} data-headline><b>{n.text}</b>{#if n.detail}{' '}<span class="muted">{n.detail}</span>{/if}</p>
+            {#if n.retry || n.href || n.advice}
               <div class="acts">
-                {#if n.retry}<Button variant="secondary" icon="refresh" on:click={() => dispatch('retry')}>{$t('admin.update.updater.flow.retry')}</Button>{/if}
+                {#if n.href}<Button variant="secondary" icon="refresh" href={n.href}>{$t('admin.update.updater.flow.retry')}</Button>
+                {:else if n.retry}<Button variant="secondary" icon="refresh" on:click={() => dispatch('retry')}>{$t('admin.update.updater.flow.retry')}</Button>{/if}
                 {#if n.advice}<button type="button" class="adv-t" aria-expanded={adviceOpen} aria-controls={adviceId} on:click={() => (adviceOpen = !adviceOpen)}>{$t('admin.update.updater.flow.advice')}</button>{/if}
               </div>
               {#if n.advice}<p class="adv" id={adviceId} hidden={!adviceOpen} data-advice>{n.advice}</p>{/if}
@@ -122,6 +123,7 @@
   .bar i { position: absolute; inset: 0; }
   .fill { background: var(--acc); transform-origin: 0 50%; transition: transform 640ms var(--fr-out); }
   .bar.bar-ok .fill { background: var(--ok); } .bar.bar-failed .fill { background: var(--err); } .bar.bar-neutral .fill { background: var(--info); }
+  .bar.bar-warn .fill { background: var(--warn); }
   .glint { background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .55), transparent); transform: translateX(-100%); opacity: 0; }
   .bar.bar-running .glint { opacity: 1; animation: ff-glint 1.6s cubic-bezier(.4, 0, .2, 1) infinite; }
   @keyframes ff-glint { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
@@ -194,6 +196,7 @@
   .note.n-ok { background: var(--wash-ok); border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent); } .note.n-ok > :global(svg) { color: var(--ok); }
   .note.n-bad { background: var(--wash-err); border: 1px solid color-mix(in srgb, var(--err) 32%, transparent); } .note.n-bad > :global(svg) { color: var(--err-mark); }
   .note.n-neutral { background: var(--wash-muted); border: 1px dashed var(--fr-line); } .note.n-neutral > :global(svg) { color: var(--info); }
+  .note.n-warn { background: var(--wash-warn); border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent); } .note.n-warn > :global(svg) { color: var(--warn); }
 
   @media (max-width: 560px) {
     /* phones: the badge goes under the name, rows stay one height */

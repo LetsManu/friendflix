@@ -57,6 +57,7 @@ import { announceSetupCode } from './setup/code.js';
 import { isOperational, isSetupComplete, onOperational } from './setup/state.js';
 import { autoUpdateTick, syncChannel } from './updater.js';
 import { mediaManagedTick } from './mediaserver/firstRun.js';
+import { mediaPinTick } from './mediaserver/pinTick.js';
 import { joinedStopsSettled } from './cast.js';
 
 // the bootstrap keys open the database: env (incl. VAR_FILE) wins, else the bootstrap volume written by the init container (a missing
@@ -225,6 +226,14 @@ if (cfg.BACKGROUND_JOBS === 'true') {
   timers.push(setInterval(() => { if (op()) void healthTick(ctx); }, 60_000)); // admin health snapshot (kv health:snap); never throws
   // AUTO_UPDATE=nightly-window through the updater (one start per day across instances) + the result audit of updater jobs
   timers.push(setInterval(() => { if (op()) void autoUpdateTick(ctx, new Date(), app.log).catch(jobFailed(ctx, app.log, 'auto-update', 'auto update tick failed')); }, 60_000));
+  // the managed media server follows a FriendFlix build the updater did not install (mediaserver/pinTick.ts: pin.changed starts its
+  // update), audits the supervisor's recreates and notes a pending pin for the Systemcheck
+  let mediaPinBusy = false;
+  timers.push(setInterval(() => {
+    if (mediaPinBusy || !op()) return;
+    mediaPinBusy = true;
+    void mediaPinTick(ctx, app.log).catch(jobFailed(ctx, app.log, 'media-pin', 'media server pin tick failed')).finally(() => { mediaPinBusy = false; });
+  }, 60_000));
   // admin alerts (adminAlerts.ts, syscheckAlerts.ts): a new version (the check at most every 6 h across instances) and Systemcheck lines turning into a problem
   timers.push(setInterval(() => { if (op()) void updateAlertTick(ctx).catch(jobFailed(ctx, app.log, 'update-alert', 'update alert tick failed')); }, 3_600_000));
   timers.push(setInterval(() => { if (op()) void syscheckAlertTick(ctx).catch(jobFailed(ctx, app.log, 'syscheck-alert', 'syscheck alert tick failed')); }, 900_000));

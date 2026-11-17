@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
-import { jobFlow, progressOf, redeployFlow, type StepRow } from './steps';
+import { catchUp, jobFlow, progressOf, redeployFlow, type StepRow } from './steps';
 import { installedOf, mergeView, shownActivity, tagText, type Redeploy, type UpdaterJob, type UpdaterStatus, type UpdaterView } from './updater';
 
 // The one step list of Admin -> Update (StepList.svelte) is driven by these mappings only: an updater job, a Portainer redeploy
@@ -101,6 +101,54 @@ describe('updater job -> rows', () => {
   it('Live TV passes its own steps (a disable has only the restart)', () => {
     const lt = job({ action: 'livetv-disable', step: 'restart', steps: { pull: 'skipped', verify: 'skipped', restart: 'running', health: 'skipped', rollback: 'skipped' } });
     expect(jobFlow(lt, { steps: ['restart'] }).rows.map((r) => [r.key, r.state])).toEqual([['restart', 'running']]);
+  });
+});
+
+describe('media server steps', () => {
+  const SKIP = { pull: 'skipped', verify: 'skipped', restart: 'skipped', health: 'skipped', rollback: 'skipped' } as const;
+  type Media = NonNullable<UpdaterJob['media']>;
+  const media = (over: Partial<Media['steps']> = {}, step: Media['step'] = null): Media => ({
+    step, steps: { check: 'pending', pull: 'pending', verify: 'pending', snapshot: 'pending', create: 'pending', start: 'pending', health: 'pending', rollback: 'pending', ...over },
+  });
+
+  it('a mediaserver-apply job lists its media steps (check … health) with their states, none of the update\'s', () => {
+    const f = jobFlow(job({ action: 'mediaserver-apply', step: null, steps: SKIP, media: media({ check: 'ok', pull: 'ok', verify: 'running' }, 'verify') }), { now: T + 5_000 });
+    expect(f.rows.map((r) => r.key)).toEqual(['media-check', 'media-pull', 'media-verify', 'media-snapshot', 'media-create', 'media-start', 'media-health']);
+    expect(f.rows.map((r) => r.state)).toEqual(['ok', 'ok', 'running', 'waiting', 'waiting', 'waiting', 'waiting']);
+    expect(f.rows.map((r) => r.label)).toEqual(['Check requirements', 'Download image', 'Verify image', 'Back up data', 'Create container', 'Start', 'Health check']);
+    expect(f).toMatchObject({ outcome: 'running', count: 'Step 3 of 7', reserve: 0 });
+    // Live TV's step list passed to a media job changes nothing
+    expect(jobFlow(job({ action: 'mediaserver-start', steps: SKIP, media: media() }), { steps: ['restart'] }).rows[0]!.key).toBe('media-check');
+  });
+
+  it('a failed media job with its rollback: the rollback row shows, the count stays over the real steps', () => {
+    const f = jobFlow(job({ action: 'mediaserver-update', state: 'rolled_back', error: 'unhealthy', finishedAt: iso(9_000), steps: SKIP,
+      media: media({ check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'skipped', create: 'ok', start: 'ok', health: 'failed', rollback: 'ok' }) }));
+    expect(f.rows.at(-1)).toMatchObject({ key: 'media-rollback', state: 'ok', label: 'Roll back' });
+    expect(f).toMatchObject({ outcome: 'failed', count: 'Stopped at step 7 of 7' });
+    expect(f.note).toMatchObject({ tone: 'bad', result: 'rolled_back', retry: true });
+  });
+
+  it('an update job with a media server phase adds its steps after the core steps', () => {
+    const f = jobFlow(job({ state: 'running', step: null, steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'ok', rollback: 'skipped' }, media: media({ check: 'running' }, 'check') }));
+    expect(f.rows.map((r) => r.key)).toEqual(['pull', 'verify', 'restart', 'health', 'media-check', 'media-pull', 'media-verify', 'media-snapshot', 'media-create', 'media-start', 'media-health']);
+    expect(f).toMatchObject({ outcome: 'running', count: 'Step 5 of 11' });
+    // without a media server phase: the four only
+    expect(jobFlow(job({ media: null })).rows).toHaveLength(4);
+  });
+
+  it('succeeded_mediaserver_failed: its own warn result, "try again" links to the media tab', () => {
+    const f = jobFlow(job({ state: 'succeeded_mediaserver_failed', step: null, error: 'pull_failed', finishedAt: iso(60_000), steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'ok', rollback: 'skipped' },
+      media: media({ check: 'ok', pull: 'failed', verify: 'skipped', snapshot: 'skipped', create: 'skipped', start: 'skipped', health: 'skipped', rollback: 'skipped' }) }));
+    expect(f.outcome).toBe('warn');
+    expect(f.count).toBe('Stopped at step 6 of 11');
+    expect(f.note).toEqual({ tone: 'warn', result: 'succeeded_mediaserver_failed', text: 'FriendFlix updated, media server not: pull_failed.', advice: '', detail: 'Took 1 min', retry: false, href: '/admin/settings?tab=media' });
+  });
+
+  it('a media rollback row never makes a step before it done while the list catches up', () => {
+    const shown: StepRow[] = [{ key: 'media-create', label: '', state: 'running' }, { key: 'media-start', label: '', state: 'waiting' }, { key: 'media-rollback', label: '', state: 'waiting' }];
+    const next: StepRow[] = [{ key: 'media-create', label: '', state: 'failed' }, { key: 'media-start', label: '', state: 'waiting' }, { key: 'media-rollback', label: '', state: 'running' }];
+    expect(catchUp(shown, next).at(-1)).toEqual(['failed', 'waiting', 'running']);
   });
 });
 

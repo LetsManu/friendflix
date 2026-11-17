@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { hasKey, setLocale, tr } from '#lib/i18n';
 import { ApiError } from '#lib/api';
-import { TIME_RE, canRollback, failReason, foreignMode, foreignText, isRunning, nextPoll, portainerMissing, redeployResult, redeployRunning, redeploySteps, startError, statusOf, visibleSteps, type Redeploy, type UpdaterJob, type UpdaterStatus } from './updater';
+import {
+  MEDIA_JOB_ACTIONS, MEDIA_STEPS, MEDIA_TAB, TIME_RE, canRollback, failReason, foreignMode, foreignText, isMediaJob, isRunning, jobTone, mediaActionLabel, mediaFailedText, nextPoll,
+  portainerMissing, redeployResult, redeployRunning, redeploySteps, startError, statusOf, visibleMediaSteps, visibleSteps, type Redeploy, type UpdaterJob, type UpdaterStatus,
+} from './updater';
 
 const job = (over: Partial<UpdaterJob> = {}): UpdaterJob => ({
   id: '0123456789abcdef', action: 'update', state: 'running', step: 'pull', from: 'sha-aaaaaaa', to: 'latest', startedAt: '2026-10-18T04:00:00.000Z', finishedAt: null, error: null,
@@ -167,5 +171,50 @@ describe('updater panel logic', () => {
     expect(foreignMode({ present: true, status: status({ stack: 'own' }), portainer: { configured: false, mode: null, missing: ['PORTAINER_STACK_ID'] } })).toBeNull();
     expect(foreignText('manual', null)).toContain('PORTAINER_STACK_ID');
     expect(failReason('compose_config')).toContain('Portainer');
+  });
+});
+
+describe('media server jobs and the update whose media server phase failed', () => {
+  it('succeeded_mediaserver_failed maps to the warn tone and its text names the code, in every locale', async () => {
+    expect(jobTone('running')).toBe('running');
+    expect(jobTone('succeeded')).toBe('ok');
+    expect(jobTone('failed')).toBe('bad');
+    expect(jobTone('rolled_back')).toBe('bad');
+    expect(jobTone('succeeded_mediaserver_failed')).toBe('warn');
+    expect(mediaFailedText('verify_failed')).toBe('FriendFlix aktualisiert, Medienserver nicht: verify_failed.');
+    // an error that is no code is never shown as it came
+    expect(mediaFailedText('<b>x</b>')).toBe('FriendFlix aktualisiert, Medienserver nicht: unknown.');
+    expect(mediaFailedText(null)).toContain('unknown');
+    for (const l of ['en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
+      await setLocale(l);
+      const t = mediaFailedText('unhealthy');
+      expect(t, l).toContain('FriendFlix');
+      expect(t, l).toContain('unhealthy');
+      expect(t, l).not.toMatch(/\{\w+\}/);
+    }
+  });
+
+  it('every media action has a label in every locale; the media steps and actions mirror the backend', async () => {
+    const backend = readFileSync(new URL('../../../../backend/src/updater.ts', import.meta.url), 'utf8');
+    const list = (name: string) => [...(backend.match(new RegExp(`export const ${name} = \\[([^\\]]+)\\]`))?.[1] ?? '').matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
+    expect([...MEDIA_JOB_ACTIONS]).toEqual(list('MEDIA_JOB_ACTIONS'));
+    expect([...MEDIA_STEPS]).toEqual(list('MEDIA_STEPS'));
+    expect(mediaActionLabel('mediaserver-apply')).toBe('Einrichten');
+    expect(mediaActionLabel('mediaserver-hdr-test')).toBe('HDR-Test');
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
+      await setLocale(l);
+      for (const a of MEDIA_JOB_ACTIONS) expect(hasKey(`admin.update.updater.mediaAction.${a.slice(12).replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())}`), `${l} ${a}`).toBe(true);
+      for (const s of MEDIA_STEPS) expect(hasKey(`admin.update.updater.mediaStep.${s}`), `${l} ${s}`).toBe(true);
+    }
+  });
+
+  it('media jobs: which actions, and the rollback row only once it started', () => {
+    expect(isMediaJob('mediaserver-recover')).toBe(true);
+    expect(isMediaJob('update')).toBe(false);
+    expect(isMediaJob('livetv-enable')).toBe(false);
+    const steps = Object.fromEntries(MEDIA_STEPS.map((s) => [s, 'pending'])) as NonNullable<UpdaterJob['media']>['steps'];
+    expect(visibleMediaSteps({ step: null, steps })).toEqual(['check', 'pull', 'verify', 'snapshot', 'create', 'start', 'health']);
+    expect(visibleMediaSteps({ step: 'rollback', steps: { ...steps, health: 'failed', rollback: 'running' } })).toContain('rollback');
+    expect(MEDIA_TAB).toBe('/admin/settings?tab=media');
   });
 });
