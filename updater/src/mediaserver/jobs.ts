@@ -442,24 +442,30 @@ export class MediaJobs {
 
   /**
    * After a failure: the new container goes; the snapshot is restored when the new one ran on the data; the old one is renamed back
-   * and started when it should run. A first create without an old container is removed again (nothing is left half set up).
+   * and started when it should run. A first create without an old container is removed again (nothing is left half set up). Each
+   * step is tried on its own (a failed one does not stop the next): the old container gets its name back whatever happened, but
+   * is started only when its data needed no restore or the restore succeeded (half-restored data is never started on).
    */
   private async undo(job: Job, c: Ctx, t: Changes, wasRunning: boolean): Promise<void> {
     if (!t.newId && !t.stopped) return;
     const m = this.media(job);
     const withOld = c.old !== null;
     if (withOld) { m.step = 'rollback'; m.steps.rollback = 'running'; this.u.persistNow(); this.u.log.add('media rollback'); }
-    try {
-      if (t.newId) {
-        await this.engine.stop(t.newId).catch(() => undefined);
-        await this.engine.remove(t.newId, { force: true });
-      }
-      if (t.snapshot && t.started) await this.restoreSnapshot(t.snapshot.id, t.snapshot.kind);
-      if (c.old && t.renamed) await this.engine.rename(c.old.id, names(c.project).container);
-      if (c.old && t.stopped && wasRunning) await this.engine.start(c.old.id);
-      if (withOld) { m.steps.rollback = 'ok'; this.u.log.add('media server restored to the previous container'); }
-    } catch {
-      if (withOld) { m.steps.rollback = 'failed'; this.u.log.add('media rollback failed'); }
+    let ok = true;
+    const attempt = async (f: () => Promise<unknown>): Promise<boolean> => {
+      try { await f(); return true; } catch { ok = false; return false; }
+    };
+    if (t.newId) {
+      const id = t.newId;
+      await this.engine.stop(id).catch(() => undefined);
+      await attempt(() => this.engine.remove(id, { force: true }));
+    }
+    const dataOk = t.snapshot && t.started ? await attempt(() => this.restoreSnapshot(t.snapshot!.id, t.snapshot!.kind)) : true;
+    if (c.old && t.renamed) await attempt(() => this.engine.rename(c.old!.id, names(c.project).container));
+    if (c.old && t.stopped && wasRunning && dataOk) await attempt(() => this.engine.start(c.old!.id));
+    if (withOld) {
+      m.steps.rollback = ok ? 'ok' : 'failed';
+      this.u.log.add(ok ? 'media server restored to the previous container' : 'media rollback failed');
     }
     this.u.persistNow();
   }

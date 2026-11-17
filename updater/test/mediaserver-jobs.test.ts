@@ -64,6 +64,8 @@ function world(o: { facts?: Partial<EngineFacts> } = {}) {
     failStart: (_c: C): boolean => false,
     healthOf: (_c: C): string | null => 'healthy',
     pull: null as null | (() => Promise<void>),
+    /** remove() of this container fails after the engine let it go (a removal already in progress answers an error) */
+    failRemove: (_c: C): boolean => false,
     hdr: { exit1: 0, lines2: ['RESULT vpp FAIL the VA driver has no HDR tone mapper', 'RESULT qsv FAIL ffmpeg exit 1'] },
     answer: (c: HelperCall): Answer => {
       if (c.verb === 'check' && c.args[0] === 'folders') return okFolders(c);
@@ -123,6 +125,7 @@ function world(o: { facts?: Partial<EngineFacts> } = {}) {
       calls.push(`remove ${label(c)}`);
       removedWith.push({ name: label(c), o: ro });
       containers.delete(c.id);
+      if (cfg.failRemove(c)) throw new EngineError(409, 'conflict');
     },
     wait: async (id: string) => {
       const c = find(id)!;
@@ -324,6 +327,35 @@ describe('apply', () => {
     ]);
     expect(w.media().backups).toEqual([{ id, kind: 'jellyfin', upstream: '10.11.2', at: new Date(T0).toISOString(), tag: 'auto', size: 4096 }]);
     expect(w.media().container!.upstream).toBe('10.11.2');
+  });
+
+  it('a failed restore still gives the old container its name back, but does not start it', async () => {
+    const w = world();
+    const old = w.existing(JSPEC, jellyPin('10.11.2', '2'), '10.11.2');
+    w.cfg.healthOf = (c) => (c.body.Image === jellyPin('10.11.3').image ? 'unhealthy' : 'healthy');
+    const answer = w.cfg.answer;
+    w.cfg.answer = (c) => (c.verb === 'restore' ? new StepError('helper_timeout') : answer(c));
+    const job = await w.run({ op: 'apply', spec: JSPEC });
+    expect(job).toMatchObject({ state: 'failed', error: 'unhealthy' });
+    expect(job.media!.steps).toMatchObject({ snapshot: 'ok', health: 'failed', rollback: 'failed' });
+    expect(w.calls.slice(-4)).toEqual([`stop ${N.container}`, `remove ${N.container}`, 'helper restore', `rename ${N.old} -> ${N.container}`]);
+    // the real name is ours again (the next apply can recreate), the half-restored data is not started on
+    expect(w.find(N.container)).toMatchObject({ id: old.id, running: false });
+    expect(w.find(N.old)).toBeUndefined();
+    expect(w.media()).toMatchObject({ container: { id: old.id }, lastError: 'unhealthy' });
+    expect(w.updater.log.tail(200).join('\n')).toContain('media rollback failed');
+  });
+
+  it('a failed remove of the new container does not stop the rollback', async () => {
+    const w = world();
+    const old = w.existing(SPEC, ferroPin(), 'v1.5.1');
+    w.cfg.failStart = (c) => c.id !== old.id;
+    w.cfg.failRemove = (c) => c.id !== old.id;
+    const job = await w.run({ op: 'apply', spec: { ...SPEC, tz: 'Europe/Vienna' } });
+    expect(job).toMatchObject({ state: 'failed', error: 'start_failed' });
+    expect(job.media!.steps.rollback).toBe('failed');
+    expect(w.changes().slice(-3)).toEqual([`remove ${N.container}`, `rename ${N.old} -> ${N.container}`, `start ${N.container}`]);
+    expect(w.find(N.container)).toMatchObject({ id: old.id, running: true });
   });
 
   it('downgrade is refused before anything stops', async () => {
