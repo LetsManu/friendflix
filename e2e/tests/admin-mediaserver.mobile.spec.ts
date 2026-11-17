@@ -32,7 +32,7 @@ test.describe('admin: Medienserver card (phone)', () => {
     const c = card(page);
     const head = c.getByRole('heading', { level: 2, name: 'Medienserver' });
     const seg = c.getByRole('radiogroup', { name: 'Art des Medienservers' });
-    for (const name of ['Ferrofin (eigener)', 'Jellyfin (offiziell, verwaltet)', 'Bestehender Jellyfin/Plex (Adresse)']) await fits(seg.getByRole('radio', { name: new RegExp(name.replace(/[()/]/g, '\\$&')) }), name);
+    for (const name of ['Ferrofin (eigener)', 'Jellyfin (offiziell, verwaltet)', 'Bestehender Jellyfin/Plex (Adresse)']) await fits(seg.getByRole('radio', { name }), name);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
     const at = { head: await box(head), seg: await box(seg) };
 
