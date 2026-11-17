@@ -249,7 +249,7 @@ describe('kids profiles', () => {
     await call(s, 'PUT', `/api/profiles/${ownerId}/pin`, { pin: '1111' });
     const k = await switchTo(s, kid.id);
     for (let i = 0; i < 4; i++) expect((await select(k, ben.id, String(1000 + i))).statusCode).toBe(403);
-    expect((await select(k, ben.id, '0000')).json()).toEqual({ error: 'pin_locked', pinOf: 'owner' });
+    expect((await select(k, ben.id, '0000')).json()).toEqual({ error: 'pin_locked', pinOf: 'owner', retryAfter: 60 }); // the first escalated lock: 1 minute
     expect((await select(k, ben.id, '1111')).statusCode).toBe(429); // even the right PIN, until the lock expires
   });
 

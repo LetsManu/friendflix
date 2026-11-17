@@ -153,6 +153,8 @@ describe('profiles', () => {
     expect(fifth.json().error).toBe('pin_locked');
     expect((await call(s, 'POST', url, { pin: '4321' })).statusCode).toBe(429); // locked even for the right pin
     await env.kv.del(`pinfail:${p.id}`);
+    expect((await call(s, 'POST', url, { pin: '4321' })).json()).toMatchObject({ error: 'pin_locked', retryAfter: expect.any(Number) }); // the escalated lock (1 min) still runs
+    await env.kv.del(`pinlock:${p.id}`);
     const ok = await call(s, 'POST', url, { pin: '4321' });
     expect(ok.statusCode).toBe(200);
     expect(ok.cookies.find((c) => c.name === 'ff_sid')).toBeTruthy();

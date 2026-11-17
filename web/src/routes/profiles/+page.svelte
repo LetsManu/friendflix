@@ -114,7 +114,8 @@
       pinOwner = e instanceof ApiError && e.body?.pinOf === 'owner';
       if (code === 'pin_required') { pinFor = p; pinErr = ''; }
       else if (code === 'pin_wrong') { pinFor = p; pinErr = tr('account.profiles.pinWrong'); }
-      else if (code === 'pin_locked') { pinFor = p; pinErr = tr('account.profiles.pinLocked'); }
+      // a lock longer than the 15-minute window (the server's escalation, `retryAfter` in seconds) says "later", not "in 15 minutes"
+      else if (code === 'pin_locked') { pinFor = p; pinErr = tr(Number(e instanceof ApiError ? e.body?.retryAfter : 0) > 900 ? 'account.profiles.pinLockedLater' : 'account.profiles.pinLocked'); }
       else { pinFor = p; pinErr = tr('account.profiles.selectFailed'); }
     } finally { pinBusy = false; }
   }
