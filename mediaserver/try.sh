@@ -335,8 +335,11 @@ cat <<EOF
 
 Next:
   1. Turn off the NFO saver: the media is mounted read-only, and Ferrofin's NFO saver would try to write .nfo files next
-     to it. In Ferrofin's dashboard (the Jellyfin web UI, at /web/): Dashboard → Libraries → each library → Metadata
-     savers → untick "Nfo". (Reaching /web/ needs --publish, or a browser on one of the networks above.)
+     to it. The image has no web client (so no dashboard), so use the API, once per library: GET /Library/VirtualFolders
+     lists the libraries (ItemId, LibraryOptions); POST /Library/VirtualFolders/LibraryOptions with the body
+     {"Id": "<ItemId>", "LibraryOptions": <that library's options with "SaveLocalMetadata": false and "MetadataSavers": []>}
+     and the header X-Emby-Token: <an administrator's API key, they came along with the copy>. Reaching the API needs --publish,
+     or a container on one of the networks above.
   2. FriendFlix: Admin → Einstellungen → Medienserver → address $ADDR, save.
      Saving works = the API key carried over. If the key is refused, use "API-Schlüssel automatisch anlegen"
      with a Jellyfin admin's name and password. If the address is pinned in .env (JELLYFIN_URL), change it there and
