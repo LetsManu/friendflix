@@ -69,6 +69,19 @@ export function folderRowsError(rows: ReadonlyArray<Pick<FolderInput, 'rel' | 'n
   if (rows.some((r, i) => rows.some((o, j) => j !== i && (o.rel === r.rel || r.rel.startsWith(`${o.rel}/`))))) return 'nested';
   return null;
 }
+/**
+ * A picked folder's first library name: its own name cut at 60 (the backend's bound, UTF-16 units) at a code point boundary, so a
+ * character outside the BMP is never split in half.
+ */
+export function defaultName(name: string): string {
+  let out = '';
+  for (const ch of name) {
+    if (out.length + ch.length > 60) break;
+    out += ch;
+  }
+  return out;
+}
+
 /** the row whose name is the name of a kept library (a removed folder whose library stays in the server): 409 library_name_taken */
 export const nameTakenRow = (rows: ReadonlyArray<Pick<FolderInput, 'name'>>, kept: readonly LibraryEntry[]): number =>
   rows.findIndex((r) => kept.some((k) => sameName(k.name, r.name)));
@@ -170,6 +183,14 @@ export function actionsFor(v: MediaView): ActionOp[] {
   if (managed && s.backups.some((b) => b.kind === v.managed.kind)) out.add('restore');
   if (managed || c) out.add('remove');
   return ACTION_ORDER.filter((a) => out.has(a));
+}
+
+/** a save picker or file write that failed in the browser (not a refusal of the backend): a sentence, else null */
+export function saveErrorText(e: unknown): string | null {
+  const name = (e as { name?: unknown } | null)?.name;
+  if (name === 'SecurityError' || name === 'NotAllowedError') return trDynamic('mediaserver.backup.saveRefused');
+  if (name === 'AbortError') return trDynamic('mediaserver.backup.saveAborted');
+  return null;
 }
 
 const CODE = /^[a-z][a-z0-9_]{0,39}$/;

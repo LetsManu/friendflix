@@ -299,14 +299,14 @@
           <BaseFolder {api} {call} {base} inUse={Boolean(view.status?.container)} disabled={locked || running} on:changed={() => load()} on:job={(e) => started(e.detail)} on:unreadable={(e) => (baseUnreadable = e.detail)} />
           {#if base.set}
             <FolderPicker {api} {call} bind:rows libraries={isCurrent ? view.managed.libraries : []} {kept} {rowErrors} livetv={offer} disabled={locked || running}
-              on:changed={() => { edited(); }} on:livetv={(e) => saveLivetv(e.detail)} />
+              on:changed={() => { edited(); }} on:deleted={() => load()} on:livetv={(e) => saveLivetv(e.detail)} />
 
             <section class="sec" aria-labelledby="ms-user-t">
               <h3 id="ms-user-t"><Icon name="user" size={18} />{$t('mediaserver.user.title')}</h3>
               <p class="muted small">{$t('mediaserver.user.intro')}</p>
               <div class="ids">
-                <Field label={$t('mediaserver.user.uid')} bind:value={uid} maxlength={5} autocomplete="off" disabled={locked || running} error={uidErr} on:input={edited} />
-                <Field label={$t('mediaserver.user.gid')} bind:value={gid} maxlength={5} autocomplete="off" disabled={locked || running} error={gidErr} on:input={edited} />
+                <Field label={$t('mediaserver.user.uid')} bind:value={uid} maxlength={5} autocomplete="off" disabled={locked || running} error={uidErr} reserve on:input={edited} />
+                <Field label={$t('mediaserver.user.gid')} bind:value={gid} maxlength={5} autocomplete="off" disabled={locked || running} error={gidErr} reserve on:input={edited} />
               </div>
               {#if mediaGid === null}
                 <div class="grp">
@@ -320,6 +320,7 @@
             </section>
 
             <GpuSection {api} {call} bind:gpu preselect={preselectGpu} hdr={view.status?.hdr ?? null} canTest={isCurrent && Boolean(view.status?.container) && available && !running}
+              deployed={isCurrent ? view.status?.desired?.gpu ?? null : null}
               testing={acting === 'hdr-test'} disabled={locked || running} on:hdr={() => act('hdr-test')} />
 
             <section class="sec">
@@ -329,7 +330,7 @@
         {/key}
       </div>
       <div class="apply">
-        <Button icon="check" pending={applying} disabled={locked || running || !base.set} on:click={apply}>{firstRun ? $t('mediaserver.apply.setup') : $t('mediaserver.apply.apply')}</Button>
+        <Button class="go" icon="check" pending={applying} disabled={locked || running || !base.set} data-testid="media-apply" on:click={apply}>{firstRun ? $t('mediaserver.apply.setup') : $t('mediaserver.apply.apply')}</Button>
         <p class="msg" class:err={applyError} role={applyError ? 'alert' : 'status'} data-testid="media-apply-error">{applyError}</p>
       </div>
     {/if}
@@ -414,6 +415,8 @@
   .ids { display: grid; grid-template-columns: repeat(2, minmax(0, 10rem)); gap: .6rem; }
   .grp { display: grid; grid-template-columns: minmax(0, 14rem) auto; align-items: end; gap: .6rem; }
   .grpset { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .8rem; margin: 0; }
+  /* one width for *Einrichten* and *Übernehmen*: the label switching at the end of the first run moves nothing */
+  .apply :global(.go) { min-width: 11rem; }
   .apply { display: grid; gap: .3rem; justify-items: start; margin-top: 1.2rem; padding-top: 1rem; border-top: 1px solid var(--line); }
   .acts { display: flex; flex-wrap: wrap; gap: .5rem; }
   .msg { margin: 0; min-height: 2.6em; font-size: .9rem; color: var(--mut); }

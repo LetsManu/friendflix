@@ -153,7 +153,7 @@ const dict: Translation<typeof de> = {
     failedAt: 'Arrêté à « {step} ». {reason}',
     again: 'Encore une fois',
     recreate: 'Recréer',
-    recreateHint: 'Supprime les données de ce serveur et le réinstalle.',
+    recreateHint: 'Supprime ce serveur avec ses données et remplit à nouveau les indications précédentes. Ensuite, réinstallez-le avec « Installer ».',
   },
   status: {
     title: 'État',
@@ -237,6 +237,8 @@ const dict: Translation<typeof de> = {
     passError: { short: 'Au moins 12 caractères.', long: 'Au plus 1024 caractères.', mismatch: 'Les deux saisies ne correspondent pas.' },
     downloadConfirm: 'Télécharger',
     downloaded: 'Le téléchargement est en cours.',
+    saveRefused: 'Le navigateur n’a pas autorisé l’enregistrement. Réessayez.',
+    saveAborted: 'L’enregistrement a été annulé.',
     upload: 'Restaurer depuis un fichier',
     uploadTitle: 'Restaurer depuis un fichier',
     uploadBody: 'Une sauvegarde téléchargée (.tar.gz.age, au plus 20 Gio) avec sa phrase secrète. Les données du serveur sont ensuite remplacées par elle.',

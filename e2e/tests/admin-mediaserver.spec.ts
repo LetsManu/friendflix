@@ -37,6 +37,15 @@ async function setUpManagedJellyfin(page: Page, ms: MediaMock): Promise<void> {
   await expect(c.getByTestId('media-code-hint')).toContainText('docker compose logs updater | grep "media folder"');
   await expect(c.getByTestId('media-code-hint')).toContainText('Portainer → Containers → updater → Logs');
   const count = await box(c.getByTestId('media-code-countdown'));
+  // a first path can be changed while its code is pending
+  await expect(c.getByRole('button', { name: 'Abbrechen' })).toBeVisible();
+  // a new code that is refused (the updater's limit) keeps the pending code, its countdown and the hint
+  ms.refuse = { status: 429, error: 'rate_limited' };
+  await c.getByRole('button', { name: 'Neuen Code anfordern' }).click();
+  await expect(c.getByRole('alert').filter({ hasText: 'Zu oft hintereinander.' })).toBeVisible();
+  await expect(c.getByLabel('Code aus dem Protokoll')).toBeVisible();
+  await expect(c.getByTestId('media-code-hint')).toBeVisible();
+  expect(await box(c.getByTestId('media-code-countdown'))).toEqual(count);
   await c.getByLabel('Code aus dem Protokoll').fill('ZZZZ-ZZZZ-ZZZZ');
   await c.getByRole('button', { name: 'Bestätigen' }).click();
   await expect(c.getByRole('alert').filter({ hasText: 'Der Code stimmt nicht.' })).toBeVisible();
@@ -68,11 +77,12 @@ async function setUpManagedJellyfin(page: Page, ms: MediaMock): Promise<void> {
   // the job's steps come through the shared step list
   await expect(c.getByTestId('media-job').locator('li[data-step="media-check"]')).toBeVisible();
   // the progress advances through the first run's steps; nothing above it moves meanwhile
-  const above = { head: await box(head), seg: await box(seg), base: await box(c.getByTestId('media-base-path')) };
+  const go = c.getByTestId('media-apply');
+  const above = { head: await box(head), seg: await box(seg), base: await box(c.getByTestId('media-base-path')), go: await box(go) };
   const seen = new Set<string>();
   await expect.poll(async () => {
     seen.add((await progress.getAttribute('data-setup')) ?? '');
-    expect({ head: await box(head), seg: await box(seg), base: await box(c.getByTestId('media-base-path')) }).toEqual(above);
+    expect({ head: await box(head), seg: await box(seg), base: await box(c.getByTestId('media-base-path')), go: await box(go) }).toEqual(above);
     return seen.has('done');
   }, { timeout: 40_000, intervals: [300] }).toBe(true);
   expect(seen.has('first_run') || seen.has('libraries')).toBe(true);
@@ -92,7 +102,7 @@ async function setUpManagedJellyfin(page: Page, ms: MediaMock): Promise<void> {
 
 test.describe('admin: Medienserver card (desktop)', () => {
   // a wrong base code is a mocked 409 the browser logs
-  test.use({ allowedConsole: /status of 409/ });
+  test.use({ allowedConsole: /status of (409|429)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
   test('choose managed Jellyfin, confirm the base with the code, pick two folders, set up', async ({ page, api }) => {
@@ -172,12 +182,17 @@ test.describe('admin: Medienserver card (desktop)', () => {
     const go = dlg.getByRole('button', { name: 'Herunterladen' });
     await dlg.getByLabel('Passphrase (mindestens 12 Zeichen)').fill('zu kurz');
     await dlg.getByLabel('Passphrase wiederholen').fill('zu kurz');
+    const at = await box(go);
     await go.click();
     await expect(dlg).toContainText('Mindestens 12 Zeichen.');
+    // the error lines had their room: the button did not move
+    expect(await box(go)).toEqual(at);
     await dlg.getByLabel('Passphrase (mindestens 12 Zeichen)').fill('Ein langer Satz eins');
     await dlg.getByLabel('Passphrase wiederholen').fill('Ein langer Satz zwei');
     await go.click();
     await expect(dlg).toContainText('Die beiden Eingaben stimmen nicht überein.');
+    expect(await box(go)).toEqual(at);
+    for (const f of await dlg.locator('input[type=password]').all()) await expect(f).toHaveAttribute('autocomplete', 'off');
     expect(header).toBeUndefined();
     await dlg.getByLabel('Passphrase wiederholen').fill('Ein langer Satz eins');
     const download = page.waitForEvent('download');
@@ -185,6 +200,24 @@ test.describe('admin: Medienserver card (desktop)', () => {
     expect((await download).suggestedFilename()).toBe('jellyfin-20261117-0300-10.11.0.tar.gz.age');
     await expect(dlg).toHaveCount(0);
     expect(header).toBe(Buffer.from('Ein langer Satz eins', 'utf8').toString('base64url'));
+  });
+
+  test('deleting a kept library counts its references first, then the row is gone', async ({ page, api }) => {
+    const ms = api.admin.media;
+    runningMedia(ms);
+    ms.managed.libraries.push({ slug: 'alt', name: 'Alt', type: 'mixed', rel: 'Alt', created: true });
+    ms.libraries = [{ slug: 'alt', name: 'Alt', type: 'mixed', rel: 'Alt', created: true, references: { lists: 2, resume: 3, recordings: 1 } }];
+    await page.goto('/admin/settings?tab=media');
+    const c = card(page);
+    const kept = c.locator('ul.kept li').filter({ hasText: 'Alt' });
+    await expect(kept).toHaveCount(1);
+    await kept.getByRole('button', { name: 'Bibliothek löschen' }).click();
+    const dlg = page.getByRole('alertdialog', { name: 'Bibliothek „Alt“ löschen?' });
+    await expect(dlg).toContainText('2 Listeneinträge, 3 Fortsetzungspunkte und 1 Aufnahmen');
+    await dlg.getByRole('button', { name: 'Bibliothek löschen' }).click();
+    // the card reads the view again: the kept row is gone, nothing can be deleted twice
+    await expect(kept).toHaveCount(0);
+    expect(ms.calls.filter((x) => x.m === 'DELETE').map((x) => x.p)).toEqual(['/api/admin/mediaserver/libraries/alt']);
   });
 
   test('log dialog shows redacted lines and copies them', async ({ page, api, context }) => {

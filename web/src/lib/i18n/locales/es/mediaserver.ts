@@ -153,7 +153,7 @@ const dict: Translation<typeof de> = {
     failedAt: 'Detenido en «{step}». {reason}',
     again: 'Otra vez',
     recreate: 'Volver a crear',
-    recreateHint: 'Borra los datos de este servidor y lo configura de nuevo.',
+    recreateHint: 'Quita este servidor con sus datos y vuelve a rellenar los datos anteriores. Después vuelve a configurarlo con «Configurar».',
   },
   status: {
     title: 'Estado',
@@ -237,6 +237,8 @@ const dict: Translation<typeof de> = {
     passError: { short: 'Al menos 12 caracteres.', long: 'Como máximo 1024 caracteres.', mismatch: 'Las dos entradas no coinciden.' },
     downloadConfirm: 'Descargar',
     downloaded: 'La descarga está en marcha.',
+    saveRefused: 'El navegador no permitió guardar. Inténtalo de nuevo.',
+    saveAborted: 'Se canceló el guardado.',
     upload: 'Restaurar desde archivo',
     uploadTitle: 'Restaurar desde archivo',
     uploadBody: 'Una copia descargada (.tar.gz.age, como máximo 20 GiB) con su frase de contraseña. Los datos del servidor se sustituyen después por ella.',

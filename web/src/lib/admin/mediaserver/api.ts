@@ -83,7 +83,11 @@ export interface MediaApi {
   libraries(): Promise<{ libraries: Array<LibraryEntry & { references: LibraryReferences | null }> }>;
   deleteLibrary(slug: string): Promise<{ ok: true }>;
   mode(restore: boolean): Promise<{ ok: true }>;
-  download(id: string, passphrase: string): Promise<void>;
+  /**
+   * `target`: the file picked for it (pickSaveTarget, asked once on the click: a retry after a fresh sign-in reuses it, the browser
+   * would refuse a second picker without the click); undefined = pick here, null = the browser has no picker (a download link)
+   */
+  download(id: string, passphrase: string, target?: SaveTarget | null): Promise<void>;
   upload(file: File, passphrase: string): Promise<{ backup: MediaBackup; job: UpdaterJob | null }>;
 }
 
@@ -101,23 +105,43 @@ const json = async (res: Response): Promise<unknown> => {
   try { return text ? JSON.parse(text) : null; } catch { return null; }
 };
 
-type SaveHandle = { createWritable(): Promise<WritableStream<Uint8Array>> };
-type SavePicker = (o: { suggestedName: string }) => Promise<SaveHandle>;
+/** the file the person picked (File System Access API); `remove` where the browser has it */
+export type SaveTarget = { createWritable(): Promise<WritableStream<Uint8Array>>; remove?(): Promise<void> };
+type SavePicker = (o: { suggestedName: string }) => Promise<SaveTarget>;
 
 /**
- * The encrypted backup to a file: streamed into the file the person picks when the browser can (showSaveFilePicker), else through a
- * Blob and an object URL (a download link clicked once). A refusal is an ApiError with the backend's code; cancelling the picker is
- * an AbortError, nothing is fetched then.
+ * Asks where to save `<id>.tar.gz.age` (showSaveFilePicker), on the click itself: it needs the click's user activation. null when the
+ * browser has no picker (the download then goes through a link). Cancelling rejects with an AbortError, a refused picker with a
+ * SecurityError (model.ts saveErrorText).
  */
-async function saveDownload(path: string, id: string, headers: Record<string, string>): Promise<void> {
-  const name = `${id}.tar.gz.age`;
+export async function pickSaveTarget(id: string): Promise<SaveTarget | null> {
   const picker = (globalThis as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
-  // the picker first: it needs the click's user activation, which the fetch would use up
-  const handle = picker ? await picker({ suggestedName: name }) : null;
+  return picker ? picker({ suggestedName: `${id}.tar.gz.age` }) : null;
+}
+
+/** a picked file that got nothing (a refusal, a broken stream): removed where the browser can, never left empty or partial */
+const discard = async (t: SaveTarget) => { try { await t.remove?.(); } catch { /* the browser keeps it: nothing more to do */ } };
+
+/**
+ * The encrypted backup to a file: streamed into the picked file when there is one, else through a Blob and an object URL (a download
+ * link clicked once). A refusal is an ApiError with the backend's code and leaves no file; a stream that breaks aborts the writable
+ * (pipeTo: nothing written is kept) and removes the file.
+ */
+async function saveDownload(path: string, id: string, headers: Record<string, string>, target: SaveTarget | null | undefined): Promise<void> {
+  const name = `${id}.tar.gz.age`;
+  const handle = target === undefined ? await pickSaveTarget(id) : target;
   const res = await fetch(path, { method: 'GET', credentials: 'same-origin', headers, cache: 'no-store' });
-  if (!res.ok || !res.body) throw new ApiError(res.status, await json(res));
+  if (!res.ok || !res.body) {
+    if (handle) await discard(handle);
+    throw new ApiError(res.status, await json(res));
+  }
   if (handle) {
-    await res.body.pipeTo(await handle.createWritable());
+    try {
+      await res.body.pipeTo(await handle.createWritable());
+    } catch (e) {
+      await discard(handle);
+      throw e;
+    }
     return;
   }
   const url = URL.createObjectURL(await res.blob());
@@ -156,7 +180,8 @@ export const adminMediaApi: MediaApi = {
   libraries: () => api(`${P}/libraries`),
   deleteLibrary: (slug) => api(`${P}/libraries/${encodeURIComponent(slug)}`, { method: 'DELETE', body: {} }),
   mode: (restore) => api(`${P}/mode`, { method: 'POST', body: { mode: 'external', restore } }),
-  download: (id, passphrase) => saveDownload(`${P}/backups/${encodeURIComponent(id)}/download`, id, { 'x-csrf-token': getCsrf(), [PASSPHRASE_HEADER]: encodePassphrase(passphrase) }),
+  download: (id, passphrase, target) =>
+    saveDownload(`${P}/backups/${encodeURIComponent(id)}/download`, id, { 'x-csrf-token': getCsrf(), [PASSPHRASE_HEADER]: encodePassphrase(passphrase) }, target),
   async upload(file, passphrase) {
     const res = await fetch(`${P}/backups/upload`, {
       method: 'POST', credentials: 'same-origin', body: file,

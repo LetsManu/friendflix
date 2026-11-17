@@ -5,7 +5,8 @@
    * *Basisordner* (spec "The base folder and its code"): the confirmed path read-only with *Ändern*, or the path field with *Code
    * anfordern*; then the code field with its countdown (mm:ss, model.ts countdown) and where the updater wrote the line
    * (model.ts codeLogHint). A right code stores the base (a managed server is recreated on it: its job goes to the card); a wrong,
-   * expired or used-up one says so. The countdown, the hint and the reason line keep their room while the code is pending: nothing
+   * expired or used-up one says so. *Neuen Code anfordern* keeps the pending code until a new one replaces it; *Abbrechen* (whenever a code
+   * is pending) frees the path field again. The countdown, the hint and the reason line keep their room while the code is pending: nothing
    * below moves while the time runs or a refusal appears.
    */
   import { createEventDispatcher, onDestroy } from 'svelte';
@@ -28,7 +29,8 @@
   export let disabled = false;
   const dispatch = createEventDispatcher<{ changed: void; job: UpdaterJob; unreadable: boolean }>();
 
-  let editing = false, path = base.path ?? '', code = '', error = '', note = '', busy = false;
+  let editing = false, path = base.path ?? '', code = '', error = '', note = '', doing: '' | 'request' | 'confirm' | 'clear' = '';
+  $: busy = doing !== '';
   /** the expiry of a code requested here (the status brings it back after a reload) */
   let expiresAt: string | null = base.pending ? base.expiresAt : null;
   $: if (base.pending && base.expiresAt) expiresAt = base.expiresAt;
@@ -45,7 +47,7 @@
   async function request() {
     error = ''; note = '';
     if (!absolute(path)) { error = tr('mediaserver.base.pathError'); return; }
-    busy = true;
+    doing = 'request';
     try {
       const r = await call(() => api.requestBase(path.trim()));
       expiresAt = r.expiresAt ?? new Date(Date.now() + 30 * 60_000).toISOString();
@@ -54,13 +56,13 @@
       if (r.warning === 'base_unreadable') note = tr('mediaserver.base.unreadable');
     } catch (e) {
       error = mediaErrorText(apiCode(e));
-    } finally { busy = false; }
+    } finally { doing = ''; }
   }
 
   async function confirmCode() {
     error = ''; note = '';
     if (!code.trim()) return;
-    busy = true;
+    doing = 'confirm';
     try {
       const r: BaseConfirm = await call(() => api.confirmBase(code.trim()));
       editing = false; expiresAt = null; code = '';
@@ -75,20 +77,20 @@
       error = mediaErrorText(c);
       // the pending request is gone (expired, the fifth wrong code, none at all): a new code is needed
       if (c === 'expired' || c === 'locked' || c === 'no_pending') expiresAt = null;
-    } finally { busy = false; }
+    } finally { doing = ''; }
   }
 
   async function clear() {
     if (!(await confirm({ title: tr('mediaserver.base.clearTitle'), body: tr('mediaserver.base.clearBody'), confirmLabel: tr('mediaserver.base.clear') }))) return;
     error = '';
-    busy = true;
+    doing = 'clear';
     try {
       await call(() => api.clearBase());
       path = ''; editing = false;
       dispatch('changed');
     } catch (e) {
       error = mediaErrorText(apiCode(e));
-    } finally { busy = false; }
+    } finally { doing = ''; }
   }
   const change = () => { editing = true; path = base.path ?? ''; error = ''; note = ''; };
   const cancel = () => { editing = false; expiresAt = null; code = ''; error = ''; };
@@ -102,22 +104,23 @@
       <code data-testid="media-base-path">{base.path}</code>
       <span class="pill"><Icon name="check" size={14} />{$t('mediaserver.base.confirmed')}</span>
       <Button variant="secondary" size="sm" icon="pencil" {disabled} on:click={change}>{$t('mediaserver.base.change')}</Button>
-      {#if api.scope === 'admin' && !inUse}<Button variant="ghost" size="sm" {disabled} pending={busy} on:click={clear}>{$t('mediaserver.base.clear')}</Button>{/if}
+      {#if api.scope === 'admin' && !inUse}<Button variant="ghost" size="sm" {disabled} pending={doing === 'clear'} on:click={clear}>{$t('mediaserver.base.clear')}</Button>{/if}
     </div>
   {:else}
     <form class="row" novalidate on:submit|preventDefault={request}>
       <Field label={$t('mediaserver.base.path')} bind:value={path} placeholder="/srv/media" maxlength={200} autocomplete="off" disabled={disabled || busy || pending} />
       <div class="btns">
-        {#if !pending}<Button type="submit" variant="secondary" {disabled} pending={busy}>{$t('mediaserver.base.request')}</Button>{/if}
-        {#if editing}<Button variant="ghost" disabled={busy} on:click={cancel}>{$t('common.cancel')}</Button>{/if}
+        {#if !pending}<Button type="submit" variant="secondary" {disabled} pending={doing === 'request'}>{$t('mediaserver.base.request')}</Button>{/if}
+        {#if editing || pending}<Button variant="ghost" disabled={busy} on:click={cancel}>{$t('common.cancel')}</Button>{/if}
       </div>
     </form>
     {#if pending}
       <form class="row" novalidate on:submit|preventDefault={confirmCode}>
         <Field label={$t('mediaserver.base.code')} bind:value={code} placeholder="XXXX-XXXX-XXXX" maxlength={20} autocomplete="off" disabled={disabled || busy || expired} />
         <div class="btns">
-          <Button type="submit" pending={busy} disabled={disabled || expired || !code.trim()}>{$t('mediaserver.base.confirm')}</Button>
-          <Button variant="ghost" disabled={busy} on:click={() => { expiresAt = null; void request(); }}>{$t('mediaserver.base.newCode')}</Button>
+          <Button type="submit" pending={doing === 'confirm'} disabled={disabled || expired || !code.trim()}>{$t('mediaserver.base.confirm')}</Button>
+          <!-- the pending code, its countdown and the hint stay until a new code replaces them (or a refusal says why) -->
+          <Button variant="ghost" pending={doing === 'request'} disabled={busy && doing !== 'request'} on:click={request}>{$t('mediaserver.base.newCode')}</Button>
         </div>
       </form>
       <!-- fixed room: the countdown never changes width (tabular digits), the hint is there the whole time -->

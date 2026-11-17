@@ -153,7 +153,7 @@ const dict: Translation<typeof de> = {
     failedAt: '“{step}” adımında durdu. {reason}',
     again: 'Bir daha',
     recreate: 'Yeniden oluştur',
-    recreateHint: 'Bu sunucunun verilerini siler ve onu yeniden kurar.',
+    recreateHint: 'Bu sunucuyu verileriyle birlikte kaldırır ve önceki bilgileri yeniden doldurur. Ardından onu “Kur” ile yeniden kur.',
   },
   status: {
     title: 'Durum',
@@ -237,6 +237,8 @@ const dict: Translation<typeof de> = {
     passError: { short: 'En az 12 karakter.', long: 'En fazla 1024 karakter.', mismatch: 'İki giriş birbirini tutmuyor.' },
     downloadConfirm: 'İndir',
     downloaded: 'İndirme sürüyor.',
+    saveRefused: 'Tarayıcı kaydetmeye izin vermedi. Yeniden dene.',
+    saveAborted: 'Kaydetme iptal edildi.',
     upload: 'Dosyadan geri yükle',
     uploadTitle: 'Dosyadan geri yükle',
     uploadBody: 'İndirilmiş bir yedek (.tar.gz.age, en fazla 20 GiB) ve parola ifadesi. Sunucunun verileri ardından onunla değiştirilir.',

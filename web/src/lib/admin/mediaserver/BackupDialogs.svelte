@@ -20,8 +20,8 @@
   import { toast } from '#lib/ui/toast';
   import { uid } from '#lib/ui/ids';
   import type { UpdaterJob } from '../updater';
-  import type { MediaApi, MediaBackup, MediaView } from './api';
-  import { mediaErrorText, passphraseError, type ActionOp } from './model';
+  import { pickSaveTarget, type MediaApi, type MediaBackup, type MediaView, type SaveTarget } from './api';
+  import { mediaErrorText, passphraseError, saveErrorText, type ActionOp } from './model';
 
   export let api: MediaApi;
   export let call: <T>(fn: () => Promise<T>) => Promise<T>;
@@ -52,19 +52,27 @@
       after(await call(fn));
       open = null;
     } catch (e) {
-      if ((e as { name?: string } | null)?.name === 'AbortError') return; // the save picker was closed
-      error = mediaErrorText(apiCode(e));
+      // the browser refused or cancelled saving (picker, file write): its own sentence; else the backend's code
+      error = saveErrorText(e) ?? mediaErrorText(apiCode(e));
     } finally { working = false; }
   }
   const jobOf = (r: unknown) => ((r as { job?: UpdaterJob | null } | null)?.job ?? null);
 
-  function submit() {
+  async function submit() {
     tried = true;
     if (open === 'create') return run(() => api.action({ op: 'backup', trickplay }), (r) => dispatch('job', jobOf(r)));
     if (open === 'download' && target) {
       if (passphraseError(pass, pass2)) return;
       const b = target;
-      return run(() => api.download(b.id, pass), () => toast.success(tr('mediaserver.backup.downloaded')));
+      // the file is picked on the click itself (it needs the click's user activation); a retry after a fresh sign-in reuses it
+      let into: SaveTarget | null;
+      try {
+        into = await pickSaveTarget(b.id);
+      } catch (e) {
+        error = saveErrorText(e) ?? mediaErrorText(apiCode(e));
+        return;
+      }
+      return run(() => api.download(b.id, pass, into), () => toast.success(tr('mediaserver.backup.downloaded')));
     }
     if (open === 'upload') {
       if (!file || passphraseError(pass, pass)) return;
@@ -119,17 +127,18 @@
           <Toggle label={$t('mediaserver.backup.trickplay')} bind:checked={trickplay} disabled={working} />
         {:else if open === 'download'}
           {#if target}<p class="which">{label(target)}</p>{/if}
-          <Field label={$t('mediaserver.backup.passphrase')} type="password" bind:value={pass} autocomplete="new-password" maxlength={4096} disabled={working}
+          <!-- never stored: no password manager offer; the error lines keep their room (the dialog never grows) -->
+          <Field label={$t('mediaserver.backup.passphrase')} type="password" bind:value={pass} autocomplete="off" maxlength={4096} disabled={working} reserve
             error={passErr === 'short' || passErr === 'long' ? $t(`mediaserver.backup.passError.${passErr}`) : ''} />
-          <Field label={$t('mediaserver.backup.passphraseAgain')} type="password" bind:value={pass2} autocomplete="new-password" maxlength={4096} disabled={working}
+          <Field label={$t('mediaserver.backup.passphraseAgain')} type="password" bind:value={pass2} autocomplete="off" maxlength={4096} disabled={working} reserve
             error={passErr === 'mismatch' ? $t('mediaserver.backup.passError.mismatch') : ''} />
         {:else}
           <div class="field">
             <label for="{id}-f">{$t('mediaserver.backup.file')}</label>
             <input id="{id}-f" type="file" accept=".age,application/octet-stream" disabled={working} on:change={picked} />
-            {#if tried && !file}<span class="ferr" role="alert">{$t('mediaserver.backup.fileMissing')}</span>{/if}
+            <span class="ferr" role={tried && !file ? 'alert' : undefined}>{tried && !file ? $t('mediaserver.backup.fileMissing') : ''}</span>
           </div>
-          <Field label={$t('mediaserver.backup.uploadPassphrase')} type="password" bind:value={pass} autocomplete="off" maxlength={4096} disabled={working}
+          <Field label={$t('mediaserver.backup.uploadPassphrase')} type="password" bind:value={pass} autocomplete="off" maxlength={4096} disabled={working} reserve
             error={passErr === 'short' || passErr === 'long' ? $t(`mediaserver.backup.passError.${passErr}`) : ''} />
         {/if}
       </div>
@@ -158,5 +167,5 @@
   form :global(.field), form :global(.tgl) { margin-top: 10px; }
   .field { display: flex; flex-direction: column; gap: .3rem; }
   .field input { min-height: 44px; }
-  .ferr { font-size: .85rem; color: var(--err); font-weight: 600; }
+  .ferr { min-height: 2.8em; line-height: 1.4; font-size: .85rem; color: var(--err); font-weight: 600; }
 </style>

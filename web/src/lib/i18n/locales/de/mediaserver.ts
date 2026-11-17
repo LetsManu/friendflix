@@ -155,7 +155,7 @@ export default {
     failedAt: 'Angehalten bei „{step}“. {reason}',
     again: 'Nochmal',
     recreate: 'Neu anlegen',
-    recreateHint: 'Löscht die Daten dieses Servers und richtet ihn neu ein.',
+    recreateHint: 'Entfernt diesen Server samt Daten und trägt die bisherigen Angaben wieder ein. Danach richtest du ihn mit „Einrichten“ neu ein.',
   },
   status: {
     title: 'Status',
@@ -239,6 +239,8 @@ export default {
     passError: { short: 'Mindestens 12 Zeichen.', long: 'Höchstens 1024 Zeichen.', mismatch: 'Die beiden Eingaben stimmen nicht überein.' },
     downloadConfirm: 'Herunterladen',
     downloaded: 'Der Download läuft.',
+    saveRefused: 'Der Browser hat das Speichern nicht erlaubt. Versuch es noch einmal.',
+    saveAborted: 'Das Speichern wurde abgebrochen.',
     upload: 'Aus Datei wiederherstellen',
     uploadTitle: 'Aus Datei wiederherstellen',
     uploadBody: 'Eine heruntergeladene Sicherung (.tar.gz.age, höchstens 20 GiB) mit ihrer Passphrase. Die Daten des Servers werden danach durch sie ersetzt.',

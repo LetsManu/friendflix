@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, setCsrf } from '#lib/api';
-import { adminMediaApi, encodePassphrase, PASSPHRASE_HEADER, setupMediaApi } from './api';
+import { adminMediaApi, encodePassphrase, PASSPHRASE_HEADER, pickSaveTarget, setupMediaApi, type SaveTarget } from './api';
 
 type Call = { url: string; init: RequestInit };
 let calls: Call[] = [];
@@ -122,6 +122,55 @@ describe('media server API', () => {
     // a refusal: its code, nothing saved
     answer = () => new Response('{"error":"invalid_passphrase"}', { status: 400 });
     await expect(adminMediaApi.download('ferrofin-20261117-1030-10.11.0', 'x')).rejects.toMatchObject({ status: 400, body: { error: 'invalid_passphrase' } });
+  });
+
+  it('download into a picked file: the target is asked once and reused, a refusal or a broken stream leaves no file', async () => {
+    const target = (opts: { breaks?: boolean } = {}) => {
+      const t = { writable: vi.fn(), remove: vi.fn(async () => undefined), aborted: false };
+      const handle: SaveTarget = {
+        createWritable: async () => { t.writable(); return new WritableStream<Uint8Array>({ abort: () => { t.aborted = true; } }); },
+        remove: t.remove,
+      };
+      if (opts.breaks) answer = () => new Response(new ReadableStream<Uint8Array>({ pull: (c) => c.error(new Error('cut')) }), { status: 200 });
+      return { t, handle };
+    };
+    const picker = vi.fn();
+    vi.stubGlobal('showSaveFilePicker', picker);
+    // a target handed in: no second picker (a retry after a fresh sign-in has no user activation)
+    const ok = target();
+    answer = () => new Response(new Uint8Array([1]), { status: 200 });
+    await adminMediaApi.download('jellyfin-20261117-1030-10.11.0', 'Ein langer Satz', ok.handle);
+    expect(picker).not.toHaveBeenCalled();
+    expect(ok.t.writable).toHaveBeenCalledOnce();
+    expect(ok.t.remove).not.toHaveBeenCalled();
+    // refused (a fresh sign-in needed, a wrong passphrase): nothing written, the picked file removed
+    const refused = target();
+    answer = () => new Response('{"error":"reauth_required"}', { status: 401 });
+    await expect(adminMediaApi.download('jellyfin-20261117-1030-10.11.0', 'Ein langer Satz', refused.handle)).rejects.toMatchObject({ status: 401 });
+    expect(refused.t.writable).not.toHaveBeenCalled();
+    expect(refused.t.remove).toHaveBeenCalledOnce();
+    // the stream breaks halfway: the writable is aborted (nothing kept) and the file removed
+    const broken = target({ breaks: true });
+    await expect(adminMediaApi.download('jellyfin-20261117-1030-10.11.0', 'Ein langer Satz', broken.handle)).rejects.toThrow();
+    expect(broken.t.aborted).toBe(true);
+    expect(broken.t.remove).toHaveBeenCalledOnce();
+    // a browser without remove(): the error still arrives
+    const old = target();
+    delete (old.handle as { remove?: unknown }).remove;
+    answer = () => new Response('{"error":"backup_invalid"}', { status: 400 });
+    await expect(adminMediaApi.download('x', 'Ein langer Satz', old.handle)).rejects.toMatchObject({ body: { error: 'backup_invalid' } });
+  });
+
+  it('pickSaveTarget asks with the file name, null without a picker; a cancel rejects as AbortError', async () => {
+    const handle = { createWritable: vi.fn() };
+    const picker = vi.fn(async () => handle);
+    vi.stubGlobal('showSaveFilePicker', picker);
+    expect(await pickSaveTarget('ferrofin-20261117-1030-10.11.0')).toBe(handle);
+    expect(picker).toHaveBeenCalledWith({ suggestedName: 'ferrofin-20261117-1030-10.11.0.tar.gz.age' });
+    vi.stubGlobal('showSaveFilePicker', vi.fn(async () => { throw new DOMException('cancelled', 'AbortError'); }));
+    await expect(pickSaveTarget('x')).rejects.toMatchObject({ name: 'AbortError' });
+    vi.stubGlobal('showSaveFilePicker', undefined);
+    expect(await pickSaveTarget('x')).toBeNull();
   });
 
   it('upload sends the file as octet-stream with the passphrase header', async () => {

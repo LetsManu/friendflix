@@ -57,9 +57,10 @@ test.describe('admin: Medienserver card (phone)', () => {
     await fits(c.getByRole('button', { name: 'Einrichten' }), 'Einrichten');
     await c.getByRole('button', { name: 'Einrichten' }).click();
     const progress = c.getByTestId('media-setup');
-    const above = { head: await box(head), seg: await box(seg) };
+    const go = c.getByTestId('media-apply');
+    const above = { head: await box(head), seg: await box(seg), go: await box(go) };
     await expect.poll(async () => {
-      expect({ head: await box(head), seg: await box(seg) }).toEqual(above);
+      expect({ head: await box(head), seg: await box(seg), go: await box(go) }).toEqual(above);
       return progress.getAttribute('data-setup');
     }, { timeout: 40_000, intervals: [300] }).toBe('done');
     await expect(progress.locator('li[data-state="done"]')).toHaveCount(6);

@@ -153,7 +153,7 @@ const dict: Translation<typeof de> = {
     failedAt: 'Fermato a «{step}». {reason}',
     again: 'Ancora',
     recreate: 'Ricrea',
-    recreateHint: 'Elimina i dati di questo server e lo configura di nuovo.',
+    recreateHint: 'Rimuove questo server con i suoi dati e reinserisce i dati precedenti. Poi configuralo di nuovo con «Configura».',
   },
   status: {
     title: 'Stato',
@@ -237,6 +237,8 @@ const dict: Translation<typeof de> = {
     passError: { short: 'Almeno 12 caratteri.', long: 'Al massimo 1024 caratteri.', mismatch: 'I due inserimenti non coincidono.' },
     downloadConfirm: 'Scarica',
     downloaded: 'Il download è in corso.',
+    saveRefused: 'Il browser non ha consentito il salvataggio. Riprova.',
+    saveAborted: 'Il salvataggio è stato annullato.',
     upload: 'Ripristina da file',
     uploadTitle: 'Ripristina da file',
     uploadBody: 'Un backup scaricato (.tar.gz.age, al massimo 20 GiB) con la sua passphrase. I dati del server vengono poi sostituiti da esso.',

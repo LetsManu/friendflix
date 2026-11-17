@@ -153,7 +153,7 @@ const dict: Translation<typeof de> = {
     failedAt: 'Zatrzymano na „{step}”. {reason}',
     again: 'Jeszcze raz',
     recreate: 'Utwórz ponownie',
-    recreateHint: 'Usuwa dane tego serwera i konfiguruje go od nowa.',
+    recreateHint: 'Usuwa ten serwer razem z danymi i ponownie wypełnia wcześniejsze ustawienia. Potem skonfiguruj go od nowa przyciskiem „Skonfiguruj”.',
   },
   status: {
     title: 'Stan',
@@ -237,6 +237,8 @@ const dict: Translation<typeof de> = {
     passError: { short: 'Co najmniej 12 znaków.', long: 'Najwyżej 1024 znaki.', mismatch: 'Oba wpisy się różnią.' },
     downloadConfirm: 'Pobierz',
     downloaded: 'Pobieranie trwa.',
+    saveRefused: 'Przeglądarka nie pozwoliła zapisać pliku. Spróbuj ponownie.',
+    saveAborted: 'Zapisywanie zostało przerwane.',
     upload: 'Przywróć z pliku',
     uploadTitle: 'Przywróć z pliku',
     uploadBody: 'Pobrana kopia zapasowa (.tar.gz.age, najwyżej 20 GiB) z jej hasłem. Dane serwera zostaną potem nią zastąpione.',

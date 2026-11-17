@@ -23,6 +23,8 @@
   export let hdr: MediaStatus['hdr'] = null;
   /** the HDR test can run (a managed server of this kind exists, no job runs) */
   export let canTest = false;
+  /** the GPU the running server was deployed with (the test uses that, never the unsaved choice) */
+  export let deployed: Gpu | null = null;
   export let testing = false;
   export let disabled = false;
   const dispatch = createEventDispatcher<{ hdr: void }>();
@@ -63,7 +65,7 @@
   </div>
   <div class="hdr">
     <div class="hdr-head">
-      <Button variant="secondary" size="sm" icon="activity" pending={testing} disabled={disabled || !canTest || gpu === 'off'} on:click={() => dispatch('hdr')}>{$t('mediaserver.gpu.hdr')}</Button>
+      <Button variant="secondary" size="sm" icon="activity" pending={testing} disabled={disabled || !canTest || !deployed || deployed === 'off'} on:click={() => dispatch('hdr')}>{$t('mediaserver.gpu.hdr')}</Button>
       <span class="muted small">{$t('mediaserver.gpu.hdrHint')}</span>
     </div>
     <dl data-testid="media-hdr">

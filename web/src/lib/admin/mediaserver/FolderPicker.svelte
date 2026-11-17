@@ -19,7 +19,7 @@
   import { confirm } from '#lib/ui/confirm';
   import { toast } from '#lib/ui/toast';
   import type { BrowseEntry, FolderInput, LibraryEntry, LibraryType, MediaApi } from './api';
-  import { MAX_FOLDERS, mediaErrorText } from './model';
+  import { MAX_FOLDERS, defaultName, mediaErrorText } from './model';
 
   export let api: MediaApi;
   export let call: <T>(fn: () => Promise<T>) => Promise<T>;
@@ -33,7 +33,8 @@
   /** the Live TV recordings offer (model.ts livetvOffer) */
   export let livetv: { rel: string; target: string } | null = null;
   export let disabled = false;
-  const dispatch = createEventDispatcher<{ livetv: string; changed: void }>();
+  /** changed: the rows were edited; deleted: a kept library is gone in the server (the card reads the view again) */
+  const dispatch = createEventDispatcher<{ livetv: string; changed: void; deleted: string }>();
 
   const TYPES: LibraryType[] = ['movies', 'tvshows', 'music', 'mixed'];
   $: typeOptions = TYPES.map((v) => ({ value: v, label: $t(`mediaserver.folders.types.${v}`) }));
@@ -64,7 +65,7 @@
   function pick(e: BrowseEntry) {
     const rel = relOf(e.name);
     if (picked(rel) || rows.length >= MAX_FOLDERS) return;
-    rows = [...rows, { rel, name: e.name.slice(0, 60), type: 'movies' }];
+    rows = [...rows, { rel, name: defaultName(e.name), type: 'movies' }];
     dispatch('changed');
   }
   async function unpick(rel: string) {
@@ -86,7 +87,7 @@
       if (!(await confirm({ title: tr('mediaserver.folders.deleteTitle', { name: lib.name }), body, danger: true, confirmLabel: tr('mediaserver.folders.deleteLibrary') }))) return;
       await call(() => api.deleteLibrary(lib.slug));
       toast.success(tr('mediaserver.folders.deleted'));
-      dispatch('changed');
+      dispatch('deleted', lib.slug);
     } catch (e) {
       toast.error(mediaErrorText(apiCode(e)));
     } finally { deleting = ''; }

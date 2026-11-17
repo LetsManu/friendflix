@@ -13,7 +13,7 @@ import tr_ from '#lib/i18n/locales/tr/index';
 import type { MediaManaged, MediaStatus, MediaView } from './api';
 import {
   ACTION_ORDER, DEFAULT_MANAGED, TRIAL_KINDS, actionsFor, choiceDisabled, codeLogHint, countdown, currentChoice, folderRowsError, idError, initialRows,
-  keptLibraries, kindName, livetvOffer, mediaErrorText, nameTakenRow, passphraseError, pinState, reasonText, setupSteps, versionCmp,
+  defaultName, keptLibraries, kindName, livetvOffer, mediaErrorText, saveErrorText, nameTakenRow, passphraseError, pinState, reasonText, setupSteps, versionCmp,
 } from './model';
 
 afterEach(async () => { await setLocale('de'); });
@@ -155,6 +155,16 @@ describe('folders', () => {
     expect(livetvOffer({ ...v, livetvLibraryPath: null }, [{ rel: 'TV/Aufnahmen' }])).toBeNull();
   });
 
+  it('defaultName: a picked folder\'s name cut at 60 without splitting a character', () => {
+    expect(defaultName('Filme')).toBe('Filme');
+    expect(defaultName('x'.repeat(70))).toBe('x'.repeat(60));
+    // 59 units, then an emoji (2 units): it does not fit whole, and is never cut in half
+    const cut = defaultName(`${'a'.repeat(59)}🎬b`);
+    expect(cut).toBe('a'.repeat(59));
+    expect(defaultName('🎬'.repeat(40))).toBe('🎬'.repeat(30));
+    expect(folderRowsError([{ rel: 'x', name: defaultName('🎬'.repeat(40)), type: 'movies' }])).toBeNull();
+  });
+
   it('idError: an integer 1–65535, never 0', () => {
     expect(idError(1000)).toBe(false);
     expect(idError(65535)).toBe(false);
@@ -219,6 +229,16 @@ describe('status and actions', () => {
     expect(actionsFor(running({ ...pending, setup: 'done' }))).toEqual(['stop', 'restart', 'update', 'backup', 'remove']);
     // newer than this build: never down, no update
     expect(actionsFor(running({ pin: { image: `x@sha256:${'b'.repeat(64)}`, upstream: '10.10.7', changed: false } }))).not.toContain('update');
+  });
+});
+
+describe('save errors', () => {
+  it('a refused or cancelled save reads as a sentence; anything else is left to the code', () => {
+    expect(saveErrorText(new DOMException('x', 'SecurityError'))).toBe('Der Browser hat das Speichern nicht erlaubt. Versuch es noch einmal.');
+    expect(saveErrorText(new DOMException('x', 'NotAllowedError'))).toBe(saveErrorText({ name: 'SecurityError' }));
+    expect(saveErrorText(new DOMException('x', 'AbortError'))).toBe('Das Speichern wurde abgebrochen.');
+    expect(saveErrorText(new Error('x'))).toBeNull();
+    expect(saveErrorText(null)).toBeNull();
   });
 });
 
