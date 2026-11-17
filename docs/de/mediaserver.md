@@ -122,7 +122,7 @@ Assistent weitergeht.
   startet einen Container, den du gestoppt hast, nie neu, egal ob in Admin oder außerhalb. Ein **fehlender** Container wird binnen
   einer Minute neu angelegt.
 - **Entfernen** behält die Daten-, Cache- und Sicherungs-Volumes; *Daten löschen* (mit Eingabe des Namens der Art) entfernt Daten und
-  Cache, nie die Sicherungen. Danach geht FriendFlix zum gespeicherten externen Server zurück, wenn es einen gibt.
+  Cache beider Arten (auch die, die ein Wechsel zurückließ), nie die Sicherungen. Danach geht FriendFlix zum gespeicherten externen Server zurück, wenn es einen gibt.
 - **Systemcheck:** Die Zeile *Verwalteter Medienserver* (`media.managed`) meldet einen fehlenden oder ungesunden Container, einen
   Basisordner oder Ordner, der verschwunden ist (zum Beispiel ein nicht eingehängtes NAS-Share), eine fehlende GPU, einen
   fehlgeschlagenen Auftrag (`managed_job_failed`), ein Image, das länger als 7 Tage vom festgelegten Stand abweicht, und eine

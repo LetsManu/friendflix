@@ -111,8 +111,8 @@ The wizard's media step offers the same path under the setup session; it ends wh
 - **Actions** on the card: *Starten*, *Stoppen*, *Neu starten*, *Aktualisieren*, *Sicherung*, *Wiederherstellen*, *Protokoll*
   (the last 300 lines, secrets replaced by `…`, never stored) and *Entfernen*. A stop is your choice: the updater never restarts a
   container you stopped, in Admin or outside. A container that is *missing* is recreated within a minute.
-- **Entfernen** keeps the data, cache and backup volumes; *Daten löschen* (typing the kind's name) removes data and cache, never
-  the backups. Afterwards FriendFlix goes back to the saved external server when there is one.
+- **Entfernen** keeps the data, cache and backup volumes; *Daten löschen* (typing the kind's name) removes data and cache of both
+  kinds (also those a switch left behind), never the backups. Afterwards FriendFlix goes back to the saved external server when there is one.
 - **Systemcheck:** the line *Verwalteter Medienserver* (`media.managed`) reports a missing or unhealthy container, a base or folder
   that disappeared (for example an unmounted NAS share), a missing GPU, a failed job (`managed_job_failed`), an image that
   differs from its pin for more than 7 days and a backup older than 30 days. A container whose labels are right but whose
