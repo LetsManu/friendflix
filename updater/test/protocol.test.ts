@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { HEADER_NONCE, HEADER_SIG, HEADER_TS, ReplayCache, WINDOW_MS, deriveKey, sign, streamBinding, verify, type Verifier } from '../src/protocol.js';
+import { HEADER_NONCE, HEADER_SIG, HEADER_TS, ReplayCache, WINDOW_MS, deriveKey, precheck, sign, streamBinding, streamBindingAsync, verify, type Verifier } from '../src/protocol.js';
 
 const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/updater-hmac.json', import.meta.url), 'utf8')) as {
   secret: string; key: string; cases: Array<{ method: string; path: string; body: string; ts: string; nonce: string; signature: string }>;
@@ -24,8 +24,11 @@ describe('updater request signing', () => {
     }
   });
 
-  it('the backup streams sign a scrypt derivation of the passphrase header (shared vectors), and only that header verifies', () => {
-    for (const c of vectors.streamBindings) expect(streamBinding(c.header)).toBe(c.binding);
+  it('the backup streams sign a scrypt derivation of the passphrase header (shared vectors), and only that header verifies', async () => {
+    for (const c of vectors.streamBindings) {
+      expect(streamBinding(c.header)).toBe(c.binding);
+      expect(await streamBindingAsync(c.header)).toBe(c.binding);
+    }
     const v = mk();
     const path = '/v1/mediaserver/backups/upload';
     const header = vectors.streamBindings[0]!.header;
@@ -35,6 +38,19 @@ describe('updater request signing', () => {
     // the header itself in place of the binding no longer verifies
     expect(verify(v, req(h, header, 'POST', path))).toEqual({ ok: false, error: 'bad_signature' });
     expect(verify(v, req(h, streamBinding(header), 'POST', path))).toEqual({ ok: true });
+  });
+
+  it('precheck refuses what verify would without a key: missing, malformed, expired, a used nonce (and claims nothing)', () => {
+    const v = mk();
+    const h = sign(key, 'POST', '/v1/update', '', String(NOW));
+    expect(precheck(v, {})).toEqual({ ok: false, error: 'missing' });
+    expect(precheck(v, { ...h, [HEADER_NONCE]: 'xyz' })).toEqual({ ok: false, error: 'malformed' });
+    expect(precheck(v, sign(key, 'POST', '/v1/update', '', String(NOW - WINDOW_MS - 1)))).toEqual({ ok: false, error: 'expired' });
+    expect(precheck(v, h)).toEqual({ ok: true });
+    expect(precheck(v, h)).toEqual({ ok: true });
+    expect(v.cache.size).toBe(0);
+    expect(verify(v, req(h))).toEqual({ ok: true });
+    expect(precheck(v, h)).toEqual({ ok: false, error: 'replay' });
   });
 
   it('accepts a fresh signed request once; the same nonce again is a replay', () => {

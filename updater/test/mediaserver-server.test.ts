@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createServer, type Server } from 'node:http';
 import { connect, type AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Ops, StartResult } from '../src/job.js';
 import { Updater } from '../src/job.js';
 import type { MediaOp } from '../src/mediaserver/types.js';
 import { MediaService } from '../src/mediaserver/service.js';
 import { STARTING_VIEW, mediaStatusView, type MediaStatusView } from '../src/mediaserver/status.js';
-import { ReplayCache, deriveKey, sign, streamBinding, type Verifier } from '../src/protocol.js';
-import { handler, warmMediaStatus, type AppDeps } from '../src/server.js';
+import { ReplayCache, deriveKey, sign, streamBinding, streamBindingAsync, type Verifier } from '../src/protocol.js';
+import { MAX_DERIVING, handler, warmMediaStatus, type AppDeps } from '../src/server.js';
 import { DEFAULT_STATE, memoryStore, type Job } from '../src/state.js';
 import { FACTS, PASSWORD, SOURCE, SPEC, ferroPin, world } from './media-world.js';
 
@@ -27,7 +27,8 @@ const servers: Server[] = [];
 afterEach(async () => { await Promise.all(servers.splice(0).map((s) => new Promise<void>((r) => s.close(() => r())))); });
 
 async function listen(d: AppDeps): Promise<string> {
-  const server = createServer((req, res) => { void handler(d)(req, res); });
+  const h = handler(d);
+  const server = createServer((req, res) => { void h(req, res); });
   servers.push(server);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -378,6 +379,51 @@ describe('the backup streams', () => {
     expect(up.status).toBe(200);
     expect(await up.json()).toEqual({ backup: { id: BACKUP, kind: 'jellyfin', upstream: '10.11.3', at: '2026-11-17T14:02:00.000Z', tag: 'upload', size: 3 } });
     expect(t.uploaded).toEqual([POLISH]);
+  });
+
+  it('the scrypt derivation runs only after every cheap check passed', async () => {
+    const t = fake();
+    const derive = vi.fn(streamBindingAsync);
+    const base = await listen({ ...t.deps, streamBinding: derive });
+    const path = `/v1/mediaserver/backups/${BACKUP}/download`;
+    const h = b64(POLISH);
+    const get = (headers: Record<string, string>) => fetch(base + path, { headers: { 'x-ff-backup-passphrase': h, ...headers } });
+    const answer = async (r: Response) => [r.status, await r.json()];
+    expect(await answer(await get({}))).toEqual([401, { error: 'missing' }]);
+    const good = sign(key, 'GET', path, streamBinding(h));
+    expect(await answer(await get({ ...good, 'x-ff-updater-signature': 'v1=zz' }))).toEqual([401, { error: 'malformed' }]);
+    expect(await answer(await get(sign(key, 'GET', path, streamBinding(h), String(Date.now() - 5 * 60_000))))).toEqual([401, { error: 'expired' }]);
+    const bad = b64('a'.repeat(11));
+    expect(await answer(await fetch(base + path, { headers: { ...sign(key, 'GET', path, streamBinding(bad)), 'x-ff-backup-passphrase': bad } }))).toEqual([400, { error: 'invalid_passphrase' }]);
+    expect(derive).not.toHaveBeenCalled();
+    // a signed request is derived once and passes; its nonce again is refused before deriving
+    expect((await get(good)).status).toBe(200);
+    expect(derive).toHaveBeenCalledTimes(1);
+    expect(await answer(await get(good))).toEqual([401, { error: 'replay' }]);
+    expect(derive).toHaveBeenCalledTimes(1);
+    // a well-formed but wrong signature costs one derivation and is refused
+    expect(await answer(await get({ ...sign(key, 'GET', path, streamBinding(h)), 'x-ff-updater-signature': `v1=${'0'.repeat(64)}` }))).toEqual([401, { error: 'bad_signature' }]);
+    expect(derive).toHaveBeenCalledTimes(2);
+  });
+
+  it('at most MAX_DERIVING derivations run at once; one more is answered busy', async () => {
+    const t = fake();
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((r) => { release = r; });
+    const derive = vi.fn(async (header: string) => { await held; return streamBindingAsync(header); });
+    const base = await listen({ ...t.deps, streamBinding: derive });
+    const path = `/v1/mediaserver/backups/${BACKUP}/download`;
+    const h = b64(POLISH);
+    const get = () => fetch(base + path, { headers: { ...sign(key, 'GET', path, streamBinding(h)), 'x-ff-backup-passphrase': h } });
+    const running = Array.from({ length: MAX_DERIVING }, () => get());
+    await vi.waitFor(() => expect(derive).toHaveBeenCalledTimes(MAX_DERIVING));
+    const extra = await get();
+    expect([extra.status, await extra.json()]).toEqual([409, { error: 'busy' }]);
+    expect(derive).toHaveBeenCalledTimes(MAX_DERIVING);
+    release();
+    expect((await Promise.all(running)).map((r) => r.status)).toEqual(Array(MAX_DERIVING).fill(200));
+    // the slots are free again
+    expect((await get()).status).toBe(200);
   });
 
   it('upload refusals before reading are answered', async () => {

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, scrypt, scryptSync, timingSafeEqual } from 'node:crypto';
 
 /**
  * Request signing between the backend and the updater (docs/security.md "Updater"). The backend keeps a copy of `sign` in
@@ -29,9 +29,18 @@ const TS_RE = /^[0-9]{13}$/;
 
 const STREAM_SALT = 'friendflix-updater-stream/v1';
 
+const STREAM_SCRYPT = { N: 2 ** 14, r: 8, p: 1 } as const;
+
 /** what the backup streams sign in place of the body: scrypt of the passphrase header as sent (hex); backend/src/updater.ts has the same */
 export function streamBinding(passphraseHeader: string): string {
-  return scryptSync(passphraseHeader, STREAM_SALT, 32, { N: 2 ** 14, r: 8, p: 1 }).toString('hex');
+  return scryptSync(passphraseHeader, STREAM_SALT, 32, STREAM_SCRYPT).toString('hex');
+}
+
+/** streamBinding off the event loop (the same bytes): what the server derives, only after precheck() passed */
+export function streamBindingAsync(passphraseHeader: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    scrypt(passphraseHeader, STREAM_SALT, 32, STREAM_SCRYPT, (err, key) => (err ? reject(err) : resolve(key.toString('hex'))));
+  });
 }
 
 export function deriveKey(secret: string): Buffer {
@@ -63,6 +72,8 @@ export class ReplayCache {
     this.seen.set(nonce, expiresAt);
     return true;
   }
+  /** whether the nonce was already used (without claiming it) */
+  has(nonce: string): boolean { return this.seen.has(nonce); }
   get size(): number { return this.seen.size; }
 }
 
@@ -74,15 +85,36 @@ export interface Verifier {
   now?: () => number;
 }
 
-/** Checks one request; the signature is compared in constant time before the nonce is claimed (an invalid request burns no nonce). */
-export function verify(v: Verifier, req: { method: string; path: string; headers: Record<string, string | string[] | undefined>; body: string }): { ok: true } | { ok: false; error: AuthError } {
-  const h = (k: string) => { const x = req.headers[k]; return Array.isArray(x) ? undefined : x; };
+type Headers = Record<string, string | string[] | undefined>;
+type Screened = { ok: true; ts: string; nonce: string; sig: string; t: number; now: number } | { ok: false; error: AuthError };
+
+/** the checks that need no key: headers present and well-formed, inside the time window */
+function screen(v: Verifier, headers: Headers): Screened {
+  const h = (k: string) => { const x = headers[k]; return Array.isArray(x) ? undefined : x; };
   const ts = h(HEADER_TS), nonce = h(HEADER_NONCE), sig = h(HEADER_SIG);
   if (!ts || !nonce || !sig) return { ok: false, error: 'missing' };
   if (!TS_RE.test(ts) || !NONCE_RE.test(nonce) || !SIG_RE.test(sig)) return { ok: false, error: 'malformed' };
   const now = (v.now ?? Date.now)();
   const t = Number(ts);
   if (Math.abs(now - t) > WINDOW_MS || t < v.notBefore) return { ok: false, error: 'expired' };
+  return { ok: true, ts, nonce, sig, t, now };
+}
+
+/**
+ * The cheap part of verify() for a request whose signed content is costly to derive (the backup streams): headers, time window
+ * and an already used nonce, without claiming it. verify() still runs in full afterwards.
+ */
+export function precheck(v: Verifier, headers: Headers): { ok: true } | { ok: false; error: AuthError } {
+  const s = screen(v, headers);
+  if (!s.ok) return s;
+  return v.cache.has(s.nonce) ? { ok: false, error: 'replay' } : { ok: true };
+}
+
+/** Checks one request; the signature is compared in constant time before the nonce is claimed (an invalid request burns no nonce). */
+export function verify(v: Verifier, req: { method: string; path: string; headers: Headers; body: string }): { ok: true } | { ok: false; error: AuthError } {
+  const s = screen(v, req.headers);
+  if (!s.ok) return s;
+  const { ts, nonce, sig, t, now } = s;
   const want = createHmac('sha256', v.key).update(canonical(req.method, req.path, ts, nonce, req.body)).digest();
   const got = Buffer.from(sig.slice(3), 'hex');
   if (got.length !== want.length || !timingSafeEqual(got, want)) return { ok: false, error: 'bad_signature' };

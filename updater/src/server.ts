@@ -18,7 +18,7 @@ import { STARTING_VIEW, mediaStatusView, type MediaStatusView } from './mediaser
 import { Supervisor } from './mediaserver/supervise.js';
 import { BACKUP_ID_RE, type MediaOp } from './mediaserver/types.js';
 import { FF_SERVICES, HEALTH_SERVICES, SELF_SERVICE, channelTag, parseChannelBody, parseLivetvBody, shaTag } from './policy.js';
-import { ReplayCache, deriveKey, streamBinding, verify, type Verifier } from './protocol.js';
+import { ReplayCache, deriveKey, precheck, streamBindingAsync, verify, type Verifier } from './protocol.js';
 import { fileStore } from './state.js';
 
 type Route = 'status' | 'channel' | 'update' | 'rollback' | 'self-update' | 'livetv' | 'mediaserver';
@@ -38,6 +38,8 @@ export const MAX_BODY_FOR: Record<Route, number> = { status: 1024, channel: 1024
 const BODY_DEADLINE_MS = 10_000;
 /** a backup stream that moves no byte for this long is cut (an upload holds the one-scrypt-at-a-time lock until its header is read) */
 const STREAM_IDLE_MS = 60_000;
+/** stream signature derivations (scrypt, 16 MB each) in flight at once; one more is answered 409 busy before it is derived */
+export const MAX_DERIVING = 2;
 const DOWNLOAD_RE = new RegExp(`^/v1/mediaserver/backups/(${BACKUP_ID_RE.source.slice(1, -1)})/download$`);
 const UPLOAD_PATH = '/v1/mediaserver/backups/upload';
 const PASSPHRASE_HEADER = 'x-ff-backup-passphrase';
@@ -63,6 +65,8 @@ export interface AppDeps {
   media?: MediaApi;
   /** shorter deadlines for tests: a JSON body (10 s), an idle backup stream (60 s), the media status (2 s) */
   limits?: { bodyMs?: number; streamIdleMs?: number; mediaStatusMs?: number };
+  /** the backup streams' signed content (protocol.ts streamBindingAsync); replaced in tests */
+  streamBinding?: (passphraseHeader: string) => Promise<string>;
 }
 
 export interface MediaApi {
@@ -199,24 +203,34 @@ async function mediaOp(m: MediaApi, op: MediaOp): Promise<{ status: number; body
 /**
  * The two backup streams (spec "Backup and restore"): the signature covers a scrypt derivation of the `x-ff-backup-passphrase`
  * header as sent (base64url; protocol.ts streamBinding) in place of the body, so it is checked before a byte of the stream is read
- * or written. Answers carry codes only.
+ * or written. The derivation (async, at most MAX_DERIVING at once) runs only after the checks that cost nothing passed. Answers
+ * carry codes only.
  */
-async function stream(d: AppDeps, req: IncomingMessage, res: ServerResponse, path: string, id: string | null): Promise<void> {
+async function stream(d: AppDeps, gate: { deriving: number }, req: IncomingMessage, res: ServerResponse, path: string, id: string | null): Promise<void> {
   const want = id === null ? 'POST' : 'GET';
   // the upload's body is never read on a refusal: the connection is closed after the answer
   const refuse = (status: number, error: string): void => send(res, status, { error }, id === null);
+  const unauthorized = (error: string): void => {
+    d.warn?.(`refused mediaserver-backup: ${error}`);
+    refuse(401, error);
+  };
   if (req.method !== want) return refuse(405, 'method_not_allowed');
+  // every cheap check before the scrypt derivation: signature headers, time window, a used nonce, the passphrase rule
+  const pre = precheck(d.verifier, req.headers);
+  if (!pre.ok) return unauthorized(pre.error);
   const raw = req.headers[PASSPHRASE_HEADER];
   const header = typeof raw === 'string' ? raw : '';
-  const auth = verify(d.verifier, { method: want, path, headers: req.headers, body: streamBinding(header) });
-  if (!auth.ok) {
-    d.warn?.(`refused mediaserver-backup: ${auth.error}`);
-    return refuse(401, auth.error);
-  }
-  const m = d.media;
-  if (!m) return refuse(404, 'not_found');
   const passphrase = decodePassphrase(header);
   if (passphrase === null) return refuse(400, 'invalid_passphrase');
+  // a bounded number of derivations at a time: a flood is answered, never queued
+  if (gate.deriving >= MAX_DERIVING) return refuse(409, 'busy');
+  gate.deriving++;
+  let binding: string;
+  try { binding = await (d.streamBinding ?? streamBindingAsync)(header); } finally { gate.deriving--; }
+  const auth = verify(d.verifier, { method: want, path, headers: req.headers, body: binding });
+  if (!auth.ok) return unauthorized(auth.error);
+  const m = d.media;
+  if (!m) return refuse(404, 'not_found');
   if (id === null) {
     const declared = Number(req.headers['content-length']);
     if (Number.isFinite(declared) && declared > UPLOAD_MAX) return refuse(413, 'too_large');
@@ -236,12 +250,13 @@ async function stream(d: AppDeps, req: IncomingMessage, res: ServerResponse, pat
 }
 
 export function handler(d: AppDeps) {
+  const gate = { deriving: 0 };
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const path = (req.url ?? '').split('?')[0]!;
     if (path === '/healthz' && req.method === 'GET') return send(res, 200, { ok: true });
-    if (path === UPLOAD_PATH) return stream(d, req, res, path, null);
+    if (path === UPLOAD_PATH) return stream(d, gate, req, res, path, null);
     const dl = DOWNLOAD_RE.exec(path);
-    if (dl) return stream(d, req, res, path, dl[1]!);
+    if (dl) return stream(d, gate, req, res, path, dl[1]!);
     const r = ROUTES[path];
     if (!r) return send(res, 404, { error: 'not_found' });
     if (req.method !== r.method) return send(res, 405, { error: 'method_not_allowed' });
