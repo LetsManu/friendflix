@@ -3,7 +3,8 @@
 Status: the owner decided direction, approach, choices, security rule and staging on 2026-11-17 (listed under *Owner
 decisions*; binding). Everything the owner did not decide is marked **Controller's call** with its reason. Stage 1 is specified
 to build; stages 2–4 are outlines with their key decisions and open questions. Revised the same day after the builder check
-(volume ownership, container user, engine floor, pin label, folder changes, helpers, recreate).
+(volume ownership, container user, engine floor, pin label, folder changes, helpers, recreate). The owner answered the 8 open
+questions the same day (*Owner decisions* 6–13).
 
 ## Why
 
@@ -44,6 +45,20 @@ everything itself, while people who already run Jellyfin or Plex keep doing so.
       one-way until Ferrofin 1.6.0;
    3. `.env` clean-up: everything left goes into settings, one `compose.yaml` for normal setups, `.env` still honoured;
    4. Plex → Ferrofin migration: a fresh scan plus watch history from FriendFlix's Plex mirror, with a FriendFlix id remap.
+6. **Existing installs only by migration.** No *Neuanfang*: an install whose profiles are linked to a media server user reaches
+   managed mode only through stage 2 (ids kept).
+7. **Backups leave the host as an encrypted download** from Admin, protected by a passphrase the admin types; restore takes the
+   same file back as an upload.
+8. **Ferrofin becomes the default** once the owner has tested the nightly media server image on the Intel GPU (`probe.sh` and a
+   real HDR title). Until then managed Jellyfin stays offered next to it; the owner says when.
+9. **The media server is updated with FriendFlix**: it is FriendFlix's own server, so it moves in the normal update (manual or
+   automatic), not in a separate window or on a separate click.
+10. **No dashboard at all.** No published port, no web client, no dashboard credentials. FriendFlix's own image drops the bundled
+    web client (fork change, below) to save disk and memory; the fork is edited to FriendFlix's needs.
+11. **Metadata download on by default**, as in Plex and Jellyfin.
+12. **Media server image and releases:** decided together with a separate CI/release project: build and redeploy only the
+    containers that changed, to save CI time and update time. Until that project lands, stage 1 keeps today's rule (the media
+    server publish job is not required; a build without it carries no `ferrofin` pin).
 
 ## Goals (stage 1)
 
@@ -57,8 +72,8 @@ everything itself, while people who already run Jellyfin or Plex keep doing so.
    `JELLYFIN_ADMIN_API_KEY` itself.
 4. **Least privilege.** No published port, read-only media, no capabilities, non-root, read-only root file system, internal network
    (plus optional egress for metadata), no Docker socket anywhere but `docker-proxy`.
-5. **Updates.** Each FriendFlix build pins the media server image; the updater moves the container to it when nobody is watching,
-   never downgrades the server's database, and snapshots the config before an upstream version change.
+5. **Updates.** Each FriendFlix build pins the media server image; the normal FriendFlix update moves the container to it, never
+   downgrades the server's database, and snapshots the config before an upstream version change.
 6. **Visibility.** Systemcheck line *Verwalteter Medienserver*, status card, log view, audit entries.
 7. **Docs:** `docs/mediaserver.md` (rewritten: managed first, trial second), `docs/security.md`, `docs/setup.md`,
    `docs/operations.md`, German copies, CHANGELOG.
@@ -67,7 +82,7 @@ everything itself, while people who already run Jellyfin or Plex keep doing so.
 
 - Migrating an existing server's users, ids or watch state (stages 2 and 4). Stage 1 sets up a **fresh** managed server.
 - A managed Plex. Plex stays "existing, by address".
-- Publishing the media server's port or its dashboard (awaiting owner).
+- Any dashboard or published port (owner decision 10).
 - Several base folders (one base fits the owner's install, whose media folders share a parent; several bases stay a later option).
 - Moving `MEDIA_SERVER`, paths or ports out of `.env` (stage 3).
 - Installing plugins (the Jellyfin webhook plugin stays optional; the session poll is the fallback, as today).
@@ -165,8 +180,8 @@ Owner decision 2 settles the shape (approach 1). Within it:
 ### Who may do what
 
 - Every route is admin-only (the guard of *Admin → Update*). **Re-authentication** (sign-in at most 10 minutes old, the
-  `needsReauth` rule) for: requesting a base folder, applying a spec, removing with data, restoring a backup, showing the dashboard
-  credentials, switching between managed and external (Controller's call: each one changes which host data a container reads, deletes
+  `needsReauth` rule) for: requesting a base folder, applying a spec, removing with data, restoring a backup, downloading a backup,
+  switching between managed and external (Controller's call: each one changes which host data a container reads, deletes
   data, or reveals a credential).
 - The wizard's media step offers the same flow under the setup session (`requireSetupSession`, CSRF header).
 - Without an updater (`compose.no-updater.yaml`, `UPDATER_URL` unset or not answering) the managed choices are shown disabled with
@@ -180,8 +195,7 @@ Owner decision 2 settles the shape (approach 1). Within it:
 A managed server starts empty: new user ids, new item ids. Stage 1 therefore offers *Einrichten* only while **no profile carries a
 `jellyfin_user_id`** (a new install, or one that never linked a media server user). Otherwise the managed choices show "Umzug von
 deinem Jellyfin: kommt mit Stufe 2" and stay disabled. Reason: a fresh server would orphan every profile link, resume point, list
-and recording reference without a word; the migration (stage 2) keeps the ids. Whether an explicit "Neuanfang" should be allowed
-earlier is awaiting owner (question 1).
+and recording reference without a word; the migration (stage 2) keeps the ids. There is no *Neuanfang* (owner decision 6).
 
 The same rule applies to switching between the two managed kinds: they use different data volumes (a Jellyfin database adopted by
 Ferrofin cannot go back), so switching kind is a fresh server too; managed Jellyfin → managed Ferrofin with ids kept is stage 2.
@@ -398,6 +412,7 @@ body exactly one of:
 | `{op: "update"}` | move to the image of the running FriendFlix build (job) |
 | `{op: "hdr-test", kind}` | probe tests 1 and 2 (job) |
 | `{op: "backup", trickplay: boolean}` / `{op: "restore", id}` | (jobs) |
+| `GET /v1/mediaserver/backups/:id/download` (passphrase in a header, body is the age stream) / `POST /v1/mediaserver/backups/upload` (passphrase in a header, age stream as body) | the encrypted download and upload (Backup and restore); outside the job lock, refused while a restore of the same backup runs |
 | `{op: "remove", data: boolean}` | (job) |
 | `{op: "logs", tail}` | `tail` 50–500; answer `{lines}` |
 
@@ -462,12 +477,15 @@ engine), `verify_failed`, `snapshot_failed`, `downgrade_refused`, `template_viol
   own PR); Ferrofin from the digest of the media server image built in the same CI run (the backend image build takes both as build
   arguments; a build without a published media server image has no `ferrofin` entry). Upstream versions: Jellyfin's tag, Ferrofin's
   image label `io.github.letsmanu.friendflix.mediaserver.ferrofin`.
-- **When it moves** (Controller's call): never inside an update or rollback job of FriendFlix (a media server restart must not hold
-  back or roll back FriendFlix). The trigger is **"the backend build changed since last seen"**: the updater records the backend
-  image id it last read the pins from and compares on every status read, so it works for updater jobs and for Portainer-driven
-  updates alike (`pin.changed`). When the new pin differs from the running image, the backend starts `mediaserver-update` in the
-  quiet window: when no playback session is active (checked every 5 minutes), at the latest at the next `AUTO_UPDATE_TIME`;
-  *Jetzt aktualisieren* runs it at once (whether the quiet-window run is automatic is awaiting owner).
+- **When it moves** (owner decision 9): **with the FriendFlix update**, manual or automatic. The update job gains a last phase
+  *Medienserver*: after FriendFlix's own health check has passed (so FriendFlix's rollback is never held up or triggered by it),
+  when the new build's pin differs from the running media server image, the job snapshots and recreates the media server
+  (below). A failure there rolls back **only the media server** (the old container comes back) and ends the job as
+  `succeeded_mediaserver_failed`: FriendFlix stays on the new build, Admin shows the media server's code and *Erneut versuchen*.
+  For updates the updater did not run (Portainer, `compose pull` by hand) the trigger is **"the backend build changed since last
+  seen"**: the updater records the backend image id it last read the pins from and compares on every status read
+  (`pin.changed`); the backend then starts the same phase on its own at once. A FriendFlix rollback never moves the media
+  server (*Never down*, below). There is no separate quiet window and no separate click for media server updates.
 - **Never down** (Controller's call: Ferrofin and Jellyfin migrate their databases one-way): a pin whose upstream version is older
   than the running container's is `downgrade_refused`; the container stays (a FriendFlix rollback keeps the newer media server; Admin
   shows "neuer als dieser FriendFlix-Stand").
@@ -478,6 +496,12 @@ engine), `verify_failed`, `snapshot_failed`, `downgrade_refused`, `template_viol
   its image; a new setup is refused with a hint to choose managed Jellyfin.
 - The **trial** wording in `mediaserver/README.md` ("The FriendFlix updater never pulls or recreates it") changes to "only the managed
   media server, from its pin".
+
+- **Fork change 0004, no web client** (owner decision 10): `mediaserver/Dockerfile` removes the bundled jellyfin-web directory
+  from the image and points the server's web directory setting at nothing, so the server serves only the API (saves disk and the
+  memory of serving the client). An image-level change, listed in `mediaserver/patches/0004-no-web-client.md`, offered upstream as an
+  optional "API only" setting. The image build's smoke test checks that `/System/Info/Public` answers and `/web/` gives 404. Further
+  trims to save memory are later fork changes, each measured first.
 
 ### First run
 
@@ -505,9 +529,9 @@ step, Controller's call: survives a backend restart in the middle):
 
 Progress is shown as these steps; each failure is a code with a *Nochmal* that resumes at that step.
 
-**Dashboard credentials:** *Zugang anzeigen* (re-authentication, audited) shows the name and password once in a dialog, for the
-rare case an owner needs the server's own dashboard (reachable only once a port is published: awaiting owner, question
-5).
+**No dashboard** (owner decision 10): the generated administrator name and password are stored encrypted for FriendFlix's own use
+only and are never shown. Nothing publishes the port; FriendFlix's media server image has no web client (fork change 0004), and
+managed Jellyfin's built-in one is unreachable without a port.
 
 ### Backend storage
 
@@ -548,9 +572,17 @@ only until stage 3. The desired container spec and the base folder live only in 
   automatic backups (Controller's call: a NAS disk is not filled by forgotten backups).
 - *Wiederherstellen*: same kind only; refused when the backup's upstream version is newer than the image (`downgrade_refused`); stop,
   replace the volume's contents, start, health.
-- The backup holds the server's password hashes and API keys. **Awaiting owner:** whether backups also leave the host as an
-  encrypted download from Admin (passphrase), go to a writable host backup folder (an exception to the read-only rule), or stay in
-  the volume only. Stage 1 builds the volume form, which either answer extends.
+- **Encrypted download** (owner decision 7): *Herunterladen* on a backup asks for a passphrase (at least 12 characters, typed twice,
+  never stored) and re-authentication. The updater streams the archive encrypted in the **age** format with a passphrase (scrypt)
+  recipient (Controller's call: an open, documented format the owner can also decrypt without FriendFlix, `age -d`; library
+  `age-encryption`, the reference TypeScript implementation; the builder pins its version), file name
+  `<kind>-<YYYYMMDD-HHMM>-<upstream>.tar.gz.age`. The plain archive never leaves the updater; nothing is written to the host.
+- **Restore from a file:** *Aus Datei wiederherstellen* uploads such a file with its passphrase (re-authentication); the updater
+  decrypts it into the backup volume as a backup tagged `upload` (wrong passphrase or a damaged file: `backup_invalid`, nothing
+  kept), checks kind and upstream version as above, then restores as above. Limit 20 GiB (Controller's call: a large library's
+  metadata, without trickplay). Kept with the manual ones.
+- The backup holds the server's password hashes and API keys, hence the passphrase; the backup volume itself stays like the data
+  volume (Docker volume, not a host folder; the read-only rule holds).
 - `docs/operations.md` *Backups & Wiederherstellung* gains the media server: what the backup volume holds and the one command that
   copies it to the host, next to `scripts/backup-bootstrap.sh`.
 
@@ -577,21 +609,22 @@ only until stage 3. The desired container spec and the base folder live only in 
   - **Metadaten aus dem Internet** switch;
   - **Status:** state, health, kind and upstream version, image age vs. pin, last job with its steps;
   - **Actions:** *Einrichten* / *Übernehmen*, *Starten*, *Stoppen*, *Neu starten*, *Aktualisieren*, *Sicherung*, *Wiederherstellen*,
-    *Protokoll*, *Zugang anzeigen*, *Entfernen* (with "Daten löschen" as an extra confirmation typing the kind's name);
+    *Protokoll*, *Entfernen* (with "Daten löschen" as an extra confirmation typing the kind's name);
   - while Ferrofin is a trial, its choice carries *Test* and links `docs/mediaserver.md`.
 - **Protokoll:** the last 300 lines (`tail` up to 500), fetched on demand, never stored: ANSI codes stripped, lines cut at 500
   characters, and values after `api_key=`, `apikey=`, `token=`, `X-Emby-Token`, `X-MediaBrowser-Token`, `Authorization`, `Pw` and
   `password` replaced with `…` (Controller's call: the server logs request URLs). Copy button.
 - **Wizard step 3** gains the same choice; the managed path runs base → folders → GPU → *Einrichten* with progress, then continues.
-  The default selection while Ferrofin is a trial: *Jellyfin (offiziell, verwaltet)* (Controller's call, owner decision 3's reason;
-  awaiting owner, question 3).
+  The default selection while Ferrofin is a trial: *Jellyfin (offiziell, verwaltet)*, until the owner has tested the nightly image
+  and switches the default (owner decision 8): a one-line change of the default kind plus the *Test* mark.
 - Texts in all 7 languages; glass and motion rules.
 
 ### Backend routes
 
 `routes/adminMediaserver.ts` (admin) and the matching setup routes (setup session): `GET /api/admin/mediaserver` (updater status
 `mediaserver` + `media_managed` + the id rule's verdict), `POST …/base`, `…/base/confirm`, `…/browse`, `…/gpu`, `…/apply`,
-`…/action` (`start|stop|restart|update|backup|restore|remove|hdr-test`), `…/logs`, `…/credentials`, `…/mode`. Rate limits: base
+`…/action` (`start|stop|restart|update|backup|restore|remove|hdr-test`), `…/logs`, `…/backups` (list), `…/backups/:id/download`,
+`…/backups/upload`, `…/mode`. Download and upload stream through the backend without buffering the whole file. Rate limits: base
 request 3 per 10 minutes, confirm 10 per 10 minutes, logs 20 per minute, everything else the `/v1/livetv` route's limit. Answers
 carry codes, never Docker or server text.
 
@@ -600,7 +633,7 @@ carry codes, never Docker or server text.
 `mediaserver.base_request` {path}, `mediaserver.base_confirm` {result: ok | wrong | expired | locked, path on ok},
 `mediaserver.base_clear`, `mediaserver.apply` {kind, folders: n, gpu, egress}, `mediaserver.action` {op},
 `mediaserver.result` {action, result, error} (written when the backend sees a job end, like `reconcileAudit`), `mediaserver.recover`,
-`mediaserver.credentials_view`, `mediaserver.mode` {from, to}. Never a code, a password or a key.
+`mediaserver.backup_download` {id}, `mediaserver.backup_upload` {size}, `mediaserver.mode` {from, to}. Never a code, a password or a key.
 
 ### Systemcheck
 
@@ -729,7 +762,7 @@ today (`plex/features.ts`); several Plex libraries with the same media.
 
 1. **Stage 1 (one PR):** updater (template, guard, helpers, the route, state, jobs, pin label, supervision), CI (the pin label on
    the backend image), `docker-proxy` `ALLOW_LOGS`,
-   our image's `HEALTHCHECK` (change 0003), backend (table, routes, first run, update scheduling, audit, Systemcheck), web (Admin card,
+   our image's `HEALTHCHECK` (change 0003), the web-client removal (change 0004), backend (table, routes, first run, update scheduling, audit, Systemcheck), web (Admin card,
    wizard), Dependabot, docs, CHANGELOG. Reason for one PR: the template, the guard and the routes are one security boundary and are
    reviewed together.
 2. **Stage 2**, 3, 4 as above, one PR each; stage 4 needs stage 3.
@@ -745,23 +778,9 @@ today (`plex/features.ts`); several Plex libraries with the same media.
 - The pull progress shown in Admin; the CI wiring that hands the media server digest to the backend image build.
 - The exact German texts (then the other six languages).
 
-## Questions only the owner can answer (awaiting owner)
+## Questions only the owner can answer
 
-Most important first:
-
-1. **Existing installs:** managed mode only through the migration (stage 2), or also an explicit *Neuanfang* that re-provisions every
-   account on the new server (watch state and FriendFlix references to old items lost)? Stage 1 as written offers managed mode only
-   while no profile is linked to a media server user.
-2. **Backups:** an encrypted download from Admin (passphrase; password hashes and API keys are inside), a writable host backup
-   folder (an exception to the read-only rule), or volume only?
-3. **When is Ferrofin "proven"** and becomes the default over managed Jellyfin (for example `probe.sh` tests 1 and 2 passing plus one
-   real HDR title on your Intel GPU)?
-4. **Media server updates:** automatic in the quiet window, or only on a click?
-5. **Dashboard access:** none, `127.0.0.1` only, or a LAN address you choose (for example `192.0.2.10`)?
-6. **Stage 2:** may FriendFlix stop your existing Jellyfin container for the copy after one confirmation in the UI?
-7. **Metadata download** from the internet on by default?
-8. **The media server image as a required part of every release?** Today its publish job may fail without stopping a release; a
-   release without it has no `ferrofin` pin, leaves managed Ferrofin installs on their image and refuses new Ferrofin setups.
+All 8 answered on 2026-11-17: see *Owner decisions* 6–12.
 
 Answered by the install's facts (no longer open): the Docker Engine is 26 or newer, so the subpath mounts apply and there is no
 fallback; one base folder fits (the two media folders share a parent), so stage 1 keeps a single base and several bases stay a
