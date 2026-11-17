@@ -30,6 +30,11 @@ export interface FeedStore extends Readable<FeedState> {
 }
 
 interface Removed { group: FeedGroup; section: string; index: number; sectionIndex: number }
+/** undo tokens handed out since the last reset() (this person): when the answer came, and the rows to put back while they are still on this page */
+export type HeldTokens = Map<string, { at: number; removed: Removed[] | null }>;
+
+/** the server keeps an undo token for 30 s; one held longer than that is dead */
+const UNDO_TTL_MS = 30_000;
 
 const errorOf = (e: unknown) => apiCode(e) ?? 'error';
 const copy = (s: Section[]): Section[] => s.map((x) => ({ key: x.key, groups: [...x.groups] }));
@@ -42,21 +47,22 @@ const hits = (g: FeedGroup, sel: Selection) =>
 const unreadOf = (g: FeedGroup) => (g.unread ? g.count : 0);
 const everything = (sel: Selection) => !sel.ids?.length && !sel.groups?.length && sel.category === undefined;
 
-export function createFeed(api: NotesApi = defaultApi): FeedStore {
+export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Map()): FeedStore {
   const initial = (): FeedState => ({ filter: 'all', sections: [], next: null, loading: 'idle', error: null, fresh: 0, open: new Set() });
   const { subscribe, update, set } = writable<FeedState>(initial());
   let state!: FeedState;
   subscribe((s) => (state = s));
   let gen = 0; // a newer load / refresh makes older answers obsolete
   let baseUnread = 0;
-  const undoable = new Map<string, Removed[]>();
-  /** every undo token handed out since the last reset() (this person), also those whose rows are no longer on this page */
-  const issued = new Set<string>();
-  let epoch = 0;
+  let epoch = 0; // bumped only by reset(): a newer person
+  const prune = () => {
+    const now = Date.now();
+    for (const [token, h] of held) if (now - h.at >= UNDO_TTL_MS) held.delete(token);
+  };
 
   const first = async (filter: Filter, keepRows: boolean) => {
     const g = ++gen;
-    undoable.clear(); // a token of another filter or an older page must not put rows back
+    for (const h of held.values()) h.removed = null; // a token of another filter or an older page must not put rows back
     update((s) => (keepRows ? { ...s, filter, loading: 'refresh', error: null } : { ...initial(), filter, loading: 'first' }));
     try {
       const f: Feed = await api.feed({ filter });
@@ -91,7 +97,7 @@ export function createFeed(api: NotesApi = defaultApi): FeedStore {
   return {
     subscribe,
     load: (filter) => first(filter, false),
-    reset() { gen++; epoch++; baseUnread = 0; undoable.clear(); issued.clear(); set(initial()); },
+    reset() { gen++; epoch++; baseUnread = 0; held.clear(); set(initial()); },
     refresh: () => first(state.filter, true),
     async more() {
       if (!state.next || state.loading !== 'idle') return;
@@ -129,15 +135,18 @@ export function createFeed(api: NotesApi = defaultApi): FeedStore {
       const prior = baseUnread;
       baseUnread = all ? 0 : Math.max(0, baseUnread - lowered);
       const g0 = gen;
+      const e0 = epoch;
       try {
         await api.markRead(all ? undefined : sel);
       } catch (e) {
+        if (e0 !== epoch) return; // another person's page now
         if (g0 === gen) baseUnread = prior; // an obsolete page keeps its own baseline
         // only the groups this call flipped come back unread; a page appended meanwhile stays as it is
         update((s) => ({ ...s, error: errorOf(e), sections: s.sections.map((x) => ({ key: x.key, groups: x.groups.map((g) => (flipped.has(g.id) ? { ...g, unread: true } : g)) })) }));
       }
     },
     async hide(sel) {
+      prune();
       const g0 = gen;
       const e0 = epoch;
       const removed = removeGroups(sel);
@@ -145,30 +154,32 @@ export function createFeed(api: NotesApi = defaultApi): FeedStore {
       baseUnread = Math.max(0, baseUnread - lowered);
       try {
         const r = await api.hide(sel);
-        if (e0 === epoch) issued.add(r.undo);
-        if (g0 === gen) undoable.set(r.undo, removed);
+        // the answer time is no earlier than the server's: a token pruned by it is surely dead there
+        if (e0 === epoch) held.set(r.undo, { at: Date.now(), removed: g0 === gen ? removed : null });
         return r.undo;
       } catch (e) {
         if (g0 === gen) { baseUnread += lowered; restore(removed); }
-        update((s) => ({ ...s, error: errorOf(e) }));
+        if (e0 === epoch) update((s) => ({ ...s, error: errorOf(e) }));
         return null;
       }
     },
     async undo(token) {
-      const removed = undoable.get(token);
-      if (!removed && !issued.has(token)) return; // not this person's (a reset dropped it)
+      prune();
+      const h = held.get(token);
+      if (!h) return; // not this person's (a reset dropped it) or older than the server keeps it
+      const { removed } = h;
       const g0 = gen;
       const e0 = epoch;
       try {
         await api.unhide(token);
       } catch (e) {
+        if (e0 !== epoch) return; // another person's page now
         update((s) => ({ ...s, error: errorOf(e) }));
-        if (apiCode(e) === 'undo_expired') { undoable.delete(token); issued.delete(token); } // final: the entries stay cleared; any other failure keeps the token for a retry
+        if (apiCode(e) === 'undo_expired') held.delete(token); // final: the entries stay cleared; any other failure keeps the token for a retry
         return;
       }
       if (e0 !== epoch) return; // another person's page now
-      undoable.delete(token);
-      issued.delete(token);
+      held.delete(token);
       if (removed && g0 === gen) {
         baseUnread += removed.reduce((n, r) => n + unreadOf(r.group), 0);
         restore(removed);

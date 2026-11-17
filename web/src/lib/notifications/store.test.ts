@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { get } from 'svelte/store';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NotesApi } from './api';
-import { createFeed } from './store';
+import { createFeed, type HeldTokens } from './store';
 import type { Feed, FeedGroup, Filter } from './types';
 
 const g = (id: string, over: Partial<FeedGroup> = {}): FeedGroup => ({ id, kind: 'k', category: 'other', title: id, body: null, link: null, at: '2026-10-01T00:00:00Z', count: 1, unread: true, items: [{ id: Number(id.replace(/\D/g, '')) || 1, title: id, body: null, at: '2026-10-01T00:00:00Z' }], ...over });
@@ -314,5 +314,66 @@ describe('notifications feed store: baseline, reset, concurrency', () => {
       s.noteFresh(2);
       expect(get(s).fresh).toBe(2); // the baseline was not raised again
     }
+  });
+});
+
+describe('notifications feed store: token lifetime, answers after a reset', () => {
+  afterEach(() => vi.useRealTimers());
+  it('a token older than 30 s is not sent to the server', async () => {
+    vi.useFakeTimers();
+    const api = fake();
+    const s = createFeed(api);
+    await s.load('all');
+    await s.hide({ groups: ['a1'] });
+    vi.advanceTimersByTime(31_000);
+    await s.undo('tok');
+    expect(api.unhide).not.toHaveBeenCalled();
+    expect(ids(s)).toEqual([]);
+  });
+  it('100 hides over time keep only the tokens of the last 30 s', async () => {
+    vi.useFakeTimers();
+    let n = 0;
+    const api = fake({ hide: vi.fn(async () => ({ undo: `t${n++}`, n: 1 })) });
+    const held: HeldTokens = new Map();
+    const s = createFeed(api, held);
+    await s.load('all');
+    for (let i = 0; i < 100; i++) {
+      vi.advanceTimersByTime(1_000);
+      await s.hide({ groups: [`x${i}`] });
+    }
+    expect(held.size).toBeGreaterThan(0);
+    expect(held.size).toBeLessThanOrEqual(31);
+    await s.undo('t0');
+    expect(api.unhide).not.toHaveBeenCalled();
+    await s.undo('t99');
+    expect(api.unhide).toHaveBeenCalledWith('t99');
+  });
+  it('a failed unhide after a reset leaves the reset state alone', async () => {
+    const d = deferred<{ n: number }>();
+    const s = createFeed(fake({ unhide: vi.fn(() => d.promise) }));
+    await s.load('all');
+    await s.hide({ groups: ['a1'] });
+    const u = s.undo('tok');
+    s.reset();
+    d.reject(new Error('x'));
+    await u;
+    expect(get(s)).toMatchObject({ sections: [], error: null });
+  });
+  it('a failed hide or read after a reset leaves the next page alone', async () => {
+    const h = deferred<{ undo: string; n: number }>();
+    const r = deferred<unknown>();
+    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1', 'a2']]])).mockResolvedValueOnce(pageOf([g('a1', { unread: false })], 0));
+    const s = createFeed(fake({ feed, hide: vi.fn(() => h.promise), markRead: vi.fn(() => r.promise) }));
+    await s.load('all');
+    const hid = s.hide({ groups: ['a2'] });
+    const read = s.read({ groups: ['a1'] });
+    s.reset();
+    await s.load('all');
+    h.reject(new Error('x'));
+    r.reject(new Error('x'));
+    await Promise.all([hid, read]);
+    expect(ids(s)).toEqual([['today', ['a1']]]);
+    expect(get(s).sections[0].groups[0].unread).toBe(false);
+    expect(get(s).error).toBeNull();
   });
 });
