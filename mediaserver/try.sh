@@ -338,7 +338,8 @@ Next:
      to it. The image has no web client (so no dashboard), so use the API, once per library: GET /Library/VirtualFolders
      lists the libraries (ItemId, LibraryOptions); POST /Library/VirtualFolders/LibraryOptions with the body
      {"Id": "<ItemId>", "LibraryOptions": <that library's options with "SaveLocalMetadata": false and "MetadataSavers": []>}
-     and the header X-Emby-Token: <an administrator's API key, they came along with the copy>. Reaching the API needs --publish,
+     and the header X-Emby-Token: <an administrator's API key, they came along with the copy>. It answers 204 on success;
+     anything else means the key, the Id or the body was refused: check them and the address. Reaching the API needs --publish,
      or a container on one of the networks above.
   2. FriendFlix: Admin → Einstellungen → Medienserver → address $ADDR, save.
      Saving works = the API key carried over. If the key is refused, use "API-Schlüssel automatisch anlegen"

@@ -255,7 +255,7 @@ Gut zu wissen:
 - Schalte den **NFO-Speicher** aus (die Medien sind schreibgeschützt eingebunden): Das Image hat keinen Web-Client (Änderung
   0004), also gibt es dafür kein Dashboard. `try.sh` zeigt die Schritte am Ende: Schicke pro Bibliothek ihre Optionen mit
   `SaveLocalMetadata` `false` und `MetadataSavers` `[]` zurück (`POST /Library/VirtualFolders/LibraryOptions`, mit dem
-  API-Schlüssel eines Administrators aus der Kopie). Ein verwalteter Server (oben) wird von Anfang an ohne NFO-Dateien
+  API-Schlüssel eines Administrators aus der Kopie). Der Aufruf antwortet bei Erfolg mit 204; jede andere Antwort heißt, dass Schlüssel, Bibliotheks-`Id` oder Body nicht angenommen wurden: Prüfe sie und die Adresse und schicke ihn noch einmal. Ein verwalteter Server (oben) wird von Anfang an ohne NFO-Dateien
   eingerichtet.
 - Der Container trägt `com.centurylinklabs.watchtower.enable=false`: kein Auto-Updater darf ihn aktualisieren (ein neueres Image
   würde die kopierte Datenbank von selbst umwandeln). Der FriendFlix-Updater fasst ihn nie an.

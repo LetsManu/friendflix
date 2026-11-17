@@ -47,7 +47,7 @@ Der verwaltete Medienserver ([de/mediaserver.md](de/mediaserver.md)) legt seine 
 - **Den Host verlässt eine Sicherung am besten als verschlüsselter Download** (*Admin → Einstellungen → Medienserver → Sicherung → Herunterladen*, mit Passphrase; Entschlüsseln: `age -d -o backup.tar.gz <datei>.age`). Das ist die Kopie für einen anderen Ort.
 - **Das ganze Volume unverschlüsselt auf den Host kopieren** (ein Befehl; `cp -a` behält Besitzer und Rechte, und die Dateien liegen im Klartext auf dem Host: Zielordner schützen):
 ```bash
-docker run --rm -v <projekt>_mediaserver-backup:/b:ro -v "$PWD":/out alpine cp -a /b/. /out/
+docker run --rm -v <projekt>_mediaserver-backup:/b:ro -v "$PWD":/out alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 cp -a /b/. /out/
 ```
 - **`docker compose down -v` löscht dieses Volume** (der Updater bindet es über Compose ein). Vorher eine Sicherung herunterladen. Das Entfernen des Medienservers in Admin (auch mit *Daten löschen*) lässt die Sicherungen stehen.
 

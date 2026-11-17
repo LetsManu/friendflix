@@ -239,6 +239,7 @@ Good to know:
 - Turn off the **NFO saver** (the media is mounted read-only): the image has no web client (change 0004), so there is no
   dashboard for it. `try.sh` prints the steps at the end: per library, send the library's options back with `SaveLocalMetadata`
   `false` and `MetadataSavers` `[]` (`POST /Library/VirtualFolders/LibraryOptions`, with an administrator's API key from the copy).
+  The call answers 204 on success; any other answer means the key, the library `Id` or the body was not accepted, so check those and the address, and send it again.
   A managed server (above) is set up without NFO files from the start.
 - The container carries `com.centurylinklabs.watchtower.enable=false`: no auto-updater may upgrade it (a newer image would
   upgrade the copied database by itself). The FriendFlix updater never touches it.
