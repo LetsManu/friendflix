@@ -68,4 +68,14 @@ describe('updater policy', () => {
     expect(pinnedRef(img, ['ghcr.io/letsmanu/friendflix-backend@sha256:short'])).toBeNull();
     expect(pinnedRef(img, [])).toBeNull();
   });
+
+  it('pinned ref: a digest ref (the media server pin) is pinned only by that very digest', () => {
+    const d = 'sha256:' + 'c'.repeat(64);
+    const pin = `ghcr.io/letsmanu/friendflix-mediaserver@${d}`;
+    expect(pinnedRef(pin, [`ghcr.io/letsmanu/friendflix-mediaserver@${d}`])).toBe(pin);
+    expect(pinnedRef(pin, [`ghcr.io/letsmanu/friendflix-mediaserver@sha256:${'d'.repeat(64)}`])).toBeNull();
+    expect(pinnedRef(pin, [`ghcr.io/evil/friendflix-mediaserver@${d}`])).toBeNull();
+    expect(pinnedRef(`ghcr.io/letsmanu/friendflix-mediaserver@sha256:short`, [`ghcr.io/letsmanu/friendflix-mediaserver@sha256:short`])).toBeNull();
+    expect(pinnedRef(pin, [])).toBeNull();
+  });
 });

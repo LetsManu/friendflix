@@ -110,6 +110,8 @@ export function cosignIdentity(repo: string): { identityRegexp: string; issuer: 
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 /** the repo@sha256 reference cosign verifies; null unless it is exactly the expected repository with a sha256 digest */
 export function pinnedRef(image: string, repoDigests: readonly string[]): string | null {
+  // a digest ref (the media server pin, repo@sha256:…) is pinned only by that very digest among the image's own
+  if (image.includes('@')) return repoDigests.includes(image) && DIGEST_RE.test(image.slice(image.lastIndexOf('@') + 1)) ? image : null;
   const repo = imageRepo(image);
   for (const d of repoDigests) {
     const at = d.lastIndexOf('@');
