@@ -102,6 +102,29 @@ test.describe('admin update progress (desktop)', () => {
     await expect(card(page).locator('[data-target]')).toHaveText(/Stabil\s+latest/);
   });
 
+  test('an update whose media server phase failed: a warn bar and note (not red), "Erneut versuchen" links to the media tab', async ({ page, api }) => {
+    api.updater = updaterState(true);
+    api.updater.mediaserver = { container: { state: 'running' }, desired: { run: true } };
+    const media = { check: 'ok', pull: 'failed', verify: 'skipped', snapshot: 'skipped', create: 'skipped', start: 'skipped', health: 'skipped', rollback: 'skipped' };
+    api.updater.job = { id: 'fedcba9876543211', action: 'update', state: 'succeeded_mediaserver_failed', step: null, from: 'sha-a1b2c3d', to: 'latest', startedAt: '2026-11-01T10:00:00.000Z',
+      finishedAt: '2026-11-01T10:02:00.000Z', error: 'pull_failed', steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'ok', rollback: 'skipped' }, media: { step: null, steps: media } };
+    await page.goto('/admin/update');
+    const flow = card(page).locator('[data-flow="warn"]');
+    await expect(flow).toBeVisible();
+    await expect(flow.locator('.bar')).toHaveClass(/bar-warn/);
+    await expect(state(flow, 'health')).toHaveAttribute('data-state', 'ok');
+    await expect(state(flow, 'media-pull')).toHaveAttribute('data-state', 'failed');
+    const note = flow.locator('[data-result="succeeded_mediaserver_failed"]');
+    await expect(note).toHaveClass(/n-warn/);
+    await expect(note).toContainText('FriendFlix aktualisiert, Medienserver nicht. Das Image ließ sich nicht laden. Prüfe die Internetverbindung des Servers.');
+    await expect(note).not.toContainText('pull_failed');
+    // found on load: a status, not an alert
+    await expect(note.locator('[data-headline]')).toHaveAttribute('role', 'status');
+    // try again is the media tab's (a link), not the update's confirmation
+    await expect(note.getByRole('button', { name: 'Erneut versuchen' })).toHaveCount(0);
+    await expect(note.getByRole('link', { name: 'Erneut versuchen' })).toHaveAttribute('href', '/admin/settings?tab=media');
+  });
+
   test('a Live TV job is not an update: the card shows no "Update auf … abgeschlossen" for it', async ({ page, api }) => {
     api.updater = updaterState(true);
     api.updater.job = { id: 'fedcba9876543210', action: 'livetv-enable', state: 'succeeded', step: null, from: null, to: 'sha-c0be6c5', startedAt: '2026-11-01T10:00:00.000Z',

@@ -5,6 +5,7 @@
    * Labelled form field with hint and error (aria-describedby / aria-invalid wired up).
    *   <Field label={$t('…')} bind:value={name} required error={nameErr} />
    *   <Field label="Max" type="number" bind:value={max} min={0} max={200} hint="0–200" />
+   *   <Field label="Nummer" bind:value={n} error={err} reserve />   (reserve: two lines kept for the error while empty: nothing moves)
    *   <Field label="Custom" let:id let:describedby let:invalid><textarea {id} aria-describedby={describedby} aria-invalid={invalid} /></Field>
    */
   import type { HTMLInputAttributes } from 'svelte/elements';
@@ -29,6 +30,8 @@
   export let width = '';
   export let autocomplete: HTMLInputAttributes['autocomplete'] = undefined;
   export let id = uid('fld');
+  /** keep the error line's room (two lines) while there is no error: a validation message never moves what follows */
+  export let reserve = false;
   $: hintId = hint ? `${id}-h` : '';
   $: errId = error ? `${id}-e` : '';
   $: describedby = [hintId, errId].filter(Boolean).join(' ') || undefined;
@@ -43,7 +46,8 @@
     <input {id} {type} bind:value {required} {disabled} {placeholder} {min} {max} {step} {maxlength} {minlength} {autocomplete} aria-describedby={describedby} aria-invalid={invalid} style={width ? `width:${width}` : undefined} on:change on:input on:blur on:keydown />
   {/if}
   {#if hint}<span class="hint" id={hintId}>{hint}</span>{/if}
-  {#if error}<span class="error" id={errId} role="alert">{error}</span>{/if}
+  {#if error}<span class="error" class:rsv={reserve} id={errId} role="alert">{error}</span>
+  {:else if reserve}<span class="error rsv" aria-hidden="true"></span>{/if}
 </div>
 
 <style>
@@ -52,6 +56,7 @@
   .req { color: var(--err); }
   .hint { font-size: .82rem; color: var(--hint, var(--mut)); overflow-wrap: anywhere; } /* long example URLs wrap at 320 px */
   .error { font-size: .85rem; color: var(--err); font-weight: 600; }
+  .error.rsv { min-height: 2.8em; line-height: 1.4; } /* two lines: a narrow field wraps its message */
   .has-err :global(input), .has-err :global(select), .has-err :global(textarea) { border-color: var(--err); }
   /* the dense glass admin's look for this field: app.css (.adm .field), shared with Select */
 </style>

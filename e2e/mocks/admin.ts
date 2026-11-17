@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { ltvStatusMock, ltvStatusRoute, type LtvStatusMock } from './livetvStatus.js';
-import { advanceLivetvJob, livetvJob, type LivetvJobOutcome } from './updater.js';
+import { advanceLivetvJob, livetvJob, type LivetvJobOutcome, type UpdaterMock } from './updater.js';
 /**
  * Admin API fixtures for the mocked FriendFlix backend (shapes follow backend/src/routes/admin.ts, seerr.ts, polls.ts,
  * hubs.ts, digest.ts). Stateful: mutations change the state, so specs can assert what the UI did.
@@ -126,6 +126,8 @@ export interface AdminState {
   revokedLicences: string[];
   /** the role matrix behind GET/PUT/POST/DELETE /api/admin/roles* (spec §4.1) */
   matrix: MatrixMock;
+  /** Admin → Einstellungen → Medienserver (backend routes/adminMediaserver.ts; mediaserverRoute) */
+  media: MediaMock;
 }
 /**
  * Admin -> Live-TV (backend/src/livetv/adminRoutes.ts): the state the page polls, enable and disable. An enable job moves one step per
@@ -686,6 +688,7 @@ export function adminState(): AdminState {
     repairs: [],
     repairReply: null,
     matrix: matrixMock(),
+    media: mediaMock(),
     streams: { streams: [], totals: { direct: 0, remux: 0, transcode: 0 }, details: true, failed: [] },
     errors: { entries: [], overflow: 0 },
     bannerIssues: [],
@@ -1470,6 +1473,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       v2: { impressions: 0, clicks: 0, plays: 0, dismisses: 0, ctr: null, playRate: null },
     },
   });
+  if (p.startsWith('/api/admin/mediaserver')) return mediaserverRoute(st.media, m, p, body, J);
   if (p.startsWith('/api/admin/livetv/groups')) return ltvGroupsRoute(st, m, p, body, J);
   if (p.startsWith('/api/admin/livetv/recordings')) { const r = recAdminRoute(st.livetv.rec, m, p, sp, body, J); if (r) return r; }
   if (p.startsWith('/api/admin/livetv/')) return livetvRoute(st.livetv, m, p, sp, body, J);
@@ -2224,4 +2228,164 @@ function viewCheck(st: AdminState, u: AdminUser, m: string, body: any, J: Reply,
   });
   log('user.check_viewed', u.id, { profile: p.id, hits: hits.length }, u.name);
   return J({ hits });
+}
+
+/**
+ * Admin → Einstellungen → Medienserver (backend routes/adminMediaserver.ts, Task 17): the view, the base code, the browser, the GPU, apply
+ * and the actions, logs, libraries, mode and the backup streams. Stateful: an apply starts a media job whose steps advance one per GET of
+ * the view, then the first run walks `setupSeq` (one step per GET). Every write is recorded in `calls`. The default is an instance without
+ * an updater (the managed choices disabled with no_updater); a spec sets `offer`, `status` and the rest. `updater`: the spec's updater
+ * mock, so GET /api/admin/updater reports the media job (linkMediaJob).
+ */
+export interface MediaMock {
+  mode: 'managed' | 'external';
+  offer: { managed: boolean; reason: string | null };
+  kinds: { ferrofin: boolean; jellyfin: boolean };
+  status: any;
+  managed: any;
+  external: { url: string | null; hasKey: boolean };
+  livetvLibraryPath: string | null;
+  /** the code the updater printed (the confirm accepts it, normalised: case and dashes do not matter) */
+  code: string;
+  /** directories per rel ('' = the base) */
+  tree: Record<string, Array<{ name: string; symlink?: boolean; unreadable?: boolean }>>;
+  gpu: { dri: Array<{ node: string; gid: number; vendor: string }>; nvidia: boolean };
+  /** the first run's steps after an apply, one per GET of the view */
+  setupSeq: string[];
+  job: any;
+  logs: string[];
+  libraries: Array<{ slug: string; name: string; type: string; rel: string; created: boolean; references: { lists: number; resume: number; recordings: number } | null }>;
+  /** the next write answers this refusal once */
+  refuse: { status: number; error: string } | null;
+  calls: Array<{ m: string; p: string; body: any }>;
+  updater: UpdaterMock | null;
+}
+const MEDIA_STEP_KEYS = ['check', 'pull', 'verify', 'snapshot', 'create', 'start', 'health', 'rollback'] as const;
+export const mediaStatus = (o: Record<string, unknown> = {}): any => ({
+  available: true, reason: null, base: { set: false, path: null, pending: false, expiresAt: null }, desired: null, container: null, pin: null,
+  pins: { ferrofin: true, jellyfin: true }, engine: { api: '1.47', logs: true, arch: 'x86_64', nvidia: false }, error: null, backups: [], hdr: null, ...o,
+});
+export const mediaManaged = (o: Record<string, unknown> = {}): any => ({
+  kind: null, setup: 'none', setupError: null, adminUser: null, hasPassword: false, libraries: [], externalUrl: null, hasExternalKey: false, updatedAt: null, ...o,
+});
+export function mediaMock(): MediaMock {
+  return {
+    mode: 'external', offer: { managed: false, reason: 'no_updater' }, kinds: { ferrofin: false, jellyfin: false }, status: null, managed: mediaManaged(),
+    external: { url: null, hasKey: false }, livetvLibraryPath: '/media/Aufnahmen', code: 'ABCD-EFGH-JKMN',
+    tree: {
+      '': [{ name: 'Filme' }, { name: 'Serien' }, { name: 'Musik' }, { name: 'Verknüpfung', symlink: true }, { name: 'Privat', unreadable: true }],
+      Filme: [{ name: 'Klassiker' }, { name: 'Neu' }], Serien: [{ name: 'Animation' }], Musik: [],
+    },
+    gpu: { dri: [{ node: 'renderD128', gid: 109, vendor: 'intel' }], nvidia: false },
+    setupSeq: ['first_run', 'api_key', 'libraries', 'hwaccel', 'finishing', 'done'],
+    job: null,
+    logs: ['[10:00:01] [INF] Startup complete', '[10:00:02] [INF] GET /Items?api_key=… 200', '[10:00:03] [WRN] Slow request /System/Info'],
+    libraries: [], refuse: null, calls: [], updater: null,
+  };
+}
+/** a managed Jellyfin running on /srv/media with two folders (the remove, download and log specs start here) */
+export function runningMedia(ms: MediaMock): void {
+  const digest = `sha256:${'a'.repeat(64)}`;
+  ms.mode = 'managed';
+  ms.offer = { managed: true, reason: null };
+  ms.kinds = { ferrofin: true, jellyfin: true };
+  ms.managed = mediaManaged({ kind: 'jellyfin', setup: 'done', adminUser: 'friendflix-admin', hasPassword: true, libraries: [
+    { slug: 'filme', name: 'Filme', type: 'movies', rel: 'Filme', created: true }, { slug: 'serien', name: 'Serien', type: 'tvshows', rel: 'Serien', created: true },
+  ] });
+  ms.status = mediaStatus({
+    base: { set: true, path: '/srv/media', pending: false, expiresAt: null },
+    desired: { kind: 'jellyfin', folders: [{ rel: 'Filme', target: '/media/filme' }, { rel: 'Serien', target: '/media/serien' }], uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: true, run: true },
+    container: { state: 'running', health: 'healthy', kind: 'jellyfin', image: { digest, upstream: '10.11.0' }, template: 'current', tampered: false, createdAt: '2026-11-17T08:00:00.000Z' },
+    pin: { image: `docker.io/jellyfin/jellyfin:10.11.0@${digest}`, upstream: '10.11.0', changed: false },
+    backups: [{ id: 'jellyfin-20261117-0300-10.11.0', kind: 'jellyfin', upstream: '10.11.0', at: '2026-11-17T03:00:00.000Z', tag: 'manual', size: 52_428_800 }],
+  });
+}
+/** GET /api/admin/updater reports the media job (a fresh copy each read: the updater mock's own job steps never touch it) */
+export function linkMediaJob(u: UpdaterMock, ms: MediaMock): void {
+  ms.updater = u;
+  Object.defineProperty(u, 'job', { get: () => (ms.job ? structuredClone(ms.job) : null), set: () => undefined, configurable: true });
+}
+function mediaJob(op: string): any {
+  return {
+    id: `0123456789abcd${op.length.toString(16).padStart(2, '0')}`, action: `mediaserver-${op}`, state: 'running', step: null, from: null, to: 'sha-c0be6c5',
+    startedAt: new Date().toISOString(), finishedAt: null, error: null,
+    steps: { pull: 'skipped', verify: 'skipped', restart: 'skipped', health: 'skipped', rollback: 'skipped' },
+    media: { step: 'check', steps: { check: 'running', pull: 'pending', verify: 'pending', snapshot: 'pending', create: 'pending', start: 'pending', health: 'pending', rollback: 'pending' } },
+  };
+}
+/** one media step further (the snapshot is skipped on a first run); the job ends after the health step */
+function advanceMediaJob(ms: MediaMock): void {
+  const j = ms.job;
+  if (!j || j.state !== 'running') return;
+  const order = MEDIA_STEP_KEYS.filter((k) => k !== 'rollback');
+  const i = order.indexOf(j.media.step);
+  j.media.steps[order[i]!] = order[i] === 'snapshot' ? 'skipped' : 'ok';
+  const next = order[i + 1];
+  if (next) { j.media.step = next; j.media.steps[next] = 'running'; return; }
+  j.media.steps.rollback = 'skipped';
+  j.media.step = null; j.state = 'succeeded'; j.finishedAt = new Date().toISOString();
+}
+function mediaserverRoute(ms: MediaMock, m: string, p: string, body: any, J: Reply): Promise<void> | null {
+  const P = '/api/admin/mediaserver';
+  let mm: RegExpMatchArray | null;
+  if (m !== 'GET') ms.calls.push({ m, p, body });
+  if (m !== 'GET' && ms.refuse) { const r = ms.refuse; ms.refuse = null; return J({ error: r.error }, r.status); }
+  const job = (op: string) => { ms.job = mediaJob(op); return ms.job; };
+  if (p === P && m === 'GET') {
+    // three job steps per read (a job is followed every 2 s: the specs stay short)
+    if (ms.job?.state === 'running') for (let i = 0; i < 3; i++) advanceMediaJob(ms);
+    else if (ms.mode === 'managed' && ms.managed.setup !== 'done' && ms.managed.setup !== 'none' && !ms.managed.setupError && ms.setupSeq.length) {
+      ms.managed.setup = ms.setupSeq.shift();
+      if (ms.managed.setup === 'done') ms.managed.libraries = ms.managed.libraries.map((l: any) => ({ ...l, created: true }));
+    }
+    return J({ mode: ms.mode, offer: ms.offer, kinds: ms.kinds, status: ms.status, managed: ms.managed, external: ms.external, livetvLibraryPath: ms.livetvLibraryPath });
+  }
+  if (p === `${P}/base` && m === 'POST') {
+    ms.status.base = { ...ms.status.base, pending: true, expiresAt: new Date(Date.now() + 30 * 60_000).toISOString() };
+    ms.status.base.requested = body.path;
+    return J({ pending: true, expiresAt: ms.status.base.expiresAt, warning: null });
+  }
+  if (p === `${P}/base/confirm` && m === 'POST') {
+    const norm = (c: string) => String(c).toUpperCase().replace(/[^0-9A-Z]/g, '');
+    if (!ms.status.base.pending) return J({ error: 'no_pending' }, 409);
+    if (norm(body.code) !== norm(ms.code)) return J({ error: 'wrong' }, 409);
+    const path = ms.status.base.requested;
+    ms.status.base = { set: true, path, pending: false, expiresAt: null };
+    return J({ result: 'ok', path, kept: [], dropped: [], job: null });
+  }
+  if (p === `${P}/base` && m === 'DELETE') { ms.status.base = { set: false, path: null, pending: false, expiresAt: null }; return J({ ok: true }); }
+  if (p === `${P}/browse` && m === 'POST') return J({ entries: (ms.tree[body.rel] ?? []).map((e) => ({ symlink: false, unreadable: false, ...e })), truncated: false });
+  if (p === `${P}/gpu` && m === 'POST') return J(ms.gpu);
+  if (p === `${P}/apply` && m === 'POST') {
+    const first = ms.managed.kind !== body.kind || ms.managed.setup !== 'done';
+    const libs = body.folders.map((f: any) => ({ slug: f.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name: f.name, type: f.type, rel: f.rel, created: false }));
+    ms.mode = 'managed';
+    ms.managed = { ...ms.managed, kind: body.kind, libraries: libs, ...(first ? { setup: 'applying', setupError: null, adminUser: 'friendflix-admin', hasPassword: true } : {}) };
+    ms.status.desired = { kind: body.kind, folders: libs.map((l: any) => ({ rel: l.rel, target: `/media/${l.slug}` })), uid: body.uid, gid: body.gid, gpu: body.gpu, mediaGid: body.mediaGid, egress: body.egress, run: true };
+    ms.status.container = { state: 'running', health: 'starting', kind: body.kind, image: { digest: `sha256:${'a'.repeat(64)}`, upstream: '10.11.0' }, template: 'current', tampered: false, createdAt: new Date().toISOString() };
+    ms.status.pin = { image: `docker.io/jellyfin/jellyfin:10.11.0@sha256:${'a'.repeat(64)}`, upstream: '10.11.0', changed: false };
+    return J({ job: job('apply') }, 202);
+  }
+  if (p === `${P}/action` && m === 'POST') {
+    if (body.op === 'retry') { ms.managed.setupError = null; return J({ ok: true }); }
+    if (body.op === 'remove') {
+      ms.status.container = null; ms.status.desired = null;
+      if (ms.mode === 'managed') { ms.mode = 'external'; ms.managed = { ...ms.managed, kind: null, setup: 'none', setupError: null }; }
+    }
+    return J({ job: job(body.op) }, 202);
+  }
+  if (p === `${P}/logs` && m === 'POST') return J({ lines: ms.logs.slice(-body.tail) });
+  if (p === `${P}/libraries` && m === 'GET') return J({ libraries: ms.libraries });
+  if ((mm = p.match(/^\/api\/admin\/mediaserver\/libraries\/([a-z0-9-]+)$/)) && m === 'DELETE') {
+    ms.managed.libraries = ms.managed.libraries.filter((l: any) => l.slug !== mm![1]);
+    return J({ ok: true });
+  }
+  if (p === `${P}/mode` && m === 'POST') {
+    if (body.restore) { /* the saved address comes back */ }
+    ms.mode = 'external'; ms.managed = { ...ms.managed, kind: null, setup: 'none', setupError: null };
+    return J({ ok: true });
+  }
+  if ((mm = p.match(/^\/api\/admin\/mediaserver\/backups\/([^/]+)\/download$/)) && m === 'GET') return J({ encrypted: mm[1] });
+  if (p === `${P}/backups/upload` && m === 'POST') return J({ backup: ms.status.backups[0] ?? null, job: job('restore') }, 202);
+  return null;
 }

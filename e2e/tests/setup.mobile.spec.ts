@@ -3,10 +3,16 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
-import { SETUP_CODE, setupState } from '../mocks/setup.js';
+import { SETUP_CODE, setupMedia, setupState } from '../mocks/setup.js';
 
 // The setup wizard on the phone (390px): every step fits, every control is at least 44px tall and has a name.
 const h2 = (page: Page, name: string) => page.getByRole('heading', { level: 2, name, exact: true });
+
+/** a box in page coordinates (the page may scroll between two reads); `timeout` for an element that may be gone by then */
+const box = (l: ReturnType<Page['locator']>, timeout?: number) => l.evaluate((el) => {
+  const r = el.getBoundingClientRect();
+  return { x: Math.round(r.x + scrollX), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) };
+}, undefined, { timeout });
 
 /** no horizontal overflow; every visible button and input inside the wizard fits the width; buttons are >= 44px and named */
 async function fits(page: Page) {
@@ -71,6 +77,43 @@ test.describe('setup wizard (phone)', () => {
 
     await expect(h2(page, 'Erster Admin')).toBeVisible();
     await fits(page);
+  });
+
+  test('managed Jellyfin at 390px: every part fits, the progress moves nothing above it, then step 4', async ({ page, api }) => {
+    api.setup!.steps.publicUrl = 'done';
+    const ms = (api.setup!.mediaserver = setupMedia(true));
+    ms.setupSeq = ['first_run', 'libraries', 'done'];
+    await page.goto('/setup');
+    await page.getByLabel('Einrichtungscode', { exact: true }).fill(SETUP_CODE);
+    await page.getByRole('button', { name: 'Entsperren' }).click();
+    const head = h2(page, 'Medienserver');
+    const seg = page.getByRole('radiogroup', { name: 'Art des Medienservers' });
+    await expect(seg.getByRole('radio', { name: 'Jellyfin (offiziell, verwaltet)' })).toHaveAttribute('aria-checked', 'true');
+    await fits(page);
+
+    await page.getByLabel('Pfad auf dem Server').fill('/srv/media');
+    await page.getByRole('button', { name: 'Code anfordern' }).click();
+    await expect(page.getByTestId('media-code-countdown')).toBeVisible();
+    await fits(page);
+    await page.getByLabel('Code aus dem Protokoll').fill('ABCD-EFGH-JKMN');
+    await page.getByRole('button', { name: 'Bestätigen' }).click();
+    await expect(page.getByTestId('media-base-path')).toHaveText('/srv/media');
+    await page.getByTestId('media-browser').locator('[data-entry="Filme"]').getByRole('button', { name: 'Wählen' }).click();
+    await expect(page.getByTestId('media-gpu-found')).toContainText('Intel (renderD128)');
+    await fits(page);
+
+    const go = page.getByTestId('media-apply');
+    const before = { head: await box(head), seg: await box(seg), go: await box(go) };
+    test.setTimeout(90_000);
+    await go.click();
+    await expect.poll(async () => {
+      if (await h2(page, 'Anmeldung').isVisible()) return true;
+      // the step may go on between two reads: a box that is gone by then is no move
+      const now = await Promise.all([box(head, 1000), box(seg, 1000), box(go, 1000)]).catch(() => null);
+      if (now) expect({ head: now[0], seg: now[1], go: now[2] }).toEqual(before);
+      return false;
+    }, { timeout: 40_000, intervals: [300] }).toBe(true);
+    expect(ms.calls.find((c) => c.p.endsWith('/apply'))?.body).toMatchObject({ kind: 'jellyfin', folders: [{ rel: 'Filme', name: 'Filme', type: 'movies' }] });
   });
 
   test('extras fit at 390px', async ({ page, api }) => {

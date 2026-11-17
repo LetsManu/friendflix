@@ -17,6 +17,8 @@
    * The search above the tabs (search.ts) covers every setting, Live TV's too: while a query is typed its results take the tab panel's
    * place; choosing one clears the query and opens `?setting=<KEY>`; Esc clears. Nothing is edited in the result list.
    * Leaving the page (a Live-TV result or link, the menu) with unsaved drafts asks first; a tab switch or a deep link on this page does not.
+   * The media tab starts with the card *Medienserver* (lib/admin/mediaserver); the address card (`media` group) shows unless the media
+   * server is a managed one.
    */
   import { onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
@@ -36,6 +38,7 @@
   import { refreshSummary } from '#lib/admin/summary';
   import MailStatus from '#lib/admin/settings/MailStatus.svelte';
   import AuthentikSync from '#lib/admin/settings/AuthentikSync.svelte';
+  import MediaServerCard from '#lib/admin/mediaserver/MediaServerCard.svelte';
   import SettingRow from '#lib/admin/settings/SettingRow.svelte';
   import { highlightSetting } from '#lib/admin/settings/highlight';
   import { SEARCH_MIN, searchSettings, type SettingHit } from '#lib/admin/settings/search';
@@ -91,7 +94,9 @@
     return where && where !== 'livetv' ? where : 'general';
   };
   $: tab = view && (linkKey || linkGroup) ? linkTab(view, linkKey, linkGroup) : tabOf(url.searchParams.get('tab'));
-  $: tabGroups = TAB_GROUPS[tab].flatMap((id) => groups.filter((g) => g.id === id));
+  /** the media server's mode (card *Medienserver*): the address card (`media` group) only while the server is not a managed one */
+  let mediaMode: 'managed' | 'external' | null = null;
+  $: tabGroups = TAB_GROUPS[tab].flatMap((id) => groups.filter((g) => g.id === id && !(id === 'media' && mediaMode === 'managed')));
   $: dirty = dirtyTabs(changes);
   leaveGuard((nav) => leavesRoute(nav) && dirty.size > 0, () => ({
     title: tr('settings.leave.title'), body: tr('settings.leave.body'), danger: true, confirmLabel: tr('settings.leave.confirm'),
@@ -363,6 +368,8 @@
       </div>
     {/if}
 
+    <!-- the media tab starts with the media server's own card: managed or the existing server -->
+    {#if tab === 'media'}<MediaServerCard bind:mode={mediaMode} />{/if}
     {#each tabGroups as g (g.id)}
       {@const dirty = Object.keys(changes[g.id] ?? {}).length > 0}
       {@const probe = probes[g.id]}

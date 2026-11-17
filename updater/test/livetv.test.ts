@@ -540,7 +540,7 @@ describe('livetv jobs', () => {
 
   it('a livetv job interrupted by a restart is marked failed; the state stays', () => {
     const job = { id: '0123456789abcdef', action: 'livetv-enable' as const, state: 'running' as const, step: 'health' as const, from: null, to: 'latest', startedAt: new Date().toISOString(), finishedAt: null, error: null,
-      steps: { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'running' as const, rollback: 'skipped' as const } };
+      steps: { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'running' as const, rollback: 'skipped' as const }, media: null };
     const s = memoryStore({ ...DEFAULT_STATE, livetv: 'disabled', lastJob: job });
     const w = world();
     new Updater(dockerOps(new Docker({ projectDir: '/srv/friendflix', files: ['compose.prod.yaml'], repo: 'LetsManu/friendflix', dockerHost: 'tcp://docker-proxy:2375' }, w.run), 'http://b/health', w.health), s);
@@ -656,15 +656,15 @@ describe('livetv HTTP API and status', () => {
 
 describe('livetv in the docs', () => {
   const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), 'utf8');
-  it('the docs count six updater actions and name every route', () => {
+  it('the docs count seven updater routes and name every route', () => {
     const sec = read('docs/security.md');
-    for (const r of ['/v1/status', '/v1/channel', '/v1/update', '/v1/rollback', '/v1/self-update', '/v1/livetv']) expect(sec).toContain(r);
+    for (const r of ['/v1/status', '/v1/channel', '/v1/update', '/v1/rollback', '/v1/self-update', '/v1/livetv', '/v1/mediaserver']) expect(sec).toContain(r);
     for (const f of ['docs/security.md', 'docs/setup.md']) {
-      expect(read(f), f).toMatch(/\bsix\b/i);
-      expect(read(f), f).not.toMatch(/\bfive\b/i);
+      expect(read(f), f).toMatch(/\bseven\b (fixed|signed)/i);
+      expect(read(f), f).not.toMatch(/\b(five|six)\b (fixed|signed)/i);
     }
-    expect(read('docs/de/setup.md')).toMatch(/\bsechs\b/);
-    expect(read('docs/de/setup.md')).not.toMatch(/\bfünf\b/);
+    expect(read('docs/de/setup.md')).toMatch(/\bsieben\b/);
+    expect(read('docs/de/setup.md')).not.toMatch(/\b(fünf|sechs)\b/);
   });
 });
 

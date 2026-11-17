@@ -101,3 +101,7 @@ d621dd5eec11ab8f5215e2ed87e92b8790c67846:livetv/test/fetch-routes.test.ts:generi
 # fictional unsubscribe tokens (v1.<uuid>.<type>.<mac>) in the e2e specs, not secrets
 4b865923083fdba35dfd237432b65ccdf0fe7671:e2e/tests/mail-unsubscribe.spec.ts:generic-api-key:10
 4b865923083fdba35dfd237432b65ccdf0fe7671:e2e/tests/mail-unsubscribe.mobile.spec.ts:generic-api-key:6
+# the shared test fixture INTERNAL_SECRET (backend/test/helpers.ts cfg), copied into media server tests before they read it from cfg; not a secret
+6d0d3a02ed13aae60faa194163773c02933d314c:backend/test/mediaserver-client.test.ts:generic-api-key:10
+82a9d12bd15d48984b83dc1697a17ee088575555:backend/test/mediaserver-routes.test.ts:generic-api-key:10
+6b07f9303f25026c49697490653692247e28e703:backend/test/mediaserver-firstrun.test.ts:generic-api-key:10

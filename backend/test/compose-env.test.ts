@@ -99,6 +99,54 @@ describe('updater default', () => {
     expect(services.map((b) => b.split(':')[0])).toEqual(['docker-proxy']);
     expect(read('compose.no-updater.yaml')).toMatch(/docker-proxy:\n {4}profiles: \[updater\]\n {2}updater:\n {4}profiles: \[updater\]/);
   });
+
+  it('the socket proxy opens only the logs endpoint beyond 1.x; the updater alone mounts the media server backup volume', () => {
+    const prod = read('compose.prod.yaml');
+    const proxy = service(prod, 'docker-proxy');
+    const env = proxy.slice(proxy.indexOf('    environment:\n')).split('\n    volumes')[0]!.split('\n').map((l) => l.trim()).filter((l) => /^[A-Z0-9_]+: /.test(l));
+    expect(env).toContain('ALLOW_LOGS: 1');
+    expect(env).not.toContain('ALLOW_LOGS: 0');
+    expect(env.filter((l) => !l.startsWith('ALLOW_LOGS:'))).toEqual([
+      'CONTAINERS: 1',
+      'IMAGES: 1',
+      'NETWORKS: 1',
+      'VOLUMES: 1',
+      'INFO: 1',
+      'PING: 1',
+      'VERSION: 1',
+      'EVENTS: 0',
+      'POST: 1',
+      'ALLOW_START: 1',
+      'ALLOW_STOP: 1',
+      'ALLOW_RESTARTS: 0',
+      'EXEC: 0',
+      'BUILD: 0',
+      'COMMIT: 0',
+      'ALLOW_ARCHIVE: 0',
+      'ALLOW_EXPORT: 0',
+      'ALLOW_PAUSE: 0',
+      'ALLOW_UNPAUSE: 0',
+      'ALLOW_TOP: 0',
+      'ALLOW_CHANGES: 0',
+      'AUTH: 0',
+      'CONFIGS: 0',
+      'DISTRIBUTION: 0',
+      'NODES: 0',
+      'PLUGINS: 0',
+      'SECRETS: 0',
+      'SERVICES: 0',
+      'SESSION: 0',
+      'SWARM: 0',
+      'SYSTEM: 0',
+      'TASKS: 0',
+      'DISABLE_IPV6: 0',
+      'LOG_LEVEL: warning',
+    ]);
+    expect(service(prod, 'updater')).toMatch(/^ {6}- mediaserver-backup:\/backups( #.*)?$/m);
+    const mounting = prod.split(/\n {2}(?=[a-z-]+:\n)/).filter((b) => /^ {6}- mediaserver-backup:/m.test(b));
+    expect(mounting.map((b) => b.split(':')[0])).toEqual(['updater']);
+    expect(prod).toMatch(/^ {2}mediaserver-backup:.*\n {4}labels:\n {6}friendflix\.managed: mediaserver-backup$/m);
+  });
 });
 
 /** one top-level service block of a compose file (text up to the next service or top-level key) */

@@ -56,7 +56,7 @@
     "updater": {
       "dockerfile": "updater/Dockerfile",
       "groups": ["all", "node-common"],
-      "inputs": ["updater/**", "version.json"],
+      "inputs": ["updater/**", "version.json", "scripts/mediahelper-smoke.sh"],
       "argsFrom": ["version.json"],
       "required": false,
       "reproducible": true
@@ -72,7 +72,7 @@
     "mediaserver": {
       "dockerfile": "mediaserver/Dockerfile",
       "groups": ["all"],
-      "inputs": ["mediaserver/Dockerfile", "mediaserver/NOTICE"],
+      "inputs": ["mediaserver/Dockerfile", "mediaserver/NOTICE", "scripts/mediaserver-smoke.sh"],
       "argsFrom": [],
       "required": false,
       "reproducible": false

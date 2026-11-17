@@ -5,15 +5,28 @@
    * Step 3: the media server, rendered from GET /api/setup/state (spec Part H): `media.keys` are the manual fields (labels
    * settings.keys.<KEY>, the key itself without a text), `media.auto` the fields of "Create API key automatically" (null = manual only).
    * The administrator's password is sent once and the field is emptied afterwards; a typed API key is emptied after the save.
+   *
+   * The managed media server (spec "Admin and wizard", wizard step 3): where the backend offers it (GET /api/setup/mediaserver, read
+   * once on the way in, never on Plex), the step shows the Admin card's three choices (MediaChoice) with the default managed kind
+   * preselected (api.ts initialChoice); the existing server by address keeps the fields below unchanged, a managed kind is
+   * StepMediaManaged (setupMediaApi()). Not offered: today's fields with the reason line. Plex: today's step, nothing read.
+   * While the updater has not read the media status yet since it started (reason `starting`, model.ts statusStarting) the step waits
+   * like on its way in, with the neutral line in its kept place, and reads the view again every 2 s; then the first choice is made.
    */
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
+  import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
+  import { setupMediaApi, type MediaView } from '#lib/admin/mediaserver/api';
+  import MediaChoice from '#lib/admin/mediaserver/MediaChoice.svelte';
+  import { DEFAULT_MANAGED, choiceDisabled, currentChoice, reasonText, statusStarting, type Choice } from '#lib/admin/mediaserver/model';
   import { errorText as fieldText, keyHelp, keyLabel } from '#lib/admin/settings/form';
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
-  import { mediaAuto, saveSetup, testSetup, type AutoField, type SetupState } from './api';
-  import { filled, isSecretKey, otherFieldErrors, probeText, type Handle, type Message } from './messages';
+  import Skeleton from '#lib/ui/Skeleton.svelte';
+  import { initialChoice, mediaAuto, saveSetup, testSetup, type AutoField, type SetupState } from './api';
+  import { failure, filled, isSecretKey, otherFieldErrors, probeText, type Handle, type Message } from './messages';
   import Notice from './Notice.svelte';
+  import StepMediaManaged from './StepMediaManaged.svelte';
 
   export let state: SetupState;
   export let handle: Handle;
@@ -80,12 +93,78 @@
       if (note) { ok = note; held = true; } else dispatch('done');
     } catch (e) { msg = handle(e); } finally { busy = null; }
   }
+
+  // ------------------------------------------------------------------ the managed media server
+  const media = setupMediaApi();
+  /** the backend's view; null until read, on Plex, or when it could not be read (then today's step) */
+  let view: MediaView | null = null;
+  /** the first read is over (Plex reads nothing: today's step at once) */
+  let loaded = state.mediaKind === 'plex';
+  let choice: Choice = 'external';
+
+  /** the sections' requests: a setup session that is gone (or a setup someone finished) goes to the page, the section still says why */
+  async function call<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (e) {
+      if (failure(e).kind !== 'message') handle(e);
+      throw e;
+    }
+  }
+
+  /** the updater has not read the media status yet since it started: the step waits and reads the view again */
+  let starting = false;
+  const STARTING_POLL_MS = 2000;
+  let timer: ReturnType<typeof setTimeout> | undefined, gone = false;
+  /** the offer, read once (again every 2 s while it is starting); the managed path reads the view again while it follows the first run */
+  async function load(): Promise<void> {
+    try {
+      const v = await call(() => media.view());
+      state.mediaserver = { offer: v.offer, kinds: v.kinds };
+      const first = statusStarting(v) ? null : v.mode === 'managed' ? currentChoice(v) : initialChoice(state);
+      if (first === null) {
+        starting = true;
+        if (!gone) timer = setTimeout(() => { void load(); }, STARTING_POLL_MS);
+        return;
+      }
+      view = v;
+      choice = first;
+    } catch { /* a backend without the route, or the network: today's step */ }
+    starting = false;
+    loaded = true;
+  }
+  onMount(() => { if (!loaded) void load(); });
+  onDestroy(() => { gone = true; clearTimeout(timer); });
+
+  $: offered = Boolean(view && !plex && (view.offer.managed || view.mode === 'managed'));
+  /** why the managed server is not offered (a view that was read; Plex never shows it) */
+  $: offReason = view && !plex && !offered ? choiceDisabled(view, DEFAULT_MANAGED) : null;
+  $: managedKind = choice === 'external' ? null : choice;
 </script>
 
 <h2 id="setup-step-h">{$t('setup.media.title')}</h2>
-<p>{$t(plex ? 'setup.media.textPlex' : 'setup.media.text')}</p>
-{#if state.steps.media === 'done'}<p class="muted">{$t('setup.doneText')}</p>{/if}
+{#if !loaded}
+  <!-- the line keeps its place while loading too: the neutral line of a starting updater moves nothing -->
+  <div data-testid="media-wait">
+    <div class="sk" aria-hidden="true"><Skeleton h="1.2rem" lines={2} /><Skeleton h="3rem" /></div>
+    <p class="wait" role="status" data-testid="media-starting">{#if starting}{$t('mediaserver.reason.starting')}{:else}<span class="sr-only">{$t('ui.table.loading')}</span>{/if}</p>
+  </div>
+{:else if offered && view}
+  <p>{$t('setup.media.textChoice')}</p>
+  {#if state.steps.media === 'done'}<p class="muted">{$t('setup.doneText')}</p>{/if}
+  <MediaChoice {view} {choice} reasonsId="sm-reasons" on:pick={(e) => (choice = e.detail)} />
+{:else}
+  <p>{$t(plex ? 'setup.media.textPlex' : 'setup.media.text')}</p>
+  {#if offReason}<p class="muted off" data-testid="media-off"><Icon name="info" size={16} /><span>{$t('setup.media.managedOff')} {reasonText(offReason)}</span></p>{/if}
+  {#if state.steps.media === 'done'}<p class="muted">{$t('setup.doneText')}</p>{/if}
+{/if}
 
+{#if !loaded}
+  <!-- the offer is being read -->
+{:else if managedKind && view}
+  {#key managedKind}<StepMediaManaged api={media} {call} bind:view kind={managedKind} on:done={() => dispatch('done')} />{/key}
+{:else}
+{#if offered}<p>{$t('setup.media.text')}</p>{/if}
 {#if autoFields.length}
   <div class="seg" role="group" aria-label={$t('setup.media.modeLabel')}>
     <button type="button" class:on={mode === 'auto'} aria-pressed={mode === 'auto'} on:click={() => setMode('auto')}>{$t('setup.media.auto')}</button>
@@ -140,6 +219,7 @@
     </div>
   </form>
 {/if}
+{/if}
 
 <style>
   form { display: grid; gap: .8rem; }
@@ -149,4 +229,8 @@
   .seg button { min-height: 44px; padding: .4rem 1rem; border-radius: 6px; background: transparent; color: var(--fg); border: 0; font-weight: 600; }
   .seg button.on { background: var(--fg); color: var(--bg); }
   @media (max-width: 480px) { .acts > :global(*) { flex: 1 1 100%; } .seg { display: flex; } .seg button { flex: 1; } }
+  .sk { display: grid; gap: .8rem; }
+  .wait { margin: .6rem 0 0; min-height: 1.5em; font-size: .9rem; color: var(--mut); }
+  .off { display: flex; align-items: flex-start; gap: .4rem; font-size: .9rem; }
+  .off :global(svg) { flex: none; margin-top: .15rem; color: var(--info-mark); }
 </style>

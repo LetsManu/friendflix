@@ -54,6 +54,9 @@ const setup: Translation<typeof de> = {
     textPlex: 'FriendFlix potrzebuje adresu twojego serwera Plex i tokenu konta Plex, którego używa FriendFlix; token właściciela serwera odblokowuje wszystkie funkcje.',
     manualTextPlex: 'Wpisz adres i token Plex. Test sprawdza połączenie i informuje, czy token należy do właściciela serwera.',
     noAuto: 'Ten serwer multimediów nie ma automatycznej konfiguracji. Wpisz wartości ręcznie.',
+    textChoice: 'Wybierz serwer, który dostarcza twoje filmy, seriale i muzykę: taki, który FriendFlix prowadzi za ciebie, albo twój istniejący.',
+    managedText: 'FriendFlix prowadzi serwer za ciebie: potwierdź folder bazowy, wybierz foldery i kartę graficzną, potem „Skonfiguruj”. Użytkownika, grupę i kopie zapasowe ustawisz później w Admin → Ustawienia → Serwer multimediów.',
+    managedOff: 'Serwer prowadzony przez FriendFlix nie jest tu dostępny.',
   },
   signin: {
     title: 'Logowanie',

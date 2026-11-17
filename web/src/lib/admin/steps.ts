@@ -9,15 +9,18 @@
  * the note gives the real total instead. Reconnecting (the backend restarts in the middle) never changes a row, only the label.
  */
 import { fmtDateTime, fmtDuration, trDynamic } from '#lib/i18n';
-import { REDEPLOY_STEPS, failReason, redeployResult, redeploySteps, visibleSteps, type Redeploy, type StepName, type StepState, type UpdaterJob } from './updater';
+import {
+  MEDIA_STEPS, MEDIA_TAB, REDEPLOY_STEPS, failReason, isMediaJob, jobTone, mediaFailedText, redeployResult, redeploySteps, visibleMediaSteps, visibleSteps,
+  type Redeploy, type StepName, type StepState, type UpdaterJob,
+} from './updater';
 
 export type RowState = 'waiting' | 'running' | 'ok' | 'failed' | 'skipped';
 export interface StepRow { key: string; label: string; sub?: string; state: RowState; took?: string }
-/** running; ok / neutral (nothing to do) / failed once it ended */
-export type FlowOutcome = 'running' | 'ok' | 'neutral' | 'failed';
+/** running; ok / neutral (nothing to do) / warn (FriendFlix updated, its media server not) / failed once it ended */
+export type FlowOutcome = 'running' | 'ok' | 'neutral' | 'warn' | 'failed';
 export interface FlowNote {
-  tone: 'ok' | 'neutral' | 'bad';
-  /** the outcome code (data-result): succeeded / rolled_back / failed, done / unchanged / failed / timeout */
+  tone: 'ok' | 'neutral' | 'warn' | 'bad';
+  /** the outcome code (data-result): succeeded / rolled_back / failed / succeeded_mediaserver_failed, done / unchanged / failed / timeout */
   result: string;
   text: string;
   /** the real total duration and, for a failed job, its error code */
@@ -26,6 +29,8 @@ export interface FlowNote {
   advice: string;
   /** a failure: the note offers to try again */
   retry: boolean;
+  /** "try again" is elsewhere: the note links there instead (a media server failure: the media tab) */
+  href?: string;
 }
 export interface StepFlow {
   rows: StepRow[];
@@ -38,12 +43,14 @@ export interface StepFlow {
   count: string;
   reconnecting: boolean;
   note: FlowNote | null;
-  /** invisible row slots kept under the list (an update's rollback, shown only once it starts): nothing moves when it appears */
+  /** invisible row slots kept under the list (an update's or a media job's rollback, shown only once it starts): nothing moves when it appears */
   reserve?: number;
 }
 
 const U = 'admin.update.updater';
 export const rowState = (s: StepState): RowState => (s === 'pending' ? 'waiting' : s);
+/** a rollback row (the update's own, a media job's): it only undoes the steps, never counts as one */
+const isRollback = (key: string): boolean => key === 'rollback' || key === 'media-rollback';
 
 /** done rows count whole, the running one by `partial` (0..1, default half); failed and skipped rows add nothing */
 export function progressOf(rows: readonly StepRow[], partial = 0.5): number {
@@ -68,23 +75,46 @@ function frame(rows: StepRow[], outcome: FlowOutcome, partial?: number): Pick<St
   const at = found >= 0 ? found : open >= 0 ? open : rows.length - 1;
   const n = rows.length;
   if (outcome === 'running') return { progress: progressOf(rows, partial), count: trDynamic(`${U}.flow.stepOf`, { n: Math.max(1, at + 1), total: n }) };
-  if (outcome === 'failed') return { progress: progressOf(rows), count: trDynamic(`${U}.flow.stopped`, { n: Math.max(1, at + 1), total: n }) };
+  if (outcome === 'failed' || outcome === 'warn') return { progress: progressOf(rows), count: trDynamic(`${U}.flow.stopped`, { n: Math.max(1, at + 1), total: n }) };
   return { progress: 1, count: trDynamic(`${U}.flow.done`) };
 }
 
 export interface FlowOpts { reconnecting?: boolean; now?: number }
 
-/** an updater job; `steps`: which to list (Live TV passes its own, default the update's) */
-export function jobFlow(job: UpdaterJob, o: FlowOpts & { steps?: readonly StepName[] | null } = {}): StepFlow {
-  const list = o.steps ?? visibleSteps(job);
-  const rows: StepRow[] = list.map((st) => ({ key: st, label: trDynamic(`${U}.step.${st}`), state: rowState(job.steps[st]) }));
-  const outcome: FlowOutcome = job.state === 'running' ? 'running' : job.state === 'succeeded' ? 'ok' : 'failed';
+/**
+ * The media server phase of an update before it started (`job.media` null): its steps waiting while the job runs, skipped once it
+ * ended without one (nothing to move, the server stopped on purpose, or FriendFlix itself failed). The rollback is not listed: it
+ * takes the update's reserved slot when it starts.
+ */
+function pendingPhase(job: UpdaterJob): NonNullable<UpdaterJob['media']> {
+  const st: StepState = job.state === 'running' ? 'pending' : 'skipped';
+  return { step: null, steps: Object.fromEntries(MEDIA_STEPS.map((k) => [k, k === 'rollback' ? 'skipped' : st])) as NonNullable<UpdaterJob['media']>['steps'] };
+}
+
+/**
+ * an updater job; `steps`: which to list (Live TV passes its own, default the update's). A media job lists its media steps only; an
+ * update with a media server phase adds that phase's steps after its own (keys `media-<step>`). `mediaPhase`: a managed media server
+ * exists, so an update lists its phase's steps from the start (nothing jumps when the phase begins), skipped when it never ran.
+ */
+export function jobFlow(job: UpdaterJob, o: FlowOpts & { steps?: readonly StepName[] | null; mediaPhase?: boolean } = {}): StepFlow {
+  const list = isMediaJob(job.action) ? [] : o.steps ?? visibleSteps(job);
+  // only an update runs the phase (never a rollback or a self-update: updater/src/job.ts)
+  const media = job.media ?? (o.mediaPhase && job.action === 'update' ? pendingPhase(job) : null);
+  const core = list.map((st): StepRow => ({ key: st, label: trDynamic(`${U}.step.${st}`), state: rowState(job.steps[st]) }));
+  const mediaRows = media ? visibleMediaSteps(media).map((st): StepRow => ({ key: `media-${st}`, label: trDynamic(`${U}.mediaStep.${st}`), state: rowState(media.steps[st]) })) : [];
+  // FriendFlix's own rollback row goes last, into the slot reserved under the list: the media rows never move down when it starts
+  const rows: StepRow[] = [...core.filter((r) => r.key !== 'rollback'), ...mediaRows, ...core.filter((r) => r.key === 'rollback')];
+  const tone = jobTone(job.state);
+  const outcome: FlowOutcome = tone === 'running' ? 'running' : tone === 'bad' ? 'failed' : tone;
   const running = outcome === 'running';
   const label = running
     ? (o.reconnecting ? trDynamic(`${U}.reconnecting`) : trDynamic(`${U}.running`, { s: elapsed(job.startedAt, o.now ?? Date.now()) }))
     : `${trDynamic(`${U}.lastJob`)} ${fmtDateTime(job.finishedAt ?? job.startedAt)}`;
   let note: FlowNote | null = null;
-  if (!running) {
+  if (outcome === 'warn') {
+    // FriendFlix runs the new build; the media server phase failed and the old media server came back: tried again on its tab
+    note = { tone: 'warn', result: job.state, text: mediaFailedText(job.error), advice: '', detail: took(job.startedAt, job.finishedAt), retry: false, href: MEDIA_TAB };
+  } else if (!running) {
     // one sentence (the failed row by its label); the reason, often long, is the advice
     const failedRow = rows.find((r) => r.state === 'failed');
     const text = job.state === 'succeeded' ? trDynamic(`${U}.result.succeeded`, { to: job.to })
@@ -94,9 +124,10 @@ export function jobFlow(job: UpdaterJob, o: FlowOpts & { steps?: readonly StepNa
     const advice = outcome === 'failed' && (job.state === 'rolled_back' || failedRow) ? failReason(job.error) : '';
     note = { tone: outcome === 'ok' ? 'ok' : 'bad', result: job.state, text, advice, detail: [took(job.startedAt, job.finishedAt), code].filter(Boolean).join(' · '), retry: outcome === 'failed' };
   }
-  const main = rows.filter((r) => r.key !== 'rollback');
-  // an update may roll back: its row's room is kept from the start, the row itself shows only once the rollback started
-  const reserve = job.action === 'update' && main.length === rows.length ? 1 : 0;
+  const main = rows.filter((r) => !isRollback(r.key));
+  // an update and a media job may roll back: the row's room is kept from the start, the row itself shows only once the rollback
+  // started (it takes the slot: nothing moves)
+  const reserve = (job.action === 'update' || isMediaJob(job.action)) && main.length === rows.length ? 1 : 0;
   return { rows, outcome, label, reconnecting: running && Boolean(o.reconnecting), note, reserve, ...frame(main, outcome) };
 }
 
@@ -149,8 +180,8 @@ const ended = (s: RowState) => RANK[s] === 2;
  */
 export function catchUp(shown: readonly Pick<StepRow, 'key' | 'state'>[] | null, next: readonly Pick<StepRow, 'key' | 'state'>[]): RowState[][] {
   const target = next.map((r) => r.state);
-  const reached = next.reduce((at, r, i) => (r.key !== 'rollback' && r.state !== 'waiting' ? i : at), -1);
-  for (let i = 0; i < reached; i++) if (target[i] === 'waiting' && next[i]!.key !== 'rollback') target[i] = 'ok';
+  const reached = next.reduce((at, r, i) => (!isRollback(r.key) && r.state !== 'waiting' ? i : at), -1);
+  for (let i = 0; i < reached; i++) if (target[i] === 'waiting' && !isRollback(next[i]!.key)) target[i] = 'ok';
   if (!shown) return [target];
   const before = new Map(shown.map((r) => [r.key, r.state]));
   const cur = next.map((r) => before.get(r.key) ?? 'waiting');
@@ -168,7 +199,7 @@ export function catchUp(shown: readonly Pick<StepRow, 'key' | 'state'>[] | null,
 
 /** a frame of a catch-up that has not reached the server's state yet: still running (no outcome, no note), bar and count from its rows */
 export function heldFlow<F extends Pick<StepFlow, 'rows'> & Partial<StepFlow>>(flow: F, rows: StepRow[]): F {
-  return { ...flow, rows, outcome: 'running', note: null, ...frame(rows.filter((r) => r.key !== 'rollback'), 'running') };
+  return { ...flow, rows, outcome: 'running', note: null, ...frame(rows.filter((r) => !isRollback(r.key)), 'running') };
 }
 
 export interface StepPlayerOpts {

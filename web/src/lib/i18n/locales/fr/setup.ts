@@ -54,6 +54,9 @@ const setup: Translation<typeof de> = {
     textPlex: 'FriendFlix a besoin de l’adresse de ton serveur Plex et du jeton du compte Plex qu’utilise FriendFlix ; le jeton du propriétaire du serveur débloque toutes les fonctions.',
     manualTextPlex: 'Saisis l’adresse et le jeton Plex. Le test vérifie la connexion et indique si le jeton appartient au propriétaire du serveur.',
     noAuto: 'Ce serveur multimédia n’a pas de configuration automatique. Saisis les valeurs à la main.',
+    textChoice: 'Choisis le serveur qui fournit tes films, séries et musique : un serveur que FriendFlix gère pour toi, ou ton serveur existant.',
+    managedText: 'FriendFlix gère le serveur pour toi : confirme le dossier de base, choisis les dossiers et la carte graphique, puis « Installer ». Utilisateur, groupe et sauvegardes se règlent ensuite dans Admin → Paramètres → Serveur multimédia.',
+    managedOff: 'Un serveur géré par FriendFlix pour toi n’est pas disponible ici.',
   },
   signin: {
     title: 'Connexion',

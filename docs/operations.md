@@ -42,6 +42,15 @@ Startet einen Wegwerf-Postgres ohne Port-Mapping, spielt den neuesten Dump ein u
 - **Volume `bootstrap` sichern!** (getrennt vom Dump). Ohne den `APP_ENC_KEY` darin sind die gespeicherten Jellyfin-Passwörter der Nutzer und die geheimen Einstellungen unlesbar.
 - Nicht im Dump: Daten von Jellyfin, Wunsch-Dienst und Authentik (eigene Backups dieser Dienste; Authentik: [de/authentik.md §2.6](de/authentik.md#26-backups-und-updates)).
 
+### Medienserver-Sicherungen (Volume `mediaserver-backup`)
+Der verwaltete Medienserver ([de/mediaserver.md](de/mediaserver.md)) legt seine Sicherungen im Volume `<projekt>_mediaserver-backup` ab (nur der Updater bindet es ein): je Sicherung eine Datei `<art>-<JJJJMMTT-HHMM>-<upstream>.tar.gz` mit dem Daten-Volume des Servers (ohne Logs und Transkodierungen); behalten werden die letzten 3 manuellen und hochgeladenen und die letzten 2 automatischen. **Nicht im Postgres-Dump und nicht in `scripts/backup-bootstrap.sh`.** Die Dateien enthalten Passwort-Hashes und API-Schlüssel des Servers.
+- **Den Host verlässt eine Sicherung am besten als verschlüsselter Download** (*Admin → Einstellungen → Medienserver → Sicherung → Herunterladen*, mit Passphrase; Entschlüsseln: `age -d -o backup.tar.gz <datei>.age`). Das ist die Kopie für einen anderen Ort.
+- **Das ganze Volume unverschlüsselt auf den Host kopieren** (ein Befehl; `cp -a` behält Besitzer und Rechte, und die Dateien liegen im Klartext auf dem Host: Zielordner schützen):
+```bash
+docker run --rm -v <projekt>_mediaserver-backup:/b:ro -v "$PWD":/out alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 cp -a /b/. /out/
+```
+- **`docker compose down -v` löscht dieses Volume** (der Updater bindet es über Compose ein). Vorher eine Sicherung herunterladen. Das Entfernen des Medienservers in Admin (auch mit *Daten löschen*) lässt die Sicherungen stehen.
+
 ### Redis-Volume (`redis-data`)
 Redis schreibt seine Daten in eine Append-only-Datei im Volume `redis-data` (einmal pro Sekunde): Anmeldungen (auch die gekoppelter Fernseher und der Apps), laufende Kopplungen und der Stand eines Updates über Portainer überstehen einen Neustart von Redis und des Hosts. Ein Backup braucht das Volume nicht; fehlt es, muss sich nur jede Person neu anmelden. Sitzungen liegen dort nur als SHA-256 ihrer ID (`sess:<hash>`), nie als Cookie-Wert: Eine Kopie des Volumes meldet niemanden an; trotzdem nicht weitergeben (Konto, Gerät und CSRF-Token stehen darin). Alle Sitzungen auf einmal beenden: `docker compose rm -sf redis`, `docker volume rm <projekt>_redis-data`, `docker compose up -d`. Jeder Schlüssel hat seine eigene Ablaufzeit, auch nach einem Neustart läuft nichts für immer weiter.
 

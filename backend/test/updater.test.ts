@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto.js';
 import { REDEPLOY_KEY, REDEPLOY_LOCK } from '../src/redeploy.js';
-import { autoUpdateTick, parseStatus, signUpdater, updaterKey, updaterView } from '../src/updater.js';
+import { autoUpdateTick, parseStatus, signUpdater, streamBinding, updaterKey, updaterView } from '../src/updater.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 import { sessionKey } from '../src/session.js';
 
@@ -13,6 +13,7 @@ import { sessionKey } from '../src/session.js';
 // limit, audit of start and result), the updater-absent fallback and the automatic update tick.
 const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/updater-hmac.json', import.meta.url), 'utf8')) as {
   secret: string; key: string; cases: Array<{ method: string; path: string; body: string; ts: string; nonce: string; signature: string }>;
+  streamBindings: Array<{ header: string; binding: string }>;
 };
 type Sess = { cookies: Record<string, string>; csrf: string };
 const DORA = { sub: 'sub-dora', email: 'dora@example.com', name: 'Dora', groups: [] as string[] };
@@ -93,6 +94,8 @@ describe('updater signing', () => {
     const key = updaterKey(vectors.secret);
     expect(key.toString('hex')).toBe(vectors.key);
     for (const c of vectors.cases) expect(signUpdater(key, c.method, c.path, c.body, c.ts, c.nonce)['x-ff-updater-signature']).toBe(c.signature);
+    // the backup streams sign a scrypt derivation of the passphrase header, the same bytes as updater/src/protocol.ts streamBinding
+    for (const c of vectors.streamBindings) expect(streamBinding(c.header)).toBe(c.binding);
     const a = signUpdater(key, 'GET', '/v1/status'), b = signUpdater(key, 'GET', '/v1/status');
     expect(a['x-ff-updater-nonce']).toMatch(/^[0-9a-f]{32}$/);
     expect(a['x-ff-updater-nonce']).not.toBe(b['x-ff-updater-nonce']);

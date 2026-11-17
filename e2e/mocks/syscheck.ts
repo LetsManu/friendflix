@@ -35,7 +35,7 @@ export interface SyscheckMock {
 export const SERVER_IDS = [
   'core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env', 'core.mail',
   'signin.oidc', 'signin.authentik', 'signin.flows', 'signin.issuerHost', 'signin.passkeys', 'signin.mail',
-  'media.server', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder',
+  'media.server', 'media.managed', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder',
 ];
 
 /** a full answer from lines (group, runs and counts filled in like the backend) */

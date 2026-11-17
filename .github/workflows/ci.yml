@@ -373,8 +373,16 @@ jobs:
           test -z "$(docker compose -f compose.yaml config --services | grep -x livetv || true)"
           docker compose -f compose.prod.yaml --profile livetv config --services | grep -qx livetv
           rm .env
+      - name: Media server pins script
+        run: bash scripts/mediaserver-pins.test.sh
   docker:
     runs-on: ubuntu-latest
+    # Waits for `mediaserver-image` only so the backend image can carry that image's digest in its pin label (the updater reads
+    # the pins from the backend image, which cosign signs with the build). `!cancelled()` keeps every image building when that
+    # job failed or was skipped: the label then has no ferrofin entry and the updater treats Ferrofin as not pinned. This is the
+    # one wait between the two job families; the ci-changed-only project (Stage D) removes it with its own reuse of the digest.
+    needs: mediaserver-image
+    if: ${{ !cancelled() }}
     # push events upload the candidate image to GHCR; PRs only build+scan locally
     permissions:
       contents: read
@@ -395,6 +403,21 @@ jobs:
         if: env.PUBLISHABLE == 'true'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      # backend only: the media server pins (the Jellyfin pin file + the Ferrofin candidate's digest), written by the build action
+      # as the backend image's label. Also runs on PRs, so a malformed pin file fails there. A newline would add extra labels.
+      - name: Media server pins (backend label)
+        id: pins
+        if: matrix.service == 'backend'
+        env:
+          FERROFIN_DIGEST: ${{ needs.mediaserver-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          pins=$(bash scripts/mediaserver-pins.sh "$GITHUB_REPOSITORY" "$FERROFIN_DIGEST")
+          case "$pins" in
+            '' | *$'\n'* | *$'\r'*) echo "::error::the media server pins are empty or contain a line break"; exit 1 ;;
+          esac
+          echo "pins: $pins"
+          echo "value=$pins" >> "$GITHUB_OUTPUT"
       # pull_request / other dispatch: local friendflix-<svc>:ci; push (main / v* tags) or publishable dispatch: built once,
       # pushed as the candidate ci-<sha> (outputs.ref = that exact digest)
       - name: Build
@@ -405,6 +428,7 @@ jobs:
           publish: ${{ env.PUBLISHABLE }}
           image: ${{ steps.img.outputs.name }}
           tag: ci-${{ github.sha }}
+          mediaserver-pins: ${{ steps.pins.outputs.value }}
       # ---- pull_request: scan the local image, discard ----
       - name: Scan (PR / other dispatch)
         if: env.PUBLISHABLE != 'true'
@@ -465,6 +489,14 @@ jobs:
             if (missing.length) { console.error('::error::backend image cannot resolve: ' + missing.join(', ')); process.exit(1); }
             console.log('all ' + Object.keys(pkg.dependencies ?? {}).length + ' backend dependencies resolve');
           "
+      # updater only: the media server helper in this image (busybox tar) backs up and restores byte-equal, stops cleanly at the end
+      # of the archive, refuses a hostile archive without writing anything, and runs when started through a symlink
+      # (scripts/mediahelper-smoke.sh)
+      - name: Smoke test (updater image media helper backup and restore)
+        if: matrix.service == 'updater'
+        env:
+          IMAGE: ${{ steps.build.outputs.ref }}
+        run: bash scripts/mediahelper-smoke.sh "$IMAGE"
       # web only: the image starts without any backend and serves its static files with the security headers (web/server/index.js)
       - name: Smoke test (web image serves static files with security headers)
         if: matrix.service == 'web'
@@ -491,6 +523,10 @@ jobs:
   # Not a required status check (docs/operations.md) and exempt from `reproducible` (docs/reproducible-builds.md).
   mediaserver-image:
     runs-on: ubuntu-latest
+    # the pushed digest (publishable runs only; empty otherwise, and empty when the smoke test failed): the backend image's pin
+    # label names it
+    outputs:
+      digest: ${{ steps.smoke.outcome == 'success' && steps.build.outputs.digest || '' }}
     permissions:
       contents: read
       packages: write # same reasoning as `docker`: PRs never push, fork PRs get a read-only token
@@ -538,6 +574,15 @@ jobs:
           publish: ${{ env.PUBLISHABLE }}
           image: ${{ steps.img.outputs.name }}
           tag: ci-${{ github.sha }}
+      # Runs the image as the updater's container template does (read-only root, no capabilities, fresh named volumes, a uid other
+      # than the image's): the API answers, /web/ is 404 (change 0004), health turns healthy (0003), /data and /cache are
+      # writable (0005); compares its `docker inspect` with the updater's inspect fixture (scripts/mediaserver-smoke.sh).
+      # Fails the job (and so the publish of this image), on PRs and pushes alike.
+      - name: Smoke test (runs as the managed media server)
+        id: smoke
+        env:
+          IMAGE: ${{ steps.build.outputs.ref }}
+        run: bash scripts/mediaserver-smoke.sh "$IMAGE"
       # ---- pull_request / other dispatch: report on the local image, discard ----
       - name: Scan (PR / other dispatch, report only)
         if: env.PUBLISHABLE != 'true'
