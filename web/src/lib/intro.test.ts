@@ -55,7 +55,8 @@ describe('settings storage', () => {
 
 describe('intro mark decision (brand present / absent / image failure)', () => {
   const sym = `/api/public/brand/img/${'a'.repeat(64)}.png`;
-  const mk = (name: string, symbol?: string): LoadedBrand => ({ ...DEFAULT_LOADED, name, shortName: name, images: symbol ? { symbol } : {} });
+  const mk = (name: string, symbol?: string, logo?: string): LoadedBrand => ({ ...DEFAULT_LOADED, name, shortName: name, images: { ...(symbol ? { symbol } : {}), ...(logo ? { logo } : {}) } });
+  const wide = `/api/public/brand/img/${'b'.repeat(64)}.png`;
 
   it('no branding: the built-in mark, nothing to preload', () => {
     expect(introMarkSource(DEFAULT_LOADED)).toBeNull();
@@ -68,6 +69,15 @@ describe('intro mark decision (brand present / absent / image failure)', () => {
   it('a symbol: preloaded; the image once it loaded', () => {
     expect(introMarkSource(mk('Moonbeam', sym))).toBe(sym);
     expect(decideIntroMark(mk('Moonbeam', sym), true)).toBe('image');
+  });
+  it('a logo without a symbol: preloaded, shown as the logo; failed: the initial', () => {
+    expect(introMarkSource(mk('Moonbeam', undefined, wide))).toBe(wide);
+    expect(decideIntroMark(mk('Moonbeam', undefined, wide), true)).toBe('logo');
+    expect(decideIntroMark(mk('Moonbeam', undefined, wide), false)).toBe('initial');
+  });
+  it('the symbol wins over the logo', () => {
+    expect(introMarkSource(mk('Moonbeam', sym, wide))).toBe(sym);
+    expect(decideIntroMark(mk('Moonbeam', sym, wide), true)).toBe('image');
   });
   it('a symbol that failed: the initial for a custom name, the built-in mark for the default name', () => {
     expect(decideIntroMark(mk('Moonbeam', sym), false)).toBe('initial');

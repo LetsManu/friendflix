@@ -107,10 +107,12 @@
   <p class="sr" role="status">{$t('home.intro.loading')}</p>
   {#if ready}
   <div class="stage" aria-hidden="true">
-    <div class="tilewrap">
+    <div class="tilewrap" class:wide={mark === 'logo'}>
       <div class="glow"></div>
       <div class="flare"></div>
-      {#if mark === 'image' && b.images.symbol}
+      {#if mark === 'logo' && b.images.logo}
+        <img class="logo" src={b.images.logo} alt="" draggable="false" />
+      {:else if mark === 'image' && b.images.symbol}
         <img class="tile sym" src={b.images.symbol} alt="" draggable="false" />
       {:else if mark === 'initial'}
         <svg class="tile" viewBox="0 0 64 64" focusable="false">
@@ -134,7 +136,7 @@
       {/if}
       <div class="ring"></div>
     </div>
-    <div class="word">{#each words as w}<span class="wd">{#each w.chars as c}<span class="ch" style="--d:{c.i * stagger}ms">{c.ch}</span>{/each}</span>{/each}</div>
+    {#if mark !== 'logo'}<div class="word">{#each words as w}<span class="wd">{#each w.chars as c}<span class="ch" style="--d:{c.i * stagger}ms">{c.ch}</span>{/each}</span>{/each}</div>{/if}
   </div>
   {/if}
 </div>
@@ -165,6 +167,10 @@
   .g0 { stop-color: var(--mark-from); }
   .g1 { stop-color: var(--mark-to); }
   .fill { fill: var(--acc-fill); }
+  /* the wide logo (no symbol): centred, in a box that grows with the screen; it already carries the name, so no lettering below */
+  .wide { width: min(80vw, calc(var(--tile) * 2.8)); aspect-ratio: auto; }
+  .logo { display: block; width: 100%; height: auto; max-height: calc(var(--tile) * 1.3); object-fit: contain; }
+  .wide .ring { display: none; }
   .sym { object-fit: cover; border-radius: 23%; }
   /* another brand's symbol (an upload or the initial on the accent fill) has no F to draw: it rises in (opacity and translation only) */
   .own .tilewrap { animation-name: ff-rise; }

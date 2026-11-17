@@ -80,17 +80,18 @@ export function shouldPlayIntroSound(o: { sound: boolean; soundExplicit: boolean
 
 // ---- the brand's mark in the intro (Intro.svelte) ----
 
-/** the intro's mark: the brand's symbol image, the initial on the accent fill (a custom name), or the built-in F tile */
-export type IntroMark = 'image' | 'initial' | 'builtin';
+/** the intro's mark: the brand's symbol image, the wide logo (no symbol; it carries the name), the initial on the accent fill (a custom name), or the built-in F tile */
+export type IntroMark = 'image' | 'logo' | 'initial' | 'builtin';
 /** how long the intro waits for the symbol before it falls back (the image is same-origin, immutable and normally cached) */
 export const MARK_WAIT_MS = 1500;
 
 /** the image the intro must have before it animates (the brand's symbol), null when there is nothing to wait for */
-export const introMarkSource = (b: LoadedBrand): string | null => b.images.symbol ?? null;
+export const introMarkSource = (b: LoadedBrand): string | null => b.images.symbol ?? b.images.logo ?? null;
 
 /** which mark the intro draws, given whether the symbol loaded; a failed symbol falls back to the name's mark, never a broken image */
 export function decideIntroMark(b: LoadedBrand, imageLoaded: boolean): IntroMark {
-  if (b.images.symbol && imageLoaded) return 'image';
+  if (imageLoaded && b.images.symbol) return 'image';
+  if (imageLoaded && b.images.logo) return 'logo';
   return b.name === DEFAULT_APP_NAME ? 'builtin' : 'initial';
 }
 

@@ -37,6 +37,30 @@ export function brandIntroTests(): void {
       await expect(intro.locator('.word')).toHaveText('Nordlicht Kino');
     });
 
+    test('a logo without a symbol is shown wide, with no separate name', async ({ page, api }) => {
+      const logo = brandImage('1090');
+      api.brand = brandAnswer({ name: 'Nordlicht Kino', header: 'logo', logo: logo.slice(22, 86) }, { logo });
+      await page.goto('/');
+      const intro = page.locator('.intro');
+      await expect(intro.locator('img.logo')).toHaveAttribute('src', logo);
+      await expect(intro.locator('.tilewrap.wide')).toHaveCount(1);
+      await expect(intro.locator('.word')).toHaveCount(0);
+      await expect(intro.locator('img.sym, svg.tile')).toHaveCount(0);
+      await expect(intro.locator('.glow')).toHaveCSS('background-image', /rgba\(76, 157, 255/);
+      const box = (await intro.locator('.tilewrap').boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual((await page.viewportSize())!.width);
+    });
+
+    test('with symbol and logo the symbol wins', async ({ page, api }) => {
+      const symbol = brandImage('5e'), logo = brandImage('1090');
+      api.brand = brandAnswer({ name: 'Nordlicht Kino', symbol: symbol.slice(22, 86), logo: logo.slice(22, 86) }, { symbol, logo });
+      await page.goto('/');
+      await expect(page.locator('.intro img.sym')).toHaveAttribute('src', symbol);
+      await expect(page.locator('.intro img.logo')).toHaveCount(0);
+      await expect(page.locator('.intro .word')).toHaveText('Nordlicht Kino');
+    });
+
     test('a slow symbol: nothing animates, and no default mark shows, until it has loaded', async ({ page, api }) => {
       const symbol = brandImage('5e');
       api.brand = brandAnswer({ name: 'Nordlicht Kino', symbol: symbol.slice(22, 86) }, { symbol });
