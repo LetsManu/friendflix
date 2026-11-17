@@ -7,7 +7,8 @@ import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { effectiveLanguage, LANGUAGES, m } from '../i18n.js';
 import { localizeStored, notify } from '../notify.js';
-import { decodeCursor, feed, FEED_PAGE, feedCounts, isFeedFilter } from '../notifications/feed.js';
+import { hide, InvalidGroupError, isEmptySelection, markRead, selectionSchema, unhide, type Selection } from '../notifications/actions.js';
+import { decodeCursor, feed, FEED_PAGE, feedCounts, fromSql, isFeedFilter, readSql, visibleSql } from '../notifications/feed.js';
 import { portalStatus, RequestsDisabledError, requestsClient, requestsEnabled, requestStateKey, SeerrError, viewerLanguage } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { collectionOf, partState, seasonRequestable, seasonStates } from '../seerr/states.js';
@@ -362,16 +363,17 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/internal/webhook/seerr', requestWebhook);
 
   // ---- notifications (in-app) ----
+  // the legacy list (Android poller, old clients): fields, order and limit unchanged; hidden entries are left out, `read` follows the
+  // combined rule (watermark or state row for broadcasts) and `id` is a number
   app.get('/api/notifications', npre, async (req) => {
-    const r = await ctx.db.query(
-      `select n.id, n.kind, n.title, n.body, n.link, n.created_at, n.msg,
-              (case when n.user_id is null then coalesce(n.created_at <= u.notifications_read_at, false) else n.read_at is not null end) as read
-         from notifications n, users u
-        where u.id = $1 and (n.user_id = $1 or n.user_id is null) order by n.created_at desc limit 30`,
+    const r = await ctx.db.query<{ id: string; kind: string; title: string; body: string | null; link: string | null; created_at: Date; msg: unknown; read: boolean }>(
+      `select n.id, n.kind, n.title, n.body, n.link, n.created_at, n.msg, ${readSql()} as read
+         from ${fromSql()}
+        where ${visibleSql()} order by n.created_at desc, n.id desc limit 30`,
       [req.user!.id],
     );
     const lang = await effectiveLanguage(ctx, req.profile?.id ?? req.user!.id);
-    return { notifications: r.rows.map((row) => localizeStored(row as { title: string; body: string | null; msg: unknown }, lang)) };
+    return { notifications: r.rows.map((row) => ({ ...localizeStored(row, lang), id: Number(row.id) })) };
   });
   // the notifications center: grouped sections in the viewer's time zone, paged by groups; limit=0 answers only the counts (bell badge)
   app.get('/api/notifications/feed', npre, async (req, reply) => {
@@ -387,9 +389,39 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     const lang = await effectiveLanguage(ctx, req.profile?.id ?? req.user!.id);
     return feed(ctx, req.user!.id, lang, { tz: typeof q.tz === 'string' ? q.tz : '', filter, cursor, limit: Math.min(limit, FEED_PAGE) });
   });
-  app.post('/api/notifications/read', npre, async (req) => {
-    await ctx.db.query('update notifications set read_at = now() where user_id = $1 and read_at is null', [req.user!.id]);
-    await ctx.db.query('update users set notifications_read_at = now() where id = $1', [req.user!.id]);
+  // read: no body (or `{}`) is today's "everything"; else entries, groups (feed ids) and/or a filter. hide: the same selection (an
+  // empty one is refused: clearing everything needs category 'all'), answered with an undo token for 30 s; unhide takes it once.
+  const selection = (body: unknown): Selection | null => {
+    const b = selectionSchema.safeParse(body ?? {});
+    return b.success ? b.data : null;
+  };
+  const invalidGroup = (e: unknown, reply: FastifyReply) => {
+    if (e instanceof InvalidGroupError) return reply.code(400).send({ error: 'invalid_group' });
+    throw e;
+  };
+  app.post('/api/notifications/read', npre, async (req, reply) => {
+    const sel = selection(req.body);
+    if (!sel) return reply.code(400).send({ error: 'invalid_body' });
+    try {
+      await markRead(ctx, req.user!.id, isEmptySelection(sel) ? null : sel);
+    } catch (e) {
+      return invalidGroup(e, reply);
+    }
     return { ok: true };
+  });
+  app.post('/api/notifications/hide', npre, async (req, reply) => {
+    const sel = selection(req.body);
+    if (!sel || isEmptySelection(sel)) return reply.code(400).send({ error: 'invalid_body' });
+    try {
+      return await hide(ctx, req.user!.id, sel);
+    } catch (e) {
+      return invalidGroup(e, reply);
+    }
+  });
+  app.post('/api/notifications/unhide', npre, async (req, reply) => {
+    const b = z.strictObject({ token: z.string().min(1).max(64) }).safeParse(req.body ?? {});
+    if (!b.success) return reply.code(400).send({ error: 'invalid_body' });
+    const r = await unhide(ctx, req.user!.id, b.data.token);
+    return r ?? reply.code(404).send({ error: 'undo_expired' });
   });
 }
