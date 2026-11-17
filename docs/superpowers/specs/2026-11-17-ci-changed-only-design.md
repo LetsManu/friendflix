@@ -2,8 +2,10 @@
 
 Status: requested by the owner on 2026-11-17 ("only build containers and redeploy them if they have had changes … to save CI
 times as well as redeploy time"); the owner chose approach A and the rules listed under *Owner decisions* (binding). Everything
-else is marked **Controller's call** with its reason. Related: `2026-11-17-managed-mediaserver-design.md` (owner decisions 9 and 12
-there), which this spec amends in *Media server* below.
+else is marked **Controller's call** with its reason. Revised the same day after the builder check (compose recreate, old compose
+files, change-class base, burn-in rule, rebuild scope, release candidates, `RELEASE_TOKEN`, missing consumers). Related:
+`docs/superpowers/specs/2026-11-17-managed-mediaserver-design.md` on branch `claude/managed-mediaserver` (not on this branch; owner
+decisions 9 and 12 there), which this spec amends in *Media server* below.
 
 ## Why
 
@@ -96,7 +98,13 @@ inputs (lockfile or a `package.json`); `backend` inputs changed in 71 (including
 - **Updater** verifies with `cosignIdentity()` (`policy.ts:103-108`: main or a plain `vX.Y.Z` tag), records `previous` as `sha-<7>` of the
   backend's baked `GIT_SHA` (`job.ts:319-321`), judges health by `/health` `version === GIT_SHA[0:7]` (`server.ts:139`, `app.ts:278`),
   recreates with `compose up -d --no-deps --pull never` (`docker.ts:308-309`); self-update already compares `RepoDigests`
-  (`job.ts:446-447`). Compose itself recreates a named service only when its image id or config changed.
+  (`job.ts:446-447`). Compose recreates a named service when its image id **or its config hash** changed, and the image string
+  (`…:${FF_TAG}`) is part of that hash: a new `FF_TAG` recreates every named service even when the image id is the same.
+- **Other baked consumers:** the updater's own `version`/`gitSha` from `APP_VERSION`/`GIT_SHA` (`updater/src/config.ts:64-68`); livetv's
+  `version` from `APP_VERSION` (`livetv/src/config.ts:63`, reported on its health route); the updater's per-service `sha`/`version`
+  in `/v1/status` from each image's baked env (`docker.ts:465`, `server.ts:150-156`), which feeds the Portainer judge's `onNew`
+  (`backend/src/redeploy.ts:211`); `builtAt` from `BUILD_TIME` (`backend/src/updates.ts:136`); and `mediaserver`'s `ARG GIT_SHA` →
+  `org.opencontainers.image.revision` (`mediaserver/Dockerfile:53,93`).
 - **Backend** derives the installed version from baked `APP_VERSION` else `version.json` (`version.ts:51-56`), the build kind from "tag
   `v<version>` points at `GIT_SHA`" (`channel.ts:27-31`), the nightly distance from `GIT_SHA` (`updates.ts:101`), the Portainer
   redeploy result from "`GIT_SHA` changed" (`redeploy.ts:218`). The web footer imports `version.json` at build time
@@ -125,6 +133,7 @@ Within A, two sub-choices:
   stack runs as a one-shot init service. Rejected: the updater as the only source (manual and Portainer installs would lose their
   version), `FF_TAG` in the backend's environment (`latest` names no version and moves before the user pulls), OCI index annotations
   (change the digest the updater compares), and an image volume mount (needs a newer Docker Engine than FriendFlix requires).
+  Installs whose compose file predates the service are covered in *Old compose files*.
 
 ## Decisions
 
@@ -159,7 +168,8 @@ Within A, two sub-choices:
   and the burn-in (*Testing*) use as proof. The image carries `ENV FF_IMAGE_COMMIT`, `org.opencontainers.image.revision` = image commit,
   `created` = its time, and nothing else per run: `GIT_SHA`, `BUILD_TIME`, `APP_VERSION`, `APP_CODENAME` and the `.version` label go;
   `version.json` is no longer copied into `backend` or `web`. The web build names itself after `FF_IMAGE_COMMIT`, so the service worker
-  cache only turns over when `web` changed. Rename instead of reusing `GIT_SHA` (Controller's call): the meaning changed, and readers
+  cache only turns over when `web` changed. `mediaserver` gets the same rule: its `ARG GIT_SHA` becomes `FF_IMAGE_COMMIT`, which fills
+  its own `org.opencontainers.image.revision` label (`mediaserver/Dockerfile:53,93`); its base-pin consistency step is unaffected. Rename instead of reusing `GIT_SHA` (Controller's call): the meaning changed, and readers
   fall back to `GIT_SHA` only to recognise images from before the change ("legacy").
 - **`release.mjs` stops writing versions into `package.json`/`package-lock.json`**; they are set once to `0.0.0` (Controller's call:
   nothing reads them, checked; otherwise every release would rebuild everything). `version.json` is the only version file.
@@ -176,18 +186,32 @@ Within A, two sub-choices:
   the backend mounts. Every `compose up` after a pull runs it, whoever pulled: updater, `docker compose pull`, or Portainer. For the
   self-built `compose.yaml` the same service builds the carrier locally from `version.json` with commit `dev`.
 
+### Old compose files (Controller's call: no forced compose edit for updater installs)
+
+- The updater sees from `compose config` whether the stack's files have the `release` service and volume. Without them it skips that
+  service (legacy path for it alone) and serves the stack manifest it applied through `/v1/status` (`stack`), so updater installs
+  know their version without touching their compose file.
+- Manual and Portainer installs without the service show "unbekannt · <image commit7>" and an *Admin → Update* hint that links the
+  one compose addition in the release notes. Stage 3 of the media server project (one `compose.yaml` for normal setups) brings the
+  service to everyone. Whether that interim is acceptable is an owner question (end).
+
 ### Where version and commit come from now
 
 | Consumer | Today | After |
 |---|---|---|
-| `/api/version`, footer, *Admin → Update* "installiert" | baked `APP_VERSION`/`GIT_SHA` | the manifest in the `release` volume, read per request (mtime-cached); else the updater's reported stack; else legacy env; else "unbekannt · <image commit7>" |
+| `/api/version`, footer, *Admin → Update* "installiert" | baked `APP_VERSION`/`GIT_SHA` | the manifest in the `release` volume, read per request (mtime-cached); else the updater's `/v1/status` `stack`; else legacy env; else "unbekannt · <image commit7>" + hint |
+| *Admin → Update* `builtAt` (`updates.ts:136`) | `BUILD_TIME` | the manifest's commit date |
 | build kind / nightly label (`channel.ts`) | tag commit == `GIT_SHA` | tag commit == manifest `commit` (same rule) |
 | commits behind (`updates.ts`) | compare `GIT_SHA…main` | compare manifest `commit…main` |
 | backend `/health` | `GIT_SHA[0:7]` | `FF_IMAGE_COMMIT[0:7]` (field name kept) |
 | Portainer result (`redeploy.ts`) | `GIT_SHA` changed | manifest `commit` changed (the file changes even when the backend is not recreated) |
 | error log release, setup `appVersion` | `APP_VERSION` | manifest version, else image commit7 |
 | web `APP_VERSION` (footer fallback, device caps) | `version.json` at build | `/api/version` only; nothing shown until it answers |
-| updater `previous`, rollback tag | `sha-<backend GIT_SHA7>` | stack commit and per-service digests from the manifest |
+| updater `previous`, rollback | `sha-<backend GIT_SHA7>` | per-service digests running before the update, plus the manifest they came from |
+| updater's own `version`/`gitSha` (`updater/src/config.ts:64-68`) | baked env | its `FF_IMAGE_COMMIT`; the stack version is the applied manifest's |
+| livetv `version` on its health route (`livetv/src/config.ts:63`) | `APP_VERSION` | its `FF_IMAGE_COMMIT` (the stack version is not livetv's to report) |
+| per-service `sha`/`version` in `/v1/status` (`docker.ts:465`, `server.ts:150-156`) | baked env per image | digest + image commit per service, and whether it matches the applied manifest |
+| Portainer judge `onNew` (`redeploy.ts:211`) | service `sha` ≠ `sha-<from7>` | service digest ≠ the digest recorded at the start of the redeploy |
 | OCI labels, SBOM, provenance | per run | per image commit (they describe the build that made the bytes) |
 | reproducible check, `reproduce-image.sh --compare` | rebuild at the run's commit | rebuild at the image's `revision` label (the script reads it; `--ref` optional) |
 
@@ -198,6 +222,9 @@ Within A, two sub-choices:
   updater's identity rule, else it is ignored (everything builds). An image is **carried** when its image commit equals the manifest's
   and the manifest's digest still resolves and verifies; otherwise it is **built**. Because the comparison is by image commit, a failed
   or dropped run is harmless: the next run compares with what was really published.
+- **Change classes on push (Controller's call)** (docs mode, `e2e`, `dast`, the tag guard) are computed from the files changed
+  between the **base manifest's stack commit** and the run's commit, not the first parent. So when a run failed or was dropped, its
+  changes are tested by the next run in full and never only in docs mode.
 - **Pull requests:** image commits at the PR head vs at `pull_request.base.sha` (what this PR changes; no registry read, works for forks).
 - **Other dispatches** (not `main`, not a tag): full.
 - **Manual full rebuild:** `workflow_dispatch` input `full` (main only). **Weekly** (below). There is no force-push, so no history
@@ -211,7 +238,7 @@ The plan job (`changes`, first in `ci.yml`, ~30 s) outputs per image `build | ca
 |---|---|---|---|---|
 | only docs (`docs/**`, `**/*.md`) or `version.json` | `test:docs` + `test:scripts` | unverändert | unverändert | unverändert |
 | anything else | full | full if `web` builds, `e2e/**` changed or a workflow/action changed | full if `web` builds, `.zap/**` or a workflow/action changed | build where the map says so |
-| map/script, `full` input, weekly schedule | full | full | full | build all |
+| map/script, `full` input, weekly schedule | full | full | full | rebuild all (weekly: not `livetv`/`mediaserver`); publish only images whose image manifest differs |
 
 - `version.json` sits with docs (Controller's call): only the release commit changes it, and it is no longer an image input; the TV,
   Android and desktop release jobs still read it on the tag as today. `codenames.json` stays a `web` input.
@@ -247,23 +274,29 @@ The plan job (`changes`, first in `ci.yml`, ~30 s) outputs per image `build | ca
   pass for every image of a release, and it is bounded (one signature per release). The updater's rule (`main` or a release tag)
   already accepts both, so it does not change.
 - **Order:** sign new digests → `cosign verify` every image of the set with the updater's exact rule → only then move tags → carrier
-  last (built, signed, verified, tagged). A verify failure moves no tag. The updater resolves a stack through its carrier and installs
-  by `sha-<stack7>`, so a reader never sees half a set.
+  last (built, signed, verified, tagged). A verify failure moves no tag. The updater reads the carrier and pulls changed images **by
+  the manifest's digest**, never by a moving registry tag, so it never assembles half a set. A manual `compose pull` while publish is
+  moving tags can still get a mix, as today; the next pull settles it.
 - **`ci-<sha>` pruning** keeps working: a carried digest stays reachable through `nightly`, `sha-<7>` and release tags.
 
 ### Release flow
 
 - **Precondition** (`release.yml`, Controller's call): `main`'s head must have a published, verified manifest (`sha-<head7>`). While its
   CI run is still going the workflow waits (up to 60 min, the e2e budget plus publish), on failure it refuses with "erst main grün
-  machen". Then it commits only `version.json` + `CHANGELOG.md` and tags.
+  machen". Then it commits only `version.json` + `CHANGELOG.md` and tags. The job's `timeout-minutes` rises from 10 to 75 to cover
+  the wait.
+- **`RELEASE_TOKEN` (Controller's call: designed for both, since whether it is configured is unknown):** with it, its pushes start CI
+  for `main` and the tag, as written. Without it, the workflow dispatches `ci.yml` itself for the tag (as today) **and** on `main` for
+  the release commit, so `nightly` and `sha-<rel7>` follow the release commit either way.
 - **Tag run:** base = `sha-<parent7>`; every image is carried (the release commit touches no input); tests run in docs mode; `publish`
   re-tags and signs. **Guard:** a tag run whose parent has a manifest but whose plan wants to build anything fails ("release commit changes
   image inputs"); the auto-rebuild on a failed scan is off for tags (fix on `main`, release again).
 - **Exception:** a tag whose first parent has no manifest (a hand-made backport tag on a side branch) builds what differs from
   `nightly`'s manifest, as today's full run would; it is logged as such. The `main` run of the release commit carries too and moves
   `nightly` to the release commit; both runs write identical carriers for `sha-<rel7>`.
-- **Release candidates** (`vX.Y.Z-rc.N`, by hand): same as a release (carry from the parent, `X.Y.Z-rc.N` tag only, never `latest`).
-  The updater still cannot select them (`TAG_RE` unchanged).
+- **Release candidates** (`vX.Y.Z-rc.N`, by hand; Controller's call: unchanged from today): the run carries from its parent like a
+  release and publishes the images with the `X.Y.Z-rc.N` tag, but **no carrier**; the updater never installs rc builds (its signer
+  rule only names plain `vX.Y.Z`, `policy.ts:105`, and `TAG_RE` has no rc). `parseVersion` in `release.mjs` stays as it is.
 - Android, desktop, Tizen and webOS release jobs on the tag are unchanged; with tests in docs mode a release is about the length of
   those jobs instead of 35 min.
 
@@ -271,28 +304,35 @@ The plan job (`changes`, first in `ci.yml`, ~30 s) outputs per image `build | ca
 
 - **Target first:** pull `friendflix-release:<channel tag>` (kilobytes), `cosign verify`, read the manifest. A missing carrier (a tag
   from before this change) → the **legacy path**: today's behaviour unchanged (pull and verify all, health by `GIT_SHA`).
+- **`FF_TAG` stays the channel tag** (`latest`, `nightly`, `X.Y.Z`) as today (Controller's call: a per-stack tag such as
+  `sha-<stack7>` would change every service's image string and so compose's config hash, recreating all of them).
 - **Per service** (`bootstrap` follows `backend`; `livetv` while enabled; `updater` only on self-update): running `RepoDigests` contains
-  the manifest digest → **unverändert**: tag the local image as `sha-<stack7>` (`docker image tag`, no registry call, no verify:
-  it is the image that was verified when it was installed) → else **changed**: pull, check the pulled digest equals the manifest's,
-  `cosign verify`. Any verify failure aborts before anything restarts.
-- **Restart:** `compose up -d --no-deps --pull never` with `FF_TAG=sha-<stack7>` for all FriendFlix services plus `release`; compose
-  recreates only services whose image or config changed (Controller's call: a `.env` edit still applies on the next update, as today).
-  The job records per service `aktualisiert | unverändert` by container id before/after; nothing changed → still `up release`, so the
-  backend learns the new stack, and the job ends "alles unverändert".
+  the manifest digest → **unverändert**, no pull, no verify (it was verified when installed) → else **changed**: pull
+  `<repo>@sha256:<manifest digest>`, `cosign verify`. Any verify failure aborts before any tag moves or anything restarts.
+- **Move the local tags:** only after every changed image is pulled and verified, the updater points the local channel tag of each
+  service at its manifest digest (`docker tag <repo>@sha256:… <repo>:<channel tag>`, through the socket proxy's image routes). For an
+  unchanged service that is the image it already runs, so its image id stays the same.
+- **Restart:** `compose up -d --no-deps --pull never` with the channel tag for all FriendFlix services, plus `release` where the compose
+  file has it. Same image id and same config → compose leaves the container alone; a `.env` edit still applies, as today. Switching the
+  channel changes the image string, so that one update recreates everything once. The job records per service "aktualisiert" or
+  "unverändert" by container id before/after; nothing changed → still `up release` (the backend learns the new stack), "alles unverändert".
 - **Health:** every FriendFlix service running and healthy (compose), each recreated container on its manifest digest, backend
   `/health` answering with the manifest's backend image commit7 (equal to before when the backend did not change). Same 3-minute budget.
-- **State and rollback:** `installed` and `previous` become `{commit, version, digests}` (the old `sha-<7>` string is still read).
-  Rollback and auto-rollback go to `sha-<previous7>` the same way, so only the services the update changed are touched; a legacy
-  `previous` uses the legacy path. `sha-<7>` exists for every image at every published commit, because carried images are re-tagged.
-- **livetv:** same rule; enabling follows the installed stack (`sha-<stack7>`) instead of the backend's commit; it stays optional and
-  never fails a core update. **Self-update** keeps its digest check, now against the manifest before pulling.
+- **State and rollback:** before restarting, the state records each service's running digest and the manifest it belongs to
+  (`previous`; the old `sha-<7>` string is still read). Rollback and auto-rollback move the local channel tags back to those digests
+  (pulling by digest if an image was pruned meanwhile) and run `up` again, so only the services the update changed are recreated. A
+  legacy `previous` uses the legacy path.
+- **livetv:** same rule; enabling uses the digest from the applied manifest instead of the backend's commit; it stays optional and
+  never fails a core update. **Self-update** keeps its digest check, now against the manifest before pulling, and moves the updater's
+  local tag the same way before its helper recreates it.
 - *Admin → Update* shows the per-service result ("aktualisiert" / "unverändert") from the job state the backend already relays.
 
 ### Manual installs and Portainer
 
 `docker compose pull && up -d` and Portainer's redeploy with pull get the same benefit without code: unchanged images keep their image
-id, so compose leaves those containers running; `release` reruns and the backend shows the new version. `redeploy.ts` judges
-progress by the manifest commit and, where the updater lists services, by digests instead of `sha-<7>` of `GIT_SHA`.
+id and `FF_TAG` is unchanged, so compose leaves those containers running; `release` reruns and the backend shows the new version.
+`redeploy.ts` judges progress by the manifest commit and, where the updater lists services, by digests recorded at the start instead
+of `sha-<7>` of `GIT_SHA`. Without the `release` service: *Old compose files*.
 
 ### Media server (amends the managed media server spec)
 
@@ -307,11 +347,17 @@ progress by the manifest commit and, where the updater lists services, by digest
 
 ### Periodic rebuild (Controller's call)
 
-Weekly scheduled run on `main` (Sunday night, plus the `full` dispatch): rebuild every image at `main`'s head with its image commit,
+Weekly scheduled run on `main` (Sunday night): rebuild `backend gateway web updater` at `main`'s head with their image commits,
 compare the new **image manifest** digest with the carried one, and publish only images whose bytes differ (OS package fixes for the
 unpinned packages above). Equal → the carried index digest stays (no restart anywhere). A build failure of an unchanged image is a
 warning (the carried digest stays valid) so build rot (a vanished download, a rotated key) shows within a week. Reason: Dependabot is
-monthly and does not see apk/apt drift; today every commit rebuilt, so this keeps the fix latency at about a week for one extra run.
+monthly and does not see apk drift; today every commit rebuilt, so this keeps the fix latency at about a week for one extra run.
+
+- **`livetv` and `mediaserver` are not in the weekly comparison** (Controller's call): they are not reproducible, so every weekly
+  rebuild would publish new bytes and restart them for nothing. They are rebuilt only when their inputs change, Dependabot bumps
+  included; a fixable CVE in them still triggers the one automatic rebuild in their `docker` leg.
+- **A forced "build all"** (`full` dispatch, map or script change) follows the same rule for every image it rebuilds: an equal image
+  manifest keeps the carried index digest; only differing bytes are published.
 
 ### Expected savings
 
@@ -330,7 +376,8 @@ five, and a web-only update no longer drops the gateway's streams or restarts th
 | Required checks pending | no workflow path filters, no job-level skip on required jobs |
 | Required checks "skipped" into green | `!cancelled()` + explicit plan check; red on a broken plan |
 | Release ships untested bytes | release precondition + tag-run build guard |
-| Half-updated set read by a client | install by `sha-<stack7>` via the carrier; carrier tagged last |
+| Half-updated set read by the updater | pull by manifest digest; local tags move only after all changed images verified; carrier tagged last |
+| Compose recreates every service | `FF_TAG` stays the channel tag; the local tag moves per service, so unchanged image ids stay |
 | Version shown wrongly | one manifest source; legacy fallback only for pre-change images |
 | A new CVE in a long-carried image | Trivy gate on carried digests every publish; one automatic rebuild; weekly rebuild |
 
@@ -339,10 +386,14 @@ five, and a web-only update no longer drops the gateway's streams or restarts th
 - `scripts/changed-images.test.mjs` with a throwaway git repository in a temp dir: image commits across merges, reverts and exclusions;
   each change class; the COPY and docs-reader guards against the real Dockerfiles and tests.
 - **Burn-in before skipping (Controller's call):** PR 2 still builds everything, but the plan already runs in report mode; for every
-  image it calls "carry", the rebuilt image manifest digest must equal the carried one. PR 3 is merged only after 20 consecutive `main`
-  runs without a mismatch for `backend gateway web updater` (livetv and mediaserver are not reproducible; the map's guard covers them).
+  image of `backend gateway web updater` it calls "carry", the rebuilt image manifest digest is compared with the carried one, and
+  every mismatch is diagnosed with `reproduce-image.sh --diff`. **Counter rule:** a run counts when each such mismatch differs only
+  in files owned by OS packages (paths outside `/app`, e.g. from `ffmpeg`, `docker-cli`, `cosign`, `zlib`/`musl`: expected drift) or
+  there is none. A mismatch in anything else (a file under `/app`, the config's env or labels) is a missing map input: the input is
+  added and the counter resets to 0. PR 3 merges after 20 consecutive counting `main` runs. livetv and mediaserver are not
+  reproducible; the COPY guard covers them.
 - Updater (fake `Ops`, `job.ts` tests): nothing changed, one changed, verify failure of one, partial rollback, legacy target and legacy
-  previous, livetv on/off, self-update. Backend: version from the file and each fallback, `redeploy.ts` by stack commit, `channel.ts`
+  previous, compose file without `release`, channel switch, local tag moves and rollback re-tag, livetv on/off, self-update. Backend: version from the file and each fallback, `redeploy.ts` by stack commit, `channel.ts`
   with the manifest commit. Web: footer without baked version.
 - `release.yml`: the precondition and guard as tested functions in `release.mjs`; one dry run on a fork before the first real release.
 
@@ -354,13 +405,14 @@ Each PR is mergeable alone and leaves `main` releasable.
    `test:docs`, the composite build action, the `changes` job printing its plan. Nothing is skipped yet.
 2. **Identity out of the images:** `FF_IMAGE_COMMIT` + its time as build inputs, labels fixed, `version.json` out of `backend`/`web`,
    `release.mjs` stops touching `package.json`; the stack manifest, carrier, `release` service in both compose files, backend and web
-   reading it, `/health`, `redeploy.ts`, `channel.ts`; the updater reading the manifest (still restarting everything);
+   reading it, `/health`, `redeploy.ts`, `channel.ts`, the other baked consumers (*Where version and commit come from now*); the
+   updater reading the manifest, serving it in `/v1/status`, detecting compose files without `release` (still restarting everything);
    `reproduce-image.sh`. A one-off dispatch backfills carriers for the existing `vX.Y.Z`, `X.Y`, `X`, `latest` and `nightly` tags from
    the images' baked values, so pinned old versions keep working with the new compose file. Burn-in starts.
-3. **CI carries (after the burn-in):** build-or-carry legs, `ci-<sha>` on carried digests, Trivy auto-rebuild, test classes, docs-only
-   shortcut, `mediaserver` into the matrix, publish signing order and verify gate, `full` input, weekly rebuild, release precondition
-   and tag guard, `docs/operations.md` (required checks, release, channels, updater flow, verification), `docs/reproducible-builds.md`.
-4. **Updater changed-only:** digest compare, local tagging, per-service report, partial rollback, health rule; *Admin → Update*
+3. **CI carries (after the burn-in):** build-or-carry legs, `ci-<sha>` on carried digests, Trivy auto-rebuild, test classes against
+   the base manifest's commit, docs-only shortcut, `mediaserver` into the matrix, publish signing order and verify gate, `full` input,
+   weekly rebuild, release precondition, tag guard and both `RELEASE_TOKEN` paths, `docs/operations.md` (required checks, release, channels, updater flow, verification), `docs/reproducible-builds.md`.
+4. **Updater changed-only:** digest compare, pull by digest, local channel-tag moves, per-service report, rollback by re-tag, health rule; *Admin → Update*
    "unverändert". Independent of 3 (with everything rebuilt it simply finds nothing unchanged).
 5. **Media server pins in the manifest** — in whichever of this project or media server stage 1 lands second.
 
@@ -377,6 +429,11 @@ Each PR is mergeable alone and leaves `main` releasable.
 ## Questions only the owner can answer
 
 1. **A new one-shot `release` container in every stack** (exits after copying the version file, like `bootstrap`; a new GHCR package
-   `friendflix-release` beside the six images). It is what lets manual and Portainer installs show the right version without a
-   version inside any image. *Recommended: yes, as specified.* Without it, only updater installs would know their version; the
-   others would show "unbekannt · <commit>".
+   `friendflix-release` beside the six images)? It is what lets manual and Portainer installs show the right version without a
+   version inside any image. *Recommended: yes, as specified.* Without it, only updater installs would know their version.
+2. **Is `RELEASE_TOKEN` configured?** The design works either way (*Release flow*). *Recommended: yes, keep or set it* (fine-grained,
+   contents write on this repository only, the one bypass actor), so the release pushes start CI themselves and `main` can stay
+   closed to direct pushes.
+3. **Is a one-line compose edit acceptable for installs without the updater until media server stage 3?** Updater installs need nothing
+   (*Old compose files*); manual and Portainer installs show "unbekannt · <commit>" with a hint until they add the `release` service.
+   *Recommended: yes*; stage 3's single `compose.yaml` removes the edit for everyone.
