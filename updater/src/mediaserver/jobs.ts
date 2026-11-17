@@ -671,7 +671,7 @@ export class MediaJobs {
 
   /**
    * remove: stops and removes the container (and a leftover `-old`) when it carries our labels, guard-clean or not (removing only
-   * narrows); `data` also removes that kind's data and cache volumes (only ours). Base and backup volumes stay.
+   * narrows); `data` also removes the data and cache volumes of every kind (only ours). Base and backup volumes stay.
    */
   private async remove(job: Job, data: boolean): Promise<void> {
     const found = await this.step(job, 'check', async () => {
@@ -685,8 +685,6 @@ export class MediaJobs {
       }
       return { project, containers: out };
     });
-    const m = this.u.mediaState();
-    const kinds = new Set<Kind>([...found.containers.flatMap((c) => (c.kind ? [c.kind] : [])), ...(m.desired ? [m.desired.kind] : []), ...(m.container ? [m.container.kind] : [])]);
     try {
       for (const c of found.containers) {
         await this.engine.stop(c.id);
@@ -694,7 +692,8 @@ export class MediaJobs {
       }
       if (data) {
         const n = names(found.project);
-        for (const k of kinds) {
+        // every kind: a kind switch or an earlier remove without data leaves volumes the state no longer names (the labels decide)
+        for (const k of KINDS) {
           for (const [name, label] of [[n.data(k), 'mediaserver-data'], [n.cache(k), 'mediaserver-cache']] as const) {
             const v = await this.engine.inspectVolume(name);
             const ours = v?.labels['friendflix.managed'] === label && v.labels['friendflix.project'] === found.project;

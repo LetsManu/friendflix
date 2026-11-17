@@ -513,6 +513,20 @@ describe('remove', () => {
     expect(w.media()).toMatchObject({ desired: null, container: null });
   });
 
+  it('remove {data: true} also removes the data of a kind the state no longer knows', async () => {
+    const w = world();
+    // a jellyfin server, and the ferrofin volumes a remove without data left behind earlier
+    w.existing(JSPEC, jellyPin('10.11.3'), '10.11.3');
+    for (const [v, label] of [[N.data('ferrofin'), 'mediaserver-data'], [N.cache('ferrofin'), 'mediaserver-cache']] as const) w.volumes.set(v, { labels: { 'friendflix.managed': label, 'friendflix.project': PROJECT }, options: {} });
+    w.updater.updateMedia((m) => { m.dataUpstream = { ferrofin: 'v1.5.1', jellyfin: '10.11.3' }; });
+    expect((await w.run({ op: 'remove', data: true })).state).toBe('succeeded');
+    for (const k of ['ferrofin', 'jellyfin'] as const) {
+      expect(w.volumes.has(N.data(k)), k).toBe(false);
+      expect(w.volumes.has(N.cache(k)), k).toBe(false);
+    }
+    expect(w.media().dataUpstream).toEqual({});
+  });
+
   it('remove never deletes a volume that is not ours', async () => {
     const w = world();
     w.existing(SPEC, ferroPin(), 'v1.5.1');
