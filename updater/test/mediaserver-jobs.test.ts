@@ -243,6 +243,18 @@ describe('apply', () => {
       expect(w.media().dataUpstream).toEqual({ ferrofin: 'v1.6.0', jellyfin: '10.11.3' });
     });
 
+    it('a kind switch back that fails restores its snapshot as the user that owns that data', async () => {
+      const w = world();
+      expect((await w.run({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } })).state).toBe('succeeded');
+      expect((await w.run({ op: 'apply', spec: { ...JSPEC, uid: 1001, gid: 1001 } })).state).toBe('succeeded');
+      const p = ferro(w, 'd', 'v1.6.0');
+      w.cfg.healthOf = (c) => (c.body.Image === p.image ? 'unhealthy' : 'healthy');
+      const job = await w.run({ op: 'apply', spec: SPEC });
+      expect(job).toMatchObject({ state: 'rolled_back', error: 'unhealthy' });
+      expect(w.helperCalls.filter((c) => c.verb === 'backup' || c.verb === 'restore').map((c) => [c.verb, c.args[1], c.user])).toEqual([['backup', '0', '1000:1000'], ['restore', 'ferrofin', '1000:1000']]);
+      expect(w.media()).toMatchObject({ container: { kind: 'jellyfin' }, dataUpstream: { ferrofin: 'v1.5.1' } });
+    });
+
     it('a data volume of unknown upstream is snapshotted before a deploy uses it', async () => {
       const w = world();
       w.volumes.set(N.data('jellyfin'), { labels: { 'friendflix.managed': 'mediaserver-data', 'friendflix.project': PROJECT }, options: {} });

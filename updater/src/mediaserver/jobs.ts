@@ -97,7 +97,7 @@ interface Ctx { project: string; facts: EngineFacts; runner: Runner; base: NonNu
 /** a data volume to snapshot: its kind, the upstream it is at and the user the helper reads it as */
 interface DataOf { kind: Kind; upstream: string; user: { uid: number; gid: number; groups: number[] } }
 /** what a deploy changed so far (for the rollback) */
-interface Changes { stopped: boolean; renamed: boolean; newId: string | null; started: boolean; snapshot: { id: string; kind: Kind } | null }
+interface Changes { stopped: boolean; renamed: boolean; newId: string | null; started: boolean; snapshot: { id: string; kind: Kind; user: DataOf['user'] } | null }
 
 export class MediaJobs {
   private readonly healthMs: number;
@@ -328,8 +328,9 @@ export class MediaJobs {
       if (c.dataExists && known !== upstream) {
         await this.step(job, 'snapshot', async () => {
           if (c.old) { await this.engine.stop(c.old.id); t.stopped = true; }
-          const meta = await this.snapshot(null, 'auto', false, { kind: d.kind, upstream: known ?? UNKNOWN_UPSTREAM, user: userOf(d) });
-          t.snapshot = { id: meta.id, kind: meta.kind };
+          const of: DataOf = { kind: d.kind, upstream: known ?? UNKNOWN_UPSTREAM, user: userOf(d) };
+          const meta = await this.snapshot(null, 'auto', false, of);
+          t.snapshot = { id: meta.id, kind: meta.kind, user: of.user };
         });
       }
 
@@ -560,7 +561,7 @@ export class MediaJobs {
       await this.engine.stop(id).catch(() => undefined);
       await attempt(() => this.engine.remove(id, { force: true }));
     }
-    const dataOk = t.snapshot && t.started ? await attempt(() => this.restoreSnapshot(t.snapshot!.id, t.snapshot!.kind)) : true;
+    const dataOk = t.snapshot && t.started ? await attempt(() => this.restoreSnapshot(t.snapshot!.id, t.snapshot!.kind, t.snapshot!.user)) : true;
     if (c.old && t.renamed) await attempt(() => this.engine.rename(c.old!.id, names(c.project).container));
     if (c.old && t.stopped && wasRunning && dataOk) await attempt(() => this.engine.start(c.old!.id));
     if (withOld) {
@@ -619,12 +620,12 @@ export class MediaJobs {
    * helper `restore`: the data volume read-write, the backup volume read-only. `backup_invalid` (the archive failed the helper's
    * check before anything changed) passes; any other failure is `restore_failed`.
    */
-  async restoreSnapshot(id: string, kind: Kind): Promise<void> {
+  async restoreSnapshot(id: string, kind: Kind, user = userOf(this.u.mediaState().desired)): Promise<void> {
     if (!BACKUP_ID_RE.test(id)) fail('restore_failed');
     let a: Obj;
     try {
       const { project, runner } = await this.ready();
-      a = await this.helper(runner, userOf(this.u.mediaState().desired), 'restore', [id, kind],
+      a = await this.helper(runner, user, 'restore', [id, kind],
         [{ kind: 'data', volume: names(project).data(kind), rw: true }, { kind: 'backup', rw: false }], BACKUP_HELPER_MS);
     } catch (e) {
       guardFirst(e);
