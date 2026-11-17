@@ -42,6 +42,8 @@ const INTERVAL_MS = 5_000;
 const MAX_FOLDERS = 20;
 const FERROFIN_UPSTREAM_LABEL = 'io.github.letsmanu.friendflix.mediaserver.ferrofin';
 const UPSTREAM_RE = /^[A-Za-z0-9._+-]{1,64}$/;
+/** the upstream of a data volume nothing recorded (a backup of it is named so; never "older" than anything) */
+const UNKNOWN_UPSTREAM = 'unknown';
 const RENDER_NODE_RE = /^renderD[0-9]{1,4}$/;
 const JELLYFIN_REPO_RE = /^(docker\.io\/)?jellyfin\/jellyfin$/;
 const FOLDER_CODES: readonly MediaError[] = ['folder_missing', 'folder_symlink', 'folder_unreadable'];
@@ -75,6 +77,9 @@ function nested(rels: string[]): boolean {
 const specOf = (d: Desired): DesiredSpec => ({ kind: d.kind, folders: d.folders, uid: d.uid, gid: d.gid, gpu: d.gpu, mediaGid: d.mediaGid, egress: d.egress, tz: d.tz });
 const userOf = (d: { uid: number; gid: number; mediaGid: number | null } | null) =>
   ({ uid: d?.uid ?? DEFAULT_USER.uid, gid: d?.gid ?? DEFAULT_USER.gid, groups: d?.mediaGid ? [d.mediaGid] : [] });
+/** the upstream a kind's data volume is at: recorded per kind, else (a state from before the record) the container's own */
+const dataUpstreamOf = (m: MediaState, kind: Kind): string | undefined =>
+  m.dataUpstream[kind] ?? (m.container?.kind === kind ? m.container.upstream : undefined);
 const labelsOf = (i: Obj): Record<string, unknown> => (isObj(i.Config) && isObj(i.Config.Labels) ? i.Config.Labels : {});
 
 /** the render nodes a `gpu` helper reported (a gid 0 is kept: the template refuses it) */
@@ -89,6 +94,8 @@ interface Runner { project: string; image: string }
 /** a managed container found under the real name */
 export interface Existing { id: string; kind: Kind | null; running: boolean }
 interface Ctx { project: string; facts: EngineFacts; runner: Runner; base: NonNullable<MediaState['base']>; pin: Pin; old: Existing | null; dataExists: boolean }
+/** a data volume to snapshot: its kind, the upstream it is at and the user the helper reads it as */
+interface DataOf { kind: Kind; upstream: string; user: { uid: number; gid: number; groups: number[] } }
 /** what a deploy changed so far (for the rollback) */
 interface Changes { stopped: boolean; renamed: boolean; newId: string | null; started: boolean; snapshot: { id: string; kind: Kind } | null }
 
@@ -309,18 +316,19 @@ export class MediaJobs {
       const c = await this.step(job, 'check', () => this.check(d, o.password, before));
       ctx = c;
       await this.step(job, 'pull', () => this.engine.pull(c.pin.image));
+      // the never-down rule and the snapshot follow the data volume, which outlives its container (remove without data, a kind switch)
+      const known = dataUpstreamOf(before, d.kind);
       const upstream = await this.step(job, 'verify', async () => {
         const up = await this.verifyImage(c.pin);
-        const prev = before.container;
-        if (prev && prev.kind === d.kind && older(up, prev.upstream)) fail('downgrade_refused');
+        if (c.dataExists && known !== undefined && older(up, known)) fail('downgrade_refused');
         return up;
       });
 
-      const prev = before.container;
-      if (prev && prev.kind === d.kind && prev.upstream !== upstream && c.dataExists) {
+      // an existing data volume of another or an unknown version is saved before the new image touches it
+      if (c.dataExists && known !== upstream) {
         await this.step(job, 'snapshot', async () => {
           if (c.old) { await this.engine.stop(c.old.id); t.stopped = true; }
-          const meta = await this.snapshot(null, 'auto');
+          const meta = await this.snapshot(null, 'auto', false, { kind: d.kind, upstream: known ?? UNKNOWN_UPSTREAM, user: userOf(d) });
           t.snapshot = { id: meta.id, kind: meta.kind };
         });
       }
@@ -335,6 +343,7 @@ export class MediaJobs {
       if (c.old) await this.engine.remove(c.old.id).catch(() => undefined);
       this.u.updateMedia((m) => {
         m.container = { id: made.id, kind: d.kind, digest: c.pin.digest, upstream, specHash: made.specHash };
+        m.dataUpstream[d.kind] = upstream;
         m.desired = { ...d, run };
         m.lastError = null;
         m.tampered = false;
@@ -579,18 +588,18 @@ export class MediaJobs {
    * job it runs as that job's `snapshot` step. Leftover `.part` files go first; the id never replaces a backup being restored or
    * downloaded (freeBackupId).
    */
-  async snapshot(job: Job | null, tag: Exclude<BackupTag, 'upload'>, trickplay = false): Promise<BackupMeta> {
+  async snapshot(job: Job | null, tag: Exclude<BackupTag, 'upload'>, trickplay = false, of?: DataOf): Promise<BackupMeta> {
     const code: MediaError = tag === 'auto' ? 'snapshot_failed' : 'backup_failed';
     const run = async (): Promise<BackupMeta> => {
       const m = this.u.mediaState();
-      const c = m.container ?? fail(code);
+      const c = of ?? (m.container ? { kind: m.container.kind, upstream: m.container.upstream, user: userOf(m.desired) } : fail(code));
       const { project, runner } = await this.ready();
       const { id, at } = freeBackupId(c.kind, c.upstream, this.d.now());
       if (!BACKUP_ID_RE.test(id)) fail(code);
       const dir = this.d.backupDir ?? BACKUP_DIR;
       let a: Obj;
       try {
-        a = await writingBackup(dir, id, () => this.helper(runner, userOf(m.desired), 'backup', [id, trickplay ? '1' : '0', c.kind, c.upstream],
+        a = await writingBackup(dir, id, () => this.helper(runner, c.user, 'backup', [id, trickplay ? '1' : '0', c.kind, c.upstream],
           [{ kind: 'data', volume: names(project).data(c.kind), rw: false }, { kind: 'backup', rw: true }], BACKUP_HELPER_MS));
       } catch (e) {
         guardFirst(e);
@@ -688,7 +697,10 @@ export class MediaJobs {
         for (const k of kinds) {
           for (const [name, label] of [[n.data(k), 'mediaserver-data'], [n.cache(k), 'mediaserver-cache']] as const) {
             const v = await this.engine.inspectVolume(name);
-            if (v?.labels['friendflix.managed'] === label && v.labels['friendflix.project'] === found.project) await this.engine.removeVolume(name);
+            const ours = v?.labels['friendflix.managed'] === label && v.labels['friendflix.project'] === found.project;
+            if (ours) await this.engine.removeVolume(name);
+            // a data volume that is gone takes its recorded version with it
+            if (label === 'mediaserver-data' && (v === null || ours)) this.u.updateMedia((s) => { delete s.dataUpstream[k]; });
           }
         }
       }

@@ -524,6 +524,11 @@ describe('jobs', () => {
     ]);
     expect(job.media!.steps).toMatchObject({ check: 'ok', snapshot: 'ok', create: 'ok', start: 'ok', health: 'ok', rollback: 'skipped' });
     expect(w.media().backups.map((b) => [b.id, b.tag])).toEqual([[id, 'upload'], [safety, 'auto']]);
+    // the restored data counts as the running server's version (a remove without data keeps that record)
+    w.updater.updateMedia((m) => { m.dataUpstream = {}; });
+    w.calls.length = 0;
+    expect((await w.run({ op: 'restore', id })).state).toBe('succeeded');
+    expect(w.media().dataUpstream).toEqual({ jellyfin: '10.11.3' });
     const answer = w.cfg.answer;
     const again = async (restore: (c: { args: string[] }) => ReturnType<typeof answer>) => {
       w.cfg.answer = (c) => (c.verb === 'restore' ? restore(c) : answer(c));

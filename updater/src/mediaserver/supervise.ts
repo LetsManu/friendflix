@@ -4,6 +4,7 @@ import type { MediaState } from '../state.js';
 import type { EngineFacts } from './facts.js';
 import { cleanupHelpers } from './helpers.js';
 import type { JobDeps, MediaJobs } from './jobs.js';
+import { older } from './backup.js';
 import { parseMediaBody } from './parse.js';
 import { checkBasePath } from './paths.js';
 import { names } from './template.js';
@@ -227,6 +228,9 @@ export class Supervisor {
 
     this.u.updateMedia((s) => {
       s.container = { id, kind, digest, upstream, specHash };
+      // the adopted server ran on that kind's data: its version is the data's unless a newer one is recorded
+      const known = s.dataUpstream[kind];
+      if (upstream !== UNKNOWN_UPSTREAM && (known === undefined || older(known, upstream))) s.dataUpstream[kind] = upstream;
       s.desired = { ...parsed.spec, run };
       s.tampered = false;
       if (base) adoptBase(s, base, new Date(this.d.now()).toISOString());

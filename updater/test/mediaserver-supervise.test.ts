@@ -331,9 +331,11 @@ describe('adoption and ownership', () => {
   it('adoption after a lost state volume', async () => {
     const w = setup();
     const c = w.existing(JSPEC, jellyPin('10.11.3'), '10.11.3');
-    w.updater.updateMedia((m) => { m.container = null; m.desired = null; m.base = null; });
+    w.updater.updateMedia((m) => { m.container = null; m.desired = null; m.base = null; m.dataUpstream = { ferrofin: 'v1.5.1' }; });
     await w.sup.startup();
     const m = w.media();
+    // the adopted server's version is its data's (a newer record stays)
+    expect(m.dataUpstream).toEqual({ ferrofin: 'v1.5.1', jellyfin: '10.11.3' });
     expect(m.container).toEqual({ id: c.id, kind: 'jellyfin', digest: jellyPin('10.11.3').digest, upstream: '10.11.3', specHash: (c.body.Labels as Record<string, string>)['friendflix.spec'] });
     expect(m.desired).toEqual({ ...JSPEC, run: true });
     expect(m.base).toMatchObject({ path: '/srv/media', volume: baseVolume(BASE), previousVolume: null });
@@ -351,6 +353,11 @@ describe('adoption and ownership', () => {
     expect(await g.tick()).toBe('idle');
     expect(g.media().desired).toEqual({ ...dri, run: true });
     expect(g.media().container).toMatchObject({ kind: 'ferrofin', upstream: 'v1.5.1' });
+    const h = setup();
+    h.existing(JSPEC, jellyPin('10.11.3'), '10.11.3');
+    h.updater.updateMedia((m) => { m.container = null; m.desired = null; m.dataUpstream = { jellyfin: '10.11.4' }; });
+    expect(await h.tick()).toBe('idle');
+    expect(h.media().dataUpstream).toEqual({ jellyfin: '10.11.4' });
   });
 
   it('a tampered container is flagged, never started', async () => {

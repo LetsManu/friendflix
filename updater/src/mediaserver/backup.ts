@@ -366,7 +366,7 @@ export async function restoreJob(k: BackupKit, job: Job, id: string): Promise<vo
       if (b.kind !== running.kind) fail('kind_mismatch');
       if (older(running.upstream, b.upstream)) fail('downgrade_refused');
       await stat(fileOf(k.dir, id)).catch(() => fail('backup_invalid'));
-      return { b, found: await k.ours() };
+      return { b, running: running.upstream, found: await k.ours() };
     });
     /** after a restore: when the server should run; with the data as it was: only when it ran before this job */
     const startAgain = async (asBefore = false): Promise<void> => {
@@ -409,7 +409,11 @@ export async function restoreJob(k: BackupKit, job: Job, id: string): Promise<vo
       k.updater.updateMedia((m) => { m.lastError = 'restore_failed'; });
       throw new StepError('restore_failed');
     }
-    k.updater.updateMedia((m) => { if (m.lastError === 'restore_failed') m.lastError = null; });
+    k.updater.updateMedia((m) => {
+      if (m.lastError === 'restore_failed') m.lastError = null;
+      // the data is at most at the running server's version (the backup is never newer; a start migrates it there)
+      m.dataUpstream[c.b.kind] = c.running;
+    });
   } finally {
     restores.delete(id);
   }

@@ -62,9 +62,15 @@ export interface MediaState {
   hdr: HdrResult | null;
   lastError: MediaError | null;
   tampered: boolean;
+  /**
+   * per kind, the upstream version its data volume was last brought to (a successful deploy or restore); kept while the container
+   * goes (`remove` without data, a kind switch) and forgotten only with that kind's data volume. The never-down rule and the
+   * deploy's snapshot read it, not the container.
+   */
+  dataUpstream: Partial<Record<Kind, string>>;
 }
 
-export const DEFAULT_MEDIA: MediaState = { base: null, pending: null, desired: null, container: null, pinSource: null, backups: [], hdr: null, lastError: null, tampered: false };
+export const DEFAULT_MEDIA: MediaState = { base: null, pending: null, desired: null, container: null, pinSource: null, backups: [], hdr: null, lastError: null, tampered: false, dataUpstream: {} };
 
 /** What survives a restart (state volume): the channel, what is installed and the previous build to roll back to. */
 export interface State {
@@ -160,19 +166,32 @@ function sanitizeHdr(raw: unknown): HdrResult | null {
   return kind && at && opencl && qsv ? { kind, at, opencl, qsv } : null;
 }
 
+/** a state file from before `dataUpstream` knows it from the recorded container (the one running on that kind's data) */
+function sanitizeDataUpstream(raw: unknown, container: MediaState['container']): MediaState['dataUpstream'] {
+  if (!isObj(raw)) return container ? { [container.kind]: container.upstream } : {};
+  const out: MediaState['dataUpstream'] = {};
+  for (const k of KINDS) {
+    const v = raw[k];
+    if (typeof v === 'string' && UPSTREAM_RE.test(v)) out[k] = v;
+  }
+  return out;
+}
+
 /** every field of the media section is re-validated on its own; a wrong one falls back to its default, its siblings survive */
 export function sanitizeMedia(raw: unknown): MediaState {
   const o = isObj(raw) ? raw : {};
+  const container = sanitizeContainer(o.container);
   return {
     base: sanitizeBase(o.base),
     pending: sanitizePending(o.pending),
     desired: sanitizeDesired(o.desired),
-    container: sanitizeContainer(o.container),
+    container,
     pinSource: typeof o.pinSource === 'string' && DIGEST.test(o.pinSource) ? o.pinSource : null,
     backups: sanitizeBackups(o.backups),
     hdr: sanitizeHdr(o.hdr),
     lastError: MEDIA_ERRORS.find((c) => c === o.lastError) ?? null,
     tampered: o.tampered === true,
+    dataUpstream: sanitizeDataUpstream(o.dataUpstream, container),
   };
 }
 

@@ -7,7 +7,7 @@ import { TemplateViolation } from '../src/mediaserver/guard.js';
 import { MediaService } from '../src/mediaserver/service.js';
 import type { Desired, DesiredSpec, Kind } from '../src/mediaserver/types.js';
 import type { MediaState } from '../src/state.js';
-import { BASE, FACTS, JSPEC, N, PASSWORD, PROJECT, SOURCE, SPEC, T0, baseVolume, ferroPin, jellyPin, okFolders, world, type C, type Obj } from './media-world.js';
+import { BASE, FACTS, JSPEC, N, PASSWORD, PROJECT, SOURCE, SPEC, T0, UPSTREAM_LABEL, baseVolume, ferroPin, jellyPin, okFolders, world, type C, type Obj } from './media-world.js';
 
 describe('apply', () => {
   it('first apply creates volumes, container and egress, then is healthy', async () => {
@@ -171,6 +171,95 @@ describe('apply', () => {
     expect(w.find(N.container)).toMatchObject({ id: old.id, running: true });
     expect(w.media().lastError).toBe('downgrade_refused');
     expect(w.updater.log.tail(200).join('\n')).toContain('media downgrade_refused');
+  });
+
+  // the never-down rule and the snapshot follow the data volume, not the container: a remove without data or a kind switch keeps it
+  describe('the data volume\'s upstream', () => {
+    const ferro = (w: ReturnType<typeof world>, hex: string, upstream: string) => {
+      const p = ferroPin(hex);
+      w.images.set(p.image, { ...w.images.get(ferroPin().image)!, repoDigests: [p.image], labels: { [UPSTREAM_LABEL]: upstream } });
+      w.cfg.pins = { ...w.cfg.pins, pins: { ...(w.cfg.pins as { pins: object }).pins, ferrofin: p } } as typeof w.cfg.pins;
+      return p;
+    };
+    const jelly = (w: ReturnType<typeof world>, p: ReturnType<typeof jellyPin>) => {
+      w.jellyImage(p);
+      w.cfg.pins = { ...w.cfg.pins, pins: { ...(w.cfg.pins as { pins: object }).pins, jellyfin: p } } as typeof w.cfg.pins;
+    };
+
+    it('a deploy records it per kind', async () => {
+      const w = world();
+      expect((await w.run({ op: 'apply', spec: JSPEC })).state).toBe('succeeded');
+      expect(w.media().dataUpstream).toEqual({ jellyfin: '10.11.3' });
+    });
+
+    it('remove {data: false}, then an older pin: downgrade_refused, nothing created', async () => {
+      const w = world();
+      expect((await w.run({ op: 'apply', spec: JSPEC })).state).toBe('succeeded');
+      expect((await w.run({ op: 'remove', data: false })).state).toBe('succeeded');
+      expect(w.media()).toMatchObject({ container: null, dataUpstream: { jellyfin: '10.11.3' } });
+      jelly(w, jellyPin('10.11.2', '2'));
+      const before = w.changes().length;
+      const job = await w.run({ op: 'apply', spec: JSPEC });
+      expect(job).toMatchObject({ state: 'failed', error: 'downgrade_refused' });
+      expect(w.changes().slice(before)).toEqual([`pull ${jellyPin('10.11.2', '2').image}`]);
+      expect(w.find(N.container)).toBeUndefined();
+    });
+
+    it('remove {data: false}, then a newer pin: the data is snapshotted first, as the version it is', async () => {
+      const w = world();
+      expect((await w.run({ op: 'apply', spec: JSPEC })).state).toBe('succeeded');
+      expect((await w.run({ op: 'remove', data: false })).state).toBe('succeeded');
+      jelly(w, jellyPin('10.11.4', '4'));
+      const job = await w.run({ op: 'apply', spec: JSPEC });
+      expect(job).toMatchObject({ state: 'succeeded' });
+      expect(job.media!.steps.snapshot).toBe('ok');
+      const backup = w.helperCalls.find((c) => c.verb === 'backup')!;
+      expect(backup.args.slice(1)).toEqual(['0', 'jellyfin', '10.11.3']);
+      expect(backup.mounts[0]).toMatchObject({ Source: N.data('jellyfin'), ReadOnly: true });
+      expect(w.media().backups).toEqual([expect.objectContaining({ kind: 'jellyfin', upstream: '10.11.3', tag: 'auto' })]);
+      expect(w.media().dataUpstream).toEqual({ jellyfin: '10.11.4' });
+    });
+
+    it('ferrofin -> jellyfin -> ferrofin onto the surviving volume: older refused, newer snapshotted first', async () => {
+      const w = world();
+      expect((await w.run({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } })).state).toBe('succeeded');
+      expect((await w.run({ op: 'apply', spec: JSPEC })).state).toBe('succeeded');
+      expect(w.media()).toMatchObject({ container: { kind: 'jellyfin' }, dataUpstream: { ferrofin: 'v1.5.1', jellyfin: '10.11.3' } });
+      expect(w.volumes.has(N.data('ferrofin'))).toBe(true);
+
+      ferro(w, 'e', 'v1.5.0');
+      let job = await w.run({ op: 'apply', spec: SPEC });
+      expect(job).toMatchObject({ state: 'failed', error: 'downgrade_refused' });
+      expect(w.find(N.container)).toMatchObject({ running: true });
+      expect(w.media().container!.kind).toBe('jellyfin');
+
+      ferro(w, 'd', 'v1.6.0');
+      job = await w.run({ op: 'apply', spec: SPEC });
+      expect(job).toMatchObject({ state: 'succeeded' });
+      expect(job.media!.steps.snapshot).toBe('ok');
+      const backup = w.helperCalls.find((c) => c.verb === 'backup')!;
+      expect(backup.args.slice(1)).toEqual(['0', 'ferrofin', 'v1.5.1']);
+      expect(backup.mounts[0]).toMatchObject({ Source: N.data('ferrofin'), ReadOnly: true });
+      expect(w.media().dataUpstream).toEqual({ ferrofin: 'v1.6.0', jellyfin: '10.11.3' });
+    });
+
+    it('a data volume of unknown upstream is snapshotted before a deploy uses it', async () => {
+      const w = world();
+      w.volumes.set(N.data('jellyfin'), { labels: { 'friendflix.managed': 'mediaserver-data', 'friendflix.project': PROJECT }, options: {} });
+      const job = await w.run({ op: 'apply', spec: JSPEC });
+      expect(job).toMatchObject({ state: 'succeeded' });
+      expect(job.media!.steps.snapshot).toBe('ok');
+      expect(w.helperCalls.find((c) => c.verb === 'backup')!.args.slice(1)).toEqual(['0', 'jellyfin', 'unknown']);
+    });
+
+    it('remove {data: true} forgets it', async () => {
+      const w = world();
+      expect((await w.run({ op: 'apply', spec: JSPEC })).state).toBe('succeeded');
+      expect((await w.run({ op: 'remove', data: true })).state).toBe('succeeded');
+      expect(w.media().dataUpstream).toEqual({});
+      jelly(w, jellyPin('10.11.2', '2'));
+      expect((await w.run({ op: 'apply', spec: JSPEC })).state).toBe('succeeded');
+    });
   });
 
   it('apply with a vanished folder fails at check and keeps the old container', async () => {

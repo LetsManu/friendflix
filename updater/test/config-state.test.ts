@@ -77,7 +77,7 @@ describe('updater state file', () => {
     const s = fileStore(dir).load();
     expect(s).toMatchObject({ channel: 'nightly', current: 'nightly', livetv: 'enabled' });
     expect(s.media).toEqual(DEFAULT_MEDIA);
-    expect(DEFAULT_MEDIA).toEqual({ base: null, pending: null, desired: null, container: null, pinSource: null, backups: [], hdr: null, lastError: null, tampered: false });
+    expect(DEFAULT_MEDIA).toEqual({ base: null, pending: null, desired: null, container: null, pinSource: null, backups: [], hdr: null, lastError: null, tampered: false, dataUpstream: {} });
     // a job from before the media server has no media phase
     expect(sanitize({ lastJob: { id: '0123456789abcdef', action: 'update', state: 'succeeded', to: 'latest' } }).lastJob!.media).toBeNull();
   });
@@ -94,8 +94,14 @@ describe('updater state file', () => {
       backups: [{ id: 'jellyfin-20261117-1400-manual', kind: 'jellyfin', upstream: '10.10.7', at: '2026-11-17T14:00:00.000Z', tag: 'manual', size: 1234 }],
       hdr: { kind: 'jellyfin', at: '2026-11-17T14:00:00.000Z', opencl: 'pass', qsv: 'fail' },
       lastError: 'unhealthy', tampered: true,
+      dataUpstream: { jellyfin: '10.10.7', ferrofin: 'v1.5.1' },
     };
     expect(sanitize({ media }).media).toEqual(media);
+    // a state file from before the per-kind data record takes it from the recorded container; a bad entry is dropped
+    const { dataUpstream: _d, ...older } = media;
+    expect(sanitize({ media: older }).media.dataUpstream).toEqual({ jellyfin: '10.10.7' });
+    expect(sanitize({ media: { ...older, container: null } }).media.dataUpstream).toEqual({});
+    expect(sanitize({ media: { ...media, dataUpstream: { jellyfin: '../x', ferrofin: 'v1.5.1', other: '1.0.0' } } }).media.dataUpstream).toEqual({ ferrofin: 'v1.5.1' });
     const steps = { check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'ok', create: 'ok', start: 'ok', health: 'failed', rollback: 'skipped' };
     const job = sanitize({ lastJob: { id: '0123456789abcdef', action: 'mediaserver-apply', state: 'succeeded_mediaserver_failed', to: 'latest', media: { step: 'health', steps } } }).lastJob!;
     expect(job).toMatchObject({ action: 'mediaserver-apply', state: 'succeeded_mediaserver_failed', media: { step: 'health', steps } });
