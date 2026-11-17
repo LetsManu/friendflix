@@ -97,7 +97,17 @@ export class MediaService {
     const now = this.d.now();
     this.issued = this.issued.filter((t) => now - t < WINDOW_MS);
     if (this.issued.length >= REQUESTS_PER_WINDOW) return { ok: false, status: 429, error: 'rate_limited' };
+    // the slot is taken before the helper runs (concurrent requests all see it) and given back unless a code is issued
+    this.issued.push(now);
+    let issuedCode = false;
+    try {
+      return await this.issue(r, path, now, () => { issuedCode = true; });
+    } finally {
+      if (!issuedCode) { const i = this.issued.indexOf(now); if (i >= 0) this.issued.splice(i, 1); }
+    }
+  }
 
+  private async issue(r: Ready, path: string, now: number, issued: () => void): Promise<RequestResult> {
     let a: Obj;
     try {
       a = await this.helper(r, 'check', ['base'], [{ kind: 'request', path }], path);
@@ -112,7 +122,7 @@ export class MediaService {
 
     const code = newBaseCode();
     const expiresAt = new Date(now + CODE_TTL_MS);
-    this.issued.push(now);
+    issued();
     this.d.updater.updateMedia((m) => { m.pending = { path, codeHash: code.hash, expiresAt: expiresAt.toISOString(), failures: 0 }; });
     this.d.updater.log.add('media folder code issued');
     this.d.print(baseCodeLogLine(path, code.display, expiresAt));
@@ -154,14 +164,29 @@ export class MediaService {
     if (this.d.updater.busy) return { error: 'busy' };
     if (this.d.updater.mediaState().pending?.codeHash !== pending.codeHash) return { result: 'no_pending' };
     const at = new Date(this.d.now()).toISOString();
+    const old = this.d.updater.mediaState().base;
+    // the volume the container still uses (never the new base volume itself)
+    const rawPrev = old && old.volume !== volume ? old.previousVolume ?? old.volume : old?.previousVolume ?? null;
+    const previousVolume = rawPrev === volume ? null : rawPrev;
     this.d.updater.updateMedia((m) => {
-      const old = m.base;
-      m.base = { path: pending.path, volume, confirmedAt: at, previousVolume: old && old.volume !== volume ? old.previousVolume ?? old.volume : old?.previousVolume ?? null };
+      m.base = { path: pending.path, volume, confirmedAt: at, previousVolume };
       m.pending = null;
+      // the folders that are not below the new base are dropped from the choice
+      if (m.desired) m.desired.folders = m.desired.folders.filter((x) => split.kept.includes(x.rel));
     });
     this.d.updater.log.add('media base folder confirmed');
+    // a replaced base volume that was never applied (neither the new one nor the one the container uses) is not needed any more
+    if (old && old.volume !== volume && old.volume !== previousVolume) await this.dropUnusedVolume(old.volume, r.project);
     // with a managed container the new base needs the apply of the lifecycle (a later step): until then nothing else changes
     return { result: 'ok', path: pending.path, ...split, job: null };
+  }
+
+  /** best effort: only a base volume of this project, errors are swallowed */
+  private async dropUnusedVolume(name: string, project: string): Promise<void> {
+    try {
+      const v = await this.d.engine.inspectVolume(name);
+      if (v?.labels['friendflix.managed'] === 'mediaserver-base' && v.labels['friendflix.project'] === project) await this.d.engine.removeVolume(name);
+    } catch { /* the next confirm tries again */ }
   }
 
   private wrong(hash: string): ConfirmResult {

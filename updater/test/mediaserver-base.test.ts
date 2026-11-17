@@ -34,6 +34,7 @@ function world(o: { facts?: Partial<EngineFacts>; answer?: (c: HelperCall) => An
   const printed: string[] = [];
   const helperCalls: HelperCall[] = [];
   const created: unknown[] = [];
+  const removed: string[] = [];
   const volumes = new Map<string, { labels: Record<string, string>; options: Record<string, string> }>();
   const store = memoryStore();
   const updater = new Updater({} as Ops, store, { now: () => clock.t });
@@ -42,6 +43,7 @@ function world(o: { facts?: Partial<EngineFacts>; answer?: (c: HelperCall) => An
   const engine = {
     inspectVolume: async (name: string) => volumes.get(name) ?? null,
     createVolume: async (v: { Name: string; DriverOpts: Record<string, string>; Labels: Record<string, string> }) => { created.push(v); volumes.set(v.Name, { labels: v.Labels, options: v.DriverOpts }); },
+    removeVolume: async (name: string) => { removed.push(name); volumes.delete(name); },
     inspectContainer: async () => (labels ? { Config: { Labels: labels } } : null),
     logs: async () => logs,
   } as unknown as Engine;
@@ -65,7 +67,7 @@ function world(o: { facts?: Partial<EngineFacts>; answer?: (c: HelperCall) => An
     },
   });
   return {
-    svc, updater, clock, printed, helperCalls, created, volumes, store,
+    svc, updater, clock, printed, helperCalls, created, removed, volumes, store,
     setLogs: (l: string[]) => { logs = l; },
     setLabels: (l: Record<string, string> | null) => { labels = l; },
     /** the code of the last printed line */
@@ -145,6 +147,28 @@ describe('base-request', () => {
     expect(w.printed).toHaveLength(3);
     w.clock.t = T0 + 10 * MIN;
     expect(await w.svc.request('/srv/media')).toMatchObject({ ok: true });
+  });
+
+  it('concurrent requests cannot get past the limit while the helper is slow', async () => {
+    const gate: Array<() => void> = [];
+    const w = world({ answer: () => ({ exists: true, dir: true, listable: true, looksSystem: false }) });
+    // a helper that answers late
+    const slow = new MediaService({
+      engine: {} as Engine, updater: w.updater, repo: 'LetsManu/friendflix', now: () => w.clock.t, print: (l) => { w.printed.push(l); },
+      facts: async () => FACTS,
+      helper: () => new Promise((res) => { gate.push(() => res({ exists: true, dir: true, listable: true, looksSystem: false })); }),
+    });
+    const all = Promise.all([1, 2, 3, 4].map(() => slow.request('/srv/media')));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(gate).toHaveLength(3);
+    gate.forEach((g) => g());
+    const res = await all;
+    expect(res.filter((x) => x.ok)).toHaveLength(3);
+    expect(res.filter((x) => !x.ok)).toEqual([{ ok: false, status: 429, error: 'rate_limited' }]);
+    expect(w.printed).toHaveLength(3);
+    // a refused attempt gives its slot back
+    const f = world({ answer: () => new StepError('helper_timeout') });
+    for (let i = 0; i < 5; i++) expect(await f.svc.request('/srv/media')).toMatchObject({ error: 'not_available' });
   });
 
   it('one pending request; a new one replaces it', async () => {
@@ -231,8 +255,9 @@ describe('base-confirm', () => {
     const check = w.helperCalls.find((c) => c.args[0] === 'folders')!;
     expect(check.args[1]).toBe('["Filme","Serien"]');
     expect(check.mounts).toEqual([{ Type: 'volume', Source: volumeOf('/srv/new'), Target: '/base', ReadOnly: true, VolumeOptions: { NoCopy: true } }]);
-    // the chosen folders themselves stay as they were until an apply
-    expect(w.updater.mediaState().desired!.folders).toHaveLength(2);
+    // the choice is narrowed to the kept folders: the status no longer lists the dropped one
+    expect(w.updater.mediaState().desired!.folders).toEqual([{ rel: 'Filme', target: '/media/filme' }]);
+    expect(JSON.stringify(w.updater.mediaState())).not.toContain('Serien');
   });
 
   it('a helper that fails, or a base volume that exists for another path, commits nothing', async () => {
@@ -248,6 +273,32 @@ describe('base-confirm', () => {
     await v.svc.request('/srv/media');
     expect(await v.svc.confirm(v.code())).toEqual({ error: 'not_available' });
     expect(v.created).toEqual([]);
+  });
+
+  it('previousVolume is never the current base (A, B, A) and a never applied base volume is removed (A, B, C)', async () => {
+    const w = world();
+    const go = async (p: string) => { w.clock.t += 11 * MIN; await w.svc.request(p); return w.svc.confirm(w.code()); };
+    const [A, B, C] = ['/srv/a', '/srv/b', '/srv/c'];
+    await go(A);
+    await go(B);
+    expect(w.updater.mediaState().base).toMatchObject({ volume: volumeOf(B), previousVolume: volumeOf(A) });
+    expect(w.removed).toEqual([]);
+    // back to A: nothing to remove later (previousVolume null), B was never used and goes
+    await go(A);
+    expect(w.updater.mediaState().base).toMatchObject({ volume: volumeOf(A), previousVolume: null });
+    expect(w.removed).toEqual([volumeOf(B)]);
+    // A, B, C: A is what the container uses, B was never applied and is removed, C is the base
+    await go(B);
+    await go(C);
+    expect(w.updater.mediaState().base).toMatchObject({ volume: volumeOf(C), previousVolume: volumeOf(A) });
+    expect(w.removed).toEqual([volumeOf(B), volumeOf(B)]);
+    // a volume without our labels, or a failing removal, is never an error
+    const x = world();
+    await x.svc.request(A); await x.svc.confirm(x.code());
+    x.clock.t += 11 * MIN; await x.svc.request(B); await x.svc.confirm(x.code());
+    x.volumes.set(volumeOf(B), { labels: { 'friendflix.managed': 'other' }, options: { device: B } });
+    x.clock.t += 11 * MIN; await x.svc.request(C); expect(await x.svc.confirm(x.code())).toMatchObject({ result: 'ok' });
+    expect(x.removed).toEqual([]);
   });
 
   it('confirming the same base again reuses its volume and keeps the previous one', async () => {
