@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Test helper (not a test file: importing a *.test.mjs would re-run its tests): throwaway git repositories, removed after the run.
+// Test helper (not a test file: importing a *.test.mjs would re-run its tests): throwaway directories and git repositories, removed after the run.
 import { after } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -12,10 +12,16 @@ const GIT_C = ['-c', 'user.name=ci', '-c', 'user.email=ci@example.com', '-c', 'c
 const created = [];
 after(() => { for (const root of created.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
-/** a throwaway git repository: write files, commit, branch, merge --no-ff, git mv, revert; every helper that commits returns the new sha */
-export function tmpRepo() {
+/** a throwaway directory, removed after the run like the repositories */
+export function tmpDir() {
   const root = mkdtempSync(join(tmpdir(), 'ff-changed-images-'));
   created.push(root);
+  return root;
+}
+
+/** a throwaway git repository: write files, commit, branch, merge --no-ff, git mv, revert; every helper that commits returns the new sha */
+export function tmpRepo() {
+  const root = tmpDir();
   const git = (...args) => execFileSync('git', [...GIT_C, '-C', root, ...args], { encoding: 'utf8' }).trim();
   const head = () => git('rev-parse', 'HEAD');
   const write = (files) => {

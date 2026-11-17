@@ -5,12 +5,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import process from 'node:process';
 import { URL, fileURLToPath } from 'node:url';
-import { tmpRepo } from './test-helpers/tmp-repo.mjs';
+import { tmpDir, tmpRepo } from './test-helpers/tmp-repo.mjs';
 import { IMAGES, changedFiles, classify, copyGuard, docsGuard, docsReaders, imageCommits, isInput, loadMap, plan } from './changed-images.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./changed-images.mjs', import.meta.url));
@@ -55,7 +54,7 @@ const DOCKERIGNORE = [
 ].join('\n');
 
 test('isInput: globs, ! excludes, @image, **/*.md, .dockerignore drop and re-include', () => {
-  const root = mkdtempSync(join(tmpdir(), 'ff-changed-images-'));
+  const root = tmpDir();
   writeFileSync(join(root, '.dockerignore'), DOCKERIGNORE);
   const map = {
     ...MAP,
@@ -105,7 +104,7 @@ test('isInput: globs, ! excludes, @image, **/*.md, .dockerignore drop and re-inc
   no('backend', '.github/actions/build-image/README.md');
   assert.throws(() => isInput(map, 'nope', 'x', root), /unknown image "nope"/);
   // no .dockerignore: nothing dropped
-  const bare = mkdtempSync(join(tmpdir(), 'ff-changed-images-'));
+  const bare = tmpDir();
   assert.equal(isInput(map, 'backend', 'backend/gen/out.ts', bare), true);
 });
 
@@ -286,7 +285,7 @@ test('real map: .dockerignore and .github/actions/build-image/action.yml are inp
 
 test('CLI: an empty --pr-base on push is absent; pull_request without one fails', () => {
   const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
-  const summary = join(mkdtempSync(join(tmpdir(), 'ff-changed-images-')), 'summary.md');
+  const summary = join(tmpDir(), 'summary.md');
   const push = run('plan', '--event', 'push', '--sha', 'HEAD', '--pr-base', '', '--summary', summary);
   assert.equal(push.status, 0, push.stderr);
   assert.equal(push.stdout.trim().split('\n').length, 1);

@@ -48,6 +48,8 @@ jobs:
   # table in the step summary. Pull requests compare the image commits at the merge commit with those at the PR base;
   # other events build everything. Full history: an image commit is the newest commit that touched the image's inputs.
   changes:
+    # report only until Stage D (D2 removes this): a failed report must not make the main run non-success (backend updates.ts reads only successful runs)
+    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: { contents: read }
