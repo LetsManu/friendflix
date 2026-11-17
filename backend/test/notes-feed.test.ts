@@ -3,7 +3,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { m } from '../src/i18n.js';
 import { localizeStored } from '../src/notify.js';
-import { feed, groupId, parseGroupId, type Feed } from '../src/notifications/feed.js';
+import { decodeCursor, feed, groupId, parseGroupId, type Feed } from '../src/notifications/feed.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
 let env: TestEnv;
@@ -147,7 +147,8 @@ describe('notifications feed', () => {
   });
 
   it('paging never splits a group and next continues after the last group', async () => {
-    const now = Date.now();
+    // anchored in a fixed past month, so the whole set is one month section whenever the test runs (never split by a midnight)
+    const now = Date.parse('2025-03-10T12:00:00Z');
     // 70 groups: 69 single rows, pairs share their created_at (the id breaks the tie; the 30th/31st pair straddles page 1's end), and a 3-row group in the middle
     const rows: Row[] = Array.from({ length: 69 }, (_, i) => ({ title: `Eintrag ${i}`, at: new Date(now - Math.floor((i + 1) / 2) * 1000) }));
     rows.push(...[0, 1, 2].map((j) => ({ title: 'Mitte', key: 'tv_paired|mitte', at: new Date(now - 17_500 - j * 60_000) })));
@@ -168,6 +169,42 @@ describe('notifications feed', () => {
     } while (cursor);
     expect(sizes).toEqual([30, 30, 10]);
     expect(new Set(seen).size).toBe(70);
+  });
+
+  /** 70 single-row groups one minute apart before NOW (titles G0 newest … G69), all today in Berlin. */
+  const seventy = () => seed(Array.from({ length: 70 }, (_, i) => ({ title: `G${i}`, at: minutesAgo(i + 1) })));
+  const pageTitles = (f: Feed) => groups(f).map((g) => g.title);
+  const nextOf = (f: Feed) => (f.next ? decodeCursor(f.next) : null);
+
+  it('rows arriving between pages neither lift a group off the unseen pages nor show up on them', async () => {
+    await seventy();
+    const p1 = await feed(env.ctx, ua, 'de', opts(), NOW);
+    expect(pageTitles(p1)).toEqual(Array.from({ length: 30 }, (_, i) => `G${i}`));
+    // a brand-new group, and a new row for G65 (still unseen, on page 3), both newer than everything on page 1
+    await seed([{ title: 'Neu', at: NOW }, { title: 'G65', at: NOW }]);
+    const later = new Date(NOW.getTime() + 60_000);
+    const p2 = await feed(env.ctx, ua, 'de', opts({ cursor: nextOf(p1) }), later);
+    const p3 = await feed(env.ctx, ua, 'de', opts({ cursor: nextOf(p2) }), later);
+    expect(pageTitles(p2)).toEqual(Array.from({ length: 30 }, (_, i) => `G${i + 30}`));
+    expect(pageTitles(p3)).toEqual(Array.from({ length: 10 }, (_, i) => `G${i + 60}`));
+    expect(p3.next).toBeNull();
+    // G65 keeps the shape it had when paging started
+    expect(groups(p3).find((g) => g.title === 'G65')).toMatchObject({ count: 1, at: minutesAgo(66).toISOString() });
+    // a fresh first page sees both
+    expect(pageTitles(await feed(env.ctx, ua, 'de', opts(), later)).slice(0, 2)).toEqual(['G65', 'Neu']);
+  });
+
+  it('a local midnight between pages keeps the sections of the first page', async () => {
+    // Berlin 23:59 on the 17th; the next page is asked for at 00:01 on the 18th
+    const before = new Date('2026-11-17T22:59:00Z');
+    const after = new Date('2026-11-17T23:01:00Z');
+    await seed(Array.from({ length: 31 }, (_, i) => ({ title: `H${i}`, at: new Date(before.getTime() - (i + 1) * 60_000) })));
+    const p1 = await feed(env.ctx, ua, 'de', opts(), before);
+    expect(p1.sections.map((x) => x.key)).toEqual(['today']);
+    const p2 = await feed(env.ctx, ua, 'de', opts({ cursor: nextOf(p1) }), after);
+    expect(p2.sections.map((x) => [x.key, x.groups.map((g) => g.title)])).toEqual([['today', ['H30']]]);
+    // without a cursor the new day applies
+    expect((await feed(env.ctx, ua, 'de', opts(), after)).sections.map((x) => x.key)).toEqual(['week']);
   });
 
   it("hidden rows and other people's rows never appear; broadcasts appear for everyone", async () => {

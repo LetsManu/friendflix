@@ -66,11 +66,12 @@ export async function viewerTz(ctx: Pick<Ctx, 'db'>, tz: string | null | undefin
   return knownZone(zones, process.env.TZ) ? process.env.TZ : 'UTC';
 }
 
-// ---- cursor: opaque base64url JSON of the last group on the page ----
-const cursorSchema = z.object({ s: z.string().regex(/^(today|week|\d{4}-\d{2})$/), at: z.iso.datetime(), id: z.number().int().positive() });
-type Cursor = z.infer<typeof cursorSchema>;
+// ---- cursor: opaque base64url JSON. A snapshot of the first page (its reference time `now` and its newest visible row id `max`),
+// so later pages keep its sections and leave out rows that arrived since, plus the position after the page's last group (at, id).
+const cursorSchema = z.object({ now: z.iso.datetime(), max: z.number().int().positive(), at: z.iso.datetime(), id: z.number().int().positive() });
+export type FeedCursor = z.infer<typeof cursorSchema>;
 /** The decoded cursor, or null when it is not one this feed handed out. */
-export function decodeCursor(c: string): Cursor | null {
+export function decodeCursor(c: string): FeedCursor | null {
   try {
     const r = cursorSchema.safeParse(JSON.parse(Buffer.from(c, 'base64url').toString('utf8')));
     return r.success ? r.data : null;
@@ -78,7 +79,7 @@ export function decodeCursor(c: string): Cursor | null {
     return null;
   }
 }
-const encodeCursor = (c: Cursor) => Buffer.from(JSON.stringify(c)).toString('base64url');
+const encodeCursor = (c: FeedCursor) => Buffer.from(JSON.stringify(c)).toString('base64url');
 
 // ---- group ids: `<base64url JSON [groupKey, from ms, to ms, maxId]>.<HMAC>`, bound to the person ----
 const groupMacKey = (ctx: Pick<Ctx, 'encKey'>) => createHmac('sha256', ctx.encKey).update('friendflix notes group v1').digest();
@@ -116,9 +117,9 @@ export function parseGroupId(ctx: Pick<Ctx, 'encKey'>, userId: string, id: strin
   return { groupKey, from: new Date(from), to: new Date(to), maxId };
 }
 
-type KindCount = { kind: string; n: number; unread: number };
+type KindCount = { kind: string; n: number; unread: number; max_id: string };
 const kindCounts = async (ctx: Pick<Ctx, 'db'>, userId: string) => (await ctx.db.query<KindCount>(
-  `select n.kind, count(*)::int as n, (count(*) filter (where not ${readSql()}))::int as unread
+  `select n.kind, count(*)::int as n, (count(*) filter (where not ${readSql()}))::int as unread, max(n.id) as max_id
      from ${fromSql()} where ${visibleSql()} group by n.kind`,
   [userId],
 )).rows;
@@ -145,17 +146,18 @@ interface ItemRow { id: string; kind: string; title: string; body: string | null
 /**
  * One page of the grouped feed. Sections are the viewer's calendar today, the 6 days before, then one per calendar month (in `tz`);
  * within a section, rows with the same group key are one group, which belongs to the section of its newest row. Groups are ordered
- * newest first and a page ends at a group boundary. `now` is the reference time for the sections (tests pin it).
+ * newest first and a page ends at a group boundary. `now` is the reference time for the sections of a first page (tests pin it);
+ * a next page (`cursor`, validated by decodeCursor) uses the first page's time and leaves out rows newer than its newest visible one.
  */
 export async function feed(
   ctx: Pick<Ctx, 'db' | 'encKey'>, userId: string, lang: Language,
-  o: { tz: string; filter: FeedFilter; cursor: string | null; limit: number }, now: Date = new Date(),
+  o: { tz: string; filter: FeedFilter; cursor: FeedCursor | null; limit: number }, now: Date = new Date(),
 ): Promise<Feed> {
-  const cursor = o.cursor ? decodeCursor(o.cursor) : null;
-  if (o.cursor && !cursor) throw new Error('invalid_cursor');
+  const { cursor } = o;
   const limit = Math.min(Math.max(1, Math.floor(o.limit)), FEED_PAGE);
   const tz = await viewerTz(ctx, o.tz);
   const perKind = await kindCounts(ctx, userId);
+  const snap = cursor ? { now: new Date(cursor.now), max: cursor.max } : { now, max: Math.max(0, ...perKind.map((x) => Number(x.max_id))) };
   // a category filter is the set of the person's visible kinds that map to it
   const kinds = o.filter === 'all' || o.filter === 'unread' ? null : perKind.map((x) => x.kind).filter((k) => categoryOf(k) === o.filter);
   const g = await ctx.db.query<GroupRow>(
@@ -164,7 +166,7 @@ export async function feed(
        select n.id, n.created_at, coalesce(n.group_key, n.kind || '|id:' || n.id) as gk, ${readSql()} as read,
               (n.created_at at time zone $2)::date as d
          from ${fromSql()}
-        where ${visibleSql()} and ($4::text[] is null or n.kind = any($4::text[]))
+        where ${visibleSql()} and n.id <= $9::bigint and ($4::text[] is null or n.kind = any($4::text[]))
      ),
      sv as (
        select v.*, case when v.d >= t.today then 'today' when v.d >= t.today - 6 then 'week' else to_char(v.d, 'YYYY-MM') end as sec
@@ -184,7 +186,7 @@ export async function feed(
       where (not $5::boolean or g.unread) and ($6::timestamptz is null or (g.at, g.last_id) < ($6::timestamptz, $7::bigint))
       order by g.at desc, g.last_id desc
       limit $8`,
-    [userId, tz, now, kinds, o.filter === 'unread', cursor?.at ?? null, cursor?.id ?? null, limit + 1],
+    [userId, tz, snap.now, kinds, o.filter === 'unread', cursor?.at ?? null, cursor?.id ?? null, limit + 1, snap.max],
   );
   const page = g.rows.slice(0, limit);
   const ids = page.flatMap((x) => x.item_ids);
@@ -210,6 +212,6 @@ export async function feed(
     else sections.push({ key: row.sec, groups: [group] });
   }
   const end = page[page.length - 1];
-  const next = g.rows.length > limit && end ? encodeCursor({ s: end.sec, at: end.at_us, id: Number(end.last_id) }) : null;
+  const next = g.rows.length > limit && end ? encodeCursor({ now: snap.now.toISOString(), max: snap.max, at: end.at_us, id: Number(end.last_id) }) : null;
   return { sections, next, ...countsOf(perKind) };
 }

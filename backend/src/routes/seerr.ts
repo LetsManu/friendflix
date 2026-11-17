@@ -378,8 +378,9 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     const q = req.query as Record<string, unknown>;
     const filter = q.filter === undefined || q.filter === '' ? 'all' : q.filter;
     if (typeof filter !== 'string' || !isFeedFilter(filter)) return reply.code(400).send({ error: 'invalid_filter' });
-    const cursor = q.cursor === undefined || q.cursor === '' ? null : q.cursor;
-    if (cursor !== null && (typeof cursor !== 'string' || !decodeCursor(cursor))) return reply.code(400).send({ error: 'invalid_cursor' });
+    const raw = q.cursor === undefined || q.cursor === '' ? null : q.cursor;
+    const cursor = typeof raw === 'string' ? decodeCursor(raw) : null;
+    if (raw !== null && !cursor) return reply.code(400).send({ error: 'invalid_cursor' });
     const limit = q.limit === undefined || q.limit === '' ? FEED_PAGE : Number(q.limit);
     if (!Number.isInteger(limit) || limit < 0) return reply.code(400).send({ error: 'bad_request' });
     if (limit === 0) return feedCounts(ctx, req.user!.id);
