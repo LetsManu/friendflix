@@ -340,9 +340,9 @@ Controller's calls with reasons:
   first mounted on (Docker's copy-up). The template therefore mounts state volumes at targets the image already owns as the
   container user: Ferrofin's own `/data` and `/cache`. Where an image has no such target (official Jellyfin running non-root:
   `/config` and `/cache` belong to root), the **first create** of a fresh volume is a never-started seed container from the same
-  pinned image and template that mounts the volume at a directory the image owns as that uid; the real container then mounts it at
+  pinned image and template that mounts the volume at a directory writable by the uid; the real container then mounts it at
   `/config` / `/cache`. The seed target comes from a per-kind constant the guard also knows. No root init helper, no guard
-  exception. A uid for which the pinned image owns no directory is refused for that kind before anything is created
+  exception. A uid for which the pinned image has no directory writable by the uid is refused for that kind before anything is created
   (`uid_unsupported`).
 - **Read-only root file system** for both. The builder boots each image read-only, plays and transcodes a title, and adds a `tmpfs`
   (or an environment variable pointing into `/cache`) for any further path either server writes; read-only is never dropped.
@@ -582,7 +582,8 @@ only until stage 3. The desired container spec and the base folder live only in 
   kept), checks kind and upstream version as above, then restores as above. Limit 20 GiB (Controller's call: a large library's
   metadata, without trickplay). Kept with the manual ones.
 - The backup holds the server's password hashes and API keys, hence the passphrase; the backup volume itself stays like the data
-  volume (Docker volume, not a host folder; the read-only rule holds).
+  volume (Docker volume, not a host folder; the read-only rule holds). `docker compose down -v` removes the backup volume (it is
+  mounted into the updater through compose); the encrypted download is the off-host copy.
 - `docs/operations.md` *Backups & Wiederherstellung* gains the media server: what the backup volume holds and the one command that
   copies it to the host, next to `scripts/backup-bootstrap.sh`.
 
@@ -625,7 +626,8 @@ only until stage 3. The desired container spec and the base folder live only in 
 `mediaserver` + `media_managed` + the id rule's verdict), `POST …/base`, `…/base/confirm`, `…/browse`, `…/gpu`, `…/apply`,
 `…/action` (`start|stop|restart|update|backup|restore|remove|hdr-test`), `…/logs`, `…/backups` (list), `…/backups/:id/download`,
 `…/backups/upload`, `…/mode`. Download and upload stream through the backend without buffering the whole file. Rate limits: base
-request 3 per 10 minutes, confirm 10 per 10 minutes, logs 20 per minute, everything else the `/v1/livetv` route's limit. Answers
+request 3 per 10 minutes, confirm 10 per 10 minutes, logs 20 per minute, browse and gpu 30 per minute, everything else the
+`/v1/livetv` route's limit. Answers
 carry codes, never Docker or server text.
 
 ### Audit (Controller's call: the `system.updater_*` pattern)
