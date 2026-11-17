@@ -23,6 +23,7 @@ const es: Translation<typeof de> = {
     pinWrong: 'PIN incorrecto. Inténtalo de nuevo.',
     pinLocked: 'Demasiados intentos fallidos. Inténtalo de nuevo en 15 minutos.',
     pinLockedLater: 'Demasiados intentos fallidos. Inténtalo de nuevo más tarde.',
+    pinLockedLaterForgot: 'Demasiados intentos fallidos. Inténtalo de nuevo más tarde o usa «¿Has olvidado el PIN?».',
     selectFailed: 'No se pudo seleccionar el perfil. Inténtalo de nuevo.',
     name: 'Nombre',
     color: 'Color',

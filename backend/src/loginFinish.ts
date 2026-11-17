@@ -22,7 +22,7 @@ import { welcomeOnce } from './mail/welcome.js';
 import { notifyAdmins } from './notify.js';
 import { freshAuth, RESET_PIN_MAX_AGE, type OidcClaims } from './oidc.js';
 import { pendingNoticeKey } from './pending.js';
-import { accountJellyfinIds, deviceKidsProfile } from './profiles.js';
+import { accountJellyfinIds, clearPinLockout, deviceKidsProfile } from './profiles.js';
 import { COOKIE, loadSession, newSession, rand, saveSession } from './session.js';
 import { SETUP_COOKIE, SETUP_CSRF_COOKIE } from './setup/code.js';
 import { completeSetup } from './setup/state.js';
@@ -252,7 +252,7 @@ export async function resolveLogin(ctx: Ctx, req: FastifyRequest, reply: Fastify
     if (await kidLockedDevice(ctx, req, user.id)) return { kind: 'redirect', to: RESET_BLOCKED };
     // the person just re-authenticated at the IdP: the owner profile's forgotten PIN is cleared (and its lockout lifted)
     const cleared = await ctx.db.query('update profiles set pin_hash=null where id=$1 and is_owner and pin_hash is not null', [user.id]);
-    await ctx.kv.del(`pinfail:${user.id}`);
+    await clearPinLockout(ctx, user.id);
     await ctx.kv.del(`pinfail-acct:${user.id}`);
     if (cleared.rowCount) await audit(ctx, user.id, 'profile.pin_reset', user.id);
   }

@@ -312,10 +312,13 @@ describe('playback', () => {
   });
   it('enforces max concurrent streams per role', async () => {
     await env.pool.query("update users set role='guest'"); // guest: 1 stream
-    const b = (n: string) => ({ itemId: ID, playSessionId: `ps-${n}-0000`, mediaSourceId: 'ms1', positionTicks: 0, isPaused: false });
+    const OTHER = 'b'.repeat(32);
+    const b = (n: string, itemId = ID) => ({ itemId, playSessionId: `ps-${n}-0000`, mediaSourceId: 'ms1', positionTicks: 0, isPaused: false });
     expect((await call('POST', '/api/playback/start', b('a'))).statusCode).toBe(200);
-    expect((await call('POST', '/api/playback/info', { itemId: ID })).statusCode).toBe(429);
-    expect((await call('POST', '/api/playback/start', b('b'))).statusCode).toBe(429);
+    expect((await call('POST', '/api/playback/info', { itemId: OTHER })).statusCode).toBe(429);
+    expect((await call('POST', '/api/playback/start', b('b', OTHER))).statusCode).toBe(429);
+    // the same title on the same device is the same stream (a quality or audio switch, a resume): not refused
+    expect((await call('POST', '/api/playback/info', { itemId: ID })).statusCode).toBe(200);
     await call('POST', '/api/playback/stop', b('a'));
     await env.pool.query("update users set role='admin'");
   });

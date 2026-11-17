@@ -49,6 +49,23 @@ updates:
     groups:
       docker-minor-patch:
         update-types: [minor, patch]
+  # the third-party images in compose.yaml and compose.prod.yaml (database, cache, the bundled media server and request
+  # service; the socket proxy) are pinned by tag and digest: this entry proposes new tags and digests for them. Postgres and
+  # Redis majors are ignored: a new Postgres major needs a dump and restore (docs/operations.md), so it is done by hand.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
+    rebase-strategy: disabled
+    open-pull-requests-limit: 2
+    ignore:
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+      - dependency-name: redis
+        update-types: ["version-update:semver-major"]
+    groups:
+      compose-minor-patch:
+        update-types: [minor, patch]
   # the trial media server image (mediaserver/README.md): a new Ferrofin release arrives as its own PR, which is only the
   # reminder: finish it by hand (labels, NOTICE, try.sh/probe.sh, probe on the Intel host, FriendFlix test) before merging
   - package-ecosystem: docker

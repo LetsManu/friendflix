@@ -137,6 +137,8 @@ describe('Plex: cast stop report and the queued next episode', () => {
     const cur = await create(E1); // the transcode runs at Plex, nothing reported yet
     expect(cur.r.statusCode).toBe(200);
     expect((await authz(cur.ct)).statusCode).toBe(200); // pinned by the receiver's first fetch
+    expect(await countLive(env.ctx, uid)).toBe(1); // the first fetch takes the FriendFlix slot at once (review 3)
+    for (const k of await env.kv.keys(`play:${uid}:`)) await env.kv.del(k); // without it (expired), Plex's own limit alone holds
     expect(await countLive(env.ctx, uid)).toBe(0);
     const other = await call(admin, 'POST', '/api/cast/session', { itemId: E3 });
     expect(other.statusCode).toBe(429);

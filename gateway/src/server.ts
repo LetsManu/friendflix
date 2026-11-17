@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { internalSecret, need, optional, recordingsDir } from './env.js';
 import { createGateway } from './gateway.js';
-import { watchUntrustedHost } from './peers.js';
+import { serviceHosts, watchUntrustedHosts } from './peers.js';
 import { createRemoteConfig } from './remoteConfig.js';
 import { bindUpstream, checkUpstreamConfig, remoteKeys, selectUpstream } from './upstream/index.js';
 
@@ -15,8 +15,9 @@ const secret = internalSecret(process.env); // env, INTERNAL_SECRET_FILE or the 
 const remote = createRemoteConfig({ backendUrl, internalSecret: secret, envUrl: optional(process.env, upstream.urlEnv), keys: remoteKeys(upstream, process.env) });
 const bound = bindUpstream(upstream, process.env, secret, remote);
 const livetvUrl = optional(process.env, 'LIVETV_URL') ?? 'http://livetv:8090';
-// livetv never proxies a client: its own address is no trusted proxy, whatever X-Real-IP it sends (review L2/L3)
-const livetvPeer = watchUntrustedHost(URL.canParse(livetvUrl) ? new URL(livetvUrl).hostname : '');
+// livetv, the media server and the bundled request service (compose name `requests`) never proxy a client: their addresses are no
+// trusted proxy, whatever X-Real-IP they send (review L2/L3, security audit). The media server URL is read again on every refresh.
+const livetvPeer = watchUntrustedHosts(() => serviceHosts([livetvUrl, remote.url(), 'http://requests']));
 // the first lookup finishes (bounded: a hanging resolver must not block startup) before the first request; the <= 15 s window after a livetv restart (new IP) is accepted
 await Promise.race([livetvPeer.ready, new Promise<void>((r) => setTimeout(r, 3000).unref())]);
 const { server } = createGateway({

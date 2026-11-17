@@ -8,6 +8,7 @@
  */
 import { areasFrom, type Areas } from './capabilities';
 import { deniedKeys, permsFrom, type PermKey, type Perms } from './perms';
+import { safeRedirect } from './safeRedirect';
 
 /** the switched-off rights of an /api/me `perms` object */
 const deniedOf = (raw: unknown): PermKey[] => deniedKeys(permsFrom(raw));
@@ -74,9 +75,8 @@ export const needsWelcome = (me: Pick<GateMe, 'onboarded' | 'tv'> | null | undef
   me?.onboarded === false && !me.tv && !NO_WELCOME.test(path);
 /** `/welcome?next=…`; a kids profile continues on its own home */
 export const welcomeHref = (pathAndSearch: string, kids = false) => `/welcome?next=${encodeURIComponent(kids && !kidsAllowed(pathAndSearch.split(/[?#]/)[0]!) ? '/kids' : pathAndSearch)}`;
-/** a same-origin path from `?next=` (anything else: the fallback) */
-export const safeNext = (raw: string | null | undefined, fallback = '/'): string =>
-  raw && raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('\\') ? raw : fallback;
+/** a same-origin path from `?next=` (anything else: the fallback); one rule for every redirect, see safeRedirect.ts */
+export const safeNext = (raw: string | null | undefined, fallback = '/'): string => safeRedirect(raw, fallback);
 
 /** paths that never show the per-session gate (the profile page itself, the phone remote control) */
 const NO_SESSION_GATE = /^\/(profiles|remote)(\/|$)/;

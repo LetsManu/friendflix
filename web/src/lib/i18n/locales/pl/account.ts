@@ -23,6 +23,7 @@ const pl: Translation<typeof de> = {
     pinWrong: 'Nieprawidłowy PIN. Spróbuj jeszcze raz.',
     pinLocked: 'Zbyt wiele nieudanych prób. Spróbuj ponownie za 15 minut.',
     pinLockedLater: 'Zbyt wiele nieudanych prób. Spróbuj ponownie później.',
+    pinLockedLaterForgot: 'Zbyt wiele nieudanych prób. Spróbuj ponownie później lub użyj „Nie pamiętasz PIN-u?”.',
     selectFailed: 'Nie udało się wybrać. Spróbuj ponownie.',
     name: 'Nazwa',
     color: 'Kolor',

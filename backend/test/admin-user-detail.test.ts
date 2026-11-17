@@ -277,11 +277,13 @@ describe('repair, sessions, Authentik, profiles', () => {
 
   it('admin renames a profile and resets its PIN', async () => {
     await env.kv.set(`pinfail:${KID}`, '4', 600);
+    await env.kv.set(`pinlock:${KID}`, String(Date.now() + 600_000), 600);
+    await env.kv.set(`pinlevel:${KID}`, '4', 600);
     const r = await as('PATCH', `/api/admin/users/${anna}/profiles/${KID}`, { name: 'Kleine', resetPin: true });
     expect(r.statusCode).toBe(200);
     const row = (await env.pool.query('select name, pin_hash from profiles where id=$1', [KID])).rows[0];
     expect(row).toEqual({ name: 'Kleine', pin_hash: null });
-    expect(await env.kv.get(`pinfail:${KID}`)).toBeNull();
+    for (const k of ['pinfail', 'pinlock', 'pinlevel']) expect(await env.kv.get(`${k}:${KID}`), k).toBeNull();
     expect((await audits('profile.admin_update', anna)).at(-1)).toMatchObject({
       actor: adminId, meta: { profile: KID, from: { name: 'Kiddo', hasPin: true }, to: { name: 'Kleine', hasPin: false } },
     });

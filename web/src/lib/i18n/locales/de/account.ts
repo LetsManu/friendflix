@@ -20,6 +20,7 @@ export default {
     pinWrong: 'Falsche PIN. Bitte noch einmal versuchen.',
     pinLocked: 'Zu viele Fehlversuche. Bitte in 15 Minuten erneut probieren.',
     pinLockedLater: 'Zu viele Fehlversuche. Bitte später erneut probieren.',
+    pinLockedLaterForgot: 'Zu viele Fehlversuche. Bitte später erneut probieren oder „PIN vergessen?“ nutzen.',
     selectFailed: 'Auswählen hat nicht geklappt. Bitte erneut versuchen.',
     name: 'Name',
     color: 'Farbe',

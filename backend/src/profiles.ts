@@ -29,6 +29,13 @@ export class ProfileError extends Error {
 
 const jfSafe = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 20);
 
+/** The kv keys of a profile's PIN lockout: the 15-minute window counter, the escalated lock and its level (routes/profiles.ts checkPin). */
+export const PIN_LOCK_KEYS = (profileId: string) => [`pinfail:${profileId}`, `pinlock:${profileId}`, `pinlevel:${profileId}`];
+/** Lifts a profile's PIN lockout entirely (a reset PIN, a deleted profile or account). */
+export async function clearPinLockout(ctx: Pick<Ctx, 'kv'>, profileId: string): Promise<void> {
+  for (const k of PIN_LOCK_KEYS(profileId)) await ctx.kv.del(k);
+}
+
 export async function listProfiles(ctx: Pick<Ctx, 'db'>, userId: string): Promise<ProfileRow[]> {
   const r = await ctx.db.query<ProfileRow>('select * from profiles where user_id=$1 order by is_owner desc, created_at, name', [userId]);
   return r.rows;

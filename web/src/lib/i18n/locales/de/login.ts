@@ -165,8 +165,8 @@ const login = {
     },
     emailSent: {
       title: 'Bestätigungslink gesendet',
-      text: 'Wir haben einen Bestätigungslink an {to} geschickt. Die Adresse ändert sich erst, wenn du den Link öffnest.',
-      textNoTo: 'Wir haben einen Bestätigungslink an die neue Adresse geschickt. Die Adresse ändert sich erst, wenn du den Link öffnest.',
+      text: 'Wenn {to} nicht schon zu einem anderen Konto gehört, haben wir einen Bestätigungslink dorthin geschickt. Die Adresse ändert sich erst, wenn du den Link öffnest.',
+      textNoTo: 'Wenn die neue Adresse nicht schon zu einem anderen Konto gehört, haben wir einen Bestätigungslink dorthin geschickt. Die Adresse ändert sich erst, wenn du den Link öffnest.',
     },
     passkey: {
       title: 'Passkey hinzufügen',

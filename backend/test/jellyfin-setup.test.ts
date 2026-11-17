@@ -197,6 +197,17 @@ describe('jellyfinSetup provider', () => {
     expect(await jellyfinSetup.probe({ JELLYFIN_URL: 'ftp://x', JELLYFIN_ADMIN_API_KEY: 'k' }, { fetchImpl: f })).toEqual({ ok: false, code: 'invalid', detail: 'invalid_url' });
     expect(calls.length).toBe(2);
   });
+
+  it('probe: a redirect is an error, never followed (the key would travel with it; review 11)', async () => {
+    const seen: RequestInit[] = [];
+    const f = (async (_u: RequestInfo | URL, init: RequestInit = {}) => {
+      seen.push(init);
+      // a real fetch returns the 3xx itself only with redirect 'manual'; following it would reach evil.example.com and get a 200
+      return init.redirect === 'manual' ? new Response(null, { status: 302, headers: { location: 'http://evil.example.com/Auth/Keys' } }) : new Response('{"Items":[]}', { status: 200 });
+    }) as typeof fetch;
+    expect(await jellyfinSetup.probe({ JELLYFIN_URL: URL_, JELLYFIN_ADMIN_API_KEY: 'good' }, { fetchImpl: f })).toEqual({ ok: false, code: 'invalid', detail: 'redirect' });
+    expect(seen.map((i) => i.redirect)).toEqual(['manual']);
+  });
 });
 
 describe('POST /api/setup/media/auto', () => {

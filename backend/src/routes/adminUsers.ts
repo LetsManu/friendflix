@@ -19,7 +19,7 @@ import { mailConfigured } from '../mail/transport.js';
 import { deliverNow, type DeliverResult } from '../mail/worker.js';
 import { publicOrigin } from '../config.js';
 import { getUserLimits } from '../limits.js';
-import { KIDS_RATINGS, ProfileError, accountJellyfinIds, createProfile, deleteProfile, getProfile, jfUserFor, listProfiles, lockProfileKids, onConnection, publicProfile } from '../profiles.js';
+import { KIDS_RATINGS, ProfileError, accountJellyfinIds, clearPinLockout, createProfile, deleteProfile, getProfile, jfUserFor, listProfiles, lockProfileKids, onConnection, publicProfile } from '../profiles.js';
 import { roleLimitFor } from '../requestlimit.js';
 import { ROLE_KEY_RE, invitableRoles, roleExists } from '../rolecat.js';
 import { effectiveRole } from '../roles.js';
@@ -306,7 +306,7 @@ async function updateProfile(ctx: Ctx, log: FastifyBaseLogger, actor: string, us
   } finally {
     c.release();
   }
-  if (b.resetPin) await ctx.kv.del(`pinfail:${pid}`);
+  if (b.resetPin) await clearPinLockout(ctx, pid);
   if (!kidsChanged(p, u)) return { profile: u, policyFailed: false };
   invalidateRights(user.id);
   await policyChanged(ctx, u.jellyfin_user_id!); // cached rows / hubs / items of the old policy must not be served again

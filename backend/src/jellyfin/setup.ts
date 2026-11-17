@@ -134,7 +134,8 @@ export const jellyfinSetup: MediaSetupProvider = {
     const base = httpUrl(url);
     if (!base) return fail('invalid', 'invalid_url');
     const headers = { Authorization: mediaBrowserHeader({ deviceId: 'portal-probe', token: key }) };
-    return byStatus(await fetchImpl(join(base, '/Auth/Keys'), { headers }), 'not_admin');
+    // never follow a redirect: the admin key would travel with it (a 3xx is an `invalid` / `redirect` answer, byStatus)
+    return byStatus(await fetchImpl(join(base, '/Auth/Keys'), { headers, redirect: 'manual' }), 'not_admin');
   },
   auto: {
     fields: ['url', 'username', 'password'],

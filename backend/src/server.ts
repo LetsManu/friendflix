@@ -5,7 +5,7 @@ import pg from 'pg';
 import { updateAlertTick } from './adminAlerts.js';
 import { syscheckAlertTick } from './syscheckAlerts.js';
 import { buildApp } from './app.js';
-import { watchUntrustedHost } from './netaddr.js';
+import { serviceHosts, watchUntrustedHosts } from './netaddr.js';
 import { loadConfig, removedEnvNames } from './config.js';
 import { keyFromBase64 } from './crypto.js';
 import { migrate, poolOptions } from './db.js';
@@ -97,9 +97,10 @@ await syncRoles(ctx);
 
 const app = await buildApp(ctx);
 logTo.app = app.log;
-// livetv reaches the backend from a private address but never proxies a client: its X-Forwarded-For is never believed (review L3).
-// Its address is looked up now and every 15 s (the timer does not keep the process alive).
-const livetvPeer = watchUntrustedHost(URL.canParse(cfg.LIVETV_URL) ? new URL(cfg.LIVETV_URL).hostname : '');
+// livetv, the media server and the request service reach the backend from private addresses but never proxy a client: their
+// X-Forwarded-For is never believed (review L3, security audit). Their addresses (the compose service names of the current settings) are
+// looked up now and every 15 s (the timer does not keep the process alive).
+const livetvPeer = watchUntrustedHosts(() => serviceHosts([ctx.cfg.LIVETV_URL, ctx.cfg.JELLYFIN_URL, ctx.cfg.PLEX_URL, ctx.cfg.REQUESTS_URL]));
 // the first lookup finishes (bounded: a hanging resolver must not block startup) before the first request; the <= 15 s window after a livetv restart (new IP) is accepted
 await Promise.race([livetvPeer.ready, new Promise<void>((r) => setTimeout(r, 3000).unref())]);
 await app.listen({ port: cfg.PORT, host: '0.0.0.0' });

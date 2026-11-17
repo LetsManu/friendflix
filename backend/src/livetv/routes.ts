@@ -16,7 +16,8 @@ import { readLogo } from './logos.js';
 import { recordingRoutes } from './recroutes.js';
 import { channelSet } from './rights.js';
 import { clearJoinMark, receivingChannelIds, runningChannelIds, startOrJoin } from './streams.js';
-import { adminStopViewKey, beatLiveToken, deviceLiveSessions, endLiveToken, LIVE_CAP_S, liveSidHash, mintLiveToken, revokeLiveToken, unfetchedLiveSessions } from './tokens.js';
+import { adminStopViewKey, beatLiveToken, deviceLiveSessions, endLiveToken, LIVE_CAP_S, liveSidHash, mintLiveToken, revokeLiveToken } from './tokens.js';
+import { countStreams } from '../streamclaim.js';
 import { addFavourite, favouriteIds, recentIds, recordRecent, removeFavourite, setFavouriteOrder, RECENT_MAX } from './userdata.js';
 
 /** a logo never changes under its hash (sha256 of the bytes): the browser keeps it a week without asking again */
@@ -85,16 +86,13 @@ export async function playEntryGate(ctx: Ctx, req: FastifyRequest, reply: Fastif
 }
 
 /**
- * The account's `maxStreams` for a new live or recording playback (spec §7.2, B-I5): running streams (play records) plus tokens minted
- * but not fetched yet (review L1), without the device's own token this one replaces (same kind and slot). null = within the limit.
+ * The account's `maxStreams` for a new live or recording playback (spec §7.2, B-I5): running streams (play records and streams the
+ * gateway serves) plus tokens minted but not fetched yet (review L1), without the device's own token this one replaces (same kind and slot). null = within the limit.
  */
 export async function streamLimitRefusal(ctx: Ctx, u: { id: string; role: string }, deviceId: string, via: 'local' | 'chromecast' | 'airplay', kind: 'live' | 'rec'): Promise<{ error: 'max_streams'; max: number } | null> {
   const limits = (await effectiveLimits(ctx, u))!;
-  const prefix = `play:${u.id}:`;
-  const own = new Set(await deviceLiveSessions(ctx, u.id, deviceId, via, kind));
-  const running = new Set((await ctx.kv.keys(prefix)).map((k) => k.slice(prefix.length)));
-  for (const ps of await unfetchedLiveSessions(ctx, u.id)) running.add(ps);
-  const counted = [...running].filter((ps) => !own.has(ps)).length;
+  // play records, streams the gateway serves (security audit G1) and unfetched tokens, without this device's own token of the slot
+  const counted = await countStreams(ctx, u.id, { ps: await deviceLiveSessions(ctx, u.id, deviceId, via, kind) });
   return counted >= limits.maxStreams ? { error: 'max_streams', max: limits.maxStreams } : null;
 }
 

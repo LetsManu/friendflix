@@ -448,7 +448,7 @@ Since 2025.12 Authentik permissions are assigned to **roles** only. *Directory �
 | Can add Invitation | `authentik_stages_invitation.add_invitation` | `POST /api/v3/stages/invitation/invitations/` |
 | Can view Invitation | `authentik_stages_invitation.view_invitation` | reading invitations (granted by the blueprint; not strictly needed by the current code) |
 | Can delete Invitation | `authentik_stages_invitation.delete_invitation` | `DELETE /api/v3/stages/invitation/invitations/<pk>/` after redemption/revocation |
-| Can view User | `authentik_core.view_user` | `GET /api/v3/core/users/?…` (finds the Authentik user of a portal account by its `sub`; the username for the in-app re-authentication; whether a new e-mail address already belongs to another Authentik user) and the user in the password-link call |
+| Can view User | `authentik_core.view_user` | `GET /api/v3/core/users/?…` (finds the Authentik user of a portal account by its `sub`; the username for the in-app re-authentication; whether a new e-mail address already belongs to another Authentik user: such an address is answered like a free one but never sent a link) and the user in the password-link call |
 | Can view TOTP Device | `authentik_stages_authenticator_totp.view_totpdevice` | two-factor state: authenticator app (`GET /api/v3/authenticators/admin/all/?user=<pk>`) |
 | Can view WebAuthn Device | `authentik_stages_authenticator_webauthn.view_webauthndevice` | two-factor state: passkey / security key (same call) |
 | Can view Static Device | `authentik_stages_authenticator_static.view_staticdevice` | two-factor state: recovery codes (same call) |

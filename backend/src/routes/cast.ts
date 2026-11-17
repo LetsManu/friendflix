@@ -8,7 +8,7 @@ import { receiverCaps } from '../media/clientCaps.js';
 import { MediaError, type HevcGate, type ItemDto, type PlaybackDto, type TrackList } from '../media/types.js';
 import { noteHevcFailure } from '../hevcenc.js';
 import { convertsOf, copyFitsCap, filmGate, type FilmGate } from '../filmgate.js';
-import { countStreams } from '../livetv/tokens.js';
+import { countStreams } from '../streamclaim.js';
 import { clientAddress, isHomeRequest } from '../netaddr.js';
 import { playbackReport } from './media.js';
 import { loadPrefs } from './prefs.js';

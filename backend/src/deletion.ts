@@ -13,7 +13,7 @@ import { m } from './i18n.js';
 import { notifyAdmins } from './notify.js';
 import { akSetActive } from './authentik.js';
 import { revokeDownloads } from './downloads.js';
-import { accountJellyfinIds } from './profiles.js';
+import { accountJellyfinIds, clearPinLockout, PIN_LOCK_KEYS } from './profiles.js';
 import { pendingNoticeKey } from './pending.js';
 import { SeerrError } from './seerr/client.js';
 import { HttpError, accessEnded, accountSerial, assertNotLastAdmin, lockUser, unlockUser } from './users.js';
@@ -255,10 +255,10 @@ async function runSteps(ctx: Ctx, t: Tombstone, now: Date): Promise<StepResult> 
       }
       // akuser:<sub> stays until step 6 (the Authentik lookup); akmfa is a cache only
       if (t.authentik_sub) await ctx.kv.del(`akmfa:${t.authentik_sub}`);
-      await ctx.kv.del(`pinfail:${id}`);
+      await clearPinLockout(ctx, id);
       await ctx.kv.del(`pinfail-acct:${id}`);
       // per-profile caches (TTL only): media server tokens of the deleted identities, PIN lockouts, home cache stamps
-      for (const pid of profileIds) for (const k of [`jft:${pid}`, `pinfail:${pid}`, `homegen:${pid}`]) await ctx.kv.del(k);
+      for (const pid of profileIds) for (const k of [`jft:${pid}`, ...PIN_LOCK_KEYS(pid), `homegen:${pid}`]) await ctx.kv.del(k);
     },
   ];
   if (step < 4) {

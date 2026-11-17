@@ -166,8 +166,8 @@ const login: Translation<typeof de> = {
     },
     emailSent: {
       title: 'Link potwierdzający wysłany',
-      text: 'Wysłaliśmy link potwierdzający na adres {to}. Adres zmieni się dopiero po otwarciu linku.',
-      textNoTo: 'Wysłaliśmy link potwierdzający na nowy adres. Adres zmieni się dopiero po otwarciu linku.',
+      text: 'Jeśli adres {to} nie należy do innego konta, wysłaliśmy na niego link potwierdzający. Adres zmieni się dopiero po otwarciu linku.',
+      textNoTo: 'Jeśli nowy adres nie należy do innego konta, wysłaliśmy na niego link potwierdzający. Adres zmieni się dopiero po otwarciu linku.',
     },
     passkey: {
       title: 'Dodaj klucz dostępu',

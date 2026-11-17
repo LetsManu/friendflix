@@ -4,12 +4,15 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type pg from 'pg';
 import { audit, auditInTx } from '../audit.js';
+import { dayKey } from '../adminAlerts.js';
 import { revokeCasts } from '../cast.js';
 import { revokeLiveTokens } from '../livetv/tokens.js';
 import { secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { hashPin, verifyPin } from '../crypto.js';
-import { MAX_PROFILES, ProfileError, createProfile, deleteProfile, getProfile, listProfiles, lockProfileKids, onConnection, publicProfile, setDeviceKids, type KidsRating } from '../profiles.js';
+import { m } from '../i18n.js';
+import { MAX_PROFILES, ProfileError, clearPinLockout, createProfile, deleteProfile, getProfile, listProfiles, lockProfileKids, onConnection, publicProfile, setDeviceKids, type KidsRating } from '../profiles.js';
+import { notifyAdmins } from '../notify.js';
 import { dropPartyPeers } from '../partySockets.js';
 import { invalidateRights } from '../rights.js';
 import { COOKIE, rand, requireUser, saveSession, scanSessions, sessionHash, sessionKey, sessionTtl } from '../session.js';
@@ -22,6 +25,17 @@ import { renamePeerSid } from './tv.js';
 const PIN_FAIL_TTL = 15 * 60;
 const PIN_MAX_FAILS = 5;
 const ACCOUNT_MAX_FAILS = 15;
+/**
+ * Escalation on top of those windows (security audit G3): every time a profile runs into PIN_MAX_FAILS, it is locked for
+ * PIN_LOCK_BASE_S · 2^(level-1), at most PIN_LOCK_MAX_S; the level is kept PIN_LEVEL_TTL_S after the last lockout and reset by a right PIN.
+ * From PIN_ALERT_LEVEL on, every admin gets a notice (once a day per profile).
+ */
+export const PIN_LOCK_BASE_S = 900; // 15 minutes: every level outlasts the window of the floor, so each one has an effect (review 6)
+export const PIN_LOCK_MAX_S = 86_400;
+const PIN_LEVEL_TTL_S = 2 * 86_400;
+export const PIN_ALERT_LEVEL = 3;
+/** the lockout delay of `level` (15, 30, 60 … minutes, at most 24 hours) */
+export const pinLockSeconds = (level: number) => Math.min(PIN_LOCK_MAX_S, PIN_LOCK_BASE_S * 2 ** Math.min(Math.max(level, 1) - 1, 20));
 /** old sid stays valid this long after a profile switch so in-flight requests of the tab do not 401 */
 const OLD_SID_GRACE = 15;
 
@@ -186,26 +200,59 @@ export function profileRoutes(app: FastifyInstance, ctx: Ctx) {
     return { profile: { ...publicProfile(u), hasPin: Boolean(u.pin_hash), active: u.id === req.profile?.id } };
   };
 
+  /** seconds left of the profile's escalated lock (0: none) */
+  const lockLeft = async (profileId: string) => Math.max(0, Math.ceil((Number((await ctx.kv.get(`pinlock:${profileId}`)) ?? 0) - Date.now()) / 1000));
+  /**
+   * The profile ran into PIN_MAX_FAILS: the next level's lock starts now, is audited (`profile.pin_locked`, level and minutes only, never
+   * a PIN) and, from PIN_ALERT_LEVEL on, every admin is told once a day per profile. Returns the lock's seconds.
+   */
+  const escalate = async (userId: string, p: { id: string; name?: string }): Promise<number> => {
+    const level = await ctx.kv.incr(`pinlevel:${p.id}`, PIN_LEVEL_TTL_S);
+    await ctx.kv.set(`pinlevel:${p.id}`, String(level), PIN_LEVEL_TTL_S); // the level lives on from the latest lockout
+    const secs = pinLockSeconds(level);
+    await ctx.kv.set(`pinlock:${p.id}`, String(Date.now() + secs * 1000), secs);
+    await audit(ctx, userId, 'profile.pin_locked', p.id, { level, minutes: Math.round(secs / 60) });
+    if (level >= PIN_ALERT_LEVEL) {
+      const name = (await ctx.db.query<{ name: string }>('select name from users where id=$1', [userId])).rows[0]?.name ?? '';
+      await notifyAdmins(ctx, {
+        kind: 'pin_locked', title: m('notify.pin.locked.title', { profile: p.name ?? '', name }), body: m('notify.pin.locked.body'),
+        link: `/admin/users/${userId}`, dedupe: `pin-locked-${p.id}-${dayKey(new Date())}`,
+      }).catch(() => undefined);
+    }
+    return secs;
+  };
   /**
    * Checks a PIN. The attempt is counted atomically BEFORE verifying (concurrent guesses cannot race past the limit):
-   * 5 attempts per profile and 15 per account within 15 minutes; beyond that the PIN is not even verified.
-   * The 5th wrong attempt already answers 429. A correct PIN resets the profile counter.
+   * 5 attempts per profile and 15 per account within 15 minutes; beyond that the PIN is not even verified (the floor). On top, each
+   * time a profile reaches the 5th wrong attempt its lock escalates (15 min, then doubling up to 24 h, see escalate); while that lock
+   * runs nothing is counted or verified. The 5th wrong attempt already answers 429. A correct PIN resets the profile's counter and level.
    */
-  const checkPin = async (userId: string, p: { id: string; pin_hash: string | null }, given: string | undefined): Promise<'ok' | 'locked' | 'wrong' | 'missing'> => {
-    if (!given) return Number((await ctx.kv.get(`pinfail:${p.id}`)) ?? 0) >= PIN_MAX_FAILS ? 'locked' : 'missing';
+  type PinResult = 'ok' | 'wrong' | 'missing' | { locked: number };
+  const checkPin = async (userId: string, p: { id: string; name?: string; pin_hash: string | null }, given: string | undefined): Promise<PinResult> => {
+    const left = await lockLeft(p.id);
+    if (left > 0) return { locked: left };
+    if (!given) return Number((await ctx.kv.get(`pinfail:${p.id}`)) ?? 0) >= PIN_MAX_FAILS ? { locked: 0 } : 'missing';
     const n = await ctx.kv.incr(`pinfail:${p.id}`, PIN_FAIL_TTL);
     const acct = await ctx.kv.incr(`pinfail-acct:${userId}`, PIN_FAIL_TTL);
-    if (n > PIN_MAX_FAILS || acct > ACCOUNT_MAX_FAILS) return 'locked';
+    if (n > PIN_MAX_FAILS || acct > ACCOUNT_MAX_FAILS) return { locked: 0 };
     if (verifyPin(given, p.pin_hash!)) {
-      await ctx.kv.del(`pinfail:${p.id}`);
+      await clearPinLockout(ctx, p.id);
       return 'ok';
     }
-    return n >= PIN_MAX_FAILS ? 'locked' : 'wrong';
+    return n >= PIN_MAX_FAILS ? { locked: await escalate(userId, p) } : 'wrong';
   };
-  /** `pinOf: 'owner'`: the owner profile's PIN was asked for (leaving a kids profile towards a profile without PIN) */
-  const pinReply = (reply: FastifyReply, r: 'locked' | 'wrong' | 'missing', owner = false) =>
-    r === 'locked' ? reply.code(429).send({ error: 'pin_locked', ...(owner ? { pinOf: 'owner' } : {}) })
-      : reply.code(403).send({ error: r === 'wrong' ? 'pin_wrong' : 'pin_required', ...(owner ? { pinOf: 'owner' } : {}) });
+  /**
+   * `pinOf: 'owner'`: the owner profile's PIN was asked for (leaving a kids profile towards a profile without PIN). A running escalated
+   * lock adds `retryAfter` (seconds) and the Retry-After header; the 15-minute windows alone add nothing.
+   */
+  const pinReply = (reply: FastifyReply, r: Exclude<PinResult, 'ok'>, owner = false) => {
+    const of = owner ? { pinOf: 'owner' } : {};
+    if (typeof r === 'object') {
+      if (r.locked > 0) reply.header('retry-after', String(r.locked));
+      return reply.code(429).send({ error: 'pin_locked', ...of, ...(r.locked > 0 ? { retryAfter: r.locked } : {}) });
+    }
+    return reply.code(403).send({ error: r === 'wrong' ? 'pin_wrong' : 'pin_required', ...of });
+  };
 
   app.put('/api/profiles/:id/pin', { ...pre, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => {
     const b = z.object({ pin: pin.nullable(), currentPin: pin.optional() }).parse(req.body);

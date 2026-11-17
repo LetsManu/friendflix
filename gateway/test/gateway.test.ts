@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { isTrustedPeer, setUntrustedPeers, watchUntrustedHost } from '../src/peers.js';
+import { isTrustedPeer, serviceHosts, setUntrustedPeers, watchUntrustedHost, watchUntrustedHosts } from '../src/peers.js';
 import { authClientIp, baseHeaders, blocksDirectStream, castHlsSubAllowed, compatPlaylist, createGateway, hlsAttrs, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
 import { UPSTREAMS } from '../src/upstream/index.js';
 
@@ -123,6 +123,8 @@ beforeAll(async () => {
     req.on('data', (c) => (b += c));
     req.on('end', () => {
       if (req.headers['x-internal-secret'] !== 's3cret-s3cret-s3cret') return void res.writeHead(403).end();
+      // the stream limit's claims (security audit G1; tested in stream-claim.test.ts): always granted here
+      if (req.url === '/internal/stream') return void res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
       const j = JSON.parse(b);
       authzBodies.push(b);
       if (j.ct !== undefined) {
@@ -265,6 +267,23 @@ describe('trusted proxy peers (peers.ts)', () => {
     answer = ['172.20.0.7'];
     for (const host of ['livetv.example.com', '192.0.2.10', '[::1]']) await watchUntrustedHost(host, { lookup }).ready;
     expect(isTrustedPeer('172.20.0.7')).toBe(true);
+  });
+  it('the media server and the bundled request service are never trusted proxies (watchUntrustedHosts)', async () => {
+    const addrs: Record<string, string[]> = { livetv: ['172.20.0.4'], jellyfin: ['172.21.0.5'], requests: ['172.21.0.6'] };
+    const lookup = async (h: string) => { const a = addrs[h]; if (!a) throw Object.assign(new Error('x'), { code: 'ENOTFOUND' }); return a; };
+    let hosts = ['livetv', 'jellyfin', 'requests'];
+    const w = watchUntrustedHosts(() => hosts, { lookup, intervalMs: 60_000 });
+    await w.ready;
+    for (const ip of ['172.20.0.4', '172.21.0.5', '172.21.0.6']) expect(isTrustedPeer(ip), ip).toBe(false);
+    expect(isTrustedPeer('172.18.0.1')).toBe(true);
+    hosts = ['livetv'];
+    await w.refresh();
+    expect(isTrustedPeer('172.21.0.5')).toBe(true);
+    expect(isTrustedPeer('172.20.0.4')).toBe(false);
+    w.stop();
+  });
+  it('serviceHosts keeps the single-label hosts of the URLs', () => {
+    expect(serviceHosts(['http://livetv:8090', 'http://jellyfin:8096', null, '', 'x', 'https://media.example.com', 'http://192.0.2.10:8096', 'http://requests:5055'])).toEqual(['livetv', 'jellyfin', 'requests']);
   });
 });
 

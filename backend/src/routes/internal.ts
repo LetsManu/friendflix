@@ -18,7 +18,8 @@ import { jfUserFor, resolveProfile } from '../profiles.js';
 import { isHomeAddress } from '../netaddr.js';
 import { effectiveRole, remoteBitrateCap } from '../roles.js';
 import { loadSession, sessionHash } from '../session.js';
-import { upstreamUri } from '../mediapath.js';
+import { claimStream, streamDeviceOf } from '../streamclaim.js';
+import { streamOfUri, upstreamUri } from '../mediapath.js';
 import { authzNginx } from '../metrics.js';
 import { getUserById } from '../users.js';
 import type { UserRow } from '../types.js';
@@ -85,7 +86,7 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     const role = (user ? await effectiveRole(ctx, user.role) : undefined) ?? (await effectiveRole(ctx, 'guest')); // admin overrides (Admin → Rollen) apply to media too
     const prof = user && !user.disabled ? await resolveProfile(ctx, user, s) : null; // no profile chosen yet (owner PIN) -> deny
     if (!user || !prof || !role) return null;
-    return { user, role, jfUser: jfUserFor(user, prof) };
+    return { user, role, jfUser: jfUserFor(user, prof), session: s };
   }
 
   async function lookup(sid: string): Promise<MediaAuth | null> {
@@ -150,6 +151,27 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     // no ip (an older gateway, or one that cannot tell) is ambiguous = remote
     const remote = body.data.ip === undefined || !isHomeAddress(body.data.ip, ctx.cfg.HOME_NETWORKS);
     return withoutRemoteCap(m, remote);
+  });
+
+  /**
+   * The stream limit where streams are served (security audit G1, streamclaim.ts): the gateway asks before it serves a playlist, segment
+   * or stream of a play session (memoised there for a few seconds). 200 { ok } keeps the stream counted; 429 { error: 'max_streams',
+   * max } = a new stream beyond the account's limit (the gateway passes the body on, as /api/playback/info answers it); 401 = no usable
+   * session. `ps` is the play session the request names (absent: the item stands for it). Rate limiting is off as for /internal/authz.
+   */
+  app.post('/internal/stream', { config: { rateLimit: false } }, async (req, reply) => {
+    if (!checkSecret(req, 'x-internal-secret', ctx.cfg.INTERNAL_SECRET)) return reply.code(403).send({ error: 'forbidden' });
+    const b = z.object({
+      sid: z.string().regex(/^[\w-]{20,80}$/),
+      itemId: z.string().regex(/^[0-9a-fA-F]{32}$/),
+      ps: z.string().regex(/^[\w-]{1,64}$/).optional(),
+    }).strict().safeParse(req.body);
+    if (!b.success) return reply.code(400).send({ error: 'bad_request' });
+    const id = await sessionIdentity(b.data.sid);
+    if (!id) return reply.code(401).send({ error: 'unauthenticated' });
+    reply.header('cache-control', 'no-store');
+    const r = await claimStream(ctx, id.user, { deviceId: streamDeviceOf(id.session.deviceId, b.data.sid), itemId: b.data.itemId, ps: b.data.ps });
+    return 'error' in r ? reply.code(429).send(r) : r;
   });
 
   /**
@@ -242,6 +264,17 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!uri) {
       authzNginx.inc({ result: 'path_denied' });
       return reply.code(403).send();
+    }
+    // the stream limit (security audit G1), as the gateway's /internal/stream: nginx knows only 2xx, 401 and 403, so a new stream
+    // beyond the limit is denied with 403 (the player was already told `max_streams` by /api/playback/info)
+    const stream = streamOfUri(uri);
+    if (stream) {
+      const id = await sessionIdentity(sid);
+      const r = id ? await claimStream(ctx, id.user, { deviceId: streamDeviceOf(id.session.deviceId, sid), itemId: stream.itemId, ps: stream.ps }) : null;
+      if (!r || 'error' in r) {
+        authzNginx.inc({ result: r ? 'max_streams' : 'unauthenticated' });
+        return reply.code(r ? 403 : 401).send();
+      }
     }
     authzNginx.inc({ result: 'ok' });
     return reply
