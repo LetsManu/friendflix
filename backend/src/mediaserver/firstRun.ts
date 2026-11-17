@@ -197,7 +197,8 @@ async function finishing({ ctx, m, status }: Step): Promise<Next> {
     if (sent === '0' && status.mediaserver?.container?.template === 'current') return 'done';
     const r = await startMediaJob(ctx, { op: 'finish-setup' }, null, {});
     if (!r.ok) {
-      if (r.error === 'busy' || r.error === 'not_available') return 'waiting';
+      // starting: the updater restarted and has not read the media status yet (it answers that until its first read ends)
+      if (r.error === 'busy' || r.error === 'not_available' || r.error === 'starting') return 'waiting';
       throw new StepFailed(r.error);
     }
     if ('job' in r) await ctx.kv.set(fk, r.job.id, WEEK);

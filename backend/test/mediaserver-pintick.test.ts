@@ -137,6 +137,19 @@ describe('mediaPinTick', () => {
     expect(await mediaPinTick(env.ctx, log)).toBe('started');
   });
 
+  it('a start refused while the updater has not read the media status yet (starting) is retried quietly', async () => {
+    const warns: Array<Record<string, unknown>> = [];
+    const log = { warn: (o: object) => { warns.push(o as Record<string, unknown>); } };
+    const real = env.ctx.fetchImpl;
+    env.ctx.fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => (new URL(String(input)).pathname === '/v1/mediaserver'
+      ? new Response(JSON.stringify({ error: 'starting' }), { status: 409 }) : real(input, init))) as typeof fetch;
+    try {
+      expect(await mediaPinTick(env.ctx, log)).toBe('idle');
+    } finally { env.ctx.fetchImpl = real; }
+    expect(warns).toEqual([]);
+    expect(await mediaPinTick(env.ctx, log)).toBe('started');
+  });
+
   it('without an updater (or one from before the media server) → off', async () => {
     const real = env.ctx.cfg;
     env.ctx.cfg = { ...real, UPDATER_URL: undefined };

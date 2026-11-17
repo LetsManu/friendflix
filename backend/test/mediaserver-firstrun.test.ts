@@ -114,11 +114,12 @@ const fake = {
   bodies: [] as Array<Record<string, any>>,
   /** the render nodes the gpu op detects */
   dri: [] as Array<Record<string, unknown>>,
-  /** ops the updater refuses (busy) */
+  /** ops the updater refuses (with refuseCode) */
   refuse: new Set<string>(),
+  refuseCode: 'busy',
 };
 const INTEL = [{ node: 'renderD129', gid: 44, vendor: 'intel' }];
-const resetFake = (kind = 'jellyfin') => Object.assign(fake, { media: media(kind), job: null, busy: false, bodies: [], dri: INTEL, refuse: new Set<string>() });
+const resetFake = (kind = 'jellyfin') => Object.assign(fake, { media: media(kind), job: null, busy: false, bodies: [], dri: INTEL, refuse: new Set<string>(), refuseCode: 'busy' });
 const opBodies = (op: string) => fake.bodies.filter((b) => b.op === op);
 
 const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -138,7 +139,7 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
   if (u.pathname !== '/v1/mediaserver') return j({ error: 'not_found' }, 404);
   fake.bodies.push(body);
   if (body.op === 'gpu') return j({ dri: fake.dri, nvidia: false });
-  if (fake.refuse.has(body.op)) return j({ error: 'busy' }, 409);
+  if (fake.refuse.has(body.op)) return j({ error: fake.refuseCode }, 409);
   fake.job = job(`mediaserver-${body.op === 'finish-setup' ? 'finish' : body.op}`);
   fake.busy = true;
   return j({ job: fake.job }, 202);
@@ -259,6 +260,26 @@ describe('managed media server first run', () => {
     expect(opBodies('finish-setup')).toHaveLength(1);
     expect(server.calls.filter((c) => c.path.startsWith('/Startup/'))).toEqual([]);
     expect((await env.pool.query("select meta from audit_log where action = 'mediaserver.action'")).rows.map((r) => r.meta)).toEqual([{ op: 'finish-setup' }]);
+  });
+
+  it('ferrofin: finish-setup refused while the updater has not read the media status yet (starting) waits, then runs', async () => {
+    resetFake('ferrofin');
+    server.wizardDone = true;
+    server.user = { name: 'friendflix-admin', password: PASSWORD };
+    await seed('ferrofin', 'applying');
+    appliedJob();
+    expect(await run('finishing')).toEqual(['first_run', 'api_key', 'libraries', 'libraries', 'libraries', 'hwaccel', 'finishing']);
+    fake.refuse.add('finish-setup');
+    fake.refuseCode = 'starting';
+    expect(await tick()).toBe('waiting');
+    expect(await tick()).toBe('waiting');
+    expect(await readManaged(env.pool)).toMatchObject({ setup: 'finishing', setupError: null });
+    fake.refuse.clear();
+    expect(await tick()).toBe('waiting'); // finish-setup started
+    expect(opBodies('finish-setup')).toHaveLength(3);
+    fake.job!.state = 'succeeded';
+    fake.busy = false;
+    expect(await tick()).toBe('done');
   });
 
   it('wizard_taken: someone else completed the wizard', async () => {

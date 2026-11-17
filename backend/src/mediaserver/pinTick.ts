@@ -57,8 +57,9 @@ export async function mediaPinTick(ctx: Ctx, log?: TickLog): Promise<'off' | 'id
   const r = await startMediaJob(ctx, { op: 'update' }, null, { op: 'update', auto: true });
   if (r.ok) return 'started';
   if (r.error === 'busy') return 'busy';
-  // refused (no base, an outdated updater, …): tried again next tick; told at most once an hour per code
-  if (r.error !== 'not_available' && (await ctx.kv.setnx(warnKey(r.error), '1', 3_600).catch(() => false))) {
+  // refused (no base, an outdated updater, …): tried again next tick; told at most once an hour per code (not for an updater that is
+  // gone or has not read the media status yet since it started: both pass on their own)
+  if (r.error !== 'not_available' && r.error !== 'starting' && (await ctx.kv.setnx(warnKey(r.error), '1', 3_600).catch(() => false))) {
     log?.warn({ code: r.error }, 'automatic media server update could not start');
   }
   return 'idle';
