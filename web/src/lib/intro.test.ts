@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_INTRO, introKey, isIntroFreeRoute, parseIntroSettings, shouldPlayIntro, shouldPlayIntroSound } from './intro';
+import { DEFAULT_LOADED, type LoadedBrand } from './brand';
+import { decideIntroMark, introMarkSource, preloadMark, preloadMarkCancelable, DEFAULT_INTRO, introKey, isIntroFreeRoute, parseIntroSettings, shouldPlayIntro, shouldPlayIntroSound } from './intro';
 
 const base = { setting: true, reducedMotion: false, route: '/', sessionSeen: false, tv: false };
 
@@ -50,4 +51,64 @@ describe('settings storage', () => {
     expect(parseIntroSettings('{"show":"x","sound":false}')).toEqual({ show: true, sound: false, soundExplicit: false });
   });
   it('route helper', () => expect(isIntroFreeRoute('/watch/1')).toBe(true));
+});
+
+describe('intro mark decision (brand present / absent / image failure)', () => {
+  const sym = `/api/public/brand/img/${'a'.repeat(64)}.png`;
+  const mk = (name: string, symbol?: string, logo?: string): LoadedBrand => ({ ...DEFAULT_LOADED, name, shortName: name, images: { ...(symbol ? { symbol } : {}), ...(logo ? { logo } : {}) } });
+  const wide = `/api/public/brand/img/${'b'.repeat(64)}.png`;
+
+  it('no branding: the built-in mark, nothing to preload', () => {
+    expect(introMarkSource(DEFAULT_LOADED)).toBeNull();
+    expect(decideIntroMark(DEFAULT_LOADED, false)).toBe('builtin');
+  });
+  it('a custom name without a symbol: the initial, nothing to preload', () => {
+    expect(introMarkSource(mk('Moonbeam'))).toBeNull();
+    expect(decideIntroMark(mk('Moonbeam'), false)).toBe('initial');
+  });
+  it('a symbol: preloaded; the image once it loaded', () => {
+    expect(introMarkSource(mk('Moonbeam', sym))).toBe(sym);
+    expect(decideIntroMark(mk('Moonbeam', sym), true)).toBe('image');
+  });
+  it('a logo without a symbol: preloaded, shown as the logo; failed: the initial', () => {
+    expect(introMarkSource(mk('Moonbeam', undefined, wide))).toBe(wide);
+    expect(decideIntroMark(mk('Moonbeam', undefined, wide), true)).toBe('logo');
+    expect(decideIntroMark(mk('Moonbeam', undefined, wide), false)).toBe('initial');
+  });
+  it('the symbol wins over the logo', () => {
+    expect(introMarkSource(mk('Moonbeam', sym, wide))).toBe(sym);
+    expect(decideIntroMark(mk('Moonbeam', sym, wide), true)).toBe('image');
+  });
+  it('a symbol that failed: the initial for a custom name, the built-in mark for the default name', () => {
+    expect(decideIntroMark(mk('Moonbeam', sym), false)).toBe('initial');
+    expect(decideIntroMark(mk('FriendFlix', sym), false)).toBe('builtin');
+  });
+});
+
+describe('preloadMark', () => {
+  it('resolves true on load, false on error and on timeout', async () => {
+    const make = (fire: 'load' | 'error' | 'never') => class { onload: (() => void) | null = null; onerror: (() => void) | null = null; decoding = ''; set src(_: string) { queueMicrotask(() => { if (fire === 'load') this.onload?.(); else if (fire === 'error') this.onerror?.(); }); } };
+    expect(await preloadMark('/x.png', make('load') as never, 50)).toBe(true);
+    expect(await preloadMark('/x.png', make('error') as never, 50)).toBe(false);
+    expect(await preloadMark('/x.png', make('never') as never, 20)).toBe(false);
+    expect(await preloadMark('/x.png', undefined as never, 20)).toBe(false);
+  });
+  it('waits for decode() after load; a failing decode still counts as ready', async () => {
+    const make = (decode: () => Promise<void>) => class { onload: (() => void) | null = null; onerror: (() => void) | null = null; decoding = ''; decode = decode; set src(_: string) { queueMicrotask(() => this.onload?.()); } };
+    let decoded = false;
+    expect(await preloadMark('/x.png', make(async () => { await Promise.resolve(); decoded = true; }) as never, 50)).toBe(true);
+    expect(decoded).toBe(true);
+    expect(await preloadMark('/x.png', make(() => Promise.reject(new Error('x'))) as never, 50)).toBe(true);
+  });
+  it('cancel() stops the timer and the handlers: the promise never settles', async () => {
+    const made: { onload: (() => void) | null }[] = [];
+    const C = class { onload: (() => void) | null = null; onerror: (() => void) | null = null; decoding = ''; constructor() { made.push(this); } set src(_: string) { /* pending */ } };
+    const h = preloadMarkCancelable('/x.png', C as never, 20);
+    let settled = false;
+    void h.promise.then(() => { settled = true; });
+    h.cancel();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(settled).toBe(false);
+    expect(made[0]!.onload).toBeNull();
+  });
 });
