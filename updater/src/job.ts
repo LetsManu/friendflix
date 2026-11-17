@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import { StepError, type ImageInfo, type LivetvContainer } from './docker.js';
 import { FF_SERVICES, LIVETV_SERVICE, SELF_SERVICE, SHA_TAG_RE, channelTag, shaTag, type Channel, type LivetvOp } from './policy.js';
-import { MEDIA_ERRORS, MEDIA_STEPS, type MediaJobAction } from './mediaserver/types.js';
+import { MEDIA_ERRORS, MEDIA_STEPS, type MediaError, type MediaJobAction } from './mediaserver/types.js';
 import { LIVETV_ERRORS, type Job, type JobAction, type JobState, type LivetvError, type LivetvState, type MediaState, type State, type StateStore, type StepName } from './state.js';
 
 /** what an update does with livetv at a tag: nothing (not enabled), start it (pulled and verified), or drop it for this reason */
@@ -57,6 +57,12 @@ export interface UpdaterOpts {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   log?: JobLog;
+  /**
+   * the managed media server's phase of an update job (MediaJobs.phase): runs once FriendFlix's own health check passed, never in
+   * a rollback job and never when the update rolls back. A code = the media server failed (and was rolled back on its own): the
+   * job ends `succeeded_mediaserver_failed`; 'ok' or null (nothing to do) = `succeeded`.
+   */
+  mediaPhase?: (job: Job) => Promise<'ok' | MediaError | null>;
 }
 
 export type StartResult = { ok: true; job: Job } | { ok: false; error: 'busy' | 'no_target' | 'no_previous' };
@@ -79,7 +85,8 @@ export class Updater {
   readonly log: JobLog;
   private state: State;
   private current: Promise<void> | null = null;
-  private readonly o: Required<Omit<UpdaterOpts, 'log'>>;
+  private readonly o: Required<Omit<UpdaterOpts, 'log' | 'mediaPhase'>>;
+  private readonly mediaPhase: UpdaterOpts['mediaPhase'];
 
   constructor(private readonly ops: Ops, private readonly store: StateStore, opts: UpdaterOpts = {}) {
     this.o = {
@@ -88,6 +95,7 @@ export class Updater {
       sleep: opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))), now: opts.now ?? Date.now,
     };
     this.log = opts.log ?? new JobLog(200, this.o.now);
+    this.mediaPhase = opts.mediaPhase;
     this.state = store.load();
     this.recover();
   }
@@ -99,6 +107,11 @@ export class Updater {
     if (j.action === 'self-update' && j.step === 'restart') {
       j.steps.restart = 'ok'; j.steps.health = 'ok'; j.step = null; j.state = 'succeeded';
       this.log.add(`self-update to ${j.to} finished`);
+    } else if (j.action === 'update' && j.steps.health === 'ok' && j.steps.rollback !== 'running' && j.media) {
+      // interrupted in the media server phase: FriendFlix itself was already updated
+      if (j.media.step) j.media.steps[j.media.step] = 'failed';
+      j.state = 'succeeded_mediaserver_failed'; j.error = 'interrupted';
+      this.log.add(`job ${j.action} was interrupted by a restart in the media server phase`);
     } else {
       if (j.step) j.steps[j.step] = 'failed';
       if (j.media?.step) j.media.steps[j.media.step] = 'failed';
@@ -372,7 +385,7 @@ export class Updater {
       this.state.current = job.to;
       const newTag = shaTag(newSha);
       if (prevTag && prevTag !== newTag) this.state.previous = prevTag;
-      return this.finishJob(job, 'succeeded', null);
+      this.persist();
     } catch (e) {
       const code = (e as StepError).code;
       if (!autoRollback || !prevTag) return this.finishJob(job, 'failed', code);
@@ -388,6 +401,20 @@ export class Updater {
       } catch {
         return this.finishJob(job, 'failed', 'rollback_failed');
       }
+    }
+    // FriendFlix is healthy on the new build: the media server follows (its failure never rolls FriendFlix back); never in a rollback
+    const media = job.action === 'update' ? await this.runMediaPhase(job) : null;
+    return media ? this.finishJob(job, 'succeeded_mediaserver_failed', media) : this.finishJob(job, 'succeeded', null);
+  }
+
+  /** the media phase's code when it failed; null when it succeeded or had nothing to do */
+  private async runMediaPhase(job: Job): Promise<MediaError | null> {
+    if (!this.mediaPhase) return null;
+    try {
+      const r = await this.mediaPhase(job);
+      return r === 'ok' ? null : r;
+    } catch {
+      return 'helper_failed';
     }
   }
 

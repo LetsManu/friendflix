@@ -98,7 +98,7 @@ function renderNodes(a: Obj): Array<{ node: string; gid: number; vendor: string 
 
 interface Runner { project: string; image: string }
 /** a managed container found under the real name */
-interface Existing { id: string; kind: Kind | null; running: boolean }
+export interface Existing { id: string; kind: Kind | null; running: boolean }
 interface Ctx { project: string; facts: EngineFacts; runner: Runner; base: NonNullable<MediaState['base']>; pin: Pin; old: Existing | null; dataExists: boolean }
 /** what a deploy changed so far (for the rollback) */
 interface Changes { stopped: boolean; renamed: boolean; newId: string | null; started: boolean; snapshot: { id: string; kind: Kind } | null }
@@ -148,6 +148,86 @@ export class MediaJobs {
   rebase(spec: DesiredSpec): StartResult {
     if (this.u.busy) return { ok: false, error: 'busy' };
     return this.job('mediaserver-apply', (job) => this.deploy(job, spec, { reason: 'update' }));
+  }
+
+  /** the supervisor's recreate of a container that should run but is missing (`mediaserver-recover`) */
+  recover(): StartResult {
+    if (this.u.busy) return { ok: false, error: 'busy' };
+    if (!this.u.mediaState().desired) return NO_TARGET;
+    return this.job('mediaserver-recover', (job) => this.deploy(job, specOf(this.desired()), { reason: 'recover' }));
+  }
+
+  /**
+   * The media server phase of a FriendFlix update (spec "Images and updates"), inside the update job once its health check passed:
+   * the pins of the new backend build are read and their source recorded; the container is recreated when its pin moved or the
+   * template would build it differently (`update_pending`: a template or render gid change, F22). null = nothing to do (no managed
+   * server, or one stopped on purpose: its status keeps the pending update); a code = the deploy failed and undid itself.
+   */
+  async phase(job: Job): Promise<'ok' | MediaError | null> {
+    const m = this.u.mediaState();
+    if (!m.desired || !m.container || !m.desired.run) return null;
+    const read: PinRead = await this.d.pins().catch((): PinRead => ({ error: 'no_backend' }));
+    // a pin read that failed goes into the deploy, whose check reports it with its code (nothing is changed)
+    if (!('error' in read)) {
+      this.u.updateMedia((s) => { s.pinSource = read.source; });
+      if (read.pins[m.desired.kind]?.digest === m.container.digest && (await this.templateState()) !== 'update_pending') return null;
+    }
+    try {
+      await this.deploy(job, specOf(m.desired), { reason: 'update' });
+      return 'ok';
+    } catch (e) {
+      return codeOf(e, 'helper_failed');
+    }
+  }
+
+  /**
+   * whether the running container is what the template builds now from the desired spec, its own image and the host's current
+   * render gids (spec hash label against a fresh build); null when that cannot be told (no recorded container, no answer)
+   */
+  async templateState(): Promise<'current' | 'update_pending' | null> {
+    const m = this.u.mediaState();
+    if (!m.desired || !m.container || !m.base) return null;
+    try {
+      const { project, runner } = await this.ready();
+      const i = await this.engine.inspectContainer(names(project).container);
+      if (!i || !this.labelled(i, project)) return null;
+      const running = labelsOf(i)['friendflix.spec'];
+      const image = isObj(i.Config) ? i.Config.Image : undefined;
+      if (typeof running !== 'string' || typeof image !== 'string') return null;
+      const gids = await this.renderGids(runner, m.desired);
+      const want = containerSpec(specOf(m.desired), { project, image, renderGids: gids, baseVolume: m.base.volume });
+      return (want.body.Labels as Obj)['friendflix.spec'] === running ? 'current' : 'update_pending';
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * the supervisor's periodic check that the base, the chosen folders and the chosen GPU are still there: `base_missing`,
+   * `folder_missing` (any folder code), `nvidia_missing`, `gpu_missing` or null. Throws when it cannot run at all.
+   */
+  async hostCheck(): Promise<MediaError | null> {
+    const m = this.u.mediaState();
+    if (!m.desired || !m.base) return null;
+    const { facts, runner } = await this.ready();
+    try {
+      if (!(await this.engine.inspectVolume(m.base.volume))) return 'base_missing';
+      await this.checkFolders(runner, userOf(m.desired), m.base.volume, m.desired.folders.map((f) => f.rel));
+      if (m.desired.gpu === 'nvidia' && !facts.nvidia) return 'nvidia_missing';
+      await this.renderGids(runner, m.desired);
+      return null;
+    } catch (e) {
+      const code = codeOf(e, 'helper_failed');
+      if (code === 'base_missing' || code === 'gpu_missing') return code;
+      if (FOLDER_CODES.includes(code)) return 'folder_missing';
+      throw e;
+    }
+  }
+
+  /** the gids of the host's render nodes, read through a helper as the given user (adoption tells render and media groups apart) */
+  async hostRenderGids(user: { uid: number; gid: number }): Promise<number[]> {
+    const { runner } = await this.ready();
+    return this.renderGids(runner, { ...user, mediaGid: null, gpu: 'dri' });
   }
 
   private desired(): Desired {
@@ -315,7 +395,7 @@ export class MediaJobs {
   }
 
   /** GPU `dri`: the distinct gids of the host's render nodes, read through the helper each time (a host update can change them) */
-  private async renderGids(r: Runner, d: DesiredSpec): Promise<number[]> {
+  private async renderGids(r: Runner, d: Pick<DesiredSpec, 'uid' | 'gid' | 'mediaGid' | 'gpu'>): Promise<number[]> {
     if (d.gpu !== 'dri') return [];
     let a: Obj;
     try { a = await this.helper(r, userOf(d), 'gpu', [], [{ kind: 'dri' }, { kind: 'drm' }]); } catch (e) { guardFirst(e); return fail('gpu_missing'); }
@@ -339,14 +419,14 @@ export class MediaJobs {
   }
 
   /** a container with both of our labels (managed media server, this project); null for anything else */
-  private labelled(i: Obj, project: string): Existing | null {
+  labelled(i: Obj, project: string): Existing | null {
     const l = labelsOf(i);
     if (l['friendflix.managed'] !== 'mediaserver' || l['friendflix.project'] !== project) return null;
     return { id: String(i.Id), kind: KINDS.find((k) => k === l['friendflix.kind']) ?? null, running: isObj(i.State) && i.State.Running === true };
   }
 
   /** the inspect guard with the user the container runs as and the image's own facts; any refusal is `managed_tampered` */
-  private async guardInspect(i: Obj, project: string, gpu: Gpu | undefined): Promise<void> {
+  async guardInspect(i: Obj, project: string, gpu: Gpu | undefined): Promise<void> {
     const user = /^([0-9]{1,5}):([0-9]{1,5})$/.exec(isObj(i.Config) && typeof i.Config.User === 'string' ? i.Config.User : '') ?? fail('managed_tampered');
     const img = typeof i.Image === 'string' ? await this.engine.inspectImage(i.Image).catch(() => null) : null;
     try {

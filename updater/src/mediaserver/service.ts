@@ -180,7 +180,7 @@ export class MediaService {
     });
     this.d.updater.log.add('media base folder confirmed');
     // a replaced base volume that was never applied (neither the new one nor the one the container uses) is not needed any more
-    if (old && old.volume !== volume && old.volume !== previousVolume) await this.dropUnusedVolume(old.volume, r.project);
+    if (old && old.volume !== volume && old.volume !== previousVolume) await this.dropBaseVolume(old.volume, r.project);
     // with a managed container the new base is applied at once: a recreate with the kept folders (Controller's call 4); the old base
     // volume goes when it succeeds
     return { result: 'ok', path: pending.path, ...split, job: this.recreate() };
@@ -194,12 +194,24 @@ export class MediaService {
     return started.ok ? started.job : null;
   }
 
-  /** best effort: only a base volume of this project, errors are swallowed */
-  private async dropUnusedVolume(name: string, project: string): Promise<void> {
+  /**
+   * best effort: only a base volume of this project, never while the media server or the container left aside mounts it (Docker
+   * refuses any other user); a failure is swallowed with one fixed log line
+   */
+  private async dropBaseVolume(name: string, project: string): Promise<void> {
     try {
       const v = await this.d.engine.inspectVolume(name);
-      if (v?.labels['friendflix.managed'] === 'mediaserver-base' && v.labels['friendflix.project'] === project) await this.d.engine.removeVolume(name);
-    } catch { /* the next confirm tries again */ }
+      if (v?.labels['friendflix.managed'] !== 'mediaserver-base' || v.labels['friendflix.project'] !== project) return;
+      const n = names(project);
+      for (const c of [n.container, n.old]) {
+        const i = await this.d.engine.inspectContainer(c);
+        const mounts = isObj(i?.HostConfig) && Array.isArray(i.HostConfig.Mounts) ? i.HostConfig.Mounts : [];
+        if (mounts.some((m) => isObj(m) && m.Source === name)) throw new Error('in use');
+      }
+      await this.d.engine.removeVolume(name);
+    } catch {
+      this.d.updater.log.add('media base volume could not be removed');
+    }
   }
 
   private wrong(hash: string): ConfirmResult {
@@ -221,12 +233,20 @@ export class MediaService {
     return { kept: rels.filter((x) => found.get(x) === 'ok'), dropped: rels.filter((x) => found.get(x) !== 'ok') };
   }
 
-  /** base-clear: no code (it only narrows), but not while a managed container or a job exists */
-  clear(): { ok: true } | { error: 'container_exists' | 'busy' } {
+  /**
+   * base-clear: no code (it only narrows), but not while a managed container or a job exists. The base volume and the one a
+   * container last used go with it (only ours, never while mounted; see dropBaseVolume).
+   */
+  async clear(): Promise<{ ok: true } | { error: 'container_exists' | 'busy' }> {
     if (this.d.updater.busy) return { error: 'busy' };
-    if (this.d.updater.mediaState().container) return { error: 'container_exists' };
+    const before = this.d.updater.mediaState();
+    if (before.container) return { error: 'container_exists' };
     this.d.updater.updateMedia((m) => { m.base = null; m.pending = null; });
     this.d.updater.log.add('media base folder cleared');
+    if (!before.base) return { ok: true };
+    const project = (await this.d.facts().catch(() => null))?.project;
+    if (!project) { this.d.updater.log.add('media base volume could not be removed'); return { ok: true }; }
+    for (const v of new Set([before.base.volume, before.base.previousVolume])) if (v) await this.dropBaseVolume(v, project);
     return { ok: true };
   }
 

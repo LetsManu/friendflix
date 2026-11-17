@@ -40,11 +40,17 @@ function world(o: { facts?: Partial<EngineFacts>; answer?: (c: HelperCall) => An
   const updater = new Updater({} as Ops, store, { now: () => clock.t });
   let logs: string[] = [];
   let labels: Record<string, string> | null = { 'friendflix.managed': 'mediaserver', 'friendflix.project': 'friendflix' };
+  /** the volumes the containers under our names mount, and whether Docker refuses a volume removal */
+  const mounted: string[] = [];
+  const refuse = { removeVolume: false };
   const engine = {
     inspectVolume: async (name: string) => volumes.get(name) ?? null,
     createVolume: async (v: { Name: string; DriverOpts: Record<string, string>; Labels: Record<string, string> }) => { created.push(v); volumes.set(v.Name, { labels: v.Labels, options: v.DriverOpts }); },
-    removeVolume: async (name: string) => { removed.push(name); volumes.delete(name); },
-    inspectContainer: async () => (labels ? { Config: { Labels: labels } } : null),
+    removeVolume: async (name: string) => {
+      if (refuse.removeVolume) throw new EngineError(409, 'conflict');
+      removed.push(name); volumes.delete(name);
+    },
+    inspectContainer: async () => (labels ? { Config: { Labels: labels }, HostConfig: { Mounts: mounted.map((Source) => ({ Type: 'volume', Source })) } } : null),
     logs: async () => logs,
   } as unknown as Engine;
   const answer = o.answer ?? ((c: HelperCall): Answer => {
@@ -67,7 +73,7 @@ function world(o: { facts?: Partial<EngineFacts>; answer?: (c: HelperCall) => An
     },
   });
   return {
-    svc, updater, clock, printed, helperCalls, created, removed, volumes, store,
+    svc, updater, clock, printed, helperCalls, created, removed, volumes, store, mounted, refuse,
     setLogs: (l: string[]) => { logs = l; },
     setLabels: (l: Record<string, string> | null) => { labels = l; },
     /** the code of the last printed line */
@@ -320,16 +326,53 @@ describe('base-clear', () => {
     await w.svc.confirm(w.code());
     await w.svc.request('/srv/media');
     w.updater.updateMedia((m) => { m.container = { ...CONTAINER }; });
-    expect(w.svc.clear()).toEqual({ error: 'container_exists' });
+    expect(await w.svc.clear()).toEqual({ error: 'container_exists' });
     expect(w.updater.mediaState().base).not.toBeNull();
     w.updater.updateMedia((m) => { m.container = null; });
     let release!: () => void;
     w.updater.startMediaJob('mediaserver-stop', () => new Promise<void>((r) => { release = r; }));
-    expect(w.svc.clear()).toEqual({ error: 'busy' });
+    expect(await w.svc.clear()).toEqual({ error: 'busy' });
+    expect(w.removed).toEqual([]);
     release();
     await w.updater.idle();
-    expect(w.svc.clear()).toEqual({ ok: true });
+    expect(await w.svc.clear()).toEqual({ ok: true });
     expect(w.updater.mediaState()).toMatchObject({ base: null, pending: null });
+    expect(w.removed).toEqual([volumeOf('/srv/media')]);
+  });
+
+  it('clearing the base removes its volumes: only ours, never while mounted, failures only logged', async () => {
+    const ours = { 'friendflix.managed': 'mediaserver-base', 'friendflix.project': 'friendflix' };
+    const setup = (prevLabels: Record<string, string>) => {
+      const w = world();
+      w.volumes.set(volumeOf('/srv/media'), { labels: ours, options: { device: '/srv/media' } });
+      w.volumes.set(volumeOf(OLD_BASE), { labels: prevLabels, options: { device: OLD_BASE } });
+      w.updater.updateMedia((m) => { m.base = { path: '/srv/media', volume: volumeOf('/srv/media'), confirmedAt: new Date(T0).toISOString(), previousVolume: volumeOf(OLD_BASE) }; });
+      return w;
+    };
+    // the base volume and the one the last container used
+    const a = setup(ours);
+    expect(await a.svc.clear()).toEqual({ ok: true });
+    expect(a.removed).toEqual([volumeOf('/srv/media'), volumeOf(OLD_BASE)]);
+
+    // a volume of another project (or none of ours) stays
+    const b = setup({ ...ours, 'friendflix.project': 'other' });
+    await b.svc.clear();
+    expect(b.removed).toEqual([volumeOf('/srv/media')]);
+
+    // a volume a container under our names still mounts stays; the answer is ok, the log says so in a fixed line
+    const c = setup(ours);
+    c.mounted.push(volumeOf(OLD_BASE));
+    expect(await c.svc.clear()).toEqual({ ok: true });
+    expect(c.removed).toEqual([volumeOf('/srv/media')]);
+    expect(c.updater.log.tail().filter((l) => l.endsWith('media base volume could not be removed'))).toHaveLength(1);
+
+    // Docker refuses (another user of the volume): swallowed, logged, the base is cleared all the same
+    const d = setup(ours);
+    d.refuse.removeVolume = true;
+    expect(await d.svc.clear()).toEqual({ ok: true });
+    expect(d.updater.mediaState().base).toBeNull();
+    expect(d.updater.log.tail().filter((l) => l.endsWith('media base volume could not be removed'))).toHaveLength(2);
+    expect(d.updater.log.tail().join('\n')).not.toContain('/srv/');
   });
 });
 
