@@ -50,7 +50,6 @@ const es: Translation<typeof de> = {
   bell: {
     label: 'Notificaciones',
     unread: 'Notificaciones, {n} nuevas',
-    empty: 'No hay notificaciones',
   },
   account: {
     label: 'Menú de perfil',

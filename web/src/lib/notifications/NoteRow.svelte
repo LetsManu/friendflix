@@ -3,12 +3,15 @@
 <script lang="ts">
   /**
    * One row of the notifications center (spec variant B): a 40-px icon tile (colour by category) with the unread dot, the title
-   * with a count chip for a group, one body line, the relative time and at most one action link. The row itself is a button: it
-   * opens a group in place (its entries with date and time beneath) and marks it read. ✕ removes it (shown on hover or focus;
-   * always on touch, 44 px). `compact` (Mein Bereich): no ✕.
+   * with a count chip for a group, one body line, the relative time and at most one action link. The row itself is:
+   *   - a group: a button that opens it in place (its entries with date and time beneath) and marks it read;
+   *   - a single entry with a link: that link (marks it read; the action pill beside it is then for the pointer only);
+   *   - an unread single entry without a link: a button that marks it read (the focus then goes to its ✕);
+   *   - a read single entry without a link: plain text, nothing to press.
+   * ✕ removes it (shown on hover or focus; always on touch, 44 px). `compact` (Mein Bereich): no ✕.
    *   <NoteRow {group} open={…} on:toggle on:read on:hide on:follow />
    */
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, tick } from 'svelte';
   import Icon from '#lib/Icon.svelte';
   import { fmtDateTime, fmtRelative, locale, t } from '#lib/i18n';
   import { uid } from '#lib/ui/ids';
@@ -27,24 +30,39 @@
   /** the accessible name: title, count, "neu", time (the body is its description) */
   $: name = [group.title, many ? String(group.count) : '', group.unread ? $t('notes.newLabel') : '', when].filter(Boolean).join(', ');
   $: action = group.link ? $t(actionKeyOf(group.category, group.kind)) : '';
+  /** what the row itself is (see above) */
+  $: kind = many ? 'group' : group.link ? 'link' : group.unread ? 'mark' : 'still';
+  let row: HTMLLIElement, xBtn: HTMLButtonElement | undefined;
 
   function press() {
     if (many) dispatch('toggle', group.id);
     if (group.unread) dispatch('read', group.id);
+    // the button turns into plain text once read: the focus stays in the row
+    if (kind === 'mark') void tick().then(() => { if (!row?.contains(document.activeElement)) (xBtn ?? row)?.focus({ preventScroll: true }); });
   }
 </script>
 
-<li class="nr" class:compact class:unread={group.unread} data-group={group.id}>
-  <button type="button" class="main" aria-label={name} aria-describedby={group.body ? `${id}-b` : undefined} aria-expanded={many ? open : undefined}
-    aria-controls={many && open ? `${id}-i` : undefined} on:click={press}>
-    <span class="tile tone-{toneOf(group.category, group.kind)}" aria-hidden="true"><Icon name={iconOf(group.category)} size={20} />{#if group.unread}<i class="udot"></i>{/if}</span>
-    <span class="txt">
-      <span class="top"><b class="ti">{group.title}</b>{#if many}<span class="cnt" aria-hidden="true">{group.count}×</span>{/if}<time datetime={group.at} aria-hidden="true">{when}</time></span>
-      {#if group.body}<span class="bd" id="{id}-b">{group.body}</span>{/if}
-    </span>
-  </button>
-  {#if group.link}<a class="act" href={group.link} aria-label="{action}: {group.title}" on:click={() => dispatch('follow', group.id)}>{action}</a>{/if}
-  {#if !compact}<button type="button" class="x" aria-label="{$t('notes.remove')}: {group.title}" title={$t('notes.remove')} on:click={() => dispatch('hide', group.id)}><Icon name="x" size={16} /></button>{/if}
+{#snippet face(named: boolean)}
+  <span class="tile tone-{toneOf(group.category, group.kind)}" aria-hidden="true"><Icon name={iconOf(group.category)} size={20} />{#if group.unread}<i class="udot"></i>{/if}</span>
+  <span class="txt">
+    <span class="top"><b class="ti">{group.title}</b>{#if many}<span class="cnt" aria-hidden="true">{group.count}×</span>{/if}<time datetime={group.at} aria-hidden={named ? 'true' : undefined}>{when}</time></span>
+    {#if group.body}<span class="bd" id="{id}-b">{group.body}</span>{/if}
+  </span>
+{/snippet}
+
+<li class="nr" class:compact class:unread={group.unread} data-group={group.id} bind:this={row} tabindex="-1">
+  {#if kind === 'link'}
+    <a class="main" href={group.link} aria-label={name} aria-describedby={group.body ? `${id}-b` : undefined} on:click={() => dispatch('follow', group.id)}>{@render face(true)}</a>
+  {:else if kind === 'still'}
+    <div class="main still">{@render face(false)}</div>
+  {:else}
+    <button type="button" class="main" aria-label={name} aria-describedby={group.body ? `${id}-b` : undefined} aria-expanded={many ? open : undefined}
+      aria-controls={many && open ? `${id}-i` : undefined} on:click={press}>{@render face(true)}</button>
+  {/if}
+  <!-- beside a row that is its link already, the action pill is for the pointer only (one stop per row for the keyboard) -->
+  {#if group.link}<a class="act" href={group.link} aria-label="{action}: {group.title}" tabindex={kind === 'link' ? -1 : undefined} aria-hidden={kind === 'link' ? 'true' : undefined}
+    on:click={() => dispatch('follow', group.id)}>{action}</a>{/if}
+  {#if !compact}<button type="button" class="x" bind:this={xBtn} aria-label="{$t('notes.remove')}: {group.title}" title={$t('notes.remove')} on:click={() => dispatch('hide', group.id)}><Icon name="x" size={16} /></button>{/if}
   {#if many && open}
     <ul class="items" id="{id}-i">
       {#each group.items as it (it.id)}<li><span class="it">{it.title}</span><time datetime={it.at}>{fmtDateTime(it.at)}</time></li>{/each}
@@ -57,8 +75,11 @@
   .nr { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 40px; column-gap: 2px; padding: 2px 0; list-style: none; }
   .nr.compact { grid-template-columns: minmax(0, 1fr); }
   .main { grid-column: 1; grid-row: 1; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; width: 100%; min-height: 44px; box-sizing: border-box;
-    padding: 10px 8px; margin: 0; border: 0; border-radius: 14px; background: transparent; color: #fff; text-align: left; font: inherit; cursor: pointer; }
-  .main:hover { background: rgba(255, 255, 255, .08); }
+    padding: 10px 8px; margin: 0; text-decoration: none; border: 0; border-radius: 14px; background: transparent; color: #fff; text-align: left; font: inherit; cursor: pointer; }
+  .main:hover { background: rgba(255, 255, 255, .08); text-decoration: none; }
+  .main.still { cursor: default; }
+  .main.still:hover { background: transparent; }
+  .nr:focus { outline: none; }
   .main:focus-visible, .act:focus-visible, .x:focus-visible { outline: 2px solid #fff; outline-offset: -2px; box-shadow: inset 0 0 0 4px var(--ring-dark); }
   .tile { position: relative; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; color: var(--tone); background: color-mix(in srgb, var(--tone) 20%, transparent); }
   .tone-ok { --tone: var(--ok, #4ade80); }

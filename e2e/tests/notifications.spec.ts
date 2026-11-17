@@ -50,8 +50,15 @@ test.describe('notifications center', () => {
     await expect(rowOf(page, TV).locator('.cnt')).toHaveText('6×');
     await expect(rowOf(page, TV).locator('button.main')).toHaveAccessibleName(new RegExp(`^${TV}, 6, neu, `));
     await expect(rowOf(page, TV).getByRole('link', { name: `Geräte prüfen: ${TV}` })).toHaveAttribute('href', '/devices');
-    // no action without a link
-    await expect(rowOf(page, 'Neues Achievement: Nachteule').getByRole('link')).toHaveCount(0);
+    // a single entry with a link is that link (its action pill is for the pointer only); a read one without a link is plain text
+    const dl = rowOf(page, 'Nordlicht ist bereit');
+    await expect(dl.getByRole('link', { name: /^Nordlicht ist bereit, neu, / })).toHaveAttribute('href', '/downloads');
+    await expect(dl.getByRole('link', { name: 'Ansehen: Nordlicht ist bereit' })).toHaveCount(0);
+    await expect(dl.locator('a.act')).toHaveAttribute('tabindex', '-1');
+    const still = rowOf(page, 'Neues Achievement: Nachteule');
+    await expect(still.getByRole('link')).toHaveCount(0);
+    await expect(still.getByRole('button', { name: /Nachteule, / })).toHaveCount(0);
+    await expect(still.locator('.main')).toContainText('Fünf Filme nach Mitternacht.');
     // Alle, Ungelesen, then the categories with entries (none in "Sonstiges")
     await expect(s.getByRole('group', { name: 'Benachrichtigungen' }).getByRole('button')).toHaveText(['Alle', 'Ungelesen', 'Downloads', 'Geräte', 'Serien & Filme', 'Achievements', 'Live TV', 'System', 'Wünsche', 'Freunde']);
     await expect(s.getByRole('button', { name: 'Alle', exact: true })).toHaveAttribute('aria-pressed', 'true');
@@ -155,6 +162,35 @@ test.describe('notifications center', () => {
     expect(await box(row)).toEqual(before);
   });
 
+  test('an unread entry without a link: pressing it reads it, then it is plain text and the focus stays in the row', async ({ page, api }) => {
+    api.notes.entries.push({ id: 900, kind: 'achievement', category: 'achievements', title: 'Neues Achievement: Frühaufsteher', body: null, link: null, at: new Date().toISOString(), read: false, hidden: false });
+    await open(page);
+    const row = rowOf(page, 'Frühaufsteher');
+    await row.getByRole('button', { name: /^Neues Achievement: Frühaufsteher, neu, / }).click();
+    await expect(row.locator('div.main')).toBeVisible();
+    await expect(row.getByRole('button', { name: /Frühaufsteher, neu/ })).toHaveCount(0);
+    await expect(row.getByRole('button', { name: 'Entfernen: Neues Achievement: Frühaufsteher' })).toBeFocused();
+    await expect.poll(() => reads(api.log).length).toBe(1);
+    expect(api.notes.entries.find((e) => e.id === 900)!.read).toBe(true);
+  });
+
+  test('clearing everything brings the counts and chips up to date; undo brings them back', async ({ page }) => {
+    await open(page);
+    const s = sheet(page);
+    const chips = s.getByRole('group', { name: 'Benachrichtigungen' }).getByRole('button');
+    await s.getByRole('button', { name: 'Alles leeren' }).click();
+    await expect(rows(page)).toHaveCount(0);
+    await expect(s.getByTestId('notes-unread')).toHaveCount(0);
+    await expect(s.getByRole('button', { name: 'Alle gelesen' })).toBeDisabled();
+    await expect(chips).toHaveText(['Alle', 'Ungelesen']);
+    await expect(toasts(page).getByText('75 Mitteilungen entfernt')).toBeVisible();
+    await toasts(page).getByRole('button', { name: 'Rückgängig' }).click();
+    await expect(rowOf(page, TV)).toBeVisible();
+    await expect(s.getByTestId('notes-unread')).toHaveText('8 neu');
+    await expect(chips).toHaveCount(10);
+    await expect(s.getByRole('button', { name: 'Alle gelesen' })).toBeEnabled();
+  });
+
   test('Alle gelesen reads everything; the badge follows', async ({ page, api }) => {
     await open(page);
     await sheet(page).getByRole('button', { name: 'Alle gelesen' }).click();
@@ -202,6 +238,10 @@ test.describe('notifications center', () => {
   test('Escape closes and focus returns to the bell', async ({ page }) => {
     await open(page);
     await expect(sheet(page)).toBeFocused();
+    // Shift+Tab from the dialog itself stays inside: the last control
+    await page.keyboard.press('Shift+Tab');
+    await expect(sheet(page).getByRole('button', { name: 'Alles leeren' })).toBeFocused();
+    await sheet(page).focus();
     await page.keyboard.press('Tab');
     await expect(sheet(page).getByRole('link', { name: 'Einstellungen' })).toBeFocused();
     await page.keyboard.press('Escape');

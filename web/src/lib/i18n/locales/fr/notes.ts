@@ -33,6 +33,6 @@ const dict: Translation<typeof de> = {
   retry: 'Réessayer',
   settings: 'Paramètres',
   close: 'Fermer',
-  newLabel: 'nouveau',
+  newLabel: 'nouvelle',
 };
 export default dict;

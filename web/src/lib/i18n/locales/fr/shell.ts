@@ -54,7 +54,6 @@ const fr: Translation<typeof de> = {
   bell: {
     label: 'Notifications',
     unread: 'Notifications, {n} nouvelles',
-    empty: 'Aucune notification',
   },
   account: {
     label: 'Menu du profil',

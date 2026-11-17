@@ -10,7 +10,8 @@ const g = (id: string, over: Partial<FeedGroup> = {}): FeedGroup => ({ id, kind:
 const page = (sections: Array<[string, string[]]>, next: string | null = null, unread = 3): Feed => ({ sections: sections.map(([key, ids]) => ({ key, groups: ids.map((i) => g(i)) })), next, unread, categories: [] });
 const fake = (over: Partial<NotesApi> = {}): NotesApi => ({
   feed: vi.fn(async () => page([['today', ['a1']]])),
-  counts: vi.fn(async () => ({ unread: 0, categories: [] })),
+  // no count reload by default (it fails: the local counts stay), so the baseline tests see the store's own arithmetic
+  counts: vi.fn(async () => { throw new Error('no counts'); }),
   markRead: vi.fn(async () => ({ ok: true })),
   hide: vi.fn(async () => ({ undo: 'tok', n: 1 })),
   unhide: vi.fn(async () => ({ n: 1 })),
@@ -110,6 +111,39 @@ describe('notifications feed store', () => {
     expect(get(s).unread).toBe(2);
     s.reset();
     expect(get(s)).toMatchObject({ unread: 0, categories: [] });
+  });
+  it('a clear and its undo reload the counts from the server (entries on pages not loaded, categories gone)', async () => {
+    const feed = vi.fn(async () => ({ ...pageOf([bigGroup('a1', 1, { category: 'devices' })], 5, 'n'), categories: [{ key: 'devices' as const, n: 1 }, { key: 'series' as const, n: 9 }] }));
+    const counts = vi.fn().mockResolvedValueOnce({ unread: 0, categories: [{ key: 'series', n: 9 }] }).mockResolvedValueOnce({ unread: 5, categories: [{ key: 'devices', n: 1 }, { key: 'series', n: 9 }] });
+    const s = createFeed(fake({ feed, counts, hide: vi.fn(async () => ({ undo: 'tok', n: 5 })) }));
+    await s.load('all');
+    await s.hide({ category: 'unread' });
+    expect(counts).toHaveBeenCalledTimes(1);
+    expect(get(s)).toMatchObject({ unread: 0, categories: [{ key: 'series', n: 9 }] });
+    s.noteFresh(0);
+    expect(get(s).fresh).toBe(0);
+    await s.undo('tok');
+    expect(counts).toHaveBeenCalledTimes(2);
+    expect(get(s)).toMatchObject({ unread: 5, categories: [{ key: 'devices', n: 1 }, { key: 'series', n: 9 }] });
+    expect(ids(s)).toEqual([['today', ['a1']]]);
+  });
+  it('a count reload that answers after a reset is dropped', async () => {
+    const d = deferred<{ unread: number; categories: Array<{ key: 'series'; n: number }> }>();
+    const s = createFeed(fake({ counts: vi.fn(() => d.promise) }));
+    await s.load('all');
+    const h = s.hide({ groups: ['a1'] });
+    await Promise.resolve();
+    s.reset();
+    d.resolve({ unread: 7, categories: [{ key: 'series', n: 7 }] });
+    await h;
+    expect(get(s)).toMatchObject({ unread: 0, categories: [] });
+  });
+  it('a failed count reload keeps the local counts', async () => {
+    const s = createFeed(fake({ feed: vi.fn(async () => pageOf([bigGroup('a1', 2), bigGroup('a2', 1)], 3)), counts: vi.fn(async () => { throw new Error('x'); }) }));
+    await s.load('all');
+    await s.hide({ groups: ['a1'] });
+    expect(get(s).unread).toBe(1);
+    expect(get(s).error).toBeNull();
   });
   it('a failed first load and a failed more set error', async () => {
     const feed = vi.fn().mockRejectedValueOnce(new Error('x')).mockResolvedValueOnce(page([['today', ['a1']]], 'n')).mockRejectedValueOnce(new Error('x'));

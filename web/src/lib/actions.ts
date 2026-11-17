@@ -21,7 +21,7 @@ export function dialogKeys(node: HTMLElement, opts: { close: () => void; focusFi
     if (!f.length) { e.preventDefault(); return; }
     const first = f[0]!, last = f[f.length - 1]!, a = document.activeElement;
     if (!node.contains(a)) { e.preventDefault(); first.focus(); }
-    else if (e.shiftKey && a === first) { e.preventDefault(); last.focus(); }
+    else if (e.shiftKey && (a === first || a === node)) { e.preventDefault(); last.focus(); } // the dialog itself (its first focus) counts as the start
     else if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); }
   }
   node.addEventListener('keydown', onKey);

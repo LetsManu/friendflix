@@ -332,7 +332,7 @@ test.describe('header menus', () => {
     await expect(notes).toHaveAttribute('role', 'dialog');
     await expect(notes.getByRole('heading', { level: 2 })).toHaveText('Benachrichtigungen');
     await expect(bell).toHaveAttribute('aria-expanded', 'true');
-    const rows = notes.locator('li.nr > button.main');
+    const rows = notes.locator('li.nr > .main');
     await expect(rows.first()).toBeVisible();
     for (const r of (await rows.all()).slice(0, 8)) expect((await r.boundingBox())!.height).toBeGreaterThanOrEqual(43.5);
     const unread = notes.locator('li.nr.unread');

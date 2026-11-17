@@ -64,6 +64,18 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
   /** the page's unread baseline, mirrored into the state for the sheet's header */
   const setBase = (n: number) => { baseUnread = n; update((s) => (s.unread === n ? s : { ...s, unread: n })); };
   let epoch = 0; // bumped only by reset(): a newer person
+  /**
+   * The server's counts after a clear or its undo: the page only knows its own rows, so entries on pages not loaded (a clear by
+   * filter) and the categories that went or came back are read again. A failure keeps the local counts.
+   */
+  const recount = async (e0: number) => {
+    try {
+      const c = await api.counts();
+      if (e0 !== epoch) return;
+      setBase(c.unread);
+      update((s) => ({ ...s, categories: c.categories }));
+    } catch { /* the local counts stay */ }
+  };
   const prune = () => {
     const now = Date.now();
     for (const [token, h] of held) if (now - h.at >= UNDO_TTL_MS) held.delete(token);
@@ -167,6 +179,7 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
         const r = await api.hide(sel);
         // the answer time is no earlier than the server's: a token pruned by it is surely dead there
         if (e0 === epoch) held.set(r.undo, { at: Date.now(), removed: g0 === gen ? removed : null });
+        await recount(e0);
         return { undo: r.undo, n: r.n };
       } catch (e) {
         if (g0 === gen) { setBase(baseUnread + lowered); restore(removed); }
@@ -195,6 +208,7 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
         setBase(baseUnread + removed.reduce((n, r) => n + unreadOf(r.group), 0));
         restore(removed);
       } else await first(state.filter, true); // the rows are not on this page any more: show what the server has
+      await recount(e0);
       return true;
     },
   };
