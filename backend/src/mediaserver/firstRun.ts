@@ -3,7 +3,7 @@
 import { randomToken } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
 import { FALLBACK_LANGUAGE, instanceLanguage, type Language } from '../i18n.js';
-import { jellyfinSetup } from '../jellyfin/setup.js';
+import { MEDIA_SETUP } from '../media/setup.js';
 import { MediaSetupError } from '../media/types.js';
 import { containerTz } from '../routes/adminMediaserver.js';
 import { saveWithProbes } from '../routes/adminSettings.js';
@@ -120,7 +120,7 @@ async function apiKey({ ctx, m }: Step): Promise<Next> {
     if (probe.code !== 'unauthorized' && probe.code !== 'not_admin') throw new StepFailed(probe.code === 'timeout' ? 'unreachable' : probe.code);
   }
   const a = await admin(ctx, m);
-  const auto = jellyfinSetup.auto!;
+  const auto = MEDIA_SETUP.jellyfin!.auto!; // Ferrofin speaks Jellyfin's API
   const values = await auto.run({ url: MANAGED_URL, username: a.user, password: a.password }, { fetchImpl: ctx.fetchImpl, appVersion: ctx.cfg.APP_VERSION ?? 'dev' });
   const r = await saveWithProbes(ctx, values, { force: false, actor: null, allowedKeys: SETTING_KEYS });
   if ('errors' in r || 'probe' in r) {

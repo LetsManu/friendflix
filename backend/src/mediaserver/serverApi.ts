@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Config } from '../config.js';
-import { mediaBrowserHeader } from '../jellyfin/client.js';
+import { mediaBrowserHeader } from '../media/mediaBrowser.js';
 import { MediaSetupError } from '../media/types.js';
 import { smallJson } from '../settings/probeKit.js';
 import type { LibraryEntry } from './store.js';

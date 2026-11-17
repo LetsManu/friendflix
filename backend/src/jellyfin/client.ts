@@ -1,26 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
+import { mediaBrowserHeader } from '../media/mediaBrowser.js';
 import { MediaError } from '../media/types.js';
 import type { RoleTemplate } from '../roles.js';
 import { timed } from '../timing.js';
 
-/**
- * Jellyfin authorization header, e.g.
- * MediaBrowser Client="FriendFlix", Device="Portal", DeviceId="abc", Version="0.1.0", Token="..."
- * Values are stripped of quotes/newlines so they can never break out of the header.
- */
-export function mediaBrowserHeader(opts: { deviceId: string; token?: string; version?: string; device?: string }): string {
-  const esc = (v: string) => v.replace(/["\\\r\n]/g, '');
-  const parts: Array<[string, string]> = [
-    ['Client', 'FriendFlix'],
-    ['Device', opts.device ?? 'Portal'],
-    ['DeviceId', opts.deviceId],
-    ['Version', opts.version ?? '0.1.0'],
-  ];
-  if (opts.token) parts.push(['Token', opts.token]);
-  return 'MediaBrowser ' + parts.map(([k, v]) => `${k}="${esc(v)}"`).join(', ');
-}
+export { mediaBrowserHeader };
 
 export interface AuthResult {
   AccessToken: string;
