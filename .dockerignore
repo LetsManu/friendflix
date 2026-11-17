@@ -33,3 +33,10 @@ docs
 .zap
 test-vectors
 backend/test
+**/*.md
+gateway/test
+updater/test
+livetv/test
+**/tsconfig.test.json
+**/vitest.config.ts
+web/src/**/*.test.ts

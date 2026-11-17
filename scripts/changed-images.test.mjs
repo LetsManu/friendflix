@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import process from 'node:process';
 import { URL, fileURLToPath } from 'node:url';
 import { tmpRepo } from './test-helpers/tmp-repo.mjs';
-import { IMAGES, changedFiles, classify, imageCommits, isInput, loadMap, plan } from './changed-images.mjs';
+import { IMAGES, changedFiles, classify, copyGuard, docsGuard, docsReaders, imageCommits, isInput, loadMap, plan } from './changed-images.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./changed-images.mjs', import.meta.url));
 const REPO = fileURLToPath(new URL('..', import.meta.url));
@@ -307,4 +307,114 @@ test('CLI: an empty --pr-base on push is absent; pull_request without one fails'
   assert.match(ic.stdout, /^[0-9a-f]{40} \d+\n$/);
   assert.equal(run('image-commit', 'nope').status, 1);
   assert.equal(run('frobnicate').status, 1);
+});
+
+test('COPY guard: the real Dockerfiles are covered', () => {
+  assert.deepEqual(copyGuard(REPO, loadMap()), []);
+});
+
+test('COPY guard: an uncovered COPY source fails', () => {
+  const map = loadMap();
+  map.images.web.inputs = map.images.web.inputs.filter((p) => p !== 'codenames.json');
+  const problems = copyGuard(REPO, map);
+  assert.deepEqual(problems, ['web/Dockerfile: codenames.json → codenames.json is not an input']);
+  // an argsFrom path that names no tracked file would never trigger a rebuild
+  const args = loadMap();
+  args.images.gateway.argsFrom = ['version.jsn'];
+  assert.deepEqual(copyGuard(REPO, args), ['.github/images.json: gateway argsFrom version.jsn matches no tracked file']);
+});
+
+test('COPY guard: COPY forms (continuations, flags, globs, folders, --from, URLs) in a fixture repository', () => {
+  const r = tmpRepo();
+  r.commit('init', {
+    '.dockerignore': 'img/skip\n',
+    'img/Dockerfile': [
+      'FROM scratch',
+      '# COPY ignored/comment.txt /x',
+      'COPY --chown=1:1 \\',
+      '  img/a.txt img/dir /dst/',
+      'COPY --from=build /out/x /y',
+      'ADD https://example.com/x.deb /tmp/',
+      'COPY img/skip /s',
+      'COPY img/*.cfg /etc/',
+    ].join('\n'),
+    'img/a.txt': 'a', 'img/dir/b.txt': 'b', 'img/skip/c.txt': 'c', 'img/one.cfg': '1', 'img/Dockerfile.d': 'd',
+  });
+  const map = { exclude: [], full: [], groups: {}, images: { img: { dockerfile: 'img/Dockerfile', groups: [], inputs: ['img/a.txt'], argsFrom: [] } } };
+  assert.deepEqual(copyGuard(r.root, map), [
+    'img/Dockerfile: img/dir → img/dir/b.txt is not an input',
+    'img/Dockerfile: img/*.cfg → img/one.cfg is not an input',
+  ]);
+  map.images.img.inputs = ['img/**'];
+  assert.deepEqual(copyGuard(r.root, map), []);
+  // a heredoc or variable source cannot be resolved: fail closed
+  r.commit('var', { 'img/Dockerfile': 'COPY $SRC /x\nCOPY <<EOF /y\n' });
+  assert.equal(copyGuard(r.root, map).length, 2);
+});
+
+test('COPY guard: a file the build action reads must be in argsFrom', () => {
+  const r = tmpRepo();
+  const map = { exclude: [], full: [], groups: {}, images: { img: { dockerfile: 'img/Dockerfile', groups: [], inputs: ['img/**', 'version.json', 'extra.json'], argsFrom: ['version.json'] } } };
+  const action = (body) => ({ 'img/Dockerfile': 'FROM scratch\n', 'version.json': '{}', 'extra.json': '{}', 'scripts/tool.sh': '#', '.github/actions/build-image/action.yml': body });
+  // reads: a run operand, a $(…) operand, a with: file value; comments and a label string do not count
+  r.commit('ok', action([
+    'name: build',
+    '# reads extra.json in a comment only',
+    'runs:',
+    '  using: composite',
+    '  steps:',
+    '    - run: |',
+    '        # also extra.json in a comment',
+    '        v=$(jq -r .version version.json)',
+    '        echo "$v" # scripts/tool.sh named in a trailing comment',
+    '      shell: bash',
+    '    - uses: example/build@0000000000000000000000000000000000000000',
+    '      with:',
+    '        labels: |',
+    '          org.opencontainers.image.documentation=extra.json',
+    '        file: img/Dockerfile',
+  ].join('\n')));
+  assert.deepEqual(copyGuard(r.root, map), []);
+  r.commit('reads', action([
+    'runs:',
+    '  steps:',
+    '    - run: node scripts/tool.sh --in "./extra.json"',
+    '      shell: bash',
+  ].join('\n')));
+  assert.deepEqual(copyGuard(r.root, map), [
+    ".github/actions/build-image/action.yml: reads extra.json, which is in no image's argsFrom",
+    ".github/actions/build-image/action.yml: reads scripts/tool.sh, which is in no image's argsFrom",
+  ]);
+  map.images.img.argsFrom = ['version.json', 'extra.json', 'scripts/tool.sh'];
+  map.images.img.inputs.push('scripts/tool.sh');
+  assert.deepEqual(copyGuard(r.root, map), []);
+});
+
+test('docs-reader guard: every docs-reading test is in test:docs', () => {
+  assert.deepEqual(docsGuard(REPO), []);
+  const readers = docsReaders(REPO);
+  assert.ok(readers.includes('updater/test/livetv.test.ts'), 'the readers are found');
+  assert.ok(readers.includes('backend/test/syscheck.test.ts'));
+  assert.ok(!readers.some((f) => f.endsWith('.mjs')));
+});
+
+test('docs-reader guard: a reader missing from test:docs fails; literals decide, comments do not', () => {
+  const r = tmpRepo();
+  r.commit('init', {
+    'backend/package.json': JSON.stringify({ scripts: { 'test:docs': 'vitest run test/a.test.ts' } }),
+    'backend/test/a.test.ts': "it('x', () => read('docs/setup.md'));\n",
+    'backend/test/b.test.ts': "it('x', () => expect(link).toBe(`https://example.com/operations.md`));\n",
+    'backend/test/c.test.ts': "// see docs/setup.md and README.md\nit('x', () => expect(1).toBe(1));\n",
+    'backend/test/d.test.ts': "const re = /docs/; it('x', () => expect('mydocs').toBe('mydocs'));\n",
+  });
+  assert.deepEqual(docsReaders(r.root), ['backend/test/a.test.ts', 'backend/test/b.test.ts']);
+  assert.deepEqual(docsGuard(r.root), ['backend/package.json: test:docs does not run test/b.test.ts']);
+});
+
+test('docs/operations.md lists docker (x) for every required image and reproducible (x) for every required reproducible one', () => {
+  const text = readFileSync(join(REPO, 'docs/operations.md'), 'utf8');
+  for (const [name, def] of Object.entries(loadMap().images)) {
+    if (def.required) assert.ok(text.includes(`\`docker (${name})\``), `docker (${name})`);
+    if (def.required && def.reproducible) assert.ok(text.includes(`\`reproducible (${name})\``), `reproducible (${name})`);
+  }
 });

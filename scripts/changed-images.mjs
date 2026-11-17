@@ -7,6 +7,7 @@
  *   - an image's image commit is the newest first-parent commit that touched one of its inputs (a merge counts as the merge
  *     commit, a rename counts on both sides, a revert is a new commit); equal image commits mean equal inputs
  *   - the change classes (docs only, version.json, code, map/script → full) decide what test, e2e and dast run
+ * The guards (copyGuard, docsGuard) fail a build context or a docs reader that the map or `test:docs` does not cover.
  * Stage A only reports: a pull request compares the image commits at its base and its merge commit, every other event builds all.
  *
  * Usage:
@@ -25,6 +26,7 @@ import { parseArgs } from 'node:util';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MAP_FILE = '.github/images.json';
+const ACTION_FILE = '.github/actions/build-image/action.yml';
 /** the docs class; with version.json added it is the version class (both: docs-mode tests, no e2e, no dast) */
 const DOCS = ['docs/**', '**/*.md'];
 const VERSION_FILE = 'version.json';
@@ -234,6 +236,148 @@ export function plan({ root = ROOT, map = loadMap(root), event, sha, prBase, ful
   const [mode, reason] = full ? ['full', 'alles bauen'] : ['report', 'kein Vergleich (nur Bericht)'];
   const images = Object.fromEntries(names.map((n) => [n, entry(n, 'build', reason)]));
   return { v: 1, event, mode, sha: head, base: null, classes: ALL_FULL(reason), images };
+}
+
+/** every tracked file of the checkout (git ls-files) */
+function trackedFiles(root) {
+  return git(root, ['ls-files', '-z']).split('\0').filter(Boolean);
+}
+
+/** the COPY/ADD instructions of a Dockerfile as { line, sources }: continuation lines joined, comment lines dropped, `--flags` dropped,
+ *  the last argument (the destination) dropped; `--from=` copies and URL sources are not repository files and are skipped.
+ *  Forms the guard cannot expand (heredocs, `$` variables in a source) come back as `unresolved` so the guard fails closed. */
+function copyInstructions(text) {
+  const lines = [];
+  let pending = '';
+  for (const raw of text.split(/\r?\n/)) {
+    if (/^\s*#/.test(raw)) continue;
+    if (/\\\s*$/.test(raw)) { pending += raw.replace(/\\\s*$/, ' '); continue; }
+    lines.push(pending + raw);
+    pending = '';
+  }
+  if (pending) lines.push(pending);
+  const out = [];
+  for (const line of lines) {
+    const m = /^\s*(COPY|ADD)\s+(.*)$/i.exec(line);
+    if (!m) continue;
+    let args = m[2].trim();
+    if (args.startsWith('[')) {
+      try { args = JSON.parse(args).join(' '); } catch { out.push({ line, sources: [], unresolved: args }); continue; }
+    }
+    const words = args.split(/\s+/);
+    const flags = words.filter((w) => w.startsWith('--'));
+    if (flags.some((f) => f.startsWith('--from='))) continue;
+    const operands = words.filter((w) => !w.startsWith('--'));
+    const sources = operands.slice(0, -1).filter((s) => !/^[a-z][a-z0-9+.-]*:\/\//i.test(s));
+    const bad = sources.find((s) => s.startsWith('<<') || s.includes('$'));
+    out.push({ line, sources: bad ? [] : sources, ...(bad ? { unresolved: bad } : {}) });
+  }
+  return out;
+}
+
+/** the tracked files a COPY/ADD source takes: a file, a folder (everything under it) or a glob (`*`/`?` within one segment) */
+function expandSource(files, source) {
+  const src = source.replace(/^(\.?\/)+/, '').replace(/\/+$/, '');
+  if (src === '' || src === '.') return files;
+  if (!/[*?[]/.test(src)) return files.filter((f) => f === src || f.startsWith(`${src}/`));
+  const re = globRe(src);
+  return files.filter((f) => {
+    const parts = f.split('/');
+    return parts.some((_, i) => re.test(parts.slice(0, i + 1).join('/')));
+  });
+}
+
+/** the repository files the build action reads: operands of its (non-comment) `run:` lines and its `with:` file/context values;
+ *  YAML comments, labels and every other key are out of scope */
+function actionReads(text, tracked) {
+  const reads = new Set();
+  const known = new Set(tracked);
+  const take = (s) => {
+    for (const tok of s.split(/[\s"'`=,;|&()<>]+/)) {
+      const t = tok.replace(/^\.\//, '');
+      if (known.has(t)) reads.add(t);
+    }
+  };
+  let runIndent = -1;
+  for (const raw of text.split(/\r?\n/)) {
+    if (/^\s*#/.test(raw)) continue;
+    const line = raw.replace(/\s+#.*$/, '');
+    const indent = line.length - line.trimStart().length;
+    if (runIndent >= 0 && line.trim() !== '' && indent > runIndent) { take(line); continue; }
+    runIndent = -1;
+    const m = /^\s*(?:-\s+)?([A-Za-z_-]+):\s*(.*)$/.exec(line);
+    if (!m) continue;
+    const [, key, value] = m;
+    if (key === 'run') { runIndent = indent; take(value.replace(/^[|>][+-]?$/, '')); } else if (key === 'file' || key === 'context') take(value);
+  }
+  return [...reads].sort();
+}
+
+/** the guards that keep a missed image input from shipping a stale image. Problems as strings, empty = ok:
+ *   - every file a Dockerfile COPY/ADDs (after the `.dockerignore` drops) must be an input of that image
+ *   - every argsFrom file must be an input of its image and match a tracked file (a mistyped path would never trigger a rebuild)
+ *   - every tracked file the build action reads must be in some image's argsFrom */
+export function copyGuard(root = ROOT, map = loadMap(root)) {
+  const problems = [];
+  const files = trackedFiles(root);
+  const drops = dockerignoreDrops(root);
+  const matches = inputMatcher(map, root);
+  for (const [name, def] of Object.entries(map.images)) {
+    const dockerfile = join(root, def.dockerfile);
+    if (!existsSync(dockerfile)) { problems.push(`${def.dockerfile}: file not found`); continue; }
+    for (const { sources, unresolved } of copyInstructions(readFileSync(dockerfile, 'utf8'))) {
+      if (unresolved) problems.push(`${def.dockerfile}: ${unresolved} cannot be resolved statically`);
+      for (const source of sources) {
+        for (const file of expandSource(files, source)) {
+          if (!drops(file) && !matches(name, file)) problems.push(`${def.dockerfile}: ${source} → ${file} is not an input`);
+        }
+      }
+    }
+    for (const file of def.argsFrom ?? []) {
+      if (!matches(name, file)) problems.push(`${MAP_FILE}: ${name} argsFrom ${file} is not an input`);
+      if (!expandSource(files, file).length) problems.push(`${MAP_FILE}: ${name} argsFrom ${file} matches no tracked file`);
+    }
+  }
+  const action = join(root, ACTION_FILE);
+  if (existsSync(action)) {
+    // an image's Dockerfile is an input by itself (BuildKit reads it whatever the build passes in)
+    const fed = new Set(Object.values(map.images).flatMap((d) => [d.dockerfile, ...(d.argsFrom ?? [])]));
+    for (const file of actionReads(readFileSync(action, 'utf8'), files)) {
+      if (!fed.has(file)) problems.push(`${ACTION_FILE}: reads ${file}, which is in no image's argsFrom`);
+    }
+  }
+  return problems;
+}
+
+/** where docs readers live: the workspace test folders; a reader is a `*.test.ts` with a string literal containing `docs/` or a name ending `.md` */
+const DOCS_TEST_DIRS = ['backend/test', 'gateway/test', 'updater/test', 'livetv/test', 'web/src'];
+const DOCS_LITERAL = /(?:^|[^\w])docs\/|[\w-]+\.md(?![\w-])/;
+
+/** the tests that read documentation, as repository paths (sorted) */
+export function docsReaders(root = ROOT) {
+  const readers = [];
+  for (const file of trackedFiles(root)) {
+    if (!file.endsWith('.test.ts') || !DOCS_TEST_DIRS.some((d) => file.startsWith(`${d}/`))) continue;
+    const source = readFileSync(join(root, file), 'utf8');
+    const literals = source.match(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g) ?? [];
+    if (literals.some((l) => DOCS_LITERAL.test(l))) readers.push(file);
+  }
+  return readers.sort();
+}
+
+/** the docs readers missing from their workspace's `test:docs` script (`vitest run <files relative to the workspace>`) */
+export function docsGuard(root = ROOT) {
+  const problems = [];
+  const lists = new Map();
+  for (const file of docsReaders(root)) {
+    const ws = file.split('/')[0];
+    if (!lists.has(ws)) {
+      const pkg = JSON.parse(readFileSync(join(root, ws, 'package.json'), 'utf8'));
+      lists.set(ws, new Set(String(pkg.scripts?.['test:docs'] ?? '').replace(/^\s*vitest run\b/, '').split(/\s+/).filter(Boolean)));
+    }
+    if (!lists.get(ws).has(file.slice(ws.length + 1))) problems.push(`${ws}/package.json: test:docs does not run ${file.slice(ws.length + 1)}`);
+  }
+  return problems;
 }
 
 /** the plan as Markdown for $GITHUB_STEP_SUMMARY */
