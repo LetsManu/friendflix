@@ -157,33 +157,99 @@ describe('docker command lines', () => {
     expect(await d.docker.startedWith('../x')).toBeNull();
   });
 
-  it('verify: cosign gets the digest-pinned reference and the publish workflow identity, never a tag', async () => {
-    const { calls, docker } = fake((c) => (c.program === 'docker' ? { stdout: `["ghcr.io/letsmanu/friendflix-web@${D}"]\t["GIT_SHA=${'a'.repeat(40)}","APP_VERSION=1.2.3"]\n` } : {}));
-    expect(await docker.verify('ghcr.io/letsmanu/friendflix-web:latest')).toBe(true);
-    const cos = calls.find((c) => c.program === 'cosign')!;
-    expect(cos.args).toEqual(['verify', '--certificate-identity-regexp',
+  it('verify takes only own digest refs: cosign gets that reference and the publish workflow identity', async () => {
+    const { calls, docker } = fake();
+    const ref = `ghcr.io/letsmanu/friendflix-web@${D}`;
+    expect(await docker.verify(ref)).toBe(true);
+    expect(calls).toHaveLength(1); // nothing but cosign: the digest is the reference
+    expect(calls[0]!.program).toBe('cosign');
+    expect(calls[0]!.args).toEqual(['verify', '--certificate-identity-regexp',
       '^https://github\\.com/LetsManu/friendflix/\\.github/workflows/publish\\.yml@refs/(heads/main|tags/v[0-9]+\\.[0-9]+\\.[0-9]+)$',
-      '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com', `ghcr.io/letsmanu/friendflix-web@${D}`]);
-    expect(cos.env).toEqual({ PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp' });
+      '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com', ref]);
+    expect(calls[0]!.env).toEqual({ PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp' });
+    expect(await fake(() => ({ code: 1 })).docker.verify(ref)).toBe(false);
+    // a tag, another repository, a foreign image, garbage: false without any command
+    const none = fake();
+    for (const bad of ['ghcr.io/letsmanu/friendflix-web:latest', `ghcr.io/evil/friendflix-web@${D}`, `ghcr.io/letsmanu/friendflix-postgres@${D}`,
+      `ghcr.io/letsmanu/friendflix-web@sha256:short`, `ghcr.io/letsmanu/friendflix-web:latest@${D}`, '']) expect(await none.docker.verify(bad), bad).toBe(false);
+    expect(none.calls).toEqual([]);
   });
 
-  it('verify fails without a matching digest or when cosign fails', async () => {
-    expect(await fake(() => ({ stdout: `["ghcr.io/evil/friendflix-web@${D}"]\t[]` })).docker.verify('ghcr.io/letsmanu/friendflix-web:latest')).toBe(false);
-    expect(await fake((c) => (c.program === 'docker' ? { stdout: `["ghcr.io/letsmanu/friendflix-web@${D}"]\t[]` } : { code: 1 })).docker.verify('ghcr.io/letsmanu/friendflix-web:latest')).toBe(false);
-    expect(await fake(() => ({ code: 1 })).docker.verify('ghcr.io/letsmanu/friendflix-web:latest')).toBe(false);
+  it('verifyPulled: cosign gets the digest-pinned reference a local tagged image carries, never a tag', async () => {
+    const { calls, docker } = fake((c) => (c.program === 'docker' ? { stdout: `["ghcr.io/letsmanu/friendflix-web@${D}"]\t["GIT_SHA=${'a'.repeat(40)}","APP_VERSION=1.2.3"]\n` } : {}));
+    expect(await docker.verifyPulled('ghcr.io/letsmanu/friendflix-web:latest')).toBe(true);
+    const cos = calls.find((c) => c.program === 'cosign')!;
+    expect(cos.args.at(-1)).toBe(`ghcr.io/letsmanu/friendflix-web@${D}`);
+    expect(await fake(() => ({ stdout: `["ghcr.io/evil/friendflix-web@${D}"]\t[]` })).docker.verifyPulled('ghcr.io/letsmanu/friendflix-web:latest')).toBe(false);
+    expect(await fake((c) => (c.program === 'docker' ? { stdout: `["ghcr.io/letsmanu/friendflix-web@${D}"]\t[]` } : { code: 1 })).docker.verifyPulled('ghcr.io/letsmanu/friendflix-web:latest')).toBe(false);
+    expect(await fake(() => ({ code: 1 })).docker.verifyPulled('ghcr.io/letsmanu/friendflix-web:latest')).toBe(false);
+  });
+
+  it('pullDigest and tag run exactly these argv', async () => {
+    const { calls, docker } = fake();
+    await docker.pullDigest(`ghcr.io/letsmanu/friendflix-backend@${D}`);
+    await docker.tag(`ghcr.io/letsmanu/friendflix-backend@${D}`, 'ghcr.io/letsmanu/friendflix-backend:nightly');
+    await docker.pullDigest(`ghcr.io/letsmanu/friendflix-livetv@${D}`);
+    await docker.tag(`ghcr.io/letsmanu/friendflix-livetv@${D}`, 'ghcr.io/letsmanu/friendflix-livetv:sha-abc1234');
+    expect(calls.map((c) => [c.program, ...c.args])).toEqual([
+      ['docker', 'pull', '--quiet', `ghcr.io/letsmanu/friendflix-backend@${D}`],
+      ['docker', 'image', 'tag', `ghcr.io/letsmanu/friendflix-backend@${D}`, 'ghcr.io/letsmanu/friendflix-backend:nightly'],
+      ['docker', 'pull', '--quiet', `ghcr.io/letsmanu/friendflix-livetv@${D}`],
+      ['docker', 'image', 'tag', `ghcr.io/letsmanu/friendflix-livetv@${D}`, 'ghcr.io/letsmanu/friendflix-livetv:sha-abc1234'],
+    ]);
+    for (const c of calls) expect(c.env).toEqual({ PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp', PWD: '/srv/friendflix', DOCKER_HOST: 'tcp://docker-proxy:2375', DOCKER_CONFIG: '/tmp/.docker' });
+    await expect(fake(() => ({ code: 1 })).docker.pullDigest(`ghcr.io/letsmanu/friendflix-web@${D}`)).rejects.toMatchObject({ code: 'pull_failed' });
+    await expect(fake(() => ({ code: 1 })).docker.tag(`ghcr.io/letsmanu/friendflix-web@${D}`, 'ghcr.io/letsmanu/friendflix-web:latest')).rejects.toMatchObject({ code: 'tag_failed' });
+  });
+
+  it('another repository, a tag ref, a backend digest tagged as web are refused before any command', async () => {
+    const { calls, docker } = fake();
+    for (const ref of [`ghcr.io/evil/friendflix-web@${D}`, 'ghcr.io/letsmanu/friendflix-web:latest', `ghcr.io/letsmanu/friendflix-postgres@${D}`,
+      `ghcr.io/letsmanu/friendflix-web@sha256:${'C'.repeat(64)}`, `ghcr.io/letsmanu/friendflix-web:latest@${D}`, `docker.io/letsmanu/friendflix-web@${D}`, `--help`, ''])
+      await expect(docker.pullDigest(ref), ref).rejects.toThrow('invalid image');
+    const web = `ghcr.io/letsmanu/friendflix-web@${D}`, backend = `ghcr.io/letsmanu/friendflix-backend@${D}`;
+    for (const [ref, image] of [
+      [backend, 'ghcr.io/letsmanu/friendflix-web:latest'], // a backend digest tagged as web
+      [web, 'ghcr.io/evil/friendflix-web:latest'], [`ghcr.io/evil/friendflix-web@${D}`, 'ghcr.io/letsmanu/friendflix-web:latest'],
+      ['ghcr.io/letsmanu/friendflix-web:nightly', 'ghcr.io/letsmanu/friendflix-web:latest'], [web, 'ghcr.io/letsmanu/friendflix-web:edge'],
+      [web, `ghcr.io/letsmanu/friendflix-web@${D}`], [web, 'ghcr.io/letsmanu/friendflix-web'], [web, 'ghcr.io/letsmanu/friendflix-web:latest;id'],
+      [web, 'ghcr.io/letsmanu/friendflix-postgres:latest'], [web, ''],
+    ] as Array<[string, string]>) await expect(docker.tag(ref, image), `${ref} ${image}`).rejects.toThrow('invalid image');
+    expect(calls).toEqual([]);
+  });
+
+  it('imageInfo reads FF_IMAGE_COMMIT, else GIT_SHA', async () => {
+    const A = 'a'.repeat(40), B = 'b'.repeat(40);
+    const info = (env: string[]) => fake(() => ({ stdout: `["ghcr.io/letsmanu/friendflix-web@${D}"]\t${JSON.stringify(env)}` })).docker.imageInfo('ghcr.io/letsmanu/friendflix-web:latest');
+    expect(await info([`FF_IMAGE_COMMIT=${A}`, `GIT_SHA=${B}`, 'APP_VERSION=1.2.3'])).toEqual({ repoDigests: [`ghcr.io/letsmanu/friendflix-web@${D}`], commit: A, version: '1.2.3' });
+    expect(await info([`GIT_SHA=${B}`])).toMatchObject({ commit: B, version: null }); // an image from before FF_IMAGE_COMMIT
+    expect(await info(['FF_IMAGE_COMMIT=dev', `GIT_SHA=${B}`])).toMatchObject({ commit: null }); // a local build: no commit
+    expect(await info(['GIT_SHA=dev'])).toMatchObject({ commit: null });
+    expect(await info([`FF_IMAGE_COMMIT=${'A'.repeat(40)}`])).toMatchObject({ commit: null });
+    expect(await info([`FF_IMAGE_COMMIT=${A}x`])).toMatchObject({ commit: null });
+    expect(await info([])).toMatchObject({ commit: null });
   });
 
   it('ps, running image and image info', async () => {
-    const { docker } = fake((c) => {
+    const C = 'f'.repeat(64);
+    const { calls, docker } = fake((c) => {
       if (c.args.includes('ps')) return { stdout: [{ Service: 'backend', Name: 'friendflix-backend-1', State: 'running', Health: 'healthy' }, { Service: 'web', Name: 'friendflix-web-1', State: 'exited', Health: '' }].map((x) => JSON.stringify(x)).join('\n') };
-      if (c.args[0] === 'container') return { stdout: `${ID}\n` };
+      if (c.args[0] === 'container') return { stdout: `${C}\t${ID}\n` };
       return { stdout: `["ghcr.io/letsmanu/friendflix-backend@${D}"]\t["PATH=/x","GIT_SHA=${'a'.repeat(40)}","APP_VERSION=1.2.3"]` };
     });
     expect(await docker.ps()).toEqual([{ service: 'backend', name: 'friendflix-backend-1', state: 'running', health: 'healthy' }, { service: 'web', name: 'friendflix-web-1', state: 'exited', health: '' }]);
-    expect(await docker.running('backend')).toEqual({ repoDigests: [`ghcr.io/letsmanu/friendflix-backend@${D}`], gitSha: 'a'.repeat(40), version: '1.2.3' });
+    expect(await docker.running('backend')).toEqual({ repoDigests: [`ghcr.io/letsmanu/friendflix-backend@${D}`], commit: 'a'.repeat(40), version: '1.2.3', container: C });
+    expect(calls.find((c) => c.args[0] === 'container')!.args).toEqual(['container', 'inspect', '--format', '{{.Id}}\t{{.Image}}', 'friendflix-backend-1']);
+    expect(calls.at(-1)!.args).toEqual(['image', 'inspect', '--format', '{{json .RepoDigests}}\t{{json .Config.Env}}', ID]);
     expect(await docker.running('web')).toBeNull(); // not running
     expect(await docker.imageInfo('bad ref; id')).toBeNull();
     expect(await docker.containerImage('../x')).toBeNull();
+    // a container id or image id that is not one: nothing to tell
+    const run = (stdout: string) => fake((c) => (c.args.includes('ps') ? { stdout: JSON.stringify({ Service: 'backend', Name: 'friendflix-backend-1', State: 'running' }) } : c.args[0] === 'container' ? { stdout } : { stdout: '[]\t[]' })).docker.running('backend');
+    expect(await run(`${C}\tnot-an-id`)).toBeNull();
+    expect(await run(`short\t${ID}`)).toBeNull();
+    expect(await run(`${C}`)).toBeNull();
+    expect(await run(`${C}\t${ID}`)).toEqual({ repoDigests: [], commit: null, version: null, container: C });
   });
 
   it('ps tolerates an array answer and failures', async () => {

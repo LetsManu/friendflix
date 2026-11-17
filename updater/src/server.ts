@@ -338,7 +338,7 @@ export function servicesView(docker: Pick<Docker, 'psView' | 'containerImage' | 
       const st = ps.find((p) => p.service === service);
       const id = st ? await docker.containerImage(st.name) : null;
       const info: ImageInfo | null = id ? await docker.imageInfo(id) : null;
-      return { service, state: st?.state ?? 'missing', health: st?.health ?? '', sha: shaTag(info?.gitSha), version: info?.version ?? null };
+      return { service, state: st?.state ?? 'missing', health: st?.health ?? '', sha: shaTag(info?.commit), version: info?.version ?? null };
     }));
     cache = { at: now(), v };
     return v;
@@ -360,7 +360,7 @@ export function livetvView(docker: Pick<Docker, 'livetvContainer'>, ttlMs = 10_0
 /** the job's view of Docker: the fixed command lines of docker.ts and the health probe */
 export function dockerOps(docker: Docker, healthUrl: string, fetchImpl: typeof fetch = fetch): Ops {
   return {
-    images: (t, s) => docker.images(t, s), pull: (t, s) => docker.pull(t, s), verify: (i) => docker.verify(i), up: (t, s) => docker.up(t, s),
+    images: (t, s) => docker.images(t, s), pull: (t, s) => docker.pull(t, s), verify: (i) => docker.verifyPulled(i), up: (t, s) => docker.up(t, s),
     imageInfo: (r) => docker.imageInfo(r), running: (s) => docker.running(s), spawnSelfUpdate: (t) => docker.spawnSelfUpdate(t),
     healthy: healthProbe(docker, healthUrl, fetchImpl), composeFiles: () => docker.files,
     ownStack: async () => { await docker.refreshFiles(); },
@@ -421,7 +421,7 @@ export function start(env: NodeJS.ProcessEnv = process.env): Server {
 function mediaParts(cfg: ReturnType<typeof loadConfig>, docker: Docker, updater: Updater): { jobs: MediaJobs; supervisor: Supervisor; api: MediaApi } {
   const engine = new Engine(cfg.dockerHost);
   const facts = () => readFacts(engine, cfg.self);
-  const verifyImage = (ref: string) => docker.verify(ref);
+  const verifyImage = (ref: string) => docker.verifyPulled(ref);
   const deps: JobDeps = {
     engine, updater, facts, helper: runHelper, repo: cfg.repo, now: Date.now, verify: verifyImage,
     // the base code goes to stdout only (one line), never to the job log

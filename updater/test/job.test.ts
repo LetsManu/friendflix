@@ -12,7 +12,7 @@ function world(o: { verifyFails?: string; healthyTags?: string[]; pullFails?: bo
   const calls: string[] = [];
   let runningTag = 'old';
   const shaOf = (tag: string) => (tag === 'old' || tag === 'sha-aaaaaaa' ? OLD : NEW);
-  const info = (sha: string): ImageInfo => ({ repoDigests: o.digest ? [o.digest] : [], gitSha: sha, version: '1.0.0' });
+  const info = (sha: string): ImageInfo => ({ repoDigests: o.digest ? [o.digest] : [], commit: sha, version: '1.0.0' });
   const ops: Ops = {
     images: async (tag, services) => { calls.push(`images ${tag} ${services.join(',')}`); return Object.fromEntries(services.map((s) => [s, `ghcr.io/letsmanu/friendflix-${s === 'bootstrap' ? 'backend' : s}:${tag}`])); },
     pull: async (tag) => { calls.push(`pull ${tag}`); if (o.pullFails) throw new StepError('pull_failed'); },

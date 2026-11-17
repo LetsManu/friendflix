@@ -15,7 +15,7 @@ let release: () => void = () => {};
 let media: unknown;
 
 function ops(): Ops {
-  const info: ImageInfo = { repoDigests: [], gitSha: 'a'.repeat(40), version: '1.0.0' };
+  const info: ImageInfo = { repoDigests: [], commit: 'a'.repeat(40), version: '1.0.0' };
   return {
     images: async (tag, s) => Object.fromEntries(s.map((x) => [x, `ghcr.io/letsmanu/friendflix-${x}:${tag}`])),
     pull: async (tag) => { started.push(tag); await new Promise<void>((r) => { release = r; }); },
@@ -180,7 +180,7 @@ describe('health probe and service view', () => {
   it('service view is cached', async () => {
     let n = 0, t = 0;
     const d = { psView: async () => { n++; return [{ service: 'backend', name: 'ff-backend-1', state: 'running', health: 'healthy' }]; },
-      containerImage: async () => 'sha256:' + 'e'.repeat(64), imageInfo: async () => ({ repoDigests: [], gitSha: 'c'.repeat(40), version: '1.1.0' }) };
+      containerImage: async () => 'sha256:' + 'e'.repeat(64), imageInfo: async () => ({ repoDigests: [], commit: 'c'.repeat(40), version: '1.1.0' }) };
     const view = servicesView(d, 10_000, () => t);
     const v = await view();
     expect(v.find((s) => s.service === 'backend')).toEqual({ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-ccccccc', version: '1.1.0' });

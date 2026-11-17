@@ -12,7 +12,7 @@ const MIN = 60_000;
 
 /** FriendFlix's own update: everything pulls, verifies and gets healthy on the new build */
 function coreOps(): Ops {
-  const info = (sha: string): ImageInfo => ({ repoDigests: [], gitSha: sha, version: '1.0.0' });
+  const info = (sha: string): ImageInfo => ({ repoDigests: [], commit: sha, version: '1.0.0' });
   return {
     images: async (tag, services) => Object.fromEntries(services.map((s) => [s, `ghcr.io/letsmanu/friendflix-${s}:${tag}`])),
     pull: async () => undefined, verify: async () => true, up: async () => undefined,

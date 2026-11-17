@@ -271,7 +271,7 @@ export class Updater {
    * (dropLivetv) while the job goes on: livetv is optional and never fails or rolls back a core update.
    */
   private async bringUp(job: Job, tag: string, images: Record<string, string>, steps: boolean, livetv: LivetvPlan): Promise<string | null> {
-    const newSha = (await this.ops.imageInfo(images.backend!))?.gitSha ?? null;
+    const newSha = (await this.ops.imageInfo(images.backend!))?.commit ?? null;
     let ltUp = livetv === 'up';
     const restart = async () => {
       await this.ops.up(tag, FF_SERVICES);
@@ -369,7 +369,7 @@ export class Updater {
   private async deployJob(job: Job, autoRollback: boolean): Promise<void> {
     await this.reconcileLivetv();
     const before = await this.ops.running('backend').catch(() => null);
-    const prevTag = shaTag(before?.gitSha);
+    const prevTag = shaTag(before?.commit);
     if (prevTag) job.from = prevTag;
     let images: Record<string, string>;
     let livetv: LivetvPlan;
@@ -440,7 +440,7 @@ export class Updater {
    */
   private async livetvEnable(job: Job): Promise<void> {
     await this.reconcileLivetv();
-    const running = shaTag((await this.ops.running('backend').catch(() => null))?.gitSha);
+    const running = shaTag((await this.ops.running('backend').catch(() => null))?.commit);
     if (running && running !== job.to) { job.to = running; this.persist(); this.log.add(`livetv follows the running build ${running}`); }
     const wasEnabled = this.state.livetv === 'enabled';
     try {

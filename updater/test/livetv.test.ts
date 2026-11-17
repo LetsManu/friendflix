@@ -125,7 +125,9 @@ function world(o: WorldOpts = {}) {
           const nets = !peer ? { friendflix_default: {} } : o.noLivetvService || o.notAttached ? { friendflix_front: {} } : { friendflix_front: {}, friendflix_livetv: {} };
           return ok(`{}\t${JSON.stringify(nets)}\t${JSON.stringify(o.labels ?? LABELS)}`);
         }
-        if (f === '{{.Image}}') return ok(`${name.startsWith('friendflix-livetv-') ? (name.includes('run') ? OTHER_ID : ID) : OTHER_ID}\n`);
+        const image = name.startsWith('friendflix-livetv-') ? (name.includes('run') ? OTHER_ID : ID) : OTHER_ID;
+        if (f === '{{.Image}}') return ok(`${image}\n`);
+        if (f === '{{.Id}}\t{{.Image}}') return ok(`${'1'.repeat(64)}\t${image}\n`);
         if (f === '{{json .Config.Env}}') return ok('[]');
         return ok();
       }
