@@ -97,6 +97,8 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
   let elapsed = true;
   /** a progress report beyond the limit: forwarded (the position is kept), but no live record is rebuilt that the gateway would serve */
   let untracked = false;
+  /** this report wrote the live record that takes the slot: given back when the media server report fails (review round 2, a) */
+  let reserved = false;
   if (!live) {
     // Start takes a stream slot; so does a progress report that would rebuild an expired live record (security audit G1: a record
     // the client builds by reports alone must not open a stream beyond the limit). Not counted: the caller's own play session and its
@@ -118,10 +120,11 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
         const over = (await countStreams(ctx, user.id, { ps: [b.playSessionId], deviceId: who.deviceId, itemId: b.itemId })) >= role.maxStreams;
         if (over) return kind === 'Playing' ? { error: 'max_streams' as const, max: role.maxStreams } : 'untracked' as const;
         await setLive(ctx, fresh);
-        return 'ok' as const;
+        return 'reserved' as const;
       });
       if (typeof r === 'object') return r;
       untracked = r === 'untracked';
+      reserved = r === 'reserved';
     }
   } else if (live.type === undefined && live.itemId === b.itemId) {
     // a live record the cast token's touch made before the first report (cast.ts touch: item id and title only): the item's facts
@@ -141,11 +144,16 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
     const load = typeof rec.bitrate === 'number' && rec.bitrate > 0 && typeof rec.remote === 'boolean' ? { bitrate: rec.bitrate, remote: rec.remote } : {};
     live = { ...live, playMethod, ...(playMethod === 'transcode' && reason ? { transcodeReason: reason } : {}), deviceId: who.deviceId, serverUserId: who.jfUser.jellyfin_user_id, ...load };
   }
-  await ctx.jf.report(who.jfUser, {
-    event: kind === 'Playing' ? 'start' : kind === 'Playing/Stopped' ? 'stop' : 'progress',
-    itemId: b.itemId, mediaSourceId: b.mediaSourceId, playSessionId: b.playSessionId, positionTicks: ticks, paused: b.isPaused,
-    audioIndex: b.audioIndex, subtitleIndex: b.subtitleIndex, playMethod: b.playMethod,
-  });
+  try {
+    await ctx.jf.report(who.jfUser, {
+      event: kind === 'Playing' ? 'start' : kind === 'Playing/Stopped' ? 'stop' : 'progress',
+      itemId: b.itemId, mediaSourceId: b.mediaSourceId, playSessionId: b.playSessionId, positionTicks: ticks, paused: b.isPaused,
+      audioIndex: b.audioIndex, subtitleIndex: b.subtitleIndex, playMethod: b.playMethod,
+    });
+  } catch (e) {
+    if (reserved) await clearLive(ctx, user.id, b.playSessionId);
+    throw e;
+  }
   // device hand-off: what this device played for the profile, how far and when (best effort, never fails the report)
   if (who.profile && who.deviceId && !b.probe) {
     await noteHandoff(ctx, {

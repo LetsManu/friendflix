@@ -240,6 +240,18 @@ describe('stream limit at the gateway (/internal/stream)', () => {
     }
   });
 
+  it('a start whose media server report fails gives its reserved slot back (review round 2, a)', async () => {
+    await setUserLimits(env.ctx, userId, { ...NONE, maxStreams: 1 });
+    const spy = vi.spyOn(env.ctx.jf, 'report').mockRejectedValueOnce(new Error('media server down'));
+    try {
+      expect((await report(me, 'start', ITEMS[0]!, 'ps-f-0001')).statusCode).toBeGreaterThanOrEqual(500);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await env.kv.get(`play:${userId}:ps-f-0001`)).toBeNull();
+    expect((await claim(other, ITEMS[1]!, 'ps-f-0002')).statusCode).toBe(200);
+  });
+
   it('parallel claims of two new streams cannot both pass the last slot', async () => {
     await setUserLimits(env.ctx, userId, { ...NONE, maxStreams: 1 });
     const r = await Promise.all([claim(me, ITEMS[0]!, 'ps-r-0001'), claim(other, ITEMS[1]!, 'ps-r-0002')]);
