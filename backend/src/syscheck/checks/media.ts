@@ -56,6 +56,8 @@ export async function managedLine(env: CheckEnv, view: MediaView | null, updater
   if (!s) return managedKind ? bad(id, 'warning', 'managed_no_updater', o) : bad(id, 'not_set_up', 'managed_off', o);
   if (s.reason === 'engine_old') return c ? bad(id, 'problem', 'managed_engine_old', o) : bad(id, 'not_set_up', 'managed_engine_old', o);
   if (s.reason === 'no_logs') return bad(id, 'warning', 'managed_proxy_outdated', { ...o, docs: 'mediaserver.md#update-the-compose-files' });
+  // any other reason the updater cannot run the media server (no project, no media network, its engine unreachable): like no updater
+  if (!s.available) return managedKind ? bad(id, 'warning', 'managed_no_updater', o) : bad(id, 'not_set_up', 'managed_off', o);
   if (c?.tampered) return bad(id, 'problem', 'managed_tampered', o);
   if (s.desired?.run && c?.state !== 'running') return bad(id, 'problem', 'managed_down', o);
   if (c?.health === 'unhealthy') return bad(id, 'problem', 'managed_unhealthy', o);

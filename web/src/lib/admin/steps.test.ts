@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import { catchUp, jobFlow, progressOf, redeployFlow, type StepRow } from './steps';
-import { hasManagedMedia, installedOf, mergeView, shownActivity, tagText, type Redeploy, type UpdaterJob, type UpdaterStatus, type UpdaterView } from './updater';
+import { hasManagedMedia, installedOf, mediaPhaseMemo, mergeView, shownActivity, tagText, type Redeploy, type UpdaterJob, type UpdaterStatus, type UpdaterView } from './updater';
 
 // The one step list of Admin -> Update (StepList.svelte) is driven by these mappings only: an updater job, a Portainer redeploy
 // followed in the updater card, and the same redeploy record followed by the page without an updater.
@@ -161,9 +161,38 @@ describe('media server steps', () => {
       expect(ok.note).toMatchObject({ tone: 'ok', result: 'succeeded' });
       // FriendFlix itself rolled back: the phase never ran either
       const rb = jobFlow(job({ state: 'rolled_back', error: 'unhealthy', finishedAt: iso(80_000), steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'failed', rollback: 'ok' } }), { mediaPhase: true });
-      expect(rb.rows.map((r) => r.key)).toEqual(['pull', 'verify', 'restart', 'health', 'rollback', ...MEDIA_KEYS]);
-      expect(rb.rows.slice(5).every((r) => r.state === 'skipped')).toBe(true);
+      expect(rb.rows.map((r) => r.key)).toEqual(['pull', 'verify', 'restart', 'health', ...MEDIA_KEYS, 'rollback']);
+      expect(rb.rows.slice(4, 11).every((r) => r.state === 'skipped')).toBe(true);
+      expect(rb.rows.at(-1)).toMatchObject({ key: 'rollback', state: 'ok' });
       expect(rb).toMatchObject({ outcome: 'failed', count: 'Stopped at step 4 of 11', reserve: 0 });
+    });
+
+    it('FriendFlix\'s own rollback starting: the row keys differ only at the end (it takes the reserved slot, the media rows stay put)', () => {
+      const before = jobFlow(job({ step: 'health', steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'running', rollback: 'skipped' } }), { mediaPhase: true });
+      const after = jobFlow(job({ step: 'rollback', steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'failed', rollback: 'running' } }), { mediaPhase: true });
+      const keys = (f: typeof before) => f.rows.map((r) => r.key);
+      expect(keys(after).slice(0, keys(before).length)).toEqual(keys(before));
+      expect(keys(after).slice(keys(before).length)).toEqual(['rollback']);
+      // the slot it fills was reserved under the list from the start
+      expect([before.reserve, after.reserve]).toEqual([1, 0]);
+    });
+
+    it('decided once per job: a poll without the media server keeps the rows, a past job seen later gets none', () => {
+      const decide = mediaPhaseMemo();
+      const running = job({ id: '00000000000000a1' });
+      expect(decide(running, managed)).toBe(true);
+      // one poll without the media server's status: still listed
+      expect(decide(running, status({ mediaserver: null }))).toBe(true);
+      expect(decide({ ...running, state: 'succeeded' }, status())).toBe(true);
+      // a job first seen running without a managed media server keeps its four rows when one shows up later
+      const other = job({ id: '00000000000000a2' });
+      expect(decide(other, status())).toBe(false);
+      expect(decide(other, managed)).toBe(false);
+      // a past job found finished on load: no phase rows it never had
+      expect(decide(job({ id: '00000000000000a3', state: 'succeeded' }), managed)).toBe(false);
+      // a job that carries its phase always lists it
+      expect(decide(job({ id: '00000000000000a4', state: 'succeeded', media: media({ check: 'ok' }) }), status())).toBe(true);
+      expect(decide(null, managed)).toBe(false);
     });
 
     it('(c) no managed media server: no media rows at all; never for a rollback or a self-update', () => {

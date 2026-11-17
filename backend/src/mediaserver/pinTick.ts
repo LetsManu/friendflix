@@ -17,6 +17,7 @@ import { readManaged } from './store.js';
  */
 
 const DAY_S = 86_400;
+const PIN_DIFF_TTL_S = 30 * DAY_S;
 const recoverKey = (jobId: string) => `media:recover:${jobId}`;
 export const pinDiffKey = (pinImage: string) => `media:pindiff:${pinImage}`;
 const warnKey = (code: string) => `media:pintick:warn:${code}`;
@@ -38,7 +39,15 @@ export async function mediaPinTick(ctx: Ctx, log?: TickLog): Promise<'off' | 'id
     await audit(ctx, null, 'mediaserver.recover');
   }
   const pin = differingPin(s);
-  if (pin) await ctx.kv.setnx(pinDiffKey(pin), new Date().toISOString(), 30 * DAY_S);
+  if (pin) {
+    // the first-seen time stays while the difference lasts: its ttl is renewed on every read (else after 30 days it would be
+    // recorded anew and hide managed_update_pending for another 7)
+    const key = pinDiffKey(pin);
+    if (!(await ctx.kv.setnx(key, new Date().toISOString(), PIN_DIFF_TTL_S))) {
+      const first = await ctx.kv.get(key);
+      if (first) await ctx.kv.replace(key, first, PIN_DIFF_TTL_S);
+    }
+  }
 
   if (!s.pin?.changed || s.desired?.run !== true || !s.container) return 'idle';
   if (busy) return 'busy';

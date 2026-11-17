@@ -88,6 +88,14 @@ describe('media.managed', () => {
       .toMatchObject({ status: 'warning', cause: 'managed_proxy_outdated', docs: 'mediaserver.md#update-the-compose-files' });
   });
 
+  it('any other reason the updater cannot run it (no project, no media network, engine unreachable) → never ok', async () => {
+    for (const reason of ['no_project', 'no_network', null] as const) {
+      const off = (s: MediaStatus) => { s.available = false; s.reason = reason; s.container = null; s.desired = null; s.backups = []; };
+      expect(await lineFor(off), String(reason)).toMatchObject({ status: 'warning', cause: 'managed_no_updater' });
+      expect(await lineFor((s) => { s.available = false; s.reason = reason; }), String(reason)).toMatchObject({ status: 'warning', cause: 'managed_no_updater' });
+    }
+  });
+
   it('tampered → problem managed_tampered', async () => {
     expect(await lineFor((s) => { s.container!.tampered = true; s.container!.state = 'exited'; })).toMatchObject({ status: 'problem', cause: 'managed_tampered' });
   });

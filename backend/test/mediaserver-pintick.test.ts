@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mediaPinTick } from '../src/mediaserver/pinTick.js';
 import { writeManaged } from '../src/mediaserver/store.js';
 import { makeEnv, type TestEnv } from './helpers.js';
@@ -171,6 +171,15 @@ describe('mediaPinTick', () => {
     await new Promise((r) => setTimeout(r, 5));
     await mediaPinTick(env.ctx);
     expect(await env.kv.get(`media:pindiff:${PIN}`)).toBe(first);
+    // a difference that lasts: the first-seen time stays and its ttl is renewed on every read (it never lapses and starts over)
+    const old = new Date(Date.now() - 29 * 86_400_000).toISOString();
+    await env.kv.set(`media:pindiff:${PIN}`, old, 60);
+    const replace = vi.spyOn(env.kv, 'replace');
+    try {
+      await mediaPinTick(env.ctx);
+      expect(replace).toHaveBeenCalledWith(`media:pindiff:${PIN}`, old, 30 * 86_400);
+    } finally { replace.mockRestore(); }
+    expect(await env.kv.get(`media:pindiff:${PIN}`)).toBe(old);
     // the running image is the pin: nothing recorded
     for (const k of await env.kv.keys('media:pindiff:')) await env.kv.del(k);
     fake.media.container.image.digest = `sha256:${'b'.repeat(64)}`;

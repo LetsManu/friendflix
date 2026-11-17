@@ -40,6 +40,8 @@ export interface UpdaterMock {
   redeploy?: any;
   redeployOutcome?: 'done' | 'failed' | 'unchanged';
   awayPolls?: number;
+  /** the managed media server as the updater reports it (status.mediaserver); undefined = none */
+  mediaserver?: any;
 }
 type Reply = (b: unknown, status?: number) => Promise<void>;
 
@@ -128,7 +130,7 @@ export function updaterRoute(u: UpdaterMock | null, settings: SettingsMock, m: s
     const busy = u.job?.state === 'running';
     return J({ present: true, autoUpdate: auto, portainer, redeploy: u.redeploy ?? null, status: { ...(u.stack ? { stack: u.stack } : {}), ...(u.stackReason ? { stackReason: u.stackReason, stackDir: u.stackDir, projectDir: u.projectDir } : {}),
       updater: { version: '1.1.0', sha: null }, channel: ch, version: ch === 'pinned' ? ver : null, targetTag: target, current: u.current, previous: u.previous, busy,
-      job: u.job, log: u.log.slice(-30), services: [{ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-c0be6c5', version: '1.0.0' }],
+      job: u.job, log: u.log.slice(-30), ...(u.mediaserver !== undefined ? { mediaserver: u.mediaserver } : {}), services: [{ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-c0be6c5', version: '1.0.0' }],
     } });
   }
   const mm = p.match(/^\/api\/admin\/updater\/(update|rollback|self-update)$/);

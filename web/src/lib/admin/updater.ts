@@ -148,6 +148,22 @@ export function visibleMediaSteps(m: NonNullable<UpdaterJob['media']>): MediaSte
  */
 export const hasManagedMedia = (s: UpdaterStatus | null | undefined): boolean => Boolean(s?.mediaserver && (s.mediaserver.container || s.mediaserver.desired));
 
+/**
+ * Whether an update job lists its media server phase, decided once per job (StepList must not gain or lose rows between polls): a
+ * job that carries its phase always; else at first sight, a running job when a managed media server exists. A job first seen
+ * finished without a phase never gets the rows (it never had one we know of).
+ */
+export function mediaPhaseMemo(): (job: UpdaterJob | null | undefined, s: UpdaterStatus | null | undefined) => boolean {
+  const seen = new Map<string, boolean>();
+  return (job, s) => {
+    if (!job) return false;
+    if (job.media) { seen.set(job.id, true); return true; }
+    let v = seen.get(job.id);
+    if (v === undefined) { v = job.state === 'running' && hasManagedMedia(s); seen.set(job.id, v); }
+    return v;
+  };
+}
+
 /** a job state's tone: an update whose media server phase failed is a warning (FriendFlix runs the new build), never red */
 export type JobTone = 'running' | 'ok' | 'warn' | 'bad';
 export function jobTone(state: JobState): JobTone {

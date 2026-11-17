@@ -28,7 +28,7 @@
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import { toast } from '#lib/ui/toast';
   import {
-    TIME_RE, canRollback, foreignMode, foreignText, hasManagedMedia, installedOf, isRunning, mergeView, portainerMissing, redeployRunning, shownActivity, startError, statusOf, tagText,
+    TIME_RE, canRollback, foreignMode, foreignText, installedOf, mediaPhaseMemo, isRunning, mergeView, portainerMissing, redeployRunning, shownActivity, startError, statusOf, tagText,
     type UpdaterAction, type UpdaterJob, type UpdaterView,
   } from './updater';
 
@@ -55,7 +55,9 @@
   let watchedId: string | null = null;
   /** a redeploy this page started or found running: the page reloads its data once it ended */
   let watchedRedeploy: string | null = null;
-  $: flow = (void $t, shown === 'job' && s?.job ? jobFlow(s.job, { reconnecting, now, mediaPhase: hasManagedMedia(s) }) : shown === 'redeploy' && redeploy ? redeployFlow(redeploy, { reconnecting, now }) : null);
+  /** whether an update lists its media server phase: decided once per job, never from poll to poll */
+  const mediaPhase = mediaPhaseMemo();
+  $: flow = (void $t, shown === 'job' && s?.job ? jobFlow(s.job, { reconnecting, now, mediaPhase: mediaPhase(s.job, s) }) : shown === 'redeploy' && redeploy ? redeployFlow(redeploy, { reconnecting, now }) : null);
 
   async function refresh(signal?: AbortSignal): Promise<boolean> {
     try {

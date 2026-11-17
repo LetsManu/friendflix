@@ -100,10 +100,10 @@ export function jobFlow(job: UpdaterJob, o: FlowOpts & { steps?: readonly StepNa
   const list = isMediaJob(job.action) ? [] : o.steps ?? visibleSteps(job);
   // only an update runs the phase (never a rollback or a self-update: updater/src/job.ts)
   const media = job.media ?? (o.mediaPhase && job.action === 'update' ? pendingPhase(job) : null);
-  const rows: StepRow[] = [
-    ...list.map((st): StepRow => ({ key: st, label: trDynamic(`${U}.step.${st}`), state: rowState(job.steps[st]) })),
-    ...(media ? visibleMediaSteps(media).map((st): StepRow => ({ key: `media-${st}`, label: trDynamic(`${U}.mediaStep.${st}`), state: rowState(media.steps[st]) })) : []),
-  ];
+  const core = list.map((st): StepRow => ({ key: st, label: trDynamic(`${U}.step.${st}`), state: rowState(job.steps[st]) }));
+  const mediaRows = media ? visibleMediaSteps(media).map((st): StepRow => ({ key: `media-${st}`, label: trDynamic(`${U}.mediaStep.${st}`), state: rowState(media.steps[st]) })) : [];
+  // FriendFlix's own rollback row goes last, into the slot reserved under the list: the media rows never move down when it starts
+  const rows: StepRow[] = [...core.filter((r) => r.key !== 'rollback'), ...mediaRows, ...core.filter((r) => r.key === 'rollback')];
   const tone = jobTone(job.state);
   const outcome: FlowOutcome = tone === 'running' ? 'running' : tone === 'bad' ? 'failed' : tone;
   const running = outcome === 'running';
