@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { get } from 'svelte/store';
-import { t, type TKey } from '#lib/i18n';
+import { t } from '#lib/i18n';
 import type { Category } from './types';
 
 export type IconName = 'download' | 'tv' | 'film' | 'crown' | 'record' | 'alert' | 'vote' | 'users' | 'bell';
 export type Tone = 'ok' | 'info' | 'acc' | 'warn' | 'gold' | 'neutral';
 export type ActionKey = 'notes.action.view' | 'notes.action.devices' | 'notes.action.update' | 'notes.action.open';
+export type CategoryKey = `notes.category.${Exclude<Category, 'other'>}` | 'notes.category.misc';
 
 const ICONS: Record<Category, IconName> = { downloads: 'download', devices: 'tv', series: 'film', achievements: 'crown', livetv: 'record', system: 'alert', requests: 'vote', social: 'users', other: 'bell' };
 export const iconOf = (c: Category): IconName => ICONS[c];
@@ -23,10 +24,12 @@ export function actionKeyOf(c: Category, kind: string): ActionKey {
   return 'notes.action.open';
 }
 
+/** The label key of a category chip ('other' is `misc` in the dictionary: an `other` key would read as plural forms). */
+export const categoryKey = (c: Category): CategoryKey => (c === 'other' ? 'notes.category.misc' : `notes.category.${c}`);
+
 /** Section heading: today / the last six days / the month (with the year when it is not this one). */
 export function sectionLabel(key: string, lang: string): string {
-  // the notes.* keys are registered with the locales (Task 5); until then they are not in TKey
-  if (key === 'today' || key === 'week') return get(t)(`notes.section.${key}` as TKey);
+  if (key === 'today' || key === 'week') return get(t)(`notes.section.${key}`);
   const [y, m] = key.split('-').map(Number);
   const month = new Intl.DateTimeFormat(lang, { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(y, m - 1, 15)));
   return y === new Date().getFullYear() ? month : `${month} ${y}`;

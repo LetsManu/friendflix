@@ -54,9 +54,10 @@ describe('notifications feed store', () => {
   it('hide removes optimistically and undo puts the group back in place', async () => {
     const s = createFeed(fake({ feed: vi.fn(async () => page([['today', ['a1', 'a2', 'a3']], ['week', ['w1']]])) }));
     await s.load('all');
-    expect(await s.hide({ groups: ['a2', 'w1'] })).toBe('tok');
+    expect(await s.hide({ groups: ['a2', 'w1'] })).toEqual({ undo: 'tok', n: 1 });
     expect(ids(s)).toEqual([['today', ['a1', 'a3']]]);
-    await s.undo('tok');
+    expect(await s.undo('tok')).toBe(true);
+    expect(await s.undo('tok')).toBe(false); // used up
     expect(ids(s)).toEqual([['today', ['a1', 'a2', 'a3']], ['week', ['w1']]]);
   });
   it('a failed hide puts the group back and sets error', async () => {
@@ -70,7 +71,7 @@ describe('notifications feed store', () => {
     const s = createFeed(fake({ unhide: vi.fn(async () => { throw new Error('x'); }) }));
     await s.load('all');
     await s.hide({ groups: ['a1'] });
-    await s.undo('tok');
+    expect(await s.undo('tok')).toBe(false);
     expect(ids(s)).toEqual([]);
     expect(get(s).error).toBe('error');
   });
@@ -87,13 +88,28 @@ describe('notifications feed store', () => {
     const markRead = vi.fn().mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('x'));
     const s = createFeed(fake({ markRead }));
     await s.load('all');
-    await s.read({ groups: ['a1'] });
+    expect(await s.read({ groups: ['a1'] })).toBe(true);
     expect(get(s).sections[0].groups[0].unread).toBe(false);
     await s.load('all');
-    await s.read();
+    expect(await s.read()).toBe(false);
     expect(markRead).toHaveBeenLastCalledWith(undefined);
     expect(get(s).sections[0].groups[0].unread).toBe(true);
     expect(get(s).error).toBe('error');
+  });
+  it('the state carries the unread count and the categories for the header and the chips', async () => {
+    const feed = vi.fn(async () => ({ ...pageOf([bigGroup('a1', 2), bigGroup('a2', 1)], 3), categories: [{ key: 'devices' as const, n: 3 }] }));
+    const s = createFeed(fake({ feed, hide: vi.fn(async () => ({ undo: 'tok', n: 2 })) }));
+    await s.load('all');
+    expect(get(s).unread).toBe(3);
+    expect(get(s).categories).toEqual([{ key: 'devices', n: 3 }]);
+    await s.read({ groups: ['a2'] });
+    expect(get(s).unread).toBe(2);
+    await s.hide({ groups: ['a1'] });
+    expect(get(s).unread).toBe(0);
+    await s.undo('tok');
+    expect(get(s).unread).toBe(2);
+    s.reset();
+    expect(get(s)).toMatchObject({ unread: 0, categories: [] });
   });
   it('a failed first load and a failed more set error', async () => {
     const feed = vi.fn().mockRejectedValueOnce(new Error('x')).mockResolvedValueOnce(page([['today', ['a1']]], 'n')).mockRejectedValueOnce(new Error('x'));

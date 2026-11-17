@@ -122,7 +122,7 @@ test.describe('no text scaling in pop-ups (desktop)', () => {
     expect(r.dev).toBeLessThan(LIMIT);
   }
 
-  test('the notifications and Categories dropdowns', async ({ page }) => {
+  test('the notifications sheet and the Categories dropdown', async ({ page }) => {
     await page.goto('/watchlist');
     const bar = page.locator('[data-desk-bar]');
     const bell = bar.getByRole('button', { name: /Benachrichtigungen/ });

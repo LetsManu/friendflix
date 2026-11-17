@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
+import { get } from 'svelte/store';
 import { describe, expect, it } from 'vitest';
-import { actionKeyOf, iconOf, sectionLabel, toneOf } from './look';
+import { t } from '#lib/i18n';
+import { actionKeyOf, categoryKey, iconOf, sectionLabel, toneOf } from './look';
 import type { Category } from './types';
 
 const CATS: Category[] = ['downloads', 'devices', 'series', 'achievements', 'livetv', 'system', 'requests', 'social', 'other'];
@@ -27,6 +29,15 @@ describe('notification look', () => {
     expect(actionKeyOf('devices', 'new_device')).toBe('notes.action.devices');
     expect(actionKeyOf('system', 'update_available')).toBe('notes.action.update');
     expect(actionKeyOf('social', 'party_invite')).toBe('notes.action.open');
+  });
+  it('names every category with a key of the notes area', () => {
+    expect(categoryKey('devices')).toBe('notes.category.devices');
+    expect(categoryKey('other')).toBe('notes.category.misc');
+    for (const c of CATS) expect(get(t)(categoryKey(c)), c).not.toBe(categoryKey(c));
+  });
+  it('labels today and the week from the locale', () => {
+    expect(sectionLabel('today', 'de')).toBe('Heute');
+    expect(sectionLabel('week', 'de')).toBe('Diese Woche');
   });
   it('labels months, adding the year when it is not this one', () => {
     const y = new Date().getFullYear();

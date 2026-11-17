@@ -40,6 +40,7 @@
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
   import DeskBar from '#lib/desk/DeskBar.svelte';
+  import { feedStore } from '#lib/notifications/store';
   import { deskActive, deskUi } from '#lib/desk/bar';
   import { historyIndex, trackNav } from '#lib/desk/back';
   import { railKey } from '#lib/tv/rail';
@@ -315,6 +316,10 @@
     loadModal().then((m) => (Modal = m.default)).catch(() => { location.href = `/item/${id}`; }); // chunk gone (new deploy/offline): open the full page
   }
 
+  // the notifications center's feed (lib/notifications/store.ts) keeps nothing of another person or profile: a sign-out or a profile switch empties it
+  let notesOwner: string | null = null;
+  $: notesOwnerNow = me ? `${me.id}|${me.profile?.id ?? ''}` : null;
+  $: if (notesOwnerNow !== notesOwner) { if (notesOwner !== null) feedStore.reset(); notesOwner = notesOwnerNow; }
   async function loadNotes() { if (me?.kids) return; try { notes = (await api('/api/notifications')).notifications; } catch { /* ignore */ } } // kids: 403 kids_profile
   $: here = publicPage ? path : path + $page.url.search; // (the prerendered /offline page has no search params)
   const HELP = [['shell.help.searchT', 'shell.help.searchD'], ['shell.help.playerT', 'shell.help.playerD'], ['shell.help.deviceT', 'shell.help.deviceD'], ['shell.help.tvT', 'shell.help.tvD'], ['shell.help.languageT', 'shell.help.languageD'], ['shell.help.moreT', 'shell.help.moreD']] as const;

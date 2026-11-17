@@ -3,7 +3,7 @@
 import { writable, type Readable } from 'svelte/store';
 import { apiCode } from '#lib/api';
 import { defaultApi, type NotesApi } from './api';
-import type { Feed, FeedGroup, Filter, Section, Selection } from './types';
+import type { Counts, Feed, FeedGroup, Filter, Section, Selection } from './types';
 
 export interface FeedState {
   filter: Filter;
@@ -14,6 +14,10 @@ export interface FeedState {
   /** unread entries that arrived since the first page was loaded (shown as a pill; never inserted as rows) */
   fresh: number;
   open: Set<string>;
+  /** unread entries as this page knows them (the last load, less what was read or cleared here since) */
+  unread: number;
+  /** the categories with entries at the last load (global: they do not follow the filter) */
+  categories: Counts['categories'];
 }
 
 export interface FeedStore extends Readable<FeedState> {
@@ -24,9 +28,12 @@ export interface FeedStore extends Readable<FeedState> {
   refresh(): Promise<void>;
   noteFresh(unreadNow: number): void;
   toggle(groupId: string): void;
-  read(sel?: Selection): Promise<void>;
-  hide(sel: Selection): Promise<string | null>;
-  undo(token: string): Promise<void>;
+  /** false when the server refused it (the groups are unread again, `error` set) */
+  read(sel?: Selection): Promise<boolean>;
+  /** the undo token and how many entries went, or null when the clear failed */
+  hide(sel: Selection): Promise<{ undo: string; n: number } | null>;
+  /** true when the entries are back */
+  undo(token: string): Promise<boolean>;
 }
 
 interface Removed { group: FeedGroup; section: string; index: number; sectionIndex: number }
@@ -48,12 +55,14 @@ const unreadOf = (g: FeedGroup) => (g.unread ? g.count : 0);
 const everything = (sel: Selection) => !sel.ids?.length && !sel.groups?.length && sel.category === undefined;
 
 export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Map()): FeedStore {
-  const initial = (): FeedState => ({ filter: 'all', sections: [], next: null, loading: 'idle', error: null, fresh: 0, open: new Set() });
+  const initial = (): FeedState => ({ filter: 'all', sections: [], next: null, loading: 'idle', error: null, fresh: 0, open: new Set(), unread: 0, categories: [] });
   const { subscribe, update, set } = writable<FeedState>(initial());
   let state!: FeedState;
   subscribe((s) => (state = s));
   let gen = 0; // a newer load / refresh makes older answers obsolete
   let baseUnread = 0;
+  /** the page's unread baseline, mirrored into the state for the sheet's header */
+  const setBase = (n: number) => { baseUnread = n; update((s) => (s.unread === n ? s : { ...s, unread: n })); };
   let epoch = 0; // bumped only by reset(): a newer person
   const prune = () => {
     const now = Date.now();
@@ -68,7 +77,7 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
       const f: Feed = await api.feed({ filter });
       if (g !== gen) return;
       baseUnread = f.unread;
-      update((s) => ({ ...s, sections: f.sections, next: f.next, loading: 'idle', fresh: 0, open: s.open }));
+      update((s) => ({ ...s, sections: f.sections, next: f.next, loading: 'idle', fresh: 0, open: s.open, unread: f.unread, categories: f.categories }));
     } catch (e) {
       if (g === gen) update((s) => ({ ...s, loading: 'idle', error: errorOf(e) }));
     }
@@ -133,16 +142,18 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
         return { ...g, unread: false };
       }) })) }));
       const prior = baseUnread;
-      baseUnread = all ? 0 : Math.max(0, baseUnread - lowered);
+      setBase(all ? 0 : Math.max(0, baseUnread - lowered));
       const g0 = gen;
       const e0 = epoch;
       try {
         await api.markRead(all ? undefined : sel);
+        return true;
       } catch (e) {
-        if (e0 !== epoch) return; // another person's page now
-        if (g0 === gen) baseUnread = prior; // an obsolete page keeps its own baseline
+        if (e0 !== epoch) return false; // another person's page now
+        if (g0 === gen) setBase(prior); // an obsolete page keeps its own baseline
         // only the groups this call flipped come back unread; a page appended meanwhile stays as it is
         update((s) => ({ ...s, error: errorOf(e), sections: s.sections.map((x) => ({ key: x.key, groups: x.groups.map((g) => (flipped.has(g.id) ? { ...g, unread: true } : g)) })) }));
+        return false;
       }
     },
     async hide(sel) {
@@ -151,14 +162,14 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
       const e0 = epoch;
       const removed = removeGroups(sel);
       const lowered = removed.reduce((n, r) => n + unreadOf(r.group), 0);
-      baseUnread = Math.max(0, baseUnread - lowered);
+      setBase(Math.max(0, baseUnread - lowered));
       try {
         const r = await api.hide(sel);
         // the answer time is no earlier than the server's: a token pruned by it is surely dead there
         if (e0 === epoch) held.set(r.undo, { at: Date.now(), removed: g0 === gen ? removed : null });
-        return r.undo;
+        return { undo: r.undo, n: r.n };
       } catch (e) {
-        if (g0 === gen) { baseUnread += lowered; restore(removed); }
+        if (g0 === gen) { setBase(baseUnread + lowered); restore(removed); }
         if (e0 === epoch) update((s) => ({ ...s, error: errorOf(e) }));
         return null;
       }
@@ -166,24 +177,25 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
     async undo(token) {
       prune();
       const h = held.get(token);
-      if (!h) return; // not this person's (a reset dropped it) or older than the server keeps it
+      if (!h) return false; // not this person's (a reset dropped it) or older than the server keeps it
       const { removed } = h;
       const g0 = gen;
       const e0 = epoch;
       try {
         await api.unhide(token);
       } catch (e) {
-        if (e0 !== epoch) return; // another person's page now
+        if (e0 !== epoch) return false; // another person's page now
         update((s) => ({ ...s, error: errorOf(e) }));
         if (apiCode(e) === 'undo_expired') held.delete(token); // final: the entries stay cleared; any other failure keeps the token for a retry
-        return;
+        return false;
       }
-      if (e0 !== epoch) return; // another person's page now
+      if (e0 !== epoch) return false; // another person's page now
       held.delete(token);
       if (removed && g0 === gen) {
-        baseUnread += removed.reduce((n, r) => n + unreadOf(r.group), 0);
+        setBase(baseUnread + removed.reduce((n, r) => n + unreadOf(r.group), 0));
         restore(removed);
       } else await first(state.filter, true); // the rows are not on this page any more: show what the server has
+      return true;
     },
   };
 }
