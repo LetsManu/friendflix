@@ -22,7 +22,7 @@ const fr: Translation<typeof de> = {
     forgotPin: 'Code PIN oublié ?',
     pinWrong: 'Code PIN incorrect. Veuillez réessayer.',
     pinLocked: 'Trop de tentatives échouées. Veuillez réessayer dans 15 minutes.',
-    pinLockedLater: 'Trop de tentatives échouées. Veuillez réessayer plus tard.',
+    pinLockedLater: 'Trop de tentatives échouées. Veuillez réessayer plus tard ou utiliser « Code PIN oublié ? ».',
     selectFailed: 'La sélection a échoué. Veuillez réessayer.',
     name: 'Nom',
     color: 'Couleur',

@@ -22,7 +22,7 @@ const it: Translation<typeof de> = {
     forgotPin: 'Hai dimenticato il PIN?',
     pinWrong: 'PIN errato. Riprova.',
     pinLocked: 'Troppi tentativi errati. Riprova tra 15 minuti.',
-    pinLockedLater: 'Troppi tentativi errati. Riprova più tardi.',
+    pinLockedLater: 'Troppi tentativi errati. Riprova più tardi o usa «Hai dimenticato il PIN?».',
     selectFailed: 'Selezione non riuscita. Riprova.',
     name: 'Nome',
     color: 'Colore',
