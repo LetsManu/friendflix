@@ -13,6 +13,7 @@
   import Logo from '#lib/Logo.svelte';
   import Button from '#lib/ui/Button.svelte';
   import { hintOf, markPicked, readHint, safeNext, writeHint } from '#lib/gate';
+  import { forgotPinShown, pinLockedKey } from '#lib/pinLock';
   import { loadIntroSettings, markSessionSeen, shouldPlayIntro, shouldPlayIntroSound } from '#lib/intro';
   import { cachedCalm } from '#lib/stores';
   import { t, tr, type TKey } from '#lib/i18n';
@@ -114,8 +115,8 @@
       pinOwner = e instanceof ApiError && e.body?.pinOf === 'owner';
       if (code === 'pin_required') { pinFor = p; pinErr = ''; }
       else if (code === 'pin_wrong') { pinFor = p; pinErr = tr('account.profiles.pinWrong'); }
-      // a lock longer than the 15-minute window (the server's escalation, `retryAfter` in seconds) says "later", not "in 15 minutes"
-      else if (code === 'pin_locked') { pinFor = p; pinErr = tr(Number(e instanceof ApiError ? e.body?.retryAfter : 0) > 900 ? 'account.profiles.pinLockedLater' : 'account.profiles.pinLocked'); }
+      // a lock longer than the 15-minute window (the server's escalation, `retryAfter` in seconds) says "later"; "Forgot PIN?" only where shown
+      else if (code === 'pin_locked') { pinFor = p; pinErr = tr(pinLockedKey(e instanceof ApiError ? e.body?.retryAfter : 0, forgotPinShown({ isOwner: p.isOwner, pinOwner, kidsLock }))); }
       else { pinFor = p; pinErr = tr('account.profiles.selectFailed'); }
     } finally { pinBusy = false; }
   }
@@ -217,7 +218,7 @@
       <span class="face sm" style="background:{avatarBg(pinFor.avatar)}">{initial(pinFor.name)}</span>
       <PinPad title={pinOwner ? $t('kids.profiles.ownerPinTitle', { name: owner?.name ?? '' }) : $t('account.profiles.pinFor', { name: pinFor.name })} hint={pinOwner ? $t('kids.profiles.ownerPinHint') : ''} error={pinErr} busy={pinBusy} on:submit={(e) => pinFor && choose(pinFor, e.detail)} on:cancel={cancelPin} />
       <!-- never offered while leaving a kids profile (the server refuses the reset on a kid-locked device anyway) -->
-      {#if pinFor.isOwner && !pinOwner && !kidsLock}<button type="button" class="sec forgot" on:click={() => (location.href = '/auth/login?resetPin=1')}>{$t('account.profiles.forgotPin')}</button>{/if}
+      {#if forgotPinShown({ isOwner: pinFor.isOwner, pinOwner, kidsLock })}<button type="button" class="sec forgot" on:click={() => (location.href = '/auth/login?resetPin=1')}>{$t('account.profiles.forgotPin')}</button>{/if}
     </div>
   </div>
 {/if}
