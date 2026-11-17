@@ -3,6 +3,7 @@
 import { StepError } from '../docker.js';
 import type { StartResult } from '../job.js';
 import type { Job, MediaState } from '../state.js';
+import { BACKUP_DIR, backupId, backupInUse, backupJob, older, record, restoreJob, type BackupKit } from './backup.js';
 import { EngineError } from './engine.js';
 import type { EngineFacts } from './facts.js';
 import { TemplateViolation, assertHelper, assertManaged, assertManagedInspect } from './guard.js';
@@ -10,7 +11,7 @@ import { runHdr } from './helpers.js';
 import type { Pin, PinRead } from './pins.js';
 import type { MediaDeps } from './service.js';
 import { containerSpec, helperSpec, names, needsSeed, seedSpec, uidSupported, volumeSpec, type CreateRequest, type HelperMount, type HelperVerb, type TemplateFacts } from './template.js';
-import { BACKUP_ID_RE, KINDS, MEDIA_ERRORS, MEDIA_STEPS, type BackupMeta, type Desired, type DesiredSpec, type Gpu, type Kind, type MediaError, type MediaJobAction, type MediaOp, type MediaStep } from './types.js';
+import { BACKUP_ID_RE, KINDS, MEDIA_ERRORS, MEDIA_STEPS, type BackupMeta, type BackupTag, type Desired, type DesiredSpec, type Gpu, type Kind, type MediaError, type MediaJobAction, type MediaOp, type MediaStep } from './types.js';
 
 /**
  * The media server jobs (spec "Lifecycle"): apply / update / finish as one deploy (check → pull → verify → snapshot → create →
@@ -24,9 +25,11 @@ export interface JobDeps extends MediaDeps {
   healthTimeoutMs?: number;
   healthIntervalMs?: number;
   sleep?(ms: number): Promise<void>;
+  /** where the updater sees the backup volume (BACKUP_DIR) */
+  backupDir?: string;
 }
 
-export type MediaJobOp = Extract<MediaOp, { op: 'apply' | 'finish-setup' | 'start' | 'stop' | 'restart' | 'update' | 'hdr-test' | 'remove' }>;
+export type MediaJobOp = Extract<MediaOp, { op: 'apply' | 'finish-setup' | 'start' | 'stop' | 'restart' | 'update' | 'hdr-test' | 'backup' | 'restore' | 'remove' }>;
 type Reason = 'apply' | 'update' | 'recover' | 'finish';
 
 /** helper limits (spec "Times"): 2 min, backup and restore 2 h */
@@ -39,7 +42,6 @@ const INTERVAL_MS = 5_000;
 const MAX_FOLDERS = 20;
 const FERROFIN_UPSTREAM_LABEL = 'io.github.letsmanu.friendflix.mediaserver.ferrofin';
 const UPSTREAM_RE = /^[A-Za-z0-9._+-]{1,64}$/;
-const VERSION_RE = /^v?([0-9]+)\.([0-9]+)\.([0-9]+)/;
 const RENDER_NODE_RE = /^renderD[0-9]{1,4}$/;
 const JELLYFIN_REPO_RE = /^(docker\.io\/)?jellyfin\/jellyfin$/;
 const FOLDER_CODES: readonly MediaError[] = ['folder_missing', 'folder_symlink', 'folder_unreadable'];
@@ -70,23 +72,10 @@ function nested(rels: string[]): boolean {
   return rels.some((a, i) => rels.some((b, j) => i !== j && (a === b || b.startsWith(`${a}/`))));
 }
 
-/** `v?X.Y.Z` compared numerically; anything else is never "older" */
-function older(a: string, b: string): boolean {
-  const x = VERSION_RE.exec(a);
-  const y = VERSION_RE.exec(b);
-  if (!x || !y) return false;
-  for (let i = 1; i <= 3; i++) if (Number(x[i]) !== Number(y[i])) return Number(x[i]) < Number(y[i]);
-  return false;
-}
-
 const specOf = (d: Desired): DesiredSpec => ({ kind: d.kind, folders: d.folders, uid: d.uid, gid: d.gid, gpu: d.gpu, mediaGid: d.mediaGid, egress: d.egress, tz: d.tz });
 const userOf = (d: { uid: number; gid: number; mediaGid: number | null } | null) =>
   ({ uid: d?.uid ?? DEFAULT_USER.uid, gid: d?.gid ?? DEFAULT_USER.gid, groups: d?.mediaGid ? [d.mediaGid] : [] });
 const labelsOf = (i: Obj): Record<string, unknown> => (isObj(i.Config) && isObj(i.Config.Labels) ? i.Config.Labels : {});
-const two = (n: number): string => String(n).padStart(2, '0');
-/** `<kind>-<YYYYMMDD-HHMM UTC>-<upstream>` (Controller's call 14) */
-const snapshotId = (kind: Kind, upstream: string, at: Date): string =>
-  `${kind}-${at.getUTCFullYear()}${two(at.getUTCMonth() + 1)}${two(at.getUTCDate())}-${two(at.getUTCHours())}${two(at.getUTCMinutes())}-${upstream}`;
 
 /** the render nodes a `gpu` helper reported (a gid 0 is kept: the template refuses it) */
 function renderNodes(a: Obj): Array<{ node: string; gid: number; vendor: string }> {
@@ -136,6 +125,14 @@ export class MediaJobs {
         return this.job('mediaserver-stop', (job) => this.stop(job));
       case 'hdr-test':
         return this.job('mediaserver-hdr-test', (job) => this.hdr(job, op.kind));
+      case 'backup':
+        if (!this.u.mediaState().container) return NO_TARGET;
+        return this.job('mediaserver-backup', (job) => backupJob(this.kit(), job, op.trickplay));
+      case 'restore':
+        if (!this.u.mediaState().container) return NO_TARGET;
+        // refused while a download of that backup streams (and a download is refused while its restore runs)
+        if (backupInUse(op.id)) return { ok: false, error: 'busy' };
+        return this.job('mediaserver-restore', (job) => restoreJob(this.kit(), job, op.id));
       case 'remove':
         return this.job('mediaserver-remove', (job) => this.remove(job, op.data));
     }
@@ -232,6 +229,18 @@ export class MediaJobs {
 
   private desired(): Desired {
     return this.u.mediaState().desired ?? fail('no_base');
+  }
+
+  /** what the backup and restore jobs (backup.ts) use of these jobs */
+  private kit(): BackupKit {
+    return {
+      updater: this.u, engine: this.engine, dir: this.d.backupDir ?? BACKUP_DIR,
+      step: (job, name, fn) => this.step(job, name, fn),
+      ours: async () => (await this.ours(true))?.c ?? null,
+      snapshot: (tag, trickplay) => this.snapshot(null, tag, trickplay),
+      restoreSnapshot: (id, kind) => this.restoreSnapshot(id, kind),
+      healthy: (id) => this.healthy(id),
+    };
   }
 
   /** a media job: `body` throws a step error, the job ends rolled_back when the rollback step brought the old container back */
@@ -564,29 +573,31 @@ export class MediaJobs {
   }
 
   /**
-   * a backup of the data volume as the recorded container has it (kind, upstream), tagged `auto`: helper `backup` with the data
-   * volume read-only and the backup volume writable. With a job it runs as that job's `snapshot` step. Task 8 adds retention.
+   * a backup of the data volume as the recorded container has it (kind, upstream): helper `backup` with the data volume
+   * read-only and the backup volume writable, recorded with its tag and the retention applied (backup.ts). `auto` is the
+   * deploy's snapshot (without trickplay; a failure is `snapshot_failed`), `manual` the backup job's (`backup_failed`). With a
+   * job it runs as that job's `snapshot` step.
    */
-  async snapshot(job: Job | null, tag: 'auto'): Promise<BackupMeta> {
+  async snapshot(job: Job | null, tag: Exclude<BackupTag, 'upload'>, trickplay = false): Promise<BackupMeta> {
+    const code: MediaError = tag === 'auto' ? 'snapshot_failed' : 'backup_failed';
     const run = async (): Promise<BackupMeta> => {
       const m = this.u.mediaState();
-      const c = m.container ?? fail('snapshot_failed');
+      const c = m.container ?? fail(code);
       const { project, runner } = await this.ready();
       const at = new Date(this.d.now());
-      const id = snapshotId(c.kind, c.upstream, at);
-      if (!BACKUP_ID_RE.test(id)) fail('snapshot_failed');
+      const id = backupId(c.kind, c.upstream, at);
+      if (!BACKUP_ID_RE.test(id)) fail(code);
       let a: Obj;
       try {
-        a = await this.helper(runner, userOf(m.desired), 'backup', [id, '0', c.kind, c.upstream],
+        a = await this.helper(runner, userOf(m.desired), 'backup', [id, trickplay ? '1' : '0', c.kind, c.upstream],
           [{ kind: 'data', volume: names(project).data(c.kind), rw: false }, { kind: 'backup', rw: true }], BACKUP_HELPER_MS);
       } catch (e) {
         guardFirst(e);
-        return fail('snapshot_failed');
+        return fail(code);
       }
-      const size = typeof a.size === 'number' && Number.isSafeInteger(a.size) && a.size >= 0 ? a.size : fail('snapshot_failed');
+      const size = typeof a.size === 'number' && Number.isSafeInteger(a.size) && a.size >= 0 ? a.size : fail(code);
       const meta: BackupMeta = { id, kind: c.kind, upstream: c.upstream, at: at.toISOString(), tag, size };
-      // an id that exists already is replaced (Controller's call 14)
-      this.u.updateMedia((s) => { s.backups = [...s.backups.filter((b) => b.id !== id), meta]; });
+      await record({ dir: this.d.backupDir ?? BACKUP_DIR, updater: this.u }, meta);
       return meta;
     };
     return job ? this.step(job, 'snapshot', run) : run();

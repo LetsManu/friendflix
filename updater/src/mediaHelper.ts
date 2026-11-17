@@ -1,9 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, statSync, watch } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { closeSync, createReadStream, createWriteStream, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, statSync, watch } from 'node:fs';
+import { chmod, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
+import { createGunzip, createGzip } from 'node:zlib';
+import { BACKUP_EXCLUDE, BACKUP_UPSTREAM_RE, metaEntry, readFileMeta } from './mediaserver/archive.js';
 import { isRel } from './mediaserver/paths.js';
+import { BACKUP_ID_RE, KINDS, type Kind } from './mediaserver/types.js';
 
 /**
  * The helper program run inside short-lived helper containers (`node updater/dist/mediaHelper.js <verb> …`). It answers with one
@@ -140,7 +147,108 @@ export function detectGpu(devDir: string, drmDir: string): GpuNode[] {
   });
 }
 
-function answer(args: string[]): unknown {
+/**
+ * the tar arguments for the data folder without the excluded paths: an entry is listed as a whole unless something below it is
+ * excluded, then its children are listed instead (exact paths, never glob patterns)
+ */
+function members(root: string, exclude: string[], rel = ''): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(rel === '' ? root : join(root, rel)).sort()) {
+    const p = rel === '' ? name : `${rel}/${name}`;
+    if (exclude.includes(p)) continue;
+    if (exclude.some((e) => e.startsWith(`${p}/`)) && lstatSync(join(root, p)).isDirectory()) out.push(...members(root, exclude, p));
+    else out.push(p);
+  }
+  return out;
+}
+
+/** a child process's exit code (spawn errors reject) */
+function exited(p: ReturnType<typeof spawn>): Promise<number | null> {
+  return new Promise((resolve, reject) => { p.once('error', reject); p.once('close', resolve); });
+}
+
+/**
+ * helper `backup`: `<backups>/<id>.tar.gz` of the data folder (the metadata entry first, then busybox tar's stream of the data
+ * without BACKUP_EXCLUDE), written as `.part` and renamed when complete; mode 0644 (the updater, another user, streams it).
+ */
+export async function writeBackup(dirs: { data: string; backups: string }, a: { id: string; trickplay: boolean; kind: Kind; upstream: string }, now: Date, tar = 'tar'): Promise<{ size: number }> {
+  const part = join(dirs.backups, `${a.id}.tar.gz.part`);
+  const file = join(dirs.backups, `${a.id}.tar.gz`);
+  const ex = BACKUP_EXCLUDE[a.kind];
+  try {
+    const list = members(dirs.data, [...ex.always, ...(a.trickplay ? [] : ex.trickplay)]);
+    const head = metaEntry({ v: 1, kind: a.kind, upstream: a.upstream, createdAt: now.toISOString() });
+    const child = list.length > 0 ? spawn(tar, ['-c', '-f', '-', '-C', dirs.data, '--', ...list], { stdio: ['ignore', 'pipe', 'ignore'] }) : null;
+    const code = child ? exited(child) : Promise.resolve(0);
+    code.catch(() => undefined);
+    try {
+      await pipeline(async function* () {
+        yield head;
+        if (child) yield* child.stdout!;
+        else yield Buffer.alloc(1024); // an empty data folder: the end of the archive
+      }, createGzip(), createWriteStream(part, { mode: 0o644 }));
+    } catch (e) {
+      child?.kill();
+      throw e;
+    }
+    if ((await code) !== 0) throw new HelperError('backup_failed');
+    await chmod(part, 0o644);
+    await rename(part, file);
+    return { size: statSync(file).size };
+  } catch {
+    await rm(part, { force: true }).catch(() => undefined);
+    throw new HelperError('backup_failed');
+  }
+}
+
+/** passes everything after the first `n` bytes */
+function skip(n: number): Transform {
+  let left = n;
+  return new Transform({
+    transform(c: Buffer, _e, cb) {
+      if (left >= c.length) { left -= c.length; cb(); return; }
+      const rest = c.subarray(left);
+      left = 0;
+      cb(null, rest);
+    },
+  });
+}
+
+/**
+ * helper `restore`: checks the archive's metadata (this kind) before anything changes, empties the data folder and extracts the
+ * archive into it without its metadata entry
+ */
+export async function restoreBackup(dirs: { data: string; backups: string }, a: { id: string; kind: Kind }, tar = 'tar'): Promise<{ ok: true }> {
+  const file = join(dirs.backups, `${a.id}.tar.gz`);
+  const head = await readFileMeta(file);
+  if (!head || head.meta.kind !== a.kind) throw new HelperError('backup_invalid');
+  try {
+    for (const name of readdirSync(dirs.data)) await rm(join(dirs.data, name), { recursive: true, force: true });
+    const child = spawn(tar, ['-x', '-o', '-f', '-', '-C', dirs.data], { stdio: ['pipe', 'ignore', 'ignore'] });
+    const code = exited(child);
+    code.catch(() => undefined);
+    try {
+      await pipeline(createReadStream(file), createGunzip(), skip(head.length), child.stdin!);
+    } catch (e) {
+      child.kill();
+      throw e;
+    }
+    if ((await code) !== 0) throw new HelperError('restore_failed');
+    return { ok: true };
+  } catch {
+    throw new HelperError('restore_failed');
+  }
+}
+
+/** the arguments of `backup` / `restore`: an id that names this kind and upstream */
+function backupArgs(id: string | undefined, kind: string | undefined, upstream?: string): { id: string; kind: Kind } {
+  const k = KINDS.find((x) => x === kind);
+  if (id === undefined || !BACKUP_ID_RE.test(id) || !k || !id.startsWith(`${k}-`)) throw new HelperError('invalid_body');
+  if (upstream !== undefined && (!BACKUP_UPSTREAM_RE.test(upstream) || !id.endsWith(`-${upstream}`))) throw new HelperError('invalid_body');
+  return { id, kind: k };
+}
+
+async function answer(args: string[]): Promise<unknown> {
   const [verb, a, b] = args;
   if (verb === 'check' && a === 'base' && args.length === 2) return checkBase('/base');
   if (verb === 'check' && a === 'folders' && args.length === 3) {
@@ -152,13 +260,18 @@ function answer(args: string[]): unknown {
   if (verb === 'check' && a === 'data' && args.length === 2) return { owner: checkData('/data') };
   if (verb === 'browse' && args.length === 2) return browseDir('/base', a!);
   if (verb === 'gpu' && args.length === 1) return { nodes: detectGpu('/dev/dri', '/sys-drm') };
+  if (verb === 'backup' && args.length === 5 && (b === '0' || b === '1')) {
+    const { id, kind } = backupArgs(a, args[3], args[4]);
+    return writeBackup({ data: '/data', backups: '/backups' }, { id, trickplay: b === '1', kind, upstream: args[4]! }, new Date());
+  }
+  if (verb === 'restore' && args.length === 3) return restoreBackup({ data: '/data', backups: '/backups' }, backupArgs(a, b));
   throw new HelperError('invalid_body');
 }
 
 /** prints one JSON line; exit code 0, or 2 with `{"error":"<code>"}` */
-export function main(args: string[]): number {
+export async function main(args: string[]): Promise<number> {
   try {
-    process.stdout.write(JSON.stringify(answer(args)) + '\n');
+    process.stdout.write(JSON.stringify(await answer(args)) + '\n');
     return 0;
   } catch (e) {
     process.stdout.write(JSON.stringify({ error: e instanceof HelperError ? e.code : 'helper_failed' }) + '\n');
@@ -166,4 +279,4 @@ export function main(args: string[]): number {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = main(process.argv.slice(2));
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) void main(process.argv.slice(2)).then((code) => { process.exitCode = code; });

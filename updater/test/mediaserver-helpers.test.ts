@@ -98,19 +98,23 @@ describe('mediaHelper functions', () => {
     expect(detectGpu(join(root, 'none'), join(root, 'drm'))).toEqual([]);
   });
 
-  it('main answers a bad verb or argument with exit 2', () => {
+  it('main answers a bad verb or argument with exit 2', async () => {
     const w = process.stdout.write;
     const out: string[] = [];
     process.stdout.write = ((s: string) => { out.push(s); return true; }) as typeof process.stdout.write;
+    const bad = [
+      ['nope'], ['browse', '../x'], ['check', 'folders', '[1]'], ['check', 'folders', 'zzz'],
+      // backup <id> <trickplay 0|1> <kind> <upstream>, restore <id> <kind>: the id must name that kind and upstream
+      ['backup', 'jellyfin-20261117-1402-10.11.3', '2', 'jellyfin', '10.11.3'], ['backup', 'jellyfin-20261117-1402-10.11.3', '0', 'ferrofin', '10.11.3'],
+      ['backup', 'jellyfin-20261117-1402-10.11.3', '0', 'jellyfin', '10.11.4'], ['backup', '../x', '0', 'jellyfin', '10.11.3'],
+      ['restore', 'jellyfin-20261117-1402-10.11.3', 'ferrofin'], ['restore', 'jellyfin-20261117-1402-10.11.3'],
+    ];
     try {
-      expect(main(['nope'])).toBe(2);
-      expect(main(['browse', '../x'])).toBe(2);
-      expect(main(['check', 'folders', '[1]'])).toBe(2);
-      expect(main(['check', 'folders', 'zzz'])).toBe(2);
-      expect(main(['gpu'])).toBe(0);
+      for (const args of bad) expect(await main(args)).toBe(2);
+      expect(await main(['gpu'])).toBe(0);
     } finally { process.stdout.write = w; }
-    expect(out.slice(0, 4)).toEqual(Array(4).fill('{"error":"invalid_body"}\n'));
-    expect(JSON.parse(out[4]!)).toEqual({ nodes: expect.any(Array) });
+    expect(out.slice(0, bad.length)).toEqual(Array(bad.length).fill('{"error":"invalid_body"}\n'));
+    expect(JSON.parse(out[bad.length]!)).toEqual({ nodes: expect.any(Array) });
   });
 });
 
