@@ -25,6 +25,7 @@ import { mailRoutes } from './mail/routes.js';
 import { mailPersonRoutes } from './mail/personRoutes.js';
 import { akBrandingRoutes } from './akBranding.js';
 import { updaterRoutes } from './routes/updater.js';
+import { adminMediaserverRoutes, setupMediaserverRoutes } from './routes/adminMediaserver.js';
 import { livetvAdminRoutes } from './livetv/adminRoutes.js';
 import { livetvRoutes } from './livetv/routes.js';
 import { conversionRoutes } from './routes/conversions.js';
@@ -85,9 +86,10 @@ export interface Extra {
 /**
  * routes whose bodies hold secrets or one-time credentials (spec Part E3; the in-app sign-in's passwords and codes; Live TV provider
  * URLs, F13; the brand's image bytes and admin ids, branding plan Task 1; the unsubscribe token and the mail switches, mail stage B
- * Task 4; an invitation's address, mail stage B Task 5): never logged with an error
+ * Task 4; an invitation's address, mail stage B Task 5; the managed media server's base code, managed media server Task 13): never logged
+ * with an error
  */
-const SENSITIVE_BODY = /^\/(api\/(setup\/|admin\/settings|admin\/mail|admin\/invites|admin\/authentik\/|admin\/livetv\/(sources|channels)|admin\/brand|public\/mail\/|account\/mail)|auth\/flow\/)/;
+const SENSITIVE_BODY = /^\/(api\/(setup\/|admin\/settings|admin\/mail|admin\/invites|admin\/authentik\/|admin\/livetv\/(sources|channels)|admin\/brand|admin\/mediaserver|public\/mail\/|account\/mail)|auth\/flow\/)/;
 
 /**
  * What answers while setup is incomplete (spec Part E1, rulings D23): matched by the route pattern, so an unknown or encoded path is
@@ -311,6 +313,8 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   mailPersonRoutes(app, ctx);
   akBrandingRoutes(app, ctx);
   updaterRoutes(app, ctx);
+  adminMediaserverRoutes(app, ctx);
+  setupMediaserverRoutes(app, ctx);
   livetvAdminRoutes(app, ctx);
   livetvRoutes(app, ctx);
   conversionRoutes(app, ctx);
