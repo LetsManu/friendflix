@@ -156,21 +156,24 @@ export async function libraryItemIds(f: typeof fetch, base: string, key: string,
 }
 
 type Hw = 'qsv' | 'vaapi' | 'nvenc' | 'none';
-const CODECS: Record<'intel' | 'amd' | 'nvidia' | 'off', string[]> = {
+const CODECS: Record<'intel' | 'amd' | 'other' | 'nvidia' | 'off', string[]> = {
   intel: ['h264', 'hevc', 'mpeg2video', 'vc1', 'vp8', 'vp9', 'av1'],
   amd: ['h264', 'hevc', 'mpeg2video', 'vc1', 'vp9', 'av1'],
+  // another (or an undetected) VA-API vendor: only what every VA-API decoder does
+  other: ['h264', 'hevc'],
   nvidia: ['h264', 'hevc', 'mpeg2video', 'mpeg4', 'vc1', 'vp8', 'vp9', 'av1'],
   off: [],
 };
 
 /**
- * The server's encoding settings for the chosen GPU (spec "GPU"): Intel QSV, AMD (and another VA-API vendor) VA-API on the render node,
- * NVIDIA NVENC, off software; tone mapping bt2390, hardware decoding for the vendor's codecs. Every other field is kept as it is.
+ * The server's encoding settings for the chosen GPU (spec "GPU"): Intel QSV, AMD VA-API on the render node, another or an undetected
+ * vendor VA-API with H.264 and HEVC decoding only, NVIDIA NVENC, off software; tone mapping bt2390, hardware decoding for the vendor's
+ * codecs. Every other field is kept as it is.
  */
 export async function setEncoding(f: typeof fetch, base: string, key: string, hw: { gpu: 'off' | 'dri' | 'nvidia'; vendor: 'intel' | 'amd' | 'other' | null; node: string | null }): Promise<void> {
   const current = obj(await json(await call(f, base, 'GET', '/System/Configuration/encoding', { key }), 256 * 1024));
   if (!current) throw new MediaSetupError('unexpected');
-  const vendor = hw.gpu === 'off' ? 'off' : hw.gpu === 'nvidia' ? 'nvidia' : hw.vendor === 'intel' ? 'intel' : 'amd';
+  const vendor = hw.gpu === 'off' ? 'off' : hw.gpu === 'nvidia' ? 'nvidia' : hw.vendor ?? 'other';
   const type: Hw = vendor === 'off' ? 'none' : vendor === 'nvidia' ? 'nvenc' : vendor === 'intel' ? 'qsv' : 'vaapi';
   const next: Obj = {
     ...current, HardwareAccelerationType: type, EnableTonemapping: true, TonemappingAlgorithm: 'bt2390', HardwareDecodingCodecs: CODECS[vendor],

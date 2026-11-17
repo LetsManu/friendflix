@@ -111,8 +111,11 @@ const fake = {
   job: null as Job | null,
   busy: false,
   bodies: [] as Array<Record<string, any>>,
+  /** the render nodes the gpu op detects */
+  dri: [] as Array<Record<string, unknown>>,
 };
-const resetFake = (kind = 'jellyfin') => Object.assign(fake, { media: media(kind), job: null, busy: false, bodies: [] });
+const INTEL = [{ node: 'renderD129', gid: 44, vendor: 'intel' }];
+const resetFake = (kind = 'jellyfin') => Object.assign(fake, { media: media(kind), job: null, busy: false, bodies: [], dri: INTEL });
 const opBodies = (op: string) => fake.bodies.filter((b) => b.op === op);
 
 const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -131,7 +134,7 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
   }
   if (u.pathname !== '/v1/mediaserver') return j({ error: 'not_found' }, 404);
   fake.bodies.push(body);
-  if (body.op === 'gpu') return j({ dri: [{ node: 'renderD129', gid: 44, vendor: 'intel' }], nvidia: false });
+  if (body.op === 'gpu') return j({ dri: fake.dri, nvidia: false });
   fake.job = job(`mediaserver-${body.op === 'finish-setup' ? 'finish' : body.op}`);
   fake.busy = true;
   return j({ job: fake.job }, 202);
@@ -446,6 +449,18 @@ describe('managed media server first run', () => {
     const posts = calls('POST', '/Library/VirtualFolders');
     expect(posts.map((c) => [c.query.get('name'), c.query.getAll('paths')])).toEqual([['Musik', ['/media/musik']]]);
     expect(calls('POST', '/Startup/User')).toEqual([]);
+  });
+
+  it('another or an undetected VA-API vendor decodes only H.264 and HEVC in hardware', async () => {
+    await connected();
+    for (const [dri, device] of [[[{ node: 'renderD130', gid: 44, vendor: 'other' }], '/dev/dri/renderD130'], [[], '/dev/dri/renderD128']] as const) {
+      await seed('jellyfin', 'libraries', LIBS.map((l) => ({ ...l, created: true })));
+      await env.pool.query("update media_managed set setup = 'hwaccel'");
+      appliedJob();
+      fake.dri = [...dri];
+      expect(await tick()).toBe('finishing');
+      expect(server.encoding).toMatchObject({ HardwareAccelerationType: 'vaapi', HardwareDecodingCodecs: ['h264', 'hevc'], VaapiDevice: device, TonemappingAlgorithm: 'bt2390' });
+    }
   });
 
   it('a changed GPU after done sets the encoding again', async () => {

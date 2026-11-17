@@ -155,6 +155,19 @@ describe('admin routes', () => {
     expect(fake.bodies).toEqual([]);
   });
 
+  it('folders sharing a library name are refused before anything is sent or stored', async () => {
+    await reauth(admin);
+    await noIds();
+    // the server holds one library per name: two folders named "Filme" and " filme " would share one
+    const r = await req(admin, 'POST', '/apply', applyBody({ folders: [FOLDERS[0], { rel: 'Neu', name: ' filme ', type: 'movies' }] }));
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toEqual({ error: 'invalid_body' });
+    expect(fake.bodies).toEqual([]);
+    expect((await env.pool.query('select count(*)::int as n from media_managed')).rows[0].n).toBe(0);
+    // distinct names are fine
+    expect((await req(admin, 'POST', '/apply', applyBody({ folders: [FOLDERS[0], { rel: 'Neu', name: 'Filme 2', type: 'movies' }] }))).statusCode).toBe(202);
+  });
+
   it('limits', async () => {
     await reauth(admin);
     for (let i = 0; i < 3; i++) expect((await req(admin, 'POST', '/base', { path: '/srv/media' })).statusCode).toBe(200);

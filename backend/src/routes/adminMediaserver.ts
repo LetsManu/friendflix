@@ -138,7 +138,9 @@ const S = {
   apply: z.object({
     kind: z.enum(KINDS),
     folders: z.array(z.object({ rel: z.string().min(1).max(200), name: libraryName, type: z.enum(LIBRARY_TYPES) }).strict()).max(20)
-      .refine((fs) => new Set(fs.map((f) => f.rel)).size === fs.length),
+      .refine((fs) => new Set(fs.map((f) => f.rel)).size === fs.length)
+      // one library per name in the server (ensureLibrary skips a name that exists): names compared trimmed, without regard to case
+      .refine((fs) => new Set(fs.map((f) => f.name.trim().toLowerCase())).size === fs.length),
     uid: id, gid: id, gpu: z.enum(GPUS), mediaGid: id.nullable(), egress: z.boolean(),
   }).strict(),
   logs: z.object({ tail: z.number().int().min(50).max(500) }).strict(),
