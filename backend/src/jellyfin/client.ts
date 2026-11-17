@@ -29,6 +29,8 @@ export interface AuthResult {
 
 /** Jellyfin HTTP failure; routes only check the server-neutral MediaError base class. */
 export class JellyfinError extends MediaError {}
+/** a 3xx that would move the request elsewhere (304 Not Modified is an answer, not a redirect) */
+const isRedirect = (status: number) => status >= 300 && status < 400 && status !== 304;
 
 /** Maps a role template to the Jellyfin UserPolicy fields we manage. */
 export function policyFromTemplate(t: RoleTemplate, folderIds: string[] | null): Record<string, unknown> {
@@ -101,9 +103,18 @@ export class JellyfinClient {
     };
   }
 
-  /** Every Jellyfin request goes through here: booked as `jf` in the request's Server-Timing (time to response headers). */
-  private send(url: string, init: RequestInit) {
-    return timed('jf', () => this.fetchImpl(url, init));
+  /**
+   * Every Jellyfin request goes through here: booked as `jf` in the request's Server-Timing (time to response headers). Redirects are never
+   * followed (they would carry the admin key or a user token to the host the Location names): a redirect answer is an error (502); a 304
+   * passes.
+   */
+  private async send(url: string, init: RequestInit) {
+    const res = await timed('jf', () => this.fetchImpl(url, { ...init, redirect: 'manual' }));
+    if (isRedirect(res.status)) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new JellyfinError(502, `Jellyfin answered ${res.status} (redirect not followed)`);
+    }
+    return res;
   }
 
   adminFetch(path: string, init: RequestInit = {}) {
@@ -264,7 +275,7 @@ export class JellyfinClient {
 
   async ping(): Promise<boolean> {
     try {
-      const res = await this.fetchImpl(this.url('/System/Ping'), { signal: AbortSignal.timeout(2000) });
+      const res = await this.fetchImpl(this.url('/System/Ping'), { signal: AbortSignal.timeout(2000), redirect: 'manual' });
       return res.ok;
     } catch {
       return false;

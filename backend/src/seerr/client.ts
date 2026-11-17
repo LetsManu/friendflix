@@ -76,6 +76,7 @@ export class SeerrClient {
       ...init,
       headers: { 'X-Api-Key': this.apiKey, 'content-type': 'application/json', ...(init.headers as Record<string, string> | undefined) },
       signal: AbortSignal.timeout(15000),
+      redirect: 'manual', // never carry the API key to another host: a redirect answer is not ok, so it is an error below
     });
     if (!res.ok) throw new SeerrError(res.status, `request service ${init.method ?? 'GET'} ${path.split('?')[0]} -> ${res.status}`);
     const t = await res.text();

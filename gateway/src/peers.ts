@@ -43,24 +43,51 @@ export function isTrustedPeer(peer: string | undefined): boolean {
 type Lookup = (host: string) => Promise<string[]>;
 const defaultLookup: Lookup = async (host) => (await dnsLookup(host, { all: true })).map((r) => r.address);
 
+const SERVICE_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+/** a compose service name (single label, not a number): a dotted name or an address may be the Docker host, whose bridge address can also be the reverse proxy's */
+const isServiceName = (host: string) => SERVICE_NAME.test(host) && !/^\d+$/.test(host);
+/** the single-label hosts (compose service names, lower case, once each) of the given URLs; anything else is left out */
+export function serviceHosts(urls: Iterable<string | null | undefined>): string[] {
+  const out = new Set<string>();
+  for (const u of urls) {
+    if (!u || !URL.canParse(u)) continue;
+    const h = new URL(u).hostname.toLowerCase();
+    if (isServiceName(h)) out.add(h);
+  }
+  return [...out];
+}
+
 /**
- * Keeps the untrusted set at the addresses of `host` (resolved now, then every `intervalMs`); a name that does not resolve (livetv is
- * off) leaves the set empty. Only a single-label host (a compose service name such as `livetv`) is followed: a dotted name or an
- * address may be the Docker host itself, whose bridge address can also be the reverse proxy's. Returns the stop function.
+ * Keeps the untrusted set at the addresses of the containers that never proxy a client: livetv, the media server and the bundled request
+ * service. `hosts` is read again on every refresh (now, then every `intervalMs`), so a media server URL from the backend's settings is
+ * followed. Each name counts on its own: a name that does not resolve (that container is off) adds nothing, any other failure keeps
+ * that name's last answer. Only single-label hosts are followed (see [serviceHosts]).
  */
-export function watchUntrustedHost(host: string, o: { lookup?: Lookup; intervalMs?: number } = {}): { ready: Promise<void>; stop(): void } {
-  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(host) || /^\d+$/.test(host)) return { ready: Promise.resolve(), stop: () => {} };
+export function watchUntrustedHosts(hosts: () => Iterable<string>, o: { lookup?: Lookup; intervalMs?: number } = {}): { ready: Promise<void>; refresh(): Promise<void>; stop(): void } {
   const lookup = o.lookup ?? defaultLookup;
+  const known = new Map<string, string[]>();
   const refresh = async () => {
-    try {
-      setUntrustedPeers(await lookup(host));
-    } catch (e) {
-      // the name is gone (the livetv profile is off): nothing to exclude; any other failure keeps the last answer
-      if ((e as { code?: string }).code === 'ENOTFOUND') setUntrustedPeers([]);
-    }
+    const want = [...new Set([...hosts()].map((h) => h.toLowerCase()).filter(isServiceName))];
+    for (const h of [...known.keys()]) if (!want.includes(h)) known.delete(h);
+    let unsure = false; // a name failed (not ENOTFOUND) before its first answer: keep the set as it is this round
+    await Promise.all(want.map(async (h) => {
+      try {
+        known.set(h, await lookup(h));
+      } catch (e) {
+        if ((e as { code?: string }).code === 'ENOTFOUND') known.set(h, []);
+        else if (!known.has(h)) unsure = true;
+      }
+    }));
+    if (!unsure) setUntrustedPeers([...known.values()].flat());
   };
   const ready = refresh();
   const t = setInterval(() => void refresh(), o.intervalMs ?? 15_000);
   t.unref();
-  return { ready, stop: () => clearInterval(t) };
+  return { ready, refresh, stop: () => clearInterval(t) };
+}
+
+/** [watchUntrustedHosts] for one fixed host; a host that is no compose service name is not followed at all (the set stays as it is) */
+export function watchUntrustedHost(host: string, o: { lookup?: Lookup; intervalMs?: number } = {}): { ready: Promise<void>; stop(): void } {
+  if (!isServiceName(host)) return { ready: Promise.resolve(), stop: () => {} };
+  return watchUntrustedHosts(() => [host], o);
 }
