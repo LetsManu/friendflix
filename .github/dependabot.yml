@@ -57,6 +57,14 @@ updates:
     cooldown: { default-days: 7 }
     rebase-strategy: disabled
     open-pull-requests-limit: 1
+  # the pinned official Jellyfin release of the managed media server (mediaserver/pins/jellyfin/Dockerfile, never built): a new
+  # release arrives as its own PR; CI reads the file into the backend image's pin label (scripts/mediaserver-pins.sh)
+  - package-ecosystem: docker
+    directory: /mediaserver/pins/jellyfin
+    schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
+    rebase-strategy: disabled
+    open-pull-requests-limit: 1
   # the workflows and the local composite actions (.github/actions/build-image pins setup-buildx, build-push, metadata)
   - package-ecosystem: github-actions
     directories: ["/", "/.github/actions/*"]
