@@ -5,6 +5,7 @@ import type { Config } from '../src/config.js';
 import { sha256 } from '../src/crypto.js';
 import { createInvite } from '../src/invites.js';
 import { provisionUser } from '../src/users.js';
+import * as notifyMod from '../src/notify.js';
 import { FLOW_MAILS_GLOBAL_KEY, flowFailKey, MAX_FLOW_MAILS_DAY } from '../src/routes/authFlow.js';
 import { issueSetupCode } from '../src/setup/code.js';
 import { isSetupComplete } from '../src/setup/state.js';
@@ -783,8 +784,18 @@ describe('/auth/flow recovery (Task 5)', () => {
     expect(await send('hanna@example.com')).toMatchObject({ stage: 'email-sent' });
     expect(await env.kv.get(FLOW_MAILS_GLOBAL_KEY)).toBe(String(MAX_FLOW_MAILS_DAY));
     expect(await notices()).toHaveLength(1);
-    expect(await send('ida@example.com')).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
-    expect(await send('jon@example.com')).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
+    const capLogs = () => logs.filter((l) => l.includes('flow_mail_daily_cap')).length;
+    const logged = capLogs();
+    expect(logged).toBeGreaterThan(0);
+    const told = vi.spyOn(notifyMod, 'notifyAdmins');
+    for (let i = 0; i < 3; i++) {
+      expect(await send('ida@example.com')).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
+      expect(await send('jon@example.com')).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
+    }
+    // refused attempts once the cap is reached neither log nor notify again in that window (review round 2, b)
+    expect(capLogs()).toBe(logged);
+    expect(told).not.toHaveBeenCalled();
+    told.mockRestore();
     expect(await notices()).toHaveLength(1);
     // a refused mail takes nothing from the other budgets
     await clearKeys(FLOW_MAILS_GLOBAL_KEY);

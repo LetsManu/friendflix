@@ -90,6 +90,8 @@ export const MAX_FLOW_MAILS_ADDRESS_DAY = 10;
 export const MAX_FLOW_MAILS_DAY = 100;
 export const FLOW_MAILS_DAY_S = 86_400;
 export const FLOW_MAILS_GLOBAL_KEY = 'recoverymail:global';
+/** set once the cap of the current window was logged and told (cleared when a new window starts) */
+const CAP_NOTED_KEY = 'recoverymail:global:noted';
 /** where a flow mail goes, and whether Authentik knows that account (only then does a sent mail count toward the daily cap) */
 interface MailDest { address?: string; known: boolean }
 
@@ -936,9 +938,13 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
    * that reaches the cap is logged by code and told to every admin once that day.
    */
   async function noteMailSent(): Promise<void> {
-    if ((await ctx.kv.incr(FLOW_MAILS_GLOBAL_KEY, FLOW_MAILS_DAY_S)) >= MAX_FLOW_MAILS_DAY) await capReached();
+    const n = await ctx.kv.incr(FLOW_MAILS_GLOBAL_KEY, FLOW_MAILS_DAY_S);
+    if (n === 1) await ctx.kv.del(CAP_NOTED_KEY); // a new window: its cap may be told again
+    if (n >= MAX_FLOW_MAILS_DAY) await capReached();
   }
+  /** once per window (review round 2, b): every refused attempt after the cap would otherwise log and ask the database again */
   async function capReached(): Promise<void> {
+    if (!(await ctx.kv.setnx(CAP_NOTED_KEY, '1', FLOW_MAILS_DAY_S))) return;
     app.log.warn({ code: 'flow_mail_daily_cap' }, 'flow e-mail daily cap reached: recovery and confirmation mails are refused until the window ends');
     await notifyAdmins(ctx, {
       kind: 'flow_mail_cap', title: m('notify.mailcap.title'), body: m('notify.mailcap.body', { n: MAX_FLOW_MAILS_DAY }),
