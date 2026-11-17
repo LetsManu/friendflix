@@ -107,9 +107,9 @@ export class Updater {
     if (j.action === 'self-update' && j.step === 'restart') {
       j.steps.restart = 'ok'; j.steps.health = 'ok'; j.step = null; j.state = 'succeeded';
       this.log.add(`self-update to ${j.to} finished`);
-    } else if (j.action === 'update' && j.steps.health === 'ok' && j.steps.rollback !== 'running' && j.media) {
-      // interrupted in the media server phase: FriendFlix itself was already updated
-      if (j.media.step) j.media.steps[j.media.step] = 'failed';
+    } else if (j.action === 'update' && j.steps.health === 'ok' && j.steps.rollback === 'skipped') {
+      // interrupted after FriendFlix got healthy on the new build (in the media server phase, maybe before it recorded a step)
+      if (j.media?.step) j.media.steps[j.media.step] = 'failed';
       j.state = 'succeeded_mediaserver_failed'; j.error = 'interrupted';
       this.log.add(`job ${j.action} was interrupted by a restart in the media server phase`);
     } else {

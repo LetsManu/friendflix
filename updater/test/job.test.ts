@@ -297,6 +297,18 @@ describe('update job', () => {
     expect(s.state.lastJob).toMatchObject({ state: 'succeeded_mediaserver_failed', error: 'interrupted', steps: { health: 'ok' }, media: { steps: { create: 'failed' } } });
   });
 
+  it('an update interrupted in its media phase before the phase recorded a step keeps FriendFlix updated', () => {
+    const steps = { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'ok' as const, rollback: 'skipped' as const };
+    const job: Job = { id: '0123456789abcdef', action: 'update', state: 'running', step: 'health', from: null, to: 'latest', startedAt: new Date().toISOString(), finishedAt: null, error: null, steps, media: null };
+    const s = memoryStore({ ...DEFAULT_STATE, current: 'latest', lastJob: job });
+    new Updater(world().ops, s);
+    expect(s.state.lastJob).toMatchObject({ state: 'succeeded_mediaserver_failed', error: 'interrupted', steps: { health: 'ok' }, media: null });
+    // a rollback that had started is not an update that succeeded
+    const back = memoryStore({ ...DEFAULT_STATE, lastJob: { ...job, step: 'rollback', steps: { ...steps, rollback: 'running' } } });
+    new Updater(world().ops, back);
+    expect(back.state.lastJob).toMatchObject({ state: 'failed', error: 'interrupted', steps: { rollback: 'failed' } });
+  });
+
   it('a job interrupted by a restart is marked failed', () => {
     const job = { id: '0123456789abcdef', action: 'update' as const, state: 'running' as const, step: 'health' as const, from: null, to: 'latest', startedAt: new Date().toISOString(), finishedAt: null, error: null,
       steps: { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'running' as const, rollback: 'skipped' as const }, media: null };
