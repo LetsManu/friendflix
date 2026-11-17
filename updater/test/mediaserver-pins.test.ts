@@ -19,6 +19,15 @@ describe('parsePinLabel', () => {
     expect(r.pins.ferrofin).toEqual({ kind: 'ferrofin', image: `ghcr.io/letsmanu/friendflix-mediaserver@sha256:${A}`, digest: `sha256:${A}`, upstream: null });
   });
 
+  it('accepts the build-stamp tags of Jellyfin 12.x and keeps the full tag as upstream', () => {
+    const r = parsePinLabel(`jellyfin=docker.io/jellyfin/jellyfin:12.4.20261026-211555@sha256:${B}`, REPO);
+    expect(r.invalid).toEqual([]);
+    expect(r.pins.jellyfin).toMatchObject({ digest: `sha256:${B}`, upstream: '12.4.20261026-211555' });
+    for (const t of ['12.4', '12.4.20261026-2115', '12.4.2026102-211555', '12.4.20261026-211555-x', '12.4.20261026_211555']) {
+      expect(parsePinLabel(`jellyfin=docker.io/jellyfin/jellyfin:${t}@sha256:${B}`, REPO).invalid, t).toEqual(['jellyfin']);
+    }
+  });
+
   it('an invalid entry disables only its kind', () => {
     const bad = [
       `ferrofin=ghcr.io/someone/friendflix-mediaserver@sha256:${A}`,

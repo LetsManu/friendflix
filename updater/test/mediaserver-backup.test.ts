@@ -13,7 +13,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { StepError } from '../src/docker.js';
 import { restoreBackup, writeBackup } from '../src/mediaHelper.js';
 import { BACKUP_EXCLUDE, metaEntry, type ArchiveMeta } from '../src/mediaserver/archive.js';
-import { backupId, decodePassphrase, download, prune, removeStaleParts, retain, upload } from '../src/mediaserver/backup.js';
+import { backupId, decodePassphrase, download, older, prune, removeStaleParts, retain, upload } from '../src/mediaserver/backup.js';
 import { MediaJobs } from '../src/mediaserver/jobs.js';
 import type { BackupMeta, BackupTag } from '../src/mediaserver/types.js';
 import { JSPEC, N, SPEC, T0, ferroPin, jellyPin, world } from './media-world.js';
@@ -105,6 +105,32 @@ function openFds(path: string): number {
   }
   return n;
 }
+
+describe('older', () => {
+  it('compares plain X.Y.Z numerically', () => {
+    expect(older('10.11.2', '10.11.3')).toBe(true);
+    expect(older('10.9.9', '10.11.0')).toBe(true);
+    expect(older('v1.5.1', 'v1.5.10')).toBe(true);
+    expect(older('10.11.3', '10.11.3')).toBe(false);
+    expect(older('10.11.11', '10.11.3')).toBe(false);
+    expect(older('nope', '10.11.3')).toBe(false);
+  });
+
+  it('compares the build-stamp tags of Jellyfin 12.x', () => {
+    const t = '12.4.20261026-211555';
+    expect(older('12.4.20261023-013714', t)).toBe(true);
+    expect(older(t, '12.4.20261023-013714')).toBe(false);
+    expect(older('12.4.20261026-211554', t)).toBe(true);
+    expect(older('12.3.20261023-013714', t)).toBe(true);
+    expect(older('10.11.11', t)).toBe(true);
+    expect(older(t, '10.11.11')).toBe(false);
+    expect(older(t, t)).toBe(false);
+    expect(older('13.0.20270101-000000', t)).toBe(false);
+    // same X.Y: a stamp is newer than any plain patch tag
+    expect(older('12.4.3', t)).toBe(true);
+    expect(older(t, '12.4.3')).toBe(false);
+  });
+});
 
 describe('ids and passphrases', () => {
   it('backupId uses UTC minutes', () => {

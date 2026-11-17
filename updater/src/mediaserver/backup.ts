@@ -35,7 +35,8 @@ const KEEP = { manualAndUpload: 3, auto: 2 };
 const HEADER_MAX = 64 * 1024;
 /** the highest scrypt work factor an upload may ask for: age's default, what the age CLI and our download write */
 const SCRYPT_MAX_LOG_N = 18;
-const VERSION_RE = /^v?([0-9]+)\.([0-9]+)\.([0-9]+)/;
+// X.Y.Z, or X.Y.<YYYYMMDD>-<HHMMSS> (Jellyfin 12.x build tags); the stamp alternative comes first so it is not read as Z
+const VERSION_RE = /^v?([0-9]+)\.([0-9]+)\.(?:([0-9]{8})-([0-9]{6})|([0-9]+))/;
 
 const fail = (code: 'backup_invalid' | 'backup_failed' | 'kind_mismatch' | 'downgrade_refused' | 'unhealthy' | 'restore_failed'): never => { throw new StepError(code); };
 const fileOf = (dir: string, id: string): string => join(dir, `${id}.tar.gz`);
@@ -58,13 +59,20 @@ export function backupId(kind: Kind, upstream: string, at: Date): string {
   return `${kind}-${at.getUTCFullYear()}${two(at.getUTCMonth() + 1)}${two(at.getUTCDate())}-${two(at.getUTCHours())}${two(at.getUTCMinutes())}-${upstream}`;
 }
 
-/** `v?X.Y.Z` compared numerically, a older than b; anything else is never "older" (the never-down rule of deploys and restores) */
+/**
+ * `v?X.Y.Z` or `X.Y.<YYYYMMDD>-<HHMMSS>` compared numerically, a older than b; anything else is never "older" (the never-down
+ * rule of deploys and restores). Same X.Y: a build-stamp tag is newer than any plain patch tag (12.x has only stamp tags, 10.x
+ * only plain ones, so the case does not occur for real releases); two stamps compare by their date and time.
+ */
 export function older(a: string, b: string): boolean {
   const x = VERSION_RE.exec(a);
   const y = VERSION_RE.exec(b);
   if (!x || !y) return false;
-  for (let i = 1; i <= 3; i++) if (Number(x[i]) !== Number(y[i])) return Number(x[i]) < Number(y[i]);
-  return false;
+  for (let i = 1; i <= 2; i++) if (Number(x[i]) !== Number(y[i])) return Number(x[i]) < Number(y[i]);
+  const stampA = x[3] !== undefined, stampB = y[3] !== undefined;
+  if (stampA !== stampB) return !stampA;
+  if (stampA) return Number(x[3]! + x[4]!) < Number(y[3]! + y[4]!);
+  return Number(x[5]) < Number(y[5]);
 }
 
 /** retention: the last 3 manual and uploaded backups together, the last 2 automatic ones; order kept */

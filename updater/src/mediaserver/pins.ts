@@ -12,7 +12,8 @@ export interface Pin { kind: Kind; image: string; digest: string; upstream: stri
 
 const HEX = '[0-9a-f]{64}';
 const FERROFIN_TAIL_RE = new RegExp(`^@(sha256:${HEX})$`);
-const JELLYFIN_RE = new RegExp(`^docker\\.io/jellyfin/jellyfin:([0-9]+\\.[0-9]+\\.[0-9]+)@(sha256:${HEX})$`);
+// Jellyfin tags: X.Y.Z (10.x) or X.Y.<YYYYMMDD>-<HHMMSS>, the immutable build tags of 12.x (no plain patch tag exists there)
+const JELLYFIN_RE = new RegExp(`^docker\\.io/jellyfin/jellyfin:([0-9]+\\.[0-9]+\\.(?:[0-9]+|[0-9]{8}-[0-9]{6}))@(sha256:${HEX})$`);
 
 /** `kind=ref` entries separated by whitespace; an invalid or duplicated entry disables only its kind */
 export function parsePinLabel(value: string | undefined, repo: string): { pins: Partial<Record<Kind, Pin>>; invalid: Kind[] } {

@@ -26,7 +26,7 @@ expect_fail() { # name args...
 
 # the committed pin file
 out=$(bash "$script" LetsManu/friendflix); rc=$?
-if [ "$rc" = 0 ] && [[ "$out" =~ ^jellyfin=docker\.io/jellyfin/jellyfin:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$ ]]; then ok "real pin file"; else bad "real pin file (rc=$rc, out: $out)"; fi
+if [ "$rc" = 0 ] && [[ "$out" =~ ^jellyfin=docker\.io/jellyfin/jellyfin:[0-9]+\.[0-9]+\.([0-9]+|[0-9]{8}-[0-9]{6})@sha256:[0-9a-f]{64}$ ]]; then ok "real pin file"; else bad "real pin file (rc=$rc, out: $out)"; fi
 
 mk "FROM $jf\n"
 expect_out "jellyfin only" "jellyfin=$jf" LetsManu/friendflix
@@ -34,9 +34,14 @@ expect_out "with ferrofin digest, owner and repo lowercased" "jellyfin=$jf ferro
 expect_out "invalid digest: no ferrofin entry" "jellyfin=$jf" LetsManu/friendflix "sha256:abc"
 expect_out "uppercase digest: no ferrofin entry" "jellyfin=$jf" LetsManu/friendflix "sha256:${d64^^}"
 expect_out "empty digest: no ferrofin entry" "jellyfin=$jf" LetsManu/friendflix ""
+stamp=docker.io/jellyfin/jellyfin:12.4.20261026-211555@sha256:$d64
+mk "FROM $stamp\n"
+expect_out "build-stamp tag (12.x)" "jellyfin=$stamp" LetsManu/friendflix
 mk "# SPDX\n\n# comment\nFROM $jf\n\n# trailer\n"
 expect_out "comments and blank lines ignored" "jellyfin=$jf" LetsManu/friendflix
 
+mk "FROM docker.io/jellyfin/jellyfin:12.4@sha256:$d64\n";          expect_fail "minor tag only" LetsManu/friendflix
+mk "FROM docker.io/jellyfin/jellyfin:12.4.20261026-2115@sha256:$d64\n"; expect_fail "short time" LetsManu/friendflix
 mk "FROM $jf\nRUN true\n";                                       expect_fail "second instruction" LetsManu/friendflix
 mk "FROM $jf\nFROM $jf\n";                                       expect_fail "two FROM lines" LetsManu/friendflix
 mk "FROM docker.io/jellyfin/jellyfin:10.11.11\n";                expect_fail "tag without digest" LetsManu/friendflix
