@@ -149,7 +149,8 @@ describe('notifications feed store: baseline, reset, concurrency', () => {
   it('reset empties everything and load clears rows at once', async () => {
     const d = deferred<Feed>();
     const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1']]])).mockReturnValueOnce(d.promise);
-    const s = createFeed(fake({ feed }));
+    const api = fake({ feed });
+    const s = createFeed(api);
     await s.load('all');
     s.toggle('a1');
     await s.hide({ groups: ['a1'] });
@@ -163,7 +164,9 @@ describe('notifications feed store: baseline, reset, concurrency', () => {
     s.reset();
     expect(get(s)).toMatchObject({ filter: 'all', sections: [], next: null, loading: 'idle', error: null, fresh: 0 });
     expect(get(s).open.size).toBe(0);
-    await s.undo('tok'); // the token is gone: nothing comes back
+    const unhide = api.unhide as ReturnType<typeof vi.fn>;
+    await s.undo('tok'); // the token is gone: the server is not asked and nothing comes back
+    expect(unhide).not.toHaveBeenCalled();
     expect(get(s).sections).toEqual([]);
   });
   it('a reset during a load drops its answer', async () => {
@@ -276,5 +279,22 @@ describe('notifications feed store: baseline, reset, concurrency', () => {
     d.resolve(page([['today', ['a9']]]));
     await p;
     expect(ids(s)).toEqual([['today', ['a9']]]);
+  });
+  it('a reset or load while unhide is in flight restores nothing', async () => {
+    for (const interrupt of [(s: ReturnType<typeof createFeed>) => s.reset(), (s: ReturnType<typeof createFeed>) => void s.load('unread')]) {
+      const d = deferred<{ n: number }>();
+      const feed = vi.fn().mockResolvedValueOnce(pageOf([bigGroup('a1', 2)], 2)).mockResolvedValue({ sections: [], next: null, unread: 0, categories: [] });
+      const s = createFeed(fake({ feed, unhide: vi.fn(() => d.promise) }));
+      await s.load('all');
+      await s.hide({ groups: ['a1'] });
+      const u = s.undo('tok');
+      interrupt(s);
+      d.resolve({ n: 1 });
+      await u;
+      await new Promise((r) => setTimeout(r));
+      expect(ids(s)).toEqual([]);
+      s.noteFresh(2);
+      expect(get(s).fresh).toBe(2); // the baseline was not raised again
+    }
   });
 });

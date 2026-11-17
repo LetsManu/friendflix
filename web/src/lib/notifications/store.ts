@@ -151,6 +151,8 @@ export function createFeed(api: NotesApi = defaultApi): FeedStore {
     },
     async undo(token) {
       const removed = undoable.get(token);
+      if (!removed) return; // not ours (any more): a reset or a new page dropped it
+      const g0 = gen;
       try {
         await api.unhide(token);
       } catch (e) {
@@ -159,10 +161,9 @@ export function createFeed(api: NotesApi = defaultApi): FeedStore {
         return;
       }
       undoable.delete(token);
-      if (removed) {
-        baseUnread += removed.reduce((n, r) => n + unreadOf(r.group), 0);
-        restore(removed);
-      } else await first(state.filter, true);
+      if (g0 !== gen) return; // the page changed meanwhile: its next refresh shows the result
+      baseUnread += removed.reduce((n, r) => n + unreadOf(r.group), 0);
+      restore(removed);
     },
   };
 }
