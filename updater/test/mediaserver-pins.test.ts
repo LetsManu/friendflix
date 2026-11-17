@@ -8,6 +8,7 @@ const A = 'a'.repeat(64);
 const B = 'b'.repeat(64);
 const J = `jellyfin=docker.io/jellyfin/jellyfin:10.11.3@sha256:${B}`;
 const F = `ferrofin=ghcr.io/letsmanu/friendflix-mediaserver@sha256:${A}`;
+const TAG = 'ghcr.io/letsmanu/friendflix-backend:latest';
 const REPO = 'LetsManu/friendflix';
 
 describe('parsePinLabel', () => {
@@ -46,9 +47,10 @@ describe('readPins', () => {
     const engine = {
       listContainers: async (labels: Record<string, string>) => (labels['com.docker.compose.service'] === 'backend' && labels['com.docker.compose.project'] === 'friendflix' ? [{ id: 'b1', names: [], state: 'running', labels: {} }] : []),
       inspectContainer: async () => ({ Image: image, Config: { Image: 'ghcr.io/letsmanu/friendflix-backend:latest' } }),
-      inspectImage: async (ref: string) => (ref === image ? { id: image, labels: { [PIN_LABEL]: `${J} ${F}` } } : null),
+      inspectImage: async (ref: string) => (ref === image || ref === TAG ? { id: ref === TAG ? tagId : image, labels: { [PIN_LABEL]: `${J} ${F}` } } : null),
     } as unknown as Engine;
     const asked: string[] = [];
+    let tagId = image;
     let verdict = false;
     const d = { engine, project: 'friendflix', repo: REPO, verify: async (ref: string) => { asked.push(ref); return verdict; } };
     expect(await readPins(d)).toEqual({ error: 'verify_failed' });
@@ -59,8 +61,15 @@ describe('readPins', () => {
     await readPins(d);
     expect(asked).toEqual(Array(2).fill('ghcr.io/letsmanu/friendflix-backend:latest'));
     image = 'sha256:' + '2'.repeat(64);
+    tagId = image;
     expect(await readPins(d)).toMatchObject({ source: image });
     expect(asked).toHaveLength(3);
+    // the tag moved on: the verified image is not the running one, nothing is trusted or cached
+    image = 'sha256:' + '3'.repeat(64);
+    tagId = 'sha256:' + '4'.repeat(64);
+    expect(await readPins(d)).toEqual({ error: 'verify_failed' });
+    tagId = image;
+    expect(await readPins(d)).toMatchObject({ source: image });
     expect(await readPins({ ...d, project: 'other' })).toEqual({ error: 'no_backend' });
   });
 });

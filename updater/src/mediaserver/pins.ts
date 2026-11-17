@@ -53,6 +53,8 @@ export async function readPins(d: PinDeps): Promise<PinRead> {
   const hit = cache.get(d.engine);
   if (hit?.id === id) return hit.read;
   if (!(await d.verify(cfg.Image))) return { error: 'verify_failed' };
+  // the tag that was verified must still be the running image, or the label would come from an unverified image
+  if ((await d.engine.inspectImage(cfg.Image))?.id !== id) return { error: 'verify_failed' };
   const img = await d.engine.inspectImage(id);
   if (!img) return { error: 'no_backend' };
   const read: PinRead = { source: id, ...parsePinLabel(img.labels[PIN_LABEL], d.repo) };
