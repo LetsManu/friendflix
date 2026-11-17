@@ -7,6 +7,7 @@ import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { effectiveLanguage, LANGUAGES, m } from '../i18n.js';
 import { localizeStored, notify } from '../notify.js';
+import { decodeCursor, feed, FEED_PAGE, feedCounts, isFeedFilter } from '../notifications/feed.js';
 import { portalStatus, RequestsDisabledError, requestsClient, requestsEnabled, requestStateKey, SeerrError, viewerLanguage } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { collectionOf, partState, seasonRequestable, seasonStates } from '../seerr/states.js';
@@ -371,6 +372,19 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     );
     const lang = await effectiveLanguage(ctx, req.profile?.id ?? req.user!.id);
     return { notifications: r.rows.map((row) => localizeStored(row as { title: string; body: string | null; msg: unknown }, lang)) };
+  });
+  // the notifications center: grouped sections in the viewer's time zone, paged by groups; limit=0 answers only the counts (bell badge)
+  app.get('/api/notifications/feed', npre, async (req, reply) => {
+    const q = req.query as Record<string, unknown>;
+    const filter = q.filter === undefined || q.filter === '' ? 'all' : q.filter;
+    if (typeof filter !== 'string' || !isFeedFilter(filter)) return reply.code(400).send({ error: 'invalid_filter' });
+    const cursor = q.cursor === undefined || q.cursor === '' ? null : q.cursor;
+    if (cursor !== null && (typeof cursor !== 'string' || !decodeCursor(cursor))) return reply.code(400).send({ error: 'invalid_cursor' });
+    const limit = q.limit === undefined || q.limit === '' ? FEED_PAGE : Number(q.limit);
+    if (!Number.isInteger(limit) || limit < 0) return reply.code(400).send({ error: 'bad_request' });
+    if (limit === 0) return feedCounts(ctx, req.user!.id);
+    const lang = await effectiveLanguage(ctx, req.profile?.id ?? req.user!.id);
+    return feed(ctx, req.user!.id, lang, { tz: typeof q.tz === 'string' ? q.tz : '', filter, cursor, limit: Math.min(limit, FEED_PAGE) });
   });
   app.post('/api/notifications/read', npre, async (req) => {
     await ctx.db.query('update notifications set read_at = now() where user_id = $1 and read_at is null', [req.user!.id]);
