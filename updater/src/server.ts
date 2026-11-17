@@ -61,8 +61,8 @@ export interface AppDeps {
   warn?: (msg: string) => void;
   /** the managed media server (Task 3–8 parts bound to their deps); absent in tests = the media routes are not found */
   media?: MediaApi;
-  /** shorter deadlines for tests: a JSON body (10 s), an idle backup stream (60 s) */
-  limits?: { bodyMs?: number; streamIdleMs?: number };
+  /** shorter deadlines for tests: a JSON body (10 s), an idle backup stream (60 s), the media status (2 s) */
+  limits?: { bodyMs?: number; streamIdleMs?: number; mediaStatusMs?: number };
 }
 
 export interface MediaApi {
@@ -108,10 +108,27 @@ function readBody(req: IncomingMessage, max: number, deadlineMs: number): Promis
   });
 }
 
+/** how long /v1/status and a media op's availability check wait for the media status (a slow pin verify must not hide the updater) */
+const MEDIA_STATUS_MS = 2_000;
+const lastMediaView = new WeakMap<MediaApi, MediaStatusView>();
+
+/** the media status within the bound; past it the last view this updater answered (null before the first), the read goes on */
+async function mediaStatus(m: MediaApi, ms = MEDIA_STATUS_MS): Promise<MediaStatusView | null> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<'late'>((r) => { timer = setTimeout(() => r('late'), ms); });
+  const fresh = m.status().then((v) => { lastMediaView.set(m, v); return v; }, () => null);
+  try {
+    const v = await Promise.race([fresh, late]);
+    return v === 'late' ? lastMediaView.get(m) ?? null : v;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function status(d: AppDeps) {
   const s = d.updater.snapshot();
   const [services, stack, livetv, mediaserver] = await Promise.all([d.services().catch(() => []), d.stack ? d.stack().catch(() => null) : Promise.resolve(null),
-    d.livetv ? d.livetv().catch(() => null) : Promise.resolve(null), d.media ? d.media.status().catch(() => null) : Promise.resolve(null)]);
+    d.livetv ? d.livetv().catch(() => null) : Promise.resolve(null), d.media ? mediaStatus(d.media, d.limits?.mediaStatusMs) : Promise.resolve(null)]);
   return {
     updater: d.self,
     channel: s.channel, version: s.version, targetTag: channelTag(s.channel, s.version),
@@ -240,7 +257,7 @@ export function handler(d: AppDeps) {
       const op = parseMediaBody(parsed.value);
       if (!op) return send(res, 400, { error: 'invalid_body' });
       if (!ALWAYS_OPS.has(op.op)) {
-        const view = await m.status().catch(() => null);
+        const view = await mediaStatus(m, d.limits?.mediaStatusMs);
         if (!view?.available) return send(res, 409, { error: view?.reason ?? 'not_available' });
       }
       const a = await mediaOp(m, op);

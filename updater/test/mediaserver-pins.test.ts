@@ -61,9 +61,11 @@ describe('readPins', () => {
     const asked: string[] = [];
     let tagId = image;
     let verdict = false;
-    const d = { engine, project: 'friendflix', repo: REPO, verify: async (ref: string) => { asked.push(ref); return verdict; } };
+    let t = 0;
+    const d = { engine, project: 'friendflix', repo: REPO, verify: async (ref: string) => { asked.push(ref); return verdict; }, now: () => t };
     expect(await readPins(d)).toEqual({ error: 'verify_failed' });
     verdict = true;
+    t = 10 * 60_000; // a failed verify of this image is kept 10 min
     const r = await readPins(d);
     expect(r).toMatchObject({ source: image, invalid: [] });
     expect('pins' in r && r.pins.jellyfin?.upstream).toBe('10.11.3');
@@ -80,5 +82,28 @@ describe('readPins', () => {
     tagId = image;
     expect(await readPins(d)).toMatchObject({ source: image });
     expect(await readPins({ ...d, project: 'other' })).toEqual({ error: 'no_backend' });
+  });
+
+  it('a failed verify of the same backend image is not run again within 10 min (cosign is slow)', async () => {
+    let image = 'sha256:' + '5'.repeat(64);
+    const engine = {
+      listContainers: async () => [{ id: 'b1', names: [], state: 'running', labels: {} }],
+      inspectContainer: async () => ({ Image: image, Config: { Image: 'ghcr.io/letsmanu/friendflix-backend:latest' } }),
+      inspectImage: async () => ({ id: image, labels: { [PIN_LABEL]: `${J} ${F}` } }),
+    } as unknown as Engine;
+    let verifies = 0;
+    let t = 0;
+    const d = { engine, project: 'friendflix', repo: REPO, verify: async () => { verifies++; return false; }, now: () => t };
+    expect(await readPins(d)).toEqual({ error: 'verify_failed' });
+    t = 10 * 60_000 - 1;
+    expect(await readPins(d)).toEqual({ error: 'verify_failed' });
+    expect(verifies).toBe(1);
+    t = 10 * 60_000;
+    expect(await readPins(d)).toEqual({ error: 'verify_failed' });
+    expect(verifies).toBe(2);
+    // another backend image is verified at once
+    image = 'sha256:' + '6'.repeat(64);
+    expect(await readPins(d)).toEqual({ error: 'verify_failed' });
+    expect(verifies).toBe(3);
   });
 });

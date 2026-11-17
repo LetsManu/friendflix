@@ -40,10 +40,12 @@ export function parsePinLabel(value: string | undefined, repo: string): { pins: 
   return { pins, invalid: [...invalid] };
 }
 
-export interface PinDeps { engine: Engine; project: string; verify(imageRef: string): Promise<boolean>; repo: string }
+export interface PinDeps { engine: Engine; project: string; verify(imageRef: string): Promise<boolean>; repo: string; now?(): number }
 export type PinRead = { source: string; pins: Partial<Record<Kind, Pin>>; invalid: Kind[] } | { error: 'no_backend' | 'verify_failed' };
 
-const cache = new WeakMap<Engine, { id: string; read: PinRead }>();
+/** a backend image that failed cosign is not verified again for this long (cosign is slow; the status reads the pins often) */
+const VERIFY_FAILED_MS = 10 * 60_000;
+const cache = new WeakMap<Engine, { id: string; read: PinRead; at: number }>();
 
 export async function readPins(d: PinDeps): Promise<PinRead> {
   const found = await d.engine.listContainers({ 'com.docker.compose.project': d.project, 'com.docker.compose.service': 'backend' }, true);
@@ -51,14 +53,19 @@ export async function readPins(d: PinDeps): Promise<PinRead> {
   const id = typeof backend?.Image === 'string' ? backend.Image : '';
   const cfg = backend?.Config as { Image?: unknown; Labels?: unknown } | undefined;
   if (!id || typeof cfg?.Image !== 'string') return { error: 'no_backend' };
+  const now = d.now ?? Date.now;
   const hit = cache.get(d.engine);
-  if (hit?.id === id) return hit.read;
-  if (!(await d.verify(cfg.Image))) return { error: 'verify_failed' };
+  if (hit?.id === id && (!('error' in hit.read) || now() - hit.at < VERIFY_FAILED_MS)) return hit.read;
+  if (!(await d.verify(cfg.Image))) {
+    const failed: PinRead = { error: 'verify_failed' };
+    cache.set(d.engine, { id, read: failed, at: now() });
+    return failed;
+  }
   // the tag that was verified must still be the running image, or the label would come from an unverified image
   if ((await d.engine.inspectImage(cfg.Image))?.id !== id) return { error: 'verify_failed' };
   const img = await d.engine.inspectImage(id);
   if (!img) return { error: 'no_backend' };
   const read: PinRead = { source: id, ...parsePinLabel(img.labels[PIN_LABEL], d.repo) };
-  cache.set(d.engine, { id, read });
+  cache.set(d.engine, { id, read, at: now() });
   return read;
 }

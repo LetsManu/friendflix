@@ -267,6 +267,46 @@ describe('the media status', () => {
   });
 });
 
+describe('a slow media status', () => {
+  it('concurrent callers share one read', async () => {
+    const w = world();
+    let facts = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const view = mediaStatusView({
+      updater: w.updater, engine: w.deps.engine, jobs: w.jobs, pins: w.deps.pins, now: () => w.clock.t, templateState: async () => null,
+      facts: async () => { facts++; await gate; return FACTS; },
+    });
+    const all = Promise.all([view(), view(), view()]);
+    release();
+    const [a, b, c] = await all;
+    expect(facts).toBe(1);
+    expect(a.available && b.available && c.available).toBe(true);
+  });
+
+  it('/v1/status answers within the bound while the media status hangs (the last view, else null)', async () => {
+    const f = fake();
+    let hang = false;
+    f.deps.media!.status = () => (hang ? new Promise<MediaStatusView>(() => undefined) : Promise.resolve(f.view));
+    const base = await listen({ ...f.deps, limits: { mediaStatusMs: 50 } });
+    const get = async () => (await (await fetch(`${base}/v1/status`, { headers: sign(key, 'GET', '/v1/status', '') })).json()) as { mediaserver: MediaStatusView | null };
+
+    hang = true;
+    let t0 = Date.now();
+    expect((await get()).mediaserver).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(1_000);
+    // a media op's availability check is bounded too
+    expect((await post(base, '{"op":"start"}')).status).toBe(409);
+
+    hang = false;
+    expect((await get()).mediaserver).toEqual(VIEW);
+    hang = true;
+    t0 = Date.now();
+    expect((await get()).mediaserver).toEqual(VIEW);
+    expect(Date.now() - t0).toBeLessThan(1_000);
+  });
+});
+
 describe('the backup streams', () => {
   const download = (base: string, id: string, header: string, signedOver = header) => {
     const path = `/v1/mediaserver/backups/${id}/download`;

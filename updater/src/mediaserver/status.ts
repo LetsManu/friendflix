@@ -113,8 +113,17 @@ export function mediaStatusView(d: MediaStatusDeps): () => Promise<MediaStatusVi
     return { id: own.id, kind: own.kind, state: typeof st.Status === 'string' ? st.Status : '', health, createdAt: iso(i.Created), digest, clean };
   }
 
-  async function read(key: string): Promise<Live> {
-    if (live && live.key === key && now() - live.at < ttl) return live.v;
+  /** one Docker read at a time: callers while it runs share it */
+  let inflight: { key: string; p: Promise<Live> } | null = null;
+  function read(key: string): Promise<Live> {
+    if (live && live.key === key && now() - live.at < ttl) return Promise.resolve(live.v);
+    if (inflight?.key === key) return inflight.p;
+    const p = load(key).finally(() => { if (inflight?.p === p) inflight = null; });
+    inflight = { key, p };
+    return p;
+  }
+
+  async function load(key: string): Promise<Live> {
     const facts = await d.facts().catch(() => null);
     const project = facts?.project ?? null;
     const [r, s] = await Promise.all([
