@@ -190,6 +190,27 @@ describe('stream limit at the gateway (/internal/stream)', () => {
     expect((await claim(other, ITEMS[1]!, 'ps-p-0002')).statusCode).toBe(429);
   });
 
+  it('a claim never waits for a start report\'s media server call (review 2: only the count and the write are queued)', async () => {
+    await setUserLimits(env.ctx, userId, { ...NONE, maxStreams: 3 });
+    let release!: () => void;
+    const slow = new Promise<void>((r) => (release = r));
+    const spy = vi.spyOn(env.ctx.jf, 'report').mockImplementation(async () => { await slow; });
+    try {
+      const starting = report(me, 'start', ITEMS[0]!, 'ps-w-0001'); // hangs in the media server's report
+      await new Promise((r) => setTimeout(r, 50));
+      const t0 = Date.now();
+      const quick = await Promise.race([claim(other, ITEMS[1]!, 'ps-w-0002'), new Promise<'stuck'>((r) => setTimeout(() => r('stuck'), 1500))]);
+      expect(quick === 'stuck' ? 'stuck' : quick.statusCode).toBe(200);
+      expect(Date.now() - t0).toBeLessThan(1500);
+      release();
+      expect((await starting).statusCode).toBe(200);
+      expect(await env.kv.get(`play:${userId}:ps-w-0001`)).toBeTruthy();
+    } finally {
+      release();
+      spy.mockRestore();
+    }
+  });
+
   it('parallel claims of two new streams cannot both pass the last slot', async () => {
     await setUserLimits(env.ctx, userId, { ...NONE, maxStreams: 1 });
     const r = await Promise.all([claim(me, ITEMS[0]!, 'ps-r-0001'), claim(other, ITEMS[1]!, 'ps-r-0002')]);

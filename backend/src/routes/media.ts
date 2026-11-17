@@ -8,7 +8,7 @@ import { MediaError, type CapReason, type ItemDto, type PlaybackDto, type Transc
 import type { JfUser, ProfileRow, UserRow } from '../types.js';
 import { methodOf } from '../playstats.js';
 import { countStreams, forgetServed, streamSerial } from '../streamclaim.js';
-import { clearLive, clearStopped, getLive, listLive, markStopped, setLive } from '../live.js';
+import { clearLive, clearStopped, getLive, listLive, markStopped, setLive, type Live } from '../live.js';
 import { noteHandoff, REC_ITEM_RE, selectHandoff, type HandoffVia } from '../handoff.js';
 import { isHomeRequest } from '../netaddr.js';
 import { effectiveLimits } from '../limits.js';
@@ -78,12 +78,7 @@ export const abilityOf = (st: HevcState): 'ready' | 'off' | 'unproven' | 'unheal
  * `opts.elapsedMs`: the watch time this report closes, when the caller knows it better than the live record's last update (continuous
  * AirPlay: the server is the only reporter and the token refresh moves `updatedAt` every 20 s). Absent = since the last update, at most 30 s.
  */
-export function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackReportBody, who: PlaybackReporter, opts: { elapsedMs?: number } = {}): Promise<{ ok: true } | { error: 'max_streams'; max: number }> {
-  // one at a time per account, with the gateway's stream claims (streamclaim.ts): a start and a claim never both take the last slot
-  return streamSerial(who.user.id, () => reportNow(ctx, kind, b, who, opts));
-}
-
-async function reportNow(ctx: Ctx, kind: PlaybackKind, b: PlaybackReportBody, who: PlaybackReporter, opts: { elapsedMs?: number }): Promise<{ ok: true } | { error: 'max_streams'; max: number }> {
+export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackReportBody, who: PlaybackReporter, opts: { elapsedMs?: number } = {}): Promise<{ ok: true } | { error: 'max_streams'; max: number }> {
   const user = who.user;
   const ticks = Math.floor(b.positionTicks);
   let live = await getLive(ctx, user.id, b.playSessionId);
@@ -96,18 +91,27 @@ async function reportNow(ctx: Ctx, kind: PlaybackKind, b: PlaybackReportBody, wh
     // the client builds by reports alone must not open a stream beyond the limit). Not counted: the caller's own play session and its
     // own stream (same device and item: a quality switch, a resume). Progress / Stopped after TTL expiry are always forwarded, so a
     // sleeping tab does not lose its position.
-    if (kind !== 'Playing/Stopped') {
-      const role = (await effectiveLimits(ctx, user))!;
-      const over = (await countStreams(ctx, user.id, { ps: [b.playSessionId], deviceId: who.deviceId, itemId: b.itemId })) >= role.maxStreams;
-      if (over && kind === 'Playing') return { error: 'max_streams', max: role.maxStreams };
-      untracked = over;
-    }
     const item = await ctx.jf.item(who.jfUser, b.itemId); // access check: the user must be able to see the item
     elapsed = false;
-    live = {
+    const fresh: Live = {
       userId: user.id, userName: user.name, profileName: who.profile?.is_owner ? undefined : who.profile?.name, itemId: b.itemId, title: item.name, seriesName: item.seriesName, seriesId: item.seriesId, type: item.type ?? 'Unknown',
-      positionTicks: ticks, runtimeTicks: item.runtimeTicks, isPaused: false, playSessionId: b.playSessionId, updatedAt: Date.now(), source: 'portal',
+      positionTicks: ticks, runtimeTicks: item.runtimeTicks, isPaused: false, playSessionId: b.playSessionId, updatedAt: Date.now(), source: 'portal', deviceId: who.deviceId,
     };
+    live = fresh;
+    if (kind !== 'Playing/Stopped') {
+      // only the count and the write that takes the slot are queued with the gateway's claims (streamclaim.ts), never a media server
+      // call: a start and a claim never both take the last slot, and no claim waits for the media server
+      const r = await streamSerial(user.id, async () => {
+        if (await getLive(ctx, user.id, b.playSessionId)) return 'ok' as const; // a parallel report of the same play session took it
+        const role = (await effectiveLimits(ctx, user))!;
+        const over = (await countStreams(ctx, user.id, { ps: [b.playSessionId], deviceId: who.deviceId, itemId: b.itemId })) >= role.maxStreams;
+        if (over) return kind === 'Playing' ? { error: 'max_streams' as const, max: role.maxStreams } : 'untracked' as const;
+        await setLive(ctx, fresh);
+        return 'ok' as const;
+      });
+      if (typeof r === 'object') return r;
+      untracked = r === 'untracked';
+    }
   } else if (live.type === undefined && live.itemId === b.itemId) {
     // a live record the cast token's touch made before the first report (cast.ts touch: item id and title only): the item's facts
     // once (hand-off series and runtime). The token's creation already checked access, so a failed lookup keeps the record as it is.
