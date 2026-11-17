@@ -101,14 +101,14 @@ describe('preloadMark', () => {
     expect(await preloadMark('/x.png', make(() => Promise.reject(new Error('x'))) as never, 50)).toBe(true);
   });
   it('cancel() stops the timer and the handlers: the promise never settles', async () => {
-    let img: { onload: (() => void) | null } | null = null;
-    const C = class { onload: (() => void) | null = null; onerror: (() => void) | null = null; decoding = ''; constructor() { img = this; } set src(_: string) { /* pending */ } };
+    const made: { onload: (() => void) | null }[] = [];
+    const C = class { onload: (() => void) | null = null; onerror: (() => void) | null = null; decoding = ''; constructor() { made.push(this); } set src(_: string) { /* pending */ } };
     const h = preloadMarkCancelable('/x.png', C as never, 20);
     let settled = false;
     void h.promise.then(() => { settled = true; });
     h.cancel();
     await new Promise((r) => setTimeout(r, 40));
     expect(settled).toBe(false);
-    expect(img!.onload).toBeNull();
+    expect(made[0]!.onload).toBeNull();
   });
 });
