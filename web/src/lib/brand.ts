@@ -240,6 +240,15 @@ const known = writable(false);
  */
 export const brandKnown: Readable<boolean> = { subscribe: known.subscribe };
 
+/** resolves once the page knows its brand (see `brandKnown`); the intro waits for it so it never plays the defaults first */
+export function whenBrandKnown(): Promise<void> {
+  return new Promise((resolve) => {
+    let stop: (() => void) | null = null, hit = false;
+    stop = known.subscribe((k) => { if (k) { hit = true; stop?.(); resolve(); } });
+    if (hit) stop();
+  });
+}
+
 /** what applyBrand last applied (null: nothing yet, the page shows app.html's and app.css's defaults) */
 let applied: LoadedBrand | null = null;
 

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Pure decision logic + storage helpers for the FriendFlix brand intro (see Intro.svelte, sonic.ts). */
+import { DEFAULT_APP_NAME } from '#lib/i18n';
+import type { LoadedBrand } from './brand';
 
 export interface IntroSettings {
   /** show the intro at all */
@@ -74,4 +76,35 @@ export function shouldPlayIntro({ setting, reducedMotion, route, sessionSeen, tv
 export function shouldPlayIntroSound(o: { sound: boolean; soundExplicit: boolean; reducedMotion: boolean; cold?: boolean }): boolean {
   if (!o.sound || o.cold) return false;
   return !o.reducedMotion || o.soundExplicit;
+}
+
+// ---- the brand's mark in the intro (Intro.svelte) ----
+
+/** the intro's mark: the brand's symbol image, the initial on the accent fill (a custom name), or the built-in F tile */
+export type IntroMark = 'image' | 'initial' | 'builtin';
+/** how long the intro waits for the symbol before it falls back (the image is same-origin, immutable and normally cached) */
+export const MARK_WAIT_MS = 1500;
+
+/** the image the intro must have before it animates (the brand's symbol), null when there is nothing to wait for */
+export const introMarkSource = (b: LoadedBrand): string | null => b.images.symbol ?? null;
+
+/** which mark the intro draws, given whether the symbol loaded; a failed symbol falls back to the name's mark, never a broken image */
+export function decideIntroMark(b: LoadedBrand, imageLoaded: boolean): IntroMark {
+  if (b.images.symbol && imageLoaded) return 'image';
+  return b.name === DEFAULT_APP_NAME ? 'builtin' : 'initial';
+}
+
+/** Loads (and decodes) the image into the browser cache; true when it is usable, false on an error or after `timeoutMs`. */
+export function preloadMark(src: string, ImageCtor: typeof Image | undefined = typeof Image === 'undefined' ? undefined : Image, timeoutMs = MARK_WAIT_MS): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!ImageCtor) { resolve(false); return; }
+    let done = false;
+    const end = (ok: boolean) => { if (!done) { done = true; clearTimeout(timer); resolve(ok); } };
+    const timer = setTimeout(() => end(false), timeoutMs);
+    const img = new ImageCtor();
+    img.decoding = 'async';
+    img.onload = () => end(true);
+    img.onerror = () => end(false);
+    img.src = src;
+  });
 }

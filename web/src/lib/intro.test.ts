@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_INTRO, introKey, isIntroFreeRoute, parseIntroSettings, shouldPlayIntro, shouldPlayIntroSound } from './intro';
+import { DEFAULT_LOADED, type LoadedBrand } from './brand';
+import { decideIntroMark, introMarkSource, preloadMark, DEFAULT_INTRO, introKey, isIntroFreeRoute, parseIntroSettings, shouldPlayIntro, shouldPlayIntroSound } from './intro';
 
 const base = { setting: true, reducedMotion: false, route: '/', sessionSeen: false, tv: false };
 
@@ -50,4 +51,36 @@ describe('settings storage', () => {
     expect(parseIntroSettings('{"show":"x","sound":false}')).toEqual({ show: true, sound: false, soundExplicit: false });
   });
   it('route helper', () => expect(isIntroFreeRoute('/watch/1')).toBe(true));
+});
+
+describe('intro mark decision (brand present / absent / image failure)', () => {
+  const sym = `/api/public/brand/img/${'a'.repeat(64)}.png`;
+  const mk = (name: string, symbol?: string): LoadedBrand => ({ ...DEFAULT_LOADED, name, shortName: name, images: symbol ? { symbol } : {} });
+
+  it('no branding: the built-in mark, nothing to preload', () => {
+    expect(introMarkSource(DEFAULT_LOADED)).toBeNull();
+    expect(decideIntroMark(DEFAULT_LOADED, false)).toBe('builtin');
+  });
+  it('a custom name without a symbol: the initial, nothing to preload', () => {
+    expect(introMarkSource(mk('Moonbeam'))).toBeNull();
+    expect(decideIntroMark(mk('Moonbeam'), false)).toBe('initial');
+  });
+  it('a symbol: preloaded; the image once it loaded', () => {
+    expect(introMarkSource(mk('Moonbeam', sym))).toBe(sym);
+    expect(decideIntroMark(mk('Moonbeam', sym), true)).toBe('image');
+  });
+  it('a symbol that failed: the initial for a custom name, the built-in mark for the default name', () => {
+    expect(decideIntroMark(mk('Moonbeam', sym), false)).toBe('initial');
+    expect(decideIntroMark(mk('FriendFlix', sym), false)).toBe('builtin');
+  });
+});
+
+describe('preloadMark', () => {
+  it('resolves true on load, false on error and on timeout', async () => {
+    const make = (fire: 'load' | 'error' | 'never') => class { onload: (() => void) | null = null; onerror: (() => void) | null = null; decoding = ''; set src(_: string) { queueMicrotask(() => { if (fire === 'load') this.onload?.(); else if (fire === 'error') this.onerror?.(); }); } };
+    expect(await preloadMark('/x.png', make('load') as never, 50)).toBe(true);
+    expect(await preloadMark('/x.png', make('error') as never, 50)).toBe(false);
+    expect(await preloadMark('/x.png', make('never') as never, 20)).toBe(false);
+    expect(await preloadMark('/x.png', undefined as never, 20)).toBe(false);
+  });
 });

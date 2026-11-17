@@ -1,0 +1,71 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { expect, test } from '../fixtures.js';
+import { brandAnswer, brandImage } from './api.js';
+
+/** The brand in the start intro (Intro.svelte): symbol, name and accent; the default intro without branding; a symbol that fails or is slow. */
+export function brandIntroTests(): void {
+  test.describe('the brand in the intro', () => {
+    test.use({ reducedMotion: 'no-preference' }); // the suite default (reduce) would skip the cold-start intro
+
+    test('without branding the intro is the built-in F tile and FriendFlix', async ({ page, api: _api }) => {
+      await page.goto('/');
+      const intro = page.locator('.intro');
+      await expect(intro).toBeVisible();
+      await expect(intro).not.toHaveClass(/own/);
+      await expect(intro.locator('svg.tile path.fstroke')).toHaveCount(1);
+      await expect(intro.locator('img.sym')).toHaveCount(0);
+      await expect(intro.locator('.word')).toHaveText('FriendFlix');
+    });
+
+    test('with branding the intro shows the brand symbol, name and accent', async ({ page, api }) => {
+      const symbol = brandImage('5e');
+      api.brand = brandAnswer({ name: 'Nordlicht Kino', symbol: symbol.slice(22, 86) }, { symbol });
+      await page.goto('/');
+      const intro = page.locator('.intro');
+      await expect(intro.locator('img.sym')).toHaveAttribute('src', symbol);
+      await expect(intro.locator('svg.tile path.fstroke')).toHaveCount(0);
+      await expect(intro.locator('.word')).toHaveText('Nordlicht Kino');
+      await expect(intro.locator('.glow')).toHaveCSS('background-image', /rgba\(76, 157, 255/);
+    });
+
+    test('a custom name without a symbol shows its initial on the accent', async ({ page, api }) => {
+      api.brand = brandAnswer({ name: 'Nordlicht Kino' });
+      await page.goto('/');
+      const intro = page.locator('.intro');
+      await expect(intro.locator('svg.tile text')).toHaveText('N');
+      await expect(intro.locator('.word')).toHaveText('Nordlicht Kino');
+    });
+
+    test('a slow symbol: nothing animates, and no default mark shows, until it has loaded', async ({ page, api }) => {
+      const symbol = brandImage('5e');
+      api.brand = brandAnswer({ name: 'Nordlicht Kino', symbol: symbol.slice(22, 86) }, { symbol });
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      await page.route('**/api/public/brand/img/**', async (route) => { await gate; await route.fallback(); });
+      await page.goto('/');
+      const intro = page.locator('.intro');
+      await expect(intro).toBeVisible();
+      await page.waitForTimeout(300);
+      await expect(intro.locator('.stage')).toHaveCount(0);
+      await expect(intro.locator('svg.tile')).toHaveCount(0);
+      release();
+      await expect(intro.locator('img.sym')).toBeVisible();
+      await expect(intro.locator('svg.tile')).toHaveCount(0);
+    });
+
+    test.describe('failing symbol', () => {
+    test.use({ allowedConsole: /ERR_FAILED/ }); // the aborted image request
+    test('a symbol that fails to load falls back to the name\'s initial, never a broken image', async ({ page, api }) => {
+      const symbol = brandImage('5e');
+      api.brand = brandAnswer({ name: 'Nordlicht Kino', symbol: symbol.slice(22, 86) }, { symbol });
+      await page.route('**/api/public/brand/img/**', (route) => route.abort());
+      await page.goto('/');
+      const intro = page.locator('.intro');
+      await expect(intro.locator('svg.tile text')).toHaveText('N');
+      await expect(intro.locator('img.sym')).toHaveCount(0);
+      await expect(intro.locator('.word')).toHaveText('Nordlicht Kino');
+    });
+    });
+  });
+}
