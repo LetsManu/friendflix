@@ -117,6 +117,30 @@ describe('cast session', () => {
     expect(r.json().error).toBe('max_streams');
   });
 
+  it('unfetched cast tokens count toward maxStreams, and the first fetch checks the limit (review 3)', async () => {
+    const userId = (await call(admin, 'GET', '/api/me')).json().id as string;
+    const role = env.ctx.roles.admin!;
+    const before = role.maxStreams;
+    for (const p of ['cast:', 'castidx:', 'castpin:', `play:${userId}:`, `serve:${userId}:`]) for (const k of await env.kv.keys(p)) await env.kv.del(k);
+    role.maxStreams = 1;
+    try {
+      const first = await create();
+      expect(first.r.statusCode).toBe(200);
+      // a second cast while the first one is not fetched yet: the unfetched token holds the slot
+      const second = await call(admin, 'POST', '/api/cast/session', { itemId: ID });
+      expect([second.statusCode, second.json().error]).toEqual([429, 'max_streams']);
+      // tokens minted around the check (here: straight from the store) cannot all stream: only the first fetch fits
+      const devId = JSON.parse((await env.kv.get((await env.kv.keys('cast:'))[0]!))!).deviceId as string;
+      const extra = await createCast(env.ctx, { userId, profileId: userId, deviceId: devId, itemId: ID, mediaSourceId: MS, playSessionId: 'ps-cast-extra-01', maxBitrate: 4_000_000 }, 600);
+      const fetched = [await authz({ ct: first.ct }), await authz({ ct: extra.ct, client: '198.51.100.77' })];
+      expect(fetched.map((r) => r.statusCode)).toEqual([200, 401]);
+      // the fetched cast is a running stream from its first fetch on (no 20 s wait for the sliding refresh)
+      expect(await getLive(env.ctx, userId, first.j.playSessionId ?? 'ps-12345678')).toBeTruthy();
+    } finally {
+      role.maxStreams = before;
+    }
+  });
+
   it('rate limits session creation to 10 per minute per client', async () => {
     const codes: number[] = [];
     for (let i = 0; i < 12; i++) {
@@ -319,8 +343,12 @@ describe('cast token hardening', () => {
     const k = `cast:${hashToken(ct)}`;
     const rec0 = JSON.parse((await env.kv.get(k))!);
     expect(rec0.seen).toBeGreaterThan(0);
+    expect((await authz({ ct })).statusCode).toBe(200); // the first fetch takes the stream slot and refreshes once (review 3)
+    const seen1 = JSON.parse((await env.kv.get(k))!).seen as number;
+    expect(seen1).toBeGreaterThanOrEqual(rec0.seen);
+    skipClock(5100); // 5 s memo
     expect((await authz({ ct })).statusCode).toBe(200);
-    expect(JSON.parse((await env.kv.get(k))!).seen).toBe(rec0.seen); // within the throttle window: no write
+    expect(JSON.parse((await env.kv.get(k))!).seen).toBe(seen1); // within the throttle window: no write
     await env.kv.set(k, JSON.stringify({ ...rec0, seen: Date.now() - 120_000 }), 60);
     skipClock(5100); // 5 s memo
     expect((await authz({ ct })).statusCode).toBe(200);
@@ -813,6 +841,7 @@ describe('cast: own receiver and its report token', () => {
     await clean(uid);
     const was = env.ctx.roles.admin!.maxStreams;
     env.ctx.roles.admin!.maxStreams = 1;
+    for (const k of await env.kv.keys(`castidx:${uid}:`)) await env.kv.del(k); // earlier tests' unfetched tokens would hold the only slot
     try {
       const { j } = await cast();
       await clean(uid);

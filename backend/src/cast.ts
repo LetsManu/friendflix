@@ -6,6 +6,8 @@ import type { Ctx } from './ctx.js';
 import { jfUserFor, getProfile } from './profiles.js';
 import { effectiveRole } from './roles.js';
 import { clearLive, draining, getLive, setLive } from './live.js';
+import { effectiveLimits } from './limits.js';
+import { countStreams, streamSerial } from './streamclaim.js';
 import { getUserById } from './users.js';
 import { playbackReport, type PlaybackKind, type PlaybackReporter } from './routes/media.js';
 import type { JfUser, ProfileRow, UserRow } from './types.js';
@@ -171,6 +173,26 @@ async function listIdx(ctx: Ctx, userId: string): Promise<Array<IdxEntry & { key
   for (const k of await ctx.kv.keys(`castidx:${userId}:`)) {
     const raw = await ctx.kv.get(k);
     if (raw) out.push({ key: k, ...(JSON.parse(raw) as IdxEntry) });
+  }
+  return out;
+}
+
+/** how long a minted media token that nobody fetched holds a stream slot (a receiver loads within seconds; an abandoned one frees it) */
+export const UNFETCHED_CAST_S = 120;
+/**
+ * The play sessions of the account's media cast tokens that were minted but not fetched yet (no pin), within UNFETCHED_CAST_S of
+ * their mint (review 3): they count toward `maxStreams` like unfetched live tokens, so minting several casts first cannot get past it.
+ * A queued next episode's token is not among them (it follows its predecessor's slot).
+ */
+export async function unfetchedCastSessions(ctx: Ctx, userId: string): Promise<string[]> {
+  const out: string[] = [];
+  const now = Date.now();
+  for (const i of await listIdx(ctx, userId)) {
+    if (i.kind === 'img' || i.next || now - i.createdAt > UNFETCHED_CAST_S * 1000) continue;
+    const raw = await ctx.kv.get(dataKey(i.hash));
+    const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
+    if (!rec || rec.afterPs || (rec.kind ?? 'media') !== 'media' || rec.exp <= now || (await ctx.kv.get(pinKey(i.hash)))) continue;
+    out.push(rec.playSessionId);
   }
   return out;
 }
@@ -529,7 +551,19 @@ export async function resolveCast(ctx: Ctx, ct: string, client: string): Promise
     const owner = await liveOwner(ctx, rec);
     // a queued next token never takes a pin of its own (0 slots): it only matches the pin it got at mint
     const slots = rec.afterPs ? 0 : rec.via === 'airplay' && Date.now() - rec.createdAt <= AIRPLAY_PIN2_WINDOW_MS ? 2 : 1;
-    const ok = owner && (await pinned(ctx, hash, client, rec.exp, slots, rec.via === 'airplay'));
+    // the first fetch of a media token takes its stream slot (review 3): checked with the gateway's claims in one queue, and the live
+    // record is written at once, so it counts from this fetch on (not only from the first sliding refresh)
+    const first = owner !== null && (rec.kind ?? 'media') === 'media' && !rec.afterPs && !(await castPinned(ctx, hash));
+    const ok = owner && (first
+      ? await streamSerial(rec.userId, async () => {
+        const max = (await effectiveLimits(ctx, owner.user))!.maxStreams;
+        // other tokens nobody fetched yet are checked at their own first fetch: here only what runs (or is about to) counts
+        if ((await countStreams(ctx, rec.userId, { ps: [rec.playSessionId, ...(await unfetchedCastSessions(ctx, rec.userId))] })) >= max) return false;
+        if (!(await pinned(ctx, hash, client, rec.exp, slots, rec.via === 'airplay'))) return false;
+        await touch(ctx, hash, rec, owner.user.name, owner.prof.name);
+        return true;
+      })
+      : await pinned(ctx, hash, client, rec.exp, slots, rec.via === 'airplay'));
     const overlap = ok ? await nextOverlap(ctx, rec) : false;
     if (ok && owner && overlap !== null) {
       const { user, role, prof } = owner;

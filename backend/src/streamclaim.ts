@@ -18,6 +18,7 @@
  * never both take the last slot.
  */
 import type { Ctx } from './ctx.js';
+import { unfetchedCastSessions } from './cast.js';
 import { effectiveLimits } from './limits.js';
 import { unfetchedLiveSessions } from './livetv/tokens.js';
 import type { UserRow } from './types.js';
@@ -49,7 +50,7 @@ const parse = <T>(raw: string | null): T | null => {
   try { return JSON.parse(raw) as T; } catch { return null; }
 };
 
-/** the account's running streams by play session: reported (`play:`), served (`serve:`) and minted-but-unfetched live tokens */
+/** the account's running streams by play session: reported (`play:`), served (`serve:`), minted-but-unfetched live and cast tokens */
 async function sessionsOf(ctx: Ctx, userId: string): Promise<Map<string, Session>> {
   const out = new Map<string, Session>();
   const playPrefix = `play:${userId}:`;
@@ -67,6 +68,7 @@ async function sessionsOf(ctx: Ctx, userId: string): Promise<Map<string, Session
     out.set(ps, { deviceId: known?.deviceId ?? r.deviceId, itemId: known?.itemId ?? r.itemId });
   }
   for (const ps of await unfetchedLiveSessions(ctx, userId)) if (!out.has(ps)) out.set(ps, {});
+  for (const ps of await unfetchedCastSessions(ctx, userId)) if (!out.has(ps)) out.set(ps, {});
   // a stopped stream that is still being served (its trailing requests) keeps counting (review: a drain must not be a free slot)
   const drainPrefix = `servedrain:${userId}:`;
   const now = Date.now();
