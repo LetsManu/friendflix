@@ -53,5 +53,5 @@ CI's `mediaserver-image` job runs `scripts/mediaserver-smoke.sh` on the image it
 fixture (`updater/test/fixtures/mediaserver-inspect.json`) carries `FERROFIN_WEB_DIR=/nonexistent` as the image's environment,
 and the smoke test fails when the image's environment differs from it.
 
-`mediaserver/try.sh` and docs/mediaserver.md still describe turning off the NFO saver in the dashboard at `/web/`; with this
-image there is none (the managed media server sets the library options over the API).
+There is no dashboard to turn off the NFO saver in: the managed media server sets the library options over the API, and
+`mediaserver/try.sh` and [docs/mediaserver.md](../../docs/mediaserver.md) describe the same API call for a trial.
