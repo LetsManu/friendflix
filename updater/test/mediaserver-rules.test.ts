@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { baseCodeLogLine, hashBaseCode, newBaseCode, normalizeBaseCode } from '../src/mediaserver/code.js';
 import { parseMediaBody } from '../src/mediaserver/parse.js';
@@ -89,6 +90,20 @@ describe('media paths', () => {
     expect(isTarget('/media/filme')).toBe(true);
     expect(isTarget('/media/a/b/c')).toBe(true);
     for (const t of ['/media', '/data/x', '/media/../data', '/media/Filme', '/media/a/b/c/d', '/media/']) expect(isTarget(t), t).toBe(false);
+  });
+});
+
+describe('the stack directory refusal in the docs', () => {
+  const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), 'utf8');
+  it('is best effort (no compose working_dir label, Portainer): the docs say so and name the code as the protection', () => {
+    // without a known stack directory the stack directory itself is not refused
+    expect(checkBasePath('/srv/friendflix', { dockerRoot: null, stackDir: null })).toBeNull();
+    expect(checkBasePath('/srv/friendflix', { dockerRoot: null, stackDir: '/srv/friendflix' })).toBe('path_refused');
+    for (const f of ['docs/mediaserver.md', 'docs/security.md']) {
+      expect(read(f), f).toMatch(/stack directory[^.]*best effort[^.]*working_dir[^.]*Portainer/);
+      expect(read(f), f).toMatch(/best effort[^.]*Portainer[^.]*one-time code/);
+    }
+    expect(read('docs/de/mediaserver.md')).toMatch(/Stack-Verzeichnis[^.]*nach Möglichkeit[^.]*working_dir[^.]*Portainer[^.]*einmalige Code/);
   });
 });
 

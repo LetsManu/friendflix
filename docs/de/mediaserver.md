@@ -74,7 +74,9 @@ Wähle *Ferrofin (eigener)* oder *Jellyfin (offiziell, verwaltet)*, dann:
    erscheint nur auf der Standardausgabe des Updaters: nicht in Admin, nicht in einem Job-Protokoll, Status oder Audit-Eintrag.
    Als Basisordner abgelehnt werden: `/`, Systemverzeichnisse (`/etc`, `/usr`, `/var/lib/docker` und ähnliche), `/home`, `/var`,
    `/opt`, `/mnt`, `/media`, `/srv` und `/volume<N>` selbst (ein Ordner *darunter* geht), das Docker-Stammverzeichnis und das
-   Stack-Verzeichnis (sie enthalten Geheimnisse). Pfadteile dürfen Buchstaben, Ziffern, Leerzeichen und `._-+()&'` enthalten,
+   Stack-Verzeichnis (sie enthalten Geheimnisse; das Stack-Verzeichnis nur nach Möglichkeit: Der Updater liest es aus dem
+   Compose-Label `working_dir`, das ein Stack aus einem anderen Werkzeug, etwa Portainer, nicht immer trägt; dann schützt der
+   einmalige Code aus den Logs des Hosts). Pfadteile dürfen Buchstaben, Ziffern, Leerzeichen und `._-+()&'` enthalten,
    keiner beginnt mit einem Punkt. Der Updater prüft, ob der Ordner existiert, und warnt, wenn der Container-Benutzer ihn nicht
    auflisten kann.
 2. **Ordner.** Stöbere unterhalb des Basisordners (eine Ebene nach der anderen, höchstens drei Ebenen tief, nur Namen) und hake die

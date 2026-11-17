@@ -70,7 +70,9 @@ Choose *Ferrofin (eigener)* or *Jellyfin (offiziell, verwaltet)*, then:
    cancels it, a new request replaces the old one, and at most three can be requested per ten minutes. The code appears only on
    the updater's stdout: not in Admin, not in any job log, status or audit entry. Refused as a base folder: `/`, system trees
    (`/etc`, `/usr`, `/var/lib/docker` and the like), `/home`, `/var`, `/opt`, `/mnt`, `/media`, `/srv` and `/volume<N>` themselves
-   (a folder *below* them is fine), the Docker root directory and the stack directory (they hold secrets). Path components may
+   (a folder *below* them is fine), the Docker root directory and the stack directory (they hold secrets; the stack directory
+   only as a best effort: the updater reads it from the compose `working_dir` label, which a stack deployed by another tool,
+   such as Portainer, may not carry; then the one-time code from the host's logs is the protection). Path components may
    contain letters, digits, spaces and `._-+()&'`, none starts with a dot. The updater checks that the folder exists and warns
    when the container user cannot list it.
 2. **Folders.** Browse below the base (one level at a time, at most three levels deep, names only) and tick the folders to share.
