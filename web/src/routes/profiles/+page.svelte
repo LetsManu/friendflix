@@ -12,7 +12,7 @@
   import { stopSonicLogo } from '#lib/sonic';
   import Logo from '#lib/Logo.svelte';
   import Button from '#lib/ui/Button.svelte';
-  import { hintOf, markPicked, readHint, writeHint } from '#lib/gate';
+  import { hintOf, markPicked, readHint, safeNext, writeHint } from '#lib/gate';
   import { loadIntroSettings, markSessionSeen, shouldPlayIntro, shouldPlayIntroSound } from '#lib/intro';
   import { cachedCalm } from '#lib/stores';
   import { t, tr, type TKey } from '#lib/i18n';
@@ -68,8 +68,7 @@
   });
 
   function target() {
-    const next = new URLSearchParams(location.search).get('next');
-    return next && next.startsWith('/') && !next.startsWith('//') && !next.includes('\\') ? next : '/';
+    return safeNext(new URLSearchParams(location.search).get('next'));
   }
   function done() { location.href = target(); }
 

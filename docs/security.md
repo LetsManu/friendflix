@@ -608,6 +608,7 @@ What the shipped [compose.yaml](../compose.yaml) and images do:
 - **HSTS** is set at the reverse proxy ("Force SSL, HTTP/2, HSTS" in [setup.md](setup.md)), not by the app, because the app does not terminate TLS.
 - **Rate limits:** a global limit of 600 requests per minute per client, tighter limits on sensitive routes (TV pairing, client error beacon, social endpoints, downloads), failed-token blocking in the gateway and per-account stream and cast-token limits.
 - **Request handling:** 256 KiB body limit, schema validation, errors return generic messages (details only in the log).
+- **Redirect targets:** a `next` value from the address bar or from a sign-in step (`/profiles?next=`, `/welcome?next=`, the in-app sign-in's `done`) goes through one check, `web/src/lib/safeRedirect.ts`. It refuses anything that does not start with a single `/`, any control character (tab, newline, NUL, DEL), space or backslash, then parses the value with the browser's URL parser and accepts it only if it stays on the own origin and the parsed path still starts with a single `/` (dot segments like `/.//evil.example.com` are caught there). Anything else goes to the start page.
 - **Sessions:** server-side in Redis, sliding idle and absolute expiry, per-session CSRF token, revocation on sign-out-everywhere and account disable.
 
 ### TLS recommendation

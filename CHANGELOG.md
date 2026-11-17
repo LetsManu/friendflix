@@ -32,6 +32,9 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 - Switching the audio track while a film plays no longer leaves it paused: the new track starts where you were as soon as it can play. The same holds for a quality pick, the *Raumklang* switch and a downloaded subtitle; a paused film stays paused after any of them. When the browser refuses sound, the player starts muted or shows the play button as it does at the start.
 - *Zum Konto* on the page that confirms a new e-mail address now loads the account page in full, so it shows the new address and a fresh state instead of a page carried over from the confirmation.
 
+### Security
+- **No more redirect to another site after choosing a profile.** A link like `/profiles?next=/%09/evil.example.com` passed the old check (the browser drops the tab and reads `//evil.example.com`), so after the profile click the browser could land on a foreign page. Every `next` target (profile picker, onboarding, the in-app sign-in) now goes through one shared check that reads the value the way the browser will and accepts only a path on this site; anything else goes to the start page.
+
 ## [3.5.0] – Churros – 2026-11-16
 
 ### Upgrade notes
