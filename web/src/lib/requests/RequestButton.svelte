@@ -6,12 +6,14 @@
    * requested / in progress / available (calm status), quota used up (disabled, with the day the quota renews) and error (the
    * message inline and a retry). A wish counts as made only after the server answered; the result is announced politely.
    * Never render it for kids profiles or without a request service (the page decides; the server refuses them as well).
+   * A series opens the season picker first (lib/requests/SeasonSheet.svelte, which makes the wish); closing it changes nothing.
    */
   import { tick } from 'svelte';
   import { fmtDate, t } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
   import { quotaExhausted, type WishState } from '#lib/newpage';
   import { quota, submitWish, wishKey, wished, wishView } from '#lib/requests/wish';
+  import { pickSeasons } from '#lib/requests/picker';
   import { features } from '#lib/capabilities';
 
   export let mediaType: 'movie' | 'tv';
@@ -29,11 +31,16 @@
   $: view = wishView({ server: state, local, wished: $wished.has(wishKey(mediaType, tmdbId)), exhausted: quotaExhausted($quota) });
   $: resets = $quota?.resetsAt ? fmtDate($quota.resetsAt, { day: 'numeric', month: 'long' }) : '';
 
+  let picking = false;
   async function wish() {
-    if (local === 'pending') return;
+    if (local === 'pending' || picking) return;
     const had = root.contains(document.activeElement);
-    local = 'pending'; said = '';
-    const r = await submitWish(mediaType, tmdbId);
+    said = '';
+    // a series: the picker shows its own busy send; the button stays as it is while seasons are chosen (not "Wird gewünscht …")
+    let r;
+    if (mediaType === 'tv') { picking = true; r = await pickSeasons({ tmdbId, title }); picking = false; }
+    else { local = 'pending'; r = await submitWish(mediaType, tmdbId); }
+    if (!r) { local = 'idle'; return; } // the picker was closed without a wish
     if (r.kind === 'requested') { local = 'idle'; said = $t('home.wish.done', { title }); }
     else if (r.kind === 'exists') { local = 'idle'; said = $t('home.wish.already', { title }); }
     else if (r.kind === 'limit') { local = 'idle'; said = `${$t('home.wish.exhausted')}. ${$t('home.wish.resetsAt', { date: fmtDate(r.resetsAt, { day: 'numeric', month: 'long' }) })}`; }

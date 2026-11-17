@@ -8,6 +8,7 @@
   import TrailerButton from '#lib/TrailerButton.svelte';
   import Icon from '#lib/Icon.svelte';
   import { loadReminders, movieKey, remindKeys, toggleReminder } from '#lib/reminders';
+  import { pickSeasons } from '#lib/requests/picker';
 
   /** "Demnächst": upcoming releases from Seerr with a one-click wish. */
   export let type: 'movie' | 'tv' = 'movie';
@@ -34,6 +35,13 @@
     else { void loadReminders(); api(`/api/seerr/upcoming?type=${type}`).then((r) => (items = r.results)).catch(() => (items = [])); }
   }
   async function wish(it: NonNullable<typeof items>[number]) {
+    if (it.mediaType === 'tv') {
+      // a series: the season picker makes the wish (closed without one: nothing changes)
+      const r = await pickSeasons({ tmdbId: it.tmdbId, title: it.title });
+      if (r?.kind === 'requested' || r?.kind === 'exists') { it.status = 'angefragt'; items = items; }
+      if (r) msg = r.kind === 'requested' ? tr('home.upcoming.wishSent', { title: it.title }) : r.kind === 'exists' ? tr('home.upcoming.wishExists') : tr('home.upcoming.wishFailed');
+      return;
+    }
     try { await api('/api/requests', { method: 'POST', body: { mediaType: it.mediaType, tmdbId: it.tmdbId } }); it.status = 'angefragt'; items = items; msg = tr('home.upcoming.wishSent', { title: it.title }); }
     catch (e) { msg = e instanceof ApiError && e.status === 409 ? tr('home.upcoming.wishExists') : tr('home.upcoming.wishFailed'); }
   }

@@ -11,6 +11,7 @@
   import { features } from '#lib/capabilities';
   import { fmtDate, t, tr } from '#lib/i18n';
   import { collectionView, type AboutCollection, type AboutPart } from '#lib/detail/about';
+  import { requestCollection } from '#lib/requests/picker';
 
   export let collection: AboutCollection;
   export let canRequest = false;
@@ -25,6 +26,16 @@
     if (variant !== 'modal' || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
     e.preventDefault();
     swapModal(href(p));
+  }
+  /** parts that are missing and could be wished (the sheet shows their real state from the request service) */
+  $: missing = collection.parts.filter((p) => !p.inLibrary && p.tmdbId !== undefined && !sent.has(p.tmdbId));
+  $: anchor = (collection.parts.find((p) => p.current && p.tmdbId !== undefined) ?? collection.parts.find((p) => p.tmdbId !== undefined))?.tmdbId;
+  /** "Ganze Reihe anfragen…": every missing part at once (lib/requests/CollectionSheet.svelte); the library's parts count as owned */
+  async function requestAll() {
+    if (anchor === undefined) return;
+    const owned = collection.parts.filter((p) => p.inLibrary && p.tmdbId !== undefined).map((p) => p.tmdbId!);
+    const r = await requestCollection({ tmdbId: anchor, title: collection.name, owned });
+    if (r?.requested.length) { for (const id of r.requested) sent.add(id); sent = sent; msg = ''; }
   }
   async function request(p: AboutPart) {
     if (busy || p.tmdbId === undefined || sent.has(p.tmdbId)) return;
@@ -48,6 +59,9 @@
     <div class="hd">
       <h2 id={hid}>{v.index > 0 ? $t('detail.collection.title', { i: v.index, n: v.total, name: collection.name }) : $t('detail.collection.titleAll', { n: v.total, name: collection.name })}</h2>
       {#if v.next}<a class="nx" href={href(v.next)} on:click={(e) => go(e, v.next!)}>{$t('detail.collection.next', { n: v.index + 1 })}</a>{/if}
+      {#if canRequest && $features.requests && missing.length && anchor !== undefined}
+        <button type="button" class="all sec" aria-label={$t('home.wish.collection.openNamed', { name: collection.name })} on:click={requestAll}>{$t('home.wish.collection.open')}</button>
+      {/if}
     </div>
     <ul class="parts">
       {#each collection.parts as p, i (p.id ?? 't' + p.tmdbId + ':' + i)}
@@ -90,6 +104,7 @@
   .nm { font-weight: 600; overflow-wrap: anywhere; }
   .yr { color: #bdbdbd; font-size: .8rem; }
   .rq { min-height: 44px; margin-top: .2rem; }
+  .all { min-height: 44px; }
   .rq[aria-disabled='true'] { opacity: .6; cursor: default; }
   .small { font-size: .85rem; margin: .4rem 0 0; }
   @media (max-width: 899px) { .part { width: 96px; font-size: .8rem; } .parts { gap: .7rem; } }

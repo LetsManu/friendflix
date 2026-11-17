@@ -53,12 +53,13 @@
   import { chipsTucked, SOLID_AFTER } from '#lib/phone/logic';
   import { closePreview, previewSheet } from '#lib/previewSheet';
   import { isLocale, locale, pageEpoch, pickLocale, ready, setLocale, setMediaServer, t, type Locale } from '#lib/i18n';
-  import { brand, builtInMark, headerParts, loadBrand, refetchOnVisible } from '#lib/brand';
+  import { brand, builtInMark, headerParts, loadBrand, refetchOnVisible, whenBrandKnown } from '#lib/brand';
   import Rich from '#lib/i18n/Rich.svelte';
   import LanguageGate from '#lib/LanguageGate.svelte';
   import ToastHost from '#lib/ui/ToastHost.svelte';
   import { flushDeferred } from '#lib/ui/action';
   import ConfirmHost from '#lib/ui/ConfirmHost.svelte';
+  import RequestSheetHost from '#lib/requests/RequestSheetHost.svelte';
   import ReauthHost from '#lib/auth/ReauthHost.svelte';
   import HealthBanner from '#lib/admin/HealthBanner.svelte';
   import { startBanner } from '#lib/admin/banner';
@@ -854,7 +855,7 @@
         if (early) window.dispatchEvent(new Event('ff-me')); // pages that rendered early can now read the active profile
         if (pending) stops.push(watchApproval());
         tv = m.tv || sessionStorage.getItem('ff_tv') === '1';
-        if (!pending) maybeColdIntro(m.profile?.id);
+        if (!pending) void whenBrandKnown().then(() => maybeColdIntro(m.profile?.id)).catch(() => undefined); // the intro plays the brand, so the brand is known first
         if (!pending) { loadNotes(); if (get(areas).library) loadList(); loadPrefs(); const notesTimer = setInterval(loadNotes, 60_000); stops.push(() => clearInterval(notesTimer)); }
         if (m.tv) localStorage.setItem('ff_tv_device', '1'); // an expired TV session goes back to the pairing screen, not to a login form
         if (tv) {
@@ -989,6 +990,7 @@
 <!-- app-wide toasts + confirm dialog (lib/ui) + the in-app re-authentication (lib/account/reauth.ts); mounted once, outside the page so they survive navigation -->
 <ToastHost />
 <ConfirmHost />
+<RequestSheetHost />
 <ReauthHost />
 
 <style>

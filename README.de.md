@@ -153,7 +153,7 @@ Ein Admin kann unter *Admin → Live-TV* **Live-TV** einschalten: einen eigenen 
 
 - **Watch-Partys** mit synchroner Wiedergabe, Chat und Live-Emoji-Reaktionen, die für alle in der Party über das Bild schweben. **Filmabend-Abstimmung** mit Countdown und automatischem Start. „Was hat noch keiner von uns gesehen?“ – der Gruppen-Matcher findet Titel für alle.
 - **Empfehlungen**: Titel an Freunde empfehlen, sehen, was Freunde bewertet und diese Woche geschaut haben, geteilte Listen mit Editoren und Lesern, kuratierte Reihen vom Admin.
-- **Wünsche**: Fehlt etwas? Direkt aus der Suche wünschen und benachrichtigt werden, sobald es da ist – mit einem monatlichen Limit pro Rolle. „Erinnere mich“ für kommende Titel.
+- **Wünsche**: Fehlt etwas? Direkt aus der Suche wünschen und benachrichtigt werden, sobald es da ist – mit einem monatlichen Limit pro Rolle. Bei Serien die gewünschten Staffeln wählen (bei einer teilweise vorhandenen nur die fehlenden), oder eine ganze Filmreihe auf einmal anfragen. „Erinnere mich“ für kommende Titel.
 - **Immer auf dem Laufenden**: Benachrichtigungen in der App, als Web-Push auf jedem Gerät, über ntfy oder Discord und ein optionaler Wochenrückblick.
 - **Die Extras**: Reaktionen und Kurzkritiken (erst sichtbar, wenn du den Titel gesehen hast), Bewertungen, Statistik, Achievements und eine teilbare „Jahresrückblick“-Karte mit deinen Zahlen.
 

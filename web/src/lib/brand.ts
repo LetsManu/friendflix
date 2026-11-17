@@ -240,6 +240,19 @@ const known = writable(false);
  */
 export const brandKnown: Readable<boolean> = { subscribe: known.subscribe };
 
+/**
+ * resolves once the page knows its brand (see `brandKnown`), or after `capMs` with whatever is known: the intro waits for the brand
+ * so it never plays the defaults first, but an unbranded install on a slow first visit must not hold it back for long.
+ */
+export function whenBrandKnown(capMs = 800): Promise<void> {
+  return new Promise((resolve) => {
+    let stop: (() => void) | null = null, hit = false;
+    const timer = setTimeout(() => { stop?.(); resolve(); }, capMs);
+    stop = known.subscribe((k) => { if (k) { hit = true; clearTimeout(timer); stop?.(); resolve(); } });
+    if (hit) stop();
+  });
+}
+
 /** what applyBrand last applied (null: nothing yet, the page shows app.html's and app.css's defaults) */
 let applied: LoadedBrand | null = null;
 

@@ -82,12 +82,16 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     const held = new Promise<void>((res) => { release = res; });
     await page.route('**/api/requests', async (r) => { if (r.request().method() === 'POST') { await held; api.newPage.mine = [{ title: 'Lantern Row', mediaType: 'tv', status: 'angefragt', createdAt: '2026-11-10T09:00:00Z' }]; } await r.fallback(); });
     await card.getByRole('button', { name: 'Wünschen: Lantern Row' }).click();
-    await expect(card.getByRole('button', { name: 'Wird gewünscht …' })).toBeDisabled(); // not "requested" before the answer
-    await expect(card.getByText('Angefragt')).toHaveCount(0);
+    // a series: the season picker first (both seasons open, both chosen)
+    const dlg = page.getByRole('dialog', { name: 'Staffeln wählen' });
+    await dlg.getByRole('button', { name: '2 Staffeln anfragen' }).click();
+    await expect(dlg.getByRole('button', { name: '2 Staffeln anfragen' })).toHaveAttribute('aria-busy', 'true'); // the picker shows the send
+    await expect(card.getByText('Angefragt')).toHaveCount(0); // not "requested" before the answer
     release();
+    await expect(dlg).toHaveCount(0);
     await expect(card.getByText('Angefragt')).toBeVisible();
     await expect(card.getByRole('status')).toHaveText('„Lantern Row“ wurde gewünscht.');
-    expect(api.log.filter((l) => l.startsWith('POST /api/requests'))).toEqual(['POST /api/requests {"mediaType":"tv","tmdbId":31} -> 200']);
+    expect(api.log.filter((l) => l.startsWith('POST /api/requests'))).toEqual(['POST /api/requests {"mediaType":"tv","tmdbId":31,"seasons":[1,2]} -> 200']);
     // the badge counts the wish once the own requests were read again (the service now lists it)
     await expect(tab(page, /Wünsche & demnächst/)).toContainText('1');
     await tab(page, 'Wünsche & demnächst').click();
@@ -118,6 +122,13 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     const btn = card.getByRole('button', { name: 'Wünschen: Lantern Row' });
     await btn.focus();
     await page.keyboard.press('Enter');
+    // a series: the season picker, all by keyboard (the focus starts on the first row; Shift+Tab wraps to the send button)
+    const dlg = page.getByRole('dialog', { name: 'Staffeln wählen' });
+    await expect(dlg.getByRole('checkbox', { name: 'Alle Staffeln' })).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(dlg.getByRole('button', { name: '2 Staffeln anfragen' })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(dlg).toHaveCount(0);
     await expect(card.getByText('Angefragt')).toBeVisible();
     await expect(card.locator('[data-focus]')).toBeFocused();
     expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
@@ -206,6 +217,7 @@ test.describe('new & upcoming, variant B (desktop)', () => {
       await page.goto('/new');
       const ms = region(page, 'Noch nicht bei uns');
       await ms.getByRole('button', { name: 'Wünschen: Lantern Row' }).click();
+      await page.getByRole('dialog', { name: 'Staffeln wählen' }).getByRole('button', { name: '2 Staffeln anfragen' }).click();
       await expect(ms.getByRole('button', { name: /^Kontingent erschöpft/ })).toHaveCount(3);
       await expect(ms.locator('.note')).toHaveText(Array(3).fill('Neues Kontingent ab 1. Dezember'));
       await expect(ms.getByRole('button', { name: /^Wünschen: / })).toHaveCount(0);
@@ -230,12 +242,26 @@ test.describe('new & upcoming, variant B (desktop)', () => {
       api.newPage.suggestions = { ...SUGGESTIONS };
       api.newPage.wish = 'fail';
       await page.goto('/new');
-      const card = region(page, 'Noch nicht bei uns').locator('li.c', { hasText: 'Lantern Row' });
-      await card.getByRole('button', { name: 'Wünschen: Lantern Row' }).click();
+      const card = region(page, 'Noch nicht bei uns').locator('li.c', { hasText: 'Tin Meadow' });
+      await card.getByRole('button', { name: 'Wünschen: Tin Meadow' }).click();
       await expect(card.getByRole('alert')).toHaveText('Wunsch konnte nicht gestellt werden.');
       await expect(card.getByText('Angefragt')).toHaveCount(0);
       api.newPage.wish = 'ok';
-      await card.getByRole('button', { name: 'Wunsch für Lantern Row erneut versuchen' }).click();
+      await card.getByRole('button', { name: 'Wunsch für Tin Meadow erneut versuchen' }).click();
+      await expect(card.getByText('Angefragt')).toBeVisible();
+    });
+    test('a series: the failure shows in the season picker, which stays open for another try', async ({ page, api }) => {
+      api.newPage.suggestions = { ...SUGGESTIONS };
+      api.newPage.wish = 'fail';
+      await page.goto('/new');
+      const card = region(page, 'Noch nicht bei uns').locator('li.c', { hasText: 'Lantern Row' });
+      await card.getByRole('button', { name: 'Wünschen: Lantern Row' }).click();
+      const dlg = page.getByRole('dialog', { name: 'Staffeln wählen' });
+      await dlg.getByRole('button', { name: '2 Staffeln anfragen' }).click();
+      await expect(dlg.getByRole('alert').filter({ hasText: 'Der Wunsch konnte nicht gestellt werden.' })).toBeVisible();
+      api.newPage.wish = 'ok';
+      await dlg.getByRole('button', { name: '2 Staffeln anfragen' }).click();
+      await expect(dlg).toHaveCount(0);
       await expect(card.getByText('Angefragt')).toBeVisible();
     });
   });

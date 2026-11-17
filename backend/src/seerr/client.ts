@@ -97,6 +97,10 @@ export class SeerrClient {
   details(mediaType: 'movie' | 'tv', id: number, lang: Language = FALLBACK_LANGUAGE) {
     return this.json(`/${mediaType}/${id}?language=${upstreamLanguage(lang)}`);
   }
+  /** a TMDB collection with its `parts` (movies, each with the service's `mediaInfo` when it knows the title) */
+  collection(id: number, lang: Language = FALLBACK_LANGUAGE) {
+    return this.json(`/collection/${id}?language=${upstreamLanguage(lang)}`);
+  }
   createRequest(body: { mediaType: 'movie' | 'tv'; mediaId: number; seasons?: number[] | 'all'; userId?: number }) {
     return this.json('/request', { method: 'POST', body: JSON.stringify(body) });
   }

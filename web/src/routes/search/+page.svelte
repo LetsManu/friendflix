@@ -6,7 +6,9 @@
   import { pageStore } from '#lib/page';
   const page = pageStore();
   import { replaceState } from '$app/navigation';
-  import { api, ApiError, backdrop, getActiveProfile, img, type Item } from '#lib/api';
+  import { api, backdrop, getActiveProfile, img, type Item } from '#lib/api';
+  import { pickSeasons, requestCollection } from '#lib/requests/picker';
+  import { submitWish } from '#lib/requests/wish';
   import Icon from '#lib/Icon.svelte';
   import { categoryHref, itemPath, playPath } from '#lib/mobile';
   import { genreColor } from '#lib/genreTint';
@@ -37,21 +39,28 @@
       if (my === wishSeq) wishes = wishCandidates(r.results, 8);
     } catch { /* Seerr may be off: hide the section */ }
   }
+  /** after a movie wish: its collection, offered as "Ganze Reihe anfragen…" under the list */
+  let offer: { tmdbId: number; title: string; name: string } | null = null;
   async function wish(w: SeerrHit) {
     if (sending) return;
-    sending = wkey(w); wishMsg = '';
-    try {
-      await api('/api/requests', { method: 'POST', body: { mediaType: w.mediaType, tmdbId: w.tmdbId } });
+    sending = wkey(w); wishMsg = ''; offer = null;
+    // a series: the season picker makes the wish (closed without one: nothing changes)
+    const r = w.mediaType === 'tv' ? await pickSeasons({ tmdbId: w.tmdbId, title: w.title }) : await submitWish('movie', w.tmdbId);
+    if (r?.kind === 'requested') {
       sent.add(wkey(w)); sent = sent;
       wishMsg = tr('home.search.wishSent', { title: w.title });
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 429 && e.body?.error === 'request_limit') {
-        const d = e.body.resetsAt ? fmtDate(e.body.resetsAt, { dateStyle: 'medium' }) : '';
-        quotaFull = wishMsg = d ? tr('home.search.limitUntil', { date: d }) : tr('home.search.limit');
-      } else if (e instanceof ApiError && e.status === 409) { sent.add(wkey(w)); sent = sent; wishMsg = tr('home.search.already'); }
-      else wishMsg = tr('home.search.wishFailed');
-    }
+      if (r.collection) offer = { tmdbId: w.tmdbId, title: w.title, name: r.collection.name };
+    } else if (r?.kind === 'limit') {
+      const d = r.resetsAt ? fmtDate(r.resetsAt, { dateStyle: 'medium' }) : '';
+      quotaFull = wishMsg = d ? tr('home.search.limitUntil', { date: d }) : tr('home.search.limit');
+    } else if (r?.kind === 'exists') { sent.add(wkey(w)); sent = sent; wishMsg = tr('home.search.already'); }
+    else if (r) wishMsg = tr('home.search.wishFailed');
     sending = '';
+  }
+  async function wholeSeries() {
+    if (!offer) return;
+    const done = await requestCollection({ tmdbId: offer.tmdbId, title: offer.name });
+    if (done?.requested.length) { for (const id of done.requested) sent.add(`movie:${id}`); sent = sent; }
   }
 
   $: urlQ = ($page.url.searchParams.get('q') ?? '').trim();
@@ -212,6 +221,8 @@
         {:else}<button type="button" disabled={sending !== '' || quotaFull !== ''} aria-label={$t('home.search.wishName', { title: w.title })} on:click={() => wish(w)}>{$t('home.search.wish')}</button>{/if}
       </li>
     {/each}</ul>
+    <!-- "Ganze Reihe anfragen…" after a movie wish: a reserved one-line row, so nothing below moves when it shows -->
+    <div class="offer">{#if offer}<button type="button" class="sec" title={$t('home.wish.collection.openNamed', { name: offer.name })} on:click={wholeSeries}>{$t('home.wish.collection.openNamed', { name: offer.name })}</button>{/if}</div>
     <p class="muted note"><a href="/requests?q={encodeURIComponent(term)}">{$t('home.search.moreWishes')}</a></p>
   </section>
 {/if}
@@ -238,6 +249,8 @@
   @media (max-width: 720px) { .big { min-height: 44px; border-radius: 12px; margin-bottom: 1rem; } }
   .empty { text-align: center; padding: 4rem 0; }
   .wishmsg { min-height: 1.4em; margin: 0 0 .5rem; color: var(--mut); }
+  .offer { display: flex; align-items: center; height: 44px; margin: .6rem 0 0; min-width: 0; }
+  .offer button { height: 44px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wl { display: grid; gap: .6rem; max-width: 640px; }
   .wl li { display: flex; align-items: center; gap: .8rem; background: var(--surface-2); border-radius: 6px; padding: .5rem; }
   .wl img, .ph { width: 56px; height: 84px; flex: none; object-fit: cover; border-radius: 4px; background: #2b333c; }
