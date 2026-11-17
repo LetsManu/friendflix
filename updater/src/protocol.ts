@@ -12,6 +12,10 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
  *
  * The updater accepts a request only inside a 60 s window around its own clock, never one signed before it started (a replay
  * cache cannot outlive the process), and every nonce once.
+ *
+ * The two media server backup streams (`GET /v1/mediaserver/backups/<id>/download`, `POST /v1/mediaserver/backups/upload`) sign the
+ * `x-ff-backup-passphrase` header value exactly as sent (base64url of the UTF-8 passphrase; empty when absent) in place of the body,
+ * so the request is verified before a byte of the stream is read or written.
  */
 export const KEY_LABEL = 'friendflix-updater/v1';
 export const HEADER_TS = 'x-ff-updater-ts';

@@ -6,22 +6,44 @@ import { loadConfig } from './config.js';
 import { Docker, StepError, execRunner, type ImageInfo, type ServiceState } from './docker.js';
 import type { StackInfo } from './stack.js';
 import { Updater, type Ops } from './job.js';
-import { BACKUP_DIR, removeStaleParts } from './mediaserver/backup.js';
+import { BACKUP_DIR, UPLOAD_MAX, decodePassphrase, download, removeStaleParts, upload } from './mediaserver/backup.js';
+import { Engine } from './mediaserver/engine.js';
+import { readFacts } from './mediaserver/facts.js';
+import { runHelper } from './mediaserver/helpers.js';
+import { MediaJobs, type JobDeps, type MediaJobOp } from './mediaserver/jobs.js';
+import { parseMediaBody } from './mediaserver/parse.js';
+import { readPins, type PinRead } from './mediaserver/pins.js';
+import { MediaService } from './mediaserver/service.js';
+import { mediaStatusView, type MediaStatusView } from './mediaserver/status.js';
+import { Supervisor } from './mediaserver/supervise.js';
+import { BACKUP_ID_RE, type MediaOp } from './mediaserver/types.js';
 import { FF_SERVICES, HEALTH_SERVICES, SELF_SERVICE, channelTag, parseChannelBody, parseLivetvBody, shaTag } from './policy.js';
 import { ReplayCache, deriveKey, verify, type Verifier } from './protocol.js';
 import { fileStore } from './state.js';
 
-const MAX_BODY = 1024;
-type Route = 'status' | 'channel' | 'update' | 'rollback' | 'self-update' | 'livetv';
-/** the whole API: six fixed actions */
-const ROUTES: Record<string, { method: 'GET' | 'POST'; route: Route }> = {
+type Route = 'status' | 'channel' | 'update' | 'rollback' | 'self-update' | 'livetv' | 'mediaserver';
+/** the whole API: seven fixed actions (and the two backup streams below) */
+export const ROUTES: Record<string, { method: 'GET' | 'POST'; route: Route }> = {
   '/v1/status': { method: 'GET', route: 'status' },
   '/v1/channel': { method: 'POST', route: 'channel' },
   '/v1/update': { method: 'POST', route: 'update' },
   '/v1/rollback': { method: 'POST', route: 'rollback' },
   '/v1/self-update': { method: 'POST', route: 'self-update' },
   '/v1/livetv': { method: 'POST', route: 'livetv' },
+  '/v1/mediaserver': { method: 'POST', route: 'mediaserver' },
 };
+/** body limits: 8 KB for the media route (20 folders), 1 KB for the others */
+export const MAX_BODY_FOR: Record<Route, number> = { status: 1024, channel: 1024, update: 1024, rollback: 1024, 'self-update': 1024, livetv: 1024, mediaserver: 8192 };
+/** a JSON body must arrive within this time (the server's own request timeout is long for the upload stream) */
+const BODY_DEADLINE_MS = 10_000;
+/** a backup stream that moves no byte for this long is cut (an upload holds the one-scrypt-at-a-time lock until its header is read) */
+const STREAM_IDLE_MS = 60_000;
+const DOWNLOAD_RE = new RegExp(`^/v1/mediaserver/backups/(${BACKUP_ID_RE.source.slice(1, -1)})/download$`);
+const UPLOAD_PATH = '/v1/mediaserver/backups/upload';
+const PASSPHRASE_HEADER = 'x-ff-backup-passphrase';
+/** the ops that only read or narrow: allowed while the managed media server is not available */
+const ALWAYS_OPS: ReadonlySet<MediaOp['op']> = new Set(['logs', 'gpu', 'base-clear', 'stop', 'remove']);
+const JOB_OPS: ReadonlySet<MediaOp['op']> = new Set(['apply', 'finish-setup', 'start', 'stop', 'restart', 'update', 'hdr-test', 'backup', 'restore', 'remove']);
 export type LivetvContainerState = 'running' | 'exited' | null;
 
 export interface ServiceView { service: string; state: string; health: string; sha: string | null; version: string | null }
@@ -37,32 +59,59 @@ export interface AppDeps {
   livetv?: () => Promise<LivetvContainerState>;
   /** auth refusals etc. (codes only) */
   warn?: (msg: string) => void;
+  /** the managed media server (Task 3–8 parts bound to their deps); absent in tests = the media routes are not found */
+  media?: MediaApi;
+  /** shorter deadlines for tests: a JSON body (10 s), an idle backup stream (60 s) */
+  limits?: { bodyMs?: number; streamIdleMs?: number };
 }
 
-function send(res: ServerResponse, status: number, body: unknown): void {
+export interface MediaApi {
+  service: Pick<MediaService, 'request' | 'confirm' | 'clear' | 'browse' | 'gpu' | 'logs'>;
+  jobs: Pick<MediaJobs, 'start'>;
+  status(): Promise<MediaStatusView>;
+  download(id: string, passphrase: string, res: ServerResponse): Promise<void>;
+  upload(req: IncomingMessage, passphrase: string): ReturnType<typeof upload>;
+}
+
+/** a JSON answer; `close` ends the connection after it (a request whose body was not read) */
+function send(res: ServerResponse, status: number, body: unknown, close = false): void {
+  if (res.headersSent || res.destroyed) return;
   const s = JSON.stringify(body);
-  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-length': Buffer.byteLength(s) });
+  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-length': Buffer.byteLength(s), ...(close ? { connection: 'close' } : {}) });
   res.end(s);
 }
 
-function readBody(req: IncomingMessage): Promise<string | null> {
+type Body = { ok: true; body: string } | { ok: false; status: 408 | 413; error: 'timeout' | 'too_large' };
+
+/** the whole body up to `max` bytes (more: the request is cut) within the deadline (else 408, connection closed) */
+function readBody(req: IncomingMessage, max: number, deadlineMs: number): Promise<Body> {
   return new Promise((resolve) => {
     let size = 0;
+    let done = false;
     const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => {
+    const finish = (b: Body): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      req.removeListener('data', onData);
+      resolve(b);
+    };
+    const timer = setTimeout(() => finish({ ok: false, status: 408, error: 'timeout' }), deadlineMs);
+    const onData = (c: Buffer): void => {
       size += c.length;
-      if (size > MAX_BODY) { resolve(null); req.destroy(); return; }
+      if (size > max) { finish({ ok: false, status: 413, error: 'too_large' }); req.destroy(); return; }
       chunks.push(c);
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', () => resolve(null));
+    };
+    req.on('data', onData);
+    req.on('end', () => finish({ ok: true, body: Buffer.concat(chunks).toString('utf8') }));
+    req.on('error', () => finish({ ok: false, status: 413, error: 'too_large' }));
   });
 }
 
 export async function status(d: AppDeps) {
   const s = d.updater.snapshot();
-  const [services, stack, livetv] = await Promise.all([d.services().catch(() => []), d.stack ? d.stack().catch(() => null) : Promise.resolve(null),
-    d.livetv ? d.livetv().catch(() => null) : Promise.resolve(null)]);
+  const [services, stack, livetv, mediaserver] = await Promise.all([d.services().catch(() => []), d.stack ? d.stack().catch(() => null) : Promise.resolve(null),
+    d.livetv ? d.livetv().catch(() => null) : Promise.resolve(null), d.media ? d.media.status().catch(() => null) : Promise.resolve(null)]);
   return {
     updater: d.self,
     channel: s.channel, version: s.version, targetTag: channelTag(s.channel, s.version),
@@ -76,6 +125,8 @@ export async function status(d: AppDeps) {
     // the optional livetv service: what the updater did (enabled / disabled / absent) and whether its container runs
     // error: why an update or rollback disabled it on its own (pull_failed / verify_failed / restart_failed / unhealthy)
     livetv: { state: s.livetv, container: livetv, error: s.livetvError },
+    // the managed media server (status.ts): never a code, a password or a path below the base
+    mediaserver,
   };
 }
 
@@ -85,21 +136,116 @@ function jsonBody(req: IncomingMessage, body: string): { ok: true; value: unknow
   try { return { ok: true, value: JSON.parse(body) as unknown }; } catch { return { ok: false, status: 400, error: 'invalid_body' }; }
 }
 
+/** what a media op answers (codes only, never Docker or server text) */
+async function mediaOp(m: MediaApi, op: MediaOp): Promise<{ status: number; body: unknown }> {
+  if (JOB_OPS.has(op.op)) {
+    const started = m.jobs.start(op as MediaJobOp);
+    if (!started.ok) return { status: started.error === 'busy' ? 409 : 400, body: { error: started.error } };
+    return { status: 202, body: { job: started.job } };
+  }
+  switch (op.op) {
+    case 'base-request': {
+      const r = await m.service.request(op.path);
+      return r.ok ? { status: 200, body: { pending: true, expiresAt: r.expiresAt, warning: r.warning } } : { status: r.status, body: { error: r.error } };
+    }
+    case 'base-confirm': {
+      const r = await m.service.confirm(op.code);
+      return 'error' in r ? { status: 409, body: { error: r.error } } : { status: 200, body: r };
+    }
+    case 'base-clear': {
+      const r = await m.service.clear();
+      return 'error' in r ? { status: 409, body: { error: r.error } } : { status: 200, body: { ok: true } };
+    }
+    case 'browse': {
+      const r = await m.service.browse(op.rel);
+      if ('error' in r) return { status: r.error === 'invalid_body' ? 400 : 409, body: { error: r.error } };
+      return { status: 200, body: { entries: r.entries, truncated: r.truncated } };
+    }
+    case 'gpu': {
+      const r = await m.service.gpu();
+      return { status: 200, body: { dri: r.dri, nvidia: r.nvidia } };
+    }
+    case 'logs': {
+      const r = await m.service.logs(op.tail);
+      return 'error' in r ? { status: 409, body: { error: r.error } } : { status: 200, body: { lines: r.lines } };
+    }
+    default:
+      return { status: 400, body: { error: 'invalid_body' } };
+  }
+}
+
+/**
+ * The two backup streams (spec "Backup and restore"): the signature covers the `x-ff-backup-passphrase` header as sent (base64url)
+ * in place of the body, so it is checked before a byte of the stream is read or written. Answers carry codes only.
+ */
+async function stream(d: AppDeps, req: IncomingMessage, res: ServerResponse, path: string, id: string | null): Promise<void> {
+  const want = id === null ? 'POST' : 'GET';
+  // the upload's body is never read on a refusal: the connection is closed after the answer
+  const refuse = (status: number, error: string): void => send(res, status, { error }, id === null);
+  if (req.method !== want) return refuse(405, 'method_not_allowed');
+  const raw = req.headers[PASSPHRASE_HEADER];
+  const header = typeof raw === 'string' ? raw : '';
+  const auth = verify(d.verifier, { method: want, path, headers: req.headers, body: header });
+  if (!auth.ok) {
+    d.warn?.(`refused mediaserver-backup: ${auth.error}`);
+    return refuse(401, auth.error);
+  }
+  const m = d.media;
+  if (!m) return refuse(404, 'not_found');
+  const passphrase = decodePassphrase(header);
+  if (passphrase === null) return refuse(400, 'invalid_passphrase');
+  if (id === null) {
+    const declared = Number(req.headers['content-length']);
+    if (Number.isFinite(declared) && declared > UPLOAD_MAX) return refuse(413, 'too_large');
+  }
+  // a stalled client is cut (the socket is destroyed when it moves no byte for STREAM_IDLE_MS)
+  req.socket.setTimeout(d.limits?.streamIdleMs ?? STREAM_IDLE_MS);
+  try {
+    if (id !== null) return await m.download(id, passphrase, res);
+    const r = await m.upload(req, passphrase);
+    // an upload over the limit was cut inside upload(): there is no connection left to answer on
+    if (req.socket.destroyed) return;
+    if (r.ok) return send(res, 200, { backup: r.backup });
+    return refuse(r.status, r.error);
+  } finally {
+    if (!req.socket.destroyed) req.socket.setTimeout(0);
+  }
+}
+
 export function handler(d: AppDeps) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const path = (req.url ?? '').split('?')[0]!;
     if (path === '/healthz' && req.method === 'GET') return send(res, 200, { ok: true });
+    if (path === UPLOAD_PATH) return stream(d, req, res, path, null);
+    const dl = DOWNLOAD_RE.exec(path);
+    if (dl) return stream(d, req, res, path, dl[1]!);
     const r = ROUTES[path];
     if (!r) return send(res, 404, { error: 'not_found' });
     if (req.method !== r.method) return send(res, 405, { error: 'method_not_allowed' });
-    const body = await readBody(req);
-    if (body === null) return send(res, 413, { error: 'too_large' });
+    const read = await readBody(req, MAX_BODY_FOR[r.route], d.limits?.bodyMs ?? BODY_DEADLINE_MS);
+    if (!read.ok) return send(res, read.status, { error: read.error }, true);
+    const body = read.body;
     const auth = verify(d.verifier, { method: req.method, path, headers: req.headers, body });
     if (!auth.ok) {
       d.warn?.(`refused ${r.route}: ${auth.error}`);
       return send(res, 401, { error: auth.error });
     }
     if (r.route === 'status') return send(res, 200, await status(d));
+    if (r.route === 'mediaserver') {
+      const m = d.media;
+      if (!m) return send(res, 404, { error: 'not_found' });
+      const parsed = jsonBody(req, body);
+      if (!parsed.ok) return send(res, parsed.status, { error: parsed.error });
+      // exactly one op with exactly its keys: no image, path outside the base, device, port or variable can be named
+      const op = parseMediaBody(parsed.value);
+      if (!op) return send(res, 400, { error: 'invalid_body' });
+      if (!ALWAYS_OPS.has(op.op)) {
+        const view = await m.status().catch(() => null);
+        if (!view?.available) return send(res, 409, { error: view?.reason ?? 'not_available' });
+      }
+      const a = await mediaOp(m, op);
+      return send(res, a.status, a.body);
+    }
     if (r.route === 'livetv') {
       const parsed = jsonBody(req, body);
       if (!parsed.ok) return send(res, parsed.status, { error: parsed.error });
@@ -207,20 +353,54 @@ export function start(env: NodeJS.ProcessEnv = process.env): Server {
   let livetvEnabled = (): boolean => false;
   const docker = new Docker({ projectDir: cfg.projectDir, files: cfg.composeFiles, autoFiles: cfg.composeFilesAuto, projectName: cfg.projectName, repo: cfg.repo, dockerHost: cfg.dockerHost,
     livetv: () => livetvEnabled(), self: cfg.self }, execRunner);
-  const updater = new Updater(dockerOps(docker, cfg.backendHealthUrl), fileStore(cfg.stateDir));
+  // the media jobs need the updater and the update job needs their phase: bound once both exist
+  let jobs: MediaJobs | null = null;
+  const updater = new Updater(dockerOps(docker, cfg.backendHealthUrl), fileStore(cfg.stateDir), { mediaPhase: (job) => (jobs ? jobs.phase(job) : Promise.resolve(null)) });
   // plain archives an interrupted media server backup or upload left behind (they hold password hashes and keys)
   void removeStaleParts(BACKUP_DIR);
   livetvEnabled = () => updater.livetv === 'enabled';
   const verifier: Verifier = { key: deriveKey(cfg.secret), cache: new ReplayCache(), notBefore: Date.now() };
   const services = servicesView(docker);
   const log = (msg: string) => console.log(`${new Date().toISOString()} updater: ${msg}`);
-  const app = handler({ updater, verifier, services, stack: stackView(docker), livetv: livetvView(docker), self: { version: cfg.version, sha: cfg.gitSha }, warn: log });
+  const media = mediaParts(cfg, docker, updater);
+  jobs = media.jobs;
+  const app = handler({ updater, verifier, services, stack: stackView(docker), livetv: livetvView(docker), self: { version: cfg.version, sha: cfg.gitSha }, warn: log, media: media.api });
   const server = createServer((req, res) => { void app(req, res).catch(() => { if (!res.headersSent) send(res, 500, { error: 'internal' }); }); });
-  server.requestTimeout = 10_000;
+  // the upload stream may take long (20 GiB); JSON bodies have their own 10-s deadline (readBody), streams an idle limit
+  server.requestTimeout = 3 * 3600_000;
   server.headersTimeout = 5_000;
   server.listen(cfg.port, '0.0.0.0', () => log(`listening on :${cfg.port} (project ${cfg.projectDir}, files ${cfg.composeFilesAuto ? `as started (fallback ${cfg.composeFiles.join(',')})` : cfg.composeFiles.join(',')}, repo ${cfg.repo})`));
-  for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, () => { server.close(); process.exit(0); });
+  // supervision (supervise.ts): once at start, then every 60 s while no job runs
+  void media.supervisor.startup().catch(() => undefined);
+  const tick = setInterval(() => { if (!updater.busy) void media.supervisor.tick().catch(() => undefined); }, 60_000);
+  tick.unref();
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, () => { clearInterval(tick); server.close(); process.exit(0); });
   return server;
+}
+
+/** the managed media server's parts, bound to the engine (through the socket proxy), the updater and the backup volume */
+function mediaParts(cfg: ReturnType<typeof loadConfig>, docker: Docker, updater: Updater): { jobs: MediaJobs; supervisor: Supervisor; api: MediaApi } {
+  const engine = new Engine(cfg.dockerHost);
+  const facts = () => readFacts(engine, cfg.self);
+  const verifyImage = (ref: string) => docker.verify(ref);
+  const deps: JobDeps = {
+    engine, updater, facts, helper: runHelper, repo: cfg.repo, now: Date.now, verify: verifyImage,
+    // the base code goes to stdout only (one line), never to the job log
+    print: (line) => console.log(line),
+    pins: async (): Promise<PinRead> => {
+      const project = (await facts()).project;
+      return project ? readPins({ engine, project, verify: verifyImage, repo: cfg.repo }) : { error: 'no_backend' };
+    },
+  };
+  const jobs = new MediaJobs(deps);
+  const service = new MediaService(deps, jobs);
+  const supervisor = new Supervisor({ ...deps, jobs });
+  const status = mediaStatusView({ updater, engine, jobs, facts, pins: deps.pins, templateState: () => supervisor.templateState() });
+  const backups = { dir: BACKUP_DIR, updater, now: Date.now };
+  return {
+    jobs, supervisor,
+    api: { service, jobs, status, download: (id, passphrase, res) => download(backups, id, passphrase, res), upload: (req, passphrase) => upload(backups, req, passphrase) },
+  };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) start();
