@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_LOADED, type LoadedBrand } from './brand';
-import { decideIntroMark, introMarkSource, preloadMark, DEFAULT_INTRO, introKey, isIntroFreeRoute, parseIntroSettings, shouldPlayIntro, shouldPlayIntroSound } from './intro';
+import { decideIntroMark, introMarkSource, preloadMark, preloadMarkCancelable, DEFAULT_INTRO, introKey, isIntroFreeRoute, parseIntroSettings, shouldPlayIntro, shouldPlayIntroSound } from './intro';
 
 const base = { setting: true, reducedMotion: false, route: '/', sessionSeen: false, tv: false };
 
@@ -92,5 +92,23 @@ describe('preloadMark', () => {
     expect(await preloadMark('/x.png', make('error') as never, 50)).toBe(false);
     expect(await preloadMark('/x.png', make('never') as never, 20)).toBe(false);
     expect(await preloadMark('/x.png', undefined as never, 20)).toBe(false);
+  });
+  it('waits for decode() after load; a failing decode still counts as ready', async () => {
+    const make = (decode: () => Promise<void>) => class { onload: (() => void) | null = null; onerror: (() => void) | null = null; decoding = ''; decode = decode; set src(_: string) { queueMicrotask(() => this.onload?.()); } };
+    let decoded = false;
+    expect(await preloadMark('/x.png', make(async () => { await Promise.resolve(); decoded = true; }) as never, 50)).toBe(true);
+    expect(decoded).toBe(true);
+    expect(await preloadMark('/x.png', make(() => Promise.reject(new Error('x'))) as never, 50)).toBe(true);
+  });
+  it('cancel() stops the timer and the handlers: the promise never settles', async () => {
+    let img: { onload: (() => void) | null } | null = null;
+    const C = class { onload: (() => void) | null = null; onerror: (() => void) | null = null; decoding = ''; constructor() { img = this; } set src(_: string) { /* pending */ } };
+    const h = preloadMarkCancelable('/x.png', C as never, 20);
+    let settled = false;
+    void h.promise.then(() => { settled = true; });
+    h.cancel();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(settled).toBe(false);
+    expect(img!.onload).toBeNull();
   });
 });

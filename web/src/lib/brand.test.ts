@@ -512,4 +512,15 @@ describe('whenBrandKnown (the intro waits for the brand)', () => {
     expect(done).toBe(true);
     await expect(whenBrandKnown()).resolves.toBeUndefined();
   });
+  it('gives up after the cap and resolves with whatever is known', async () => {
+    vi.useFakeTimers();
+    try {
+      let done = false;
+      void whenBrandKnown(800).then(() => { done = true; });
+      await vi.advanceTimersByTimeAsync(799);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(done).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
 });

@@ -854,7 +854,7 @@
         if (early) window.dispatchEvent(new Event('ff-me')); // pages that rendered early can now read the active profile
         if (pending) stops.push(watchApproval());
         tv = m.tv || sessionStorage.getItem('ff_tv') === '1';
-        if (!pending) void whenBrandKnown().then(() => maybeColdIntro(m.profile?.id)); // the intro plays the brand, so the brand is known first
+        if (!pending) void whenBrandKnown().then(() => maybeColdIntro(m.profile?.id)).catch(() => undefined); // the intro plays the brand, so the brand is known first
         if (!pending) { loadNotes(); if (get(areas).library) loadList(); loadPrefs(); const notesTimer = setInterval(loadNotes, 60_000); stops.push(() => clearInterval(notesTimer)); }
         if (m.tv) localStorage.setItem('ff_tv_device', '1'); // an expired TV session goes back to the pairing screen, not to a login form
         if (tv) {

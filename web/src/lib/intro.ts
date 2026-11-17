@@ -95,17 +95,24 @@ export function decideIntroMark(b: LoadedBrand, imageLoaded: boolean): IntroMark
   return b.name === DEFAULT_APP_NAME ? 'builtin' : 'initial';
 }
 
-/** Loads (and decodes) the image into the browser cache; true when it is usable, false on an error or after `timeoutMs`. */
-export function preloadMark(src: string, ImageCtor: typeof Image | undefined = typeof Image === 'undefined' ? undefined : Image, timeoutMs = MARK_WAIT_MS): Promise<boolean> {
-  return new Promise((resolve) => {
+/** A cancelable preload: `cancel()` stops the timer and detaches the handlers (the promise then never settles). */
+export function preloadMarkCancelable(src: string, ImageCtor: typeof Image | undefined = typeof Image === 'undefined' ? undefined : Image, timeoutMs = MARK_WAIT_MS): { promise: Promise<boolean>; cancel: () => void } {
+  let cancel = () => undefined as void;
+  const promise = new Promise<boolean>((resolve) => {
     if (!ImageCtor) { resolve(false); return; }
     let done = false;
-    const end = (ok: boolean) => { if (!done) { done = true; clearTimeout(timer); resolve(ok); } };
-    const timer = setTimeout(() => end(false), timeoutMs);
     const img = new ImageCtor();
+    const end = (ok: boolean) => { if (!done) { done = true; cancel(); resolve(ok); } };
+    const timer = setTimeout(() => end(false), timeoutMs);
+    cancel = () => { done = true; clearTimeout(timer); img.onload = null; img.onerror = null; };
     img.decoding = 'async';
-    img.onload = () => end(true);
+    // loaded is not decoded: wait for the decode too (a failing decode still counts: the image is usable), all within the same budget
+    img.onload = () => { void Promise.resolve(typeof img.decode === 'function' ? img.decode() : undefined).catch(() => undefined).then(() => end(true)); };
     img.onerror = () => end(false);
     img.src = src;
   });
+  return { promise, cancel: () => cancel() };
 }
+
+/** Loads and decodes the image into the browser cache; true when it is usable, false on an error or after `timeoutMs`. */
+export const preloadMark = (src: string, ImageCtor?: typeof Image, timeoutMs = MARK_WAIT_MS): Promise<boolean> => preloadMarkCancelable(src, ImageCtor ?? (typeof Image === 'undefined' ? undefined : Image), timeoutMs).promise;

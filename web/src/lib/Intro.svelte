@@ -5,7 +5,7 @@
   import { playSonicLogo, stopSonicLogo } from '#lib/sonic';
   import { t } from '#lib/i18n';
   import { brand, brandInitial, brandPalette } from '#lib/brand';
-  import { decideIntroMark, introMarkSource, preloadMark, type IntroMark } from '#lib/intro';
+  import { decideIntroMark, introMarkSource, preloadMarkCancelable, type IntroMark } from '#lib/intro';
 
   /** Play the sonic logo along with the animation (only sensible after a user gesture). */
   export let sound = false;
@@ -37,6 +37,7 @@
   const src = introMarkSource(b);
   let mark: IntroMark = decideIntroMark(b, false);
   let ready = !src;
+  let preload: { cancel: () => void } | null = null;
   $: own = mark !== 'builtin';
   const pal = brandPalette(b.tokens);
 
@@ -92,14 +93,16 @@
     addEventListener('keydown', onKey, true);
     addEventListener('pointerdown', onPointer, true);
     if (src) {
-      void preloadMark(src).then((ok) => {
+      const h = preloadMarkCancelable(src);
+      preload = h;
+      void h.promise.then((ok) => {
         if (finished) return;
         mark = decideIntroMark(b, ok);
         ready = true;
         begin();
       });
     } else begin();
-    return () => { if (!finished) { finished = true; clearTimeout(fallback); clearTimeout(skipTimer); removeEventListener('keydown', onKey, true); removeEventListener('pointerdown', onPointer, true); void stopSonicLogo(100); } };
+    return () => { preload?.cancel(); if (!finished) { finished = true; clearTimeout(fallback); clearTimeout(skipTimer); removeEventListener('keydown', onKey, true); removeEventListener('pointerdown', onPointer, true); void stopSonicLogo(100); } };
   });
 </script>
 
@@ -196,5 +199,5 @@
   .rm .fstroke, .rm .flare, .rm .sweep, .rm .ring { display: none; }
   .rm .glow { opacity: .3; transform: none; }
 
-  .leaving { animation: ff-skip .15s linear both !important; pointer-events: none; }
+  .intro.leaving { animation: ff-skip .15s linear both !important; pointer-events: none; }
 </style>

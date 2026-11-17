@@ -66,16 +66,31 @@ export function brandIntroTests(): void {
       api.brand = brandAnswer({ name: 'Nordlicht Kino', symbol: symbol.slice(22, 86) }, { symbol });
       let release!: () => void;
       const gate = new Promise<void>((r) => { release = r; });
-      await page.route('**/api/public/brand/img/**', async (route) => { await gate; await route.fallback(); });
+      let seen!: () => void;
+      const requested = new Promise<void>((r) => { seen = r; });
+      await page.route('**/api/public/brand/img/**', async (route) => { seen(); await gate; await route.fallback(); });
       await page.goto('/');
       const intro = page.locator('.intro');
       await expect(intro).toBeVisible();
-      await page.waitForTimeout(300);
+      await requested; // the symbol is being fetched, and held
       await expect(intro.locator('.stage')).toHaveCount(0);
       await expect(intro.locator('svg.tile')).toHaveCount(0);
       release();
       await expect(intro.locator('img.sym')).toBeVisible();
       await expect(intro.locator('svg.tile')).toHaveCount(0);
+    });
+
+    test('skipping under reduced motion fades with ff-skip, no abrupt cut', async ({ page, api: _api }) => {
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.goto('/settings');
+      await page.getByRole('button', { name: 'Vorschau abspielen' }).click();
+      const intro = page.locator('.intro.rm');
+      await expect(intro).toBeVisible();
+      await page.waitForTimeout(250); // the click that opened it must not count as the skip
+      await page.keyboard.press('Escape');
+      await expect(intro).toHaveClass(/leaving/);
+      expect(await intro.evaluate((e) => getComputedStyle(e).animationName)).toMatch(/ff-skip$/);
+      await expect(intro).toHaveCount(0);
     });
 
     test.describe('failing symbol', () => {
