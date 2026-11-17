@@ -59,6 +59,7 @@
   import ToastHost from '#lib/ui/ToastHost.svelte';
   import { flushDeferred } from '#lib/ui/action';
   import ConfirmHost from '#lib/ui/ConfirmHost.svelte';
+  import RequestSheetHost from '#lib/requests/RequestSheetHost.svelte';
   import ReauthHost from '#lib/auth/ReauthHost.svelte';
   import HealthBanner from '#lib/admin/HealthBanner.svelte';
   import { startBanner } from '#lib/admin/banner';
@@ -989,6 +990,7 @@
 <!-- app-wide toasts + confirm dialog (lib/ui) + the in-app re-authentication (lib/account/reauth.ts); mounted once, outside the page so they survive navigation -->
 <ToastHost />
 <ConfirmHost />
+<RequestSheetHost />
 <ReauthHost />
 
 <style>

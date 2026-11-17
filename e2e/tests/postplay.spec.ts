@@ -132,7 +132,8 @@ test.describe('post-play screen (desktop)', () => {
     expect(path(page)).toBe('/watch/' + LAST_EP.id);
   });
 
-  test('finished series on /postplay/:id: wish for the missing season with the monthly limit', async ({ page }) => {
+  test('finished series on /postplay/:id: wish for the missing season with the monthly limit', async ({ page, api }) => {
+    api.requestSheets.seasons[1396] = { title: 'Bright Valley', seasons: [{ number: 1, episodes: 6, state: 'available' }, { number: 2, episodes: 6, state: 'none' }] };
     await mockPostplay(page, LAST_EP.id, FINISHED);
     const wished: unknown[] = [];
     await page.route('**/api/requests', (r) => { wished.push(r.request().postDataJSON()); return r.fulfill({ json: { id: 9, status: 'angefragt' } }); });
@@ -141,8 +142,13 @@ test.describe('post-play screen (desktop)', () => {
     await expect(pp.getByRole('heading', { level: 1 })).toHaveText('Du hast „Bright Valley“ zu Ende geschaut');
     await expect(pp.getByText('Noch 2 Wünsche in diesem Monat')).toBeVisible();
     await pp.getByRole('button', { name: 'Fehlende Staffel wünschen' }).click();
+    // the season picker: the missing season 2 is chosen, the one in the library is not choosable
+    const dlg = page.getByRole('dialog', { name: 'Staffeln wählen' });
+    await expect(dlg.getByText('Bright Valley', { exact: true })).toBeVisible();
+    await expect(dlg.locator('li').first()).toContainText('Vorhanden');
+    await dlg.getByRole('button', { name: '1 Staffel anfragen' }).click();
     await expect(pp.getByRole('button', { name: 'Gewünscht' })).toBeVisible();
-    expect(wished).toEqual([{ mediaType: 'tv', tmdbId: 1396 }]);
+    expect(wished).toEqual([{ mediaType: 'tv', tmdbId: 1396, seasons: [2] }]);
     await expect(page).toHaveTitle(/Was als Nächstes\?/);
   });
 

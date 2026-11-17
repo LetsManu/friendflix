@@ -93,6 +93,43 @@ describe('submitWish', () => {
   });
 });
 
+describe('chosen seasons and collections', () => {
+  it('a season wish sends the seasons and reports which went out; the collection of a movie wish comes back', async () => {
+    routes['POST /api/requests'] = { json: { id: 9, status: 'angefragt', seasons: [2, 3] } };
+    expect(await W.submitWish('tv', 7001, [3, 2])).toEqual({ kind: 'requested', seasons: [2, 3] });
+    expect(calls[0]).toEqual({ call: 'POST /api/requests', body: { mediaType: 'tv', tmdbId: 7001, seasons: [3, 2] } });
+    routes['POST /api/requests'] = { json: { id: 10, status: 'angefragt', collection: { id: 900, name: 'Sternwarte 24' } } };
+    expect(await W.submitWish('movie', 8002)).toEqual({ kind: 'requested', collection: { id: 900, name: 'Sternwarte 24' } });
+  });
+  it('400 bad_seasons is a failure, not "requested"', async () => {
+    routes['POST /api/requests'] = { status: 400, json: { error: 'bad_seasons' } };
+    expect(await W.submitWish('tv', 7001, [9])).toEqual({ kind: 'failed', disabled: false });
+    expect(get(W.wished).size).toBe(0);
+  });
+  it('batch: per-movie results; requested and existing parts count as wished; the quota comes from the answer', async () => {
+    routes['POST /api/requests/batch'] = { json: { results: [{ tmdbId: 8002, result: 'requested' }, { tmdbId: 8003, result: 'exists' }, { tmdbId: 8004, result: 'limit' }, { tmdbId: 8006, result: 'failed' }], quota: { limit: 2, used: 2, remaining: 0, resetsAt: 'r' } } };
+    const r = await W.submitBatch([8002, 8003, 8004, 8006], 900);
+    expect(calls[0]).toEqual({ call: 'POST /api/requests/batch', body: { items: [8002, 8003, 8004, 8006].map((tmdbId) => ({ mediaType: 'movie', tmdbId })), collectionId: 900 } });
+    expect(r).toEqual({ kind: 'done', results: [{ tmdbId: 8002, result: 'requested' }, { tmdbId: 8003, result: 'exists' }, { tmdbId: 8004, result: 'limit' }, { tmdbId: 8006, result: 'failed' }], resetsAt: 'r' });
+    expect([...get(W.wished)].sort()).toEqual(['movie:8002', 'movie:8003']);
+    expect(get(W.quota)).toEqual({ limit: 2, used: 2, resetsAt: 'r' });
+  });
+  it('batch without a collection id; the whole call failing: failed (disabled when the service is gone), nothing marked', async () => {
+    routes['POST /api/requests/batch'] = { status: 502, json: { error: 'seerr' } };
+    expect(await W.submitBatch([8002])).toEqual({ kind: 'failed', disabled: false });
+    expect(calls[0]!.body).toEqual({ items: [{ mediaType: 'movie', tmdbId: 8002 }] });
+    routes['POST /api/requests/batch'] = { status: 404, json: { error: 'requests_disabled' } };
+    expect(await W.submitBatch([8002])).toEqual({ kind: 'failed', disabled: true });
+    expect(get(W.wished).size).toBe(0);
+  });
+  it('batch answer without a quota keeps the old one', async () => {
+    routes['POST /api/requests/batch'] = { json: { results: [] } };
+    W.quota.set({ limit: 5, used: 1, resetsAt: 'x' });
+    expect(await W.submitBatch([8002])).toEqual({ kind: 'done', results: [], resetsAt: 'x' });
+    expect(get(W.quota)).toEqual({ limit: 5, used: 1, resetsAt: 'x' });
+  });
+});
+
 describe('loading', () => {
   it('quota and own requests load; a failing call leaves the old value', async () => {
     routes['GET /api/requests/quota'] = { json: { limit: null, used: 2, remaining: null, resetsAt: 'r' } };

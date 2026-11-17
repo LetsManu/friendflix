@@ -121,6 +121,17 @@ export interface MockState {
   };
   /** 1.1 post-play counters the app sent (POST /api/postplay/event bodies) */
   postplayEvents: Array<Record<string, unknown>>;
+  /**
+   * the season picker and the collection sheet (lib/requests): GET /api/seerr/tv/:id/seasons answers `seasons[id]` (default: two
+   * open seasons), `seasonsFail` a 502; GET /api/seerr/movie/:id/collection answers `collections[id]` (default: no collection);
+   * POST /api/requests names `movieCollection[id]` for a movie; POST /api/requests/batch answers `batch[tmdbId]` per part (default
+   * 'requested'; the bodies land in `batches`), `batchFail` a 502
+   */
+  requestSheets: {
+    seasons: Record<number, { title: string; seasons: unknown[] }>; seasonsFail: boolean;
+    collections: Record<number, unknown>; movieCollection: Record<number, { id: number; name: string }>;
+    batch: Record<number, 'requested' | 'exists' | 'limit' | 'failed' | 'skipped'>; batches: unknown[]; batchFail: boolean;
+  };
   /** the setup wizard (mocks/setup.ts); while it is not complete, /api/me answers 503 setup_required */
   setup?: SetupMock;
   /** the sign-in cover wall: GET /api/public/login-art answers this status and image paths (mocks/login.ts ART_IMAGES) */
@@ -184,6 +195,7 @@ export function freshState(): MockState {
     fav: new Set(items.filter((i) => i.favorite).map((i) => i.id)),
     log: [],
     postplayEvents: [],
+    requestSheets: { seasons: {}, seasonsFail: false, collections: {}, movieCollection: {}, batch: {}, batches: [], batchFail: false },
     newPage: {
       forYou: newForYou(), episodes: newEpisodes(), upcoming: { movie: [], tv: [] }, hang: new Set(), engine: 'v2',
       suggestions: { movie: [], series: [], error: null }, quota: { limit: 5, used: 1, resetsAt: '2026-12-01T00:00:00Z' }, mine: [], search: [], wish: 'ok', kids: false,
@@ -439,7 +451,27 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       if (np.kids) return J({ error: 'kids_profile' }, 403);
       if (np.wish === 'limit') return J({ error: 'request_limit', limit: np.quota?.limit ?? 5, used: np.quota?.limit ?? 5, resetsAt: np.quota?.resetsAt ?? '2026-12-01T00:00:00Z' }, 429);
       if (np.wish === 'dup') return J({ error: 'already_requested', status: 'angefragt' }, 409);
-      return np.wish === 'fail' ? J({ error: 'boom' }, 500) : J({ ok: true });
+      if (np.wish === 'fail') return J({ error: 'boom' }, 500);
+      const b = body();
+      const col = b.mediaType === 'movie' ? st.requestSheets.movieCollection[b.tmdbId] : undefined;
+      return J({ ok: true, ...(Array.isArray(b.seasons) ? { seasons: [...b.seasons].sort((x: number, y: number) => x - y) } : {}), ...(col ? { collection: col } : {}) });
+    }
+    if ((mm = p.match(/^\/api\/seerr\/tv\/(\d+)\/seasons$/))) {
+      if (st.requestSheets.seasonsFail) return J({ error: 'seerr', status: 500 }, 502);
+      const id = Number(mm[1]);
+      const s = st.requestSheets.seasons[id] ?? { title: `#${id}`, seasons: [{ number: 1, episodes: 8, airDate: '2024-03-01', state: 'none' }, { number: 2, episodes: 8, airDate: '2025-03-01', state: 'none' }] };
+      return J({ tmdbId: id, ...s });
+    }
+    if ((mm = p.match(/^\/api\/seerr\/movie\/(\d+)\/collection$/))) return J(st.requestSheets.collections[Number(mm[1])] ?? { collection: null });
+    if (p === '/api/requests/batch' && m === 'POST') {
+      const rs = st.requestSheets;
+      if (rs.batchFail) return J({ error: 'seerr', status: 500 }, 502);
+      const b = body();
+      rs.batches.push(b);
+      const q = st.newPage.quota ?? { limit: null, used: 0, resetsAt: '2026-12-01T00:00:00Z' };
+      const results = (b.items ?? []).map((x: { tmdbId: number }) => ({ tmdbId: x.tmdbId, result: rs.batch[x.tmdbId] ?? 'requested' }));
+      const used = q.used + results.filter((x: { result: string }) => x.result === 'requested').length;
+      return J({ results, quota: { ...q, used, remaining: q.limit === null ? null : Math.max(0, q.limit - used) } });
     }
     if (p === '/api/seerr/upcoming') {
       if (st.perms?.requests === false) return J({ error: 'requests_forbidden' }, 403); // the backend's requirePerm (roles redesign §4.7)

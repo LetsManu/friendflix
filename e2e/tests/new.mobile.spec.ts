@@ -58,6 +58,7 @@ test.describe('new & upcoming, variant B (phone)', () => {
     await page.goto('/new');
     const card = region(page, 'Noch nicht bei uns').locator('li.c', { hasText: 'Lantern Row' });
     await card.getByRole('button', { name: 'Wünschen: Lantern Row' }).tap();
+    await page.getByRole('dialog', { name: 'Staffeln wählen' }).getByRole('button', { name: '2 Staffeln anfragen' }).tap();
     await expect(card.getByText('Angefragt')).toBeVisible();
     expect(api.log.filter((l) => l.startsWith('POST /api/requests'))).toHaveLength(1);
 

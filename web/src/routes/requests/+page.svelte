@@ -5,10 +5,12 @@
   import { onMount } from 'svelte';
   import { pageStore } from '#lib/page';
   const page = pageStore();
-  import { api, ApiError } from '#lib/api';
+  import { api } from '#lib/api';
   import TrailerButton from '#lib/TrailerButton.svelte';
   import { episodeKey, loadReminders, movieKey, removeReminder } from '#lib/reminders';
   import { features } from '#lib/capabilities';
+  import { pickSeasons, requestCollection, seasonRanges } from '#lib/requests/picker';
+  import { submitWish } from '#lib/requests/wish';
 
   let q = $page.url.searchParams.get('q') ?? '', results: any[] = [], mine: any[] = [], msg = '', busy = false, mineErr = '', requesting = new Set<string>();
   let quota: { limit: number | null; used: number; remaining: number | null; resetsAt: string } | null = null;
@@ -37,18 +39,31 @@
     try { results = (await api(`/api/seerr/search?q=${encodeURIComponent(q.trim())}`)).results; } catch { msg = tr('social.searchUnavailable'); }
     busy = false;
   }
+  /** after a movie wish: the collection it belongs to, offered as "Ganze Reihe anfragen…" next to the message */
+  let offer: { tmdbId: number; title: string; name: string } | null = null;
   async function request(r: any) {
     const k = `${r.mediaType}:${r.tmdbId}`;
     if (requesting.has(k)) return;
-    requesting.add(k); requesting = requesting; msg = ''; msgIsLimit = false;
-    try {
-      await api('/api/requests', { method: 'POST', body: { mediaType: r.mediaType, tmdbId: r.tmdbId } });
+    requesting.add(k); requesting = requesting; msg = ''; msgIsLimit = false; offer = null;
+    // a series: the season picker makes the wish (closed without one: nothing changes)
+    const res = r.mediaType === 'tv' ? await pickSeasons({ tmdbId: r.tmdbId, title: r.title }) : await submitWish(r.mediaType, r.tmdbId);
+    if (res?.kind === 'requested') {
       r.status = 'angefragt'; results = results; msg = tr('social.requests.requested', { title: r.title }); loadMine(); loadQuota();
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 429 && e.body?.error === 'request_limit') { msg = limitMsg(e.body.resetsAt); msgIsLimit = true; loadQuota(); }
-      else msg = e instanceof ApiError && e.status === 409 ? tr('social.requests.duplicate') : tr('social.requests.failed');
-    }
+      if (res.collection) offer = { tmdbId: r.tmdbId, title: r.title, name: res.collection.name };
+    } else if (res?.kind === 'limit') { msg = limitMsg(res.resetsAt); msgIsLimit = true; loadQuota(); }
+    else if (res?.kind === 'exists') { r.status = 'angefragt'; results = results; msg = tr('social.requests.duplicate'); }
+    else if (res) msg = tr('social.requests.failed');
     requesting.delete(k); requesting = requesting;
+  }
+  async function wholeSeries() {
+    if (!offer) return;
+    const o = offer;
+    const done = await requestCollection({ tmdbId: o.tmdbId, title: o.name });
+    if (done?.requested.length) {
+      const got = new Set(done.requested);
+      for (const x of results) if (x.mediaType === 'movie' && got.has(x.tmdbId)) x.status = 'angefragt';
+      results = results; loadMine(); loadQuota();
+    }
   }
   // without a request service the page holds only the reminders (no quota, search or wishes; nothing that would answer 404)
   let mounted = false, serviceLoaded = false;
@@ -74,6 +89,8 @@
 </form>
 {#if quota && quota.limit !== null}<p class:warn={full} class:muted={!full}>{#if full}{limitMsg(quota.resetsAt)}{:else}{$t('social.requests.quota', { remaining: quota.remaining, limit: quota.limit })}{/if}</p>{/if}
 <div role="status">{#if msg && !(full && msgIsLimit)}<p class="warn">{msg}</p>{/if}</div>
+<!-- "Ganze Reihe anfragen…" after a movie wish: a reserved one-line row while results are shown, so the grid never moves -->
+{#if results.length}<div class="offer">{#if offer}<button type="button" class="sec" title={$t('home.wish.collection.openNamed', { name: offer.name })} on:click={wholeSeries}>{$t('home.wish.collection.openNamed', { name: offer.name })}</button>{/if}</div>{/if}
 <div class="grid" style="margin-top:1rem">
   {#each results as r}
     <div class="card">
@@ -88,8 +105,14 @@
 </div>
 <h2 style="margin-top:2rem">{$t('social.requests.mine')}</h2>
 {#if mineErr}<p class="err" role="alert">{mineErr} <button type="button" class="sec" on:click={loadMine}>{$t('social.tryAgain')}</button></p>{:else if !mine.length}<p class="muted">{$t('social.requests.nothingYet')}</p>{/if}
-<table><tbody>{#each mine as m}<tr><td>{m.title}</td><td>{kindLabel(m.mediaType)}</td><td class={cls[m.status]}>{label(m.status)}</td><td class="muted">{day(m.createdAt)}</td></tr>{/each}</tbody></table>
+<table><tbody>{#each mine as m}<tr><td>{m.title}{#if m.seasons?.length}<small class="muted seas">{$t('home.wish.seasons.list', { n: m.seasons.length, list: seasonRanges(m.seasons) })}</small>{/if}</td><td>{kindLabel(m.mediaType)}</td><td class={cls[m.status]}>{label(m.status)}</td><td class="muted">{day(m.createdAt)}</td></tr>{/each}</tbody></table>
 {:else}<div role="status">{#if msg}<p class="warn">{msg}</p>{/if}</div>{/if}
 <h2 style="margin-top:2rem">{$t('social.requests.reminders')}</h2>
 {#if !reminders.length}<p class="muted">{$t('social.requests.noReminders')}</p>{/if}
 <table><tbody>{#each reminders as r (r.id)}<tr><td>{r.title}</td><td>{r.kind === 'episode' ? $t('social.kind.episode') : kindLabel(r.mediaType)}</td><td class="muted">{r.releaseDate ? day(r.releaseDate) : $t('social.requests.dateOpen')}</td><td><button class="sec" aria-label={$t('social.requests.removeReminder', { title: r.title })} on:click={() => unremind(r)}>{$t('social.remove')}</button></td></tr>{/each}</tbody></table>
+
+<style>
+  .offer { display: flex; align-items: center; height: 44px; margin: .4rem 0 0; min-width: 0; }
+  .offer button { height: 44px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seas { display: block; }
+</style>

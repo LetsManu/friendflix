@@ -1358,6 +1358,11 @@ export const MIGRATIONS: string[] = [
   update users set welcomed_at = created_at where welcomed_at is null;
   alter table downloads add column if not exists expiry_warned_at timestamptz;
   `,
+  // 59: wishes for chosen seasons (routes/seerr.ts): the season numbers a series wish asked for; null = the whole series (or a movie).
+  // Shown in the account's request list. Rerunnable.
+  `
+  alter table seerr_requests add column if not exists seasons smallint[];
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

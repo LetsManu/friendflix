@@ -148,7 +148,7 @@ An admin can turn on **Live TV** under *Admin → Live TV*: its own container th
 
 - **Watch parties** with synchronised playback, chat and live emoji reactions that float over the picture for everyone in the party. **Movie-night voting** with countdown and automatic start. "What has none of us seen yet?" – the group matcher finds titles for everyone.
 - **Recommendations**: recommend titles to friends, see what friends rated and watched this week, shared lists with editors and readers, curated rows from the admin.
-- **Wishes**: missing something? Wish for it right from the search and get notified when it arrives – with a monthly limit per role. "Remind me" for upcoming titles.
+- **Wishes**: missing something? Wish for it right from the search and get notified when it arrives – with a monthly limit per role. Pick the seasons of a series you want (only the missing ones of a series that is partly there), or request a whole film series in one go. "Remind me" for upcoming titles.
 - **Stay in the loop**: notifications in the app, as web push on every device, via ntfy or Discord, and an optional weekly digest.
 - **The fun extras**: reactions and short reviews (visible only after you watched it), ratings, stats, achievements and a shareable "year in review" card of your viewing stats.
 
