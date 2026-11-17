@@ -14,7 +14,7 @@ import { MediaJobs, type JobDeps, type MediaJobOp } from './mediaserver/jobs.js'
 import { parseMediaBody } from './mediaserver/parse.js';
 import { readPins, type PinRead } from './mediaserver/pins.js';
 import { MediaService } from './mediaserver/service.js';
-import { mediaStatusView, type MediaStatusView } from './mediaserver/status.js';
+import { STARTING_VIEW, mediaStatusView, type MediaStatusView } from './mediaserver/status.js';
 import { Supervisor } from './mediaserver/supervise.js';
 import { BACKUP_ID_RE, type MediaOp } from './mediaserver/types.js';
 import { FF_SERVICES, HEALTH_SERVICES, SELF_SERVICE, channelTag, parseChannelBody, parseLivetvBody, shaTag } from './policy.js';
@@ -112,17 +112,22 @@ function readBody(req: IncomingMessage, max: number, deadlineMs: number): Promis
 const MEDIA_STATUS_MS = 2_000;
 const lastMediaView = new WeakMap<MediaApi, MediaStatusView>();
 
-/** the media status within the bound; past it the last view this updater answered (null before the first), the read goes on */
+/** the media status within the bound; past it the last view this updater read (STARTING_VIEW before the first), the read goes on */
 async function mediaStatus(m: MediaApi, ms = MEDIA_STATUS_MS): Promise<MediaStatusView | null> {
   let timer: NodeJS.Timeout | undefined;
   const late = new Promise<'late'>((r) => { timer = setTimeout(() => r('late'), ms); });
   const fresh = m.status().then((v) => { lastMediaView.set(m, v); return v; }, () => null);
   try {
     const v = await Promise.race([fresh, late]);
-    return v === 'late' ? lastMediaView.get(m) ?? null : v;
+    return v === 'late' ? lastMediaView.get(m) ?? STARTING_VIEW : v;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** one media status read at start (start() fires it after the supervisor's startup), so /v1/status has a view before anyone asks; never throws */
+export async function warmMediaStatus(m: MediaApi): Promise<void> {
+  await m.status().then((v) => { lastMediaView.set(m, v); }, () => undefined);
 }
 
 export async function status(d: AppDeps) {
@@ -388,7 +393,8 @@ export function start(env: NodeJS.ProcessEnv = process.env): Server {
   server.headersTimeout = 5_000;
   server.listen(cfg.port, '0.0.0.0', () => log(`listening on :${cfg.port} (project ${cfg.projectDir}, files ${cfg.composeFilesAuto ? `as started (fallback ${cfg.composeFiles.join(',')})` : cfg.composeFiles.join(',')}, repo ${cfg.repo})`));
   // supervision (supervise.ts): once at start, then every 60 s while no job runs
-  void media.supervisor.startup().catch(() => undefined);
+  // then the media status, read once: until it ends /v1/status answers STARTING_VIEW
+  void media.supervisor.startup().catch(() => undefined).then(() => warmMediaStatus(media.api));
   const tick = setInterval(() => { if (!updater.busy) void media.supervisor.tick().catch(() => undefined); }, 60_000);
   tick.unref();
   for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, () => { clearInterval(tick); server.close(); process.exit(0); });

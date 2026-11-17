@@ -17,14 +17,15 @@ export type Kind = 'ferrofin' | 'jellyfin';
 export type Gpu = 'off' | 'dri' | 'nvidia';
 export type LibraryType = 'movies' | 'tvshows' | 'music' | 'mixed';
 export type SetupStep = 'none' | 'applying' | 'first_run' | 'api_key' | 'libraries' | 'hwaccel' | 'finishing' | 'done' | 'failed';
-export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 'engine_old' | 'proxy_outdated' | 'no_project' | 'no_network' | 'updater_outdated';
+export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 'engine_old' | 'proxy_outdated' | 'no_project' | 'no_network' | 'updater_outdated' | 'starting';
 export interface LibraryEntry { slug: string; name: string; type: LibraryType; rel: string; created: boolean }
 export interface LibraryReferences { lists: number; resume: number; recordings: number }
 export interface MediaBackup { id: string; kind: Kind; upstream: string; at: string; tag: 'manual' | 'auto' | 'upload'; size: number }
 /** backend mediaserver/client.ts MediaStatus */
 export interface MediaStatus {
   available: boolean;
-  reason: 'engine_old' | 'no_logs' | 'no_project' | 'no_network' | null;
+  /** `starting`: the updater has read no media status yet since it started */
+  reason: 'engine_old' | 'no_logs' | 'no_project' | 'no_network' | 'starting' | null;
   base: { set: boolean; path: string | null; pending: boolean; expiresAt: string | null };
   desired: { kind: Kind; folders: Array<{ rel: string; target: string }>; uid: number; gid: number; gpu: Gpu; mediaGid: number | null; egress: boolean; run: boolean } | null;
   container: { state: string; health: 'healthy' | 'unhealthy' | 'starting' | ''; kind: Kind; image: { digest: string; upstream: string }; template: 'current' | 'update_pending'; tampered: boolean; createdAt: string } | null;

@@ -12,7 +12,8 @@ import { PENDING, signUpdater, startedJob, updaterCall, updaterKey, type StartRe
 
 export const MEDIA_ERRORS = ['no_base', 'base_missing', 'folder_missing', 'folder_symlink', 'folder_nested', 'folder_unreadable', 'too_many_folders', 'gpu_missing', 'nvidia_missing', 'no_network', 'name_taken', 'pull_failed', 'image_missing', 'arch_unsupported', 'verify_failed', 'snapshot_failed', 'downgrade_refused', 'template_violation', 'uid_unsupported', 'uid_mismatch', 'library_referenced', 'engine_old', 'create_failed', 'start_failed', 'unhealthy', 'managed_tampered', 'backup_failed', 'backup_invalid', 'kind_mismatch', 'restore_failed', 'remove_failed', 'interrupted', 'pin_invalid', 'no_logs', 'no_project', 'helper_timeout', 'helper_failed', 'admin_missing'] as const;
 export type MediaError = (typeof MEDIA_ERRORS)[number];
-const REASONS = ['engine_old', 'no_logs', 'no_project', 'no_network'] as const;
+/** `starting`: the updater has read no media status yet since it started (updater/src/mediaserver/status.ts STARTING_VIEW) */
+const REASONS = ['engine_old', 'no_logs', 'no_project', 'no_network', 'starting'] as const;
 const KINDS = ['ferrofin', 'jellyfin'] as const;
 const GPUS = ['off', 'dri', 'nvidia'] as const;
 const HEALTH = ['healthy', 'unhealthy', 'starting', ''] as const;

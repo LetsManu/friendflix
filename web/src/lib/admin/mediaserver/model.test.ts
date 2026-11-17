@@ -13,7 +13,7 @@ import tr_ from '#lib/i18n/locales/tr/index';
 import type { MediaManaged, MediaStatus, MediaView } from './api';
 import {
   ACTION_ORDER, DEFAULT_MANAGED, TRIAL_KINDS, actionsFor, choiceDisabled, codeLogHint, countdown, currentChoice, folderRowsError, idError, initialRows,
-  defaultName, keptLibraries, kindName, livetvOffer, mediaErrorText, saveErrorText, nameTakenRow, passphraseError, pinState, reasonText, setupSteps, versionCmp,
+  defaultName, keptLibraries, kindName, livetvOffer, mediaErrorText, saveErrorText, nameTakenRow, passphraseError, pinState, reasonText, setupSteps, statusStarting, versionCmp,
 } from './model';
 
 afterEach(async () => { await setLocale('de'); });
@@ -54,7 +54,7 @@ describe('choices', () => {
   });
 
   it('choiceDisabled: every offer reason, a missing image, external never', () => {
-    const reasons = ['no_updater', 'plex', 'url_pinned', 'ids_in_use', 'engine_old', 'proxy_outdated', 'no_project', 'no_network', 'updater_outdated'] as const;
+    const reasons = ['no_updater', 'plex', 'url_pinned', 'ids_in_use', 'engine_old', 'proxy_outdated', 'no_project', 'no_network', 'updater_outdated', 'starting'] as const;
     for (const r of reasons) {
       const v = view({ offer: { managed: false, reason: r } });
       expect(choiceDisabled(v, 'ferrofin'), r).toBe(r);
@@ -72,7 +72,20 @@ describe('choices', () => {
   it('the reasons read as the spec words them', () => {
     expect(reasonText('ids_in_use')).toBe('Umzug von deinem Jellyfin: kommt mit Stufe 2');
     expect(reasonText('plex')).toBe('Wechsel von Plex: kommt mit Stufe 4');
-    for (const r of ['no_updater', 'url_pinned', 'engine_old', 'proxy_outdated', 'no_project', 'no_network', 'updater_outdated', 'image_missing'] as const) expect(reasonText(r), r).not.toMatch(/^mediaserver\./);
+    for (const r of ['no_updater', 'url_pinned', 'engine_old', 'proxy_outdated', 'no_project', 'no_network', 'updater_outdated', 'starting', 'image_missing'] as const) expect(reasonText(r), r).not.toMatch(/^mediaserver\./);
+    // the updater has not read the media status yet since it started: a neutral line, never "too old"
+    expect(reasonText('starting')).toBe('Medienserver-Status wird gelesen…');
+  });
+
+  it('statusStarting: the updater has not read the media status yet (managed, or the reason the offer waits for)', () => {
+    const starting = status({ available: false, reason: 'starting', pins: { ferrofin: false, jellyfin: false } });
+    expect(statusStarting(view({ status: starting, offer: { managed: false, reason: 'starting' } }))).toBe(true);
+    expect(statusStarting(view({ mode: 'managed', managed: managed({ kind: 'jellyfin', setup: 'done' }), status: starting, offer: { managed: false, reason: 'starting' } }))).toBe(true);
+    // Plex: its own reason stands, the card is not held for the media status
+    expect(statusStarting(view({ status: starting, offer: { managed: false, reason: 'plex' } }))).toBe(false);
+    expect(statusStarting(view())).toBe(false);
+    expect(statusStarting(view({ status: null, offer: { managed: false, reason: 'updater_outdated' } }))).toBe(false);
+    expect(actionsFor(view({ mode: 'managed', managed: managed({ kind: 'jellyfin', setup: 'done' }), status: starting }))).toEqual([]);
   });
 });
 

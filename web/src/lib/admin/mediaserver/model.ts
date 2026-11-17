@@ -32,6 +32,11 @@ export function choiceDisabled(v: MediaView, c: Choice): ReasonKey | null {
   return v.kinds[c] === false ? 'image_missing' : null;
 }
 export const reasonText = (r: ReasonKey): string => trDynamic(`mediaserver.reason.${r}`);
+/**
+ * The updater has read no media status yet since it started (a pin verify can take minutes): the card waits for it like for its
+ * first load, with the neutral line instead of the form and the actions. Not while another offer reason stands (Plex, a pinned URL).
+ */
+export const statusStarting = (v: MediaView): boolean => v.status?.reason === 'starting' && (v.mode === 'managed' || v.offer.reason === 'starting');
 
 /** the base code's time left as mm:ss (00:00 once it is past, or for a time that does not parse) */
 export function countdown(expiresAt: string, now: number): string {

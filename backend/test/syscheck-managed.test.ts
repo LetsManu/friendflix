@@ -78,6 +78,15 @@ describe('media.managed', () => {
     expect(s.available).toBe(true);
   });
 
+  it('starting (no media status read yet since the updater started) → not_set_up managed_starting, never a warning', async () => {
+    const starting = (s: MediaStatus) => { s.available = false; s.reason = 'starting'; s.container = null; s.desired = null; s.backups = []; s.error = null; };
+    expect(await lineFor(starting)).toMatchObject({ status: 'not_set_up', cause: 'managed_starting', href: '/admin/settings?tab=media' });
+    // even with the last media job failed: the status is not read yet
+    expect(await lineFor(starting, { job: coreJob({ action: 'mediaserver-start', state: 'failed', error: 'start_failed' }) })).toMatchObject({ status: 'not_set_up', cause: 'managed_starting' });
+    // an external server in use and no container seen: still neutral
+    expect(await lineFor(starting, { kind: null })).toMatchObject({ status: 'not_set_up', cause: 'managed_off' });
+  });
+
   it('engine_old → problem with a container, else not_set_up', async () => {
     expect(await lineFor((s) => { s.available = false; s.reason = 'engine_old'; })).toMatchObject({ status: 'problem', cause: 'managed_engine_old' });
     expect(await lineFor((s) => { s.available = false; s.reason = 'engine_old'; s.container = null; })).toMatchObject({ status: 'not_set_up', cause: 'managed_engine_old' });

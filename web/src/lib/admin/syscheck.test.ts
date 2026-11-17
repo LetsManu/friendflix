@@ -326,7 +326,7 @@ describe('media.managed (the managed media server)', () => {
   });
 
   it('every managed_* cause has a label, cause and fix text in all 7 locales', async () => {
-    expect(managed).toHaveLength(13);
+    expect(managed).toHaveLength(14);
     for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
       await setLocale(l);
       expect(lineText(ln({ id: 'media.managed', status: 'ok' })).label, l).not.toBe('');

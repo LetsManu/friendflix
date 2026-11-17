@@ -29,6 +29,7 @@ export default {
     no_project: 'Der Updater findet sein Compose-Projekt nicht.',
     no_network: 'Das Netzwerk „media“ fehlt: Compose-Dateien erneuern und einmal docker compose up -d.',
     updater_outdated: 'Der Updater ist zu alt: erst FriendFlix aktualisieren.',
+    starting: 'Medienserver-Status wird gelesen…',
     image_missing: 'Für diesen FriendFlix-Stand gibt es kein Image dieses Servers. Wähle Jellyfin (offiziell, verwaltet).',
   },
   base: {
@@ -307,6 +308,7 @@ export default {
     ids_in_use: 'FriendFlix hängt an den IDs deines bisherigen Servers. Der Umzug kommt mit Stufe 2.',
     proxy_outdated: 'Der Docker-Proxy ist veraltet: Compose-Dateien erneuern und einmal docker compose up -d.',
     updater_outdated: 'Der Updater ist zu alt: erst FriendFlix aktualisieren.',
+    starting: 'Der Medienserver-Status wird noch gelesen. Versuch es gleich noch einmal.',
     updater_error: 'Der Updater hat unerwartet geantwortet.',
     not_available: 'Der Updater ist gerade nicht bereit.',
     busy: 'Gerade läuft ein anderer Auftrag. Versuch es gleich noch einmal.',

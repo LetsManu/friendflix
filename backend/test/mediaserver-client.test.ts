@@ -75,6 +75,15 @@ describe('parseMediaStatus', () => {
     expect(parseMediaStatus(fullStatus())).toEqual(fullStatus());
   });
 
+  it('keeps the starting view (the updater has read no media status yet since it started)', () => {
+    const starting = {
+      available: false, reason: 'starting', base: { set: false, path: null, pending: false, expiresAt: null }, desired: null, container: null, pin: null,
+      pins: { ferrofin: false, jellyfin: false }, engine: { api: null, logs: false, arch: null, nvidia: false }, error: null, backups: [], hdr: null,
+    };
+    expect(parseMediaStatus(starting)).toEqual(starting);
+    expect(parseMediaStatus({ ...starting, reason: 'whatever' })!.reason).toBeNull();
+  });
+
   it('drops what does not fit', () => {
     const raw = fullStatus() as Record<string, any>;
     raw.base.path = '/srv/media\n/etc';

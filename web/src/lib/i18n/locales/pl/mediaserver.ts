@@ -27,6 +27,7 @@ const dict: Translation<typeof de> = {
     no_project: 'Program aktualizujący nie znajduje swojego projektu compose.',
     no_network: 'Brakuje sieci „media”: odnów pliki compose i raz wykonaj docker compose up -d.',
     updater_outdated: 'Program aktualizujący jest za stary: najpierw zaktualizuj FriendFlix.',
+    starting: 'Odczytywanie stanu serwera multimediów…',
     image_missing: 'Ta wersja FriendFlix nie ma obrazu tego serwera. Wybierz Jellyfin (oficjalny, zarządzany).',
   },
   base: {
@@ -302,6 +303,7 @@ const dict: Translation<typeof de> = {
     ids_in_use: 'FriendFlix zależy od identyfikatorów twojego obecnego serwera. Przeprowadzka pojawi się w etapie 2.',
     proxy_outdated: 'Proxy Dockera jest przestarzałe: odnów pliki compose i raz wykonaj docker compose up -d.',
     updater_outdated: 'Program aktualizujący jest za stary: najpierw zaktualizuj FriendFlix.',
+    starting: 'Stan serwera multimediów jest jeszcze odczytywany. Spróbuj ponownie za chwilę.',
     updater_error: 'Program aktualizujący odpowiedział nieoczekiwanie.',
     not_available: 'Program aktualizujący nie jest teraz gotowy.',
     busy: 'Trwa inne zadanie. Spróbuj ponownie za chwilę.',

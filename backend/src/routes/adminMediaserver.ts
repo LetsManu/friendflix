@@ -27,7 +27,7 @@ import { PENDING, startedJob, updaterView, type StartResult, type UpdaterView } 
  * the generated admin password and API keys never reach an answer, an audit row or a log.
  */
 
-export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 'engine_old' | 'proxy_outdated' | 'no_project' | 'no_network' | 'updater_outdated';
+export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 'engine_old' | 'proxy_outdated' | 'no_project' | 'no_network' | 'updater_outdated' | 'starting';
 export interface MediaView {
   /** managed = media_managed.kind is set */
   mode: 'managed' | 'external';
@@ -77,7 +77,7 @@ const pinned = (ctx: Ctx): boolean => {
   }
 };
 
-const STATUS_REASON: Record<NonNullable<MediaStatus['reason']>, OfferReason> = { engine_old: 'engine_old', no_logs: 'proxy_outdated', no_project: 'no_project', no_network: 'no_network' };
+const STATUS_REASON: Record<NonNullable<MediaStatus['reason']>, OfferReason> = { engine_old: 'engine_old', no_logs: 'proxy_outdated', no_project: 'no_project', no_network: 'no_network', starting: 'starting' };
 
 /** why managed mode cannot be offered (spec "Who may do what", "Fresh server only where nothing depends on ids"); null = it can */
 async function offerReason(ctx: Ctx, view: UpdaterView, managed: MediaManaged, kind?: Kind): Promise<OfferReason | null> {
@@ -85,6 +85,7 @@ async function offerReason(ctx: Ctx, view: UpdaterView, managed: MediaManaged, k
   if (pinned(ctx)) return 'url_pinned';
   if (!('status' in view)) return 'no_updater';
   const ms = view.status.mediaserver;
+  // no `mediaserver` at all: an updater from before the media server (one that has not read it yet answers reason `starting`)
   if (!ms) return 'updater_outdated';
   // available false without a reason: the updater cannot reach its engine right now
   if (!ms.available) return ms.reason ? STATUS_REASON[ms.reason] : 'no_updater';

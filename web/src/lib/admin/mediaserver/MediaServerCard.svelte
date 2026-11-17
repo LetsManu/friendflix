@@ -9,7 +9,9 @@
    * last job, the actions that fit (model.ts actionsFor), *Protokoll* and the backups. The external choice keeps today's address
    * fields (the settings group card under this one, shown by the page while `mode` is external) and, while managed, switches back
    * with the id warning (*Zurück zu <address>* when one is saved). A request that needs a recent sign-in asks for it in place and runs
-   * once more (isReauthError / reauthenticate, like the settings page). While a job or the first run runs, the card polls every 2 s.
+   * once more (isReauthError / reauthenticate, like the settings page). While a job or the first run runs, the card polls every 2 s;
+   * so it does while the updater has not read the media status yet since it started (model.ts statusStarting): the card then waits
+   * as on its first load, with the neutral line in its kept place, and shows no form and no actions.
    * New things only ever appear below what was clicked; every line that comes and goes (codes, countdowns, errors, results) has
    * its room from the start.
    */
@@ -31,7 +33,7 @@
   import { adminMediaApi, type FolderInput, type Gpu, type Kind, type MediaApi, type MediaView } from './api';
   import {
     actionsFor, choiceDisabled, currentChoice, folderRowsError, idError, initialRows, keptLibraries, kindName, livetvOffer, mediaErrorText, nameTakenRow, setupActive,
-    type ActionOp, type Choice,
+    statusStarting, type ActionOp, type Choice,
   } from './model';
   import BackupDialogs from './BackupDialogs.svelte';
   import BaseFolder from './BaseFolder.svelte';
@@ -66,8 +68,9 @@
     try {
       const [v, j] = await Promise.all([api.view(), api.lastJob().catch(() => job)]);
       view = v; job = j; loadFailed = false;
-      // the choice follows the server when its mode changes (first load, a switch, a remove), never on a poll
-      if (seenMode !== v.mode) { seenMode = v.mode; pick(currentChoice(v)); }
+      // the choice follows the server when its mode changes (first load, a switch, a remove), never on a poll; not before the
+      // updater read the media status (the form starts from what is deployed)
+      if (seenMode !== v.mode && !statusStarting(v)) { seenMode = v.mode; pick(currentChoice(v)); }
       mode = v.mode;
       return true;
     } catch {
@@ -75,7 +78,8 @@
       return false;
     }
   }
-  $: following = Boolean(job?.state === 'running' || (view && view.mode === 'managed' && setupActive(view.managed)));
+  $: starting = Boolean(view && statusStarting(view));
+  $: following = Boolean(job?.state === 'running' || starting || (view && view.mode === 'managed' && setupActive(view.managed)));
   let timer: ReturnType<typeof setTimeout> | undefined, gone = false;
   function schedule() {
     clearTimeout(timer);
@@ -249,8 +253,10 @@
 <AdminCard id="settings-mediaserver" title={$t('mediaserver.title')} description={$t('mediaserver.description')}>
   {#if loadFailed}
     <div class="state" role="alert"><Icon name="alert" size={22} /><p>{$t('mediaserver.loadFailed')}</p><Button variant="secondary" icon="refresh" on:click={load}>{$t('ui.retry')}</Button></div>
-  {:else if !view}
-    <div class="sk" aria-hidden="true"><Skeleton h="3rem" /><Skeleton h="2.4rem" /></div><p class="sr-only" role="status">{$t('ui.table.loading')}</p>
+  {:else if !view || starting}
+    <!-- the line keeps its place while loading too: the neutral line of a starting updater moves nothing -->
+    <div class="sk" aria-hidden="true"><Skeleton h="3rem" /><Skeleton h="2.4rem" /></div>
+    <p class="wait" role="status" data-testid="media-starting">{#if starting}{$t('mediaserver.reason.starting')}{:else}<span class="sr-only">{$t('ui.table.loading')}</span>{/if}</p>
   {:else}
     <MediaChoice {view} {choice} on:pick={(e) => pick(e.detail)} />
 
@@ -360,6 +366,7 @@
 
 <style>
   .sk { display: grid; gap: 1rem; }
+  .wait { margin: .6rem 0 0; min-height: 1.5em; font-size: .9rem; color: var(--mut); }
   .state { display: flex; flex-direction: column; align-items: center; gap: .6rem; text-align: center; padding: 1.4rem 1rem; }
   .state p { margin: 0; }
   .state :global(svg) { color: var(--err); }

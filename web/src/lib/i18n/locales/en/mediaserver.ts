@@ -27,6 +27,7 @@ const dict: Translation<typeof de> = {
     no_project: 'The updater cannot find its compose project.',
     no_network: 'The “media” network is missing: refresh the compose files and run docker compose up -d once.',
     updater_outdated: 'The updater is too old: update FriendFlix first.',
+    starting: 'Reading the media server status…',
     image_missing: 'This FriendFlix build has no image of this server. Choose Jellyfin (official, managed).',
   },
   base: {
@@ -302,6 +303,7 @@ const dict: Translation<typeof de> = {
     ids_in_use: 'FriendFlix depends on the IDs of your current server. Moving comes with stage 2.',
     proxy_outdated: 'The Docker proxy is outdated: refresh the compose files and run docker compose up -d once.',
     updater_outdated: 'The updater is too old: update FriendFlix first.',
+    starting: 'The media server status is still being read. Try again in a moment.',
     updater_error: 'The updater answered unexpectedly.',
     not_available: 'The updater is not ready right now.',
     busy: 'Another job is running. Try again in a moment.',

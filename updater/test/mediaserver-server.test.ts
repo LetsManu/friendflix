@@ -7,9 +7,9 @@ import type { Ops, StartResult } from '../src/job.js';
 import { Updater } from '../src/job.js';
 import type { MediaOp } from '../src/mediaserver/types.js';
 import { MediaService } from '../src/mediaserver/service.js';
-import { mediaStatusView, type MediaStatusView } from '../src/mediaserver/status.js';
+import { STARTING_VIEW, mediaStatusView, type MediaStatusView } from '../src/mediaserver/status.js';
 import { ReplayCache, deriveKey, sign, type Verifier } from '../src/protocol.js';
-import { handler, type AppDeps } from '../src/server.js';
+import { handler, warmMediaStatus, type AppDeps } from '../src/server.js';
 import { DEFAULT_STATE, memoryStore, type Job } from '../src/state.js';
 import { FACTS, PASSWORD, SOURCE, SPEC, ferroPin, world } from './media-world.js';
 
@@ -284,7 +284,7 @@ describe('a slow media status', () => {
     expect(a.available && b.available && c.available).toBe(true);
   });
 
-  it('/v1/status answers within the bound while the media status hangs (the last view, else null)', async () => {
+  it('/v1/status answers within the bound while the media status hangs (the last view, else the starting view)', async () => {
     const f = fake();
     let hang = false;
     f.deps.media!.status = () => (hang ? new Promise<MediaStatusView>(() => undefined) : Promise.resolve(f.view));
@@ -293,10 +293,14 @@ describe('a slow media status', () => {
 
     hang = true;
     let t0 = Date.now();
-    expect((await get()).mediaserver).toBeNull();
+    // before the first view: a valid view that says it is still being read (never null: the backend reads null as "updater too old")
+    expect((await get()).mediaserver).toEqual(STARTING_VIEW);
+    expect(STARTING_VIEW).toMatchObject({ available: false, reason: 'starting', container: null, desired: null, error: null, backups: [] });
     expect(Date.now() - t0).toBeLessThan(1_000);
     // a media op's availability check is bounded too
-    expect((await post(base, '{"op":"start"}')).status).toBe(409);
+    const op = await post(base, '{"op":"start"}');
+    expect(op.status).toBe(409);
+    expect(await op.json()).toEqual({ error: 'starting' });
 
     hang = false;
     expect((await get()).mediaserver).toEqual(VIEW);
@@ -304,6 +308,29 @@ describe('a slow media status', () => {
     t0 = Date.now();
     expect((await get()).mediaserver).toEqual(VIEW);
     expect(Date.now() - t0).toBeLessThan(1_000);
+  });
+});
+
+describe('the media status warm-up', () => {
+  it('fills the view once, so /v1/status has it although the next read hangs', async () => {
+    const f = fake();
+    let reads = 0;
+    f.deps.media!.status = () => (++reads === 1 ? Promise.resolve(f.view) : new Promise<MediaStatusView>(() => undefined));
+    const base = await listen({ ...f.deps, limits: { mediaStatusMs: 50 } });
+    await warmMediaStatus(f.deps.media!);
+    expect(reads).toBe(1);
+    const r = (await (await fetch(`${base}/v1/status`, { headers: sign(key, 'GET', '/v1/status', '') })).json()) as { mediaserver: MediaStatusView | null };
+    expect(r.mediaserver).toEqual(VIEW);
+  });
+
+  it('a failed warm-up leaves the starting view and never throws', async () => {
+    const f = fake();
+    let reads = 0;
+    f.deps.media!.status = () => (++reads === 1 ? Promise.reject(new Error('engine')) : new Promise<MediaStatusView>(() => undefined));
+    const base = await listen({ ...f.deps, limits: { mediaStatusMs: 50 } });
+    await expect(warmMediaStatus(f.deps.media!)).resolves.toBeUndefined();
+    const r = (await (await fetch(`${base}/v1/status`, { headers: sign(key, 'GET', '/v1/status', '') })).json()) as { mediaserver: MediaStatusView | null };
+    expect(r.mediaserver).toEqual(STARTING_VIEW);
   });
 });
 

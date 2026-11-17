@@ -54,6 +54,8 @@ export async function managedLine(env: CheckEnv, view: MediaView | null, updater
   const c = s?.container ?? null;
   if (view.mode === 'external' && !c) return bad(id, 'not_set_up', 'managed_off', o);
   if (!s) return managedKind ? bad(id, 'warning', 'managed_no_updater', o) : bad(id, 'not_set_up', 'managed_off', o);
+  // the updater has not read the media status yet since it started (a pin verify can take minutes): pending, never a warning
+  if (s.reason === 'starting') return bad(id, 'not_set_up', 'managed_starting', o);
   if (s.reason === 'engine_old') return c ? bad(id, 'problem', 'managed_engine_old', o) : bad(id, 'not_set_up', 'managed_engine_old', o);
   if (s.reason === 'no_logs') return bad(id, 'warning', 'managed_proxy_outdated', { ...o, docs: 'mediaserver.md#update-the-compose-files' });
   // any other reason the updater cannot run the media server (no project, no media network, its engine unreachable): like no updater

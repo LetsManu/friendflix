@@ -27,6 +27,7 @@ const dict: Translation<typeof de> = {
     no_project: 'Güncelleyici compose projesini bulamıyor.',
     no_network: '“media” ağı eksik: compose dosyalarını yenile ve bir kez docker compose up -d çalıştır.',
     updater_outdated: 'Güncelleyici çok eski: önce FriendFlix’i güncelle.',
+    starting: 'Medya sunucusu durumu okunuyor…',
     image_missing: 'Bu FriendFlix sürümünde bu sunucunun imajı yok. Jellyfin (resmî, yönetilen) seç.',
   },
   base: {
@@ -302,6 +303,7 @@ const dict: Translation<typeof de> = {
     ids_in_use: 'FriendFlix şu anki sunucunun kimliklerine bağlı. Taşıma 2. aşamayla geliyor.',
     proxy_outdated: 'Docker proxy’si eskimiş: compose dosyalarını yenile ve bir kez docker compose up -d çalıştır.',
     updater_outdated: 'Güncelleyici çok eski: önce FriendFlix’i güncelle.',
+    starting: 'Medya sunucusu durumu hâlâ okunuyor. Birazdan yeniden dene.',
     updater_error: 'Güncelleyici beklenmedik şekilde yanıt verdi.',
     not_available: 'Güncelleyici şu anda hazır değil.',
     busy: 'Başka bir iş sürüyor. Birazdan yeniden dene.',

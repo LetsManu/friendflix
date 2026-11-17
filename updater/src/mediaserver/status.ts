@@ -21,7 +21,8 @@ export interface MediaContainerView {
 }
 export interface MediaStatusView {
   available: boolean;
-  reason: EngineFacts['reason'];
+  /** `starting`: no view read yet since this updater started (server.ts answers STARTING_VIEW until the first read ends) */
+  reason: EngineFacts['reason'] | 'starting';
   base: { set: boolean; path: string | null; pending: boolean; expiresAt: string | null };
   desired: Omit<Desired, 'tz'> | null;
   container: MediaContainerView | null;
@@ -32,6 +33,13 @@ export interface MediaStatusView {
   backups: BackupMeta[];
   hdr: HdrResult | null;
 }
+
+/** what /v1/status answers before the first view of this updater exists (a pin verify can take minutes): never null, which reads as an updater from before the media server */
+export const STARTING_VIEW: MediaStatusView = {
+  available: false, reason: 'starting',
+  base: { set: false, path: null, pending: false, expiresAt: null }, desired: null, container: null, pin: null,
+  pins: { ferrofin: false, jellyfin: false }, engine: { api: null, logs: false, arch: null, nvidia: false }, error: null, backups: [], hdr: null,
+};
 
 export interface MediaStatusDeps {
   updater: Updater;

@@ -27,6 +27,7 @@ const dict: Translation<typeof de> = {
     no_project: 'El actualizador no encuentra su proyecto compose.',
     no_network: 'Falta la red «media»: renueva los archivos compose y ejecuta una vez docker compose up -d.',
     updater_outdated: 'El actualizador es demasiado antiguo: actualiza primero FriendFlix.',
+    starting: 'Leyendo el estado del servidor multimedia…',
     image_missing: 'Esta versión de FriendFlix no tiene imagen de este servidor. Elige Jellyfin (oficial, gestionado).',
   },
   base: {
@@ -302,6 +303,7 @@ const dict: Translation<typeof de> = {
     ids_in_use: 'FriendFlix depende de los ID de tu servidor actual. El traslado llega con la etapa 2.',
     proxy_outdated: 'El proxy de Docker está desactualizado: renueva los archivos compose y ejecuta una vez docker compose up -d.',
     updater_outdated: 'El actualizador es demasiado antiguo: actualiza primero FriendFlix.',
+    starting: 'El estado del servidor multimedia aún se está leyendo. Inténtalo de nuevo en un momento.',
     updater_error: 'El actualizador respondió de forma inesperada.',
     not_available: 'El actualizador no está listo ahora.',
     busy: 'Hay otra tarea en curso. Inténtalo de nuevo en un momento.',

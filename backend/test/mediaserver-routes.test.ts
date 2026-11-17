@@ -286,6 +286,9 @@ describe('admin routes', () => {
     expect(await reason()).toBe('proxy_outdated');
     fake.media = { ...media(), available: false, reason: 'engine_old' };
     expect(await reason()).toBe('engine_old');
+    // the updater has not read its media status since it started: not an old updater
+    fake.media = { ...media(), available: false, reason: 'starting', container: null, desired: null };
+    expect(await reason()).toBe('starting');
     fake.media = null;
     expect(await reason()).toBe('updater_outdated');
     fake.media = media();
