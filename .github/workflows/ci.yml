@@ -16,10 +16,16 @@
 # a dispatch behaves like a push of that ref, but only main and v* tags are ever published.
 # v* tags also get the signed Android app and the Fire TV APK (android-release.yml), the Windows app (desktop-release.yml)
 # and the Samsung TV app (tizen-release.yml) attached to their GitHub Release.
+# The build itself (build args, labels, PR load + cache, push with SBOM/provenance, the pinned BuildKit) lives in the
+# composite action .github/actions/build-image, which every image job calls: it is an input of every image in the change
+# map (.github/images.json), so a change to how images are built counts as a change of every image.
 # Images carry APP_VERSION / APP_CODENAME from version.json next to GIT_SHA.
 # Reproducible builds (docs/reproducible-builds.md): SOURCE_DATE_EPOCH = commit time, rewrite-timestamp=true, pinned
-# BuildKit (BUILDKIT_IMAGE), BUILD_TIME and the `created` label derived from the commit time; the published candidate is
-# built without cache import. The `reproducible` job rebuilds every image from scratch and requires the same digest.
+# BuildKit (the action's `buildkit-image` default), BUILD_TIME and the `created` label derived from the commit time; the
+# published candidate is built without cache import. The `reproducible` job rebuilds every image from scratch and requires
+# the same digest.
+# `changes` (first job) prints the change plan (scripts/changed-images.mjs): per image build or carry and the test classes,
+# to its log and step summary. Report only for now: nothing needs it, every image still builds and every job runs in full.
 # mediaserver (trial, mediaserver/README.md) is the thin FriendFlix image on top of the pinned Ferrofin release: no Rust or
 # Node build, only image-level changes. It has its OWN jobs (`mediaserver-image`, `publish-mediaserver`) that nothing else
 # needs, so it can never block or cancel the other images: built, SBOM'd, signed and published the same way, but its Trivy
@@ -37,11 +43,31 @@ concurrency:
   group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions: { contents: read }
-env:
-  # BuildKit that builds every image, here and in scripts/reproduce-image.sh (which reads this line): the same commit only
-  # yields the same bytes with the same BuildKit. Pinned by digest; Dependabot does not see it, bump tag + digest by hand.
-  BUILDKIT_IMAGE: moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
 jobs:
+  # The change plan (scripts/changed-images.mjs, map .github/images.json) as one JSON line in the output `plan` and as a
+  # table in the step summary. Pull requests compare the image commits at the merge commit with those at the PR base;
+  # other events build everything. Full history: an image commit is the newest commit that touched the image's inputs.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: { contents: read }
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 26 }
+      - name: Plan
+        id: plan
+        env:
+          # empty outside pull requests (= no base)
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          plan=$(node scripts/changed-images.mjs plan --event "$GITHUB_EVENT_NAME" --sha "$GITHUB_SHA" --pr-base "$PR_BASE" --summary "$GITHUB_STEP_SUMMARY")
+          echo "$plan"
+          echo "plan=$plan" >> "$GITHUB_OUTPUT"
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -360,89 +386,33 @@ jobs:
       PUBLISHABLE: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-        with:
-          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
       - name: Image name (GHCR needs lowercase)
         id: img
         run: repo="${GITHUB_REPOSITORY#*/}"; echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${repo,,}-${SERVICE}" >> "$GITHUB_OUTPUT"   # friendflix-<svc>; forks get <repo>-<svc>
-      # SOURCE_DATE_EPOCH = commit time: image/history timestamps, rewrite-timestamp, BUILD_TIME and the `created` label
-      # all derive from it, never from the clock, so a rebuild of the commit reproduces them
-      - name: Release version (version.json) and build time (commit time)
-        id: ver
-        run: |
-          set -euo pipefail
-          sde=$(git log -1 --format=%ct)
-          {
-            echo "version=$(jq -er .version version.json)"
-            echo "codename=$(jq -er .codename version.json)"
-            echo "sde=$sde"
-            echo "build_time=$(date -u -d "@$sde" +%Y-%m-%dT%H:%M:%SZ)"
-          } >> "$GITHUB_OUTPUT"
-      # ---- pull_request: build locally, scan, discard ----
-      - name: Build (PR / other dispatch, not pushed)
-        if: env.PUBLISHABLE != 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: .
-          file: ${{ matrix.service }}/Dockerfile
-          load: true
-          tags: friendflix-${{ matrix.service }}:ci
-          build-args: |
-            SOURCE_DATE_EPOCH=${{ steps.ver.outputs.sde }}
-            GIT_SHA=${{ github.sha }}
-            APP_VERSION=${{ steps.ver.outputs.version }}
-            APP_CODENAME=${{ steps.ver.outputs.codename }}
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
-      - name: Scan (PR / other dispatch)
-        if: env.PUBLISHABLE != 'true'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: friendflix-${{ matrix.service }}:ci
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
-      # ---- push (main / v* tags) or dispatch: build once, push candidate tag, scan that exact digest ----
       - name: Log in to GHCR
         if: env.PUBLISHABLE == 'true'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
-      - name: OCI labels
-        id: meta
-        if: env.PUBLISHABLE == 'true'
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-        with:
-          images: ${{ steps.img.outputs.name }}
-          # default would be the clock; the commit time keeps the label (part of the image config) reproducible
-          labels: |
-            org.opencontainers.image.created=${{ steps.ver.outputs.build_time }}
-      - name: Build and push candidate
+      # pull_request / other dispatch: local friendflix-<svc>:ci; push (main / v* tags) or publishable dispatch: built once,
+      # pushed as the candidate ci-<sha> (outputs.ref = that exact digest)
+      - name: Build
         id: build
-        if: env.PUBLISHABLE == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        uses: ./.github/actions/build-image
         with:
-          context: .
-          file: ${{ matrix.service }}/Dockerfile
-          platforms: linux/amd64
-          # push = image exporter; rewrite-timestamp clamps every file mtime to SOURCE_DATE_EPOCH (reproducible layers)
-          outputs: type=image,name=${{ steps.img.outputs.name }}:ci-${{ github.sha }},push=true,oci-mediatypes=true,compression=gzip,rewrite-timestamp=true
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            SOURCE_DATE_EPOCH=${{ steps.ver.outputs.sde }}
-            GIT_SHA=${{ github.sha }}
-            BUILD_TIME=${{ steps.ver.outputs.build_time }}
-            APP_VERSION=${{ steps.ver.outputs.version }}
-            APP_CODENAME=${{ steps.ver.outputs.codename }}
-          # No cache import for what gets published: rewrite-timestamp only clamps mtimes NEWER than SOURCE_DATE_EPOCH, so
-          # a layer reused from an older commit's cache keeps that build's (older) mtimes and the image would differ from
-          # a clean rebuild. The fresh layers are still exported as cache for PR builds.
-          no-cache: true
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
-          # SPDX SBOM + full SLSA provenance stored next to the image (index digest); publish.yml re-uses the SBOM.
-          # They are separate manifests in the index (with build times); the linux/amd64 image manifest is what reproduces.
-          sbom: true
-          provenance: mode=max
+          service: ${{ matrix.service }}
+          publish: ${{ env.PUBLISHABLE }}
+          image: ${{ steps.img.outputs.name }}
+          tag: ci-${{ github.sha }}
+      # ---- pull_request: scan the local image, discard ----
+      - name: Scan (PR / other dispatch)
+        if: env.PUBLISHABLE != 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.build.outputs.ref }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      # ---- push (main / v* tags) or dispatch: scan the pushed candidate's exact digest ----
       # report first (never fails) so code scanning also gets the findings of a run that the gate below fails
       - name: Scan pushed digest (SARIF for code scanning)
         if: env.PUBLISHABLE == 'true'
@@ -451,7 +421,7 @@ jobs:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         with:
-          image-ref: ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ steps.build.outputs.ref }}
           format: sarif
           output: trivy-${{ matrix.service }}.sarif
           severity: CRITICAL,HIGH,MEDIUM
@@ -471,7 +441,7 @@ jobs:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         with:
-          image-ref: ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ steps.build.outputs.ref }}
           format: table
           output: ""
           severity: CRITICAL,HIGH
@@ -483,7 +453,7 @@ jobs:
       - name: Smoke test (backend image resolves its dependencies)
         if: matrix.service == 'backend'
         env:
-          IMAGE: ${{ env.PUBLISHABLE == 'true' && format('{0}@{1}', steps.img.outputs.name, steps.build.outputs.digest) || 'friendflix-backend:ci' }}
+          IMAGE: ${{ steps.build.outputs.ref }}
         run: |
           set -euo pipefail
           docker run --rm -w /app/backend --entrypoint node "$IMAGE" --input-type=module -e "
@@ -497,7 +467,7 @@ jobs:
       - name: Smoke test (web image serves static files with security headers)
         if: matrix.service == 'web'
         env:
-          IMAGE: ${{ env.PUBLISHABLE == 'true' && format('{0}@{1}', steps.img.outputs.name, steps.build.outputs.digest) || 'friendflix-web:ci' }}
+          IMAGE: ${{ steps.build.outputs.ref }}
         run: |
           set -euo pipefail
           docker run -d --name web-smoke -e PROTOCOL_HEADER=x-forwarded-proto -p 127.0.0.1:3000:3000 "$IMAGE"
@@ -550,79 +520,32 @@ jobs:
           done < <(grep -rhoE 'ghcr\.io/mangoleaf/ferrofin:[^ "@]+(@sha256:[0-9a-f]{64})?' mediaserver/Dockerfile mediaserver/NOTICE mediaserver/try.sh mediaserver/probe.sh)
           [ "$fail" = 0 ] && echo "base image pinned consistently: $from"
           exit "$fail"
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-        with:
-          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
       - name: Image name (GHCR needs lowercase)
         id: img
         run: repo="${GITHUB_REPOSITORY#*/}"; echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${repo,,}-${SERVICE}" >> "$GITHUB_OUTPUT"   # friendflix-mediaserver
-      - name: Build time (commit time)
-        id: ver
-        run: |
-          set -euo pipefail
-          sde=$(git log -1 --format=%ct)
-          {
-            echo "sde=$sde"
-            echo "build_time=$(date -u -d "@$sde" +%Y-%m-%dT%H:%M:%SZ)"
-          } >> "$GITHUB_OUTPUT"
-      # ---- pull_request / other dispatch: build locally, report, discard ----
-      - name: Build (PR / other dispatch, not pushed)
-        if: env.PUBLISHABLE != 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: .
-          file: mediaserver/Dockerfile
-          platforms: linux/amd64
-          load: true
-          tags: friendflix-mediaserver:ci
-          build-args: |
-            SOURCE_DATE_EPOCH=${{ steps.ver.outputs.sde }}
-            GIT_SHA=${{ github.sha }}
-          cache-from: type=gha,scope=mediaserver
-          cache-to: type=gha,mode=max,scope=mediaserver
-      - name: Scan (PR / other dispatch, report only)
-        if: env.PUBLISHABLE != 'true'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: friendflix-mediaserver:ci
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "0"
-      # ---- push (main / v* tags) or dispatch: build once, push candidate tag, report on that exact digest ----
       - name: Log in to GHCR
         if: env.PUBLISHABLE == 'true'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
-      - name: OCI labels
-        id: meta
-        if: env.PUBLISHABLE == 'true'
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-        with:
-          images: ${{ steps.img.outputs.name }}
-          # commit time, not the clock; its own title, description and licence (Ferrofin is GPL-3.0-only), not the
-          # repository's AGPL default
-          labels: |
-            org.opencontainers.image.created=${{ steps.ver.outputs.build_time }}
-            org.opencontainers.image.title=FriendFlix media server (Ferrofin)
-            org.opencontainers.image.description=Ferrofin with FriendFlix's numbered changes (mediaserver/README.md). Trial.
-            org.opencontainers.image.licenses=GPL-3.0-only
-      - name: Build and push candidate
+      # the same build action as `docker` (mediaserver: linux/amd64, only SOURCE_DATE_EPOCH + GIT_SHA, its own labels)
+      - name: Build
         id: build
-        if: env.PUBLISHABLE == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        uses: ./.github/actions/build-image
         with:
-          context: .
-          file: mediaserver/Dockerfile
-          platforms: linux/amd64
-          outputs: type=image,name=${{ steps.img.outputs.name }}:ci-${{ github.sha }},push=true,oci-mediatypes=true,compression=gzip,rewrite-timestamp=true
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            SOURCE_DATE_EPOCH=${{ steps.ver.outputs.sde }}
-            GIT_SHA=${{ github.sha }}
-          no-cache: true
-          cache-to: type=gha,mode=max,scope=mediaserver
-          sbom: true
-          provenance: mode=max
+          service: mediaserver
+          publish: ${{ env.PUBLISHABLE }}
+          image: ${{ steps.img.outputs.name }}
+          tag: ci-${{ github.sha }}
+      # ---- pull_request / other dispatch: report on the local image, discard ----
+      - name: Scan (PR / other dispatch, report only)
+        if: env.PUBLISHABLE != 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.build.outputs.ref }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+      # ---- push (main / v* tags) or dispatch: report on the pushed candidate's exact digest ----
       - name: Scan pushed digest (SARIF for code scanning)
         if: env.PUBLISHABLE == 'true'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -630,7 +553,7 @@ jobs:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         with:
-          image-ref: ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ steps.build.outputs.ref }}
           format: sarif
           output: trivy-mediaserver.sarif
           severity: CRITICAL,HIGH,MEDIUM
@@ -650,7 +573,7 @@ jobs:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         with:
-          image-ref: ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ steps.build.outputs.ref }}
           format: table
           output: ""
           severity: CRITICAL,HIGH
@@ -658,8 +581,8 @@ jobs:
           exit-code: "0"
           skip-setup-trivy: true
   # Reproducible builds (OpenSSF build_reproducible, docs/reproducible-builds.md): each image is rebuilt from scratch by
-  # scripts/reproduce-image.sh (fresh docker-container builder with BUILDKIT_IMAGE, --no-cache, context = git archive,
-  # SOURCE_DATE_EPOCH = commit time, rewrite-timestamp, no SBOM/provenance) and its image manifest digest must match:
+  # scripts/reproduce-image.sh (fresh docker-container builder with the build action's BuildKit pin, --no-cache, context =
+  # git archive, SOURCE_DATE_EPOCH = commit time, rewrite-timestamp, no SBOM/provenance) and its image manifest digest must match:
   #   push / publishable dispatch  the ci-<sha> candidate the docker job pushed (other runner, minutes earlier; its labels
   #                                and build-arg ENVs are copied, see the script) - proves the published bytes reproduce
   #   pull_request / other         a second rebuild in another fresh builder (two clean builds, compared)

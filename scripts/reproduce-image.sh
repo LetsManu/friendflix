@@ -8,6 +8,7 @@
 #
 #   scripts/reproduce-image.sh SERVICE [--ref REF] [--compare IMAGE] [--out FILE]
 #   scripts/reproduce-image.sh --diff A.oci.tar B.oci.tar   (explains a mismatch: config + per-layer file listings)
+#   scripts/reproduce-image.sh --buildkit-image [--ref REF]  (prints the BuildKit image pinned at REF and exits)
 #     SERVICE    backend | gateway | web | updater
 #     --ref      commit / tag to build (default HEAD). The build context is `git archive REF`, so local changes,
 #                untracked files, file mtimes and the umask of your checkout cannot leak into the image.
@@ -17,7 +18,8 @@
 #     --out      where to write the OCI tarball (default: a temp file, deleted at the end)
 #
 # Needs: git, jq, docker with buildx. Builds in a fresh, throw-away docker-container builder running the BuildKit image
-# pinned in .github/workflows/ci.yml (BUILDKIT_IMAGE), with --no-cache, SOURCE_DATE_EPOCH = commit time,
+# pinned at REF: the `default:` of input `buildkit-image` in .github/actions/build-image/action.yml (older refs: the
+# BUILDKIT_IMAGE line of .github/workflows/ci.yml), with --no-cache, SOURCE_DATE_EPOCH = commit time,
 # rewrite-timestamp=true and without SBOM/provenance (those attestations carry build times; they are separate manifests
 # and never part of the compared image manifest). BUILDER=<name> uses an existing builder instead (it must run the
 # same BuildKit version, or the result may legitimately differ).
@@ -45,6 +47,29 @@ if [ "${1:-}" = --diff ]; then
     diff <(blob "$A" "$la" | tar -tvzf - --full-time | sort -k6) <(blob "$B" "$lb" | tar -tvzf - --full-time | sort -k6) | head -n 60 || true
   done
   exit 0
+fi
+# the BuildKit image pinned at a commit: the build action's `buildkit-image` default, else (refs before the action existed)
+# the BUILDKIT_IMAGE line of ci.yml
+buildkit_pin() {
+  local root sha pin
+  root=$(git rev-parse --show-toplevel); sha=$1
+  pin=$(git -C "$root" show "$sha:.github/actions/build-image/action.yml" 2>/dev/null \
+    | awk '/^  buildkit-image:/ { f = 1; next } f && /^  [^ ]/ { exit } f && /^    default:/ { print $2; exit }' || true)
+  [ -n "$pin" ] || pin=$(git -C "$root" show "$sha:.github/workflows/ci.yml" 2>/dev/null \
+    | sed -n 's/^ *BUILDKIT_IMAGE: *\([^ #]*\).*/\1/p' | head -n1 || true)
+  [ -n "$pin" ] || { log "BuildKit pin not found at $sha (.github/actions/build-image/action.yml buildkit-image, .github/workflows/ci.yml BUILDKIT_IMAGE)"; return 1; }
+  echo "$pin"
+}
+if [ "${1:-}" = --buildkit-image ]; then
+  REF=HEAD
+  case "$#:${2:-}" in
+    1:) ;;
+    3:--ref) REF=$3 ;;
+    *) usage ;;
+  esac
+  SHA=$(git rev-parse --verify -q "$REF^{commit}") || { log "unknown ref $REF"; exit 1; }
+  buildkit_pin "$SHA"
+  exit
 fi
 SERVICE="${1:-}"; [ -n "$SERVICE" ] || usage; shift
 case "$SERVICE" in
@@ -113,8 +138,7 @@ BUILDER_ARGS=()
 if [ -n "${BUILDER:-}" ]; then
   BUILDER_ARGS=(--builder "$BUILDER")
 else
-  BK_IMAGE=$(ctx_file .github/workflows/ci.yml | sed -n 's/^ *BUILDKIT_IMAGE: *\([^ #]*\).*/\1/p' | head -n1)
-  [ -n "$BK_IMAGE" ] || { log "BUILDKIT_IMAGE not found in .github/workflows/ci.yml at $SHA"; exit 1; }
+  BK_IMAGE=$(buildkit_pin "$SHA")
   BUILDER_CREATED="ff-repro-$$-$RANDOM"
   docker buildx create --name "$BUILDER_CREATED" --driver docker-container --driver-opt "image=$BK_IMAGE" >/dev/null
   BUILDER_ARGS=(--builder "$BUILDER_CREATED")

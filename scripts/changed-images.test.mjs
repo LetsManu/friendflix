@@ -390,6 +390,87 @@ test('COPY guard: a file the build action reads must be in argsFrom', () => {
   assert.deepEqual(copyGuard(r.root, map), []);
 });
 
+const ACTION = join(REPO, '.github/actions/build-image/action.yml');
+
+/** the run: bodies (comment lines dropped) and the with: file / context values of an action, by indentation */
+function actionParts(text) {
+  const runs = [];
+  const paths = [];
+  let run = null;
+  for (const raw of text.split('\n')) {
+    const indent = raw.length - raw.trimStart().length;
+    if (run && (raw.trim() === '' || indent > run.indent)) { if (!/^\s*#/.test(raw)) run.lines.push(raw.trim()); continue; }
+    run = null;
+    const m = /^(\s*)(?:-\s+)?(run|file|context):\s*(.*)$/.exec(raw);
+    if (!m) continue;
+    if (m[2] === 'run') { run = { indent: m[1].length, lines: [m[3].replace(/^[|>][+-]?$/, '')] }; runs.push(run); } else paths.push(`${m[2]}: ${m[3]}`);
+  }
+  return { runs: runs.map((r) => r.lines.join('\n').trim()), paths };
+}
+
+test('build action: its real reads are version.json and the image\'s Dockerfile (pinned: the guard sees literal paths only)', () => {
+  const text = readFileSync(ACTION, 'utf8');
+  const { runs, paths } = actionParts(text);
+  // both builds: the whole checkout as context, the image's own Dockerfile (exempt from argsFrom: it is an input by itself)
+  assert.deepEqual(paths, ['context: .', 'file: ${{ inputs.service }}/Dockerfile', 'context: .', 'file: ${{ inputs.service }}/Dockerfile']);
+  assert.ok(runs.length > 0);
+  const body = runs.join('\n');
+  // no ${{ }} in a script (inputs come in as env) and no path built from a variable or a glob: every read is a literal path
+  assert.doesNotMatch(body, /\$\{\{/);
+  assert.doesNotMatch(body, /\$\{?\w+\}?\//);
+  assert.doesNotMatch(body, /[\w.-]+\/[\w*.-]+/, 'a script names a repository path; add it here and to argsFrom');
+  assert.deepEqual([...new Set(body.match(/[\w-]+\.(?:json|ya?ml|sh|mjs|js|ts|txt)\b/g))].sort(), ['version.json']);
+  // and the guard, against the real file: every file it reads is fed to some image (version.json → argsFrom), and it sees that read
+  assert.deepEqual(copyGuard(REPO, loadMap()), []);
+  const bare = loadMap();
+  for (const def of Object.values(bare.images)) def.argsFrom = [];
+  assert.deepEqual(copyGuard(REPO, bare), [".github/actions/build-image/action.yml: reads version.json, which is in no image's argsFrom"]);
+});
+
+test('reproduce-image.sh --buildkit-image reads the action\'s pin', () => {
+  const pin = /^ {2}buildkit-image:\n(?: {4}.*\n)*? {4}default: *(\S+)/m.exec(readFileSync(ACTION, 'utf8'))?.[1];
+  assert.match(pin ?? '', /^moby\/buildkit:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/);
+  const out = spawnSync('bash', [join(REPO, 'scripts/reproduce-image.sh'), '--buildkit-image'], { cwd: REPO, encoding: 'utf8' });
+  assert.equal(out.status, 0, out.stderr);
+  assert.equal(out.stdout, `${pin}\n`);
+  assert.doesNotMatch(readFileSync(join(REPO, '.github/workflows/ci.yml'), 'utf8'), /BUILDKIT_IMAGE:/, 'the pin lives only in the action');
+});
+
+test('reproduce-image.sh --buildkit-image falls back to ci.yml on an old ref', () => {
+  const r = tmpRepo();
+  const run = (...args) => spawnSync('bash', [join(REPO, 'scripts/reproduce-image.sh'), '--buildkit-image', ...args], { cwd: r.root, encoding: 'utf8' });
+  const none = r.commit('none', { 'README.md': 'x\n' });
+  const old = r.commit('old', {
+    '.github/workflows/ci.yml': [
+      'env:',
+      '  # pinned by digest',
+      `  BUILDKIT_IMAGE: moby/buildkit:v0.1.0@sha256:${'1'.repeat(64)} # comment`,
+      'jobs: {}',
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual([run().status, run().stdout], [0, `moby/buildkit:v0.1.0@sha256:${'1'.repeat(64)}\n`]);
+  r.commit('new', {
+    '.github/actions/build-image/action.yml': [
+      'inputs:',
+      '  service: { required: true }',
+      '  # pinned by digest',
+      '  buildkit-image:',
+      '    description: BuildKit',
+      `    default: moby/buildkit:v0.2.0@sha256:${'2'.repeat(64)}`,
+      '  other:',
+      '    default: nope',
+      '',
+    ].join('\n'),
+  });
+  assert.equal(run().stdout, `moby/buildkit:v0.2.0@sha256:${'2'.repeat(64)}\n`);
+  assert.equal(run('--ref', old).stdout, `moby/buildkit:v0.1.0@sha256:${'1'.repeat(64)}\n`);
+  const missing = run('--ref', none);
+  assert.equal(missing.status, 1);
+  assert.equal(missing.stdout, '');
+  assert.match(missing.stderr, /BuildKit pin not found/);
+});
+
 test('docs-reader guard: every docs-reading test is in test:docs', () => {
   assert.deepEqual(docsGuard(REPO), []);
   const readers = docsReaders(REPO);
