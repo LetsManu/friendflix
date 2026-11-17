@@ -222,26 +222,44 @@ describe('notifications feed store: baseline, reset, concurrency', () => {
     expect(ids(s)).toEqual([['today', ['a1', 'a2']]]);
     expect(get(s).sections[0].groups.map((x) => x.unread)).toEqual([true, true]);
   });
-  it('a filter switch or refresh invalidates undo tokens', async () => {
-    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1', 'a2']]])).mockResolvedValueOnce(page([['today', ['a2']]]));
-    const s = createFeed(fake({ feed }));
+  it('undo after a refresh asks the server and refreshes instead of re-inserting old rows', async () => {
+    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1', 'a2']]])).mockResolvedValueOnce(page([['today', ['a2']]])).mockResolvedValueOnce(page([['today', ['a1', 'a2']]]));
+    const api = fake({ feed });
+    const s = createFeed(api);
     await s.load('all');
     await s.hide({ groups: ['a1'] });
     await s.refresh();
-    await s.undo('tok'); // the server may undo it, but this page does not know it: no row is put back from the old page
     expect(ids(s)).toEqual([['today', ['a2']]]);
+    await s.undo('tok');
+    expect(api.unhide).toHaveBeenCalledWith('tok');
+    expect(feed).toHaveBeenCalledTimes(3);
+    expect(ids(s)).toEqual([['today', ['a1', 'a2']]]);
   });
-  it('a hide answered after a filter switch leaves no stale token', async () => {
+  it('undo after a filter switch still undoes and refreshes', async () => {
+    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1']]])).mockResolvedValueOnce(page([['today', ['u1']]])).mockResolvedValueOnce(page([['today', ['u1', 'u2']]]));
+    const api = fake({ feed });
+    const s = createFeed(api);
+    await s.load('all');
+    await s.hide({ groups: ['a1'] });
+    await s.load('unread');
+    await s.undo('tok');
+    expect(api.unhide).toHaveBeenCalledWith('tok');
+    expect(feed).toHaveBeenLastCalledWith({ filter: 'unread' });
+    expect(ids(s)).toEqual([['today', ['u1', 'u2']]]);
+  });
+  it('a hide answered after a filter switch is still undoable', async () => {
     const d = deferred<{ undo: string; n: number }>();
-    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1']]])).mockResolvedValueOnce(page([['today', ['u1']]]));
-    const s = createFeed(fake({ feed, hide: vi.fn(() => d.promise) }));
+    const feed = vi.fn().mockResolvedValueOnce(page([['today', ['a1']]])).mockResolvedValueOnce(page([['today', ['u1']]])).mockResolvedValueOnce(page([['today', ['u1', 'u3']]]));
+    const api = fake({ feed, hide: vi.fn(() => d.promise) });
+    const s = createFeed(api);
     await s.load('all');
     const h = s.hide({ groups: ['a1'] });
     await s.load('unread');
     d.resolve({ undo: 'late', n: 1 });
     await h;
     await s.undo('late');
-    expect(ids(s)).toEqual([['today', ['u1']]]);
+    expect(api.unhide).toHaveBeenCalledWith('late');
+    expect(ids(s)).toEqual([['today', ['u1', 'u3']]]);
   });
   it('ids hide a group only when all its rows are known', async () => {
     const feed = vi.fn(async () => pageOf([g('a1', { count: 3, items: [{ id: 1, title: 't', body: null, at: '' }] }), g('a2', { id: 'a2', count: 1, items: [{ id: 2, title: 't', body: null, at: '' }] })], 2));

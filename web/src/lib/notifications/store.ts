@@ -50,6 +50,9 @@ export function createFeed(api: NotesApi = defaultApi): FeedStore {
   let gen = 0; // a newer load / refresh makes older answers obsolete
   let baseUnread = 0;
   const undoable = new Map<string, Removed[]>();
+  /** every undo token handed out since the last reset() (this person), also those whose rows are no longer on this page */
+  const issued = new Set<string>();
+  let epoch = 0;
 
   const first = async (filter: Filter, keepRows: boolean) => {
     const g = ++gen;
@@ -88,7 +91,7 @@ export function createFeed(api: NotesApi = defaultApi): FeedStore {
   return {
     subscribe,
     load: (filter) => first(filter, false),
-    reset() { gen++; baseUnread = 0; undoable.clear(); set(initial()); },
+    reset() { gen++; epoch++; baseUnread = 0; undoable.clear(); issued.clear(); set(initial()); },
     refresh: () => first(state.filter, true),
     async more() {
       if (!state.next || state.loading !== 'idle') return;
@@ -136,11 +139,13 @@ export function createFeed(api: NotesApi = defaultApi): FeedStore {
     },
     async hide(sel) {
       const g0 = gen;
+      const e0 = epoch;
       const removed = removeGroups(sel);
       const lowered = removed.reduce((n, r) => n + unreadOf(r.group), 0);
       baseUnread = Math.max(0, baseUnread - lowered);
       try {
         const r = await api.hide(sel);
+        if (e0 === epoch) issued.add(r.undo);
         if (g0 === gen) undoable.set(r.undo, removed);
         return r.undo;
       } catch (e) {
@@ -151,19 +156,23 @@ export function createFeed(api: NotesApi = defaultApi): FeedStore {
     },
     async undo(token) {
       const removed = undoable.get(token);
-      if (!removed) return; // not ours (any more): a reset or a new page dropped it
+      if (!removed && !issued.has(token)) return; // not this person's (a reset dropped it)
       const g0 = gen;
+      const e0 = epoch;
       try {
         await api.unhide(token);
       } catch (e) {
         update((s) => ({ ...s, error: errorOf(e) }));
-        if (apiCode(e) === 'undo_expired') undoable.delete(token); // final: the entries stay cleared; any other failure keeps the token for a retry
+        if (apiCode(e) === 'undo_expired') { undoable.delete(token); issued.delete(token); } // final: the entries stay cleared; any other failure keeps the token for a retry
         return;
       }
+      if (e0 !== epoch) return; // another person's page now
       undoable.delete(token);
-      if (g0 !== gen) return; // the page changed meanwhile: its next refresh shows the result
-      baseUnread += removed.reduce((n, r) => n + unreadOf(r.group), 0);
-      restore(removed);
+      issued.delete(token);
+      if (removed && g0 === gen) {
+        baseUnread += removed.reduce((n, r) => n + unreadOf(r.group), 0);
+        restore(removed);
+      } else await first(state.filter, true); // the rows are not on this page any more: show what the server has
     },
   };
 }
