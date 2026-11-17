@@ -37,6 +37,9 @@ import {
 } from '../authentik.js';
 import { AkUpstreamError, akLogFields } from '../akdiag.js';
 import { audit } from '../audit.js';
+import { dayKey } from '../adminAlerts.js';
+import { m } from '../i18n.js';
+import { notifyAdmins } from '../notify.js';
 import { secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { encrypt, randomToken, sha256 } from '../crypto.js';
@@ -87,6 +90,8 @@ export const MAX_FLOW_MAILS_ADDRESS_DAY = 10;
 export const MAX_FLOW_MAILS_DAY = 100;
 export const FLOW_MAILS_DAY_S = 86_400;
 export const FLOW_MAILS_GLOBAL_KEY = 'recoverymail:global';
+/** where a flow mail goes, and whether Authentik knows that account (only then does a sent mail count toward the daily cap) */
+interface MailDest { address?: string; known: boolean }
 
 type AnswerableStep = Extract<FlowStep, { step: string }>;
 type Reply = AnswerableStep & { errors?: FlowError[] } | FlowStep;
@@ -826,9 +831,11 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     // attempt, and a budget per typed name and per IP; neither depends on whether the account exists.
     const mails = shown.stage === 'email-sent' || (shown.stage === 'identify' && jar.kind === 'recovery') || newEmail !== undefined;
     let budget: string[] = [];
+    let dest: MailDest = { known: false };
     if (mails) {
       if (shown.stage === 'email-sent' && !(await ctx.kv.setnx(resendKey(flowId), '1', RESEND_GAP_S))) return limited();
-      const keys = await takeMailBudget(identifier, req.ip, await mailAddressOf(jar.kind === 'change-email' ? undefined : identifier, newEmail));
+      dest = await mailAddressOf(jar.kind === 'change-email' ? undefined : identifier, newEmail);
+      const keys = await takeMailBudget(identifier, req.ip, dest.address);
       if (!keys) return limited();
       budget = keys;
     }
@@ -849,13 +856,18 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     if (newEmail !== undefined) {
       if (challenge.component !== 'ak-stage-email') for (const k of budget) await ctx.kv.decr(k); // Authentik sent no mail
-      else return emailRequested(reply, flowId, jar, challenge, newEmail);
+      else {
+        await noteMailSent();
+        return emailRequested(reply, flowId, jar, challenge, newEmail);
+      }
     }
     if (jar.kind === 'recovery' && shown.stage === 'identify' && challenge.component === 'ak-stage-identification') {
       // an identification stage without "pretend user exists" refused the name: answer exactly as for an existing account
       jar.decoy = true;
       challenge = DECOY_EMAIL;
     }
+    // the instance's daily cap counts only mails Authentik really sent: to an existing account, not to a decoy (review 4)
+    if (mails && dest.known && !jar.decoy && challenge.component === 'ak-stage-email') await noteMailSent();
     // a wrong password, code or passkey counts; the e-mail stage's resend notice is no error (stepErrors skips it)
     const errors = stepErrors(challenge);
     // a reserved slot goes back only when the flow moved past the answered stage (Task 3 review N1): a denial, a restart or an answer
@@ -909,32 +921,50 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
    * username names (looked up in Authentik; when there is none or the lookup fails, the typed name itself stands for it, so an unknown
    * name is budgeted exactly like a known one).
    */
-  async function mailAddressOf(identifier: string | undefined, newEmail: string | undefined): Promise<string | undefined> {
-    if (newEmail) return newEmail;
+  async function mailAddressOf(identifier: string | undefined, newEmail: string | undefined): Promise<MailDest> {
+    if (newEmail) return { address: newEmail, known: true };
     const id = identifier?.trim();
-    if (!id) return undefined;
-    if (id.includes('@')) return id;
+    if (!id) return { known: false };
+    // both kinds of name cost one Authentik lookup, whether the account exists or not
+    if (id.includes('@')) return { address: id, known: (await akUsersByEmail(ctx, id).catch(() => [])).length > 0 };
     const user = await akUserByUsername(ctx, id).catch(() => null);
-    return user?.email || id;
+    return { address: user?.email || id, known: Boolean(user) };
   }
 
   /**
-   * Takes one flow e-mail from every budget that applies: per IP (/64 for IPv6) and per typed name for an hour, per recipient address and
-   * for the whole instance for a day. Null when one is used up (nothing is taken then); otherwise the keys taken, to give back when the
+   * A mail went out (Authentik showed its e-mail stage for an existing account): it counts toward the instance's daily cap. The mail
+   * that reaches the cap is logged by code and told to every admin once that day.
+   */
+  async function noteMailSent(): Promise<void> {
+    if ((await ctx.kv.incr(FLOW_MAILS_GLOBAL_KEY, FLOW_MAILS_DAY_S)) >= MAX_FLOW_MAILS_DAY) await capReached();
+  }
+  async function capReached(): Promise<void> {
+    app.log.warn({ code: 'flow_mail_daily_cap' }, 'flow e-mail daily cap reached: recovery and confirmation mails are refused until the window ends');
+    await notifyAdmins(ctx, {
+      kind: 'flow_mail_cap', title: m('notify.mailcap.title'), body: m('notify.mailcap.body', { n: MAX_FLOW_MAILS_DAY }),
+      link: '/admin/status', dedupe: `flow-mail-cap-${dayKey(new Date())}`,
+    }).catch(() => undefined);
+  }
+
+  /**
+   * Takes one flow e-mail from every budget that applies: per IP (/64 for IPv6) and per typed name for an hour, per recipient address
+   * for a day; refused once the instance's daily cap is reached. Null when one is used up (nothing is taken then); otherwise the keys taken, to give back when the
    * mail could not be sent.
    */
   async function takeMailBudget(identifier: string | undefined, ip: string, address: string | undefined): Promise<string[] | null> {
     const budgets: Array<[string, number, number]> = [[recoveryMailIpKey(ip), MAX_RECOVERY_MAILS_IP, RECOVERY_MAIL_WINDOW_S]];
     if (identifier) budgets.push([recoveryMailKey(identifier), MAX_RECOVERY_MAILS_ACCOUNT, RECOVERY_MAIL_WINDOW_S]);
     if (address) budgets.push([recoveryMailAddrKey(address), MAX_FLOW_MAILS_ADDRESS_DAY, FLOW_MAILS_DAY_S]);
-    budgets.push([FLOW_MAILS_GLOBAL_KEY, MAX_FLOW_MAILS_DAY, FLOW_MAILS_DAY_S]);
+    // the instance's cap is only read here: it counts mails really sent (noteMailSent), so unknown names cannot use it up
+    if (Number((await ctx.kv.get(FLOW_MAILS_GLOBAL_KEY)) ?? 0) >= MAX_FLOW_MAILS_DAY) {
+      await capReached();
+      return null;
+    }
     const taken: string[] = [];
     for (const [key, max, ttl] of budgets) {
       taken.push(key);
       if ((await ctx.kv.incr(key, ttl)) > max) {
         for (const k of taken) await ctx.kv.decr(k);
-        // the instance-wide cap is an operator matter (a flood, or a too small cap): logged by code, never with a name or address
-        if (key === FLOW_MAILS_GLOBAL_KEY) app.log.warn({ code: 'flow_mail_daily_cap' }, 'flow e-mail daily cap reached: recovery and confirmation mails are refused until the window ends');
         return null;
       }
     }

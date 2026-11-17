@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { Config } from '../src/config.js';
 import { sha256 } from '../src/crypto.js';
 import { createInvite } from '../src/invites.js';
+import { provisionUser } from '../src/users.js';
 import { FLOW_MAILS_GLOBAL_KEY, flowFailKey, MAX_FLOW_MAILS_DAY } from '../src/routes/authFlow.js';
 import { issueSetupCode } from '../src/setup/code.js';
 import { isSetupComplete } from '../src/setup/state.js';
@@ -752,21 +753,43 @@ describe('/auth/flow recovery (Task 5)', () => {
     expect(await send('fritz@example.com')).toMatchObject({ stage: 'email-sent' });
   });
 
-  it('recovery e-mails: a daily cap for the whole instance', async () => {
-    const send = async (identifier: string) => {
-      useFake(recoveryStages());
+  it('recovery e-mails: a daily cap for the whole instance, counting only mails sent to an existing account; admins are told once a day (review 4)', async () => {
+    // the Authentik users the API knows (by e-mail): everyone else is unknown, however the identification stage answers
+    const known = new Set(['hanna@example.com', 'ida@example.com', 'jon@example.com']);
+    const users = { 'GET /api/v3/core/users/': (c: AkCall) => {
+      const email = new URLSearchParams(c.search).get('email') ?? '';
+      return new Response(JSON.stringify({ results: known.has(email.toLowerCase()) ? [{ pk: 9, username: email.split('@')[0], email, uid: `u-${email}`, is_active: true }] : [] }), { headers: { 'content-type': 'application/json' } });
+    } };
+    const send = async (identifier: string, stages = recoveryStages()) => {
+      ak = fakeAuthentik(stages, { ...flowsRoute, ...users });
+      env.ctx.fetchImpl = ak.fetch;
       const b = browser(env);
       await b.config();
       return (await b.post('start', { kind: 'recovery', identifier })).json() as { stage: string; errors?: string[] };
     };
+    const notices = async () => (await env.pool.query("select user_id from notifications where kind='flow_mail_cap'")).rows;
+    // an admin to be told (no session: later tests count sessions and audit rows)
+    if (!(await env.pool.query("select 1 from users where role='admin'")).rowCount) await provisionUser(env.ctx, { sub: 'sub-cap-admin', email: 'cap-admin@example.com', name: 'Cap Admin', groups: ['friendflix-admins'] }, 'admin', null);
+    await env.pool.query("delete from notifications where kind='flow_mail_cap'");
     expect(MAX_FLOW_MAILS_DAY).toBe(100);
     for (let i = 0; i < MAX_FLOW_MAILS_DAY - 1; i++) await env.kv.incr(FLOW_MAILS_GLOBAL_KEY, 86_400);
+    // unknown names and refused identifications send nothing, so they use none of the instance's mails: no way to block it anonymously
+    for (let i = 0; i < 4; i++) expect(await send(`nobody${i}@example.com`)).toMatchObject({ stage: 'email-sent' });
+    const refuse = { ...fixture('identification-recovery'), response_errors: { non_field_errors: [{ string: 'Failed to authenticate.', code: 'invalid' }] } };
+    expect(await send('ghost@example.com', [{ challenge: fixture('identification-recovery'), answer: () => refuse }])).toMatchObject({ stage: 'email-sent' });
+    expect(await env.kv.get(FLOW_MAILS_GLOBAL_KEY)).toBe(String(MAX_FLOW_MAILS_DAY - 1));
+    expect(await notices()).toHaveLength(0);
+    // a mail to an existing account counts; the hundredth tells every admin, once that day
     expect(await send('hanna@example.com')).toMatchObject({ stage: 'email-sent' });
+    expect(await env.kv.get(FLOW_MAILS_GLOBAL_KEY)).toBe(String(MAX_FLOW_MAILS_DAY));
+    expect(await notices()).toHaveLength(1);
     expect(await send('ida@example.com')).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
-    expect(executorPosts(ak)).toHaveLength(0);
+    expect(await send('jon@example.com')).toMatchObject({ stage: 'identify', errors: ['rate_limited'] });
+    expect(await notices()).toHaveLength(1);
     // a refused mail takes nothing from the other budgets
     await clearKeys(FLOW_MAILS_GLOBAL_KEY);
     for (let i = 0; i < 5; i++) expect(await send('ida@example.com')).toMatchObject({ stage: 'email-sent' });
+    expect(logs.join('\n')).toContain('flow_mail_daily_cap');
   });
 
   it('recovery e-mails: the per-IP budget counts an IPv6 /64 as one client', async () => {
