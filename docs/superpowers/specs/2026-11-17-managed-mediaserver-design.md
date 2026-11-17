@@ -2,7 +2,8 @@
 
 Status: the owner decided direction, approach, choices, security rule and staging on 2026-11-17 (listed under *Owner
 decisions*; binding). Everything the owner did not decide is marked **Controller's call** with its reason. Stage 1 is specified
-to build; stages 2–4 are outlines with their key decisions and open questions.
+to build; stages 2–4 are outlines with their key decisions and open questions. Revised the same day after the builder check
+(volume ownership, container user, engine floor, pin label, folder changes, helpers, recreate).
 
 ## Why
 
@@ -66,8 +67,8 @@ everything itself, while people who already run Jellyfin or Plex keep doing so.
 
 - Migrating an existing server's users, ids or watch state (stages 2 and 4). Stage 1 sets up a **fresh** managed server.
 - A managed Plex. Plex stays "existing, by address".
-- Publishing the media server's port or its dashboard (see the owner questions).
-- Several base folders (one base; see the owner questions).
+- Publishing the media server's port or its dashboard (awaiting owner).
+- Several base folders (one base fits the owner's install, whose media folders share a parent; several bases stay a later option).
 - Moving `MEDIA_SERVER`, paths or ports out of `.env` (stage 3).
 - Installing plugins (the Jellyfin webhook plugin stays optional; the session poll is the fallback, as today).
 - Managing the request service or any other container besides the media server.
@@ -109,8 +110,9 @@ everything itself, while people who already run Jellyfin or Plex keep doing so.
 - **Settings:** `MEDIA_SERVER` is env only; `JELLYFIN_URL` and `JELLYFIN_ADMIN_API_KEY` are settings that an env value (or
   `*_FILE`) locks. Saving a credential or a destination it goes to needs a sign-in at most 10 minutes old (`routes/adminSettings.ts`
   `needsReauth`).
+- **Docker Engine 26.0 (API 1.45) or newer** for managed mode (volume subpaths, below). The owner's host qualifies.
 - **Ferrofin image**: linux/amd64 only, about 1.1 GiB larger than upstream (Intel runtime), user `ferrofin` (uid 1000), data in
-  `FERROFIN_DATA_DIR`. Its publish job is separate and not required for a release (`mediaserver/README.md`).
+  its own `/data` (owned by `ferrofin` in the image); `try.sh` moves it with `FERROFIN_DATA_DIR`. Its publish job is separate and not required for a release (`mediaserver/README.md`).
 - Repo rules: 7 locales with identical key order, fictional names and placeholder hosts only, web coverage ≥ 94 %, glass and motion
   rules; probes and Systemcheck lines carry codes only.
 
@@ -121,7 +123,8 @@ Owner decision 2 settles the shape (approach 1). Within it:
 ### How the updater talks to Docker for the media server
 
 - **A. The Engine HTTP API with JSON bodies built by pure functions (chosen, Controller's call).** `fetch` to `DOCKER_HOST`
-  (`http://docker-proxy:2375/v1.41/...`, the version negotiated from `GET /version`). The create body is one object that a test can
+  (`http://docker-proxy:2375/v<api>/...`, `<api>` always negotiated: the engine's `ApiVersion` from `GET /version`, capped at the
+  newest version the updater knows, refused below 1.45; never a fixed version in the path). The create body is one object that a test can
   compare byte for byte, and that a second, independent function (the guard) checks before it leaves the process. Inspect answers
   are JSON, not Go templates.
 - B. The `docker` CLI (`docker run` with an argument list), as the compose jobs do. Argument order and flag parsing sit between the
@@ -134,8 +137,8 @@ Owner decision 2 settles the shape (approach 1). Within it:
   with `Subpath: <relative path>`, read-only. The engine resolves the subpath inside the volume and refuses a path that escapes it
   through a symlink, at mount time (Engine 26.0, API 1.45), which also closes the race between our check and the mount.
 - B. A bind mount of `<base>/<sub>` per folder. Docker follows a symlink in the source when it mounts, so a folder swapped for a
-  link to `/` between check and create would be mounted. Used only as the **fallback for engines older than API 1.45**, with the
-  helper's no-symlink check repeated right before every create; Systemcheck warns (`managed_engine_old`).
+  link to `/` between check and create would be mounted. **Rejected, also as a fallback** (Controller's call): below Engine API
+  1.45 managed mode is refused (`engine_old`, Systemcheck explains); a check-then-mount race is not a security boundary.
 - C. Mount the whole base and only *configure* libraries for the chosen folders. The server could read everything below the base;
   the owner's rule is that only the picked subfolders are visible.
 
@@ -178,7 +181,7 @@ A managed server starts empty: new user ids, new item ids. Stage 1 therefore off
 `jellyfin_user_id`** (a new install, or one that never linked a media server user). Otherwise the managed choices show "Umzug von
 deinem Jellyfin: kommt mit Stufe 2" and stay disabled. Reason: a fresh server would orphan every profile link, resume point, list
 and recording reference without a word; the migration (stage 2) keeps the ids. Whether an explicit "Neuanfang" should be allowed
-earlier is an owner question.
+earlier is awaiting owner (question 1).
 
 The same rule applies to switching between the two managed kinds: they use different data volumes (a Jellyfin database adopted by
 Ferrofin cannot go back), so switching kind is a fresh server too; managed Jellyfin → managed Ferrofin with ids kept is stage 2.
@@ -190,7 +193,8 @@ Flow:
 1. The admin types an absolute host path (wizard or Admin) and presses *Code anfordern*. Backend → updater:
    `{op: "base-request", path}`.
 2. The updater checks the path **syntactically** (below), then with a helper container that the folder exists and is a directory,
-   and that uid 1000 can list it (a warning, not a refusal, when it cannot: the media group can be added later).
+   and that the container user (default `1000:1000`) can list it (a warning, not a refusal, when it cannot: the user, the group
+   or the media group can be changed later).
 3. It generates a code exactly like the setup code (`setup/code.ts` `newSetupCode`: 12 Crockford base32 characters, shown as
    `XXXX-XXXX-XXXX`), stores only its sha256 with the path, an expiry of **30 minutes** and a failure counter, and prints **one line
    to its stdout**:
@@ -226,23 +230,38 @@ Rules (Controller's call, reasons in brackets):
 
 - **Browse:** `{op: "browse", rel}` lists the directories directly below `<base>/<rel>` through a helper container: names only, no
   files, no sizes; hidden entries skipped; at most 300 entries (then `truncated`); each entry flagged `symlink` (shown, not
-  selectable) or `unreadable` (uid 1000 cannot list it). Depth: a chosen folder is at most 3 levels below the base.
+  selectable) or `unreadable` (the container user cannot list it). Depth: a chosen folder is at most 3 levels below the base.
 - **Per folder the admin sets** a library name (1–60 characters, shown in FriendFlix) and a type: *Filme*, *Serien*, *Musik*,
   *Gemischt* (Jellyfin collection types `movies`, `tvshows`, `music`, `mixed`).
 - **Validation** (updater, before anything runs): at most 20 folders; each `rel` normalised, relative, no `..`, no hidden component,
   at most 3 levels and 200 characters; no folder inside another chosen one; each exists as a directory and no component below the
-  base is a symlink (helper `lstat`, also on the subpath route, for a clear error); uid 1000 (plus the configured groups) can list
-  it. Codes: `folder_missing`, `folder_symlink`, `folder_nested`, `folder_unreadable`, `too_many_folders`.
+  base is a symlink (helper `lstat`, for a clear error; the engine's subpath check is the boundary); the container user (plus the
+  configured groups) can list it. Codes: `folder_missing`, `folder_symlink`, `folder_nested`, `folder_unreadable`, `too_many_folders`.
 - **Read check** like `try.sh`: list, read one file, watch one subfolder (inotify); read and watch failures are warnings shown next
   to the folder (with `max_user_watches` when the watch fails), not refusals.
-- **Container path:** `/media/<slug>`, the slug from the library name (`[a-z0-9-]{1,40}`, unique, numbered on a clash). The template
-  accepts any absolute target that is normalised, not `/` and not inside a reserved path (`/config`, `/cache`, `/ferrofin-data`,
-  `/tmp`, `/dev`, `/proc`, `/sys`, `/etc`, `/usr`, `/bin`, `/lib*`): stage 2 needs Jellyfin's own target paths and must not need a
-  template change.
-- **Media group:** when uid 1000 cannot list the base but its group can, the UI offers *Gruppe <gid> hinzufügen*; the gid (a number
+- **Container path:** always below `/media`: `/media/<slug>`, the slug from the library name (`[a-z0-9-]{1,40}`, unique, numbered
+  on a clash). The template and the guard accept `/media/` plus one to three normalised components and nothing else, so media can
+  never land on a state directory (`/data`, `/cache`, `/config`).
+- **Container user** (Controller's call): `1000:1000` by default; the admin may set another uid and gid (each 1–65535, **never 0**)
+  in the card, for example to match a host user that reads the media through ACLs (the owner's Jellyfin runs non-root that way).
+  The read checks, the helpers and the guard all use the chosen pair. Changing it recreates the container; the state volumes keep
+  their owner, so a change is refused while the data volume belongs to another uid (`uid_mismatch`, the UI says to back up and set
+  up again).
+- **Media group:** when the container user cannot list the base but its group can, the UI offers *Gruppe <gid> hinzufügen*; the gid (a number
   1–65535, never 0) goes into the spec as `mediaGid`.
 - A Live TV recordings folder in library mode (`compose.livetv-library.yaml`) is an ordinary subfolder; when the admin picks the folder
   that `LIVETV_RECORD_LIBRARY_JF_PATH` names, the UI offers to set that setting to the new target path.
+
+### Folder changes after the first run (Controller's call)
+
+- **Adding** a folder: mounted on the next apply, then a library is created as in the first run.
+- **Removing** a folder: unmounted on the next apply; its **library entry stays** by default, so its items show as missing (the
+  server keeps their ids, and putting the folder back brings them back). The confirmation says so plainly.
+- **Deleting the library** is a separate, explicit confirmation. Before it, the dialog lists how many FriendFlix lists, resume
+  points and recordings reference items of that library (counted by the backend from its own tables); deleting removes the library
+  in the server, and those references stay orphaned.
+- **Renaming or changing the type** of a folder whose library is referenced is refused (`library_referenced`); the UI offers
+  remove + add with the warning above. Unreferenced libraries can be renamed or retyped in place.
 
 ### GPU
 
@@ -266,18 +285,18 @@ Rules (Controller's call, reasons in brackets):
 
 Built only by `updater/src/mediaserver/template.ts` `containerSpec(desired, facts)` from the validated desired spec and facts the
 updater read from Docker itself (project, network ids, render gids, image digest). The request can only name the kind, the folders
-(`rel`, `target`), the GPU choice, `mediaGid`, metadata on/off and the time zone.
+(`rel`, `target`), the container user (`uid`, `gid`), the GPU choice, `mediaGid`, metadata on/off and the time zone.
 
 | Field | Ferrofin | Jellyfin (managed) |
 |---|---|---|
-| `Image` | `ghcr.io/<owner>/<repo>-mediaserver@sha256:<digest>`: the digest of the tag `sha-<7>` of the FriendFlix build that runs (state `current`, else the backend's sha tag), pulled and cosign-verified like FriendFlix's own images (`policy.ts` `cosignIdentity`, `pinnedRef`) | `docker.io/jellyfin/jellyfin@sha256:<digest>` from the pin file (below); the digest is the integrity check (no cosign signature of ours) |
+| `Image` | `ghcr.io/<owner>/<repo>-mediaserver@sha256:<digest>` from the pin label of the running build's backend image (*Images and updates*), pulled and cosign-verified like FriendFlix's own images (`policy.ts` `cosignIdentity`, `pinnedRef`) | `docker.io/jellyfin/jellyfin@sha256:<digest>` from the same pin label; the digest is the integrity check (the label itself sits on a cosign-verified image) |
 | name / `Hostname` | `<project>-mediaserver` / `mediaserver` | same |
-| `User` | `1000:1000` (the image's `ferrofin`) | `1000:1000` |
+| `User` | `<uid>:<gid>`, default `1000:1000` (the image's `ferrofin`); never 0 | same |
 | `GroupAdd` | render gids (GPU on), `mediaGid` (when set) | same |
-| `Env` | `TZ`, `FERROFIN_DATA_DIR=/ferrofin-data`, Ferrofin's cache directory variable `=/cache`, `FERROFIN_ADMIN_PASSWORD` on the first-run create only; NVIDIA variable when chosen | `TZ`, `XDG_CACHE_HOME=/cache/xdg`; the image's own `JELLYFIN_*` directories (`/config`, `/cache`); NVIDIA variable when chosen |
-| data | volume `<project>_mediaserver-ferrofin-data` → `/ferrofin-data` | volume `<project>_mediaserver-jellyfin-config` → `/config` |
-| cache | volume `<project>_mediaserver-ferrofin-cache` → `/cache` | volume `<project>_mediaserver-jellyfin-cache` → `/cache` |
-| media | per folder: volume `<base volume>`, `Subpath: <rel>`, target `/media/<slug>`, `ReadOnly: true` (fallback: bind `<base>/<rel>`, read-only, `rprivate`) | same |
+| `Env` | `TZ`, `FERROFIN_ADMIN_PASSWORD` on the first-run create only; NVIDIA variable when chosen (no `FERROFIN_DATA_DIR`: the image's own `/data`) | `TZ`, `XDG_CACHE_HOME=/cache/xdg`; the image's own `JELLYFIN_*` directories (`/config`, `/cache`); NVIDIA variable when chosen |
+| data | volume `<project>_mediaserver-ferrofin-data` → `/data` (the image's own, owned by `ferrofin`) | volume `<project>_mediaserver-jellyfin-config` → `/config` |
+| cache | volume `<project>_mediaserver-ferrofin-cache` → `/cache` (the image's own) | volume `<project>_mediaserver-jellyfin-cache` → `/cache` |
+| media | per folder: volume `<base volume>`, `Subpath: <rel>`, target `/media/<slug>`, `ReadOnly: true`; no bind mounts at all | same |
 | `Tmpfs` | `/tmp`: `size=512m,mode=1777` | same |
 | `ReadonlyRootfs` | `true` | `true` |
 | `CapDrop` / `CapAdd` | `["ALL"]` / none | same |
@@ -302,11 +321,19 @@ up` never recreates or orphans it, and `down -v` never deletes its data.
 
 Controller's calls with reasons:
 
-- **uid 1000 for Jellyfin too:** the official image runs as root by default; it supports any uid, and root inside buys nothing here.
+- **Non-root for Jellyfin too:** the official image runs as root by default; it supports any uid, and root inside buys nothing here.
+- **Volume ownership without root** (Controller's call): a fresh named volume takes the owner and mode of the image directory it is
+  first mounted on (Docker's copy-up). The template therefore mounts state volumes at targets the image already owns as the
+  container user: Ferrofin's own `/data` and `/cache`. Where an image has no such target (official Jellyfin running non-root:
+  `/config` and `/cache` belong to root), the **first create** of a fresh volume is a never-started seed container from the same
+  pinned image and template that mounts the volume at a directory the image owns as that uid; the real container then mounts it at
+  `/config` / `/cache`. The seed target comes from a per-kind constant the guard also knows. No root init helper, no guard
+  exception. A uid for which the pinned image owns no directory is refused for that kind before anything is created
+  (`uid_unsupported`).
 - **Read-only root file system** for both. The builder boots each image read-only, plays and transcodes a title, and adds a `tmpfs`
   (or an environment variable pointing into `/cache`) for any further path either server writes; read-only is never dropped.
-- **Ferrofin data in `/ferrofin-data`,** not the image's `/data` (as in `try.sh`): libraries often live under `/data`, and stage 2 keeps
-  Jellyfin's own media paths.
+- **Ferrofin data in its own `/data`:** no collision with media in managed mode, because media always mounts below `/media`.
+  `FERROFIN_DATA_DIR=/ferrofin-data` stays only in `try.sh`, which keeps Jellyfin's own media paths.
 - **Metadata download (egress) on by default:** without it neither server fetches posters, titles or descriptions; the switch is
   there for owners who only use local metadata.
 - **No published port:** backend and gateway reach `http://mediaserver:8096` over `media`; the dashboard is not reachable from
@@ -317,9 +344,9 @@ Controller's calls with reasons:
 `updater/src/mediaserver/guard.ts` `assertManaged(body)` and `assertHelper(body)` check every create body before it is sent, as a
 second implementation that does not call the template: refuses `Privileged`, any `CapAdd`, `CapDrop` other than `["ALL"]`, any
 `SecurityOpt` but `no-new-privileges:true`, host or container `NetworkMode`/`PidMode`/`IpcMode`/`UsernsMode`, any port binding or
-`PublishAllPorts`, any bind source other than the base folder's subfolders (fallback mode) or the helper's fixed sources, any
-volume not named `<project>_mediaserver-*`, any mount of a path containing `docker.sock` or `containerd`, devices other than
-`/dev/dri`, device requests other than the one NVIDIA entry, `ReadonlyRootfs` false, `User` other than `1000:1000`, an image not
+`PublishAllPorts`, any bind mount on the managed container (helpers: only their fixed sources), any media target outside
+`/media/`, any volume not named `<project>_mediaserver-*`, any mount of a path containing `docker.sock` or `containerd`, devices other than
+`/dev/dri`, device requests other than the one NVIDIA entry, `ReadonlyRootfs` false, `User` other than the spec's `<uid>:<gid>` or with a 0 in it, an image not
 pinned by digest or not one of the two allowed repositories, environment keys outside the per-kind list, labels without the
 managed set. A refusal is `template_violation` and is never retried. Tests feed it every field of the Docker create schema that
 can widen access.
@@ -335,12 +362,15 @@ Short-lived containers for checks, listings, GPU detection, the HDR test, backup
 - image: the **updater's own image** (its container's image id; for the HDR test: the chosen media server image with ffmpeg as entry
   point). Reason (Controller's call): already local and signed, our own tested code (`updater/dist/mediaHelper.js` with fixed verbs
   `check`, `browse`, `gpu`, `backup`, `restore`), no third image to pin;
-- `NetworkMode: none`, `ReadonlyRootfs`, `CapDrop ALL`, `no-new-privileges`, `User 1000:1000` plus the spec's groups, `AutoRemove`,
-  labels `friendflix.managed=helper` and `friendflix.project`, a 2-minute limit (backup/restore: 2 hours);
+- `NetworkMode: none`, `ReadonlyRootfs`, `CapDrop ALL`, `no-new-privileges`, `User` = the spec's `<uid>:<gid>` plus its groups,
+  **no `AutoRemove`**, labels `friendflix.managed=helper` and `friendflix.project`, a 2-minute limit (backup/restore: 2 hours);
 - mounts only from this list, each read-only unless stated: the base volume (or, for `base-request`, a read-only bind of the
   requested path itself), `/dev/dri`, `/sys/class/drm`, the data volume (read-write for `restore` only), the backup volume (read-write
   for `backup` and `restore`);
-- output: one JSON line on stdout, read through the logs endpoint after `wait` (codes, names, numbers; parsed field by field).
+- run: create, start, `wait`, read the output through the logs endpoint, then remove the helper (Controller's call: with
+  `AutoRemove` the container, and with it its log, can be gone before the logs are read); a helper left over by a crash is removed
+  by label at the next start;
+- output: one JSON line on stdout (codes, names, numbers; parsed field by field).
 
 ### Proxy change
 
@@ -362,7 +392,7 @@ body exactly one of:
 | `{op: "base-clear"}` | only without a managed container |
 | `{op: "browse", rel}` | directories below `<base>/<rel>` |
 | `{op: "gpu"}` | detection result |
-| `{op: "apply", spec: {kind, folders: [{rel, target}], gpu, mediaGid, egress, tz}, firstRun?: {password}}` | create or recreate (job) |
+| `{op: "apply", spec: {kind, folders: [{rel, target}], uid, gid, gpu, mediaGid, egress, tz}, firstRun?: {password}}` | create or recreate (job) |
 | `{op: "finish-setup"}` | recreate without `FERROFIN_ADMIN_PASSWORD` (job) |
 | `{op: "start" \| "stop" \| "restart"}` | (job) |
 | `{op: "update"}` | move to the image of the running FriendFlix build (job) |
@@ -372,13 +402,14 @@ body exactly one of:
 | `{op: "logs", tail}` | `tail` 50–500; answer `{lines}` |
 
 Unknown keys, extra keys or wrong types: 400 `invalid_body`. `password` must match `^[A-Za-z0-9_-]{43}$`; `tz` an IANA name
-(`^[A-Za-z_]+(/[A-Za-z0-9_+-]+){0,2}$`); `mediaGid` 1–65535; `kind` `ferrofin` | `jellyfin`; `gpu` `off` | `dri` | `nvidia`. Job ops
+(`^[A-Za-z_]+(/[A-Za-z0-9_+-]+){0,2}$`); `uid`, `gid` and `mediaGid` 1–65535 (never 0); `kind` `ferrofin` | `jellyfin`; `gpu` `off` | `dri` | `nvidia`. Job ops
 answer 202 with the job like `/v1/livetv`; `busy` 409.
 
 `GET /v1/status` gains `mediaserver` (parsed field by field by `backend/src/updater.ts`):
-`{available, reason, base: {set, path, pending, expiresAt}, desired: {kind, folders, gpu, mediaGid, egress, run} | null,
-container: {state, health, kind, image: {digest, tag, upstream}, template, tampered} | null, pin: {tag, upstream} | null,
-engine: {subpath, logs, arch, nvidia}, error}`. `available` is false with `reason` `no_logs` (`proxy_outdated`), `no_project`,
+`{available, reason, base: {set, path, pending, expiresAt}, desired: {kind, folders, uid, gid, gpu, mediaGid, egress, run} | null,
+container: {state, health, kind, image: {digest, upstream}, template, tampered} | null, pin: {image, upstream, changed} | null,
+engine: {api, logs, arch, nvidia}, error}`. `available` is false with `reason` `engine_old` (API below 1.45), `no_logs`
+(`proxy_outdated`), `no_project`,
 `no_network` (no `<project>_media`, or backend and gateway not attached to it).
 
 Job actions extend `state.ts` `JobAction`: `mediaserver-apply`, `-finish`, `-start`, `-stop`, `-restart`, `-update`, `-hdr-test`,
@@ -393,10 +424,13 @@ another upstream version) → `create` → `start` → `health` (Docker health `
 3 minutes limit) → done. Error codes: `no_base`, `base_missing` (the base folder disappeared, for example an unmounted NAS share),
 `folder_*`, `gpu_missing`, `nvidia_missing`, `no_network`, `name_taken` (a container named `<project>-mediaserver` without our labels:
 never touched), `pull_failed`, `image_missing` (no media server image for this build), `arch_unsupported` (Ferrofin on a non-amd64
-engine), `verify_failed`, `snapshot_failed`, `downgrade_refused`, `template_violation`, `create_failed`, `start_failed`, `unhealthy`.
+engine), `verify_failed`, `snapshot_failed`, `downgrade_refused`, `template_violation`, `uid_unsupported`, `uid_mismatch`,
+`library_referenced`, `engine_old`, `create_failed`, `start_failed`, `unhealthy`.
 
-- **Recreate** = create the new container under a temporary name, stop and remove the old one, rename the new one, start it (the
-  old one is started again when any step fails). Media server downtime is the restart only.
+- **Recreate** (Controller's call): stop the old container and rename it aside (`<project>-mediaserver-old`), create and start the
+  new one under the real name, and remove the old one **only after the new one is healthy**. On any failure: stop the new one;
+  if the upstream version changed, restore the pre-upgrade config snapshot into the data volume first; then rename the old one back
+  and start it. Media server downtime is one restart.
 - **Ownership:** the updater acts only on containers with `friendflix.managed=mediaserver` **and** `friendflix.project=<own project>`
   that pass the guard. The container id is recorded in state; after a lost state volume a labelled, guard-clean container is
   adopted.
@@ -417,22 +451,30 @@ engine), `verify_failed`, `snapshot_failed`, `downgrade_refused`, `template_viol
 
 ### Images and updates
 
-- **Ferrofin pin:** the image of the same FriendFlix build (`friendflix-mediaserver:sha-<7>`; `publish.yml` already tags it). Its
-  upstream version is the label `io.github.letsmanu.friendflix.mediaserver.ferrofin`.
-- **Jellyfin pin:** `updater/pins/jellyfin/Dockerfile`, one line `FROM docker.io/jellyfin/jellyfin:X.Y.Z@sha256:<64 hex>`, copied into
-  the updater image and parsed at start with exactly that pattern (refused otherwise: managed Jellyfin unavailable,
-  `pin_invalid`). `.github/dependabot.yml` adds the directory to the docker ecosystem (its own group, one PR), so a Jellyfin release
-  arrives as a PR like Ferrofin's.
+- **The pin follows the FriendFlix build** (Controller's call): the backend image of every build carries the label
+  `io.github.letsmanu.friendflix.mediaserver.pins` with one entry per kind, kind → image by digest
+  (`ferrofin=ghcr.io/<owner>/<repo>-mediaserver@sha256:<64 hex>`, `jellyfin=docker.io/jellyfin/jellyfin:X.Y.Z@sha256:<64 hex>`).
+  The updater reads it from the image the running backend container uses, after `cosign verify` of that image (the same identity as
+  every FriendFlix image), and parses each entry with exactly that pattern (`pin_invalid` otherwise: that kind is unavailable).
+  So the pin is signed with the build, whoever installed the build.
+- **Where the values come from:** Jellyfin from `mediaserver/pins/jellyfin/Dockerfile` (one line
+  `FROM docker.io/jellyfin/jellyfin:X.Y.Z@sha256:<64 hex>`; `.github/dependabot.yml` adds the directory to the docker ecosystem, its
+  own PR); Ferrofin from the digest of the media server image built in the same CI run (the backend image build takes both as build
+  arguments; a build without a published media server image has no `ferrofin` entry). Upstream versions: Jellyfin's tag, Ferrofin's
+  image label `io.github.letsmanu.friendflix.mediaserver.ferrofin`.
 - **When it moves** (Controller's call): never inside an update or rollback job of FriendFlix (a media server restart must not hold
-  back or roll back FriendFlix). After a successful FriendFlix update, when the media server's image differs from the new pin, the
-  backend starts `mediaserver-update` when no playback session is active (checked every 5 minutes), at the latest at the next
-  `AUTO_UPDATE_TIME`; *Jetzt aktualisieren* runs it at once. With automatic updates off, only the button.
+  back or roll back FriendFlix). The trigger is **"the backend build changed since last seen"**: the updater records the backend
+  image id it last read the pins from and compares on every status read, so it works for updater jobs and for Portainer-driven
+  updates alike (`pin.changed`). When the new pin differs from the running image, the backend starts `mediaserver-update` in the
+  quiet window: when no playback session is active (checked every 5 minutes), at the latest at the next `AUTO_UPDATE_TIME`;
+  *Jetzt aktualisieren* runs it at once (whether the quiet-window run is automatic is awaiting owner).
 - **Never down** (Controller's call: Ferrofin and Jellyfin migrate their databases one-way): a pin whose upstream version is older
   than the running container's is `downgrade_refused`; the container stays (a FriendFlix rollback keeps the newer media server; Admin
   shows "neuer als dieser FriendFlix-Stand").
 - **Snapshot before an upstream change:** the data volume (without logs, transcodes and trickplay) as a backup tagged `auto`, kept:
   the last 2 automatic ones.
-- **Missing image** (the media server's publish job is not required for a release): `image_missing`; an existing container stays on
+- **Missing image** (no `ferrofin` entry in the pin label, or the pull fails; the media server's publish job is not required for a
+  release): `image_missing`; an existing container stays on
   its image; a new setup is refused with a hint to choose managed Jellyfin.
 - The **trial** wording in `mediaserver/README.md` ("The FriendFlix updater never pulls or recreates it") changes to "only the managed
   media server, from its pin".
@@ -464,8 +506,8 @@ step, Controller's call: survives a backend restart in the middle):
 Progress is shown as these steps; each failure is a code with a *Nochmal* that resumes at that step.
 
 **Dashboard credentials:** *Zugang anzeigen* (re-authentication, audited) shows the name and password once in a dialog, for the
-rare case an owner needs the server's own dashboard (reachable only once a port is published: see the owner question on
-that).
+rare case an owner needs the server's own dashboard (reachable only once a port is published: awaiting owner, question
+5).
 
 ### Backend storage
 
@@ -506,6 +548,9 @@ only until stage 3. The desired container spec and the base folder live only in 
   automatic backups (Controller's call: a NAS disk is not filled by forgotten backups).
 - *Wiederherstellen*: same kind only; refused when the backup's upstream version is newer than the image (`downgrade_refused`); stop,
   replace the volume's contents, start, health.
+- The backup holds the server's password hashes and API keys. **Awaiting owner:** whether backups also leave the host as an
+  encrypted download from Admin (passphrase), go to a writable host backup folder (an exception to the read-only rule), or stay in
+  the volume only. Stage 1 builds the volume form, which either answer extends.
 - `docs/operations.md` *Backups & Wiederherstellung* gains the media server: what the backup volume holds and the one command that
   copies it to the host, next to `scripts/backup-bootstrap.sh`.
 
@@ -527,6 +572,7 @@ only until stage 3. The desired container spec and the base folder live only in 
   - **Basisordner:** the confirmed path, or the path field with *Code anfordern*, then the code field with the countdown and where to
     find the line;
   - **Ordner:** the folder browser (breadcrumb, one level at a time) with name and type per chosen folder, read-check results;
+  - **Benutzer:** uid and gid of the container (default 1000:1000), media group;
   - **Grafikkarte:** detection result, choice, *HDR-Test*;
   - **Metadaten aus dem Internet** switch;
   - **Status:** state, health, kind and upstream version, image age vs. pin, last job with its steps;
@@ -538,7 +584,7 @@ only until stage 3. The desired container spec and the base folder live only in 
   `password` replaced with `…` (Controller's call: the server logs request URLs). Copy button.
 - **Wizard step 3** gains the same choice; the managed path runs base → folders → GPU → *Einrichten* with progress, then continues.
   The default selection while Ferrofin is a trial: *Jellyfin (offiziell, verwaltet)* (Controller's call, owner decision 3's reason;
-  see the owner questions).
+  awaiting owner, question 3).
 - Texts in all 7 languages; glass and motion rules.
 
 ### Backend routes
@@ -572,7 +618,7 @@ New line **`media.managed`** (*Verwalteter Medienserver*), after `media.server` 
 | GPU chosen but absent | `warning` / `managed_gpu_missing` |
 | last job failed | `warning` / `managed_job_failed` (params `code`) |
 | image differs from the pin for more than 7 days | `warning` / `managed_update_pending` |
-| engine older than API 1.45 | `warning` / `managed_engine_old` |
+| engine older than API 1.45 | `not_set_up` / `managed_engine_old` (managed mode not offered; says Docker Engine 26 is needed); `problem` when a managed container exists |
 | no backup in 30 days | `warning` / `managed_backup_old` |
 | else | `ok` (params `kind`, `upstream`) |
 
@@ -583,24 +629,25 @@ New line **`media.managed`** (*Verwalteter Medienserver*), after `media.server` 
 - *Updater* section: the seventh route, its bodies, the template and the guard, the helper containers, the base-folder code (only on
   the updater's stdout), `ALLOW_LOGS`.
 - *What an attacker with code execution in the backend can do* gains: create, change, stop and remove the managed media server
-  **from the template only**; choose subfolders **below the confirmed base**; read the media server's log (redacted); start backups
+  **from the template only**; choose subfolders **below the confirmed base** and the container's uid and gid (never 0, so never root); read the media server's log (redacted); start backups
   and restores; reveal the media server's admin password (also readable from the database with the encryption key). Cannot: set a
   base folder (needs the code from the updater's log), mount anything else, add a port, a device or privileges, run another image.
-- New residual risks: on engines older than API 1.45, someone who can write inside the base folder can race a symlink swap between
-  the check and the mount (the server then reads, as uid 1000 without capabilities, what that uid can read); the media server sees
-  the internal `media` network like the bundled Jellyfin today.
+- Residual risks: the media server sees the internal `media` network like the bundled Jellyfin today; a symlink inside a chosen
+  folder that points outside it is resolved by the server process itself (as the container user, without capabilities, inside the
+  container's own mount namespace), so it can only reach what is mounted there.
 
 ### Testing (stage 1)
 
 - Updater: golden create bodies per kind and GPU choice; the guard against every widening field; path rules (each refused base,
   `..`, hidden, symlink flags); the code flow (hash only, 30 minutes, 5 failures, one pending, never in job log or status); state
-  load re-validation; ownership and adoption; supervision (missing → recreate, stopped → left); recreate rollback; downgrade
-  refusal; pin file parsing; body parsing per op.
-- Backend: routes (admin, setup session, re-auth, limits), the id rule, the first-run steps against a fake Jellyfin API (wizard,
+  load re-validation; ownership and adoption; supervision (missing → recreate, stopped → left); recreate rollback (with and without snapshot restore);
+  downgrade refusal; pin label parsing and the build-changed trigger; the seed container per kind and uid; helper create → wait →
+  logs → remove; body parsing per op; API version negotiation and the 1.45 floor.
+- Backend: routes (admin, setup session, re-auth, limits), the id rule, folder removal and library deletion with reference counts, the first-run steps against a fake Jellyfin API (wizard,
   wizard_taken, key, libraries, encoding), status parsing, audit, Systemcheck causes.
 - Web: the card's states, the code step, the browser, the wizard path, i18n key order.
-- Manual on a real host (builder's checklist in the PR): both kinds read-only boot, a transcode with the GPU, Portainer stack, an
-  engine below 26.
+- Manual on a real host (builder's checklist in the PR): both kinds read-only boot, a transcode with the GPU, Portainer stack, a
+  Portainer-driven update moving the pin, an engine below 26 refused.
 
 ## Stage 2: migration from an existing Jellyfin (outline)
 
@@ -615,9 +662,10 @@ Key decisions:
 - **Copy like `try.sh`, done by helper containers:** Jellyfin's `/config` source (bind or volume, as Docker records it, never typed by
   anyone) mounted read-only; required layout `data/jellyfin.db`, `root/default`, `config/`; copied: the database files,
   `device.txt`, playlists, collections, `root/default`, `metadata`, `config/*.xml`, trickplay on request; into the managed Ferrofin
-  data volume; owner set to uid 1000. Jellyfin's real config is never written.
-- **Media paths stay identical:** each of Jellyfin's media mounts becomes a managed folder with Jellyfin's own target path (the
-  template already allows it). A mount outside the confirmed base needs a new base (code) first; the UI says which.
+  data volume; owner set to the container user. Jellyfin's real config is never written.
+- **Media below `/media`:** each of Jellyfin's media mounts becomes a managed folder. Where Jellyfin already used a path below
+  `/media`, it is kept; elsewhere (for example `/data/movies`) the copy's library paths must be rewritten to `/media/<name>` before
+  Ferrofin adopts it (key open question below). A mount outside the confirmed base needs a new base (code) first; the UI says which.
 - **Stopping Jellyfin for the copy** (seconds to minutes, size shown before): one confirmation; the updater stops exactly that
   container, copies, and starts it again whatever happens (as `try.sh`'s trap). This is the only foreign container the updater ever
   stops or starts; it records its id for the job and refuses any other.
@@ -630,7 +678,8 @@ Key decisions:
 - The same flow migrates **managed Jellyfin → managed Ferrofin** (source = our own container and volume).
 - `try.sh` stays for testing by hand; `docs/mediaserver.md` points to the UI.
 
-Open questions: Jellyfin on another host or NAS (copy over the network, or not supported); the linuxserver image's different
+Open questions: rewriting library paths in the copy (the library link files and the items' stored paths) versus offering only
+Jellyfin setups whose media already sits below `/media`; Jellyfin on another host or NAS (copy over the network, or not supported); the linuxserver image's different
 `/config` layout; installed Jellyfin plugins (copied, ignored by Ferrofin, or listed); whether to copy trickplay by default; what
 happens to FriendFlix data created between copy and switch (a short write freeze in FriendFlix during the copy?).
 
@@ -678,7 +727,8 @@ today (`plex/features.ts`); several Plex libraries with the same media.
 
 ## Order of work
 
-1. **Stage 1 (one PR):** updater (template, guard, helpers, the route, state, jobs, pins, supervision), `docker-proxy` `ALLOW_LOGS`,
+1. **Stage 1 (one PR):** updater (template, guard, helpers, the route, state, jobs, pin label, supervision), CI (the pin label on
+   the backend image), `docker-proxy` `ALLOW_LOGS`,
    our image's `HEALTHCHECK` (change 0003), backend (table, routes, first run, update scheduling, audit, Systemcheck), web (Admin card,
    wizard), Dependabot, docs, CHANGELOG. Reason for one PR: the template, the guard and the routes are one security boundary and are
    reviewed together.
@@ -687,30 +737,32 @@ today (`plex/features.ts`); several Plex libraries with the same media.
 ## Left to the builder
 
 - File split inside `updater/src/mediaserver/` beyond `template.ts` and `guard.ts`; the helper's JSON shapes.
-- Ferrofin's names for its cache-directory and first-run administrator variables (from Ferrofin v1.5.x's documentation), and any
-  write path either server needs on a read-only root (as a `tmpfs` or an environment variable into `/cache`).
+- Ferrofin's first-run administrator variables (from Ferrofin v1.5.x's documentation); confirming that `/data` and `/cache` in the
+  pinned Ferrofin image belong to its user; the seed directory per pinned image and uid for the copy-up; any write path either
+  server needs on a read-only root (as a `tmpfs` or an environment variable into `/cache`).
 - The exact Jellyfin startup-wizard requests and encoding-configuration fields for the pinned version.
 - The Jellyfin version and digest of the first pin (the current release when the PR lands).
-- The Engine API version negotiation details and the pull progress shown in Admin.
+- The pull progress shown in Admin; the CI wiring that hands the media server digest to the backend image build.
 - The exact German texts (then the other six languages).
 
-## Questions only the owner can answer
+## Questions only the owner can answer (awaiting owner)
 
-1. **Where does your media live?** Stage 1 takes **one** base folder. If your media sits in several roots (for example `/media` and
-   `/media2`, as `try.sh` expects), their common parent is often refused (`/`, `/mnt`, `/srv`). Should stage 1 support several base
-   folders, each confirmed with its own code?
-2. **Fresh start on your install before stage 2?** Stage 1 offers a managed server only while no profile is linked to a media server
-   user, so on your install it stays disabled until the migration. Do you want an explicit *Neuanfang* (new server, profiles relinked,
-   watch states and FriendFlix references to old items lost) already in stage 1?
-3. **Which Docker Engine version runs on your host** (`docker version`), and is your Jellyfin on the same engine as FriendFlix, with
-   the official image's `/config` layout? Below Engine 26 the folders use the fallback with a known race; stage 2 needs Jellyfin on
-   the same engine.
-4. **When is Ferrofin "proven"?** Until then the wizard preselects managed Jellyfin and Ferrofin carries *Test*. Is `probe.sh` passing
-   tests 1 and 2 plus one real HDR title on your Intel GPU enough to make Ferrofin the default?
-5. **Dashboard access:** stage 1 publishes no port, so the server's own web dashboard is not reachable. Do you want an optional
-   publish of port 8096 on `127.0.0.1` (SSH tunnel), on a LAN address you choose (for example `192.0.2.10`), or not at all?
-6. **Should the media server image become a required part of every release?** Today its publish job may fail without stopping a
-   release; a release without it leaves managed Ferrofin installs on their previous image and refuses new Ferrofin setups.
-7. **Media server updates:** automatically when nobody is watching (at the latest at the automatic-update time), or only on a click?
-8. **Stage 2:** may FriendFlix stop your Jellyfin container for the copy (minutes) after one confirmation in the UI?
-9. **Metadata from the internet** (posters, descriptions through the media server): on by default, as planned?
+Most important first:
+
+1. **Existing installs:** managed mode only through the migration (stage 2), or also an explicit *Neuanfang* that re-provisions every
+   account on the new server (watch state and FriendFlix references to old items lost)? Stage 1 as written offers managed mode only
+   while no profile is linked to a media server user.
+2. **Backups:** an encrypted download from Admin (passphrase; password hashes and API keys are inside), a writable host backup
+   folder (an exception to the read-only rule), or volume only?
+3. **When is Ferrofin "proven"** and becomes the default over managed Jellyfin (for example `probe.sh` tests 1 and 2 passing plus one
+   real HDR title on your Intel GPU)?
+4. **Media server updates:** automatic in the quiet window, or only on a click?
+5. **Dashboard access:** none, `127.0.0.1` only, or a LAN address you choose (for example `192.0.2.10`)?
+6. **Stage 2:** may FriendFlix stop your existing Jellyfin container for the copy after one confirmation in the UI?
+7. **Metadata download** from the internet on by default?
+8. **The media server image as a required part of every release?** Today its publish job may fail without stopping a release; a
+   release without it has no `ferrofin` pin, leaves managed Ferrofin installs on their image and refuses new Ferrofin setups.
+
+Answered by the install's facts (no longer open): the Docker Engine is 26 or newer, so the subpath mounts apply and there is no
+fallback; one base folder fits (the two media folders share a parent), so stage 1 keeps a single base and several bases stay a
+later option.
