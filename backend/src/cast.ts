@@ -319,7 +319,23 @@ export async function revokeCasts(ctx: Ctx, userId: string, deviceId?: string, e
  * `replace` (SET XX) so a token revoked in between is never resurrected. Media tokens also keep their play session
  * counted as live (maxStreams), because the Chromecast may never get progress reports from a sender.
  */
-async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, profileName: string, overlap = false) {
+/** the play session a media token counts as: a joined stream's current part (the server's progress moved it there), else its own */
+async function castPart(ctx: Ctx, hash: string, rec: CastRecord): Promise<{ itemId: string; playSessionId: string; title: string; jp?: string }> {
+  let part: { itemId: string; playSessionId: string; title: string; jp?: string } = { itemId: rec.itemId, playSessionId: rec.playSessionId, title: rec.title ?? '' };
+  if (isJoined(rec)) {
+    const jp = await ctx.kv.get(jpKey(hash));
+    const st = jp ? (JSON.parse(jp) as JoinedProgress) : null;
+    const it = st ? rec.items![st.idx] : undefined;
+    if (st && it) part = st.idx > 0 ? { itemId: it.itemId, playSessionId: it.playSessionId, title: it.title ?? '', jp: jp! } : { ...part, jp: jp! };
+  }
+  return part;
+}
+
+/**
+ * `create`: write the live record when there is none. Only resolveCast's checked path does (the account's limit was checked in the
+ * stream queue, review round 2 A); the sliding refresh only keeps an existing record alive and never brings one back.
+ */
+async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, profileName: string, overlap = false, create = false) {
   const now = Date.now();
   const ttl = castKeyTtl(rec.exp, now);
   if (ttl <= 0) return;
@@ -335,20 +351,12 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
   if (rec.kind !== 'img') await keepQueue(ctx, hash, rec);
   if (rec.kind === 'img' || overlap) return; // a queued next episode's preload: the stream it follows is the counted one
   // a joined stream counts as its current part (the server's progress moved it there; before the first progress: episode 1)
-  let part: { itemId: string; playSessionId: string; title: string } = { itemId: rec.itemId, playSessionId: rec.playSessionId, title: rec.title ?? '' };
-  if (isJoined(rec)) {
-    const jp = await ctx.kv.get(jpKey(hash));
-    const st = jp ? (JSON.parse(jp) as JoinedProgress) : null;
-    const it = st ? rec.items![st.idx] : undefined;
-    if (st && it) {
-      await ctx.kv.replace(jpKey(hash), jp!, ttl);
-      if (st.idx > 0) part = { itemId: it.itemId, playSessionId: it.playSessionId, title: it.title ?? '' };
-    }
-  }
+  const part = await castPart(ctx, hash, rec);
+  if (part.jp) await ctx.kv.replace(jpKey(hash), part.jp, ttl);
   const cur = await getLive(ctx, rec.userId, part.playSessionId);
-  // its stop was reported just now (title switch / end): the receiver only drains buffered segments until the revoke, no ghost
-  // stream; a token still fetched after DRAIN_MS counts again
-  if (!cur && (await draining(ctx, rec.userId, part.playSessionId))) return;
+  // no record: only the checked path brings one back; its stop was reported just now (title switch / end): the receiver only drains
+  // buffered segments until the revoke, no ghost stream
+  if (!cur && (!create || (await draining(ctx, rec.userId, part.playSessionId)))) return;
   await setLive(ctx, cur
     ? { ...cur, updatedAt: now }
     : { userId: rec.userId, userName, profileName, itemId: part.itemId, title: part.title, positionTicks: 0, isPaused: false, playSessionId: part.playSessionId, updatedAt: now, source: 'portal' });
@@ -553,18 +561,37 @@ export async function resolveCast(ctx: Ctx, ct: string, client: string): Promise
     const slots = rec.afterPs ? 0 : rec.via === 'airplay' && Date.now() - rec.createdAt <= AIRPLAY_PIN2_WINDOW_MS ? 2 : 1;
     // the first fetch of a media token takes its stream slot (review 3): checked with the gateway's claims in one queue, and the live
     // record is written at once, so it counts from this fetch on (not only from the first sliding refresh)
-    const first = owner !== null && (rec.kind ?? 'media') === 'media' && !rec.afterPs && !(await castPinned(ctx, hash));
-    const ok = owner && (first
-      ? await streamSerial(rec.userId, async () => {
-        const max = (await effectiveLimits(ctx, owner.user))!.maxStreams;
-        // other tokens nobody fetched yet are checked at their own first fetch: here only what runs (or is about to) counts
-        if ((await countStreams(ctx, rec.userId, { ps: [rec.playSessionId, ...(await unfetchedCastSessions(ctx, rec.userId))] })) >= max) return false;
-        if (!(await pinned(ctx, hash, client, rec.exp, slots, rec.via === 'airplay'))) return false;
-        await touch(ctx, hash, rec, owner.user.name, owner.prof.name);
+    // A media token's stream slot is checked where it is served (review 3, round 2 A): at its first fetch, and whenever its play session
+    // has no live record (expired, or ended by a stop report), in the same queue as the gateway's claims. Beyond the limit the fetch is
+    // refused; otherwise the live record is written at once. Within a reported stop's drain window it is served only while it fits,
+    // without a record. Other tokens nobody fetched yet are checked at their own first fetch: here only what runs counts.
+    let ok = false;
+    let overlap: boolean | null = false;
+    if (owner) {
+      const fits = async (ps: string) => (await countStreams(ctx, rec.userId, { ps: [ps, ...(await unfetchedCastSessions(ctx, rec.userId))] })) < (await effectiveLimits(ctx, owner.user))!.maxStreams;
+      /** the token's current play session holds a live record, or gets one if it fits (`checked`: the limit was just checked) */
+      const slot = async (checked: boolean) => {
+        const part = await castPart(ctx, hash, rec);
+        if (await getLive(ctx, rec.userId, part.playSessionId)) return true;
+        if (!checked && !(await fits(part.playSessionId))) return false;
+        await touch(ctx, hash, rec, owner.user.name, owner.prof.name, false, true); // writes nothing while draining
         return true;
-      })
-      : await pinned(ctx, hash, client, rec.exp, slots, rec.via === 'airplay'));
-    const overlap = ok ? await nextOverlap(ctx, rec) : false;
+      };
+      if ((rec.kind ?? 'media') !== 'media') ok = await pinned(ctx, hash, client, rec.exp, slots, rec.via === 'airplay');
+      else if (rec.afterPs) {
+        // a queued next episode: served uncounted inside its preload overlap; once that is over (its predecessor gone) a normal stream
+        ok = await pinned(ctx, hash, client, rec.exp, slots, rec.via === 'airplay');
+        overlap = ok ? await nextOverlap(ctx, rec) : false;
+        if (ok && overlap === false) ok = await streamSerial(rec.userId, () => slot(false));
+      } else {
+        ok = await streamSerial(rec.userId, async () => {
+          const first = !(await castPinned(ctx, hash));
+          if (first && !(await fits(rec.playSessionId))) return false;
+          if (!(await pinned(ctx, hash, client, rec.exp, slots, rec.via === 'airplay'))) return false;
+          return slot(first);
+        });
+      }
+    }
     if (ok && owner && overlap !== null) {
       const { user, role, prof } = owner;
       const jfUser = jfUserFor(user, prof);

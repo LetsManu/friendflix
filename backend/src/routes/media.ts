@@ -156,7 +156,9 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
   if (kind === 'Playing/Stopped') {
     await clearLive(ctx, user.id, b.playSessionId);
     await forgetServed(ctx, user.id, { ps: b.playSessionId, deviceId: who.deviceId, itemId: b.itemId, running: wasLive });
-    await markStopped(ctx, user.id, b.playSessionId);
+    // the cast drain mark (live.ts draining) only for a stream that was running, so once per run (review round 2 A): a stop report
+    // for anything else, or a second one, opens no window in which a cast is served uncounted
+    if (wasLive) await markStopped(ctx, user.id, b.playSessionId);
     // a stream stopped within its first 30 s: its grants go now (only the caller's own play session: /api/playback/info or cast wrote its record)
     if (await ctx.kv.get(`pbinfo:${user.id}:${b.playSessionId}`).catch(() => null)) await releaseGrants(ctx, b.playSessionId);
   }

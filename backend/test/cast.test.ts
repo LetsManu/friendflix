@@ -141,6 +141,37 @@ describe('cast session', () => {
     }
   });
 
+  it('a stop report cannot take a running cast out of the count: cast and web stay at one stream on limit 1 (review round 2, A)', async () => {
+    const userId = (await call(admin, 'GET', '/api/me')).json().id as string;
+    const role = env.ctx.roles.admin!;
+    const before = role.maxStreams;
+    for (const p of ['cast:', 'castidx:', 'castpin:', `play:${userId}:`, `serve:${userId}:`, `servedrain:${userId}:`, `pstop:${userId}:`]) for (const k of await env.kv.keys(p)) await env.kv.del(k);
+    role.maxStreams = 1;
+    const OTHER = 'c'.repeat(32);
+    const web = (ps: string) => env.app.inject({ method: 'POST', url: '/internal/stream', headers: H, payload: { sid: admin.cookies.ff_sid, itemId: OTHER, ps } });
+    try {
+      const c = await create();
+      const ps = c.j.playSessionId ?? 'ps-12345678';
+      expect((await authz({ ct: c.ct })).statusCode).toBe(200); // the receiver's first fetch: one stream
+      expect((await web('ps-web-0001')).statusCode).toBe(429);
+      // the attacker reports a stop for the cast's play session, twice, and keeps both going
+      const stop = () => call(admin, 'POST', '/api/playback/stop', { itemId: ID, playSessionId: ps, mediaSourceId: MS, positionTicks: 0 });
+      expect((await stop()).statusCode).toBe(200);
+      let served = 0;
+      for (let t = 0; t < 40; t++) {
+        skipClock(5_100); // past the cast memo (5 s) and the web claim's refusal memo
+        if (t === 3) await stop();
+        const both = [(await web('ps-web-0001')).statusCode, (await authz({ ct: c.ct })).statusCode];
+        expect(both.filter((x) => x === 200).length, `t=${t}: ${both.join(',')}`).toBeLessThanOrEqual(1);
+        served += both.includes(200) ? 1 : 0;
+      }
+      expect(served).toBeGreaterThan(0);
+    } finally {
+      role.maxStreams = before;
+      for (const p of ['cast:', 'castidx:', 'castpin:', `play:${userId}:`, `serve:${userId}:`, `servedrain:${userId}:`, `pstop:${userId}:`]) for (const k of await env.kv.keys(p)) await env.kv.del(k);
+    }
+  });
+
   it('rate limits session creation to 10 per minute per client', async () => {
     const codes: number[] = [];
     for (let i = 0; i < 12; i++) {
