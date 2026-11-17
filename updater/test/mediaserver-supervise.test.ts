@@ -327,6 +327,26 @@ describe('recovery after an interrupted recreate', () => {
   });
 });
 
+describe('overlapping rounds', () => {
+  it('a round while another (or the startup) still runs is skipped', async () => {
+    const w = world({ ops: coreOps() });
+    let facts = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const sup = new Supervisor({ ...w.deps, jobs: w.jobs, facts: async () => { facts++; await gate; return w.cfg.facts; } });
+    const first = sup.tick();
+    expect(await sup.tick()).toBe('busy');
+    const boot = sup.startup();
+    release();
+    expect(await first).toBe('idle');
+    await boot;
+    expect(facts).toBe(1);
+    // once it ended, the next round runs
+    expect(await sup.tick()).toBe('idle');
+    expect(facts).toBe(2);
+  });
+});
+
 describe('adoption and ownership', () => {
   it('adoption after a lost state volume', async () => {
     const w = setup();

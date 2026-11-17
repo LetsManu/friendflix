@@ -67,8 +67,26 @@ export class Supervisor {
   private get engine() { return this.d.engine; }
   private get jobs() { return this.d.jobs; }
 
+  /** a round (or the startup) runs: another one meanwhile is skipped, never run on top of it */
+  private running = false;
+
+  private async alone<T>(skipped: T, fn: () => Promise<T>): Promise<T> {
+    if (this.running) return skipped;
+    this.running = true;
+    try { return await fn(); } finally { this.running = false; }
+  }
+
   /** once at start: leftover helpers go, an interrupted recreate is settled, a labelled container is adopted */
-  async startup(): Promise<void> {
+  startup(): Promise<void> {
+    return this.alone(undefined, () => this.boot());
+  }
+
+  /** one supervision round (server.ts runs it every 60 s while no job runs); 'busy' while a job or another round runs */
+  tick(): Promise<TickResult> {
+    return this.alone<TickResult>('busy', () => this.round());
+  }
+
+  private async boot(): Promise<void> {
     const facts = await this.d.facts().catch(() => null);
     const project = facts?.project;
     if (!facts || !project) return;
@@ -78,8 +96,7 @@ export class Supervisor {
     await this.own(project, facts);
   }
 
-  /** one supervision round (server.ts runs it every 60 s while no job runs) */
-  async tick(): Promise<TickResult> {
+  private async round(): Promise<TickResult> {
     if (this.u.busy) return 'busy';
     const facts = await this.d.facts().catch(() => null);
     const project = facts?.project;
