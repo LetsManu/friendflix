@@ -619,7 +619,7 @@ Terminate TLS at your reverse proxy and allow **TLS 1.2 and 1.3 only**, preferri
 
 Verified from the workflows in [.github/workflows](../.github/workflows):
 
-- **Pinned inputs:** GitHub Actions are pinned to commit SHAs, the Dockerfile base images and the ZAP image to digests; Dependabot proposes updates for npm, Docker and Actions weekly.
+- **Pinned inputs:** GitHub Actions are pinned to commit SHAs, the Dockerfile base images and the ZAP image to digests; the third-party runtime images in `compose.yaml` and `compose.prod.yaml` (Postgres, Redis, the bundled Jellyfin and request service, the socket proxy) are pinned by tag **and** digest, so a changed or hijacked tag upstream is not pulled without a review (`scripts/compose-pins.test.mjs` fails on an unpinned one). Dependabot proposes updates for npm, Docker, the compose images and Actions; Postgres and Redis majors are left out (a Postgres major needs a dump and restore). Running the bundled Jellyfin on `latest` is your own opt-in in an override file.
 - **CI gate:** lint, type check, tests on a Node matrix, `npm audit` for production dependencies (high and above), end-to-end tests, secret scanning with gitleaks.
 - **Images:** built once, pushed as a candidate, then scanned by Trivy on that exact digest (SARIF goes to code scanning, a gate step fails the build on findings per its configuration).
 - **SBOM and provenance:** BuildKit SPDX SBOM and SLSA provenance (`mode=max`) are attached to each image; GitHub artifact attestations (provenance and SBOM) are published next to it.

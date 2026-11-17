@@ -35,6 +35,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 ### Security
 - **No more redirect to another site after choosing a profile.** A link like `/profiles?next=/%09/evil.example.com` passed the old check (the browser drops the tab and reads `//evil.example.com`), so after the profile click the browser could land on a foreign page. Every `next` target (profile picker, onboarding, the in-app sign-in) now goes through one shared check that reads the value the way the browser will and accepts only a path on this site; anything else goes to the start page.
 - **`/metrics` token checked in constant time, and rate limited.** The backend and the gateway compared `METRICS_TOKEN` as a plain string, although the docs promised a constant-time check; both now compare it in constant time, and `/metrics` answers at most 60 requests a minute per client (a scraper every 15 to 60 seconds is far below). Nothing to change in your monitoring.
+- **Third-party images pinned.** `compose.yaml` and `compose.prod.yaml` no longer pull Postgres, Redis, the bundled Jellyfin and the bundled request service by a moving tag (`latest`, `17-alpine`): each is pinned by version and digest (Postgres 17.12, Redis 7.4.12, Jellyfin 12.4, request service 3.5.2), so a broken or tampered upload upstream is not pulled without a look. Dependabot proposes newer versions for them as pull requests. The next `docker compose pull` fetches exactly these versions; if you ran a newer Jellyfin through `latest`, keep it with an override file.
 
 ## [3.5.0] – Churros – 2026-11-16
 
