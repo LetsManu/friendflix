@@ -208,6 +208,17 @@ describe('admin routes', () => {
     expect((await readManaged(env.pool)).hasPassword).toBe(true);
   });
 
+  it('two first-run applies at once send the one stored password', async () => {
+    await reauth(admin);
+    await noIds();
+    const rs = await Promise.all([req(admin, 'POST', '/apply', applyBody()), req(admin, 'POST', '/apply', applyBody())]);
+    expect(rs.map((r) => r.statusCode)).toContain(202);
+    const sent = opBodies('apply').map((b) => b.firstRun.password as string);
+    expect(sent.length).toBeGreaterThan(0);
+    const stored = (await env.pool.query<{ p: string }>('select admin_password_enc as p from media_managed')).rows[0]!.p;
+    for (const p of sent) expect(p).toBe(decrypt(env.ctx.encKey, stored));
+  });
+
   it('a re-apply keeps slugs and the stored password; a rename that cannot be counted is refused', async () => {
     await reauth(admin);
     await noIds();

@@ -13,7 +13,7 @@ import { BACKUP_ID, decodePassphrase, mediaDownload, mediaOp, mediaUpload, parse
 import { recordApplyFirstRun } from '../mediaserver/firstRun.js';
 import { libraryReferences, referenced } from '../mediaserver/references.js';
 import { deleteLibrary, managedKey, MANAGED_URL, renameLibrary } from '../mediaserver/serverApi.js';
-import { adminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged, type SetupStep } from '../mediaserver/store.js';
+import { adminPassword, claimAdminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged, type SetupStep } from '../mediaserver/store.js';
 import { recentlyAuthenticated } from '../reauth.js';
 import { requireAdmin } from '../session.js';
 import { requireSetupSession } from '../setup/code.js';
@@ -337,11 +337,7 @@ function ops(ctx: Ctx) {
       const firstRun = managed.kind !== b.kind || managed.setup !== 'done';
       let password: string | null = null;
       if (firstRun) {
-        password = await adminPassword(ctx);
-        if (!password) {
-          password = randomBytes(32).toString('base64url');
-          await writeManaged(ctx, { adminUser: ADMIN_USER, adminPassword: password });
-        }
+        password = (await adminPassword(ctx)) ?? await claimAdminPassword(ctx, ADMIN_USER, randomBytes(32).toString('base64url'));
       }
       // a new managed setup keeps the external server first (spec "Switching"); an empty connection (a switch without restore) leaves
       // the one kept before in place

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { adminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged } from '../src/mediaserver/store.js';
+import { adminPassword, claimAdminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged } from '../src/mediaserver/store.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
 let env: TestEnv;
@@ -16,6 +16,16 @@ describe('media_managed', () => {
     await expect(env.pool.query("insert into media_managed(id, setup_error) values (1, 'Bad Code')")).rejects.toThrow(/check/);
     await env.pool.query('insert into media_managed(id) values (1)');
     expect((await readManaged(env.pool)).setup).toBe('none');
+  });
+
+  it('the administrator password is claimed once: a stored one wins, an undecryptable one is replaced', async () => {
+    const a = 'A'.repeat(43), b = 'B'.repeat(43), c = 'C'.repeat(43);
+    expect(await Promise.all([claimAdminPassword(env.ctx, 'friendflix-admin', a), claimAdminPassword(env.ctx, 'friendflix-admin', b)])).toEqual([a, a]);
+    expect(await claimAdminPassword(env.ctx, 'friendflix-admin', c)).toBe(a);
+    expect(await readManaged(env.pool)).toMatchObject({ adminUser: 'friendflix-admin', hasPassword: true });
+    await env.pool.query("update media_managed set admin_password_enc = 'garbage'");
+    expect(await claimAdminPassword(env.ctx, 'friendflix-admin', c)).toBe(c);
+    expect(await adminPassword(env.ctx)).toBe(c);
   });
 
   it('defaults without a row', async () => {

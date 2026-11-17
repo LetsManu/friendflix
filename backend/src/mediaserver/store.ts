@@ -82,6 +82,20 @@ async function secret(ctx: Pick<Ctx, 'db' | 'encKey'>, col: 'admin_password_enc'
   try { return decrypt(ctx.encKey, v); } catch { return null; }
 }
 export const adminPassword = (ctx: Pick<Ctx, 'db' | 'encKey'>): Promise<string | null> => secret(ctx, 'admin_password_enc');
+
+/**
+ * Stores `candidate` as the administrator password only while none is stored, and answers the stored one: two first runs at once
+ * both send the password the server was (or will be) created with. A stored value that cannot be decrypted is replaced.
+ */
+export async function claimAdminPassword(ctx: Pick<Ctx, 'db' | 'encKey'>, user: string, candidate: string): Promise<string> {
+  await ctx.db.query(`insert into media_managed(id, admin_user, admin_password_enc) values (1, $1, $2)
+    on conflict (id) do update set admin_user = excluded.admin_user, admin_password_enc = excluded.admin_password_enc, updated_at = now()
+    where media_managed.admin_password_enc is null`, [user, encrypt(ctx.encKey, candidate)]);
+  const stored = await adminPassword(ctx);
+  if (stored) return stored;
+  await writeManaged(ctx, { adminUser: user, adminPassword: candidate });
+  return candidate;
+}
 export const externalKey = (ctx: Pick<Ctx, 'db' | 'encKey'>): Promise<string | null> => secret(ctx, 'external_key_enc');
 
 const UMLAUTS: Record<string, string> = { 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss' };
