@@ -1,47 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Unit tests for scripts/changed-images.mjs (node:test, run by `npm run test:scripts`). Git histories are built in throwaway
-// repositories (tmpRepo), with identity and signing passed on the command line: CI runners have no git identity, local configs sign.
+// repositories (tmpRepo in test-helpers/), with identity and signing passed on the command line: CI runners have no git identity, local configs sign.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import process from 'node:process';
 import { URL, fileURLToPath } from 'node:url';
+import { tmpRepo } from './test-helpers/tmp-repo.mjs';
 import { IMAGES, changedFiles, classify, imageCommits, isInput, loadMap, plan } from './changed-images.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./changed-images.mjs', import.meta.url));
 const REPO = fileURLToPath(new URL('..', import.meta.url));
-const GIT_C = ['-c', 'user.name=ci', '-c', 'user.email=ci@example.com', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', '-c', 'init.defaultBranch=main'];
-
-/** a throwaway git repository: write files, commit, branch, merge --no-ff, git mv, revert; every helper that commits returns the new sha */
-export function tmpRepo() {
-  const root = mkdtempSync(join(tmpdir(), 'ff-changed-images-'));
-  const git = (...args) => execFileSync('git', [...GIT_C, '-C', root, ...args], { encoding: 'utf8' }).trim();
-  const head = () => git('rev-parse', 'HEAD');
-  const write = (files) => {
-    for (const [path, text] of Object.entries(files)) {
-      mkdirSync(dirname(join(root, path)), { recursive: true });
-      writeFileSync(join(root, path), text);
-    }
-  };
-  git('init', '-q');
-  return {
-    root,
-    git,
-    head,
-    write,
-    /** writes `files`, stages everything and commits */
-    commit(message, files = {}) { write(files); git('add', '-A'); git('commit', '-q', '--allow-empty', '-m', message); return head(); },
-    branch(name) { git('checkout', '-q', '-b', name); },
-    checkout(name) { git('checkout', '-q', name); },
-    merge(name, message = `Merge ${name}`) { git('merge', '-q', '--no-ff', '-m', message, name); return head(); },
-    mv(from, to, message = `move ${from}`) { mkdirSync(dirname(join(root, to)), { recursive: true }); git('mv', from, to); git('commit', '-q', '-m', message); return head(); },
-    revert(sha) { git('revert', '--no-edit', sha); return head(); },
-  };
-}
 
 /** two images: backend (the node group, a ! exclude, a one-segment glob, argsFrom) and web */
 const MAP = {
