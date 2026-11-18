@@ -7,7 +7,8 @@
 # wants to check a release: docs/reproducible-builds.md.
 #
 #   scripts/reproduce-image.sh SERVICE [--ref REF] [--compare IMAGE] [--out FILE]
-#   scripts/reproduce-image.sh --diff A.oci.tar B.oci.tar   (explains a mismatch: config + per-layer file listings)
+#   scripts/reproduce-image.sh --diff A.tar B.tar   (explains a mismatch: config + the paths that differ per layer; last line
+#                                                    `verdict: equal|os-only|app`)
 #   scripts/reproduce-image.sh --buildkit-image [--ref REF]  (prints the BuildKit image pinned at REF and exits)
 #     SERVICE    backend | gateway | web | updater
 #     --ref      commit / tag to build (default HEAD; with --compare the image's revision label, i.e. its image commit).
@@ -37,24 +38,75 @@ set -euo pipefail
 usage() { awk 'NR >= 5 && /^#/ { sub(/^# ?/, ""); print } /^set -euo/ { exit }' "$0" >&2; exit 2; }
 log() { echo "reproduce-image: $*" >&2; }
 
-# --diff: which part of two OCI tarballs (from --out) differs - config, and for each differing layer the file listing
-# (mode, owner, size, mtime, name), which is where non-determinism shows up
+# --diff: which part of two image archives differs - OCI tarballs from --out or `docker save` archives (a nested index is descended
+# to linux/amd64; layers gzip-compressed or not, told apart by their magic bytes). Prints the config diff and, per layer whose
+# contents differ, the differing entries (type, mode, owner, size, mtime, link; content hash), then `cause: <first cause>` and as
+# the last line `verdict: equal|os-only|app`:
+#   equal    same image manifest, or same config and same layer contents (e.g. only the compression differs)
+#   app      the config's Env, Labels, Cmd, Entrypoint, WorkingDir or User differ, or a differing path starts with app/: an input
+#            the change map misses (cause: `config <Key>` or the first such path)
+#   os-only  everything else: only files outside app/ (OS packages) differ
+# Needs GNU tar, jq, gzip, sha256sum.
 if [ "${1:-}" = --diff ]; then
   [ $# -eq 3 ] || usage
-  A=$2 B=$3
-  blob() { tar -xOf "$1" "blobs/${2%%:*}/${2#*:}"; }
-  manifest() { local d; d=$(tar -xOf "$1" index.json | jq -r '.manifests[0].digest'); blob "$1" "$d"; }
-  ma=$(manifest "$A"); mb=$(manifest "$B")
-  ca=$(blob "$A" "$(jq -r .config.digest <<< "$ma")"); cb=$(blob "$B" "$(jq -r .config.digest <<< "$mb")")
-  echo "== config (A vs B)"; diff <(jq -S . <<< "$ca") <(jq -S . <<< "$cb") || true
-  n=$(jq '.layers | length' <<< "$ma")
-  for i in $(seq 0 $((n - 1))); do
-    la=$(jq -r ".layers[$i].digest" <<< "$ma"); lb=$(jq -r ".layers[$i].digest // empty" <<< "$mb")
-    [ "$la" = "$lb" ] && continue
-    echo "== layer $i differs: $la vs ${lb:-<missing>} ($(jq -r ".history | map(select(.empty_layer != true))[$i].created_by // \"?\"" <<< "$ca"))"
-    [ -n "$lb" ] || continue
-    diff <(blob "$A" "$la" | tar -tvzf - --full-time | sort -k6) <(blob "$B" "$lb" | tar -tvzf - --full-time | sort -k6) | head -n 60 || true
+  D=$(mktemp -d)
+  trap 'rm -rf "$D"' EXIT
+  mkdir "$D/a" "$D/b"
+  tar -xf "$2" -C "$D/a"
+  tar -xf "$3" -C "$D/b"
+  blobf() { echo "$D/$1/blobs/${2%%:*}/${2#*:}"; }
+  # index.json -> the linux/amd64 image manifest digest, through nested indexes
+  manifest() {
+    local side=$1 desc
+    desc=$(jq -ec '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")][0] // .manifests[0]' "$D/$side/index.json")
+    while jq -e '.mediaType == "application/vnd.oci.image.index.v1+json" or .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"' <<< "$desc" > /dev/null; do
+      desc=$(jq -ec '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")][0]' "$(blobf "$side" "$(jq -r .digest <<< "$desc")")")
+    done
+    jq -er .digest <<< "$desc"
+  }
+  # one line per entry "<path>\t<type+mode owner size date time>" and per regular file "<path>\tsha256 <hash>", sorted
+  entries() {
+    local f=$1 x
+    [ -n "$f" ] || return 0
+    x=$(mktemp -d "$D/x.XXXXXX")
+    unpack() { if [ "$(head -c2 "$f" | od -An -tx1 | tr -d ' \n')" = 1f8b ]; then gzip -dc "$f"; else cat "$f"; fi; }
+    {
+      unpack | tar -tv --full-time --numeric-owner -f - | tr -s ' ' | sed -E 's#^(\S+ \S+ \S+ \S+ \S+) (\./)?(.*)$#\3\t\1#'
+      { unpack | tar -x -f - -C "$x" --no-same-owner --no-same-permissions; } 2> /dev/null || true
+      (cd "$x" && find . -type f -print0 | xargs -0 -r sha256sum 2> /dev/null || true) | sed -E 's#^\\?([0-9a-f]{64})  \./(.*)$#\2\tsha256 \1#'
+    } | LC_ALL=C sort
+    rm -rf "$x"
+  }
+  ma=$(manifest a); mb=$(manifest b)
+  if [ "$ma" = "$mb" ]; then echo "verdict: equal"; exit 0; fi
+  MA=$(cat "$(blobf a "$ma")"); MB=$(cat "$(blobf b "$mb")")
+  ca=$(cat "$(blobf a "$(jq -r .config.digest <<< "$MA")")"); cb=$(cat "$(blobf b "$(jq -r .config.digest <<< "$MB")")")
+  causes=()
+  echo "== config (A vs B)"
+  if diff <(jq -S . <<< "$ca") <(jq -S . <<< "$cb"); then config_same=1; else config_same=; fi
+  for k in Env Labels Cmd Entrypoint WorkingDir User; do
+    [ "$(jq -cS --arg k "$k" '.config[$k]' <<< "$ca")" = "$(jq -cS --arg k "$k" '.config[$k]' <<< "$cb")" ] || causes+=("config $k")
   done
+  na=$(jq '.layers | length' <<< "$MA"); nb=$(jq '.layers | length' <<< "$MB")
+  : > "$D/paths"
+  for i in $(seq 0 $(( (na > nb ? na : nb) - 1 ))); do
+    la=$(jq -r ".layers[$i].digest // empty" <<< "$MA"); lb=$(jq -r ".layers[$i].digest // empty" <<< "$MB")
+    [ "$la" = "$lb" ] && continue
+    entries "${la:+$(blobf a "$la")}" > "$D/ea"; entries "${lb:+$(blobf b "$lb")}" > "$D/eb"
+    cmp -s "$D/ea" "$D/eb" && continue # same contents, other bytes (compression)
+    echo "== layer $i differs: ${la:-<missing>} vs ${lb:-<missing>} ($(jq -r ".history | map(select(.empty_layer != true))[$i].created_by // \"?\"" <<< "$ca"))"
+    diff "$D/ea" "$D/eb" | head -n 60 || true
+    LC_ALL=C comm -3 "$D/ea" "$D/eb" | sed 's/^\t//' | cut -f1 | sed -E 's/ (->|link to) .*$//' >> "$D/paths"
+  done
+  LC_ALL=C sort -u -o "$D/paths" "$D/paths"
+  app=$(grep -m1 '^app/' "$D/paths" || true)
+  other=$(head -n1 "$D/paths")
+  if [ ${#causes[@]} -gt 0 ]; then echo "cause: ${causes[0]}"; echo "verdict: app"
+  elif [ -n "$app" ]; then echo "cause: $app"; echo "verdict: app"
+  elif [ -n "$other" ]; then echo "cause: $other"; echo "verdict: os-only"
+  elif [ -z "$config_same" ]; then echo "cause: config"; echo "verdict: os-only"
+  else echo "verdict: equal"
+  fi
   exit 0
 fi
 # the BuildKit image pinned at a commit: the build action's `buildkit-image` default, else (refs before the action existed)

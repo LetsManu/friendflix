@@ -29,6 +29,10 @@
 # `changes` (first job) prints the change plan (scripts/changed-images.mjs): per image build or carry, its image commit and
 # time, and the test classes, to its log and step summary. `docker`, `mediaserver-image` and `reproducible` read each image's
 # commit and time from it and fail without a valid plan (step `Plan`); every image still builds and every job runs in full.
+# On publishable runs the plan also walks back to the newest main commit whose images were all published (`sha-<7>`) and says
+# per image "carry" when that base is signed by this repository (cosign, the updater's identity rule) and its revision label is the
+# image commit (report only: nothing acts on it yet). The `reproducible (x)` legs then run the burn-in: the fresh rebuild against
+# that base, as annotations only (scripts/burnin-status.sh counts them; CI carries images after 20 counting main runs).
 # mediaserver (trial, mediaserver/README.md) is the thin FriendFlix image on top of the pinned Ferrofin release: no Rust or
 # Node build, only image-level changes. It has its OWN jobs (`mediaserver-image`, `publish-mediaserver`) that nothing else
 # needs, so it can never block or cancel the other images: built, SBOM'd, signed and published the same way, but its Trivy
@@ -50,13 +54,17 @@ jobs:
   # The change plan (scripts/changed-images.mjs, map .github/images.json) as one JSON line in the output `plan` and as a
   # table in the step summary. Pull requests compare the image commits at the merge commit with those at the PR base;
   # other events build everything. Full history: an image commit is the newest commit that touched the image's inputs.
+  # Publishable runs (report only, Stage C): the base walk reads GHCR (`sha-<7>` digests, revision labels) and verifies each base
+  # with cosign. A login, install, registry or cosign failure only costs the base ("keine Basis" and a warning, never a failed plan).
   changes:
     # until Stage D (D2 removes this). It no longer hides a failure: the jobs that read the plan (docker, mediaserver-image,
     # reproducible) fail closed without a valid one in their step Plan.
     continue-on-error: true
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions: { contents: read }
+    timeout-minutes: 10
+    permissions: { contents: read, packages: read }
+    env:
+      PUBLISHABLE: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) }}
     outputs:
       plan: ${{ steps.plan.outputs.plan }}
     steps:
@@ -64,6 +72,14 @@ jobs:
         with: { fetch-depth: 0, persist-credentials: false }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 26 }
+      - name: Log in to GHCR
+        if: env.PUBLISHABLE == 'true'
+        continue-on-error: true # without it the plan has no base (registry error), it never fails
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - if: env.PUBLISHABLE == 'true'
+        continue-on-error: true # without cosign every base is "keine Basis"
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       - name: Plan
         id: plan
         env:
@@ -71,7 +87,12 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          plan=$(node scripts/changed-images.mjs plan --event "$GITHUB_EVENT_NAME" --sha "$GITHUB_SHA" --pr-base "$PR_BASE" --summary "$GITHUB_STEP_SUMMARY")
+          registry=()
+          if [ "$PUBLISHABLE" = true ]; then
+            repo="${GITHUB_REPOSITORY#*/}"
+            registry=(--registry "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${repo,,}" --repo "$GITHUB_REPOSITORY")
+          fi
+          plan=$(node scripts/changed-images.mjs plan --event "$GITHUB_EVENT_NAME" --sha "$GITHUB_SHA" --pr-base "$PR_BASE" --summary "$GITHUB_STEP_SUMMARY" ${registry[@]+"${registry[@]}"})
           echo "$plan"
           echo "plan=$plan" >> "$GITHUB_OUTPUT"
   test:
@@ -683,6 +704,8 @@ jobs:
   # `docker` matrix and publish; base images are digest-pinned. See scripts/reproduce-image.sh and docs/livetv.md.
   # mediaserver is NOT in this matrix either (documented exemption, docs/reproducible-builds.md): a third-party base image plus
   # dpkg-installed Intel debs; two identical builds have not been shown yet.
+  # Burn-in (Stage C, until CI carries): on a publishable run, when the plan says this image could be carried, the fresh rebuild
+  # is compared with the base the plan found; the result is only an annotation (title burn-in) for scripts/burnin-status.sh.
   # Not scheduled: a later rebuild differs as soon as Alpine ships a newer apk package (see the Dockerfiles).
   reproducible:
     needs: [changes, docker]
@@ -723,8 +746,49 @@ jobs:
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY#*/}"; img="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${repo,,}-${SERVICE}:ci-${GITHUB_SHA}"
-          digest=$(scripts/reproduce-image.sh "$SERVICE" --compare "$img")
+          digest=$(scripts/reproduce-image.sh "$SERVICE" --compare "$img" --out "$RUNNER_TEMP/rebuilt.tar")
           echo "### $SERVICE reproduced: \`$digest\` (= $img, linux/amd64)" >> "$GITHUB_STEP_SUMMARY"
+      # Burn-in: would carrying the base have shipped the same image? Equal linux/amd64 manifests of ci-<sha> and the base: equal.
+      # Otherwise the base is pulled and saved and `--diff` judges it against the rebuild: only OS-package files differ → counts;
+      # app/ or the config differ (an input the map misses) or no comparison was possible → resets. Annotations only: this step
+      # never fails the leg (continue-on-error, and every path exits 0), a red leg would hide the run from the update check.
+      - name: Burn-in (compare with the base)
+        if: env.PUBLISHABLE == 'true' && fromJSON(needs.changes.outputs.plan).images[matrix.service].action == 'carry'
+        continue-on-error: true
+        env:
+          BASE_DIGEST: ${{ fromJSON(needs.changes.outputs.plan).images[matrix.service].base.digest }}
+        run: |
+          set -euo pipefail
+          shopt -s inherit_errexit # a failure inside $(…) fails the assignment, which the ERR trap turns into a reset
+          resets() { echo "::warning title=burn-in::$SERVICE setzt zurück: $1"; exit 0; }
+          trap 'resets "kein Vergleich möglich (Zeile $LINENO)"' ERR
+          repo="${GITHUB_REPOSITORY#*/}"; name="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${repo,,}-${SERVICE}"
+          [[ "$BASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || resets "kein Basis-Digest im Plan"
+          # the linux/amd64 image manifest digest of a ref (an index or a single manifest)
+          amd64() {
+            local raw; raw=$(docker buildx imagetools inspect --raw "$1")
+            if jq -e 'has("manifests")' <<< "$raw" > /dev/null; then
+              jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")][0].digest' <<< "$raw"
+            else
+              docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}'
+            fi
+          }
+          ours=$(amd64 "$name:ci-$GITHUB_SHA"); theirs=$(amd64 "$name@$BASE_DIGEST")
+          if [ "$ours" = "$theirs" ]; then echo "::notice title=burn-in::$SERVICE gleich $theirs"; exit 0; fi
+          docker pull -q --platform linux/amd64 "$name@$BASE_DIGEST" > /dev/null
+          docker tag "$name@$BASE_DIGEST" "ff-burnin-base:$SERVICE"
+          docker save -o "$RUNNER_TEMP/base.tar" "ff-burnin-base:$SERVICE"
+          out=$(scripts/reproduce-image.sh --diff "$RUNNER_TEMP/rebuilt.tar" "$RUNNER_TEMP/base.tar")
+          # file names and config values from the images are data, never workflow commands
+          stop="burnin-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          echo "::stop-commands::$stop"; echo "$out"; echo "::$stop::"
+          cause=$(sed -n 's/^cause: //p' <<< "$out" | head -n1)
+          case "$(tail -n1 <<< "$out")" in
+            'verdict: equal') echo "::notice title=burn-in::$SERVICE zählt (gleicher Inhalt)" ;;
+            'verdict: os-only') echo "::notice title=burn-in::$SERVICE zählt (nur OS-Pakete)" ;;
+            'verdict: app') resets "${cause:-?}" ;;
+            *) resets "kein Urteil von --diff" ;;
+          esac
       - name: Build twice from scratch and compare
         if: env.PUBLISHABLE != 'true'
         env:
