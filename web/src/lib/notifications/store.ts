@@ -102,6 +102,12 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
     }
   };
 
+  /** a selection by filter, bounded to the newest entry the page knows: entries that arrived since (the pill) are not touched */
+  const bounded = (sel: Selection): Selection => {
+    if (sel.category === undefined || sel.max !== undefined) return sel;
+    const ids = state.sections.flatMap((x) => x.groups.flatMap((g) => g.items.map((i) => i.id)));
+    return ids.length ? { ...sel, max: Math.max(...ids) } : sel;
+  };
   const removeGroups = (sel: Selection): Removed[] => {
     const out: Removed[] = [];
     state.sections.forEach((sec, sectionIndex) => sec.groups.forEach((group, index) => { if (hits(group, sel)) out.push({ group, section: sec.key, index, sectionIndex }); }));
@@ -152,6 +158,7 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
     toggle: (id) => update((s) => { const open = new Set(s.open); if (!open.delete(id)) open.add(id); return { ...s, open }; }),
     async read(sel = {}) {
       const all = everything(sel);
+      const sent = bounded(sel);
       /** the groups this call flipped, with their unread entries */
       const flipped = new Map<string, number>();
       let lowered = 0;
@@ -166,7 +173,7 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
       const g0 = gen;
       const e0 = epoch;
       try {
-        await api.markRead(all ? undefined : sel);
+        await api.markRead(all ? undefined : sent);
         return true;
       } catch (e) {
         if (e0 !== epoch) return false; // another person's page now
@@ -180,11 +187,12 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
       prune();
       const g0 = gen;
       const e0 = epoch;
+      const sent = bounded(sel);
       const removed = removeGroups(sel);
       const lowered = removed.reduce((n, r) => n + unreadOf(r.group), 0);
       setBase(Math.max(0, baseUnread - lowered));
       try {
-        const r = await api.hide(sel);
+        const r = await api.hide(sent);
         // the answer time is no earlier than the server's: a token pruned by it is surely dead there
         if (e0 === epoch) held.set(r.undo, { at: Date.now(), removed: g0 === gen ? removed : null });
         void recount(e0); // on its own: the undo toast does not wait for it (an answer for an earlier person is dropped)

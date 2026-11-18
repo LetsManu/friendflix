@@ -108,7 +108,8 @@ Entries older than 90 days are deleted by a daily job, along with their `notific
 
 - `GET /api/notifications` stays as it is (same fields, limit 30) for the Android poller and old clients. It also leaves out hidden entries.
 - `GET /api/notifications/feed?cursor=&filter=all|unread|<category>` answers:
-  - `{ sections: [{ key: 'today'|'week'|'YYYY-MM', groups: [{ id, kind, category, title, body, link, at, count, unread, items?: [{ id, title, body, at }] }] }], next: cursor|null, unread: n, categories: [{ key, n }] }`
+  - `{ sections: [{ key: 'today'|'week'|'YYYY-MM', groups: [{ id, kind, category, title, body, link, at, count, unread, unreadCount, items?: [{ id, title, body, at }] }] }], next: cursor|null, unread: n, categories: [{ key, n }] }`
+  - `unreadCount` is the number of unread entries in the group (a group is `unread` when it is above 0).
   - A page holds about 30 groups, and `items` caps at 20 per group.
   - The cursor is opaque. Sections and groups never split across pages: a page ends at a group boundary.
 - `POST /api/notifications/read` takes `{ ids?: number[] }`. Without ids it keeps today's behaviour (everything).
@@ -129,7 +130,8 @@ Entries older than 90 days are deleted by a daily job, along with their `notific
    - More entries staying unread on the web, because opening no longer marks everything read, is intended.
 3. **Group-wide read, hide and undo.**
    - Every group in the feed has an opaque `id` that names its group key and its section's time range for this person.
-   - `read` and `hide` take `{ ids?: number[], groups?: string[], category?: string }`, and the server expands a group to all its entries, not only the 20 `items`.
+   - `read` and `hide` take `{ ids?: number[], groups?: string[], category?: string, max?: number }`, and the server expands a group to all its entries, not only the 20 `items`.
+   - A group id carries the newest entry id of its page; a category carries `max`, the newest entry id the web's page knows. Entries that arrived later (the *N neu* pill) are neither read nor cleared.
    - `hide` stores the affected entry ids in kv under a random undo token for 30 seconds. `unhide` restores exactly those entries.
 4. ***Mein Bereich* and the phone.**
    - The /me page shows the newest 5 groups in the same row component, inline, with no sheet, no filters and no clear.

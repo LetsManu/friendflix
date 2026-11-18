@@ -100,9 +100,10 @@ function feed(st: NotesMock, filter: string, cursor: string | null, limit = PAGE
   return { sections, next: start + limit < all.length ? String(start + limit) : null, ...counts(st) };
 }
 
-/** the visible entries a selection names (ids, feed group ids, a filter) */
-function selected(st: NotesMock, sel: { ids?: number[]; groups?: string[]; category?: string }): NoteEntry[] {
-  return visible(st).filter((e) => !!sel.ids?.includes(e.id) || !!sel.groups?.includes(groupIdOf(e)) || (sel.category !== undefined && shows(e, sel.category)));
+/** the visible entries a selection names (ids, feed group ids, a filter up to the page's newest id `max`) */
+function selected(st: NotesMock, sel: { ids?: number[]; groups?: string[]; category?: string; max?: number }): NoteEntry[] {
+  return visible(st).filter((e) => !!sel.ids?.includes(e.id) || !!sel.groups?.includes(groupIdOf(e))
+    || (sel.category !== undefined && shows(e, sel.category) && (sel.max === undefined || e.id <= sel.max)));
 }
 
 type Reply = (b: unknown, status?: number) => Promise<void>;

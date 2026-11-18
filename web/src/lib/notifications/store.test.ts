@@ -238,6 +238,21 @@ describe('notifications feed store: baseline, reset, concurrency', () => {
     await s.read({ groups: ['a1'] });
     expect(get(s).fresh).toBe(0);
   });
+  it('a clear or read by filter sends the newest row id the page knows, so rows that arrived since stay', async () => {
+    const hide = vi.fn(async () => ({ undo: 'tok', n: 2 }));
+    const markRead = vi.fn(async () => ({ ok: true }));
+    const feed = vi.fn().mockResolvedValueOnce(pageOf([g('a1', { items: [{ id: 7, title: 'x', body: null, at: '' }, { id: 3, title: 'y', body: null, at: '' }] }), g('a9')], 3, 'c'))
+      .mockResolvedValueOnce(pageOf([g('b12')], 0));
+    const s = createFeed(fake({ feed, hide, markRead }));
+    await s.load('devices');
+    await s.read({ category: 'unread' });
+    expect(markRead).toHaveBeenLastCalledWith({ category: 'unread', max: 9 });
+    await s.more();
+    await s.hide({ category: 'devices' });
+    expect(hide).toHaveBeenLastCalledWith({ category: 'devices', max: 12 });
+    await s.hide({ groups: ['x'] }); // ids and groups carry their own bound
+    expect(hide).toHaveBeenLastCalledWith({ groups: ['x'] });
+  });
   it('a failed read or hide and an undo restore the baseline', async () => {
     const feed = vi.fn(async () => pageOf([bigGroup('a1', 2), bigGroup('a2', 1)], 3));
     const s = createFeed(fake({ feed, markRead: vi.fn(async () => { throw new Error('x'); }), hide: vi.fn().mockRejectedValueOnce(new Error('x')).mockResolvedValue({ undo: 'tok', n: 1 }) }));

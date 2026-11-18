@@ -159,6 +159,22 @@ describe('read, hide and undo', () => {
     expect(await titles(ben)).toEqual(['Bens Fernseher', 'Neu: Nordlicht']);
   });
 
+  it('a clear or read by category with the page\'s max leaves rows that arrived later', async () => {
+    const [, newest] = await seed([{ kind: 'tv_paired', title: 'Fernseher' }, { kind: 'device_pending', title: 'Neues Gerät' }]);
+    const [late] = await seed([{ kind: 'tv_paired', title: 'Fernseher spät' }]);
+    expect((await call(anna, 'POST', '/api/notifications/read', { category: 'unread', max: newest })).statusCode).toBe(200);
+    expect((await env.pool.query('select read_at from notifications where id = $1', [late])).rows[0].read_at).toBeNull();
+    expect((await countsOf(anna)).unread).toBe(1);
+    expect((await call(anna, 'POST', '/api/notifications/hide', { category: 'devices', max: newest })).json().n).toBe(2);
+    expect((await groupsOf(anna)).map((x) => x.title)).toEqual(['Fernseher spät']);
+    for (const max of [0, -1, 1.5, '3']) {
+      const r = await call(anna, 'POST', '/api/notifications/hide', { category: 'all', max });
+      expect([r.statusCode, r.json().error], String(max)).toEqual([400, 'invalid_body']);
+    }
+    // without max a category clear takes everything it shows now
+    expect((await call(anna, 'POST', '/api/notifications/hide', { category: 'all' })).json().n).toBe(1);
+  });
+
   it('undo expires', async () => {
     const [id1, id2] = await seed([{ title: 'Eins' }, { title: 'Zwei', kind: 'achievement' }]);
     vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });

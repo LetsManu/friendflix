@@ -6,14 +6,18 @@ import type { Ctx } from '../ctx.js';
 import { CATEGORIES, categoryOf, type Category } from './categories.js';
 import { fromSql, parseGroupId, readSql, visibleSql, type GroupRef } from './feed.js';
 
-/** What a read or a clear acts on: single entries, whole groups (feed group ids) and/or everything a filter shows. */
-export type Selection = { ids?: number[]; groups?: string[]; category?: Category | 'unread' | 'all' };
+/**
+ * What a read or a clear acts on: single entries, whole groups (feed group ids) and/or everything a filter shows. `max`: the newest
+ * row id the person's page knew; a category then leaves out rows that arrived after it (ids and groups carry their own bound).
+ */
+export type Selection = { ids?: number[]; groups?: string[]; category?: Category | 'unread' | 'all'; max?: number };
 
 /** The body of POST /read and /hide (strict: an unknown field is refused). */
 export const selectionSchema = z.strictObject({
   ids: z.array(z.number().int().positive()).max(200).optional(),
   groups: z.array(z.string().min(1).max(4096)).max(50).optional(),
   category: z.enum(['all', 'unread', ...CATEGORIES]).optional(),
+  max: z.number().int().positive().optional(),
 });
 
 /** No ids, no groups (an empty list counts as none) and no category. */
@@ -51,7 +55,7 @@ export function groupRefs(ctx: Pick<Ctx, 'encKey'>, userId: string, sel: Selecti
 /**
  * The rows a selection names among the person's visible rows (`t`: id, user_id), as a CTE over fromSql() with `$1` = the user id.
  * ids: those rows; a group: its key's rows in its time range up to its maxId (never rows that arrived after the page was loaded);
- * a category: the rows it shows now (`all`, `unread` or the visible kinds of the category). Several parts add up.
+ * a category: the rows it shows now (`all`, `unread` or the visible kinds of the category), up to `max` when given. Several parts add up.
  */
 async function targetSql(ctx: Pick<Ctx, 'db' | 'encKey'>, userId: string, sel: Selection, extra = 'true') {
   const groups = groupRefs(ctx, userId, sel);
@@ -64,12 +68,13 @@ async function targetSql(ctx: Pick<Ctx, 'db' | 'encKey'>, userId: string, sel: S
         ${p(groups.map((g) => g.to))}::timestamptz[], ${p(groups.map((g) => g.maxId))}::bigint[]) as g(gk, f, t, mx)
       where coalesce(n.group_key, n.kind || '|id:' || n.id) = g.gk and n.created_at >= g.f and n.created_at < g.t and n.id <= g.mx)`);
   }
-  if (sel.category === 'all') parts.push('true');
-  else if (sel.category === 'unread') parts.push(`not ${readSql()}`);
+  const upTo = sel.max === undefined ? '' : ` and n.id <= ${p(sel.max)}::bigint`;
+  if (sel.category === 'all') parts.push(`true${upTo}`);
+  else if (sel.category === 'unread') parts.push(`not ${readSql()}${upTo}`);
   else if (sel.category) {
     const kinds = (await ctx.db.query<{ kind: string }>(`select distinct n.kind from ${fromSql()} where ${visibleSql()}`, [userId])).rows
       .map((x) => x.kind).filter((k) => categoryOf(k) === sel.category);
-    parts.push(`n.kind = any(${p(kinds)}::text[])`);
+    parts.push(`n.kind = any(${p(kinds)}::text[])${upTo}`);
   }
   const where = parts.length ? parts.map((x) => `(${x})`).join(' or ') : 'false';
   return { cte: `t as (select n.id, n.user_id from ${fromSql()} where ${visibleSql()} and ${extra} and (${where}))`, params };
