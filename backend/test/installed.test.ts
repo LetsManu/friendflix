@@ -106,6 +106,8 @@ describe('installed build', () => {
     const { ctx, ttls } = ctxOf({ UPDATER_URL: 'http://updater:7070' }, f);
     expect(await installedBuild(ctx)).toMatchObject({ commit: B, time: '2026-11-01T00:00:00Z', source: 'self' });
     expect(ttls[`update:commit:${REPO}:${W}`]).toBe(60);
+    // the fallback is cached like any installed build (10 min): a failing commit time is not asked again every minute
+    expect(ttls[`update:installed:${REPO}`]).toBe(600);
     expect(await commitTime(ctx, W)).toBeNull();
     expect(f.calls.filter((c) => c.endsWith(`/commits/${W}`))).toHaveLength(1);
     // a service without a commit (an older image, a web that names its build otherwise, an unknown commit on GitHub): own commit

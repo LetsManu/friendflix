@@ -21,6 +21,8 @@ const TIMES: Record<string, string> = {
 const dig = (commit: string) => `sha256:${commit[0]!.repeat(64)}`;
 /** what the (fake) updater lists right now; null: it gives no listing */
 let listed: ServiceSeen[] | null = null;
+/** what web and the gateway answer when asked directly (installed.ts probes); null: not answering */
+const probes: { web: string | null; gateway: string | null } = { web: null, gateway: null };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
 const fetchImpl = async (input: unknown) => {
   const u = new URL(String(input));
@@ -29,6 +31,8 @@ const fetchImpl = async (input: unknown) => {
     return t ? json({ commit: { committer: { date: t } } }) : json({}, 404);
   }
   if (u.host === 'updater:7070' && u.pathname === '/v1/status') return listed ? json({ channel: 'stable', services: listed }) : json({}, 500);
+  if (u.host === 'web:3000' && probes.web) return json({ version: probes.web });
+  if (u.host === 'gateway:4000' && probes.gateway) return json({ status: 'ok', image: probes.gateway });
   throw new TypeError('fetch failed'); // the services themselves do not answer
 };
 /** with the updater (UPDATER_URL), the installed build comes from its listing; without, from this backend alone (no service answers) */
@@ -157,6 +161,40 @@ describe('Portainer redeploy phases', () => {
     const { fromServices: _gone, ...older } = r;
     await kv.set(REDEPLOY_KEY, JSON.stringify(older), 60);
     expect(await view(ctx, all(OLD))).toBeNull();
+    // the same without where the start's installed build came from, or with an unknown source
+    const { source: _src, ...noSource } = r;
+    for (const v of [noSource, { ...r, source: 'guess' }]) {
+      await kv.set(REDEPLOY_KEY, JSON.stringify(v), 60);
+      expect(await view(ctx, all(OLD))).toBeNull();
+    }
+  });
+
+  it('a mid-redeploy "self" answer (a service not answering while recreated) does not count as a new build', async () => {
+    // no updater: the start knew every service (probes), web is newest; then web is down while Portainer recreates it, the
+    // installed build falls back to this backend's own commit, which is not "another build"
+    const kv = new MemoryKV();
+    const ctx = ctxOf(undefined, kv, false, { GIT_SHA: undefined, FF_IMAGE_COMMIT: B });
+    Object.assign(probes, { web: W1, gateway: G });
+    try {
+      const id = (await claimRedeploy(ctx, T0))!;
+      expect(await beginRedeploy(ctx, id, 'webhook', 'nightly', false, T0)).toBe(true);
+      expect(JSON.parse((await kv.get(REDEPLOY_KEY))!)).toMatchObject({ from: W1, source: 'probes' });
+      probes.web = null;
+      expect(await view(ctx, undefined, T0 + 20_000, BEFORE)).toMatchObject({ phase: 'pulling', running: true });
+      probes.web = W2;
+      expect(await view(ctx, undefined, T0 + 40_000, BEFORE)).toMatchObject({ phase: 'done' });
+    } finally {
+      Object.assign(probes, { web: null, gateway: null });
+    }
+  });
+
+  it('a service still on its start value is waited for while the registry cannot say (changed null)', async () => {
+    // every image rebuilt: the backend already runs the new one, gateway and web not yet; a registry outage leaves `changed` null
+    const kv = new MemoryKV();
+    await start(ctxOf(OLD, kv));
+    const mid = all(OLD, { backend: svc('backend', NEW) });
+    expect(await view(ctxOf(NEW, kv), mid, T0 + 30_000, T0 + 20_000)).toMatchObject({ phase: 'recreating', running: true, services: { updated: 1, total: 3 } });
+    expect(await view(ctxOf(NEW, kv), all(NEW), T0 + 40_000, T0 + 20_000)).toMatchObject({ phase: 'done' });
   });
 
   it('a web-only redeploy is done when web runs its new commit, judged without GIT_SHA', async () => {

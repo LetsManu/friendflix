@@ -11,7 +11,7 @@ import { imageCommit } from './version.js';
  * the newest image commit (by commit time) among the FriendFlix services an update installs: from the updater's listing when it
  * answers, else by asking the services (web's /_app/version.json, the gateway's /health, livetv's health), the backend's own
  * otherwise. Whatever cannot be told (a service without a commit, a commit time GitHub does not give) falls back to this backend's
- * own image commit (`source: 'self'`), never to "the newest of the rest". Cached 10 minutes (a fallback 1 minute).
+ * own image commit (`source: 'self'`), never to "the newest of the rest". Cached 10 minutes.
  */
 export interface InstalledBuild {
   /** 40 hex, or 'dev' for a local build */
@@ -24,8 +24,6 @@ export interface InstalledBuild {
 }
 
 const TTL = 600;
-/** a fallback (a service or a commit time could not be told) is asked again sooner */
-const SELF_TTL = 60;
 const TIME_TTL = 604_800;
 const TIME_ERR_TTL = 60;
 const PROBE_MS = 3_000;
@@ -130,7 +128,7 @@ function parse(raw: string | null, own: string): InstalledBuild | null {
 
 const cacheKey = (cfg: Ctx['cfg']) => `update:installed:${cfg.UPDATE_REPO}`;
 /** the installed build from the cache only (no request); null when nothing is cached */
-export async function cachedInstalled(ctx: Pick<Ctx, 'kv' | 'cfg'>): Promise<InstalledBuild | null> {
+async function cachedInstalled(ctx: Pick<Ctx, 'kv' | 'cfg'>): Promise<InstalledBuild | null> {
   return parse(await ctx.kv.get(cacheKey(ctx.cfg)).catch(() => null), imageCommit(ctx.cfg));
 }
 
@@ -152,7 +150,7 @@ export async function installedBuild(ctx: Ctx, opts: { fresh?: boolean } = {}): 
   const p = (async () => {
     try {
       const b = await compute(ctx, own);
-      await ctx.kv.set(cacheKey(ctx.cfg), JSON.stringify(b), b.source === 'self' ? SELF_TTL : TTL).catch(() => undefined);
+      await ctx.kv.set(cacheKey(ctx.cfg), JSON.stringify(b), TTL).catch(() => undefined);
       return b;
     } finally {
       inflight.delete(ctx);

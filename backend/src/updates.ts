@@ -3,15 +3,17 @@
 import { audit } from './audit.js';
 import { buildInfo, channelTag, channelUpdate, envLine, hookWithTag, withTag, type BuildKind, type Channel, type RunningChannel } from './channel.js';
 import type { Ctx } from './ctx.js';
-import { cachedInstalled, installedBuild } from './installed.js';
+import { installedBuild } from './installed.js';
 import { abandonRedeploy, beginRedeploy, claimRedeploy, settleRedeploy } from './redeploy.js';
 import { REPORT_SERVICES, updaterView } from './updater.js';
-import { appVersion, codenameFor, compareSemver, imageCommit, parseSemver } from './version.js';
+import { appVersion, codenameFor, compareSemver, parseSemver } from './version.js';
 
 const TTL = 600;
 const CACHE_MS = 'update:info:';
 /** the kv key of the cached GitHub answer for the installed build (installed.ts) */
 const infoKey = (cfg: Ctx['cfg'], installed: string): string => `${CACHE_MS}${cfg.UPDATE_REPO}:${installed}:${appVersion(cfg).version}`;
+/** the key of the GitHub answer cached last (what cachedReleaseVersion reads: the installed build's own cache may run out first) */
+const lastInfoKey = (cfg: Ctx['cfg']): string => `${CACHE_MS}${cfg.UPDATE_REPO}:last`;
 const GH = 'https://api.github.com';
 
 export interface Latest { sha: string; date: string; runUrl: string }
@@ -122,7 +124,8 @@ async function fetchLatest(ctx: Ctx, cur: string): Promise<Fetched> {
 /** The newest release's version from the cached GitHub answer only (no request); null when nothing is cached or there is no release. */
 export async function cachedReleaseVersion(ctx: Pick<Ctx, 'kv' | 'cfg'>): Promise<string | null> {
   try {
-    const hit = await ctx.kv.get(infoKey(ctx.cfg, (await cachedInstalled(ctx))?.commit ?? imageCommit(ctx.cfg)));
+    const key = await ctx.kv.get(lastInfoKey(ctx.cfg));
+    const hit = key ? await ctx.kv.get(key) : null;
     return hit ? ((JSON.parse(hit) as Partial<Fetched>).release?.version ?? null) : null;
   } catch {
     return null;
@@ -170,7 +173,7 @@ export async function updateInfo(ctx: Ctx, refresh = false): Promise<UpdateInfo>
   }
   try {
     const f = await fetchLatest(ctx, installed.commit);
-    await ctx.kv.set(key, JSON.stringify(f), TTL).catch(() => undefined);
+    await ctx.kv.set(key, JSON.stringify(f), TTL).then(() => ctx.kv.set(lastInfoKey(ctx.cfg), key, TTL)).catch(() => undefined);
     return withState(f);
   } catch (e) {
     return { ...base, channel, release: null, updateAvailable: null, latest: null, behind: null, commits: [], error: e instanceof Error && e.message.startsWith('GitHub ') ? e.message : 'github_unreachable' };

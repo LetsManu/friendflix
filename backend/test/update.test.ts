@@ -101,6 +101,19 @@ describe('admin update', () => {
     expect(await env.kv.get(`update:info:${env.ctx.cfg.UPDATE_REPO}:${WEB}:${VERSION_JSON.version}`)).not.toBeNull();
   });
 
+  it('the cached release version survives the installed build\'s cache running out', async () => {
+    release = rel('v1.1.0');
+    webVersion = WEB; times[WEB] = '2026-01-05T00:00:00Z'; // the installed build (web's) is not the backend's own commit
+    const { get } = await setup({ APP_VERSION: '1.0.0' });
+    expect((await get()).json().current.sha).toBe(WEB);
+    const { cachedReleaseVersion } = await import('../src/updates.js');
+    expect(await cachedReleaseVersion(env.ctx)).toBe('1.1.0');
+    await env.kv.del(`update:installed:${env.ctx.cfg.UPDATE_REPO}`); // its 10 minutes ran out first
+    const before = seen.length;
+    expect(await cachedReleaseVersion(env.ctx)).toBe('1.1.0');
+    expect(seen.length).toBe(before); // still no request
+  });
+
   it('GitHub failure gives latest null, not a 500', async () => {
     const { get } = await setup({}, 'fail');
     const r = await get();
