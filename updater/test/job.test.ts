@@ -343,6 +343,53 @@ describe('update job', () => {
     expect(w.calls.filter((c) => c.startsWith('up ')).length).toBe(1);
   });
 
+  it('a service that ran nothing before (or whose state could not be read) does not keep the others from rolling back', async () => {
+    // web is not running before the update: it has nothing to go back to, backend and gateway do
+    const w = world({ unhealthy: ['b'], running: { web: null } });
+    const { u, store } = make(w);
+    u.start('update');
+    await u.idle();
+    expect(store.state.lastJob).toMatchObject({ state: 'rolled_back', error: 'unhealthy', steps: { rollback: 'ok' } });
+    expect(w.runs).toMatchObject({ backend: 'a', gateway: 'a' });
+    // gateway's running container could not be read during the compare: the same
+    const f = world({ unhealthy: ['b'] });
+    const running = f.ops.running;
+    let first = true;
+    f.ops.running = async (svc) => { if (svc === 'gateway' && first) { first = false; throw new Error('docker did not answer'); } return running(svc); };
+    const m = make(f);
+    m.u.start('update');
+    await m.u.idle();
+    expect(m.store.state.lastJob).toMatchObject({ state: 'rolled_back', error: 'unhealthy', steps: { rollback: 'ok' } });
+    expect(f.runs).toMatchObject({ backend: 'a', web: 'a' });
+  });
+
+  it('builds without own digests (dev): no automatic rollback; a successful update clears the earlier rollback target', async () => {
+    const Z = { backend: ref('backend', 'c'), gateway: ref('gateway', 'c'), web: ref('web', 'c') };
+    /** the services run dev builds (no digest of this repository) until the update's `up` */
+    const dev = (w: World) => {
+      const running = w.ops.running, up = w.ops.up;
+      let before = true;
+      w.ops.running = async (svc) => { const r = await running(svc); return r && before ? { ...r, repoDigests: [] } : r; };
+      w.ops.up = async (tag, services) => { before = false; return up(tag, services); };
+      return w;
+    };
+    // healthy: z is no longer what the job left behind ("back" would skip a build), so there is no rollback target any more
+    for (const init of [{ previousDigests: Z, previous: null }, { previousDigests: null, previous: 'sha-1234567' }]) {
+      const w = dev(world());
+      const { u, store } = make(w, init);
+      u.start('update');
+      await u.idle();
+      expect(store.state).toMatchObject({ current: 'latest', previousDigests: null, previous: null, lastJob: { state: 'succeeded' } });
+      expect(u.start('rollback')).toEqual({ ok: false, error: 'no_previous' });
+    }
+    // unhealthy: a service that ran something without a digest has nothing to go back to: the job just fails, the target stays
+    const w = dev(world({ unhealthy: ['b'] }));
+    const { u, store } = make(w, { previousDigests: Z, previous: null });
+    u.start('update');
+    await u.idle();
+    expect(store.state).toMatchObject({ previousDigests: Z, lastJob: { state: 'failed', error: 'unhealthy', steps: { rollback: 'skipped' } } });
+  });
+
   it('one job at a time', async () => {
     const { u } = make(world());
     expect(u.start('update').ok).toBe(true);

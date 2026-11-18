@@ -372,6 +372,8 @@ const fr: Translation<typeof de> = {
         compose_config: 'configuration compose illisible (une stack Portainer ? Configure alors le webhook ou l’API Portainer dans Admin → Paramètres → Mises à jour)',
         foreign_stack: 'la stack est gérée par Portainer (ou un autre outil), le programme de mise à jour ne la recrée pas ; rien n’a été modifié',
         config_mismatch: 'les fichiers compose et le .env publieraient d’autres ports ou réseaux que les conteneurs en cours (variables définies ailleurs, p. ex. BIND_ADDR ?), rien n’a été redémarré',
+        registry_failed: 'registre injoignable – rien n’a été téléchargé ni redémarré',
+        tag_failed: 'impossible de poser le tag local de l’image (échec de docker image tag)',
         unknown: 'erreur inconnue',
       },
       foreign: {

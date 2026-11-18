@@ -46,6 +46,8 @@ export default {
     no_updater: 'Ohne Updater geht das nur von Hand.',
     foreign_stack: 'Dieser Stack wird von Portainer oder einem anderen Werkzeug verwaltet. Ändere es dort.',
     busy: 'Der Updater ist gerade beschäftigt. Versuch es gleich noch einmal.',
+    registry_failed: 'Die Registry war nicht erreichbar. Es wurde nichts geladen oder gestartet. Versuch es gleich noch einmal.',
+    tag_failed: 'Das geladene Image ließ sich lokal nicht markieren (docker image tag). Es wurde nichts gestartet.',
     updaterBusy: 'Ein Update läuft gerade. Danach geht es wieder.',
     tooSoon: 'Zu viele Versuche. Warte ein paar Minuten.',
     generic: 'Das hat nicht geklappt.',

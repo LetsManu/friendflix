@@ -48,6 +48,8 @@ const dict: Translation<typeof de> = {
     no_updater: 'Without the updater this has to be done by hand.',
     foreign_stack: 'This stack is managed by Portainer or another tool. Change it there.',
     busy: 'The updater is busy right now. Try again in a moment.',
+    registry_failed: 'The registry could not be reached. Nothing was downloaded or started. Try again in a moment.',
+    tag_failed: 'The downloaded image could not be tagged locally (docker image tag). Nothing was started.',
     updaterBusy: 'An update is running right now. Try again afterwards.',
     tooSoon: 'Too many attempts. Wait a few minutes.',
     generic: 'That did not work.',

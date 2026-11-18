@@ -372,6 +372,8 @@ const tr: Translation<typeof de> = {
         compose_config: 'compose yapılandırması okunamıyor (bir Portainer yığını mı? O zaman Portainer webhook’unu veya API’sini Admin → Ayarlar → Güncellemeler altında ayarla)',
         foreign_stack: 'yığın Portainer (ya da başka bir araç) tarafından yönetiliyor, güncelleyici onu yeniden oluşturmuyor; hiçbir şey değiştirilmedi',
         config_mismatch: 'compose dosyaları ve .env, çalışan konteynerlerden farklı portlar veya ağlar yayınlardı (başka yerde ayarlanmış değişkenler, ör. BIND_ADDR?), hiçbir şey yeniden başlatılmadı',
+        registry_failed: 'kayıt defterine (registry) ulaşılamadı – hiçbir şey indirilmedi veya yeniden başlatılmadı',
+        tag_failed: 'yerel imaj etiketi ayarlanamadı (docker image tag başarısız)',
         unknown: 'bilinmeyen hata',
       },
       foreign: {

@@ -14,6 +14,8 @@ interface Target { service: string; image: string; ref: string; before: Running 
 type Targets = Record<string, Target>;
 /** what a job does with livetv: nothing (not enabled), bring it to this target (pulled and verified), or drop it for this reason */
 type LivetvPlan = 'off' | Target | LivetvError;
+/** prepareLivetv's answer when livetv's registry lookup failed: nothing about its image at the tag is known */
+const LIVETV_UNKNOWN = 'unknown' as const;
 
 /** What a job needs from Docker (docker.ts in production, a fake in the tests). */
 export interface Ops {
@@ -392,7 +394,7 @@ export class Updater {
    * and verified when it changed. A fixed error code when its image is missing, does not resolve to this repository's or is not
    * verified; the target when it may start.
    */
-  private async prepareLivetv(tag: string): Promise<Target | LivetvError> {
+  private async prepareLivetv(tag: string): Promise<Target | LivetvError | typeof LIVETV_UNKNOWN> {
     let t: Target;
     try {
       const images = await this.ops.images(tag, LIVETV);
@@ -403,7 +405,7 @@ export class Updater {
       const code = livetvCode(e);
       const detail = e instanceof StepError ? e.detail ?? (e.code !== code ? e.code : null) : null;
       this.log.add(`livetv: ${code}${detail ? ` (${detail})` : ''}`);
-      return code;
+      return e instanceof StepError && e.code === 'registry_failed' ? LIVETV_UNKNOWN : code;
     }
     if (!t.changed) return t;
     try { await this.verifyRefs([t.ref]); } catch { return 'verify_failed'; }
@@ -502,8 +504,14 @@ export class Updater {
       const moved = Object.values(core).filter((t) => t.changed).map((t) => t.ref);
       if (moved.length) await this.step(job, 'verify', () => this.verifyRefs(moved));
       // livetv after the core services are verified, on its own (its failure never fails the core pull)
-      livetv = this.state.livetv === 'enabled' ? await this.prepareLivetv(job.to) : 'off';
-      if (!moved.length && !(typeof livetv === 'object' && livetv.changed)) return await this.unchanged(job, core, livetv);
+      const prepared = this.state.livetv === 'enabled' ? await this.prepareLivetv(job.to) : 'off';
+      // livetv's registry did not answer: when the core services move it is dropped (pull_failed) as always; when nothing
+      // moves it stays as it runs (a nightly update without changes never turns Live TV off for a registry hiccup)
+      livetv = prepared === LIVETV_UNKNOWN ? 'pull_failed' : prepared;
+      if (!moved.length && !(typeof livetv === 'object' && livetv.changed)) {
+        if (prepared === LIVETV_UNKNOWN) this.log.add('livetv left as it runs (registry_failed)');
+        return await this.unchanged(job, core, prepared === LIVETV_UNKNOWN ? 'off' : livetv);
+      }
       // only livetv changed: its image was verified on its own
       if (!moved.length) { job.steps.verify = 'ok'; this.persist(); }
     } catch (e) {
@@ -518,11 +526,14 @@ export class Updater {
     try {
       job.services = await this.bringUp(job, job.to, core, livetv, true);
       this.state.current = job.to;
+      // nothing of this repository ran before (dev builds): the earlier target is no longer one update back, there is none
+      if (!Object.keys(prev).length) { this.state.previousDigests = null; this.state.previous = null; }
       this.persist();
     } catch (e) {
       const code = (e as StepError).code;
-      // every service this job moved needs a digest to go back to (none for a dev build)
-      if (!autoRollback || Object.values(core).some((t) => t.changed && !prev[t.service])) return this.finishJob(job, 'failed', code);
+      // a rollback needs digests to go back to, and no moved service that ran a build without one (a dev build); a service
+      // that ran nothing before (or could not be read) has nothing to go back to and keeps the new build
+      if (!autoRollback || !Object.keys(prev).length || Object.values(core).some((t) => t.changed && t.before && !prev[t.service])) return this.finishJob(job, 'failed', code);
       this.log.add('rolling back to the previous digests');
       job.steps.rollback = 'pending';
       try {

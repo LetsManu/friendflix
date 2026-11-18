@@ -48,6 +48,8 @@ const dict: Translation<typeof de> = {
     no_updater: 'Bez aktualizatora trzeba to zrobić ręcznie.',
     foreign_stack: 'Ten stos jest zarządzany przez Portainera lub inne narzędzie. Zmień to tam.',
     busy: 'Aktualizator jest teraz zajęty. Spróbuj za chwilę.',
+    registry_failed: 'Rejestr jest nieosiągalny. Nic nie zostało pobrane ani uruchomione. Spróbuj za chwilę.',
+    tag_failed: 'Nie udało się lokalnie oznaczyć pobranego obrazu (docker image tag). Nic nie zostało uruchomione.',
     updaterBusy: 'Trwa aktualizacja. Spróbuj po jej zakończeniu.',
     tooSoon: 'Zbyt wiele prób. Poczekaj kilka minut.',
     generic: 'To się nie udało.',

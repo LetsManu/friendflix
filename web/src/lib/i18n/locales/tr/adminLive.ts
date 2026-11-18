@@ -48,6 +48,8 @@ const dict: Translation<typeof de> = {
     no_updater: 'Güncelleyici olmadan bunun elle yapılması gerekir.',
     foreign_stack: 'Bu yığını Portainer veya başka bir araç yönetiyor. Değişikliği orada yapın.',
     busy: 'Güncelleyici şu anda meşgul. Birazdan tekrar deneyin.',
+    registry_failed: 'Kayıt defterine (registry) ulaşılamadı. Hiçbir şey indirilmedi veya başlatılmadı. Birazdan tekrar deneyin.',
+    tag_failed: 'İndirilen imaj yerel olarak etiketlenemedi (docker image tag). Hiçbir şey başlatılmadı.',
     updaterBusy: 'Şu anda bir güncelleme çalışıyor. Bittikten sonra tekrar deneyin.',
     tooSoon: 'Çok fazla deneme. Birkaç dakika bekleyin.',
     generic: 'Bu işe yaramadı.',

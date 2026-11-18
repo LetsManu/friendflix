@@ -371,6 +371,8 @@ export default {
         compose_config: 'Compose-Konfiguration nicht lesbar (ein Portainer-Stack? Dann den Portainer-Webhook oder die API unter Admin → Einstellungen → Updates eintragen)',
         foreign_stack: 'der Stack wird von Portainer (oder einem anderen Werkzeug) verwaltet, der Updater erstellt ihn nicht neu; nichts wurde verändert',
         config_mismatch: 'Compose-Dateien und .env würden andere Ports oder Netzwerke veröffentlichen als die laufenden Container (Variablen anderswo gesetzt, z. B. BIND_ADDR?), nichts wurde neu gestartet',
+        registry_failed: 'Registry nicht erreichbar – nichts wurde geladen oder neu gestartet',
+        tag_failed: 'Image-Tag ließ sich lokal nicht setzen (docker image tag fehlgeschlagen)',
         unknown: 'unbekannter Fehler',
       },
       foreign: {

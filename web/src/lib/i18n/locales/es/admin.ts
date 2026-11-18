@@ -372,6 +372,8 @@ const es: Translation<typeof de> = {
         compose_config: 'configuración de compose ilegible (¿una pila de Portainer? Entonces configura el webhook o la API de Portainer en Admin → Ajustes → Actualizaciones)',
         foreign_stack: 'la pila la gestiona Portainer (u otra herramienta), el actualizador no la vuelve a crear; no se cambió nada',
         config_mismatch: 'los archivos compose y el .env publicarían otros puertos o redes que los contenedores en ejecución (¿variables definidas en otro sitio, p. ej. BIND_ADDR?), no se reinició nada',
+        registry_failed: 'registro no accesible – no se descargó ni reinició nada',
+        tag_failed: 'no se pudo asignar la etiqueta local de la imagen (falló docker image tag)',
         unknown: 'error desconocido',
       },
       foreign: {

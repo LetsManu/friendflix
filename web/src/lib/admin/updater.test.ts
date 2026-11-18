@@ -104,6 +104,11 @@ describe('updater panel logic', () => {
     expect(startError(new ApiError(502, { error: 'portainer', status: 500, step: 'webhook' }))).toBe(tr('admin.update.updater.error.portainer'));
     expect(failReason('foreign_stack')).toBe(tr('admin.update.updater.failReason.foreign_stack'));
     expect(failReason('config_mismatch')).toBe(tr('admin.update.updater.failReason.config_mismatch'));
+    // the digest-based update's own codes: the registry did not answer, a local tag could not be moved (never "unknown error")
+    for (const c of ['registry_failed', 'tag_failed']) {
+      expect(failReason(c)).toBe(tr(`admin.update.updater.failReason.${c}` as 'admin.update.updater.failReason.unknown'));
+      expect(failReason(c)).not.toBe(tr('admin.update.updater.failReason.unknown'));
+    }
   });
 
   it('every updater string exists in all seven languages', async () => {
@@ -114,7 +119,7 @@ describe('updater panel logic', () => {
       'failReason.unhealthy', 'failReason.restart_failed', 'failReason.rollback_failed', 'failReason.interrupted', 'failReason.self_update_timeout', 'failReason.unexpected_image', 'failReason.media_server_mismatch',
       'failReason.compose_config', 'failReason.unknown', 'unauthorized', 'invalid', 'log', 'auto.title', 'auto.label', 'auto.off', 'auto.window', 'auto.time',
       'auto.save', 'auto.saved', 'auto.locked', 'auto.hint', 'auto.timeInvalid', 'foreign.portainer', 'foreign.manual', 'foreign.started', 'foreign.workdir', 'confirm.updatePortainer', 'error.foreign_stack', 'error.portainer',
-      'error.portainer_unreachable', 'failReason.foreign_stack', 'failReason.config_mismatch',
+      'error.portainer_unreachable', 'failReason.foreign_stack', 'failReason.config_mismatch', 'failReason.registry_failed', 'failReason.tag_failed',
       'flow.stepOf', 'flow.done', 'flow.stopped', 'flow.duration', 'flow.code', 'flow.retry', 'flow.label', 'flow.advice', 'flow.noAnswer', 'result.failedAt', 'redeploy.head.failedAt', 'redeploy.advice.failedAt', 'redeploy.httpStatus', 'redeploy.step.request', 'redeploy.detailStep',
       'redeploy.stepName.webhook', 'redeploy.stepName.stack', 'redeploy.stepName.stack_file', 'redeploy.stepName.redeploy', 'redeploy.stepName.deploy'];
     for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {

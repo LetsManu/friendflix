@@ -392,6 +392,8 @@ const pl: Translation<typeof de> = {
         compose_config: 'nieczytelna konfiguracja compose (stos Portainera? Wtedy ustaw webhook lub API Portainera w Admin → Ustawienia → Aktualizacje)',
         foreign_stack: 'stosem zarządza Portainer (lub inne narzędzie), aktualizator go nie odtwarza; nic nie zostało zmienione',
         config_mismatch: 'pliki compose i .env opublikowałyby inne porty lub sieci niż działające kontenery (zmienne ustawione gdzie indziej, np. BIND_ADDR?), nic nie zostało zrestartowane',
+        registry_failed: 'rejestr nieosiągalny – nic nie zostało pobrane ani zrestartowane',
+        tag_failed: 'nie udało się ustawić lokalnego tagu obrazu (docker image tag nie powiódł się)',
         unknown: 'nieznany błąd',
       },
       foreign: {

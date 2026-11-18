@@ -538,12 +538,26 @@ describe('livetv jobs', () => {
       `${P} up -d --no-deps --pull never bootstrap backend gateway web`, `${P} stop livetv`, `${P} rm -f livetv`]);
     expect(v.store.state).toMatchObject({ current: 'latest', livetv: 'disabled', livetvError: 'verify_failed', lastJob: { state: 'succeeded', services: { backend: 'updated' } } });
     expect(v.store.state.lastJob?.services).not.toHaveProperty('livetv');
-    // nothing changed but livetv's image cannot be had at the tag: dropped all the same, nothing else moves
+    // nothing changed and livetv's registry lookup fails: nothing is known about livetv, it stays as it runs (logged); a nightly
+    // update with no changes never turns Live TV off for a registry hiccup
     const n = make({ core: 'b', livetv: { state: 'running', health: 'healthy' }, livetvPullFails: ['latest'] }, { livetv: 'enabled' });
     n.u.start('update');
     await n.u.idle();
-    expect(changing(n)).toEqual([`${P} stop livetv`, `${P} rm -f livetv`]);
-    expect(n.store.state).toMatchObject({ livetv: 'disabled', livetvError: 'pull_failed', lastJob: { state: 'succeeded', steps: { restart: 'skipped' } } });
+    expect(changing(n)).toEqual([]);
+    expect(n.w.livetv).toEqual({ state: 'running', health: 'healthy' });
+    expect(n.store.state).toMatchObject({ livetv: 'enabled', livetvError: null, lastJob: { state: 'succeeded', steps: { restart: 'skipped' } } });
+    expect(logged(n, 'livetv left as it runs (registry_failed)')).toBe(true);
+    // nothing else changed, but livetv's new image does not verify or the compose files do not fit it: dropped as before
+    const nv = make({ core: 'b', livetv: { state: 'running', health: 'healthy' }, verifyFails: 'friendflix-livetv' }, { livetv: 'enabled' });
+    nv.u.start('update');
+    await nv.u.idle();
+    expect(changing(nv)).toEqual([`docker pull --quiet ${ref('livetv', 'b')}`, `${COSIGN} ${ref('livetv', 'b')}`, `${P} stop livetv`, `${P} rm -f livetv`]);
+    expect(nv.store.state).toMatchObject({ livetv: 'disabled', livetvError: 'verify_failed', lastJob: { state: 'succeeded', steps: { restart: 'skipped' } } });
+    const nc = make({ core: 'b', livetv: { state: 'running', health: 'healthy' }, livetvDrift: true }, { livetv: 'enabled' });
+    nc.u.start('update');
+    await nc.u.idle();
+    expect(changing(nc)).toEqual([`${P} stop livetv`, `${P} rm -f livetv`]);
+    expect(nc.store.state).toMatchObject({ livetv: 'disabled', livetvError: 'config_mismatch', lastJob: { state: 'succeeded', steps: { restart: 'skipped' } } });
   });
 
   it('an update with an unhealthy livetv completes for the core services and disables livetv', async () => {
