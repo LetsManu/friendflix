@@ -10,6 +10,7 @@ import { startRedeploy, updaterRoute, updaterState, type UpdaterMock } from './u
 import { syscheckDrip, syscheckRoute, syscheckSocket, syscheckState, syscheckUpload, type SyscheckMock } from './syscheck.js';
 import { livetvMedia, livetvRoute, livetvState, type LivetvMock } from './livetv.js';
 import { brandAdminRoute, brandAdminState, type BrandAdminMock } from './brand.js';
+import { notesRoute, notesState, type NotesMock } from './notes.js';
 
 /** E-mail stage C: the person and admin mail types, in the backend's order */
 const PERSON_MAIL_TYPES = ['available', 'recording', 'licence', 'digest'] as const;
@@ -152,6 +153,8 @@ export interface MockState {
   accountMail: { configured: boolean; hasAddress: boolean; admin: boolean; prefs: Record<MailType, boolean>; failPut: boolean };
   /** POST /api/public/mail/unsubscribe (the public page): the JSON bodies sent, and the status to answer (400 = invalid_token) */
   unsubscribe: { posts: Array<Record<string, unknown>>; status: number };
+  /** the notifications center (mocks/notes.ts): the feed, read, hide and unhide */
+  notes: NotesMock;
 }
 export interface MockAccount {
   name: string; email: string | null; avatar: string;
@@ -232,6 +235,7 @@ export function freshState(): MockState {
     usernameError: null,
     accountMail: { configured: true, hasAddress: true, admin: false, prefs: { available: true, recording: true, licence: true, digest: false, update: true, updatefailed: true, syscheck: true, storage: true }, failPut: false },
     unsubscribe: { posts: [], status: 200 },
+    notes: notesState(),
   };
 }
 
@@ -385,8 +389,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     if ((mm = p.match(/^\/api\/devices\/([^/]+)$/)) && m === 'DELETE') { st.devices = st.devices.filter((d) => d.id !== mm![1]); return J({ ok: true }); }
     if (p === '/api/sessions/revoke-others' && m === 'POST') return J({ revoked: st.revokedOthers });
-    if (p === '/api/notifications') return J({ notifications: [{ id: 'n1', title: 'Anna hat dich zur Liste „Annas Klassiker“ eingeladen', link: '/lists/' + st.lists[1]!.id, read: false }] });
-    if (p === '/api/notifications/read') return J({ ok: true });
+    if (p === '/api/notifications' && !st.notes.legacyFromFeed) return J({ notifications: [{ id: 'n1', title: 'Anna hat dich zur Liste „Annas Klassiker“ eingeladen', link: '/lists/' + st.lists[1]!.id, read: false }] });
+    if (p.startsWith('/api/notifications')) { const r = notesRoute(st.notes, m, p, sp, body, J); if (r) return r; }
     if (p === '/api/prefs') return J({ prefs: st.audioFx ? { audioFx: st.audioFx } : {} });
     if (p === '/api/prefs/audiofx' && m === 'PUT') { st.audioFx = body().audioFx; return J({ audioFx: st.audioFx }); }
     if (p === '/api/push/config') return J({ enabled: false }); // settings page: push not set up on the mock server

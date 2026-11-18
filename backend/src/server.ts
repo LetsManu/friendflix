@@ -4,6 +4,7 @@ import { Redis } from 'ioredis';
 import pg from 'pg';
 import { updateAlertTick } from './adminAlerts.js';
 import { syscheckAlertTick } from './syscheckAlerts.js';
+import { notesRetentionTick } from './notifications/retention.js';
 import { buildApp } from './app.js';
 import { serviceHosts, watchUntrustedHosts } from './netaddr.js';
 import { loadConfig, removedEnvNames } from './config.js';
@@ -237,6 +238,8 @@ if (cfg.BACKGROUND_JOBS === 'true') {
   }, 60_000));
   // admin alerts (adminAlerts.ts, syscheckAlerts.ts): a new version (the check at most every 6 h across instances) and Systemcheck lines turning into a problem
   timers.push(setInterval(() => { if (op()) void updateAlertTick(ctx).catch(jobFailed(ctx, app.log, 'update-alert', 'update alert tick failed')); }, 3_600_000));
+  // notifications older than 90 days (notifications/retention.ts): once a day across instances (kv day key)
+  timers.push(setInterval(() => { if (op()) void notesRetentionTick(ctx).catch(jobFailed(ctx, app.log, 'notes-retention', 'notifications retention tick failed')); }, 3_600_000));
   timers.push(setInterval(() => { if (op()) void syscheckAlertTick(ctx).catch(jobFailed(ctx, app.log, 'syscheck-alert', 'syscheck alert tick failed')); }, 900_000));
   if (op()) void healthTick(ctx);
   timers.push(setInterval(() => { if (op()) void langIndexTick(ctx); }, 1800_000)); // self-limits to every 12 h, never throws

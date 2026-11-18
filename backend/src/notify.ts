@@ -6,6 +6,7 @@ import { broadcastLanguage, isMsg, renderKnown, renderNotice, userLanguage, type
 export { renderNotice, type Rendered } from './i18n.js';
 import { mailPerson, type MailPrefType } from './mail/people.js';
 import { sendWebPush } from './push.js';
+import { groupKey } from './notifications/categories.js';
 
 export interface Notice {
   /** null = broadcast to everyone */
@@ -54,9 +55,11 @@ export async function notify(ctx: Pick<Ctx, 'db' | 'cfg' | 'fetchImpl' | 'encKey
   const instLang = await broadcastLanguage(ctx);
   const lang = n.userId ? await userLanguage(ctx, n.userId) : instLang;
   const text = renderNotice(n, lang);
+  // the id is taken first so a never-grouped kind gets its final key (`kind|id:<id>`) in the same insert; a conflict burns one value, which is fine
+  const id = Number((await ctx.db.query<{ id: string }>("select nextval(pg_get_serial_sequence('notifications','id')) as id")).rows[0]!.id);
   const r = await ctx.db.query(
-    'insert into notifications(user_id, kind, title, body, link, dedupe, msg) values ($1,$2,$3,$4,$5,$6,$7) on conflict (dedupe) do nothing returning id',
-    [n.userId, n.kind, text.title, text.body ?? null, n.link ?? null, n.dedupe ?? null, storedMsg(n)],
+    'insert into notifications(id, user_id, kind, title, body, link, dedupe, msg, group_key) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) on conflict (dedupe) do nothing returning id',
+    [id, n.userId, n.kind, text.title, text.body ?? null, n.link ?? null, n.dedupe ?? null, storedMsg(n), groupKey(n.kind, n.title, id)],
   );
   if (!r.rowCount) return false;
   // Web Push: fire-and-forget, never blocks or fails the caller (tests await sendWebPush directly)

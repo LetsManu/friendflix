@@ -50,7 +50,6 @@ export default {
   bell: {
     label: 'Benachrichtigungen',
     unread: 'Benachrichtigungen, {n} neu',
-    empty: 'Keine Benachrichtigungen',
   },
   account: {
     label: 'Profilmenü',

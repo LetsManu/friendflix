@@ -40,6 +40,9 @@
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
   import DeskBar from '#lib/desk/DeskBar.svelte';
+  import { feedStore, latestCounts } from '#lib/notifications/store';
+  import { counts as noteCounts } from '#lib/notifications/api';
+  import { badgeText } from '#lib/badge';
   import { deskActive, deskUi } from '#lib/desk/bar';
   import { historyIndex, trackNav } from '#lib/desk/back';
   import { railKey } from '#lib/tv/rail';
@@ -87,7 +90,8 @@
   let lgApp = false;
   let tvApp = false; // a TV app (LG, Fire TV) runs this page as its whole UI
   let pending = false, checking = false;
-  let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
+  /** every unread notification (the notifications center's counts, no cap): the bell's badge and the phone avatar's dot */
+  let unread = 0;
   let railOpen = false;
   let scrolled = false, help = false;
   let sentinel: HTMLElement;
@@ -254,7 +258,6 @@
   let stopBanner: (() => void) | null = null;
   $: if (showBanner && !stopBanner) stopBanner = startBanner();
   $: if (!showBanner && stopBanner) { stopBanner(); stopBanner = null; }
-  $: unread = notes.filter((n) => !n.read).length;
   $: if (path) { catOpen = false; catGone(); closePreview(); }
   $: chips = $mobile && showsChips(path) && !kidsUi && $areas.library;
   /**
@@ -317,7 +320,22 @@
     loadModal().then((m) => (Modal = m.default)).catch(() => { location.href = `/item/${id}`; }); // chunk gone (new deploy/offline): open the full page
   }
 
-  async function loadNotes() { if (me?.kids) return; try { notes = (await api('/api/notifications')).notifications; } catch { /* ignore */ } } // kids: 403 kids_profile
+  // the notifications center's feed (lib/notifications/store.ts) keeps nothing of another person or profile: a sign-out or a profile switch empties it
+  let notesOwner: string | null = null;
+  const ownerOf = (m: Me | null) => (m ? `${m.id}|${m.profile?.id ?? ''}` : null);
+  $: notesOwnerNow = ownerOf(me);
+  $: if (notesOwnerNow !== notesOwner) { if (notesOwner !== null) { feedStore.reset(); unread = 0; latestCounts.set(null); if (me) void loadNotes(); } notesOwner = notesOwnerNow; }
+  /** the unread count (kids: none, the request would be a 403 kids_profile); an answer for the previous person is dropped */
+  async function loadNotes() {
+    if (me?.kids) { unread = 0; return; }
+    const owner = ownerOf(me);
+    try {
+      const c = await noteCounts();
+      if (owner !== ownerOf(me)) return;
+      unread = c.unread;
+      latestCounts.set(c);
+    } catch { /* ignore */ }
+  }
   $: here = publicPage ? path : path + $page.url.search; // (the prerendered /offline page has no search params)
   const HELP = [['shell.help.searchT', 'shell.help.searchD'], ['shell.help.playerT', 'shell.help.playerD'], ['shell.help.deviceT', 'shell.help.deviceD'], ['shell.help.tvT', 'shell.help.tvD'], ['shell.help.languageT', 'shell.help.languageD'], ['shell.help.moreT', 'shell.help.moreD']] as const;
 
@@ -905,7 +923,7 @@
           <a class="mlogo" href={home} aria-label={$t('shell.nav.homeLink')} aria-current={path === home ? 'page' : undefined}>{#if mHead.logo}<img class="mlimg" src={mHead.logo} alt="" width="112" height="28" draggable="false" />{:else}{#if mHead.mark}<Logo size={28} label="" />{/if}{#if mHead.name}<span class="wm" aria-hidden="true">{$brand.name}</span>{/if}{/if}</a>
           <span class="sp">{#if castHeader && $barSess}<button type="button" class="icon-btn castind" aria-label={$t('player.castBar.castingTo', { device: $barSess.device })} on:click={openCastRemote}><Icon name="cast" size={24} /></button>{/if}</span>
           {#if $areas.library}<a class="icon-btn" class:lib-held={libHeld} class:lib-in={libIn} href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>{/if}
-          <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
+          <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{badgeText(unread)}</span>{/if}</a>
         </div>
         {#if chipsRoom}
           <nav class="chipbar" class:tucked={mTucked} class:lib-held={libHeld || !chips} class:lib-in={libIn} aria-label={$t('shell.cats.title')} inert={mTucked || undefined}>
@@ -917,7 +935,7 @@
         {/if}
       </header>
     {:else if desk}
-      <DeskBar bind:this={deskBar} {path} {home} {heroPage} {me} {who} {faceStyle} {multi} {admin} {canDownload} {lgApp} {here} {notes} held={libHeld} fadeIn={libIn} onHelp={() => (help = true)} />
+      <DeskBar bind:this={deskBar} {path} {home} {heroPage} {me} {who} {faceStyle} {multi} {admin} {canDownload} {lgApp} {here} {unread} held={libHeld} fadeIn={libIn} onHelp={() => (help = true)} />
     {/if}
     <TabBar {path} {canDownload} held={libHeld} fadeIn={libIn} />
     {#if (catOpen || catLeaving) && $mobile}

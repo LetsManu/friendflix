@@ -321,22 +321,25 @@ test.describe('header menus', () => {
     });
   });
 
-  test('notifications: a header line, unread rows marked, rows 44 px', async ({ page }) => {
+  test('notifications: the bell opens the sheet (a titled dialog), unread rows marked, rows 44 px', async ({ page }) => {
     await page.goto('/watchlist');
     const bell = bar(page).getByRole('button', { name: /Benachrichtigungen/ });
-    await expect(bell.locator('.dot')).toHaveText('1');
+    await expect(bell.locator('.dot')).toHaveText('8'); // every unread entry of the feed (mocks/notes.ts)
+    await expect(bell).toHaveAttribute('aria-haspopup', 'dialog');
     await bell.click();
     const notes = page.locator('#ff-notes');
     await expect(notes).toBeVisible();
-    await expect(notes.locator('.gm-head')).toHaveText('Benachrichtigungen');
-    const rows = notes.locator('.gm-row');
-    expect(await rows.count()).toBeGreaterThan(0);
-    for (const r of await rows.all()) expect((await r.boundingBox())!.height).toBeGreaterThanOrEqual(43.5);
-    const unread = notes.locator('.gm-row.unread');
+    await expect(notes).toHaveAttribute('role', 'dialog');
+    await expect(notes.getByRole('heading', { level: 2 })).toHaveText('Benachrichtigungen');
+    await expect(bell).toHaveAttribute('aria-expanded', 'true');
+    const rows = notes.locator('li.nr > .main');
+    await expect(rows.first()).toBeVisible();
+    for (const r of (await rows.all()).slice(0, 8)) expect((await r.boundingBox())!.height).toBeGreaterThanOrEqual(43.5);
+    const unread = notes.locator('li.nr.unread');
     expect(await unread.count()).toBeGreaterThan(0);
     for (const r of await unread.all()) {
-      const dot = (await r.locator('.gm-ic .ndot').boundingBox())!;
-      expect(Math.abs(dot.width - 8)).toBeLessThanOrEqual(0.5);
+      const dot = (await r.locator('.tile .udot').boundingBox())!;
+      expect(Math.abs(dot.width - 10)).toBeLessThanOrEqual(0.5);
     }
   });
 
@@ -367,11 +370,16 @@ test.describe('header menus', () => {
 
   test('one pop-up at a time across the bar', async ({ page }) => {
     await page.goto(`/item/${MOVIE.id}`);
-    await bar(page).getByRole('button', { name: /Benachrichtigungen/ }).click();
-    await expect(page.locator('#ff-notes')).toBeVisible();
     await page.getByRole('button', { name: 'Mehr', exact: true }).click();
     await expect(pop(page)).toBeVisible();
+    // the notifications sheet (modal: nothing behind it can be pressed while it is open) closes the ⋯ menu
+    await bar(page).getByRole('button', { name: /Benachrichtigungen/ }).click();
+    await expect(page.locator('#ff-notes')).toBeVisible();
+    await expect(pop(page)).toHaveCount(0);
+    await page.keyboard.press('Escape');
     await expect(page.locator('#ff-notes')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+    await expect(pop(page)).toBeVisible();
     await acctBtn(page).click();
     await expect(acct(page)).toBeVisible();
     await expect(pop(page)).toHaveCount(0);

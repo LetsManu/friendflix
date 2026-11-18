@@ -33,6 +33,8 @@
   import { nextId } from './searchSheet';
   import { menuKeys } from '#lib/ui/menuKeys';
   import { openPopup, type PopupHandle } from '#lib/ui/popups';
+  import NotificationSheet from '#lib/notifications/NotificationSheet.svelte';
+  import { badgeText } from '#lib/badge';
 
   /** the header tabs: Live-TV and Aufnahmen after Filme while the feature is on; without the Mediathek only those (roles redesign §6) */
   $: tabs = liveTabs(libraryTabs(HEADER_TABS, $areas.library), LIVE_HEADERS, $features.livetv);
@@ -57,11 +59,11 @@
   export let lgApp = false;
   /** the current page with its query (where a profile switch comes back to) */
   export let here = '/';
-  export let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
+  /** every unread entry (the notifications center's counts, no cap): the bell's badge */
+  export let unread = 0;
   export let onHelp: () => void = () => {};
 
   const page = pageStore();
-  $: unread = notes.filter((n) => !n.read).length;
 
   // ---- solid pill once scrolled (24 px) or on pages without a billboard ----
   let scrollY = 0;
@@ -78,7 +80,8 @@
   const fullMotion = (_calm: unknown, _tripped: boolean) => motionLevel() === 'full'; // re-read when the prefs (calm mode) arrive or the frame guard trips
   $: still = !fullMotion($prefs, $motionTripped); // calm mode / reduced motion: the field's fades are off too (the springs check motionLevel themselves)
 
-  // ---- dropdowns: categories, notifications, account (menus glass spec: one pop-up at a time, none opens half-loaded) ----
+  // ---- dropdowns: categories, account (menus glass spec: one pop-up at a time, none opens half-loaded); the bell opens the
+  // notifications sheet (a modal dialog, lib/notifications) ----
   let menu = false, bell = false, cats = false;
   let catBtn: HTMLButtonElement, bellBtn: HTMLButtonElement, acctBtn: HTMLButtonElement;
   /** Categories was clicked while its lists load: the button spins, the drop opens once both have settled */
@@ -122,16 +125,10 @@
     cats = true;
     void focusInto('.catdrop');
   }
-  let notesTimer: ReturnType<typeof setTimeout> | undefined;
-  async function toggleBell() {
+  /** opening no longer marks anything read (the sheet reads what is opened or followed) */
+  function toggleBell() {
     if (bell) { shut(); return; }
     shut(); claim(); bell = true;
-    void focusInto('.drop.wide');
-    if (unread) {
-      await api('/api/notifications/read', { method: 'POST' });
-      clearTimeout(notesTimer);
-      notesTimer = setTimeout(() => window.dispatchEvent(new Event('ff-notes')), 1500); // the layout reloads the list (shared with the phone header)
-    }
   }
   type Prof = { id: string; name: string; avatar: string; hasPin: boolean; active?: boolean };
   /** the other profiles (null: not loaded); profLoading: the request runs (the menu shows placeholder rows of the final height) */
@@ -170,7 +167,7 @@
 
   let root: HTMLElement;
   function onWindowKey(e: KeyboardEvent) {
-    if (e.key !== 'Escape' || !(menu || bell || cats || catBusy)) return;
+    if (e.key !== 'Escape' || !(menu || cats || catBusy)) return;
     // the focus was inside the open dropdown: back to the button that opened it
     const anchor = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('.pop-anchor');
     shut();
@@ -187,7 +184,7 @@
   }
   function onWindowClick(e: MouseEvent) {
     const el = e.target as HTMLElement | null;
-    if (!el?.closest?.('.pop-anchor') && (menu || bell || cats || catBusy)) shut();
+    if (!el?.closest?.('.pop-anchor') && (menu || cats || catBusy)) shut();
     // the search sheet: a click outside the pill and the sheet closes it (and the field)
     if (sheetOpen && el?.isConnected && !inSearch(el)) leaveField(false);
   }
@@ -438,7 +435,7 @@
     ro?.observe(root);
     return () => ro?.disconnect();
   });
-  onDestroy(() => { splitGen++; clearTimeout(st); clearTimeout(notesTimer); clearTimeout(blurT); clearTimeout(safeT); });
+  onDestroy(() => { splitGen++; clearTimeout(st); clearTimeout(blurT); clearTimeout(safeT); });
 </script>
 
 <svelte:window bind:scrollY on:keydown={onWindowKey} on:click={onWindowClick} on:focusin={onWindowFocusIn} />
@@ -493,20 +490,12 @@
     </form>{/if}
   </nav>
   <div class="right">
-    <div class="pop-anchor" on:focusout={onAnchorOut}>
-      <!-- the notifications are a disclosure (a labelled list of links and texts), not a menu -->
-      <button type="button" class="round frost" class:frost-safe={safe} aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-expanded={bell} aria-controls={bell ? 'ff-notes' : undefined} bind:this={bellBtn} on:click={toggleBell} use:clipSheen>
-        <span class="sclip" aria-hidden="true"></span><Icon name="bell" size={20} />{#if unread}<span class="dot">{unread}</span>{/if}
+    <div class="pop-anchor">
+      <!-- the notifications: a side sheet (a modal dialog, portalled to <body>); the focus comes back here when it closes -->
+      <button type="button" class="round frost" class:frost-safe={safe} aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-haspopup="dialog" aria-expanded={bell} aria-controls={bell ? 'ff-notes' : undefined} bind:this={bellBtn} on:click={toggleBell} use:clipSheen>
+        <span class="sclip" aria-hidden="true"></span><Icon name="bell" size={20} />{#if unread}<span class="dot">{badgeText(unread)}</span>{/if}
       </button>
-      {#if bell}
-        <div class="drop wide gm frost frost-menu frost-safe" id="ff-notes" role="region" aria-label={$t('shell.bell.label')} tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: bellBtn }}>
-          <p class="gm-head" aria-hidden="true">{$t('shell.bell.label')}</p>
-          {#each notes as n (n.id)}
-            {#if n.link}<a class="gm-row note" class:unread={!n.read} class:read={n.read} href={n.link}><span class="gm-ic">{#if !n.read}<i class="ndot"></i>{/if}</span><span class="gm-lbl">{n.title}</span></a>
-            {:else}<div class="gm-row note still" class:unread={!n.read} class:read={n.read}><span class="gm-ic">{#if !n.read}<i class="ndot"></i>{/if}</span><span class="gm-lbl">{n.title}</span></div>{/if}
-          {:else}<div class="gm-row note still read"><span class="gm-ic"></span><span class="gm-lbl">{$t('shell.bell.empty')}</span></div>{/each}
-        </div>
-      {/if}
+      {#if bell}<NotificationSheet trigger={bellBtn} on:close={() => (bell = false)} />{/if}
     </div>
     <div class="pop-anchor" on:focusout={onAnchorOut}>
       <button type="button" class="avatar" aria-label={who ? $t('shell.account.labelWho', { name: who }) : $t('shell.account.label')} aria-haspopup="menu" aria-expanded={menu} disabled={!me} bind:this={acctBtn} on:click={toggleMenu} on:pointerenter={loadProfiles} on:focus={loadProfiles}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span></button>
@@ -676,7 +665,7 @@
   .avatar[aria-expanded='true'] .face { box-shadow: 0 0 0 2px #fff; }
 
   /* ---- dropdowns: glass cards (glass spec §5: .frost .frost-menu, 8 px padding, 44 px rows with 12 px corners, hover = the light
-     pill, 1 px separators) that grow out of their button (growBoth); the safe scrim for white rows on the light pill and .9 notes
+     pill, 1 px separators) that grow out of their button (growBoth); the safe scrim for white rows on the light pill and .9 texts
      (SCRIM_MENU), as the billboard can sit behind them ---- */
   .pop-anchor { position: relative; }
   .drop { position: absolute; right: 0; top: calc(100% + 10px); min-width: 220px; padding: 8px; box-sizing: border-box; display: flex; flex-direction: column; outline: none;
@@ -686,7 +675,7 @@
   .catdrop a:hover { background: var(--fr-sel); color: #fff; text-decoration: none; }
   .catdrop a:focus-visible { outline: 2px solid #fff; outline-offset: -2px; box-shadow: inset 0 0 0 4px var(--ring-dark), 0 0 0 2px var(--ring-dark); }
   .pad { padding: 12px 16px; }
-  /* the account menu and the notifications: the shared menu anatomy (app.css .gm*: header line, 44 px rows, 24 px icon column) */
+  /* the account menu: the shared menu anatomy (app.css .gm*: header line, 44 px rows, 24 px icon column) */
   .drop.gm { padding: 6px; }
   .acct { min-width: 280px; }
   .acct-who { display: flex; align-items: center; gap: 12px; padding: 12px 12px 10px; min-width: 0; }
@@ -702,14 +691,6 @@
   .skel .sk-bar { width: 96px; height: 12px; border-radius: 6px; }
   @keyframes sk-pulse { from { opacity: 1; } to { opacity: .45; } }
   :global(html.m-still) .skel i { animation: none; }
-  /* the notifications: a region, not a menu; long titles wrap (the row grows from 44 px); unread rows carry the accent dot (--acc-fill) */
-  .drop.wide { width: 320px; max-width: calc(100vw - 16px); }
-  .drop .note { padding-block: 8px; }
-  .note .gm-lbl { white-space: normal; overflow-wrap: anywhere; }
-  .note.read { color: rgba(255, 255, 255, .9); }
-  .drop .note.still { cursor: default; }
-  .drop .note.still:hover { background: transparent; }
-  .ndot { display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--acc-fill); }
   /* Categories while its lists load: a spinner in the caret's place (the button keeps its width) */
   .cmark { position: relative; display: inline-grid; place-items: center; }
   .caret.hide { visibility: hidden; }

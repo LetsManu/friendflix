@@ -456,11 +456,11 @@ test.describe('desktop pill bar', () => {
     await expect(cats).toHaveCount(0);
 
     const bell = bar.getByRole('button', { name: /Benachrichtigungen/ });
-    await expect(bell.locator('.dot')).toHaveText('1');
+    await expect(bell.locator('.dot')).toHaveText('8'); // every unread entry of the feed (mocks/notes.ts)
     await bell.click();
-    // the notifications are a disclosure (a named region of links), not a menu
-    const notes = page.getByRole('region', { name: 'Benachrichtigungen' });
-    await expect(notes.getByRole('link', { name: /Annas Klassiker/ })).toBeVisible();
+    // the notifications are a side sheet (a modal dialog), not a menu
+    const notes = page.getByRole('dialog', { name: 'Benachrichtigungen' });
+    await expect(notes.getByRole('button', { name: /^Ein Fernseher wurde mit deinem Konto verbunden, 6, neu/ })).toBeVisible();
     await expect(page.getByRole('menu')).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(notes).toHaveCount(0);
