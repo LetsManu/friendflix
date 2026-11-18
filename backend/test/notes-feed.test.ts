@@ -252,7 +252,7 @@ describe('notifications feed', () => {
     ]);
     const global = { unread: 2, categories: [{ key: 'downloads', n: 1 }, { key: 'devices', n: 3 }, { key: 'achievements', n: 1 }] };
     const dev = await feed(env.ctx, ua, 'de', opts({ filter: 'devices' }), NOW);
-    expect(groups(dev).map((g) => [g.title, g.count])).toEqual([['TV', 2], ['Gerät wartet', 1]]);
+    expect(groups(dev).map((g) => [g.title, g.count, g.unread, g.unreadCount])).toEqual([['TV', 2, true, 1], ['Gerät wartet', 1, false, 0]]);
     expect(dev).toMatchObject(global);
     const unread = await feed(env.ctx, ua, 'de', opts({ filter: 'unread' }), NOW);
     expect(groups(unread).map((g) => [g.title, g.count, g.items.length])).toEqual([['TV', 2, 2], ['Download fertig', 1, 1]]);

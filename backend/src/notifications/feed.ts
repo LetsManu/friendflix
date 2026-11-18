@@ -14,7 +14,7 @@ export const FEED_ITEMS = 20;
 export type SectionKey = 'today' | 'week' | `${number}-${string}`; // YYYY-MM
 export type FeedFilter = 'all' | 'unread' | Category;
 export interface FeedItem { id: number; title: string; body: string | null; at: string }
-export interface FeedGroup { id: string; kind: string; category: Category; title: string; body: string | null; link: string | null; at: string; count: number; unread: boolean; items: FeedItem[] }
+export interface FeedGroup { id: string; kind: string; category: Category; title: string; body: string | null; link: string | null; at: string; count: number; unread: boolean; unreadCount: number; items: FeedItem[] }
 export interface FeedCounts { unread: number; categories: Array<{ key: Category; n: number }> }
 export interface Feed extends FeedCounts { sections: Array<{ key: SectionKey; groups: FeedGroup[] }>; next: string | null }
 
@@ -140,7 +140,7 @@ export async function feedCounts(ctx: Pick<Ctx, 'db'>, userId: string): Promise<
   return countsOf(await kindCounts(ctx, userId));
 }
 
-interface GroupRow { sec: SectionKey; gk: string; count: number; unread: boolean; at: Date; at_us: string; last_id: string; item_ids: string[]; range_from: Date; range_to: Date }
+interface GroupRow { sec: SectionKey; gk: string; count: number; unread: boolean; unread_count: number; at: Date; at_us: string; last_id: string; item_ids: string[]; range_from: Date; range_to: Date }
 interface ItemRow { id: string; kind: string; title: string; body: string | null; link: string | null; created_at: Date; msg: unknown }
 
 /**
@@ -173,11 +173,11 @@ export async function feed(
          from v, t
      ),
      g as (
-       select sec, gk, count(*)::int as count, bool_or(not read) as unread, max(created_at) as at, max(id) as last_id, min(d) as d,
+       select sec, gk, count(*)::int as count, bool_or(not read) as unread, (count(*) filter (where not read))::int as unread_count, max(created_at) as at, max(id) as last_id, min(d) as d,
               (array_agg(id order by created_at desc, id desc))[1:${FEED_ITEMS}] as item_ids
          from sv group by sec, gk
      )
-     select g.sec, g.gk, g.count, g.unread, g.at, g.last_id, g.item_ids,
+     select g.sec, g.gk, g.count, g.unread, g.unread_count, g.at, g.last_id, g.item_ids,
             to_char(g.at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as at_us,
             (case g.sec when 'today' then t.today when 'week' then t.today - 6 else date_trunc('month', g.d)::date end)::timestamp at time zone $2 as range_from,
             (case g.sec when 'today' then t.today + 1 when 'week' then t.today
@@ -204,7 +204,7 @@ export async function feed(
     const group: FeedGroup = {
       id: groupId(ctx, userId, row.gk, row.range_from, row.range_to, Number(row.last_id)),
       kind: newest.kind, category: categoryOf(newest.kind), title: newest.title, body: newest.body, link: newest.link,
-      at: row.at.toISOString(), count: row.count, unread: row.unread,
+      at: row.at.toISOString(), count: row.count, unread: row.unread, unreadCount: row.unread_count,
       items: shown.map((x) => ({ id: x.id, title: x.title, body: x.body, at: x.at })),
     };
     const last = sections[sections.length - 1];

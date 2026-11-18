@@ -6,7 +6,7 @@ export type Category = 'downloads' | 'devices' | 'series' | 'achievements' | 'li
 export type Filter = 'all' | 'unread' | Category;
 export type SectionKey = string; // 'today' | 'week' | 'YYYY-MM'
 export interface FeedItem { id: number; title: string; body: string | null; at: string }
-export interface FeedGroup { id: string; kind: string; category: Category; title: string; body: string | null; link: string | null; at: string; count: number; unread: boolean; items: FeedItem[] }
+export interface FeedGroup { id: string; kind: string; category: Category; title: string; body: string | null; link: string | null; at: string; count: number; unread: boolean; unreadCount: number; items: FeedItem[] }
 export interface Section { key: SectionKey; groups: FeedGroup[] }
 export interface Counts { unread: number; categories: Array<{ key: Category; n: number }> }
 export interface Feed extends Counts { sections: Section[]; next: string | null }

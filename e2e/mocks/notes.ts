@@ -93,7 +93,7 @@ function feed(st: NotesMock, filter: string, cursor: string | null, limit = PAGE
     const top = es[0]!, key = sectionOf(top.at);
     if (sections.at(-1)?.key !== key) sections.push({ key, groups: [] });
     sections.at(-1)!.groups.push({
-      id, kind: top.kind, category: top.category, title: top.title, body: top.body, link: top.link, at: top.at, count: es.length, unread: es.some((x) => !x.read),
+      id, kind: top.kind, category: top.category, title: top.title, body: top.body, link: top.link, at: top.at, count: es.length, unread: es.some((x) => !x.read), unreadCount: es.filter((x) => !x.read).length,
       items: es.slice(0, ITEMS).map((x) => ({ id: x.id, title: x.title, body: x.body, at: x.at })),
     });
   }

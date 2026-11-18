@@ -6,7 +6,11 @@ import type { NotesApi } from './api';
 import { createFeed, type HeldTokens } from './store';
 import type { Feed, FeedGroup, Filter } from './types';
 
-const g = (id: string, over: Partial<FeedGroup> = {}): FeedGroup => ({ id, kind: 'k', category: 'other', title: id, body: null, link: null, at: '2026-10-01T00:00:00Z', count: 1, unread: true, items: [{ id: Number(id.replace(/\D/g, '')) || 1, title: id, body: null, at: '2026-10-01T00:00:00Z' }], ...over });
+/** unreadCount follows unread and count unless given (every entry of an unread group unread) */
+const g = (id: string, over: Partial<FeedGroup> = {}): FeedGroup => {
+  const base = { id, kind: 'k', category: 'other' as const, title: id, body: null, link: null, at: '2026-10-01T00:00:00Z', count: 1, unread: true, items: [{ id: Number(id.replace(/\D/g, '')) || 1, title: id, body: null, at: '2026-10-01T00:00:00Z' }], ...over };
+  return { ...base, unreadCount: over.unreadCount ?? (base.unread ? base.count : 0) };
+};
 const page = (sections: Array<[string, string[]]>, next: string | null = null, unread = 3): Feed => ({ sections: sections.map(([key, ids]) => ({ key, groups: ids.map((i) => g(i)) })), next, unread, categories: [] });
 const fake = (over: Partial<NotesApi> = {}): NotesApi => ({
   feed: vi.fn(async () => page([['today', ['a1']]])),
@@ -191,6 +195,48 @@ describe('notifications feed store: baseline, reset, concurrency', () => {
     await s.hide({ groups: ['a1'] });
     s.noteFresh(3); // 3 unread now, the page knew 3 and 2 of them are gone: one entry was added... 3 - 1 = 2
     expect(get(s).fresh).toBe(2);
+  });
+  it('a partly read group lowers the baseline only by its unread entries (no phantom pill)', async () => {
+    const feed = vi.fn(async () => pageOf([bigGroup('a1', 12, { unreadCount: 1 }), bigGroup('a2', 4)], 5));
+    const s = createFeed(fake({ feed }));
+    await s.load('all');
+    await s.read({ groups: ['a1'] });
+    expect(get(s).unread).toBe(4);
+    s.noteFresh(4); // the layout's next count: the server lowered unread by 1
+    expect(get(s).fresh).toBe(0);
+    await s.hide({ groups: ['a2'] });
+    s.noteFresh(0);
+    expect(get(s).fresh).toBe(0);
+  });
+  it('a failed read gives a partly read group its unread entries back', async () => {
+    const feed = vi.fn(async () => pageOf([bigGroup('a1', 12, { unreadCount: 3 })], 3));
+    const s = createFeed(fake({ feed, markRead: vi.fn(async () => { throw new Error('x'); }) }));
+    await s.load('all');
+    await s.read({ groups: ['a1'] });
+    expect(get(s).sections[0]!.groups[0]).toMatchObject({ unread: true, unreadCount: 3 });
+    expect(get(s).unread).toBe(3);
+  });
+  it('a recount arriving after the layout count corrects fresh', async () => {
+    const d = deferred<{ unread: number; categories: [] }>();
+    // the page thinks a1 holds 3 unread entries; another device read one of them meanwhile, so the server holds 2 there and 1 elsewhere
+    const s = createFeed(fake({ feed: vi.fn(async () => pageOf([bigGroup('a1', 3)], 3)), counts: vi.fn(() => d.promise) }));
+    await s.load('all');
+    await s.hide({ groups: ['a1'] });
+    s.noteFresh(1); // the layout's count after the clear: 1 left on the server, the page's baseline is 0
+    expect(get(s).fresh).toBe(1);
+    d.resolve({ unread: 1, categories: [] });
+    await flush();
+    expect(get(s).unread).toBe(1);
+    expect(get(s).fresh).toBe(0);
+  });
+  it('a reload forgets the last layout count', async () => {
+    const feed = vi.fn().mockResolvedValueOnce(pageOf([bigGroup('a1', 1)], 3)).mockResolvedValueOnce(pageOf([bigGroup('a1', 1)], 1));
+    const s = createFeed(fake({ feed }));
+    await s.load('all');
+    s.noteFresh(5);
+    await s.load('all'); // another device read 4 of them meanwhile
+    await s.read({ groups: ['a1'] });
+    expect(get(s).fresh).toBe(0);
   });
   it('a failed read or hide and an undo restore the baseline', async () => {
     const feed = vi.fn(async () => pageOf([bigGroup('a1', 2), bigGroup('a2', 1)], 3));

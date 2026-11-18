@@ -50,8 +50,8 @@ const hits = (g: FeedGroup, sel: Selection) =>
   (sel.category !== undefined && (sel.category === 'all' || (sel.category === 'unread' ? g.unread : g.category === sel.category))) ||
   // only when every row of the group is known (count === items.length); else the next refresh corrects it
   (!!sel.ids?.length && g.count === g.items.length && g.items.length > 0 && g.items.every((i) => sel.ids!.includes(i.id)));
-/** unread entries a group stands for (its count while it is unread) */
-const unreadOf = (g: FeedGroup) => (g.unread ? g.count : 0);
+/** unread entries a group stands for (a partly read group only its unread ones: the server lowers its count by those) */
+const unreadOf = (g: FeedGroup) => (g.unread ? g.unreadCount : 0);
 const everything = (sel: Selection) => !sel.ids?.length && !sel.groups?.length && sel.category === undefined;
 
 export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Map()): FeedStore {
@@ -61,8 +61,14 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
   subscribe((s) => (state = s));
   let gen = 0; // a newer load / refresh makes older answers obsolete
   let baseUnread = 0;
-  /** the page's unread baseline, mirrored into the state for the sheet's header */
-  const setBase = (n: number) => { baseUnread = n; update((s) => (s.unread === n ? s : { ...s, unread: n })); };
+  /** the layout's last unread count since this page loaded (null: none yet), so a new baseline corrects the pill as well */
+  let lastNow: number | null = null;
+  const freshOf = (base: number) => (lastNow === null ? 0 : Math.max(0, lastNow - base));
+  /** the page's unread baseline, mirrored into the state for the sheet's header, and the pill counted against it */
+  const setBase = (n: number) => {
+    baseUnread = n;
+    update((s) => { const fresh = freshOf(n); return s.unread === n && s.fresh === fresh ? s : { ...s, unread: n, fresh }; });
+  };
   let epoch = 0; // bumped only by reset(): a newer person
   /**
    * The server's counts after a clear or its undo: the page only knows its own rows, so entries on pages not loaded (a clear by
@@ -89,6 +95,7 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
       const f: Feed = await api.feed({ filter });
       if (g !== gen) return;
       baseUnread = f.unread;
+      lastNow = null; // a count from before this page would be counted against the new baseline
       update((s) => ({ ...s, sections: f.sections, next: f.next, loading: 'idle', fresh: 0, open: s.open, unread: f.unread, categories: f.categories }));
     } catch (e) {
       if (g === gen) update((s) => ({ ...s, loading: 'idle', error: errorOf(e) }));
@@ -118,7 +125,7 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
   return {
     subscribe,
     load: (filter) => first(filter, false),
-    reset() { gen++; epoch++; baseUnread = 0; held.clear(); set(initial()); },
+    reset() { gen++; epoch++; baseUnread = 0; lastNow = null; held.clear(); set(initial()); },
     refresh: () => first(state.filter, true),
     async more() {
       if (!state.next || state.loading !== 'idle') return;
@@ -141,17 +148,18 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
         if (g === gen) update((s) => ({ ...s, loading: 'idle', error: errorOf(e) }));
       }
     },
-    noteFresh: (unreadNow) => update((s) => ({ ...s, fresh: Math.max(0, unreadNow - baseUnread) })),
+    noteFresh: (unreadNow) => { lastNow = unreadNow; update((s) => ({ ...s, fresh: freshOf(baseUnread) })); },
     toggle: (id) => update((s) => { const open = new Set(s.open); if (!open.delete(id)) open.add(id); return { ...s, open }; }),
     async read(sel = {}) {
       const all = everything(sel);
-      const flipped = new Set<string>();
+      /** the groups this call flipped, with their unread entries */
+      const flipped = new Map<string, number>();
       let lowered = 0;
       update((s) => ({ ...s, sections: s.sections.map((x) => ({ key: x.key, groups: x.groups.map((g) => {
         if (!g.unread || !(all || hits(g, sel))) return g;
-        flipped.add(g.id);
+        flipped.set(g.id, g.unreadCount);
         lowered += unreadOf(g);
-        return { ...g, unread: false };
+        return { ...g, unread: false, unreadCount: 0 };
       }) })) }));
       const prior = baseUnread;
       setBase(all ? 0 : Math.max(0, baseUnread - lowered));
@@ -164,7 +172,7 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
         if (e0 !== epoch) return false; // another person's page now
         if (g0 === gen) setBase(prior); // an obsolete page keeps its own baseline
         // only the groups this call flipped come back unread; a page appended meanwhile stays as it is
-        update((s) => ({ ...s, error: errorOf(e), sections: s.sections.map((x) => ({ key: x.key, groups: x.groups.map((g) => (flipped.has(g.id) ? { ...g, unread: true } : g)) })) }));
+        update((s) => ({ ...s, error: errorOf(e), sections: s.sections.map((x) => ({ key: x.key, groups: x.groups.map((g) => (flipped.has(g.id) ? { ...g, unread: true, unreadCount: flipped.get(g.id)! } : g)) })) }));
         return false;
       }
     },
