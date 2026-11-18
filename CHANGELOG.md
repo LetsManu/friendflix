@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [4.0.0] – Donut – 2026-11-18
+
 ### Upgrade notes
 - **Authentik mail templates restyled in place.** `deploy/authentik/templates/friendflix-recovery.html` and `friendflix-email-change.html` get the new look under the same names. If you edited the link host (`friend.example.com`) in your copy and mount this repository's folder, or copy the new files over yours, enter your host in the link again; set the name and accent colour on the new `ff:brand` lines too. The new plain-text twins `friendflix-recovery.txt` and `friendflix-email-change.txt` carry the same link: enter your host there as well (and your name on their `ff:brand` line), or the text part of those mails links to `friend.example.com` ([docs/authentik.md](docs/authentik.md#10b-e-mails-in-the-friendflix-look)).
 - **Role library names are matched exactly first (Jellyfin and Plex).** A role's library name unlocks the library of exactly that name; a name in another letter case only when it matches a single library. A role whose stored name now matches two libraries only by letter case (e.g. `FILME` with both `Filme` and `filme` on the server) unlocks **neither** after the update: the role editor warns at that name, so enter the exact one under *Personen → Rollen & Rechte* ([docs/security.md](docs/security.md#roles-and-rights), [docs/plex.md](docs/plex.md#4-library-naming-and-role-access)).
