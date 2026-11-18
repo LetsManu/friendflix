@@ -3,10 +3,10 @@
 // Unit tests for scripts/release.mjs (node:test, run by `npm test` at the repo root).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CODENAMES, bump, bumpVersionInfo, changelogSection, cutChangelog, nextCodename, parseVersion, plan, release, setLockVersions, setPackageVersion } from './release.mjs';
+import { CODENAMES, bump, bumpVersionInfo, changelogSection, cutChangelog, nextCodename, parseVersion, plan, release } from './release.mjs';
 
 const LOG = `# Changelog
 
@@ -70,20 +70,6 @@ test('cutChangelog: refuses an empty Unreleased section (also headings only) and
   assert.throws(() => cutChangelog('# C\n', '1.0.1', 'Arancini', '2026-10-13'), /no "## \[Unreleased\]"/);
 });
 
-test('setPackageVersion / setLockVersions keep everything else', () => {
-  const pkg = '{\n  "name": "x",\n  "version": "0.1.0",\n  "dependencies": { "a": "^1.0.0" }\n}\n';
-  assert.equal(setPackageVersion(pkg, '1.2.0'), pkg.replace('0.1.0', '1.2.0'));
-  assert.throws(() => setPackageVersion('{ "name": "x" }', '1.0.0'), /no "version"/);
-  const lock = JSON.stringify({ name: 'x', version: '0.1.0', packages: { '': { version: '0.1.0' }, backend: { version: '0.1.0' }, web: { version: '0.2.0' }, 'node_modules/a': { version: '1.0.0' } } }, null, 2);
-  const out = JSON.parse(setLockVersions(lock, '1.2.0', ['backend', 'web', 'gateway']));
-  assert.equal(out.version, '1.2.0');
-  assert.equal(out.packages[''].version, '1.2.0');
-  assert.equal(out.packages.backend.version, '1.2.0');
-  assert.equal(out.packages.web.version, '1.2.0');
-  assert.equal(out.packages['node_modules/a'].version, '1.0.0');
-  assert.equal(out.packages.gateway, undefined);
-});
-
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'ff-release-'));
   writeFileSync(join(dir, 'version.json'), '{ "version": "1.3.2", "codename": "Arancini" }\n');
@@ -94,7 +80,7 @@ function fixture() {
   return dir;
 }
 
-test('release: major bump writes every file; dry run writes nothing', () => {
+test('release writes only version.json and CHANGELOG.md; dry run writes nothing', () => {
   const dir = fixture();
   const dry = release({ root: dir, kind: 'major', date: '2026-10-13', dryRun: true });
   assert.equal(dry.summary.version, '2.0.0');
@@ -103,10 +89,11 @@ test('release: major bump writes every file; dry run writes nothing', () => {
   assert.equal(readFileSync(join(dir, 'version.json'), 'utf8'), '{ "version": "1.3.2", "codename": "Arancini" }\n');
 
   const r = release({ root: dir, kind: 'major', date: '2026-10-13' });
-  assert.deepEqual(r.summary.files.sort(), ['CHANGELOG.md', 'backend/package.json', 'gateway/package.json', 'package-lock.json', 'package.json', 'version.json', 'web/package.json']);
+  assert.deepEqual(r.summary.files.sort(), ['CHANGELOG.md', 'version.json']);
   assert.equal(readFileSync(join(dir, 'version.json'), 'utf8'), '{ "version": "2.0.0", "codename": "Brezel" }\n');
-  for (const f of ['package.json', 'backend/package.json', 'web/package.json', 'gateway/package.json']) assert.equal(JSON.parse(readFileSync(join(dir, f), 'utf8')).version, '2.0.0', f);
-  assert.equal(JSON.parse(readFileSync(join(dir, 'package-lock.json'), 'utf8')).packages.backend.version, '2.0.0');
+  // package.json files and the lockfile stay as they were
+  for (const f of ['package.json', 'backend/package.json', 'web/package.json', 'gateway/package.json']) assert.equal(JSON.parse(readFileSync(join(dir, f), 'utf8')).version, '1.3.2', f);
+  assert.equal(JSON.parse(readFileSync(join(dir, 'package-lock.json'), 'utf8')).packages.backend.version, '1.3.2');
   assert.match(readFileSync(join(dir, 'CHANGELOG.md'), 'utf8'), /## \[Unreleased\]\n\n## \[2\.0\.0\] – Brezel – 2026-10-13\n\n### Streaming/);
   assert.equal(r.notes, '### Streaming\n- New thing.');
   // the Unreleased section is now empty: a second release is refused
@@ -128,18 +115,6 @@ test('every bump refuses an existing tag', () => {
   assert.throws(() => release({ root: fixture(), kind: 'patch', date: '2026-10-13', tags: ['v1.3.3'] }), /tag v1\.3\.3 already exists/);
 });
 
-test('setPackageVersion: only the top-level key, nested "version" keys and strings stay', () => {
-  const pkg = '{\n  "name": "x",\n  "description": "has \\"version\\": \\"0.0.1\\" in text",\n  "config": { "version": "9.9.9", "deep": [{ "version": "8" }] },\n  "version": "0.1.0",\n  "workspaces": ["a"]\n}\n';
-  const out = setPackageVersion(pkg, '1.2.0');
-  assert.equal(JSON.parse(out).version, '1.2.0');
-  assert.equal(JSON.parse(out).config.version, '9.9.9');
-  assert.equal(JSON.parse(out).config.deep[0].version, '8');
-  assert.equal(out, pkg.replace('"version": "0.1.0"', '"version": "1.2.0"'));
-  // nested key BEFORE the top-level one is the trap of a plain regex
-  assert.throws(() => setPackageVersion('{ "config": { "version": "1" } }', '2.0.0'), /no "version"/);
-  assert.throws(() => setPackageVersion('{ broken', '2.0.0'));
-});
-
 test('plan and changelogSection (used by release.yml to resume a half-finished release)', () => {
   const dir = fixture();
   assert.deepEqual(plan({ root: dir, kind: 'minor' }), { version: '1.4.0', codename: 'Arancini', tag: 'v1.4.0', previous: '1.3.2' });
@@ -150,4 +125,20 @@ test('plan and changelogSection (used by release.yml to resume a half-finished r
   assert.throws(() => changelogSection(LOG, '1.0.1'), /no section for 1\.0\.1/);
   assert.throws(() => changelogSection(LOG, '1x0x0'), /not a release version/); // only plain X.Y.Z is accepted
   assert.throws(() => changelogSection(LOG, '9.9.9'), /no section/);
+});
+
+test('every package.json and the lockfile say 0.0.0', () => {
+  const repo = join(import.meta.dirname, '..');
+  const root = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8'));
+  const dirs = ['.', ...root.workspaces];
+  for (const d of dirs) {
+    const f = join(repo, d, 'package.json');
+    if (existsSync(f)) assert.equal(JSON.parse(readFileSync(f, 'utf8')).version, '0.0.0', `${d}/package.json`);
+  }
+  const lock = JSON.parse(readFileSync(join(repo, 'package-lock.json'), 'utf8'));
+  assert.equal(lock.version, '0.0.0');
+  for (const d of dirs) {
+    const key = d === '.' ? '' : d;
+    if (lock.packages[key]) assert.equal(lock.packages[key].version, '0.0.0', `lock ${key || 'root'}`);
+  }
 });
