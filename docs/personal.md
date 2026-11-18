@@ -38,6 +38,21 @@ Profil-Einstellung `audioFx` (`'off' | 'voices' | 'night' | 'both'`, beide Modi 
 - **Symbol-Badge** (Badging API, installierte PWA auf Android/Desktop; iOS erst ab installierter Web-App mit Push): Zahl der ungelesenen Benachrichtigungen (Neue Folgen gefolgter Serien kommen als Benachrichtigung). Gesetzt von der App beim Start und beim Zurückkehren in den Vordergrund (`web/src/lib/badge.ts`, `syncBadge`) und vom Service Worker bei jedem Push (`updateBadge` in `web/src/lib/sw/push.ts`: Zahl der noch angezeigten Mitteilungen). Wo die API fehlt, passiert nichts.
 - **Widgets**: PWA-Widgets (Web App Manifest `widgets` + Service-Worker-Ereignisse) gibt es nur unter Windows 11 (Edge, Widgets-Board). Android/iOS-Widgets setzen eine native App voraus. Deshalb sind keine Widgets enthalten; Verknüpfungen und Badge sind der Ersatz.
 
+## Benachrichtigungen (Glocke und Mein Bereich)
+
+Die Glocke in der Kopfleiste öffnet ein Seitenfenster von rechts (Code: `web/src/lib/notifications/`, `backend/src/notifications/`). Auf dem Handy hat die Kopfleiste keine Glocke: Der Avatar führt zu *Mein Bereich* (`/me`) und trägt den Punkt für Ungelesenes, und dort öffnet *Alle ({n})* das Fenster über die volle Höhe.
+
+- **Abschnitte** nach der Zeitzone der Person (der Browser schickt `tz`): *Heute*, *Diese Woche* (die sechs Kalendertage davor), danach ein Abschnitt je Monat.
+- **Gruppen:** Gleiche Benachrichtigungen (gleicher Gruppenschlüssel im selben Abschnitt) stehen als eine Zeile mit Zähler; sie öffnet sich an Ort und Stelle. Titel, Text, Link und Zeit kommen von der neuesten. Wichtiges (Updates, Systemcheck, PIN-Sperre, Kontolöschung, ablaufender Zugang) wird nie gruppiert.
+- **Filter:** *Alle*, *Ungelesen* und die Kategorien (Downloads, Geräte, Serien & Filme, Achievements, Live TV, System, Wünsche, Freunde, Sonstiges).
+- **Gelesen** wird ein Eintrag, wenn du ihn öffnest, oder über *Alle gelesen*. Das Öffnen der Glocke markiert nicht mehr alles als gelesen; *Mein Bereich* auch nicht.
+- **Leeren:** ein Eintrag mit ✕ (auf Touchgeräten per Wischen), oder alles unter dem aktuellen Filter (*Alles leeren*, *<Kategorie> leeren*, *Ungelesene leeren*). *Rückgängig* gilt 5 Sekunden lang (der Server hält die Rücknahme 30 Sekunden vor).
+- **Endloses Scrollen:** 30 Gruppen je Seite, jede mit höchstens 20 Einträgen; der Rest wird beim Scrollen nachgeladen.
+- **Zähler:** Der Punkt an der Glocke und am Avatar zeigt die echte Zahl bis 99, darüber *99+* (es gibt keine Obergrenze von 30 mehr).
+- **Aufbewahrung:** Benachrichtigungen, die älter als 90 Tage sind, löscht ein täglicher Job (gelesen oder nicht; läuft mit `BACKGROUND_JOBS=true`). Unter der Liste steht das als Hinweis.
+- **Kinderprofile** haben keine Benachrichtigungen (alle Routen unter `/api/notifications*` antworten dort mit 403 `kids_profile`).
+- **Android** ändert sich nicht: Die App liest weiter `GET /api/notifications` (die letzten 30, neueste zuerst, gleiche Felder); ausgeblendete Einträge fehlen dort, `read` folgt derselben Regel wie in der Web-App ([android.md](android.md#notifications)).
+
 ## Was Admins auf der Seite „Nutzung“ sehen
 
 *Admin → Personen → Nutzung* (`/admin/usage`, nur Admins im Hauptprofil) zeigt pro Konto **Summen** für die letzten 7, 30 oder 90 Tage: Sehzeit (gesamt, davon Filme und Serien), Anzahl verschiedener Titel, Streams, Anteil umgewandelter Streams mit dem häufigsten Grund (z. B. „Videoformat“ oder „Limit unterwegs“), Zahl der Geräte (freigegeben / benutzt), wann das Konto zuletzt da war und ob gerade etwas läuft. Ein Klick auf eine Zeile öffnet die Sehzeit pro Tag als Balken, die Geräte (Gerätename bzw. Name der fremden App, zuletzt gesehen, Streams, Umwandlungen) und die Gründe der Umwandlungen.

@@ -135,7 +135,7 @@ Entries older than 90 days are deleted by a daily job, along with their `notific
    - The /me page shows the newest 5 groups in the same row component, inline, with no sheet, no filters and no clear.
    - Its *Alle ({n})* button opens the sheet.
    - /me no longer marks everything read on view.
-   - The phone header's bell opens the full-height sheet.
+   - The phone header has no bell, so *Mein Bereich*'s *Alle ({n})* opens the full-height sheet (the avatar, which goes to /me, keeps the unread dot).
 5. **Sections.**
    - The web sends the viewer's IANA time zone (`tz`, validated against `Intl.supportedValuesOf('timeZone')` on the server, falling back to the server's `TZ`).
    - *Heute* is the viewer's calendar today. *Diese Woche* is the six days before today. After that comes one section per calendar month.

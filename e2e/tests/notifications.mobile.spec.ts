@@ -181,7 +181,7 @@ test.describe('notifications on a phone', () => {
     const row = rowOf(page, 'Nordlicht ist bereit');
     await row.getByRole('button', { name: 'Entfernen: Nordlicht ist bereit' }).tap();
     await expect(row).toHaveCount(0);
-    await expect(toasts(page).getByText('1 Mitteilung entfernt')).toBeVisible();
+    await expect(toasts(page).getByText('1 Benachrichtigung entfernt')).toBeVisible();
     expect(api.notes.entries.find((e) => e.title === 'Nordlicht ist bereit')!.hidden).toBe(true);
     await toasts(page).getByRole('button', { name: 'Rückgängig' }).tap();
     await expect(row).toBeVisible();
@@ -215,7 +215,7 @@ test.describe('notifications on a phone', () => {
     await expect(row).toHaveCount(0);
     await expect.poll(() => hides(api.log).length).toBe(1);
     expect(hides(api.log)[0]).toContain('"groups"');
-    await expect(toasts(page).getByText('1 Mitteilung entfernt')).toBeVisible();
+    await expect(toasts(page).getByText('1 Benachrichtigung entfernt')).toBeVisible();
     await expect(page).toHaveURL(/\/me$/);
     await toasts(page).getByRole('button', { name: 'Rückgängig' }).tap();
     await expect(row).toBeVisible();
@@ -231,6 +231,6 @@ test.describe('notifications on a phone', () => {
     await swipe(page, row, -w * 0.25, { steps: 3, ms: 0 });
     await expect(row).toHaveCount(0);
     await expect.poll(() => hides(api.log).length).toBe(1);
-    await expect(toasts(page).getByText('1 Mitteilung entfernt')).toBeVisible();
+    await expect(toasts(page).getByText('1 Benachrichtigung entfernt')).toBeVisible();
   });
 });

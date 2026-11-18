@@ -19,7 +19,7 @@ const rows = (page: Page) => sheet(page).locator('li.nr');
 const rowOf = (page: Page, title: string) => rows(page).filter({ hasText: title });
 const toasts = (page: Page) => page.getByRole('region', { name: 'Hinweise' });
 const TV = 'Ein Fernseher wurde mit deinem Konto verbunden';
-const END = /Das waren alle\. Mitteilungen werden nach 90 Tagen entfernt\./;
+const END = /Das waren alle\. Benachrichtigungen werden nach 90 Tagen entfernt\./;
 
 async function box(l: Locator) {
   const b = (await l.boundingBox())!;
@@ -138,9 +138,9 @@ test.describe('notifications center', () => {
     const before = await box(rowOf(page, TV));
     await s.getByRole('button', { name: 'Geräte leeren' }).click();
     await expect(rows(page)).toHaveCount(0);
-    await expect(s.getByText('Keine Mitteilungen')).toBeVisible();
+    await expect(s.getByText('Keine Benachrichtigungen')).toBeVisible();
     expect(api.log.some((l) => l.startsWith('POST /api/notifications/hide {"category":"devices"}'))).toBe(true);
-    await expect(toasts(page).getByText('6 Mitteilungen entfernt')).toBeVisible();
+    await expect(toasts(page).getByText('6 Benachrichtigungen entfernt')).toBeVisible();
     await toasts(page).getByRole('button', { name: 'Rückgängig' }).click();
     await expect(rowOf(page, TV)).toBeVisible();
     expect(await box(rowOf(page, TV))).toEqual(before);
@@ -155,7 +155,7 @@ test.describe('notifications center', () => {
     await row.hover();
     await row.getByRole('button', { name: 'Entfernen: Nordlicht ist bereit' }).click();
     await expect(row).toHaveCount(0);
-    await expect(toasts(page).getByText('1 Mitteilung entfernt')).toBeVisible();
+    await expect(toasts(page).getByText('1 Benachrichtigung entfernt')).toBeVisible();
     expect(api.notes.entries.find((e) => e.title === 'Nordlicht ist bereit')!.hidden).toBe(true);
     await toasts(page).getByRole('button', { name: 'Rückgängig' }).click();
     await expect(row).toBeVisible();
@@ -183,7 +183,7 @@ test.describe('notifications center', () => {
     await expect(s.getByTestId('notes-unread')).toHaveCount(0);
     await expect(s.getByRole('button', { name: 'Alle gelesen' })).toBeDisabled();
     await expect(chips).toHaveText(['Alle', 'Ungelesen']);
-    await expect(toasts(page).getByText('75 Mitteilungen entfernt')).toBeVisible();
+    await expect(toasts(page).getByText('75 Benachrichtigungen entfernt')).toBeVisible();
     await toasts(page).getByRole('button', { name: 'Rückgängig' }).click();
     await expect(rowOf(page, TV)).toBeVisible();
     await expect(s.getByTestId('notes-unread')).toHaveText('8 neu');
@@ -263,7 +263,7 @@ test.describe('notifications center', () => {
       await page.goto('/watchlist');
       await bell(page).click();
       const s = sheet(page);
-      await expect(s.getByRole('alert')).toContainText('Mitteilungen konnten nicht geladen werden.');
+      await expect(s.getByRole('alert')).toContainText('Benachrichtigungen konnten nicht geladen werden.');
       fail = false;
       await s.getByRole('button', { name: 'Nochmal' }).click();
       await expect(rowOf(page, TV)).toBeVisible();
@@ -275,7 +275,7 @@ test.describe('notifications center', () => {
       const s = sheet(page);
       const tail = await box(s.locator('.tail'));
       await scrollList(page, 'end');
-      await expect(s.locator('.tail').getByRole('alert')).toContainText('Mitteilungen konnten nicht geladen werden.');
+      await expect(s.locator('.tail').getByRole('alert')).toContainText('Benachrichtigungen konnten nicht geladen werden.');
       expect((await box(s.locator('.tail'))).h).toBe(tail.h);
       await page.waitForTimeout(500);
       expect(asked).toBe(1);
