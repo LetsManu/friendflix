@@ -5,10 +5,11 @@ import type { Ctx } from '../src/ctx.js';
 import { commitTime, installedBuild } from '../src/installed.js';
 import { MemoryKV } from '../src/kv.js';
 import { healthProof, livetvKey } from '../src/livetv/client.js';
+import { cfg as testCfg } from './helpers.js';
 
 // The installed build (installed.ts): with images built only when they changed, the services of one stack carry different image
 // commits; "which build runs" is the newest of them, from the updater's listing, else from asking the services, else the own one.
-const SECRET = 'internal-secret-123456';
+const SECRET = testCfg.INTERNAL_SECRET;
 const REPO = 'example/friendflix';
 const B = '1'.repeat(40), G = '2'.repeat(40), W = '3'.repeat(40), L = '4'.repeat(40), U = '5'.repeat(40);
 const dig = (d: string) => `sha256:${d.repeat(64)}`;

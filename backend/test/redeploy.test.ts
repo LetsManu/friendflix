@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { Ctx } from '../src/ctx.js';
 import { MemoryKV } from '../src/kv.js';
 import { REDEPLOY_KEY, REDEPLOY_LOCK, REDEPLOY_TIMEOUT_MS, abandonRedeploy, beginRedeploy, claimRedeploy, redeployView, settleRedeploy, type ServiceSeen } from '../src/redeploy.js';
+import { cfg as testCfg } from './helpers.js';
 
 // The phase of an update handed to Portainer (redeploy.ts), worked out from what runs afterwards: Portainer gives no progress
 // and recreates this backend halfway through, so the record lives in the kv store and every read judges it again.
@@ -12,7 +13,7 @@ const OLD = 'a'.repeat(40), NEW = 'b'.repeat(40);
 const B = '1'.repeat(40), G = '2'.repeat(40), W1 = '3'.repeat(40), W2 = '4'.repeat(40);
 const T0 = 1_800_000_000_000;
 const BEFORE = T0 - 60_000; // this backend ran before the redeploy
-const SECRET = 'internal-secret-123456';
+const SECRET = testCfg.INTERNAL_SECRET;
 /** commit times as GitHub answers them (installed.ts commitTime): the newest image commit is the installed build */
 const TIMES: Record<string, string> = {
   [OLD]: '2026-01-01T00:00:00Z', [NEW]: '2026-02-01T00:00:00Z',
