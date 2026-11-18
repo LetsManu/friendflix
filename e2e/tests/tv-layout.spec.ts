@@ -297,7 +297,7 @@ test.describe('TV layout', () => {
       const out = page.getByRole('button', { name: 'Abmelden' });
       await expect(out).toBeVisible();
       await expect(page.locator('main a[href="/settings"]')).toBeVisible();
-      await expect(page.locator('main a[href="/devices"]')).toBeVisible();
+      await expect(page.getByRole('link', { name: 'Geräte', exact: true })).toBeVisible(); // the account link (a devices notice can carry its own /devices action)
       await expect(page.getByRole('button', { name: 'Server wechseln' })).toHaveCount(0); // only in the LG app
       // D-pad: everything on the page is reachable with the arrows from its first element (walk every arrow from every reached element)
       await page.locator('main .notes, main p.muted.pad').first().waitFor(); // the notifications have loaded
