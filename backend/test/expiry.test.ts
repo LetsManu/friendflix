@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { expiryTick } from '../src/expiry.js';
+import { notesRetentionTick } from '../src/notifications/retention.js';
 import { lockUser, setAccessUntil } from '../src/users.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
 
@@ -108,6 +109,15 @@ describe('expiryTick', () => {
     expect(await notices('notify.access.ended')).toHaveLength(0);
     expect(await audits('user.expiry_skipped_last_admin', adminId)).toEqual([{ actor: null, meta: { accessUntil: until.toISOString() } }]);
     expect(await audits('user.expired', adminId)).toHaveLength(0);
+
+    // retention keeps that notice, the only marker of "told": 91 days on, the tick does not tell the admins again
+    const told = (await env.pool.query<{ id: string }>("select id from notifications where kind = 'access_ended'")).rows;
+    const later = new Date(now.getTime() + 91 * DAY);
+    for (const k of await env.kv.keys('notes:retention:')) await env.kv.del(k);
+    await notesRetentionTick(env.ctx, later);
+    expect(await expiryTick(env.ctx, later)).toEqual({ warned: 0, locked: 0 });
+    expect((await env.pool.query<{ id: string }>("select id from notifications where kind = 'access_ended'")).rows).toEqual(told);
+    expect(await audits('user.expiry_skipped_last_admin', adminId)).toHaveLength(1);
 
     // with a second active admin the expired admin is locked normally
     await env.pool.query("update users set role='admin' where id=$1", [ids.ben]);

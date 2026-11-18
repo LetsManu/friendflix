@@ -146,7 +146,7 @@ Entries older than 90 days are deleted by a daily job, along with their `notific
    - The action label comes from the category (*Ansehen* for downloads and series, *Geräte prüfen* for devices, *Aktualisieren* for `update_available`, otherwise *Öffnen*), in all 7 locales.
    - An entry without a link has no action.
 8. **Retention.**
-   - The daily job deletes entries older than 90 days, read or unread.
+   - The daily job deletes entries older than 90 days, read or unread, except `update_available` and `access_ended` (`RETENTION_KEEP_KINDS` in `backend/src/notifications/retention.ts`): their dedupe key is the only "told once" marker of a condition a timer keeps seeing (a version that stays newest, the last admin whose access ended), so deleting them would send them again.
    - It runs on the existing background-job timer where `BACKGROUND_JOBS=true`.
    - A webhook retry after 90 days could re-create a deleted entry. That is accepted.
 
