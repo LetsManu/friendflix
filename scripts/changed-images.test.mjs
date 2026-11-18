@@ -466,13 +466,14 @@ test('build action: its real reads are version.json and the image\'s Dockerfile 
 
 test('build action: commit and time are required inputs, the labels are written from them (no metadata-action, no .version)', () => {
   const text = readFileSync(ACTION, 'utf8');
-  for (const input of ['commit', 'time']) assert.match(text, new RegExp(`^ {2}${input}:\\n(?: {4}.*\\n)*? {4}required: true$`, 'm'), input);
+  // code lines only: a comment must not satisfy (or fail) these checks
   const code = text.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  for (const input of ['commit', 'time']) assert.match(code, new RegExp(`^ {2}${input}:\\n(?: {4}.*\\n)*? {4}required: true$`, 'm'), input);
   assert.doesNotMatch(code, /metadata-action/);
   assert.doesNotMatch(code, /image\.version|GIT_SHA|BUILD_TIME|GITHUB_SHA|git log/);
-  for (const key of ['title', 'source', 'url', 'licenses', 'revision', 'created']) assert.match(text, new RegExp(`org\\.opencontainers\\.image\\.${key}=`), key);
-  assert.match(text, /"FF_IMAGE_COMMIT=\$COMMIT"/);
-  assert.match(text, /"SOURCE_DATE_EPOCH=\$TIME"/);
+  for (const key of ['title', 'source', 'url', 'licenses', 'revision', 'created']) assert.match(code, new RegExp(`org\\.opencontainers\\.image\\.${key}=`), key);
+  assert.match(code, /"FF_IMAGE_COMMIT=\$COMMIT"/);
+  assert.match(code, /"SOURCE_DATE_EPOCH=\$TIME"/);
 });
 
 /** a stand-in for `docker buildx build`: logs the --build-arg values to $FAKE_LOG and writes an OCI tarball with one manifest */

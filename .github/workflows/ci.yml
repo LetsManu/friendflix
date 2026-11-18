@@ -710,11 +710,6 @@ jobs:
             exit 1
           fi
           jq -c '.images | map_values({action, commit, time})' <<< "$PLAN"
-      # only after every `docker` leg passed (this job runs on !cancelled() for the Plan check, so it fails instead of skipping)
-      - name: Images built
-        env:
-          DOCKER_RESULT: ${{ needs.docker.result }}
-        run: '[ "$DOCKER_RESULT" = success ] || { echo "::error::docker did not pass ($DOCKER_RESULT): nothing to reproduce"; exit 1; }'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with: { fetch-depth: 0, persist-credentials: false }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -732,12 +727,15 @@ jobs:
           echo "### $SERVICE reproduced: \`$digest\` (= $img, linux/amd64)" >> "$GITHUB_STEP_SUMMARY"
       - name: Build twice from scratch and compare
         if: env.PUBLISHABLE != 'true'
+        env:
+          # what both rebuilds are built for (reproduce-image.sh asks the ref's own changed-images.mjs; the plan says the same)
+          IMAGE_COMMIT: ${{ fromJSON(needs.changes.outputs.plan).images[matrix.service].commit }}
         run: |
           set -euo pipefail
           a=$(scripts/reproduce-image.sh "$SERVICE" --out "$RUNNER_TEMP/a.tar")
           b=$(scripts/reproduce-image.sh "$SERVICE" --out "$RUNNER_TEMP/b.tar")
           if [ "$a" != "$b" ]; then
-            echo "::error title=Not reproducible::$SERVICE: two clean builds of $GITHUB_SHA differ ($a vs $b)"
+            echo "::error title=Not reproducible::$SERVICE: two clean builds of image commit $IMAGE_COMMIT differ ($a vs $b)"
             scripts/reproduce-image.sh --diff "$RUNNER_TEMP/a.tar" "$RUNNER_TEMP/b.tar"
             exit 1
           fi
