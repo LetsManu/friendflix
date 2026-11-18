@@ -6,15 +6,26 @@
  * (the backend restarts in the middle: failed polls mean "reconnecting", not an error).
  */
 import { hasKey, trDynamic } from '#lib/i18n';
+import { mediaErrorText } from './mediaserver/model';
 
 export type StepName = 'pull' | 'verify' | 'restart' | 'health' | 'rollback';
 export type StepState = 'pending' | 'running' | 'ok' | 'failed' | 'skipped';
 export type UpdaterAction = 'update' | 'rollback' | 'self-update';
-/** the updater's last job can be one of Live TV's too (backend updater.ts UpdaterJobAction) */
-export type UpdaterJobAction = UpdaterAction | 'livetv-enable' | 'livetv-disable' | 'livetv-remove';
+/** the managed media server's jobs (backend updater.ts MEDIA_JOB_ACTIONS) */
+export const MEDIA_JOB_ACTIONS = ['mediaserver-apply', 'mediaserver-finish', 'mediaserver-start', 'mediaserver-stop', 'mediaserver-restart', 'mediaserver-update', 'mediaserver-hdr-test', 'mediaserver-backup', 'mediaserver-restore', 'mediaserver-remove', 'mediaserver-recover'] as const;
+export type MediaJobAction = (typeof MEDIA_JOB_ACTIONS)[number];
+/** the steps of a media job, also the media server phase of an update (backend updater.ts MEDIA_STEPS) */
+export const MEDIA_STEPS = ['check', 'pull', 'verify', 'snapshot', 'create', 'start', 'health', 'rollback'] as const;
+export type MediaStepName = (typeof MEDIA_STEPS)[number];
+/** the updater's last job can be one of Live TV's or the media server's too (backend updater.ts UpdaterJobAction) */
+export type UpdaterJobAction = UpdaterAction | 'livetv-enable' | 'livetv-disable' | 'livetv-remove' | MediaJobAction;
+/** succeeded_mediaserver_failed: FriendFlix was updated, its media server phase failed (and the old media server came back) */
+export type JobState = 'running' | 'succeeded' | 'failed' | 'rolled_back' | 'succeeded_mediaserver_failed';
 export interface UpdaterJob {
-  id: string; action: UpdaterJobAction; state: 'running' | 'succeeded' | 'failed' | 'rolled_back'; step: StepName | null;
+  id: string; action: UpdaterJobAction; state: JobState; step: StepName | null;
   steps: Record<StepName, StepState>; from: string | null; to: string; startedAt: string; finishedAt: string | null; error: string | null;
+  /** a media job's steps (and an update's media server phase); absent/null for every other job and older backends */
+  media?: { step: MediaStepName | null; steps: Record<MediaStepName, StepState> } | null;
 }
 export interface UpdaterStatus {
   updater: { version: string | null; sha: string | null };
@@ -27,6 +38,8 @@ export interface UpdaterStatus {
   stackReason?: 'own' | 'working_dir' | 'portainer' | 'no_labels' | null;
   stackDir?: string | null;
   projectDir?: string | null;
+  /** the managed media server as the updater sees it (only what this page reads); absent/null = none, or an older backend */
+  mediaserver?: { container: object | null; desired: object | null } | null;
 }
 export interface AutoUpdate { mode: 'off' | 'nightly-window'; time: string; locked: string[] }
 /**
@@ -119,6 +132,56 @@ export function portainerMissing(p: Pick<PortainerSetup, 'missing'> | null | und
 export function visibleSteps(j: UpdaterJob): StepName[] {
   const base = MAIN_STEPS.filter((s) => !(j.action === 'self-update' && s === 'health'));
   return j.steps.rollback !== 'skipped' && j.steps.rollback !== 'pending' ? [...base, 'rollback'] : base;
+}
+
+/** Admin → Einstellungen → Medienserver: where a media server failure is tried again */
+export const MEDIA_TAB = '/admin/settings?tab=media';
+export const isMediaJob = (action: string): action is MediaJobAction => (MEDIA_JOB_ACTIONS as readonly string[]).includes(action);
+
+/** a media job's steps (check … health), plus the rollback once it started */
+export function visibleMediaSteps(m: NonNullable<UpdaterJob['media']>): MediaStepName[] {
+  return MEDIA_STEPS.filter((s) => s !== 'rollback' || (m.steps.rollback !== 'skipped' && m.steps.rollback !== 'pending'));
+}
+
+/**
+ * a managed media server exists (a container, or one wanted): an update job then may end with a media server phase, so its steps
+ * are listed from the start (steps.ts jobFlow `mediaPhase`)
+ */
+export const hasManagedMedia = (s: UpdaterStatus | null | undefined): boolean => Boolean(s?.mediaserver && (s.mediaserver.container || s.mediaserver.desired));
+
+/**
+ * Whether an update job lists its media server phase, decided once per job (StepList must not gain or lose rows between polls): a
+ * job that carries its phase always; else at first sight, a running job when a managed media server exists. A job first seen
+ * finished without a phase never gets the rows (it never had one we know of).
+ */
+export function mediaPhaseMemo(): (job: UpdaterJob | null | undefined, s: UpdaterStatus | null | undefined) => boolean {
+  const seen = new Map<string, boolean>();
+  return (job, s) => {
+    if (!job) return false;
+    if (job.media) { seen.set(job.id, true); return true; }
+    let v = seen.get(job.id);
+    if (v === undefined) { v = job.state === 'running' && hasManagedMedia(s); seen.set(job.id, v); }
+    return v;
+  };
+}
+
+/** a job state's tone: an update whose media server phase failed is a warning (FriendFlix runs the new build), never red */
+export type JobTone = 'running' | 'ok' | 'warn' | 'bad';
+export function jobTone(state: JobState): JobTone {
+  if (state === 'running') return 'running';
+  if (state === 'succeeded') return 'ok';
+  return state === 'succeeded_mediaserver_failed' ? 'warn' : 'bad';
+}
+
+/** "FriendFlix aktualisiert, Medienserver nicht." with the media server's code as a sentence (mediaserver/model.ts mediaErrorText) */
+export function mediaFailedText(code: string | null): string {
+  return trDynamic('admin.update.updater.result.succeeded_mediaserver_failed', { reason: mediaErrorText(code) });
+}
+
+/** a media job's name (Einrichten, Starten, …) */
+export function mediaActionLabel(action: MediaJobAction): string {
+  const key = action.slice('mediaserver-'.length).replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+  return trDynamic(`admin.update.updater.mediaAction.${key}`);
 }
 
 /** a readable reason for a job's error code (unknown codes: "unknown error"; the code itself is never shown raw) */

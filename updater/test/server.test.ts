@@ -6,12 +6,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ImageInfo } from '../src/docker.js';
 import { Updater, type Ops } from '../src/job.js';
 import { ReplayCache, deriveKey, sign, type Verifier } from '../src/protocol.js';
-import { handler, healthProbe, servicesView, stackView, status } from '../src/server.js';
+import { MAX_BODY_FOR, ROUTES, handler, healthProbe, servicesView, stackView, status } from '../src/server.js';
 import { DEFAULT_STATE, memoryStore } from '../src/state.js';
 
 const key = deriveKey('server-test-secret-0123456789');
 let server: Server, base: string, updater: Updater, verifier: Verifier, warnings: string[], started: string[];
 let release: () => void = () => {};
+let media: unknown;
 
 function ops(): Ops {
   const info: ImageInfo = { repoDigests: [], gitSha: 'a'.repeat(40), version: '1.0.0' };
@@ -25,7 +26,7 @@ function ops(): Ops {
 
 beforeAll(async () => {
   server = createServer((req, res) => { void handler({
-    get updater() { return updater; }, get verifier() { return verifier; },
+    get updater() { return updater; }, get verifier() { return verifier; }, get media() { return media; },
     services: async () => [{ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-aaaaaaa', version: '1.0.0' }],
     self: { version: '1.0.0', sha: null }, warn: (m: string) => warnings.push(m),
   } as never)(req, res); });
@@ -35,7 +36,7 @@ beforeAll(async () => {
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 beforeEach(() => {
   release();
-  warnings = []; started = [];
+  warnings = []; started = []; media = undefined;
   updater = new Updater(ops(), memoryStore(DEFAULT_STATE), { sleep: async () => {} });
   verifier = { key, cache: new ReplayCache(), notBefore: Date.now() - 1000 };
 });
@@ -56,7 +57,7 @@ describe('updater HTTP API', () => {
     const r = await call('GET', '/v1/status');
     expect(r.status).toBe(200);
     expect(r.headers.get('cache-control')).toBe('no-store');
-    expect(await r.json()).toMatchObject({ channel: 'stable', targetTag: 'latest', current: 'sha-aaaaaaa', previous: null, busy: false, job: null, services: [{ service: 'backend' }], updater: { version: '1.0.0' } });
+    expect(await r.json()).toMatchObject({ channel: 'stable', targetTag: 'latest', current: 'sha-aaaaaaa', previous: null, busy: false, job: null, services: [{ service: 'backend' }], updater: { version: '1.0.0' }, mediaserver: null });
   });
 
   it('a replayed request is refused', async () => {
@@ -70,9 +71,19 @@ describe('updater HTTP API', () => {
   });
 
   it('unknown paths and wrong methods; no other action exists', async () => {
-    for (const p of ['/v1/exec', '/v1/run', '/v1/update/../exec', '/v1/services/postgres', '/']) expect((await call('POST', p)).status, p).toBe(404);
+    for (const p of ['/v1/exec', '/v1/run', '/v1/update/../exec', '/v1/services/postgres', '/', '/v1/mediaserver/exec', '/v1/mediaserver/backups', '/v1/mediaserver/backups/x/download']) {
+      expect((await call('POST', p)).status, p).toBe(404);
+    }
     expect((await call('GET', '/v1/update')).status).toBe(405);
     expect((await call('POST', '/v1/status')).status).toBe(405);
+    expect((await call('GET', '/v1/mediaserver')).status).toBe(405);
+    // the seven routes; without the media part (tests) the media route has nothing to run
+    const routes = [['GET', '/v1/status'], ['POST', '/v1/channel'], ['POST', '/v1/update'], ['POST', '/v1/rollback'], ['POST', '/v1/self-update'], ['POST', '/v1/livetv'], ['POST', '/v1/mediaserver']];
+    expect(Object.entries(ROUTES).map(([p, r]) => [r.method, p])).toEqual(routes);
+    expect(ROUTES['/v1/mediaserver']).toEqual({ method: 'POST', route: 'mediaserver' });
+    expect(MAX_BODY_FOR).toEqual({ status: 1024, channel: 1024, update: 1024, rollback: 1024, 'self-update': 1024, livetv: 1024, mediaserver: 8192 });
+    for (const [m, p] of routes) expect((await call(m === 'GET' ? 'POST' : 'GET', p!)).status, p).toBe(405);
+    expect((await call('POST', '/v1/mediaserver', '{"op":"gpu"}')).status).toBe(404);
   });
 
   it('update: 202 with the job, then 409 while it runs', async () => {
@@ -107,6 +118,20 @@ describe('updater HTTP API', () => {
     const big = `{"channel":"stable","x":"${'a'.repeat(2000)}"}`;
     const r = await fetch(`${base}/v1/channel`, { method: 'POST', body: big, headers: { 'content-type': 'application/json' } }).catch(() => null);
     expect(r === null || r.status === 413).toBe(true);
+  });
+
+  it('the media route takes up to 8 KB', async () => {
+    media = { service: { gpu: async () => ({ dri: [], nvidia: false }) }, status: async () => ({ available: true, reason: null }) };
+    // JSON allows the padding: exactly n bytes, signed over all of them
+    const body = (n: number) => `{"op":"gpu"${' '.repeat(n - 12)}}`;
+    expect(body(8192)).toHaveLength(8192);
+    const r = await call('POST', '/v1/mediaserver', body(8192));
+    expect([r.status, await r.json()]).toEqual([200, { dri: [], nvidia: false }]);
+    const big = await call('POST', '/v1/mediaserver', body(8193)).catch(() => null);
+    expect(big === null || big.status === 413).toBe(true);
+    // the other routes stay at 1 KB
+    const l = await call('POST', '/v1/livetv', `{"op":"enable"${' '.repeat(1100)}}`).catch(() => null);
+    expect(l === null || l.status === 413).toBe(true);
   });
 
   it('status says whose stack it is and why (own / foreign / null = could not tell), for the backend and the page', async () => {

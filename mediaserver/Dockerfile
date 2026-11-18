@@ -12,6 +12,10 @@
 #      the GitHub release debs of intel/compute-runtime (NEO), intel/intel-graphics-compiler (IGC) and gmmlib, current
 #      (Gen12+) and legacy (Gen11 and older) side by side, amd64 only. Same versions as Jellyfin; here every file is also
 #      checked against a pinned sha256 (the compute-runtime ones match Intel's published ww35.sum files).
+# 0003 HEALTHCHECK on Ferrofin's GET /health (the base image has none; the managed media server's update waits for "healthy").
+# 0004 No web client: the bundled jellyfin-web goes and FERROFIN_WEB_DIR names a directory that does not exist, so the server
+#      serves the API only (FriendFlix is the only client; no dashboard at all).
+# 0005 /data and /cache writable for any non-root container user (Docker copies their mode onto fresh named volumes).
 
 # --- 0001: the Intel debs, downloaded by BuildKit and checked (a changed file fails the build); only mounted, never in a layer
 ARG GMMLIB_VER=22.10.0
@@ -78,15 +82,34 @@ RUN --mount=type=bind,from=intel-opencl,target=/tmp/intel-opencl \
     echo "no Intel OpenCL runtime for $TARGETARCH (amd64 only, as in Jellyfin's image)"; \
   fi; \
   rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/log/apt /var/log/dpkg.log /var/log/alternatives.log /var/lib/dpkg/*-old
+# 0004: no web client. Ferrofin serves FERROFIN_WEB_DIR at /web/ when it holds an index.html, else it logs "no web client bundle
+# (index.html) found" and serves the API only. An ENV cannot be unset, so it names /nonexistent (root's /, read-only in the
+# managed container: nothing can create it). The bundled client goes too (the build fails if a base bump moved it: check this
+# change again then). The files stay in the base image's layer, so this saves no download; see patches/0004-no-web-client.md.
+RUN test -f /usr/share/ferrofin/web/index.html \
+  && rm -rf /usr/share/ferrofin \
+  && test ! -e /nonexistent
+ENV FERROFIN_WEB_DIR=/nonexistent
+# 0005: the state directories writable for any non-root container user (as the official Jellyfin image does for /config and
+#       /cache). Docker copies an image directory's owner and mode onto a fresh named volume mounted there, so the managed media
+#       server's data and cache volumes are writable for the uid the owner picks. /cache is the cache root the template sets
+#       (FERROFIN_CACHE_DIR=/cache); the base image has no /cache at all. Not a VOLUME: an unmounted /cache must not become an
+#       anonymous volume.
+RUN install -d -o ferrofin -g ferrofin -m 0777 /cache && chmod 0777 /data
 COPY mediaserver/NOTICE /usr/share/doc/friendflix-mediaserver/NOTICE
-# back to the base image's own user (uid 1000) and entrypoint; /data, ports and env stay as Ferrofin sets them
+# back to the base image's own user (uid 1000) and entrypoint; /data, ports and the rest of the env stay as Ferrofin sets them
 # hadolint ignore=DL3066
 USER ferrofin
+# 0003: the base image has no curl (it purges it after installing jellyfin-ffmpeg), so bash (Debian's, in the base) sends the
+# request over /dev/tcp. Healthy = Ferrofin's GET /health answers 200 ("Every check passed"; 503 while a check fails); anything
+# else, no answer within 4 s included, exits 1 (Docker: unhealthy).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8096 && printf 'GET /health HTTP/1.0\\r\\nHost: 127.0.0.1\\r\\n\\r\\n' >&3 && IFS= read -r -t 4 status <&3 && [[ $status == 'HTTP/1.'[01]' 200 '* ]] || exit 1"]
 # CI's docker/metadata-action sets title/description/licenses/source/revision/version/created too (ci.yml passes this image's
 # values for title, description and licenses, so the repository's AGPL default does not land on it). GPL-3.0-only is the
 # licence of the Ferrofin server; the other parts keep theirs (NOTICE).
 LABEL org.opencontainers.image.title="FriendFlix media server (Ferrofin)" \
-  org.opencontainers.image.description="Ferrofin v1.5.1 with FriendFlix's numbered changes (0001: Intel OpenCL runtime). Trial." \
+  org.opencontainers.image.description="Ferrofin v1.5.1 with FriendFlix's numbered changes (0001: Intel OpenCL runtime; 0003: healthcheck; 0004: no web client, API only; 0005: state directories for any user). Trial." \
   org.opencontainers.image.source="https://github.com/LetsManu/friendflix" \
   org.opencontainers.image.documentation="https://github.com/LetsManu/friendflix/blob/main/mediaserver/README.md" \
   org.opencontainers.image.licenses="GPL-3.0-only" \
@@ -94,5 +117,5 @@ LABEL org.opencontainers.image.title="FriendFlix media server (Ferrofin)" \
   org.opencontainers.image.base.name="ghcr.io/mangoleaf/ferrofin:v1.5.1" \
   org.opencontainers.image.base.digest="sha256:5980a3c29c0bab564793f4fcf786e737b91a9eba26e9fb1d6f1c203ccb56580a" \
   io.github.letsmanu.friendflix.mediaserver.ferrofin="v1.5.1" \
-  io.github.letsmanu.friendflix.mediaserver.changes="0001"
+  io.github.letsmanu.friendflix.mediaserver.changes="0001,0003,0004,0005"
 ENTRYPOINT ["ferrofin-server"]

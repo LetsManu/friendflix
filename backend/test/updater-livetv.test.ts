@@ -100,7 +100,7 @@ describe('startLivetvJob', () => {
   it('the job is parsed and audited', async () => {
     const r = await startLivetvJob(env.ctx, { op: 'enable' }, adminId);
     expect(r).toEqual({ ok: true, job: { id: JOB_ID, action: 'livetv-enable', state: 'running', step: 'restart', from: null, to: 'latest',
-      steps: { pull: 'skipped', verify: 'skipped', restart: 'running', health: 'skipped', rollback: 'skipped' }, startedAt: '2026-11-12T04:00:00.000Z', finishedAt: null, error: null } });
+      steps: { pull: 'skipped', verify: 'skipped', restart: 'running', health: 'skipped', rollback: 'skipped' }, startedAt: '2026-11-12T04:00:00.000Z', finishedAt: null, error: null, media: null } });
     expect((await audits('system.updater_start')).at(-1)).toEqual({ actor: adminId, meta: { action: 'livetv-enable', from: null, to: 'latest' } });
     await startLivetvJob(env.ctx, { op: 'remove', data: true }, adminId);
     expect((await audits('system.updater_start')).at(-1)).toEqual({ actor: adminId, meta: { action: 'livetv-remove', data: true, from: null, to: 'latest' } });

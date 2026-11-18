@@ -31,7 +31,7 @@ export const NEVER_GROUPED: ReadonlySet<string> = new Set([
 ]);
 
 /** Key part of a title: a plain text is itself, a message its key, a join its parts' keys joined by `+`.
- *  Only one join level counts: a join inside a join contributes an empty part (the SQL backfill in migration 60 does the same). */
+ *  Only one join level counts: a join inside a join contributes an empty part (the SQL backfill in migration 61 does the same). */
 const textKey = (t: Text, nested = false): string => {
   if (typeof t === 'string') return t;
   if ('join' in t) return nested ? '' : t.join.map((x) => textKey(x, true)).join('+');

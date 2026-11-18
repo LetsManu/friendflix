@@ -1363,7 +1363,25 @@ export const MIGRATIONS: string[] = [
   `
   alter table seerr_requests add column if not exists seasons smallint[];
   `,
-  // 60: notifications center. group_key folds repeated notices into one group (kind|message key, see notifications/categories.ts);
+  // 60: managed media server stage 1 (docs/superpowers/specs/2026-11-17-managed-mediaserver-design.md "Backend storage"): the backend's half
+  // of managed mode, one row (kind, setup progress, the generated admin account with its password encrypted, the libraries until they exist
+  // in the server, the external server's address and key kept while managed mode is on). Rerunnable.
+  `
+  create table if not exists media_managed (
+    id int primary key default 1 check (id = 1),
+    kind text check (kind in ('ferrofin','jellyfin')),
+    setup text not null default 'none'
+      check (setup in ('none','applying','first_run','api_key','libraries','hwaccel','finishing','done','failed')),
+    setup_error text check (setup_error ~ '^[a-z][a-z0-9_]{0,39}$'),
+    admin_user text,
+    admin_password_enc text,
+    libraries jsonb not null default '[]',
+    external_url text,
+    external_key_enc text,
+    updated_at timestamptz not null default now()
+  );
+  `,
+  // 61: notifications center. group_key folds repeated notices into one group (kind|message key, see notifications/categories.ts);
   // A join title counts one level (a nested join adds an empty part), as groupKey() does.
   // hidden_at = cleared by the owner; notification_state holds read/hidden per person for broadcasts (user_id null). Rerunnable.
   `

@@ -18,7 +18,7 @@ export type CheckGroup = (typeof CHECK_GROUPS)[number];
 export const CHECK_IDS = [
   'core.publicUrl', 'core.database', 'core.redis', 'core.redisPersistence', 'core.gateway', 'core.disk.downloads', 'core.disk.previews', 'core.disk.database', 'core.env', 'core.mail',
   'signin.oidc', 'signin.authentik', 'signin.flows', 'signin.issuerHost', 'signin.passkeys', 'signin.mail',
-  'media.server', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder',
+  'media.server', 'media.managed', 'media.requests', 'media.tmdb', 'media.omdb', 'media.playback', 'media.encoder',
   'livetv.container', 'livetv.encoder', 'livetv.sources', 'livetv.guides',
   'updates.updater', 'updates.path', 'updates.portainer',
   'proxy.forwardedProto', 'proxy.peer', 'proxy.websocket', 'proxy.buffering', 'proxy.upload', 'proxy.headers',

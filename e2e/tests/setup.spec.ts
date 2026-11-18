@@ -3,7 +3,7 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { done, installLogin, loginState, password } from '../mocks/login.js';
-import { SETUP_CODE, setupState } from '../mocks/setup.js';
+import { SETUP_CODE, setupMedia, setupState } from '../mocks/setup.js';
 
 // The setup wizard (/setup, spec Part F): a new install without users answers 503 setup_required, the wizard opens with the code from
 // the log and walks through the public address, the media server, the sign-in and the first admin. /setup/extras (step 6) runs signed in.
@@ -15,6 +15,12 @@ async function unlock(page: Page) {
   await page.getByLabel('Einrichtungscode', { exact: true }).fill(SETUP_CODE.toLowerCase());
   await page.getByRole('button', { name: 'Entsperren' }).click();
 }
+
+/** a box in page coordinates (the page may scroll between two reads); `timeout` for an element that may be gone by then */
+const box = (l: ReturnType<Page['locator']>, timeout?: number) => l.evaluate((el) => {
+  const r = el.getBoundingClientRect();
+  return { x: Math.round(r.x + scrollX), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) };
+}, undefined, { timeout });
 
 /** every value the browser storages hold (nothing secret may end up there) */
 const storage = (page: Page) => page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }) + location.href);
@@ -159,6 +165,169 @@ test.describe('setup wizard', () => {
       OIDC_ISSUER: 'https://auth.example.com/application/o/friendflix/', OIDC_CLIENT_ID: 'friendflix', OIDC_CLIENT_SECRET: 'client-secret-placeholder',
     } });
     expect(await storage(page)).not.toMatch(/placeholder/);
+  });
+
+  test('wizard sets up managed Jellyfin and continues to step 4', async ({ page, api }) => {
+    api.setup!.steps.publicUrl = 'done';
+    const ms = (api.setup!.mediaserver = setupMedia(true));
+    ms.setupSeq = ['first_run', 'api_key', 'libraries', 'done'];
+    ms.baseUnreadable = true;
+    // this build has no Ferrofin image: its choice is disabled and says why
+    ms.kinds.ferrofin = false;
+    await unlock(page);
+    const head = h2(page, 'Medienserver');
+    await expect(head).toBeVisible();
+    const seg = page.getByRole('radiogroup', { name: 'Art des Medienservers' });
+    // the managed default is preselected; Ferrofin carries *Test* while it is a trial; the address fields wait behind the third choice
+    await expect(seg.getByRole('radio', { name: 'Jellyfin (offiziell, verwaltet)' })).toHaveAttribute('aria-checked', 'true');
+    await expect(seg.getByRole('radio', { name: /Ferrofin \(eigener\)/ })).toContainText('Test');
+    await expect(page.getByLabel('Admin-Passwort')).toHaveCount(0);
+    const ferrofin = seg.getByRole('radio', { name: /Ferrofin \(eigener\)/ });
+    await expect(ferrofin).toBeDisabled();
+    await expect(page.getByTestId('media-reasons')).toContainText('Für diesen FriendFlix-Stand gibt es kein Image dieses Servers.');
+    // the arrow keys move the choice and the focus, past the disabled one
+    const jellyfin = seg.getByRole('radio', { name: 'Jellyfin (offiziell, verwaltet)' });
+    const external = seg.getByRole('radio', { name: 'Bestehender Jellyfin/Plex (Adresse)' });
+    await jellyfin.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(external).toBeFocused();
+    await expect(external).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByLabel('Admin-Passwort')).toBeVisible();
+    await page.keyboard.press('ArrowRight');
+    await expect(jellyfin).toBeFocused();
+    await expect(jellyfin).toHaveAttribute('aria-checked', 'true');
+    await expect(jellyfin).toHaveAttribute('tabindex', '0');
+    await expect(external).toHaveAttribute('tabindex', '-1');
+    const at = { head: await box(head), seg: await box(seg) };
+
+    await page.getByLabel('Pfad auf dem Server').fill('/srv/media');
+    await page.getByRole('button', { name: 'Code anfordern' }).click();
+    await expect(page.getByTestId('media-code-countdown')).toHaveText(/^Gültig noch (30:00|29:[0-5]\d)$/);
+    await expect(page.getByTestId('media-code-hint')).toContainText('docker compose logs updater | grep "media folder"');
+    // the wizard has no section *Benutzer*: the unreadable note says where user and group are set later
+    await expect(page.getByText('Der Container-Benutzer kann diesen Ordner nicht lesen.')).toHaveText(
+      'Der Container-Benutzer kann diesen Ordner nicht lesen. Prüfe die Rechte; Benutzer und Gruppe des Containers kannst du später unter Admin → Einstellungen → Medienserver ändern.');
+    await page.getByLabel('Code aus dem Protokoll').fill('abcd-efgh-jkmn');
+    await page.getByRole('button', { name: 'Bestätigen' }).click();
+    await expect(page.getByTestId('media-base-path')).toHaveText('/srv/media');
+    // the setup routes cannot clear the base: no *Zurücksetzen*
+    await expect(page.getByRole('button', { name: 'Zurücksetzen' })).toHaveCount(0);
+
+    const list = page.getByTestId('media-browser');
+    await list.locator('[data-entry="Filme"]').getByRole('button', { name: 'Wählen' }).click();
+    await list.locator('[data-entry="Serien"]').getByRole('button', { name: 'Wählen' }).click();
+    await page.locator('[data-row="Serien"]').getByLabel('Art').selectOption('tvshows');
+    await expect(page.getByTestId('media-gpu-found')).toContainText('Intel (renderD128)');
+    await expect(page.getByRole('switch', { name: 'Metadaten aus dem Internet' })).toBeChecked();
+    expect({ head: await box(head), seg: await box(seg) }).toEqual(at);
+
+    const go = page.getByTestId('media-apply');
+    await expect(go).toHaveText('Einrichten');
+    const before = { head: await box(head), seg: await box(seg), go: await box(go) };
+    test.setTimeout(90_000);
+    await go.click();
+    const progress = page.getByTestId('media-setup');
+    // the progress advances; heading, choices and *Einrichten* stay where they are; then the step goes on by itself
+    const seen = new Set<string>();
+    await expect.poll(async () => {
+      if (await h2(page, 'Anmeldung').isVisible()) return true;
+      const state = await progress.getAttribute('data-setup', { timeout: 1000 }).catch(() => null);
+      if (state) seen.add(state);
+      // the step may go on between two reads: a box that is gone by then is no move
+      const now = await Promise.all([box(head, 1000), box(seg, 1000), box(go, 1000)]).catch(() => null);
+      if (now) expect({ head: now[0], seg: now[1], go: now[2] }).toEqual(before);
+      return false;
+    }, { timeout: 40_000, intervals: [300] }).toBe(true);
+    expect(seen.has('applying') || seen.has('first_run')).toBe(true);
+    expect(seen.has('libraries')).toBe(true);
+    // only the setup routes, in order (no re-authentication, nothing the card alone may do)
+    expect(ms.calls.map((c) => c.p.replace('/api/setup/mediaserver', ''))).toEqual(['/base', '/base/confirm', '/browse', '/gpu', '/apply']);
+    // the wizard offers no card actions beyond its routes
+    await step(page, 3).click();
+    await expect(page.getByTestId('media-setup')).toHaveAttribute('data-setup', 'done');
+    for (const name of ['Aktualisieren', 'Stoppen', 'Neu starten', 'Protokoll', 'Sicherung', 'Entfernen', 'Neu anlegen']) {
+      await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
+    }
+    await expect(page.getByTestId('media-apply')).toHaveText('Übernehmen');
+    await page.getByRole('button', { name: 'Weiter', exact: true }).click();
+    await expect(h2(page, 'Anmeldung')).toBeVisible();
+
+    expect(ms.calls.find((c) => c.p.endsWith('/apply'))?.body).toEqual({
+      kind: 'jellyfin', folders: [{ rel: 'Filme', name: 'Filme', type: 'movies' }, { rel: 'Serien', name: 'Serien', type: 'tvshows' }],
+      uid: 1000, gid: 1000, gpu: 'dri', mediaGid: null, egress: true,
+    });
+    expect(api.setup!.badCsrf).toBe(0);
+    expect(api.setup!.puts).toEqual([]);
+  });
+
+  test('a failed first-run step offers *Nochmal* and runs on', async ({ page, api }) => {
+    api.setup!.steps.publicUrl = 'done';
+    const ms = (api.setup!.mediaserver = setupMedia(true));
+    ms.status.base = { set: true, path: '/srv/media', pending: false, expiresAt: null };
+    ms.mode = 'managed';
+    ms.managed = { ...ms.managed, kind: 'jellyfin', setup: 'libraries', setupError: 'unreachable', libraries: [{ slug: 'filme', name: 'Filme', type: 'movies', rel: 'Filme', created: false }] };
+    ms.status.desired = { kind: 'jellyfin', folders: [{ rel: 'Filme', target: '/media/filme' }], uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: true, run: true };
+    ms.status.container = { state: 'running', health: 'healthy', kind: 'jellyfin', image: { digest: `sha256:${'a'.repeat(64)}`, upstream: '10.11.0' }, template: 'current', tampered: false, createdAt: '2026-11-17T08:00:00.000Z' };
+    ms.setupSeq = ['hwaccel', 'done'];
+    await unlock(page);
+    const progress = page.getByTestId('media-setup');
+    await expect(progress.locator('li[data-step="libraries"]')).toHaveAttribute('data-state', 'failed');
+    await expect(page.getByRole('radio', { name: 'Jellyfin (offiziell, verwaltet)' })).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('[data-row="Filme"]')).toBeVisible();
+    await page.getByRole('button', { name: 'Nochmal' }).click();
+    await expect(h2(page, 'Anmeldung')).toBeVisible({ timeout: 15_000 });
+    expect(ms.calls.filter((c) => c.p.endsWith('/action')).map((c) => c.body)).toEqual([{ op: 'retry' }]);
+  });
+
+  test('while the updater has not read the media status yet: the neutral line in its kept place, polled, then the managed default', async ({ page, api }) => {
+    api.setup!.steps.publicUrl = 'done';
+    const ms = (api.setup!.mediaserver = setupMedia(true));
+    ms.startingReads = 2;
+    let reads = 0;
+    page.on('request', (r) => { if (r.method() === 'GET' && new URL(r.url()).pathname === '/api/setup/mediaserver') reads++; });
+    await unlock(page);
+    await expect(h2(page, 'Medienserver')).toBeVisible();
+    const wait = page.getByTestId('media-starting');
+    await expect(wait).toHaveText('Medienserver-Status wird gelesen…');
+    // never the address fields while it waits (a fresh install must not lose the managed offer), no "not offered" line
+    await expect(page.getByLabel('Admin-Passwort')).toHaveCount(0);
+    await expect(page.getByTestId('media-off')).toHaveCount(0);
+    const sk = page.getByTestId('media-wait');
+    const first = await box(sk);
+    // the next poll answers starting again: nothing moves
+    await expect.poll(() => reads, { timeout: 6_000 }).toBeGreaterThanOrEqual(2);
+    expect(await box(sk)).toEqual(first);
+    const seg = page.getByRole('radiogroup', { name: 'Art des Medienservers' });
+    await expect(seg.getByRole('radio', { name: 'Jellyfin (offiziell, verwaltet)' })).toHaveAttribute('aria-checked', 'true', { timeout: 8_000 });
+    await expect(wait).toHaveCount(0);
+    expect(reads).toBe(3);
+  });
+
+  test('without an offer: today\'s fields with the reason line', async ({ page, api }) => {
+    api.setup!.steps.publicUrl = 'done';
+    await unlock(page);
+    await expect(page.getByTestId('media-off')).toHaveText('Einen Server, den FriendFlix für dich betreibt, gibt es hier nicht. Braucht den Updater-Container; er antwortet gerade nicht.');
+    await expect(page.getByRole('radiogroup', { name: 'Art des Medienservers' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Automatisch', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByLabel('Admin-Passwort')).toBeVisible();
+  });
+
+  test('with Plex the step stays as before', async ({ page, api }) => {
+    api.setup = setupState('plex');
+    api.setup.steps.publicUrl = 'done';
+    api.setup.mediaserver = { ...setupMedia(false), offer: { managed: false, reason: 'plex' } };
+    const reads: string[] = [];
+    page.on('request', (r) => { if (r.url().includes('/api/setup/mediaserver')) reads.push(r.url()); });
+    await unlock(page);
+    await expect(h2(page, 'Medienserver')).toBeVisible();
+    await expect(page.getByLabel('Plex-Adresse')).toBeVisible();
+    await expect(page.getByLabel('Plex-Token')).toBeVisible();
+    await expect(page.getByRole('radiogroup')).toHaveCount(0);
+    await expect(page.getByTestId('media-off')).toHaveCount(0);
+    const text = await page.locator('main').innerText();
+    expect(text).not.toMatch(/jellyfin|ferrofin|seerr/i);
+    // nothing about a managed server is even read
+    expect(reads).toEqual([]);
   });
 
   test('env-locked step shows "from environment" and a Next button', async ({ page, api }) => {

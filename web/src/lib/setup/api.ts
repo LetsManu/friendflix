@@ -8,6 +8,8 @@
  * Nothing here keeps a credential: the code, the media server password and the Authentik admin token live only in the request.
  */
 import { ApiError } from '#lib/api';
+import type { Kind, MediaView } from '#lib/admin/mediaserver/api';
+import { DEFAULT_MANAGED } from '#lib/admin/mediaserver/model';
 import type { ProbeResult } from '#lib/admin/settings/api';
 
 export type StepState = 'todo' | 'done' | 'env';
@@ -24,6 +26,11 @@ export interface SetupState {
   prefill: { publicUrl: string | null };
   /** 'authentik' once the Authentik automation saved the sign-in (and no sign-in key was typed by hand since); absent on older backends */
   signinVia?: 'authentik' | null;
+  /**
+   * the managed media server's offer, read lazily by step 3 from GET /api/setup/mediaserver (setupMediaApi().view(); never on Plex);
+   * absent until then, or when the backend has no such route
+   */
+  mediaserver?: Pick<MediaView, 'offer' | 'kinds'>;
 }
 export type AkStepId = 'check' | 'groups' | 'provider' | 'serviceAccount' | 'enrollment' | 'recovery' | 'brand' | 'passkeys' | 'readback' | 'adminMember' | 'extraFlows';
 export interface AkStep { id: AkStepId; state: 'create' | 'update' | 'exists' | 'skip' | 'ok' | 'failed'; detail?: string }
@@ -113,6 +120,21 @@ export function firstOpenStep(s: Pick<SetupState, 'steps'>): 2 | 3 | 4 | 5 {
   if (s.steps.media === 'todo') return 3;
   if (s.steps.signin === 'todo') return 4;
   return 5;
+}
+
+/**
+ * Step 3's first choice (spec "Admin and wizard"): the managed default kind (DEFAULT_MANAGED, *Jellyfin (offiziell, verwaltet)* while
+ * Ferrofin is a trial) when the backend offers a managed server and this build has its image, else the other managed kind with an
+ * image, else the existing server by address. Plex keeps today's step: always the address. null: none yet, the updater has not read
+ * the media status since it started (offer reason `starting`; a fresh install runs the wizard right after it starts), the step waits.
+ */
+export function initialChoice(s: Pick<SetupState, 'mediaKind' | 'mediaserver'>): Kind | 'external' | null {
+  const m = s.mediaserver;
+  if (s.mediaKind === 'plex') return 'external';
+  if (m?.offer.reason === 'starting') return null;
+  if (!m?.offer.managed) return 'external';
+  if (m.kinds[DEFAULT_MANAGED]) return DEFAULT_MANAGED;
+  return (['ferrofin', 'jellyfin'] as const).find((k) => m.kinds[k]) ?? 'external';
 }
 
 /** Whether a URL typed into a field starts with http:// (cookies not secure; for the issuer OIDC_ALLOW_INSECURE is needed). */

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { StepError, type ImageInfo } from '../src/docker.js';
-import { JobLog, Updater, type Ops } from '../src/job.js';
-import { DEFAULT_STATE, memoryStore, type State } from '../src/state.js';
+import { JobLog, Updater, type Ops, type UpdaterOpts } from '../src/job.js';
+import { DEFAULT_STATE, memoryStore, type Job, type State } from '../src/state.js';
 
 const OLD = 'a'.repeat(40), NEW = 'b'.repeat(40);
 
@@ -26,10 +26,10 @@ function world(o: { verifyFails?: string; healthyTags?: string[]; pullFails?: bo
   };
   return { ops, calls };
 }
-function make(w: ReturnType<typeof world>, init: Partial<State> = {}) {
+function make(w: ReturnType<typeof world>, init: Partial<State> = {}, opts: UpdaterOpts = {}) {
   let t = 1_760_800_000_000;
   const store = memoryStore({ ...DEFAULT_STATE, ...init });
-  const u = new Updater(w.ops, store, { healthTimeoutMs: 20_000, healthIntervalMs: 5_000, selfUpdateTimeoutMs: 1000, now: () => t, sleep: async (ms) => { t += ms; } });
+  const u = new Updater(w.ops, store, { healthTimeoutMs: 20_000, healthIntervalMs: 5_000, selfUpdateTimeoutMs: 1000, now: () => t, sleep: async (ms) => { t += ms; }, ...opts });
   return { u, store };
 }
 
@@ -232,9 +232,86 @@ describe('update job', () => {
     expect(b.store.state.lastJob).toMatchObject({ state: 'failed', error: 'restart_failed' });
   });
 
+  it('the media phase runs after a healthy update and never in a rollback', async () => {
+    const phase = (w: ReturnType<typeof world>, answer: () => Promise<'ok' | 'unhealthy' | null>) => async (job: Job) => {
+      // the core services are healthy and recorded before the phase starts
+      w.calls.push(`media phase ${job.action} ${job.state}`);
+      return answer();
+    };
+    const w = world();
+    const { u, store } = make(w, {}, { mediaPhase: phase(w, async () => 'ok') });
+    u.start('update');
+    await u.idle();
+    expect(w.calls.slice(-2)).toEqual(['health bbbbbbb', 'media phase update running']);
+    expect(w.calls.filter((c) => c.startsWith('media phase'))).toHaveLength(1);
+    expect(store.state.lastJob).toMatchObject({ state: 'succeeded', error: null });
+
+    // nothing to do for the media server: an ordinary success
+    const n = world();
+    const nothing = make(n, {}, { mediaPhase: phase(n, async () => null) });
+    nothing.u.start('update');
+    await nothing.u.idle();
+    expect(nothing.store.state.lastJob).toMatchObject({ state: 'succeeded', error: null });
+
+    // an update that rolls back never reaches the media server
+    const r = world({ healthyTags: ['sha-aaaaaaa'] });
+    const back = make(r, {}, { mediaPhase: phase(r, async () => 'ok') });
+    back.u.start('update');
+    await back.u.idle();
+    expect(back.store.state.lastJob).toMatchObject({ state: 'rolled_back' });
+    expect(r.calls.some((c) => c.startsWith('media phase'))).toBe(false);
+
+    // neither does a FriendFlix rollback (the media server is never moved down)
+    const rb = world({ running: NEW });
+    const rollback = make(rb, { previous: 'sha-aaaaaaa', current: 'latest' }, { mediaPhase: phase(rb, async () => 'ok') });
+    rollback.u.start('rollback');
+    await rollback.u.idle();
+    expect(rollback.store.state.lastJob).toMatchObject({ action: 'rollback', state: 'succeeded' });
+    expect(rb.calls.some((c) => c.startsWith('media phase'))).toBe(false);
+
+    // a failed media phase: FriendFlix stays on the new build, the job says the media server failed
+    const f = world();
+    const failed = make(f, {}, { mediaPhase: phase(f, async () => 'unhealthy') });
+    failed.u.start('update');
+    await failed.u.idle();
+    expect(failed.store.state.lastJob).toMatchObject({ action: 'update', state: 'succeeded_mediaserver_failed', error: 'unhealthy', steps: { health: 'ok', rollback: 'skipped' } });
+    expect(failed.store.state.current).toBe('latest');
+    expect(failed.store.state.previous).toBe('sha-aaaaaaa');
+    expect(failed.u.log.tail().some((l) => l.endsWith('update succeeded_mediaserver_failed (unhealthy)'))).toBe(true);
+
+    // a phase that throws is a media failure too, never a FriendFlix one
+    const x = world();
+    const thrown = make(x, {}, { mediaPhase: async () => { throw new Error('boom'); } });
+    thrown.u.start('update');
+    await thrown.u.idle();
+    expect(thrown.store.state.lastJob).toMatchObject({ state: 'succeeded_mediaserver_failed', error: 'helper_failed' });
+    expect(thrown.store.state.current).toBe('latest');
+  });
+
+  it('an update interrupted in its media phase keeps FriendFlix updated', () => {
+    const steps = { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'ok' as const, rollback: 'skipped' as const };
+    const media = { step: 'create' as const, steps: { check: 'ok' as const, pull: 'ok' as const, verify: 'ok' as const, snapshot: 'skipped' as const, create: 'running' as const, start: 'pending' as const, health: 'pending' as const, rollback: 'pending' as const } };
+    const job: Job = { id: '0123456789abcdef', action: 'update', state: 'running', step: 'health', from: null, to: 'latest', startedAt: new Date().toISOString(), finishedAt: null, error: null, steps, media };
+    const s = memoryStore({ ...DEFAULT_STATE, lastJob: job });
+    new Updater(world().ops, s);
+    expect(s.state.lastJob).toMatchObject({ state: 'succeeded_mediaserver_failed', error: 'interrupted', steps: { health: 'ok' }, media: { steps: { create: 'failed' } } });
+  });
+
+  it('an update interrupted in its media phase before the phase recorded a step keeps FriendFlix updated', () => {
+    const steps = { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'ok' as const, rollback: 'skipped' as const };
+    const job: Job = { id: '0123456789abcdef', action: 'update', state: 'running', step: 'health', from: null, to: 'latest', startedAt: new Date().toISOString(), finishedAt: null, error: null, steps, media: null };
+    const s = memoryStore({ ...DEFAULT_STATE, current: 'latest', lastJob: job });
+    new Updater(world().ops, s);
+    expect(s.state.lastJob).toMatchObject({ state: 'succeeded_mediaserver_failed', error: 'interrupted', steps: { health: 'ok' }, media: null });
+    // a rollback that had started is not an update that succeeded
+    const back = memoryStore({ ...DEFAULT_STATE, lastJob: { ...job, step: 'rollback', steps: { ...steps, rollback: 'running' } } });
+    new Updater(world().ops, back);
+    expect(back.state.lastJob).toMatchObject({ state: 'failed', error: 'interrupted', steps: { rollback: 'failed' } });
+  });
+
   it('a job interrupted by a restart is marked failed', () => {
     const job = { id: '0123456789abcdef', action: 'update' as const, state: 'running' as const, step: 'health' as const, from: null, to: 'latest', startedAt: new Date().toISOString(), finishedAt: null, error: null,
-      steps: { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'running' as const, rollback: 'skipped' as const } };
+      steps: { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'running' as const, rollback: 'skipped' as const }, media: null };
     const s = memoryStore({ ...DEFAULT_STATE, lastJob: job });
     new Updater(world().ops, s);
     expect(s.state.lastJob).toMatchObject({ state: 'failed', error: 'interrupted', steps: { health: 'failed' } });

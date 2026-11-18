@@ -441,7 +441,7 @@ npm run spdx:check                              # licence headers, as in CI
 | Chromecast and AirPlay | [docs/cast.md](docs/cast.md) |
 | FriendFlix's own Cast receiver: registration, HEVC and surround, checklist for a real TV | [docs/cast-receiver.md](docs/cast-receiver.md) |
 | Live TV: turning it on, GPU, ports, sources and guides, rights, SRT feeds, troubleshooting | [docs/livetv.md](docs/livetv.md) |
-| Own media server image (Ferrofin-based, trial): GPU probe, trial next to Jellyfin, way back | [docs/mediaserver.md](docs/mediaserver.md) |
+| Media server managed by FriendFlix (Ferrofin or official Jellyfin, set up from Admin), own image (Ferrofin-based, trial): GPU probe, trial next to Jellyfin, way back | [docs/mediaserver.md](docs/mediaserver.md) |
 | Android app: install, settings, offline, notifications, signing and Google Play | [docs/android.md](docs/android.md) |
 | Windows app: install, player keys, updates, troubleshooting, update signing | [docs/windows.md](docs/windows.md) |
 | Samsung TV app: developer mode, certificate, install script, probe | [docs/tizen.md](docs/tizen.md) |

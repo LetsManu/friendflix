@@ -463,7 +463,9 @@ services:
       COMMIT: 0
       ALLOW_ARCHIVE: 0
       ALLOW_EXPORT: 0
-      ALLOW_LOGS: 0
+      # logs: the updater reads the managed media server's log and its helper containers' output (and asks only for containers
+      # carrying our friendflix.* labels); it is the one endpoint of this group that is open
+      ALLOW_LOGS: 1
       ALLOW_PAUSE: 0
       ALLOW_UNPAUSE: 0
       ALLOW_TOP: 0
@@ -512,6 +514,7 @@ services:
       - .:${UPDATER_PROJECT_DIR:-${PWD:-/project}}:ro
       - updater-state:/state
       - bootstrap-gateway:/run/friendflix-gateway:ro
+      - mediaserver-backup:/backups # the managed media server's backups (only the updater mounts it)
     depends_on:
       bootstrap: { condition: service_completed_successfully }
       docker-proxy: { condition: service_started }
@@ -554,6 +557,9 @@ volumes:
   recordings: # livetv recordings (Phase 3); RECORDINGS_PATH can point to a host folder
   jellyfin-config:
   jellyfin-cache:
+  mediaserver-backup: # backups of the managed media server (updater only)
+    labels:
+      friendflix.managed: mediaserver-backup
   requests-config:
     # existing volume name, kept so upgrades keep the request service's data
     name: ${COMPOSE_PROJECT_NAME:-friendflix}_seerr-config

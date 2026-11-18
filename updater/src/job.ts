@@ -3,7 +3,8 @@
 import { randomBytes } from 'node:crypto';
 import { StepError, type ImageInfo, type LivetvContainer } from './docker.js';
 import { FF_SERVICES, LIVETV_SERVICE, SELF_SERVICE, SHA_TAG_RE, channelTag, shaTag, type Channel, type LivetvOp } from './policy.js';
-import { LIVETV_ERRORS, type Job, type JobAction, type LivetvError, type LivetvState, type State, type StateStore, type StepName } from './state.js';
+import { MEDIA_ERRORS, MEDIA_STEPS, type MediaError, type MediaJobAction } from './mediaserver/types.js';
+import { LIVETV_ERRORS, type Job, type JobAction, type JobState, type LivetvError, type LivetvState, type MediaState, type State, type StateStore, type StepName } from './state.js';
 
 /** what an update does with livetv at a tag: nothing (not enabled), start it (pulled and verified), or drop it for this reason */
 type LivetvPlan = 'off' | 'up' | LivetvError;
@@ -56,6 +57,12 @@ export interface UpdaterOpts {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   log?: JobLog;
+  /**
+   * the managed media server's phase of an update job (MediaJobs.phase): runs once FriendFlix's own health check passed, never in
+   * a rollback job and never when the update rolls back. A code = the media server failed (and was rolled back on its own): the
+   * job ends `succeeded_mediaserver_failed`; 'ok' or null (nothing to do) = `succeeded`.
+   */
+  mediaPhase?: (job: Job) => Promise<'ok' | MediaError | null>;
 }
 
 export type StartResult = { ok: true; job: Job } | { ok: false; error: 'busy' | 'no_target' | 'no_previous' };
@@ -63,7 +70,7 @@ export type StartResult = { ok: true; job: Job } | { ok: false; error: 'busy' | 
 const newJob = (action: JobAction, from: string | null, to: string, now: number): Job => ({
   id: randomBytes(8).toString('hex'), action, state: 'running', step: null, from, to,
   steps: { pull: 'pending', verify: 'pending', restart: 'pending', health: 'pending', rollback: 'skipped' },
-  startedAt: new Date(now).toISOString(), finishedAt: null, error: null,
+  startedAt: new Date(now).toISOString(), finishedAt: null, error: null, media: null,
 });
 
 const LIVETV = [LIVETV_SERVICE] as const;
@@ -78,7 +85,8 @@ export class Updater {
   readonly log: JobLog;
   private state: State;
   private current: Promise<void> | null = null;
-  private readonly o: Required<Omit<UpdaterOpts, 'log'>>;
+  private readonly o: Required<Omit<UpdaterOpts, 'log' | 'mediaPhase'>>;
+  private readonly mediaPhase: UpdaterOpts['mediaPhase'];
 
   constructor(private readonly ops: Ops, private readonly store: StateStore, opts: UpdaterOpts = {}) {
     this.o = {
@@ -87,6 +95,7 @@ export class Updater {
       sleep: opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))), now: opts.now ?? Date.now,
     };
     this.log = opts.log ?? new JobLog(200, this.o.now);
+    this.mediaPhase = opts.mediaPhase;
     this.state = store.load();
     this.recover();
   }
@@ -98,8 +107,14 @@ export class Updater {
     if (j.action === 'self-update' && j.step === 'restart') {
       j.steps.restart = 'ok'; j.steps.health = 'ok'; j.step = null; j.state = 'succeeded';
       this.log.add(`self-update to ${j.to} finished`);
+    } else if (j.action === 'update' && j.steps.health === 'ok' && j.steps.rollback === 'skipped') {
+      // interrupted after FriendFlix got healthy on the new build (in the media server phase, maybe before it recorded a step)
+      if (j.media?.step) j.media.steps[j.media.step] = 'failed';
+      j.state = 'succeeded_mediaserver_failed'; j.error = 'interrupted';
+      this.log.add(`job ${j.action} was interrupted by a restart in the media server phase`);
     } else {
       if (j.step) j.steps[j.step] = 'failed';
+      if (j.media?.step) j.media.steps[j.media.step] = 'failed';
       j.state = 'failed'; j.error = 'interrupted';
       this.log.add(`job ${j.action} was interrupted by a restart`);
     }
@@ -162,6 +177,41 @@ export class Updater {
     try { this.store.save(this.state); } catch { this.log.add('state file could not be written'); }
   }
 
+  /** writes the state file now (a media job calls it after it changed its own job's steps) */
+  persistNow(): void { this.persist(); }
+
+  /** a copy of the managed media server's state */
+  mediaState(): MediaState { return structuredClone(this.state.media); }
+
+  /** changes the media state in place and writes it; `fn` must be synchronous */
+  updateMedia(fn: (m: MediaState) => void): void {
+    fn(this.state.media);
+    this.persist();
+  }
+
+  /**
+   * a media job (no core step runs: pull, verify, restart, health and rollback are skipped, every media step starts pending).
+   * `to` is what the stack last ran (else the channel's tag). Same lock as every other job; `run` does the work on the live job
+   * and ends it with finishJob. A `run` that throws instead ends the job `failed` with a fixed code.
+   */
+  startMediaJob(action: MediaJobAction, run: (job: Job) => Promise<void>): StartResult {
+    if (this.current) return { ok: false, error: 'busy' };
+    const job = newJob(action, null, this.state.current ?? channelTag(this.state.channel, this.state.version) ?? 'latest', this.o.now());
+    for (const k of Object.keys(job.steps) as StepName[]) job.steps[k] = 'skipped';
+    job.media = { step: null, steps: Object.fromEntries(MEDIA_STEPS.map((k) => [k, 'pending'])) as NonNullable<Job['media']>['steps'] };
+    const copy = structuredClone(job);
+    this.state.lastJob = job;
+    this.persist();
+    this.log.add(`${action} started`);
+    this.current = run(job)
+      .catch((e: unknown) => {
+        const code = e instanceof StepError && (MEDIA_ERRORS as readonly string[]).includes(e.code) ? e.code : 'helper_failed';
+        if (job.state === 'running') this.finishJob(job, 'failed', code);
+      })
+      .finally(() => { this.current = null; });
+    return { ok: true, job: copy };
+  }
+
   private async step<T>(job: Job, name: StepName, fn: () => Promise<T>): Promise<T> {
     job.step = name; job.steps[name] = 'running'; this.persist();
     this.log.add(`step ${name}`);
@@ -176,10 +226,12 @@ export class Updater {
     }
   }
 
-  private finish(job: Job, state: Job['state'], error: string | null): void {
+  /** ends a job: what never ran is skipped, the state and the fixed error code are kept, the file is written and one log line added */
+  finishJob(job: Job, state: JobState, error: string | null): void {
     job.state = state; job.error = error; job.finishedAt = new Date(this.o.now()).toISOString();
     for (const k of Object.keys(job.steps) as StepName[]) if (job.steps[k] === 'pending') job.steps[k] = 'skipped';
-    if (state === 'succeeded') job.step = null;
+    if (job.media) for (const k of MEDIA_STEPS) if (job.media.steps[k] === 'pending') job.media.steps[k] = 'skipped';
+    if (state === 'succeeded') { job.step = null; if (job.media) job.media.step = null; }
     this.persist();
     this.log.add(`${job.action} ${state}${error ? ` (${error})` : ''}`);
   }
@@ -326,17 +378,17 @@ export class Updater {
       livetv = await this.livetvFor(job.to);
     } catch (e) {
       // nothing was restarted
-      return this.finish(job, 'failed', (e as StepError).code);
+      return this.finishJob(job, 'failed', (e as StepError).code);
     }
     try {
       const newSha = await this.bringUp(job, job.to, images, true, livetv);
       this.state.current = job.to;
       const newTag = shaTag(newSha);
       if (prevTag && prevTag !== newTag) this.state.previous = prevTag;
-      return this.finish(job, 'succeeded', null);
+      this.persist();
     } catch (e) {
       const code = (e as StepError).code;
-      if (!autoRollback || !prevTag) return this.finish(job, 'failed', code);
+      if (!autoRollback || !prevTag) return this.finishJob(job, 'failed', code);
       this.log.add(`rolling back to ${prevTag}`);
       job.steps.rollback = 'pending';
       try {
@@ -345,10 +397,24 @@ export class Updater {
           await this.bringUp(job, prevTag, imgs, false, await this.livetvFor(prevTag));
         });
         this.state.current = prevTag;
-        return this.finish(job, 'rolled_back', code);
+        return this.finishJob(job, 'rolled_back', code);
       } catch {
-        return this.finish(job, 'failed', 'rollback_failed');
+        return this.finishJob(job, 'failed', 'rollback_failed');
       }
+    }
+    // FriendFlix is healthy on the new build: the media server follows (its failure never rolls FriendFlix back); never in a rollback
+    const media = job.action === 'update' ? await this.runMediaPhase(job) : null;
+    return media ? this.finishJob(job, 'succeeded_mediaserver_failed', media) : this.finishJob(job, 'succeeded', null);
+  }
+
+  /** the media phase's code when it failed; null when it succeeded or had nothing to do */
+  private async runMediaPhase(job: Job): Promise<MediaError | null> {
+    if (!this.mediaPhase) return null;
+    try {
+      const r = await this.mediaPhase(job);
+      return r === 'ok' ? null : r;
+    } catch {
+      return 'helper_failed';
     }
   }
 
@@ -381,26 +447,26 @@ export class Updater {
       // compose files from before Live TV fail in images() (compose_outdated); files refreshed without `up -d` here (network_missing)
       await this.prepare(job, job.to, LIVETV, () => this.ops.livetvNetwork(job.to));
     } catch (e) {
-      return this.finish(job, 'failed', (e as StepError).code);
+      return this.finishJob(job, 'failed', (e as StepError).code);
     }
     try {
       await this.step(job, 'restart', () => this.ops.up(job.to, LIVETV));
       await this.step(job, 'health', async () => { if (!(await this.waitLivetv())) throw new StepError('unhealthy'); });
     } catch (e) {
       const code = (e as StepError).code;
-      if (wasEnabled) return this.finish(job, 'failed', code);
+      if (wasEnabled) return this.finishJob(job, 'failed', code);
       job.steps.rollback = 'pending';
       try {
         await this.step(job, 'rollback', async () => { await this.ops.stop(LIVETV); await this.ops.rm(LIVETV); });
-        return this.finish(job, 'rolled_back', code);
+        return this.finishJob(job, 'rolled_back', code);
       } catch {
-        return this.finish(job, 'failed', 'rollback_failed');
+        return this.finishJob(job, 'failed', 'rollback_failed');
       }
     }
     this.state.livetv = 'enabled';
     this.state.livetvError = null;
     await this.recordLivetvImage();
-    return this.finish(job, 'succeeded', null);
+    return this.finishJob(job, 'succeeded', null);
   }
 
   /**
@@ -430,9 +496,9 @@ export class Updater {
         this.state.livetv = 'absent';
         this.state.livetvImage = null;
       });
-      return this.finish(job, 'succeeded', null);
+      return this.finishJob(job, 'succeeded', null);
     } catch (e) {
-      return this.finish(job, 'failed', (e as StepError).code);
+      return this.finishJob(job, 'failed', (e as StepError).code);
     }
   }
 
@@ -447,16 +513,16 @@ export class Updater {
       if (now && next && now.repoDigests.some((d) => next.repoDigests.includes(d))) {
         job.steps.restart = 'skipped';
         this.log.add('the updater already runs this image');
-        return this.finish(job, 'succeeded', null);
+        return this.finishJob(job, 'succeeded', null);
       }
       await this.step(job, 'restart', () => this.ops.spawnSelfUpdate(job.to));
       job.step = 'restart'; job.steps.restart = 'running'; this.persist();
       // the helper recreates this container: a new process finishes the job (recover()); still here after the timeout = it failed
       await this.o.sleep(this.o.selfUpdateTimeoutMs);
       job.steps.restart = 'failed';
-      return this.finish(job, 'failed', 'self_update_timeout');
+      return this.finishJob(job, 'failed', 'self_update_timeout');
     } catch (e) {
-      return this.finish(job, 'failed', (e as StepError).code);
+      return this.finishJob(job, 'failed', (e as StepError).code);
     }
   }
 }

@@ -9,8 +9,14 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
-    "test:docs": "vitest run test/livetv.test.ts",
+    "test:docs": "vitest run test/livetv.test.ts test/mediaserver-rules.test.ts",
     "coverage": "vitest run --coverage"
   },
-  "devDependencies": { "@types/node": "^26.6.6", "vitest": "^5.0.3" }
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "age-encryption": "0.3.1"
+  }
 }
