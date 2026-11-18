@@ -17,8 +17,9 @@ import { MediaService } from './mediaserver/service.js';
 import { STARTING_VIEW, mediaStatusView, type MediaStatusView } from './mediaserver/status.js';
 import { Supervisor } from './mediaserver/supervise.js';
 import { BACKUP_ID_RE, type MediaOp } from './mediaserver/types.js';
-import { FF_SERVICES, HEALTH_SERVICES, SELF_SERVICE, channelTag, parseChannelBody, parseLivetvBody, shaTag } from './policy.js';
+import { FF_SERVICES, HEALTH_SERVICES, LIVETV_SERVICE, SELF_SERVICE, channelTag, expectedImage, imageRepo, isDigest, parseChannelBody, parseLivetvBody, shaTag } from './policy.js';
 import { ReplayCache, deriveKey, precheck, streamBindingAsync, verify, type Verifier } from './protocol.js';
+import { cachedRegistry, registryDigest, type CachedRegistry } from './registry.js';
 import { fileStore } from './state.js';
 
 type Route = 'status' | 'channel' | 'update' | 'rollback' | 'self-update' | 'livetv' | 'mediaserver';
@@ -48,12 +49,26 @@ const ALWAYS_OPS: ReadonlySet<MediaOp['op']> = new Set(['logs', 'gpu', 'base-cle
 const JOB_OPS: ReadonlySet<MediaOp['op']> = new Set(['apply', 'finish-setup', 'start', 'stop', 'restart', 'update', 'hdr-test', 'backup', 'restore', 'remove']);
 export type LivetvContainerState = 'running' | 'exited' | null;
 
-export interface ServiceView { service: string; state: string; health: string; sha: string | null; version: string | null }
+/**
+ * what a service runs, as /v1/status reports it: `sha` the sha-<7> of its image commit (what older backends read), `commit` that
+ * commit (40 hex), `version` the backend's only, `digest` the own-repository digest its image carries, `registry` the digest of
+ * the channel's tag in the registry (cached; null when unknown), `changed` whether they differ (null unless both are known)
+ */
+export interface ServiceView {
+  service: string; state: string; health: string; sha: string | null; version: string | null;
+  commit: string | null; digest: string | null; registry: string | null; changed: boolean | null;
+}
+/** what servicesView reads: every own-repository digest the image carries (the registry's may be any of them), never sent */
+export type ServiceRead = Omit<ServiceView, 'digest' | 'registry' | 'changed'> & { digests: string[] };
+/** the registry digest of a service's image at a tag; null when the lookup failed (registry.ts cachedRegistry) */
+export type RegistryLookup = (service: string, tag: string) => Promise<string | null>;
 export interface AppDeps {
   updater: Updater;
   verifier: Verifier;
   /** what runs now, per service (cached by the caller) */
-  services: () => Promise<ServiceView[]>;
+  services: () => Promise<ServiceRead[]>;
+  /** the registry digest of the channel's tag, cached by the caller; absent in tests = unknown (null) */
+  registry?: RegistryLookup;
   self: { version: string | null; sha: string | null };
   /** own / foreign and why (stack.ts; null = could not tell), cached by the caller; absent in tests = null */
   stack?: () => Promise<StackInfo | null>;
@@ -63,8 +78,8 @@ export interface AppDeps {
   warn?: (msg: string) => void;
   /** the managed media server (Task 3–8 parts bound to their deps); absent in tests = the media routes are not found */
   media?: MediaApi;
-  /** shorter deadlines for tests: a JSON body (10 s), an idle backup stream (60 s), the media status (2 s) */
-  limits?: { bodyMs?: number; streamIdleMs?: number; mediaStatusMs?: number };
+  /** shorter deadlines for tests: a JSON body (10 s), an idle backup stream (60 s), the media status and the registry digests (2 s each) */
+  limits?: { bodyMs?: number; streamIdleMs?: number; mediaStatusMs?: number; registryMs?: number };
   /** the backup streams' signed content (protocol.ts streamBindingAsync); replaced in tests */
   streamBinding?: (passphraseHeader: string) => Promise<string>;
 }
@@ -134,15 +149,58 @@ export async function warmMediaStatus(m: MediaApi): Promise<void> {
   await m.status().then((v) => { lastMediaView.set(m, v); }, () => undefined);
 }
 
+/** how long /v1/status waits for the registry digests (the first lookup after the 10-min cache expired may be slow) */
+const REGISTRY_STATUS_MS = 2_000;
+const lastRegistry = new WeakMap<RegistryLookup, Map<string, string | null>>();
+
+/**
+ * the registry digest of each service's image at `tag`, all within one bound; past it (or on a failure) the last answer for that
+ * service and tag (null before the first), while the lookup goes on and fills the cache for the next read
+ */
+async function registryDigests(lookup: RegistryLookup | undefined, services: readonly string[], tag: string | null, ms = REGISTRY_STATUS_MS): Promise<Record<string, string | null>> {
+  if (!lookup || !tag) return {};
+  let last = lastRegistry.get(lookup);
+  if (!last) { last = new Map(); lastRegistry.set(lookup, last); }
+  const seen = last;
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<'late'>((r) => { timer = setTimeout(() => r('late'), ms); });
+  try {
+    const out = await Promise.all(services.map(async (svc) => {
+      const key = `${svc}:${tag}`;
+      const fresh = lookup(svc, tag).then((v) => { const d = isDigest(v) ? v : null; seen.set(key, d); return d; }, () => { seen.set(key, null); return null; });
+      const v = await Promise.race([fresh, late]);
+      return [svc, v === 'late' ? seen.get(key) ?? null : v] as const;
+    }));
+    return Object.fromEntries(out);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** a service as /v1/status sends it: the registry digest set against every own digest its image carries */
+function serviceView({ digests, ...v }: ServiceRead, registry: string | null): ServiceView {
+  const own = Array.isArray(digests) ? digests.filter(isDigest) : [];
+  const digest = registry && own.includes(registry) ? registry : own[0] ?? null;
+  return { ...v, commit: v.commit ?? null, digest, registry, changed: digest && registry ? digest !== registry : null };
+}
+
 export async function status(d: AppDeps) {
   const s = d.updater.snapshot();
-  const [services, stack, livetv, mediaserver] = await Promise.all([d.services().catch(() => []), d.stack ? d.stack().catch(() => null) : Promise.resolve(null),
+  const tag = channelTag(s.channel, s.version);
+  // the registry lookups run beside the service read (by name: what servicesView lists), each within the same 2-s bound as the media status
+  const names = [...FF_SERVICES, SELF_SERVICE, ...(s.livetv === 'enabled' ? [LIVETV_SERVICE] : [])];
+  const [read, registry, stack, livetv, mediaserver] = await Promise.all([d.services().catch(() => []), registryDigests(d.registry, names, tag, d.limits?.registryMs),
+    d.stack ? d.stack().catch(() => null) : Promise.resolve(null),
     d.livetv ? d.livetv().catch(() => null) : Promise.resolve(null), d.media ? mediaStatus(d.media, d.limits?.mediaStatusMs) : Promise.resolve(null)]);
+  const services = read.map((v) => serviceView(v, registry[v.service] ?? null));
   return {
     updater: d.self,
-    channel: s.channel, version: s.version, targetTag: channelTag(s.channel, s.version),
+    channel: s.channel, version: s.version, targetTag: tag,
     // before the first job of this updater: the build the backend runs now (its sha-<7> tag)
     current: s.current ?? services.find((v) => v.service === 'backend')?.sha ?? null, previous: s.previous, busy: d.updater.busy,
+    // whether a rollback has something to go back to (the recorded digests, or a legacy sha tag); never the digests themselves
+    rollback: { available: Boolean((s.previousDigests && tag) || s.previous) },
+    // job.services: per service what the last update or rollback did (updated / unchanged)
     job: s.lastJob, log: d.updater.log.tail(30),
     services,
     // foreign: started by another tool (Portainer) or from another directory; the updater refuses to recreate it, the backend
@@ -312,7 +370,7 @@ export function handler(d: AppDeps) {
 }
 
 export function healthProbe(docker: Pick<Docker, 'ps'>, url: string, fetchImpl: typeof fetch = fetch): Ops['healthy'] {
-  return async (sha7) => {
+  return async (commit7) => {
     const ps = await docker.ps();
     for (const svc of HEALTH_SERVICES) {
       const st = ps.find((p) => p.service === svc);
@@ -321,26 +379,41 @@ export function healthProbe(docker: Pick<Docker, 'ps'>, url: string, fetchImpl: 
     const r = await fetchImpl(url, { signal: AbortSignal.timeout(3_000), redirect: 'error' });
     if (!r.ok) return false;
     const b = (await r.json().catch(() => null)) as { version?: unknown } | null;
-    return sha7 === null || b?.version === sha7;
+    return commit7 === null || b?.version === commit7;
   };
 }
 
+/** the digests of `repoDigests` that belong to this repository's image of `service` (a foreign repository's never count) */
+function ownDigests(repo: string, service: string, repoDigests: readonly string[]): string[] {
+  const own = imageRepo(expectedImage(repo, service, 'latest'));
+  return repoDigests.flatMap((d) => {
+    const at = d.lastIndexOf('@');
+    const digest = d.slice(at + 1);
+    return at > 0 && d.slice(0, at) === own && isDigest(digest) ? [digest] : [];
+  });
+}
+
 /**
- * what each FriendFlix service runs; cached a few seconds (every status poll would otherwise cost several Docker calls). On a
- * stack whose compose files the updater cannot read (Portainer) from the containers' labels, so the page can follow a redeploy.
+ * what each FriendFlix service runs (the updater's own, and livetv while it is enabled); cached a few seconds (every status poll
+ * would otherwise cost several Docker calls). On a stack whose compose files the updater cannot read (Portainer) from the
+ * containers' labels, so the page can follow a redeploy.
  */
-export function servicesView(docker: Pick<Docker, 'psView' | 'containerImage' | 'imageInfo'>, ttlMs = 10_000, now: () => number = Date.now): () => Promise<ServiceView[]> {
-  let cache: { at: number; v: ServiceView[] } | null = null;
+export function servicesView(docker: Pick<Docker, 'psView' | 'containerImage' | 'imageInfo'>, repo: string, livetv: () => boolean, ttlMs = 10_000, now: () => number = Date.now): () => Promise<ServiceRead[]> {
+  let cache: { at: number; livetv: boolean; v: ServiceRead[] } | null = null;
   return async () => {
-    if (cache && now() - cache.at < ttlMs) return cache.v;
+    const withLivetv = livetv();
+    if (cache && cache.livetv === withLivetv && now() - cache.at < ttlMs) return cache.v;
     const ps: ServiceState[] = await docker.psView();
-    const v = await Promise.all([...FF_SERVICES, SELF_SERVICE].map(async (service) => {
+    const v = await Promise.all([...FF_SERVICES, SELF_SERVICE, ...(withLivetv ? [LIVETV_SERVICE] : [])].map(async (service) => {
       const st = ps.find((p) => p.service === service);
       const id = st ? await docker.containerImage(st.name) : null;
       const info: ImageInfo | null = id ? await docker.imageInfo(id) : null;
-      return { service, state: st?.state ?? 'missing', health: st?.health ?? '', sha: shaTag(info?.gitSha), version: info?.version ?? null };
+      return {
+        service, state: st?.state ?? 'missing', health: st?.health ?? '', sha: shaTag(info?.commit),
+        version: service === 'backend' ? info?.version ?? null : null, commit: info?.commit ?? null, digests: ownDigests(repo, service, info?.repoDigests ?? []),
+      };
     }));
-    cache = { at: now(), v };
+    cache = { at: now(), livetv: withLivetv, v };
     return v;
   };
 }
@@ -357,10 +430,25 @@ export function livetvView(docker: Pick<Docker, 'livetvContainer'>, ttlMs = 10_0
   };
 }
 
-/** the job's view of Docker: the fixed command lines of docker.ts and the health probe */
-export function dockerOps(docker: Docker, healthUrl: string, fetchImpl: typeof fetch = fetch): Ops {
+/**
+ * the job's view of Docker: the fixed command lines of docker.ts, the registry (uncached) and the health probe; `fetchImpl` serves
+ * both. Every registry digest the job resolves also goes into the status page's cache (`statusRegistry`; a failure drops its
+ * entry): after an update the status compares with what the job installed, never with an older cached digest.
+ */
+export function dockerOps(docker: Docker, healthUrl: string, fetchImpl: typeof fetch = fetch, statusRegistry?: CachedRegistry): Ops {
   return {
-    images: (t, s) => docker.images(t, s), pull: (t, s) => docker.pull(t, s), verify: (i) => docker.verify(i), up: (t, s) => docker.up(t, s),
+    images: (t, s) => docker.images(t, s),
+    registryDigest: async (s, t) => {
+      try {
+        const d = await registryDigest(docker.repo, s, t, fetchImpl);
+        statusRegistry?.set(s, t, d);
+        return d;
+      } catch (e) {
+        statusRegistry?.drop(s, t);
+        throw e;
+      }
+    },
+    pullDigest: (r) => docker.pullDigest(r), tag: (r, i) => docker.tag(r, i), verify: (r) => docker.verify(r), up: (t, s) => docker.up(t, s),
     imageInfo: (r) => docker.imageInfo(r), running: (s) => docker.running(s), spawnSelfUpdate: (t) => docker.spawnSelfUpdate(t),
     healthy: healthProbe(docker, healthUrl, fetchImpl), composeFiles: () => docker.files,
     ownStack: async () => { await docker.refreshFiles(); },
@@ -393,16 +481,18 @@ export function start(env: NodeJS.ProcessEnv = process.env): Server {
     livetv: () => livetvEnabled(), self: cfg.self }, execRunner);
   // the media jobs need the updater and the update job needs their phase: bound once both exist
   let jobs: MediaJobs | null = null;
-  const updater = new Updater(dockerOps(docker, cfg.backendHealthUrl), fileStore(cfg.stateDir), { mediaPhase: (job) => (jobs ? jobs.phase(job) : Promise.resolve(null)) });
+  // the registry digests for the status page: 10 min per image and tag (a failure 1 min); the job always asks anew and primes it
+  const registry = cachedRegistry(cfg.repo);
+  const updater = new Updater(dockerOps(docker, cfg.backendHealthUrl, fetch, registry), fileStore(cfg.stateDir), { mediaPhase: (job) => (jobs ? jobs.phase(job) : Promise.resolve(null)) });
   // plain archives an interrupted media server backup or upload left behind (they hold password hashes and keys)
   void removeStaleParts(BACKUP_DIR);
   livetvEnabled = () => updater.livetv === 'enabled';
   const verifier: Verifier = { key: deriveKey(cfg.secret), cache: new ReplayCache(), notBefore: Date.now() };
-  const services = servicesView(docker);
+  const services = servicesView(docker, cfg.repo, () => updater.livetv === 'enabled');
   const log = (msg: string) => console.log(`${new Date().toISOString()} updater: ${msg}`);
   const media = mediaParts(cfg, docker, updater);
   jobs = media.jobs;
-  const app = handler({ updater, verifier, services, stack: stackView(docker), livetv: livetvView(docker), self: { version: cfg.version, sha: cfg.gitSha }, warn: log, media: media.api });
+  const app = handler({ updater, verifier, services, registry, stack: stackView(docker), livetv: livetvView(docker), self: { version: cfg.version, sha: cfg.gitSha }, warn: log, media: media.api });
   const server = createServer((req, res) => { void app(req, res).catch(() => { if (!res.headersSent) send(res, 500, { error: 'internal' }); }); });
   // the upload stream may take long (20 GiB); JSON bodies have their own 10-s deadline (readBody), streams an idle limit
   server.requestTimeout = 3 * 3600_000;
@@ -421,7 +511,7 @@ export function start(env: NodeJS.ProcessEnv = process.env): Server {
 function mediaParts(cfg: ReturnType<typeof loadConfig>, docker: Docker, updater: Updater): { jobs: MediaJobs; supervisor: Supervisor; api: MediaApi } {
   const engine = new Engine(cfg.dockerHost);
   const facts = () => readFacts(engine, cfg.self);
-  const verifyImage = (ref: string) => docker.verify(ref);
+  const verifyImage = (ref: string) => docker.verifyPulled(ref);
   const deps: JobDeps = {
     engine, updater, facts, helper: runHelper, repo: cfg.repo, now: Date.now, verify: verifyImage,
     // the base code goes to stdout only (one line), never to the job log

@@ -2,9 +2,10 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /**
-   * Admin → Update with the updater (lib/admin/updater.ts): what is installed (the build the backend runs), the previous build and
-   * the target, "Update now", "Back to previous version", "Update the updater" (inline confirmation, no dialog), the last activity
-   * as the animated step list (StepList.svelte, lib/admin/steps.ts) and the automatic updates. The last activity is whatever runs,
+   * Admin → Update with the updater (lib/admin/updater.ts): what is installed (the build the backend runs, then one row per
+   * service: its commit and "Update verfügbar" / "unverändert", after a job its report; fixed row heights, so nothing moves while
+   * values come or change), the previous build and the target, "Update now", "Back to previous version", "Update the updater"
+   * (inline confirmation, no dialog), the last activity as the animated step list (StepList.svelte, lib/admin/steps.ts) and the automatic updates. The last activity is whatever runs,
    * else the newer of the last update job and the last Portainer redeploy (shownActivity: on a Portainer stack an old updater job
    * is not shown, a Live TV job never). A job restarts the backend: failed polls show "reconnecting" and the page picks the result
    * up when it answers again (also after a reload: the updater keeps the last job, the backend the redeploy record). While Portainer
@@ -28,7 +29,8 @@
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import { toast } from '#lib/ui/toast';
   import {
-    TIME_RE, canRollback, foreignMode, foreignText, installedOf, mediaPhaseMemo, isRunning, mergeView, portainerMissing, redeployRunning, shownActivity, startError, statusOf, tagText,
+    TIME_RE, canRollback, foreignMode, foreignText, installedOf, mediaPhaseMemo, isRunning, mergeView, portainerMissing, previousText, redeployRunning, rollbackConfirm, serviceRows, shownActivity,
+    startError, statusOf, tagText,
     type UpdaterAction, type UpdaterJob, type UpdaterView,
   } from './updater';
 
@@ -48,6 +50,8 @@
   $: redeploying = redeployRunning(view);
   $: shown = shownActivity(s, redeploy, foreign !== null);
   $: installed = (void $t, installedOf(s));
+  $: svc = (void $t, serviceRows(s));
+  $: prev = s ? (void $t, previousText(s)) : null;
   let confirming: UpdaterAction | null = null;
   /** a poll failed (the backend restarts), or the updater is away while Portainer recreates it */
   let reconnecting = false, watchTimeout = false, away = false;
@@ -120,7 +124,8 @@
   /** "update" through Portainer asks about a Portainer redeploy, not about the updater's tag */
   const confirmKey = (a: UpdaterAction, f: typeof foreign) =>
     (a === 'update' && f === 'portainer' ? 'admin.update.updater.confirm.updatePortainer' : `admin.update.updater.confirm.${a}`) as 'admin.update.updater.confirm.update';
-  const confirmTag = (a: UpdaterAction) => (a === 'rollback' ? s?.previous : s?.targetTag) ?? '';
+  /** the confirmation's question (an update names the target tag; a rollback the sha tag, or the images before the last update) */
+  $: confirmText = (a: UpdaterAction, f: typeof foreign): string => (void $t, a === 'rollback' ? rollbackConfirm(s) : $t(confirmKey(a, f), { tag: s?.targetTag ?? '' }));
 
   // automatic updates (settings AUTO_UPDATE / AUTO_UPDATE_TIME)
   let autoMode = view.autoUpdate?.mode ?? 'off', autoTime = view.autoUpdate?.time ?? '04:00', autoErr = '';
@@ -150,16 +155,31 @@
     {/if}
     <!-- installed: what the backend runs (not the updater's record of a moving tag); the previous build only where a rollback can use it -->
     <dl class="ver" data-updater>
-      <div><dt>{$t('admin.update.updater.installed')}</dt><dd data-installed>
+      <div class:top={svc.rows.length > 0}><dt>{$t('admin.update.updater.installed')}</dt><dd data-installed>
         {#if installed}{#if installed.version}<span class="v">{installed.version}</span>{' '}{/if}<code>{installed.tag}</code>{#if tagText(installed.tag)}{' '}<span class="muted">({tagText(installed.tag)})</span>{/if}
-        {:else}<code>{$t('admin.update.updater.none')}</code>{/if}</dd></div>
-      {#if !foreign}<div><dt>{$t('admin.update.updater.previous')}</dt><dd><code>{s.previous ?? $t('admin.update.updater.none')}</code></dd></div>{/if}
+        {:else}<code>{$t('admin.update.updater.none')}</code>{/if}
+        {#if svc.rows.length}
+          <!-- one row per service, each the same height whether its status is known yet or not; "alles unverändert" spans the job's rows -->
+          <table class="svcs" data-services>
+            <tbody>
+              {#each svc.rows as r, i (r.service)}
+                <tr data-service={r.service} data-mark={r.mark ?? undefined}>
+                  <th scope="row">{r.service}</th>
+                  <td><code>{r.commit ?? '–'}</code></td>
+                  {#if svc.span && i === 0}<td class="st all" rowspan={svc.span} data-all>{svc.all}</td>
+                  {:else if i >= svc.span}<td class="st" class:avail={r.mark === 'changed'}>{r.text}</td>{/if}
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}</dd></div>
+      {#if !foreign && prev}<div><dt>{$t('admin.update.updater.previous')}</dt><dd data-previous>{#if prev.code}<code>{prev.text}</code>{:else}{prev.text}{/if}</dd></div>{/if}
       <div><dt>{$t('admin.update.updater.target')}</dt><dd data-target>{#if tagText(s.targetTag)}<span class="v">{tagText(s.targetTag)}</span>{' '}{/if}<code>{s.targetTag ?? $t('admin.update.updater.none')}</code></dd></div>
     </dl>
 
     {#if confirming}
-      <div class="confirm" role="group" aria-label={$t(confirmKey(confirming, foreign), { tag: confirmTag(confirming) })}>
-        <p>{$t(confirmKey(confirming, foreign), { tag: confirmTag(confirming) })}</p>
+      <div class="confirm" role="group" aria-label={confirmText(confirming, foreign)}>
+        <p>{confirmText(confirming, foreign)}</p>
         <div class="row">
           <Button variant={confirming === 'self-update' ? 'primary' : 'danger'} icon="check" on:click={() => confirming && start(confirming)}>{$t('admin.update.updater.confirmGo')}</Button>
           <Button variant="secondary" on:click={() => (confirming = null)}>{$t('admin.update.updater.cancel')}</Button>
@@ -215,6 +235,7 @@
   .intro { margin: 0 0 1rem; max-width: 70ch; }
   .ver { margin: 0 0 1rem; display: grid; gap: .5rem; }
   .ver > div { display: grid; grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr); gap: .6rem; align-items: center; }
+  .ver > div.top { align-items: start; }
   dt { color: var(--mut); font-size: .9rem; } dd { margin: 0; overflow-wrap: anywhere; min-width: 0; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: rgba(255,255,255,.07); padding: .05rem .4rem; border-radius: 4px; }
   .row { display: flex; flex-wrap: wrap; gap: .8rem; align-items: flex-end; min-width: 0; }
@@ -232,5 +253,16 @@
   .self { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: .4rem; display: grid; gap: .6rem; }
   .banner { display: flex; gap: .5rem; align-items: flex-start; margin: 0 0 1rem; padding: .6rem .8rem; border-radius: 8px; background: rgba(255,255,255,.05); overflow-wrap: anywhere; }
   .banner.warn { border: 1px solid var(--warn); }
-  @media (max-width: 560px) { .ver > div { grid-template-columns: minmax(0, 1fr); gap: .2rem; } }
+  /* fixed row heights: a status that arrives or changes (a slow registry, the job's report) never moves anything */
+  .svcs { margin-top: .4rem; border-collapse: collapse; font-size: .88rem; }
+  .svcs tr { height: 1.9rem; }
+  .svcs th, .svcs td { padding: 0 .9rem 0 0; text-align: left; vertical-align: middle; line-height: 1.2; }
+  .svcs th { font-weight: 400; color: var(--mut); }
+  .svcs .st { padding-right: 0; overflow-wrap: anywhere; }
+  .svcs .avail { color: var(--fg); font-weight: 600; }
+  @media (max-width: 560px) {
+    .ver > div { grid-template-columns: minmax(0, 1fr); gap: .2rem; }
+    /* room for a status on two lines (the longer languages) */
+    .svcs tr { height: 2.7rem; }
+  }
 </style>

@@ -42,6 +42,12 @@ export interface UpdaterMock {
   awayPolls?: number;
   /** the managed media server as the updater reports it (status.mediaserver); undefined = none */
   mediaserver?: any;
+  /** what the services run (status.services: commit, digest, registry, changed); undefined = the backend alone, as older backends list it */
+  services?: any[];
+  /** what a finished update or rollback reports per service (job.services); the services then run the registry's digest */
+  report?: Record<string, 'updated' | 'unchanged'>;
+  /** whether a rollback is possible (status.rollback; after an update by digests `previous` is null); undefined = an older backend */
+  rollback?: { available: boolean };
 }
 type Reply = (b: unknown, status?: number) => Promise<void>;
 
@@ -107,6 +113,10 @@ function advance(u: UpdaterMock): boolean {
     j.step = rolled ? 'rollback' : null;
     j.finishedAt = new Date().toISOString();
     if (!rolled) { u.previous = j.from; u.current = j.to; }
+    if (!rolled && u.report) {
+      j.services = u.report;
+      for (const x of u.services ?? []) Object.assign(x, { registry: x.digest, changed: x.registry === null ? null : false });
+    }
     u.log.push(`${j.finishedAt} ${j.action} ${j.state}`);
   }
   return true;
@@ -130,7 +140,8 @@ export function updaterRoute(u: UpdaterMock | null, settings: SettingsMock, m: s
     const busy = u.job?.state === 'running';
     return J({ present: true, autoUpdate: auto, portainer, redeploy: u.redeploy ?? null, status: { ...(u.stack ? { stack: u.stack } : {}), ...(u.stackReason ? { stackReason: u.stackReason, stackDir: u.stackDir, projectDir: u.projectDir } : {}),
       updater: { version: '1.1.0', sha: null }, channel: ch, version: ch === 'pinned' ? ver : null, targetTag: target, current: u.current, previous: u.previous, busy,
-      job: u.job, log: u.log.slice(-30), ...(u.mediaserver !== undefined ? { mediaserver: u.mediaserver } : {}), services: [{ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-c0be6c5', version: '1.0.0' }],
+      job: u.job, log: u.log.slice(-30), ...(u.mediaserver !== undefined ? { mediaserver: u.mediaserver } : {}), ...(u.rollback ? { rollback: u.rollback } : {}),
+      services: u.services ?? [{ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-c0be6c5', version: '1.0.0' }],
     } });
   }
   const mm = p.match(/^\/api\/admin\/updater\/(update|rollback|self-update)$/);
@@ -144,8 +155,9 @@ export function updaterRoute(u: UpdaterMock | null, settings: SettingsMock, m: s
       return J({ portainer: { mode: 'webhook' } }, 202);
     }
     if (u.job?.state === 'running') return J({ error: 'busy' }, 409);
-    if (mm[1] === 'rollback' && !u.previous) return J({ error: 'no_previous' }, 409);
-    const to = mm[1] === 'rollback' ? u.previous : target;
+    if (mm[1] === 'rollback' && !u.previous && !u.rollback?.available) return J({ error: 'no_previous' }, 409);
+    // a rollback by digests goes back under the channel's tag
+    const to = mm[1] === 'rollback' ? u.previous ?? target : target;
     u.tick = 0;
     u.job = { id: '0123456789abcdef', action: mm[1], state: 'running', step: 'pull', from: 'sha-c0be6c5', to, startedAt: new Date().toISOString(), finishedAt: null, error: null,
       steps: { pull: 'running', verify: 'pending', restart: 'pending', health: mm[1] === 'self-update' ? 'skipped' : 'pending', rollback: 'skipped' } };

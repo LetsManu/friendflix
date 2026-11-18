@@ -4,6 +4,7 @@ import { audit } from './audit.js';
 import { buildInfo, channelTag, channelUpdate, envLine, hookWithTag, withTag, type BuildKind, type Channel, type RunningChannel } from './channel.js';
 import type { Ctx } from './ctx.js';
 import { abandonRedeploy, beginRedeploy, claimRedeploy, settleRedeploy } from './redeploy.js';
+import { REPORT_SERVICES, updaterView } from './updater.js';
 import { appVersion, codenameFor, compareSemver, parseSemver } from './version.js';
 
 const TTL = 600;
@@ -128,6 +129,21 @@ export async function cachedReleaseVersion(ctx: Pick<Ctx, 'kv' | 'cfg'>): Promis
 }
 
 /**
+ * With the updater (UPDATER_URL), whether a service an update installs (backend, gateway, web, livetv; not the updater itself, that
+ * is its own update) runs another digest than the registry's for the nightly tag: any differs -> true, all the same -> false;
+ * anything unknown (no updater, an older one, a registry outage, another tag) -> null.
+ */
+async function updaterDigestsDiffer(ctx: Ctx): Promise<boolean | null> {
+  if (!ctx.cfg.UPDATER_URL) return null;
+  const v = await updaterView(ctx).catch(() => null);
+  const s = v && 'status' in v ? v.status : null;
+  const core = s?.targetTag === 'nightly' ? s.services.filter((x) => (REPORT_SERVICES as readonly string[]).includes(x.service)) : [];
+  if (!core.length) return null;
+  if (core.some((x) => x.changed === true)) return true;
+  return core.every((x) => x.changed === false) ? false : null;
+}
+
+/**
  * Installed vs newest release (stable channel) or vs the newest CI build on main (nightly channel: commits ahead; on stable
  * secondary info, and the only comparison before the first release). GitHub answers are cached for 10 min (unauthenticated limit: 60/h); an outage never throws.
  */
@@ -138,11 +154,11 @@ export async function updateInfo(ctx: Ctx, refresh = false): Promise<UpdateInfo>
   const pinned = selected === 'pinned' ? (ctx.cfg.UPDATE_VERSION ?? null) : null;
   let locked = false;
   try { locked = ctx.settings.sources().UPDATE_CHANNEL === 'env'; } catch { /* no store (tests): not locked */ }
-  const b = await buildInfo(ctx, { refresh });
+  const [b, digestsDiffer] = await Promise.all([buildInfo(ctx, { refresh }), selected === 'nightly' ? updaterDigestsDiffer(ctx) : Promise.resolve(null)]);
   const channel = { selected, version: pinned, running: b.channel, build: b.build, label: b.label, locked, envLine: envLine(selected, pinned) };
   const withState = (f: Fetched): UpdateInfo => ({
     ...base, ...f, channel,
-    updateAvailable: channelUpdate(selected, { releaseNewer: f.release ? compareSemver(f.release.version, ver.version) > 0 : null, behind: f.behind, pinnedDiffers: pinned ? pinned !== ver.version : null }),
+    updateAvailable: channelUpdate(selected, { releaseNewer: f.release ? compareSemver(f.release.version, ver.version) > 0 : null, behind: f.behind, pinnedDiffers: pinned ? pinned !== ver.version : null, digestsDiffer }),
   });
   const key = infoKey(ctx.cfg);
   if (!refresh) {

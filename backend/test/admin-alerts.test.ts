@@ -173,7 +173,7 @@ describe('update failed', () => {
   const job = (o: Partial<UpdaterJob> = {}): UpdaterJob => ({
     id: 'job-7', action: 'update', state: 'rolled_back', step: null,
     steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'failed', rollback: 'ok' }, from: '3.5.0', to: '3.6.0',
-    startedAt: '2026-11-16T03:00:00.000Z', finishedAt: '2026-11-16T03:04:00.000Z', error: 'unhealthy', media: null, ...o,
+    startedAt: '2026-11-16T03:00:00.000Z', finishedAt: '2026-11-16T03:04:00.000Z', error: 'unhealthy', media: null, services: null, ...o,
   });
 
   it('failed and rolled-back update jobs alert once', async () => {

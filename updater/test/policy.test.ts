@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { FF_SERVICES, HEALTH_SERVICES, channelTag, cosignIdentity, expectedImage, isRepo, isTag, parseChannelBody, pinnedRef, shaTag } from '../src/policy.js';
+import { FF_SERVICES, HEALTH_SERVICES, channelTag, cosignIdentity, digestRef, expectedImage, isDigest, isOwnDigestRef, isRepo, isTag, parseChannelBody, pinnedRef, shaTag } from '../src/policy.js';
 
 describe('updater policy', () => {
   it('the service whitelist is FriendFlix only', () => {
@@ -67,6 +67,30 @@ describe('updater policy', () => {
     expect(pinnedRef(img, [`ghcr.io/evil/friendflix-backend@${d}`])).toBeNull();
     expect(pinnedRef(img, ['ghcr.io/letsmanu/friendflix-backend@sha256:short'])).toBeNull();
     expect(pinnedRef(img, [])).toBeNull();
+  });
+
+  it('digests: sha256 with 64 lowercase hex only', () => {
+    expect(isDigest('sha256:' + 'a'.repeat(64))).toBe(true);
+    for (const bad of ['', 'sha256:' + 'a'.repeat(63), 'sha256:' + 'A'.repeat(64), 'sha512:' + 'a'.repeat(64), 'sha256:' + 'a'.repeat(64) + '\n', ` sha256:${'a'.repeat(64)}`, null, 1])
+      expect(isDigest(bad), String(bad)).toBe(false);
+  });
+
+  it('digest refs: this repository\'s image of the service, lowercase, with a valid digest only', () => {
+    const d = 'sha256:' + 'b'.repeat(64);
+    expect(digestRef('Example/FriendFlix', 'web', d)).toBe(`ghcr.io/example/friendflix-web@${d}`);
+    expect(digestRef('example/friendflix', 'bootstrap', d)).toBe(`ghcr.io/example/friendflix-backend@${d}`);
+    expect(digestRef('example/friendflix', 'livetv', d)).toBe(`ghcr.io/example/friendflix-livetv@${d}`);
+    expect(() => digestRef('example/friendflix', 'web', 'sha256:short')).toThrow();
+    expect(() => digestRef('example/friendflix', 'web', `${d}:latest`)).toThrow();
+    for (const svc of ['postgres', 'mediaserver', 'constructor', '__proto__', 'toString']) expect(() => digestRef('example/friendflix', svc, d), svc).toThrow();
+    expect(isOwnDigestRef('example/friendflix', 'web', `ghcr.io/example/friendflix-web@${d}`)).toBe(true);
+    expect(isOwnDigestRef('Example/FriendFlix', 'backend', `ghcr.io/example/friendflix-backend@${d}`)).toBe(true);
+    expect(isOwnDigestRef('example/friendflix', 'bootstrap', `ghcr.io/example/friendflix-backend@${d}`)).toBe(true);
+    for (const [svc, ref] of [
+      ['web', `ghcr.io/evil/friendflix-web@${d}`], ['web', 'ghcr.io/example/friendflix-web:latest'], ['web', `ghcr.io/example/friendflix-backend@${d}`],
+      ['web', `ghcr.io/example/friendflix-web@sha256:${'B'.repeat(64)}`], ['web', `ghcr.io/example/friendflix-web:latest@${d}`], ['web', `docker.io/example/friendflix-web@${d}`],
+      ['postgres', `ghcr.io/example/friendflix-postgres@${d}`], ['constructor', `ghcr.io/example/friendflix-web@${d}`], ['web', ''], ['web', null],
+    ] as const) expect(isOwnDigestRef('example/friendflix', svc, ref as string), `${svc} ${ref}`).toBe(false);
   });
 
   it('pinned ref: a digest ref (the media server pin) is pinned only by that very digest', () => {

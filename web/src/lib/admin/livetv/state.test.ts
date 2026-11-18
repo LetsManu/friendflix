@@ -142,9 +142,22 @@ describe('errorKey', () => {
     for (const c of ['updater_outdated', 'compose_outdated', 'network_missing']) expect(errorKey(c)).toBe(c);
     // M7: codes that used to fall back to "Das hat nicht geklappt."
     for (const c of ['stop_failed', 'interrupted', 'no_target', 'updater_error', 'not_found', 'unauthorized']) expect(errorKey(c)).toBe(c);
+    // the digest-based updater's codes for an enable: the registry did not answer, the local tag could not be moved
+    for (const c of ['registry_failed', 'tag_failed']) expect(errorKey(c)).toBe(c);
     expect(errorKey('rm -rf')).toBe('generic');
     expect(errorKey(null)).toBe('generic');
     expect(errorKey('weird_new_code')).toBe('generic');
+  });
+});
+
+describe('error texts', () => {
+  it('registry_failed and tag_failed have their own text in all seven languages', async () => {
+    const { hasKey, setLocale } = await import('#lib/i18n');
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
+      await setLocale(l);
+      for (const c of ['registry_failed', 'tag_failed']) expect(hasKey(`adminLive.err.${errorKey(c)}`), `${l} ${c}`).toBe(true);
+    }
+    await setLocale('de');
   });
 });
 

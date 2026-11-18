@@ -26,12 +26,24 @@ export interface UpdaterJob {
   steps: Record<StepName, StepState>; from: string | null; to: string; startedAt: string; finishedAt: string | null; error: string | null;
   /** a media job's steps (and an update's media server phase); absent/null for every other job and older backends */
   media?: { step: MediaStepName | null; steps: Record<MediaStepName, StepState> } | null;
+  /** per service what an update or rollback did; absent/null until it got that far, for other jobs and older backends */
+  services?: Partial<Record<string, 'updated' | 'unchanged'>> | null;
+}
+/**
+ * what a service runs: `sha` its image commit's sha-<7>, `commit` that commit, `changed` whether the registry's digest of the
+ * channel's tag differs from its own (null: unknown); the newer fields are absent with older backends
+ */
+export interface UpdaterService {
+  service: string; state: string; health: string; sha: string | null; version: string | null;
+  commit?: string | null; digest?: string | null; registry?: string | null; changed?: boolean | null;
 }
 export interface UpdaterStatus {
   updater: { version: string | null; sha: string | null };
   channel: 'stable' | 'nightly' | 'pinned'; version: string | null; targetTag: string | null;
   current: string | null; previous: string | null; busy: boolean; job: UpdaterJob | null; log: string[];
-  services: Array<{ service: string; state: string; health: string; sha: string | null; version: string | null }>;
+  services: UpdaterService[];
+  /** whether a rollback has something to go back to (after an update by digests `previous` stays null); absent/null = an older backend */
+  rollback?: { available: boolean } | null;
   /** own = started from the updater's directory; foreign = Portainer (or another tool) runs it, the updater never recreates it; absent/null = unknown */
   stack?: 'own' | 'foreign' | null;
   /** why foreign: working_dir = started from another directory (stackDir) than the updater sees (projectDir); portainer; no_labels */
@@ -231,8 +243,50 @@ export function foreignText(mode: ForeignMode, s: UpdaterStatus | null): string 
   return trDynamic(`admin.update.updater.foreign.${mode}`);
 }
 
-/** rollback is offered once the updater recorded a previous build and no job runs (never on a foreign stack: Portainer has no rollback) */
-export const canRollback = (s: UpdaterStatus | null): boolean => Boolean(s?.previous && !s.busy && !isRunning(s.job) && s.stack !== 'foreign');
+/**
+ * rollback is offered once the updater recorded something to go back to (the digests before the last update, or an older updater's
+ * sha tag) and no job runs (never on a foreign stack: Portainer has no rollback)
+ */
+export const canRollback = (s: UpdaterStatus | null): boolean => Boolean((s?.previous || s?.rollback?.available) && !s.busy && !isRunning(s.job) && s.stack !== 'foreign');
+
+/** "Vorherige Version": the sha tag, else (after an update by digests) the images before the last update, else none */
+export function previousText(s: UpdaterStatus): { text: string; code: boolean } {
+  if (s.previous) return { text: s.previous, code: true };
+  return s.rollback?.available ? { text: trDynamic('admin.update.updater.previousImages'), code: false } : { text: trDynamic('admin.update.updater.none'), code: true };
+}
+
+/** the rollback's confirmation: back to the sha tag, or to the images before the last update */
+export function rollbackConfirm(s: UpdaterStatus | null): string {
+  return s?.previous ? trDynamic('admin.update.updater.confirm.rollback', { tag: s.previous }) : trDynamic('admin.update.updater.confirm.rollbackImages');
+}
+
+/** the rows under "Installiert", in this order (bootstrap runs the backend's image and is left out) */
+const SERVICE_ORDER = ['backend', 'gateway', 'web', 'livetv', 'updater'] as const;
+/** changed: the registry has another image; unchanged / updated: what the last job did (or unchanged: the registry has the same) */
+export type ServiceMark = 'changed' | 'unchanged' | 'updated' | null;
+export interface ServiceRow { service: string; commit: string | null; mark: ServiceMark; text: string }
+const MARK_KEY: Record<Exclude<ServiceMark, null>, string> = { changed: 'svcChanged', unchanged: 'svcUnchanged', updated: 'svcUpdated' };
+
+/**
+ * One row per service: its name, commit7 and "Update verfügbar" / "unverändert" (unknown: no text, the row keeps its room). After
+ * an update or rollback its report ("aktualisiert" / "unverändert"), until the registry has something newer again; when the report
+ * found nothing changed, `all` ("alles unverändert") stands for its rows, the first `span` ones.
+ */
+export function serviceRows(s: UpdaterStatus | null): { rows: ServiceRow[]; all: string; span: number } {
+  const listed = SERVICE_ORDER.flatMap((name) => s?.services.find((x) => x.service === name) ?? []);
+  const j = s?.job;
+  // the report holds until the registry has something newer for a service an update installs (the updater's own is its self-update)
+  const newer = listed.some((x) => x.service !== 'updater' && x.changed === true);
+  const report = j && !isRunning(j) && (j.action === 'update' || j.action === 'rollback') && s?.stack !== 'foreign' && !newer && j.services && Object.keys(j.services).length ? j.services : null;
+  const rows = listed.map((x): ServiceRow => {
+    const mark: ServiceMark = report?.[x.service] ?? (x.changed === true ? 'changed' : x.changed === false ? 'unchanged' : null);
+    const commit = x.commit && /^[0-9a-f]{40}$/.test(x.commit) ? x.commit.slice(0, 7) : x.sha && /^sha-[0-9a-f]{7}$/.test(x.sha) ? x.sha.slice(4) : null;
+    return { service: x.service, commit, mark, text: mark ? trDynamic(`admin.update.updater.${MARK_KEY[mark]}`) : '' };
+  });
+  const span = report && Object.values(report).every((v) => v === 'unchanged') ? rows.findIndex((r) => !report[r.service]) : 0;
+  const n = span < 0 ? rows.length : span;
+  return { rows, all: n > 0 ? trDynamic('admin.update.updater.allUnchanged') : '', span: n };
+}
 
 /** the jobs Admin -> Update starts (a Live TV job is the Live TV page's) */
 const UPDATE_JOBS: readonly string[] = ['update', 'rollback', 'self-update'];

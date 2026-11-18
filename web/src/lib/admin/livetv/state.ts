@@ -105,7 +105,7 @@ export function phase(s: LivetvAdminState, settle: Settle): Phase {
  */
 export const foreignOn = (s: LivetvAdminState): boolean => s.updater.stack === 'foreign' && (s.updater.livetv?.container ?? null) !== null;
 
-const ERRORS = ['pull_failed', 'verify_failed', 'restart_failed', 'unhealthy', 'unexpected_image', 'config_mismatch', 'compose_config', 'updater_outdated', 'compose_outdated', 'network_missing', 'stop_failed', 'interrupted', 'no_target', 'updater_error', 'not_found', 'unauthorized', 'remove_failed', 'rollback_failed', 'no_updater', 'foreign_stack', 'busy'] as const;
+const ERRORS = ['pull_failed', 'verify_failed', 'restart_failed', 'unhealthy', 'unexpected_image', 'config_mismatch', 'compose_config', 'updater_outdated', 'compose_outdated', 'network_missing', 'stop_failed', 'interrupted', 'no_target', 'updater_error', 'not_found', 'unauthorized', 'remove_failed', 'rollback_failed', 'no_updater', 'foreign_stack', 'busy', 'registry_failed', 'tag_failed'] as const;
 export type ErrorKey = (typeof ERRORS)[number] | 'generic';
 /** the message key (adminLive.err.<key>) of an updater / route code; an unknown code is "generic", never shown raw */
 export function errorKey(code: string | null | undefined): ErrorKey {

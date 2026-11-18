@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { execFile } from 'node:child_process';
 import { FILE_RE } from './config.js';
-import { FF_SERVICES, LIVETV_SERVICE, SELF_SERVICE, cosignIdentity, expectedImage, imageRepo, isTag, pinnedRef } from './policy.js';
+import { FF_SERVICES, IMAGE_OF, LIVETV_SERVICE, SELF_SERVICE, cosignIdentity, expectedImage, imageRepo, isOwnDigestRef, isTag, pinnedRef } from './policy.js';
 import { classifyStack, configDrift, networkName, renderedNetworks, runningNetworks, type StackInfo, type StackOrigin } from './stack.js';
 
 /** The only two programs the updater starts, never through a shell. */
@@ -41,7 +41,10 @@ export interface ComposeSettings {
 }
 
 export type ServiceState = { service: string; name: string; state: string; health: string };
-export type ImageInfo = { repoDigests: string[]; gitSha: string | null; version: string | null };
+/** an image's registry digests and its image commit (FF_IMAGE_COMMIT; GIT_SHA on images from before it; 40 hex or null) */
+export type ImageInfo = { repoDigests: string[]; commit: string | null; version: string | null };
+/** what a service's container runs, with the container id */
+export type Running = ImageInfo & { container: string };
 export type LivetvContainer = ServiceState & { image: string | null };
 
 const MIN = 60_000;
@@ -53,6 +56,8 @@ const PROJECT_RE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 /** the livetv cache volume as compose names it (<project>_livetv-cache); the only volume the updater ever removes */
 const CACHE_VOLUME_RE = /^[a-z0-9][a-z0-9_-]{0,62}_livetv-cache$/;
 const IMAGE_ID_RE = /^sha256:[0-9a-f]{64}$/;
+const CONTAINER_ID_RE = /^[0-9a-f]{64}$/;
+const COMMIT_RE = /^[0-9a-f]{40}$/;
 const TAG_REF_RE = /^[a-z0-9][a-z0-9./_-]{0,200}:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
 
 /** stop / rm take only the livetv service: the FriendFlix services are recreated, never stopped */
@@ -67,6 +72,8 @@ export class Docker {
 
   /** the compose files the next commands use */
   get files(): readonly string[] { return this.active; }
+  /** owner/repo whose images this Docker pulls, tags and verifies */
+  get repo(): string { return this.s.repo; }
 
   /**
    * Whose stack runs here, from the backend container's compose labels (stack.ts classifyStack): own = started from projectDir,
@@ -299,11 +306,6 @@ export class Docker {
     } catch { return null; }
   }
 
-  async pull(tag: string, services: readonly string[]): Promise<void> {
-    const r = await this.compose(tag, ['pull', '--quiet', ...services], 10 * MIN, Docker.names(services));
-    if (r.code !== 0) throw new StepError('pull_failed');
-  }
-
   /** recreates exactly these services from the images already pulled and verified (`--pull never`: no second, unverified pull) */
   async up(tag: string, services: readonly string[]): Promise<void> {
     const r = await this.compose(tag, ['up', '-d', '--no-deps', '--pull', 'never', ...services], 10 * MIN, Docker.names(services));
@@ -452,7 +454,10 @@ export class Docker {
     if (r.code !== 0 && !/no such volume/i.test(r.stderr)) throw new StepError('remove_failed');
   }
 
-  /** what an image (a tag or the id a container runs) is: its registry digests and the commit baked in (GIT_SHA, APP_VERSION) */
+  /**
+   * what an image (a tag, a digest ref or the id a container runs) is: its registry digests, the image commit (FF_IMAGE_COMMIT,
+   * else GIT_SHA for an image from before it; null unless 40 hex, e.g. `dev` locally) and APP_VERSION
+   */
   async imageInfo(ref: string): Promise<ImageInfo | null> {
     if (!/^[a-z0-9][a-z0-9./:@_-]{0,250}$/.test(ref)) return null;
     const r = await this.run('docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}\t{{json .Config.Env}}', ref], { env: this.env(), timeoutMs: MIN });
@@ -462,7 +467,8 @@ export class Docker {
       const d = JSON.parse(digests ?? '[]') as unknown, e = JSON.parse(env ?? '[]') as unknown;
       const vars = Array.isArray(e) ? e.filter((x): x is string => typeof x === 'string') : [];
       const get = (k: string) => vars.find((v) => v.startsWith(`${k}=`))?.slice(k.length + 1) || null;
-      return { repoDigests: Array.isArray(d) ? d.filter((x): x is string => typeof x === 'string') : [], gitSha: get('GIT_SHA'), version: get('APP_VERSION') };
+      const commit = get('FF_IMAGE_COMMIT') ?? get('GIT_SHA');
+      return { repoDigests: Array.isArray(d) ? d.filter((x): x is string => typeof x === 'string') : [], commit: commit && COMMIT_RE.test(commit) ? commit : null, version: get('APP_VERSION') };
     } catch { return null; }
   }
 
@@ -474,18 +480,62 @@ export class Docker {
     return r.code === 0 && /^sha256:[0-9a-f]{64}$/.test(id) ? id : null;
   }
 
-  /** what a service runs now (image digests + GIT_SHA of its container's image) */
-  async running(service: string): Promise<ImageInfo | null> {
+  /** what a service runs now: its running container's id and that container's image (digests, image commit) */
+  async running(service: string): Promise<Running | null> {
     const st = (await this.ps()).find((p) => p.service === service && p.state === 'running');
-    const id = st ? await this.containerImage(st.name) : null;
-    return id ? this.imageInfo(id) : null;
+    if (!st || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(st.name)) return null;
+    const r = await this.run('docker', ['container', 'inspect', '--format', '{{.Id}}\t{{.Image}}', st.name], { env: this.env(), timeoutMs: MIN });
+    const [container, id] = r.stdout.trim().split('\t');
+    if (r.code !== 0 || !CONTAINER_ID_RE.test(container ?? '') || !IMAGE_ID_RE.test(id ?? '')) return null;
+    const info = await this.imageInfo(id!);
+    return info ? { ...info, container: container! } : null;
   }
 
-  /** cosign keyless verification of image@digest against this repository's publish workflow; false on any failure */
-  async verify(image: string): Promise<boolean> {
+  /** the service whose image `ref` is, pinned to a digest of this repository (bootstrap and backend share one); null for anything else */
+  private ownDigestService(ref: string): string | null {
+    return Object.keys(IMAGE_OF).find((svc) => isOwnDigestRef(this.s.repo, svc, ref)) ?? null;
+  }
+
+  /** `docker pull` of one of this repository's images by digest (never a tag: what is pulled is what was compared and is verified) */
+  async pullDigest(ref: string): Promise<void> {
+    if (!this.ownDigestService(ref)) throw new Error('invalid image');
+    const r = await this.run('docker', ['pull', '--quiet', ref], { env: this.env(), timeoutMs: 10 * MIN });
+    if (r.code !== 0) throw new StepError('pull_failed');
+  }
+
+  /**
+   * `docker image tag <ref> <image>`: the local tag compose runs (`image` = this repository's image of the same service with a
+   * valid tag) now names the pulled digest. Anything else, e.g. a backend digest tagged as web, is refused before any command.
+   */
+  async tag(ref: string, image: string): Promise<void> {
+    const svc = this.ownDigestService(ref);
+    const t = image.slice(image.lastIndexOf(':') + 1);
+    if (!svc || !isTag(t) || image !== expectedImage(this.s.repo, svc, t)) throw new Error('invalid image');
+    const r = await this.run('docker', ['image', 'tag', ref, image], { env: this.env(), timeoutMs: MIN });
+    if (r.code !== 0) throw new StepError('tag_failed');
+  }
+
+  /**
+   * cosign keyless verification of one of this repository's images by digest against its publish workflow; anything but an own
+   * digest ref of a FriendFlix service is false without a command. false on any failure.
+   */
+  async verify(ref: string): Promise<boolean> {
+    return this.ownDigestService(ref) ? this.cosign(ref) : false;
+  }
+
+  /**
+   * verify for a local image named by tag or digest ref: the digest it carries (pinnedRef: that repository, a sha256 digest the
+   * image really has), never a tag. Not limited to IMAGE_OF: the media server's pinned image is verified here too. For the callers
+   * that hold such a name: the media server's backend image and its pinned image (the update job verifies digest refs: verify).
+   */
+  async verifyPulled(image: string): Promise<boolean> {
     const info = await this.imageInfo(image);
     const ref = info ? pinnedRef(image, info.repoDigests) : null;
-    if (!ref) return false;
+    return ref ? this.cosign(ref) : false;
+  }
+
+  /** `cosign verify` of a digest ref against this repository's publish workflow identity; the callers check the ref */
+  private async cosign(ref: string): Promise<boolean> {
     const id = cosignIdentity(this.s.repo);
     const r = await this.run('cosign', ['verify', '--certificate-identity-regexp', id.identityRegexp, '--certificate-oidc-issuer', id.issuer, ref],
       { env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp' }, timeoutMs: 2 * MIN });
