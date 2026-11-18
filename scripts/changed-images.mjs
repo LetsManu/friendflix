@@ -28,6 +28,7 @@ import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import console from 'node:console';
 import process from 'node:process';
+import { clearTimeout, setTimeout } from 'node:timers';
 import { URL, fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -237,10 +238,15 @@ const PREFIX_RE = /^ghcr\.io\/[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
 const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/;
 const oneLine = (s) => String(s).replace(/\s+/g, ' ').trim().slice(0, 300);
 
-/** a program without a shell, as { code, stdout, stderr }; a missing program or a timeout throws */
-function runCommand(cmd, args, timeoutMs = 120_000) {
+/** all registry and cosign work of one plan, together (the `changes` job has 10 minutes; report mode never blocks) */
+const DEADLINE_MS = 240_000;
+/** one docker or cosign command */
+const COMMAND_TIMEOUT_MS = 30_000;
+
+/** a program without a shell, as { code, stdout, stderr }; a missing program, a timeout or an abort (`signal`) throws */
+function runCommand(cmd, args, { timeoutMs = COMMAND_TIMEOUT_MS, signal } = {}) {
   return new Promise((done, fail) => {
-    execFile(cmd, args, { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 << 20 }, (err, stdout, stderr) => {
+    execFile(cmd, args, { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 << 20, signal }, (err, stdout, stderr) => {
       if (err && typeof err.code !== 'number') { fail(new Error(`${cmd}: ${err.killed ? 'timeout' : (err.code ?? err.message)}`)); return; }
       done({ code: err ? err.code : 0, stdout, stderr });
     });
@@ -252,9 +258,10 @@ function runCommand(cmd, args, timeoutMs = 120_000) {
  *   digest(image, tag)  the tag's digest (`docker buildx imagetools inspect`), null when the tag does not exist
  *   revision(ref)       the org.opencontainers.image.revision label (linux/amd64) of `<image>@<digest>`, null without one
  *   verify(ref)         `cosign verify` of `<image>@<digest>` with this repository's identity rule: true / false (no matching signature)
- * Any other failure (registry down, denied, cosign missing, a timeout) throws; plan() turns that into "keine Basis".
+ * Any other failure (registry down, denied, cosign missing, a 30 s timeout) throws; plan() turns that into "keine Basis".
+ * `signal` aborts commands still running (the CLI aborts once the plan is printed, e.g. after the planning deadline).
  */
-export function ghcrRegistry({ prefix, repo, run = runCommand }) {
+export function ghcrRegistry({ prefix, repo, signal, run = (cmd, args) => runCommand(cmd, args, { signal }) }) {
   if (!PREFIX_RE.test(prefix ?? '')) throw new Error(`--registry: ghcr.io/<owner>/<repo> in lower case expected, not "${prefix}"`);
   if (!REPO_RE.test(repo ?? '')) throw new Error(`--repo: <owner>/<repo> expected, not "${repo}"`);
   const failed = (what, r) => new Error(`${what}: ${oneLine(r.stderr) || `exit ${r.code}`}`);
@@ -303,16 +310,27 @@ const errText = (e) => oneLine(e instanceof Error ? e.message : e);
 /**
  * The base of a report run: the newest of the first BASE_WALK first-parent commits (run commit first) for which every image has
  * `sha-<7>`, and per image { digest, revision, verified } of that tag. A registry error in the walk means no base; an error for one
- * image means no base for that image. Both warn, neither throws.
+ * image means no base for that image. Every registry call shares one deadline (`deadlineMs` from the start of the walk): once it
+ * has passed, the image being judged and every one after it have no base, with a single warning. Nothing here throws.
  */
-async function walkBase(root, map, head, registry, warn) {
+async function walkBase(root, map, head, registry, warn, deadlineMs) {
   const names = Object.keys(map.images);
   const ancestors = git(root, ['rev-list', '--first-parent', `--max-count=${BASE_WALK}`, head, '--']).split('\n').filter(Boolean);
+  const end = Date.now() + deadlineMs;
+  const expired = new Error(`Frist von ${deadlineMs / 1000} s für Registry und cosign abgelaufen`);
+  /** a registry call, or `expired` once the deadline has passed (a stalled call is left behind, never awaited) */
+  const within = (call) => {
+    const left = end - Date.now();
+    if (left <= 0) return Promise.reject(expired);
+    let timer;
+    const late = new Promise((_, fail) => { timer = setTimeout(() => fail(expired), left); });
+    return Promise.race([Promise.resolve().then(call), late]).finally(() => clearTimeout(timer));
+  };
   const digests = new Map();
   const published = async (commit) => {
     const found = {};
     for (const name of names) {
-      const digest = await registry.digest(name, `sha-${commit.slice(0, 7)}`);
+      const digest = await within(() => registry.digest(name, `sha-${commit.slice(0, 7)}`));
       if (!digest) return false;
       found[name] = digest;
     }
@@ -323,23 +341,27 @@ async function walkBase(root, map, head, registry, warn) {
   try {
     commit = await findBase({ ancestors, published });
   } catch (e) {
-    warn(`Basis-Suche fehlgeschlagen, alle Images ohne Basis: ${errText(e)}`);
+    warn(e === expired ? `${expired.message}: Basis-Suche abgebrochen, alle Images ohne Basis` : `Basis-Suche fehlgeschlagen, alle Images ohne Basis: ${errText(e)}`);
     return { commit: null, images: {} };
   }
   if (!commit) return { commit: null, images: {} };
   const images = {};
+  let late = null;
   for (const name of names) {
+    if (late) { images[name] = null; late.push(name); continue; }
     const digest = digests.get(commit)[name];
     try {
       const ref = `${name}@${digest}`;
-      const revision = await registry.revision(ref);
-      const verified = (await registry.verify(ref)) === true;
+      const revision = await within(() => registry.revision(ref));
+      const verified = (await within(() => registry.verify(ref))) === true;
       images[name] = { digest, revision: typeof revision === 'string' ? revision : null, verified };
     } catch (e) {
-      warn(`${name}: Basis ${String(digest).slice(0, 19)} nicht prüfbar, ohne Basis: ${errText(e)}`);
       images[name] = null;
+      if (e === expired) late = [name];
+      else warn(`${name}: Basis ${String(digest).slice(0, 19)} nicht prüfbar, ohne Basis: ${errText(e)}`);
     }
   }
+  if (late) warn(`${expired.message}: ohne Basis: ${late.join(', ')}`);
   return { commit, images };
 }
 
@@ -349,7 +371,7 @@ async function walkBase(root, map, head, registry, warn) {
  * for now): without a registry with reason "kein Vergleich (nur Bericht)"; with one per image `carry` iff its base is verified
  * and its revision label is the image commit, else `build` ("Eingaben geändert" / "Basis nicht signiert" / "keine Basis").
  */
-export async function plan({ root = ROOT, map = loadMap(root), event, sha, prBase, full = false, registry = null, warn = warnLine }) {
+export async function plan({ root = ROOT, map = loadMap(root), event, sha, prBase, full = false, registry = null, warn = warnLine, deadlineMs = DEADLINE_MS }) {
   const head = resolve(root, sha);
   const at = imageCommits(root, map, head);
   const entry = (name, action, reason, base = null) => ({
@@ -377,7 +399,7 @@ export async function plan({ root = ROOT, map = loadMap(root), event, sha, prBas
     const images = Object.fromEntries(names.map((n) => [n, entry(n, 'build', reason)]));
     return { v: 1, event, mode, sha: head, base: null, classes: ALL_FULL(reason), images };
   }
-  const walked = await walkBase(root, map, head, registry, warn);
+  const walked = await walkBase(root, map, head, registry, warn, deadlineMs);
   const judge = (n) => {
     const base = walked.images[n] ?? null;
     if (!base) return entry(n, 'build', 'keine Basis');
@@ -563,8 +585,11 @@ async function main(argv) {
     if (!values.event) throw new Error('--event fehlt');
     if (!values.sha) throw new Error('--sha fehlt');
     if (values.registry && !values.repo) throw new Error('--repo fehlt (die Identität für cosign verify)');
-    const registry = values.registry ? ghcrRegistry({ prefix: values.registry, repo: values.repo }) : null;
+    // commands still running once the plan is made (left behind at the deadline) are killed, so the job ends with the plan
+    const stop = new globalThis.AbortController();
+    const registry = values.registry ? ghcrRegistry({ prefix: values.registry, repo: values.repo, signal: stop.signal }) : null;
     const p = await plan({ event: values.event, sha: values.sha, prBase: values['pr-base'] || undefined, full: values.full === true, registry });
+    stop.abort();
     if (values.summary) appendFileSync(values.summary, summary(p));
     console.log(JSON.stringify(p));
     return;

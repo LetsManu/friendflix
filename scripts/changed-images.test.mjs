@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import process from 'node:process';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { URL, fileURLToPath } from 'node:url';
 import { tmpDir, tmpRepo } from './test-helpers/tmp-repo.mjs';
 import { IMAGES, changedFiles, classify, copyGuard, docsGuard, docsReaders, findBase, ghcrRegistry, identityRegexp, imageCommits, isInput, loadMap, plan } from './changed-images.mjs';
@@ -381,6 +382,41 @@ test('a registry error gives base null and build, the plan still succeeds', asyn
   }
   // git errors still fail the plan
   await assert.rejects(plan({ root: r.root, map: MAP, event: 'push', sha: 'nope', warn: () => {}, registry: fakeRegistry() }));
+});
+
+test('a registry that stalls past the planning deadline: the remaining images get base null, one warning, the plan succeeds', async () => {
+  const { r, c1, tags, revisions } = pushRepo();
+  const signed = [`backend@${D('a')}`, `web@${D('b')}`];
+  const never = () => new Promise(() => {});
+  const plan1 = async (registry, deadlineMs) => {
+    const warnings = [];
+    const p = await plan({ root: r.root, map: MAP, event: 'push', sha: 'HEAD', registry, warn: (m) => warnings.push(m), deadlineMs });
+    return { p, warnings };
+  };
+  // the walk never answers: no base at all
+  const walk = await plan1({ ...fakeRegistry({ tags, revisions, signed }), digest: never }, 50);
+  assert.equal(walk.p.mode, 'report');
+  assert.equal(walk.p.base, null);
+  assert.deepEqual(Object.values(walk.p.images).map((i) => [i.action, i.reason, i.base]), [['build', 'keine Basis', null], ['build', 'keine Basis', null]]);
+  assert.equal(walk.warnings.length, 1);
+  assert.match(walk.warnings[0], /Frist von 0\.05 s/);
+  // cosign never answers for the first image: it and every image after it have no base, nothing more is asked
+  const reg = fakeRegistry({ tags, revisions, signed });
+  const stalled = await plan1({ ...reg, verify: never }, 50);
+  assert.deepEqual(stalled.p.base, { commit: c1 });
+  assert.deepEqual(Object.values(stalled.p.images).map((i) => [i.action, i.reason, i.base]), [['build', 'keine Basis', null], ['build', 'keine Basis', null]]);
+  assert.equal(stalled.warnings.length, 1);
+  assert.match(stalled.warnings[0], /Frist/);
+  assert.equal(reg.calls.filter(([k, ref]) => k === 'revision' && ref.startsWith('web@')).length, 0);
+  // the second image answers after the deadline: the first is judged, the second has no base
+  const late = fakeRegistry({ tags, revisions, signed });
+  const slow = { ...late, revision: async (ref) => { if (ref.startsWith('web@')) await sleep(400); return late.revision(ref); } };
+  const half = await plan1(slow, 200);
+  assert.deepEqual([half.p.images.backend.action, half.p.images.backend.base], ['carry', { digest: D('a'), revision: c1, verified: true }]);
+  assert.deepEqual([half.p.images.web.action, half.p.images.web.reason, half.p.images.web.base], ['build', 'keine Basis', null]);
+  assert.equal(half.warnings.length, 1);
+  assert.match(half.warnings[0], /Frist von 0\.2 s/);
+  assert.match(half.warnings[0], /web/);
 });
 
 test('identityRegexp("example/friendflix") equals the updater rule', () => {

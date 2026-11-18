@@ -55,7 +55,8 @@ jobs:
   # table in the step summary. Pull requests compare the image commits at the merge commit with those at the PR base;
   # other events build everything. Full history: an image commit is the newest commit that touched the image's inputs.
   # Publishable runs (report only, Stage C): the base walk reads GHCR (`sha-<7>` digests, revision labels) and verifies each base
-  # with cosign. A login, install, registry or cosign failure only costs the base ("keine Basis" and a warning, never a failed plan).
+  # with cosign. A login, install, registry or cosign failure only costs the base ("keine Basis" and a warning, never a failed plan);
+  # all of that registry work shares a 4-minute deadline (30 s per command), well inside this job's timeout.
   changes:
     # until Stage D (D2 removes this). It no longer hides a failure: the jobs that read the plan (docker, mediaserver-image,
     # reproducible) fail closed without a valid one in their step Plan.
@@ -752,11 +753,12 @@ jobs:
       # Otherwise the base is pulled and saved and `--diff` judges it against the rebuild: only OS-package files differ → counts;
       # app/ or the config differ (an input the map misses) → resets; no comparison possible → neutral ("kein Burn-in"). The
       # backend's media server pin label is ignored: its value is the digest of this run's mediaserver build (Stage D keeps it
-      # equal). Annotations only: this step never fails the leg (continue-on-error, and every path exits 0), a red leg would hide
-      # the run from the update check.
+      # equal). Annotations only: this step never fails the leg (continue-on-error, every path exits 0, and its own timeout keeps a
+      # stalled pull or diff from running into the job's), a red leg would hide the run from the update check.
       - name: Burn-in (compare with the base)
         if: env.PUBLISHABLE == 'true' && fromJSON(needs.changes.outputs.plan).images[matrix.service].action == 'carry'
         continue-on-error: true
+        timeout-minutes: 10
         env:
           BASE_DIGEST: ${{ fromJSON(needs.changes.outputs.plan).images[matrix.service].base.digest }}
         run: |
@@ -779,7 +781,9 @@ jobs:
           if [ "$ours" = "$theirs" ]; then echo "::notice title=burn-in::$SERVICE gleich $theirs"; exit 0; fi
           docker pull -q --platform linux/amd64 "$name@$BASE_DIGEST" > /dev/null
           docker tag "$name@$BASE_DIGEST" "ff-burnin-base:$SERVICE"
-          docker save -o "$RUNNER_TEMP/base.tar" "ff-burnin-base:$SERVICE"
+          # linux/amd64 only (the containerd store lacks the other platforms' content); a docker without save --platform saves all
+          docker save --platform linux/amd64 -o "$RUNNER_TEMP/base.tar" "ff-burnin-base:$SERVICE" \
+            || docker save -o "$RUNNER_TEMP/base.tar" "ff-burnin-base:$SERVICE"
           ignore=()
           if [ "$SERVICE" = backend ]; then ignore=(--ignore-label io.github.letsmanu.friendflix.mediaserver.pins); fi
           out=$(scripts/reproduce-image.sh --diff "$RUNNER_TEMP/rebuilt.tar" "$RUNNER_TEMP/base.tar" ${ignore[@]+"${ignore[@]}"})
