@@ -7,8 +7,8 @@
 # wants to check a release: docs/reproducible-builds.md.
 #
 #   scripts/reproduce-image.sh SERVICE [--ref REF] [--compare IMAGE] [--out FILE]
-#   scripts/reproduce-image.sh --diff A.tar B.tar   (explains a mismatch: config + the paths that differ per layer; last line
-#                                                    `verdict: equal|os-only|app`)
+#   scripts/reproduce-image.sh --diff A.tar B.tar [--ignore-label KEY]   (explains a mismatch: config + the paths that differ per
+#                                                    layer; last line `verdict: equal|os-only|app`)
 #   scripts/reproduce-image.sh --buildkit-image [--ref REF]  (prints the BuildKit image pinned at REF and exits)
 #     SERVICE    backend | gateway | web | updater
 #     --ref      commit / tag to build (default HEAD; with --compare the image's revision label, i.e. its image commit).
@@ -46,9 +46,16 @@ log() { echo "reproduce-image: $*" >&2; }
 #   app      the config's Env, Labels, Cmd, Entrypoint, WorkingDir or User differ, or a differing path starts with app/: an input
 #            the change map misses (cause: `config <Key>` or the first such path)
 #   os-only  everything else: only files outside app/ (OS packages) differ
+# --ignore-label KEY leaves that one label out of the judgement (the burn-in passes the backend's media server pin label: its
+# value is the digest of another job's image); when it was the only config difference, `ignored: label KEY` is printed.
 # Needs GNU tar, jq, gzip, sha256sum.
 if [ "${1:-}" = --diff ]; then
-  [ $# -eq 3 ] || usage
+  IGNORE=
+  case "$#:${4:-}" in
+    3:) ;;
+    5:--ignore-label) IGNORE=$5 ;;
+    *) usage ;;
+  esac
   D=$(mktemp -d)
   trap 'rm -rf "$D"' EXIT
   mkdir "$D/a" "$D/b"
@@ -83,9 +90,17 @@ if [ "${1:-}" = --diff ]; then
   ca=$(cat "$(blobf a "$(jq -r .config.digest <<< "$MA")")"); cb=$(cat "$(blobf b "$(jq -r .config.digest <<< "$MB")")")
   causes=()
   echo "== config (A vs B)"
-  if diff <(jq -S . <<< "$ca") <(jq -S . <<< "$cb"); then config_same=1; else config_same=; fi
+  diff <(jq -S . <<< "$ca") <(jq -S . <<< "$cb") || true
+  # the judged config: without the ignored label
+  judged() { jq -cS --arg k "$IGNORE" 'if $k != "" and (.config.Labels | type) == "object" then del(.config.Labels[$k]) else . end' <<< "$1"; }
+  ja=$(judged "$ca"); jb=$(judged "$cb")
+  if [ "$ja" = "$jb" ]; then config_same=1; else config_same=; fi
+  ignored=
+  if [ -n "$IGNORE" ] && [ "$(jq -c --arg k "$IGNORE" '.config.Labels[$k]?' <<< "$ca")" != "$(jq -c --arg k "$IGNORE" '.config.Labels[$k]?' <<< "$cb")" ]; then
+    ignored=1
+  fi
   for k in Env Labels Cmd Entrypoint WorkingDir User; do
-    [ "$(jq -cS --arg k "$k" '.config[$k]' <<< "$ca")" = "$(jq -cS --arg k "$k" '.config[$k]' <<< "$cb")" ] || causes+=("config $k")
+    [ "$(jq -cS --arg k "$k" '.config[$k]' <<< "$ja")" = "$(jq -cS --arg k "$k" '.config[$k]' <<< "$jb")" ] || causes+=("config $k")
   done
   na=$(jq '.layers | length' <<< "$MA"); nb=$(jq '.layers | length' <<< "$MB")
   : > "$D/paths"
@@ -101,6 +116,7 @@ if [ "${1:-}" = --diff ]; then
   LC_ALL=C sort -u -o "$D/paths" "$D/paths"
   app=$(grep -m1 '^app/' "$D/paths" || true)
   other=$(head -n1 "$D/paths")
+  [ -z "$ignored" ] || echo "ignored: label $IGNORE"
   if [ ${#causes[@]} -gt 0 ]; then echo "cause: ${causes[0]}"; echo "verdict: app"
   elif [ -n "$app" ]; then echo "cause: $app"; echo "verdict: app"
   elif [ -n "$other" ]; then echo "cause: $other"; echo "verdict: os-only"

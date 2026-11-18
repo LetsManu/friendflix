@@ -136,6 +136,26 @@ and sha256 (nothing comes from a live repository). Whether two clean builds give
 built, scanned, SBOM'd and cosign-signed like the others, in its own jobs (`mediaserver-image`, `publish-mediaserver`) that
 the other images never wait for; its Trivy findings are reported, not a gate (see the top of `ci.yml`). To lift the exemption, show two identical builds with `scripts/reproduce-image.sh` and add it to the job's matrix.
 
+## Burn-in before CI carries unchanged images
+
+On every publishable run the change plan (`scripts/changed-images.mjs`, report mode) looks for the newest `main` commit
+whose images were all published (`sha-<7>`) and marks an image "carry" when that base is cosign-signed by this repository and
+its `revision` label is the image's image commit. Nothing acts on that yet: every image is still built. For each such image the
+`reproducible (x)` leg compares its fresh rebuild with that base and leaves an annotation (title `burn-in`), never a failure:
+
+- `<x> gleich <digest>` – the linux/amd64 image manifests are identical;
+- `<x> zählt (…)` – the bytes differ, but `reproduce-image.sh --diff` finds the same contents (`gleicher Inhalt`) or only files
+  outside `app/` that OS packages own (`nur OS-Pakete`);
+- `<x> setzt zurück: <cause>` – a file under `app/` or the config's Env, Labels, Cmd, Entrypoint, WorkingDir or User differs:
+  an input that `.github/images.json` misses. Add it to the map; the count starts again;
+- `<x> kein Burn-in (<Grund>)` – no comparison was possible (e.g. the base could not be pulled): neutral.
+
+The backend's media server pin label (`io.github.letsmanu.friendflix.mediaserver.pins`) is ignored: it holds the digest of
+the `mediaserver` image built in the same run, which changes until CI carries that image too; the notice then ends in
+`; Medienserver-Pin ignoriert`. CI only starts carrying unchanged images (Stage D) after **20 counting `main` runs in a row**:
+`scripts/burnin-status.sh [N]` lists the last N runs as `zählt`, `setzt zurück` or `kein Burn-in` (neutral runs are skipped)
+and prints the streak.
+
 ## When the `reproducible` check fails
 
 The failing job prints which layer differs and the file listing (mode, owner, size, mtime, name) of that layer in both

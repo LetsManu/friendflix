@@ -750,8 +750,10 @@ jobs:
           echo "### $SERVICE reproduced: \`$digest\` (= $img, linux/amd64)" >> "$GITHUB_STEP_SUMMARY"
       # Burn-in: would carrying the base have shipped the same image? Equal linux/amd64 manifests of ci-<sha> and the base: equal.
       # Otherwise the base is pulled and saved and `--diff` judges it against the rebuild: only OS-package files differ → counts;
-      # app/ or the config differ (an input the map misses) or no comparison was possible → resets. Annotations only: this step
-      # never fails the leg (continue-on-error, and every path exits 0), a red leg would hide the run from the update check.
+      # app/ or the config differ (an input the map misses) → resets; no comparison possible → neutral ("kein Burn-in"). The
+      # backend's media server pin label is ignored: its value is the digest of this run's mediaserver build (Stage D keeps it
+      # equal). Annotations only: this step never fails the leg (continue-on-error, and every path exits 0), a red leg would hide
+      # the run from the update check.
       - name: Burn-in (compare with the base)
         if: env.PUBLISHABLE == 'true' && fromJSON(needs.changes.outputs.plan).images[matrix.service].action == 'carry'
         continue-on-error: true
@@ -760,10 +762,10 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s inherit_errexit # a failure inside $(…) fails the assignment, which the ERR trap turns into a reset
-          resets() { echo "::warning title=burn-in::$SERVICE setzt zurück: $1"; exit 0; }
-          trap 'resets "kein Vergleich möglich (Zeile $LINENO)"' ERR
+          neutral() { echo "::notice title=burn-in::$SERVICE kein Burn-in ($1)"; exit 0; }
+          trap 'neutral "kein Vergleich möglich, Zeile $LINENO"' ERR
           repo="${GITHUB_REPOSITORY#*/}"; name="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${repo,,}-${SERVICE}"
-          [[ "$BASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || resets "kein Basis-Digest im Plan"
+          [[ "$BASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || neutral "kein Basis-Digest im Plan"
           # the linux/amd64 image manifest digest of a ref (an index or a single manifest)
           amd64() {
             local raw; raw=$(docker buildx imagetools inspect --raw "$1")
@@ -778,16 +780,19 @@ jobs:
           docker pull -q --platform linux/amd64 "$name@$BASE_DIGEST" > /dev/null
           docker tag "$name@$BASE_DIGEST" "ff-burnin-base:$SERVICE"
           docker save -o "$RUNNER_TEMP/base.tar" "ff-burnin-base:$SERVICE"
-          out=$(scripts/reproduce-image.sh --diff "$RUNNER_TEMP/rebuilt.tar" "$RUNNER_TEMP/base.tar")
+          ignore=()
+          if [ "$SERVICE" = backend ]; then ignore=(--ignore-label io.github.letsmanu.friendflix.mediaserver.pins); fi
+          out=$(scripts/reproduce-image.sh --diff "$RUNNER_TEMP/rebuilt.tar" "$RUNNER_TEMP/base.tar" ${ignore[@]+"${ignore[@]}"})
           # file names and config values from the images are data, never workflow commands
           stop="burnin-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
           echo "::stop-commands::$stop"; echo "$out"; echo "::$stop::"
           cause=$(sed -n 's/^cause: //p' <<< "$out" | head -n1)
+          pin=; if grep -q '^ignored: label ' <<< "$out"; then pin='; Medienserver-Pin ignoriert'; fi
           case "$(tail -n1 <<< "$out")" in
-            'verdict: equal') echo "::notice title=burn-in::$SERVICE zählt (gleicher Inhalt)" ;;
-            'verdict: os-only') echo "::notice title=burn-in::$SERVICE zählt (nur OS-Pakete)" ;;
-            'verdict: app') resets "${cause:-?}" ;;
-            *) resets "kein Urteil von --diff" ;;
+            'verdict: equal') echo "::notice title=burn-in::$SERVICE zählt (gleicher Inhalt$pin)" ;;
+            'verdict: os-only') echo "::notice title=burn-in::$SERVICE zählt (nur OS-Pakete$pin)" ;;
+            'verdict: app') echo "::warning title=burn-in::$SERVICE setzt zurück: ${cause:-?}" ;;
+            *) neutral "kein Urteil von --diff" ;;
           esac
       - name: Build twice from scratch and compare
         if: env.PUBLISHABLE != 'true'

@@ -802,7 +802,7 @@ test('reproduce-image.sh --buildkit-image falls back to ci.yml on an old ref', (
 
 /** a tiny image archive like `docker save` / the OCI exporter writes: layer 0 holds usr/ (OS files), layer 1 app/; `gzip` false stores
  *  the layers uncompressed (docker save's classic store), `nested` puts an index with an arm64 and an amd64 entry in between */
-function imageArchive(dir, { usr = 'lib v1\n', app = 'server a\n', env = ['PATH=/usr/bin', `FF_IMAGE_COMMIT=${C('1')}`], gzip = true, nested = false } = {}) {
+function imageArchive(dir, { usr = 'lib v1\n', app = 'server a\n', env = ['PATH=/usr/bin', `FF_IMAGE_COMMIT=${C('1')}`], labels = {}, gzip = true, nested = false } = {}) {
   const root = mkdtempSync(join(dir, 'img-'));
   const blobs = join(root, 'blobs', 'sha256');
   mkdirSync(blobs, { recursive: true });
@@ -824,7 +824,7 @@ function imageArchive(dir, { usr = 'lib v1\n', app = 'server a\n', env = ['PATH=
   const type = gzip ? 'application/vnd.oci.image.layer.v1.tar+gzip' : 'application/vnd.oci.image.layer.v1.tar';
   const config = put(Buffer.from(JSON.stringify({
     architecture: 'amd64', os: 'linux',
-    config: { Env: env, Labels: { 'org.opencontainers.image.revision': C('1') }, Cmd: ['node', 'server.js'], WorkingDir: '/app' },
+    config: { Env: env, Labels: { 'org.opencontainers.image.revision': C('1'), ...labels }, Cmd: ['node', 'server.js'], WorkingDir: '/app' },
     rootfs: { type: 'layers', diff_ids: [] },
     history: [{ created_by: 'RUN apk add libx' }, { created_by: 'COPY app /app' }],
   })));
@@ -876,6 +876,38 @@ test('--diff verdicts: a changed file under app/ is "app", under usr/ "os-only",
   assert.equal(diff(base, imageArchive(dir, { usr: 'lib v2\n', app: 'server b\n', env: ['PATH=/usr/bin'] })).cause, 'cause: config Env');
 });
 
+test('--diff --ignore-label: a backend whose only difference is the media server pin label is not "app"; any other label still is', () => {
+  const dir = tmpDir();
+  const PIN = 'io.github.letsmanu.friendflix.mediaserver.pins';
+  // the key the build action writes and the one the burn-in step ignores, for the backend only
+  assert.match(readFileSync(ACTION, 'utf8'), new RegExp(`"${PIN.replace(/\./g, '\\.')}=\\$PINS"`));
+  const ci = readFileSync(join(REPO, '.github/workflows/ci.yml'), 'utf8');
+  assert.deepEqual([...ci.matchAll(/--ignore-label (\S+)\)/g)].map((m) => m[1]), [PIN]);
+  assert.match(ci, /if \[ "\$SERVICE" = backend \]; then ignore=\(--ignore-label /);
+  const run = (...args) => {
+    const out = spawnSync('bash', [join(REPO, 'scripts/reproduce-image.sh'), '--diff', ...args], { encoding: 'utf8' });
+    assert.equal(out.status, 0, out.stderr);
+    const lines = out.stdout.trimEnd().split('\n');
+    return { verdict: lines.at(-1), cause: lines.find((l) => l.startsWith('cause: ')) ?? null, ignored: lines.find((l) => l.startsWith('ignored: ')) ?? null };
+  };
+  const a = imageArchive(dir, { labels: { [PIN]: `ferrofin@${D('a')}` } });
+  const pinOnly = imageArchive(dir, { labels: { [PIN]: `ferrofin@${D('b')}` } });
+  // without the option the pin label is a config difference like any other
+  assert.deepEqual(run(a, pinOnly), { verdict: 'verdict: app', cause: 'cause: config Labels', ignored: null });
+  // ignored: the same contents, and the line names the ignored label
+  assert.deepEqual(run(a, pinOnly, '--ignore-label', PIN), { verdict: 'verdict: equal', cause: null, ignored: `ignored: label ${PIN}` });
+  // ignored, OS files differ as well
+  assert.deepEqual(run(a, imageArchive(dir, { usr: 'lib v2\n', labels: { [PIN]: `ferrofin@${D('b')}` } }), '--ignore-label', PIN),
+    { verdict: 'verdict: os-only', cause: 'cause: usr/lib/libx.so', ignored: `ignored: label ${PIN}` });
+  // the pin label equal: nothing is reported as ignored
+  assert.equal(run(a, imageArchive(dir, { usr: 'lib v2\n', labels: { [PIN]: `ferrofin@${D('a')}` } }), '--ignore-label', PIN).ignored, null);
+  // another label differing is still app, with or without the pin
+  for (const labels of [{ [PIN]: `ferrofin@${D('b')}`, 'org.opencontainers.image.title': 'x' }, { [PIN]: `ferrofin@${D('a')}`, 'org.opencontainers.image.title': 'x' }]) {
+    const r = run(a, imageArchive(dir, { labels }), '--ignore-label', PIN);
+    assert.deepEqual([r.verdict, r.cause], ['verdict: app', 'cause: config Labels']);
+  }
+});
+
 /** a stand-in for gh: `run list` prints $FAKE_GH/runs.json, `api …/runs/<id>/jobs` jobs-<id>.json, `api …/check-runs/<id>/annotations` ann-<id>.json */
 const FAKE_GH = `#!/usr/bin/env bash
 set -euo pipefail
@@ -900,6 +932,7 @@ test('burnin-status.sh: per main run zählt / setzt zurück / kein Burn-in, and 
     { databaseId: 3, headSha: C('3'), status: 'completed', conclusion: 'failure' },
     { databaseId: 2, headSha: C('2'), status: 'completed', conclusion: 'success' },
     { databaseId: 1, headSha: C('1'), status: 'completed', conclusion: 'success' },
+    { databaseId: 0, headSha: C('0'), status: 'completed', conclusion: 'success' },
   ];
   writeFileSync(join(dir, 'runs.json'), JSON.stringify(runs));
   const note = (level, message) => ({ annotation_level: level, title: 'burn-in', message });
@@ -907,20 +940,21 @@ test('burnin-status.sh: per main run zählt / setzt zurück / kein Burn-in, and 
     // 5: one leg equal, one counting with OS drift, the others built; an unrelated annotation is ignored
     5: [[51, 'reproducible (backend)', [note('notice', `backend gleich ${D('a')}`), { annotation_level: 'warning', title: 'other', message: 'x setzt zurück' }]],
       [52, 'reproducible (web)', [note('notice', 'web zählt (nur OS-Pakete)')]], [53, 'docker (backend)', [note('warning', 'not a leg setzt zurück')]]],
-    // 4: nothing carried
-    4: [[41, 'reproducible (backend)', []], [42, 'reproducible (web)', []]],
+    // 4: nothing carried, or a leg that could not compare (neutral; one counting leg does not make the run count)
+    4: [[41, 'reproducible (backend)', [note('notice', 'backend kein Burn-in (Basis nicht ladbar)')]], [42, 'reproducible (web)', [note('notice', 'web zählt (nur OS-Pakete)')]]],
     // 3: counts, although the run failed elsewhere
     3: [[31, 'reproducible (gateway)', [note('notice', 'gateway zählt (gleicher Inhalt)')]]],
     // 2: a leg found an input
     2: [[21, 'reproducible (backend)', [note('notice', `backend gleich ${D('a')}`)]], [22, 'reproducible (web)', [note('warning', 'web setzt zurück: app/server.js')]]],
     1: [[11, 'reproducible (web)', [note('notice', 'web zählt (nur OS-Pakete)')]]],
+    0: [[1, 'reproducible (backend)', []]],
   };
   for (const [id, jobs] of Object.entries(legs)) {
     writeFileSync(join(dir, `jobs-${id}.json`), JSON.stringify({ total_count: jobs.length, jobs: jobs.map(([jid, name]) => ({ id: jid, name })) }));
     for (const [jid, , anns] of jobs) writeFileSync(join(dir, `ann-${jid}.json`), JSON.stringify(anns));
   }
   const run = (...args) => spawnSync('bash', [join(REPO, 'scripts/burnin-status.sh'), ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, FAKE_GH: dir } });
-  const out = run('6');
+  const out = run('7');
   assert.equal(out.status, 0, out.stderr);
   const lines = out.stdout.trimEnd().split('\n');
   assert.deepEqual(lines.filter((l) => /^[0-9a-f]{7} /.test(l)), [
@@ -929,11 +963,12 @@ test('burnin-status.sh: per main run zählt / setzt zurück / kein Burn-in, and 
     `${C('3').slice(0, 7)} zählt`,
     `${C('2').slice(0, 7)} setzt zurück`,
     `${C('1').slice(0, 7)} zählt`,
+    `${C('0').slice(0, 7)} kein Burn-in`,
   ]);
   assert.ok(lines.includes('  web setzt zurück: app/server.js'));
   assert.equal(lines.at(-1), 'Serie: 2 zählende main-Läufe in Folge (Stage D ab 20)');
   const calls = readFileSync(join(dir, 'calls.txt'), 'utf8');
-  assert.match(calls, /^run list .*--branch main.*--event push.*--limit 6/m);
+  assert.match(calls, /^run list .*--branch main.*--event push.*--limit 7/m);
   assert.doesNotMatch(calls, /check-runs\/53\//, 'only reproducible (x) legs are read');
   assert.equal(run('zero').status, 2);
 });

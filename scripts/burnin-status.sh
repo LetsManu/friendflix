@@ -3,11 +3,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # The burn-in before CI carries images (docs/superpowers/specs/2026-11-17-ci-changed-only-design.md, Testing): reads the
-# `burn-in` annotations of the `reproducible (x)` legs of the last N push runs of CI on main and prints per finished run
-#   <sha7> zählt          every leg the plan would have carried was equal to its base or differed only in OS-package files
-#   <sha7> setzt zurück   a leg found a difference under app/ or in the config (a missing map input), or could not compare;
-#                         the legs' messages follow, indented
-#   <sha7> kein Burn-in   no leg would have carried (nothing compared): neither counts nor resets
+# `burn-in` annotations of the `reproducible (x)` legs of the last N push runs of CI on main. Each leg's message is
+#   "<x> gleich …" / "<x> zählt …"   counts: equal to its base, or only OS-package files differ
+#   "<x> setzt zurück: …"            resets: a difference under app/ or in the config (a missing map input)
+#   anything else ("<x> kein Burn-in (…)": the leg could not compare)   neutral
+# and per finished run it prints
+#   <sha7> setzt zurück   some leg reset (the resetting messages follow, indented)
+#   <sha7> zählt          every burn-in leg counted
+#   <sha7> kein Burn-in   no burn-in leg, or some leg neutral and none reset: the streak skips the run
 # and, as the last line, the streak: counting runs since the newest reset. Stage D (CI carries) merges at 20.
 #
 #   scripts/burnin-status.sh [N]   N = how many runs to read (default 30)
@@ -31,16 +34,19 @@ while IFS=$'\t' read -r id sha; do
       | jq -rs 'add // [] | .[] | select(.title == "burn-in") | .message | gsub("[\r\n]+"; " ")')
     [ -z "$m" ] || messages+="$m"$'\n'
   done
-  counts= resets=
+  counts= neutral= resets=
   while IFS= read -r msg; do
     [ -n "$msg" ] || continue
-    if [[ "$msg" =~ ^[^\ ]+\ (gleich|zählt)(\ |$) ]]; then counts=1; else resets+="  $msg"$'\n'; fi
+    if [[ "$msg" =~ ^[^\ ]+\ (gleich|zählt)(\ |$) ]]; then counts=1
+    elif [[ "$msg" =~ ^[^\ ]+\ setzt\ zurück ]]; then resets+="  $msg"$'\n'
+    else neutral=1
+    fi
   done <<< "$messages"
   if [ -n "$resets" ]; then
     echo "${sha:0:7} setzt zurück"
     printf '%s' "$resets"
     reset_seen=1
-  elif [ -n "$counts" ]; then
+  elif [ -n "$counts" ] && [ -z "$neutral" ]; then
     echo "${sha:0:7} zählt"
     [ -n "$reset_seen" ] || streak=$((streak + 1))
   else
