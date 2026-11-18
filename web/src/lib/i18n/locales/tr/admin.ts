@@ -240,6 +240,7 @@ const tr: Translation<typeof de> = {
       rollback: 'Önceki sürüme dön',
       selfUpdate: 'Güncelleyiciyi güncelle',
       selfHint: 'Yalnızca güncelleyici konteynerini günceller (derleme {sha}).',
+      selfForeign: 'Bu yığında güncelleyici kendini değiştirmez: „Şimdi güncelle” onu diğer tüm hizmetlerle birlikte günceller.',
       advanced: 'Güncelleyicinin kendisi',
       confirm: {
         update: 'Şimdi {tag} sürümüne güncellensin mi? FriendFlix kısa süre yeniden başlar, süren oynatmalar kesilir.',

@@ -240,6 +240,7 @@ const es: Translation<typeof de> = {
       rollback: 'Volver a la versión anterior',
       selfUpdate: 'Actualizar el actualizador',
       selfHint: 'Actualiza solo el contenedor actualizador (build {sha}).',
+      selfForeign: 'En este stack el actualizador no se reemplaza a sí mismo: «Actualizar ahora» lo actualiza junto con todos los demás servicios.',
       advanced: 'El propio actualizador',
       confirm: {
         update: '¿Actualizar ahora a {tag}? FriendFlix se reinicia un momento y las reproducciones en curso se interrumpen.',

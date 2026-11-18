@@ -226,6 +226,7 @@
     <details class="self">
       <summary>{$t('admin.update.updater.advanced')}</summary>
       <p class="muted small">{$t('admin.update.updater.selfHint', { sha: updaterBuild(s) ?? $t('admin.update.updater.none') })}</p>
+      {#if foreign !== null}<p class="muted small" data-self-foreign>{$t('admin.update.updater.selfForeign')}</p>{/if}
       <Button variant="secondary" icon="refresh" pending={$busyKeys.has('updater:self-update')} disabled={running || s.busy || confirming !== null || foreign !== null} on:click={() => (confirming = 'self-update')}>{$t('admin.update.updater.selfUpdate')}</Button>
     </details>
   {/if}

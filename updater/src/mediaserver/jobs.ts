@@ -185,10 +185,12 @@ export class MediaJobs {
   }
 
   /**
-   * whether the running container is what the template builds now from the desired spec, its own image and the host's current
-   * render gids (spec hash label against a fresh build); null when that cannot be told (no recorded container, no answer)
+   * whether the running container is what the template builds now from the desired spec and its own image (spec hash label
+   * against a fresh build); null when that cannot be told (no recorded container, no answer). The render gids are the host's
+   * current ones, read through a helper (`fresh`: the update phase), or those the last deploy recorded (`recorded`: the status
+   * view, never a helper; with the dri GPU and none recorded, a state from before the record, null).
    */
-  async templateState(): Promise<'current' | 'update_pending' | null> {
+  async templateState(gids: 'fresh' | 'recorded' = 'fresh'): Promise<'current' | 'update_pending' | null> {
     const m = this.u.mediaState();
     if (!m.desired || !m.container || !m.base) return null;
     try {
@@ -198,8 +200,12 @@ export class MediaJobs {
       const running = labelsOf(i)['friendflix.spec'];
       const image = isObj(i.Config) ? i.Config.Image : undefined;
       if (typeof running !== 'string' || typeof image !== 'string') return null;
-      const gids = await this.renderGids(runner, m.desired);
-      const want = containerSpec(specOf(m.desired), { project, image, renderGids: gids, baseVolume: m.base.volume });
+      let render: number[];
+      if (gids === 'fresh') render = await this.renderGids(runner, m.desired);
+      else if (m.desired.gpu !== 'dri') render = [];
+      else if (m.renderGids) render = m.renderGids;
+      else return null;
+      const want = containerSpec(specOf(m.desired), { project, image, renderGids: render, baseVolume: m.base.volume });
       return (want.body.Labels as Obj)['friendflix.spec'] === running ? 'current' : 'update_pending';
     } catch {
       return null;
@@ -207,8 +213,9 @@ export class MediaJobs {
   }
 
   /**
-   * the supervisor's periodic check that the base, the chosen folders and the chosen GPU are still there: `base_missing`,
-   * `folder_missing` (any folder code), `nvidia_missing`, `gpu_missing` or null. Throws when it cannot run at all.
+   * the supervisor's check, once after the container stopped unexpectedly, that the base, the chosen folders and the chosen GPU
+   * are still there: `base_missing`, `folder_missing` (any folder code), `nvidia_missing`, `gpu_missing` or null. Throws when it
+   * cannot run at all.
    */
   async hostCheck(): Promise<MediaError | null> {
     const m = this.u.mediaState();
@@ -348,6 +355,7 @@ export class MediaJobs {
         m.desired = { ...d, run };
         m.lastError = null;
         m.tampered = false;
+        m.renderGids = made.gids;
       });
       await this.dropPreviousBase(c.project, c.base.volume);
     } catch (e) {
@@ -415,7 +423,7 @@ export class MediaJobs {
     }
   }
 
-  /** GPU `dri`: the distinct gids of the host's render nodes, read through the helper each time (a host update can change them) */
+  /** GPU `dri`: the distinct gids of the host's render nodes, read through the helper each time (a host update can change them); deploys, the update phase and adoption only */
   private async renderGids(r: Runner, d: Pick<DesiredSpec, 'uid' | 'gid' | 'mediaGid' | 'gpu'>): Promise<number[]> {
     if (d.gpu !== 'dri') return [];
     let a: Obj;
@@ -488,7 +496,7 @@ export class MediaJobs {
   }
 
   /** render gids re-read, the body built and guarded, volumes ensured, the old container stopped and renamed aside, the new one created */
-  private async create(c: Ctx, d: DesiredSpec, password: string | undefined, t: Changes): Promise<{ id: string; specHash: string }> {
+  private async create(c: Ctx, d: DesiredSpec, password: string | undefined, t: Changes): Promise<{ id: string; specHash: string; gids: number[] }> {
     const gids = await this.renderGids(c.runner, d);
     const req = this.build(d, { project: c.project, image: c.pin.image, renderGids: gids, baseVolume: c.base.volume }, password);
     await this.ensureVolumes(c, d);
@@ -502,7 +510,8 @@ export class MediaJobs {
     t.newId = id;
     if (d.egress) await this.engine.connect(c.facts.egressNetwork ?? fail('no_network'), id);
     this.u.log.add('media server created');
-    return { id, specHash: String((req.body.Labels as Obj)['friendflix.spec']) };
+    // the gids the body was built with (the template uses them only with the dri GPU)
+    return { id, specHash: String((req.body.Labels as Obj)['friendflix.spec']), gids: d.gpu === 'dri' ? [...new Set(gids)] : [] };
   }
 
   /** the base volume, and the kind's data and cache volumes (a fresh one seeded when the user is not the image's owner) */
@@ -709,7 +718,7 @@ export class MediaJobs {
     } catch {
       fail('remove_failed');
     }
-    this.u.updateMedia((s) => { s.desired = null; s.container = null; s.tampered = false; s.lastError = null; });
+    this.u.updateMedia((s) => { s.desired = null; s.container = null; s.tampered = false; s.lastError = null; delete s.renderGids; });
     this.u.log.add('media server removed');
   }
 

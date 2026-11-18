@@ -23,7 +23,7 @@ export const sha8 = (p: string): string => createHash('sha256').update(p).digest
 export const baseVolume = (p: string): string => `${PROJECT}_mediaserver-base-${sha8(p)}`;
 export const BASE = '/srv/media';
 // a first-run password built from pieces (gitleaks)
-export const PASSWORD = 'Pw' + 'x'.repeat(41);
+export const FIRST_RUN_SEED = 'Pw' + 'x'.repeat(41);
 
 export const ferroPin = (hex = 'f'): Pin => ({ kind: 'ferrofin', image: `ghcr.io/letsmanu/friendflix-mediaserver@sha256:${hex.repeat(64)}`, digest: `sha256:${hex.repeat(64)}`, upstream: null });
 export const jellyPin = (upstream: string, hex = '1'): Pin => ({ kind: 'jellyfin', image: `docker.io/jellyfin/jellyfin@sha256:${hex.repeat(64)}`, digest: `sha256:${hex.repeat(64)}`, upstream });
@@ -35,7 +35,8 @@ export const FACTS: EngineFacts = {
 export const SPEC: DesiredSpec = { kind: 'ferrofin', folders: [{ rel: 'Filme', target: '/media/filme' }, { rel: 'Serien', target: '/media/serien' }], uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: true, tz: 'Europe/Berlin' };
 export const JSPEC: DesiredSpec = { ...SPEC, kind: 'jellyfin', egress: false };
 
-export interface C { id: string; name: string; body: Obj; running: boolean; health: string | null; networks: string[]; host: Obj }
+/** `status` overrides the Docker status (`restarting`, `dead`); `finishedAt` is State.FinishedAt (set by stop) */
+export interface C { id: string; name: string; body: Obj; running: boolean; health: string | null; networks: string[]; host: Obj; status?: string; finishedAt?: string }
 export interface HelperCall { verb: string; args: string[]; mounts: Obj[]; user: string }
 export type Answer = Obj | Error;
 
@@ -85,7 +86,7 @@ export function world(o: { facts?: Partial<EngineFacts>; ops?: Ops; state?: Part
     const mounts = (hc.Mounts ?? []) as Obj[];
     return {
       Id: c.id, Name: `/${c.name}`, Image: b.Image,
-      State: { Running: c.running, Status: c.running ? 'running' : 'exited', ...(c.health && c.running ? { Health: { Status: c.health } } : {}) },
+      State: { Running: c.running, Status: c.status ?? (c.running ? 'running' : 'exited'), FinishedAt: c.finishedAt ?? '0001-01-01T00:00:00Z', ...(c.health && c.running ? { Health: { Status: c.health } } : {}) },
       Config: { Hostname: b.Hostname, User: b.User, Image: b.Image, Env: b.Env, Labels: b.Labels ?? {}, StopTimeout: b.StopTimeout, ...(c.health ? { Healthcheck: { Test: ['CMD', 'true'] } } : {}) },
       HostConfig: { ...hc, MaskedPaths: ['/proc/kcore'], ReadonlyPaths: ['/proc/sys'], ...c.host },
       Mounts: mounts.map((m) => ({ Type: 'volume', Name: m.Source, Source: `/var/lib/docker/volumes/${String(m.Source)}/_data`, Destination: m.Target, RW: m.ReadOnly !== true })),
@@ -115,7 +116,7 @@ export function world(o: { facts?: Partial<EngineFacts>; ops?: Ops; state?: Part
       c.running = true;
       c.health = isHelper(c.body) ? null : cfg.healthOf(c);
     },
-    stop: async (id: string) => { const c = find(id)!; calls.push(`stop ${label(c)}`); c.running = false; },
+    stop: async (id: string) => { const c = find(id)!; calls.push(`stop ${label(c)}`); c.running = false; c.finishedAt = new Date(clock.t).toISOString(); },
     rename: async (id: string, name: string) => {
       if (find(name)) throw new EngineError(409, 'name_taken');
       const c = find(id)!;
@@ -180,7 +181,7 @@ export function world(o: { facts?: Partial<EngineFacts>; ops?: Ops; state?: Part
   volumes.set(N.backup, { labels: { 'friendflix.managed': 'mediaserver-backup' }, options: {} });
   updater.updateMedia((m) => { m.base = { path: BASE, volume: baseVolume(BASE), confirmedAt: new Date(T0).toISOString(), previousVolume: null }; });
 
-  /** a running managed container built from the template, recorded in the state */
+  /** a running managed container built from the template, recorded in the state (with the render gids it was built with) */
   function existing(spec: DesiredSpec, pin: Pin, upstream: string, x: { run?: boolean; host?: Obj; renderGids?: number[]; name?: string } = {}): C {
     const body = containerSpec(spec, { project: PROJECT, image: pin.image, renderGids: x.renderGids ?? [], baseVolume: baseVolume(BASE) }).body;
     const id = (next++).toString(16).padStart(64, '0');
@@ -190,6 +191,7 @@ export function world(o: { facts?: Partial<EngineFacts>; ops?: Ops; state?: Part
     updater.updateMedia((m) => {
       m.container = { id, kind: spec.kind, digest: pin.digest, upstream, specHash: String((body.Labels as Obj)['friendflix.spec']) };
       m.desired = { ...spec, run: x.run !== false };
+      m.renderGids = spec.gpu === 'dri' ? [...(x.renderGids ?? [])] : [];
     });
     return c;
   }
