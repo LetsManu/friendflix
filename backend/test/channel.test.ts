@@ -48,6 +48,8 @@ describe('channel logic', () => {
     expect(channelUpdate('nightly', { releaseNewer: null, behind: 3, digestsDiffer: false })).toBe(false);
     expect(channelUpdate('nightly', { releaseNewer: null, behind: 0, digestsDiffer: true })).toBe(true);
     expect(channelUpdate('nightly', { releaseNewer: null, behind: 3, digestsDiffer: null })).toBe(true);
+    // a registry outage (unknown) never raises an update: commits behind decide
+    expect(channelUpdate('nightly', { releaseNewer: null, behind: 0, digestsDiffer: null })).toBe(false);
     expect(channelUpdate('stable', { releaseNewer: false, behind: 3, digestsDiffer: true })).toBe(false);
   });
 

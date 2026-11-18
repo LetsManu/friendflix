@@ -121,6 +121,38 @@ describe('registry digests', () => {
     expect(heads()).toBe(6);
   });
 
+  it('cache: set primes an entry with what the job resolved, drop forgets one; neither asks the registry', async () => {
+    let t = 0;
+    const X = 'sha256:' + 'a'.repeat(64), Y = 'sha256:' + 'b'.repeat(64);
+    let answer = X;
+    const { calls, fetchImpl } = registry({ head: () => new Response(null, { status: 200, headers: { 'docker-content-digest': answer } }) });
+    const heads = () => calls.filter((c) => c.init.method === 'HEAD').length;
+    const digest = cachedRegistry('example/friendflix', undefined, undefined, () => t, fetchImpl);
+    expect(await digest('web', 'latest')).toBe(X);
+    // the job installed Y: the status reads Y at once (not the cached X for 10 min), bootstrap and backend share their entry
+    digest.set('web', 'latest', Y);
+    digest.set('bootstrap', 'nightly', Y);
+    expect(await digest('web', 'latest')).toBe(Y);
+    expect(await digest('backend', 'nightly')).toBe(Y);
+    expect(heads()).toBe(1);
+    // a primed entry lives its own 10 min from now
+    t = 599_999;
+    expect(await digest('web', 'latest')).toBe(Y);
+    expect(heads()).toBe(1);
+    // drop: the next read asks again
+    answer = X;
+    digest.drop('web', 'latest');
+    expect(await digest('web', 'latest')).toBe(X);
+    expect(heads()).toBe(2);
+    // nothing but a digest of a known service and tag is kept
+    digest.set('web', 'latest', 'sha256:short');
+    digest.set('postgres', 'latest', Y);
+    digest.set('web', 'edge', Y);
+    digest.drop('postgres', 'latest');
+    expect(await digest('web', 'latest')).toBe(X);
+    expect(digest.size()).toBe(2); // web:latest and backend:nightly
+  });
+
   it('cache: expired entries are dropped, so the map cannot grow without bound', async () => {
     let t = 0;
     const digest = cachedRegistry('example/friendflix', undefined, undefined, () => t, registry().fetchImpl);

@@ -127,8 +127,10 @@ describe('updater signing', () => {
     expect(s.services).toEqual([
       { service: 'backend', state: 'running', health: 'healthy', sha: 'sha-1111111', version: '3.6.0', commit: '1'.repeat(40), digest: D, registry: R, changed: true },
       { service: 'web', state: 'running', health: '', sha: null, version: null, commit: null, digest: null, registry: null, changed: null },
-      { service: 'gateway', state: 'running', health: '', sha: null, version: null, commit: null, digest: null, registry: null, changed: false },
+      // changed only stands when both digests passed: an unreadable one makes it unknown
+      { service: 'gateway', state: 'running', health: '', sha: null, version: null, commit: null, digest: null, registry: null, changed: null },
     ]);
+    expect(parseStatus({ channel: 'nightly', services: [{ service: 'web', digest: D, registry: 'x', changed: true }, { service: 'backend', digest: D, registry: D, changed: false }] })!.services.map((x) => x.changed)).toEqual([null, false]);
     // an updater from before the fields: all null
     expect(parseStatus({ channel: 'stable', services: [{ service: 'backend', sha: 'sha-1111111' }] })!.services[0]).toMatchObject({ commit: null, digest: null, registry: null, changed: null });
   });

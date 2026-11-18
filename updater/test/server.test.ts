@@ -6,7 +6,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ImageInfo } from '../src/docker.js';
 import { Updater, type Ops } from '../src/job.js';
 import { ReplayCache, deriveKey, sign, type Verifier } from '../src/protocol.js';
-import { MAX_BODY_FOR, ROUTES, handler, healthProbe, servicesView, stackView, status } from '../src/server.js';
+import { MAX_BODY_FOR, ROUTES, dockerOps, handler, healthProbe, servicesView, stackView, status } from '../src/server.js';
+import { cachedRegistry } from '../src/registry.js';
+import type { Docker } from '../src/docker.js';
 import { DEFAULT_STATE, memoryStore } from '../src/state.js';
 
 const key = deriveKey('server-test-secret-0123456789');
@@ -256,6 +258,30 @@ describe('health probe and service view', () => {
     expect((await status({ ...deps, registry: slow })).services[0]).toMatchObject({ registry: D, changed: false });
     // a registry that throws: null
     expect((await status({ ...deps, registry: async () => { throw new Error('x'); } })).services[0]).toMatchObject({ registry: null, changed: null });
+  });
+
+  it('the job\'s registry lookups refresh the status cache: after an update the status never shows the older cached digest', async () => {
+    const X = 'sha256:' + 'a'.repeat(64), Y = 'sha256:' + 'b'.repeat(64);
+    let answer: string | null = X;
+    let heads = 0;
+    const fetchImpl = (async (input: string | URL | Request, init: RequestInit = {}) => {
+      if (String(input).startsWith('https://ghcr.io/token?')) return new Response(JSON.stringify({ token: 't' }), { status: 200 });
+      if (init.method === 'HEAD') heads++;
+      return answer ? new Response(null, { status: 200, headers: { 'docker-content-digest': answer } }) : new Response(null, { status: 503 });
+    }) as typeof fetch;
+    const cache = cachedRegistry('example/friendflix', undefined, undefined, Date.now, fetchImpl);
+    const ops = dockerOps({ repo: 'example/friendflix' } as unknown as Docker, 'http://backend:3000/health', fetchImpl, cache);
+    expect(await cache('web', 'latest')).toBe(X); // the status page read X
+    answer = Y;
+    expect(await ops.registryDigest('web', 'latest')).toBe(Y); // the job always asks anew
+    const n = heads;
+    expect(await cache('web', 'latest')).toBe(Y); // and the status sees Y without asking
+    expect(heads).toBe(n);
+    // the job's lookup failed: the status entry is dropped and asked again
+    answer = null;
+    await expect(ops.registryDigest('web', 'latest')).rejects.toMatchObject({ code: 'registry_failed' });
+    answer = X;
+    expect(await cache('web', 'latest')).toBe(X);
   });
 
   it('status passes the job report through and says whether a rollback is possible (never the digests)', async () => {

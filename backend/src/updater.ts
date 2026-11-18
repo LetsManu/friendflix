@@ -144,7 +144,8 @@ function parseService(raw: unknown): UpdaterService | null {
   const digest = short(x.digest, DIGEST_RE), registry = short(x.registry, DIGEST_RE);
   return {
     service, state: short(x.state, /^[a-z]{1,20}$/) ?? 'unknown', health: short(x.health, /^[a-z]{0,20}$/) ?? '', sha: tagOrNull(x.sha), version: short(x.version, /^\d+\.\d+\.\d+$/),
-    commit: short(x.commit, /^[0-9a-f]{40}$/), digest, registry, changed: typeof x.changed === 'boolean' ? x.changed : null,
+    // changed stands only on two digests that passed: anything else is unknown, never "the same"
+    commit: short(x.commit, /^[0-9a-f]{40}$/), digest, registry, changed: digest && registry && typeof x.changed === 'boolean' ? x.changed : null,
   };
 }
 

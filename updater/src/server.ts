@@ -19,7 +19,7 @@ import { Supervisor } from './mediaserver/supervise.js';
 import { BACKUP_ID_RE, type MediaOp } from './mediaserver/types.js';
 import { FF_SERVICES, HEALTH_SERVICES, LIVETV_SERVICE, SELF_SERVICE, channelTag, expectedImage, imageRepo, isDigest, parseChannelBody, parseLivetvBody, shaTag } from './policy.js';
 import { ReplayCache, deriveKey, precheck, streamBindingAsync, verify, type Verifier } from './protocol.js';
-import { cachedRegistry, registryDigest } from './registry.js';
+import { cachedRegistry, registryDigest, type CachedRegistry } from './registry.js';
 import { fileStore } from './state.js';
 
 type Route = 'status' | 'channel' | 'update' | 'rollback' | 'self-update' | 'livetv' | 'mediaserver';
@@ -430,10 +430,24 @@ export function livetvView(docker: Pick<Docker, 'livetvContainer'>, ttlMs = 10_0
   };
 }
 
-/** the job's view of Docker: the fixed command lines of docker.ts, the registry (uncached) and the health probe; `fetchImpl` serves both */
-export function dockerOps(docker: Docker, healthUrl: string, fetchImpl: typeof fetch = fetch): Ops {
+/**
+ * the job's view of Docker: the fixed command lines of docker.ts, the registry (uncached) and the health probe; `fetchImpl` serves
+ * both. Every registry digest the job resolves also goes into the status page's cache (`statusRegistry`; a failure drops its
+ * entry): after an update the status compares with what the job installed, never with an older cached digest.
+ */
+export function dockerOps(docker: Docker, healthUrl: string, fetchImpl: typeof fetch = fetch, statusRegistry?: CachedRegistry): Ops {
   return {
-    images: (t, s) => docker.images(t, s), registryDigest: (s, t) => registryDigest(docker.repo, s, t, fetchImpl),
+    images: (t, s) => docker.images(t, s),
+    registryDigest: async (s, t) => {
+      try {
+        const d = await registryDigest(docker.repo, s, t, fetchImpl);
+        statusRegistry?.set(s, t, d);
+        return d;
+      } catch (e) {
+        statusRegistry?.drop(s, t);
+        throw e;
+      }
+    },
     pullDigest: (r) => docker.pullDigest(r), tag: (r, i) => docker.tag(r, i), verify: (r) => docker.verify(r), up: (t, s) => docker.up(t, s),
     imageInfo: (r) => docker.imageInfo(r), running: (s) => docker.running(s), spawnSelfUpdate: (t) => docker.spawnSelfUpdate(t),
     healthy: healthProbe(docker, healthUrl, fetchImpl), composeFiles: () => docker.files,
@@ -467,7 +481,9 @@ export function start(env: NodeJS.ProcessEnv = process.env): Server {
     livetv: () => livetvEnabled(), self: cfg.self }, execRunner);
   // the media jobs need the updater and the update job needs their phase: bound once both exist
   let jobs: MediaJobs | null = null;
-  const updater = new Updater(dockerOps(docker, cfg.backendHealthUrl), fileStore(cfg.stateDir), { mediaPhase: (job) => (jobs ? jobs.phase(job) : Promise.resolve(null)) });
+  // the registry digests for the status page: 10 min per image and tag (a failure 1 min); the job always asks anew and primes it
+  const registry = cachedRegistry(cfg.repo);
+  const updater = new Updater(dockerOps(docker, cfg.backendHealthUrl, fetch, registry), fileStore(cfg.stateDir), { mediaPhase: (job) => (jobs ? jobs.phase(job) : Promise.resolve(null)) });
   // plain archives an interrupted media server backup or upload left behind (they hold password hashes and keys)
   void removeStaleParts(BACKUP_DIR);
   livetvEnabled = () => updater.livetv === 'enabled';
@@ -476,8 +492,7 @@ export function start(env: NodeJS.ProcessEnv = process.env): Server {
   const log = (msg: string) => console.log(`${new Date().toISOString()} updater: ${msg}`);
   const media = mediaParts(cfg, docker, updater);
   jobs = media.jobs;
-  // the registry digests for the status page: 10 min per image and tag (a failure 1 min), the job itself always asks anew
-  const app = handler({ updater, verifier, services, registry: cachedRegistry(cfg.repo), stack: stackView(docker), livetv: livetvView(docker), self: { version: cfg.version, sha: cfg.gitSha }, warn: log, media: media.api });
+  const app = handler({ updater, verifier, services, registry, stack: stackView(docker), livetv: livetvView(docker), self: { version: cfg.version, sha: cfg.gitSha }, warn: log, media: media.api });
   const server = createServer((req, res) => { void app(req, res).catch(() => { if (!res.headersSent) send(res, 500, { error: 'internal' }); }); });
   // the upload stream may take long (20 GiB); JSON bodies have their own 10-s deadline (readBody), streams an idle limit
   server.requestTimeout = 3 * 3600_000;

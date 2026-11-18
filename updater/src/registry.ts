@@ -47,8 +47,15 @@ export async function registryDigest(repo: string, service: string, tag: string,
   throw new StepError('registry_failed');
 }
 
-/** a cached registry lookup; `size()` is how many entries the cache holds (expired ones are dropped on the next miss) */
-export type CachedRegistry = ((service: string, tag: string) => Promise<string | null>) & { size(): number };
+/**
+ * a cached registry lookup; `size()` is how many entries the cache holds (expired ones are dropped on the next miss); `set` primes
+ * an entry with a digest the update job resolved itself (fresh for the full TTL), `drop` forgets one (the job's lookup failed)
+ */
+export type CachedRegistry = ((service: string, tag: string) => Promise<string | null>) & {
+  size(): number;
+  set(service: string, tag: string, digest: string): void;
+  drop(service: string, tag: string): void;
+};
 
 /**
  * registryDigest for the status page: one lookup per image and tag every `ttlMs`, a failure (null) asked again after `errTtlMs`;
@@ -59,9 +66,10 @@ export function cachedRegistry(repo: string, ttlMs = 600_000, errTtlMs = 60_000,
   type Entry = { at: number; ok: boolean | null; value: Promise<string | null> };
   const cache = new Map<string, Entry>();
   const fresh = (e: Entry, t: number) => e.ok === null || t - e.at < (e.ok ? ttlMs : errTtlMs);
+  const keyOf = (service: string, tag: string): string | null => (Object.hasOwn(IMAGE_OF, service) && isTag(tag) ? `${IMAGE_OF[service]}:${tag}` : null);
   const lookup = (service: string, tag: string): Promise<string | null> => {
-    if (!Object.hasOwn(IMAGE_OF, service) || !isTag(tag)) return Promise.resolve(null);
-    const key = `${IMAGE_OF[service]}:${tag}`;
+    const key = keyOf(service, tag);
+    if (!key) return Promise.resolve(null);
     const t = now();
     const hit = cache.get(key);
     if (hit && fresh(hit, t)) return hit.value;
@@ -71,5 +79,13 @@ export function cachedRegistry(repo: string, ttlMs = 600_000, errTtlMs = 60_000,
     cache.set(key, entry);
     return entry.value;
   };
-  return Object.assign(lookup, { size: () => cache.size });
+  const set = (service: string, tag: string, digest: string): void => {
+    const key = keyOf(service, tag);
+    if (key && isDigest(digest)) cache.set(key, { at: now(), ok: true, value: Promise.resolve(digest) });
+  };
+  const drop = (service: string, tag: string): void => {
+    const key = keyOf(service, tag);
+    if (key) cache.delete(key);
+  };
+  return Object.assign(lookup, { size: () => cache.size, set, drop });
 }
