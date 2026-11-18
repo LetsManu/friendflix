@@ -119,25 +119,26 @@ Assistent weitergeht.
 - **Den Basisordner ändern** wiederholt den Code-Schritt. Gewählte Ordner, die es auch unter dem neuen Basisordner gibt, bleiben; die
   übrigen entfallen und werden aufgelistet. *Zurücksetzen* (den Basisordner löschen) braucht keinen Code, geht aber nur, solange es
   keinen verwalteten Container gibt.
-- **Aktionen** auf der Karte: *Starten*, *Stoppen*, *Neu starten*, *Aktualisieren*, *Sicherung*, *Wiederherstellen*, *Protokoll* (die
-  letzten 300 Zeilen, Geheimnisse durch `…` ersetzt, nie gespeichert) und *Entfernen*. Ein Stopp ist deine Entscheidung: Der Updater
-  startet einen Container, den du gestoppt hast, nie neu, egal ob in Admin oder außerhalb. Ein **fehlender** Container wird binnen
-  einer Minute neu angelegt; klappt das nicht (zum Beispiel, weil ein Ordner fehlt), wird es alle 10 Minuten erneut versucht.
+- **Aktionen** auf der Karte: *Starten*, *Stoppen*, *Neu starten*, *Aktualisieren*, *Sicherung*, *Wiederherstellen*, *Protokoll*
+  (die letzten 300 Zeilen, Geheimnisse durch `…` ersetzt, nie gespeichert) und *Entfernen*. Ein Stopp ist deine Entscheidung: Der
+  Updater startet einen Container, den du gestoppt hast, nie neu, egal ob in Admin oder außerhalb. Ein **fehlender** Container
+  wird binnen einer Minute neu angelegt; klappt das nicht (etwa weil ein Ordner fehlt), wird es alle 10 Minuten erneut versucht.
 - **Prüfungen:** Basisordner, Ordner und GPU werden in kurzlebigen Hilfscontainern geprüft, wenn du den Server einrichtest oder
-  änderst, vor jedem Neuanlegen und einmal, wenn der Server unerwartet stoppt (höchstens alle 10 Minuten). Solange der Server
-  läuft, wird nichts geprüft: Ein Share, das verschwindet, während der Server weiterläuft, fällt erst auf, wenn der Server das
-  nächste Mal stoppt oder neu angelegt wird.
+  änderst, vor jedem Neuanlegen und einmal, wenn der Server unerwartet stoppt (höchstens alle 10 Minuten; ein Stopp außerhalb von
+  FriendFlix, etwa mit `docker stop` oder in Portainer, zählt für diese Prüfung als unerwartet). Solange der Server läuft, wird
+  nichts geprüft: Ein Share, das verschwindet, während der Server weiterläuft, fällt erst auf, wenn der Server das nächste Mal
+  stoppt oder neu angelegt wird.
 - **Entfernen** behält die Daten-, Cache- und Sicherungs-Volumes; *Daten löschen* (mit Eingabe des Namens der Art) entfernt Daten und
   Cache beider Arten (auch die, die ein Wechsel zurückließ), nie die Sicherungen. Danach geht FriendFlix zum gespeicherten externen Server zurück, wenn es einen gibt.
 - **Systemcheck:** Die Zeile *Verwalteter Medienserver* (`media.managed`) meldet einen fehlenden oder ungesunden Container, einen
   Basisordner oder Ordner, den eine dieser Prüfungen nicht gefunden hat (zum Beispiel ein nicht eingehängtes NAS-Share), eine
-  fehlende GPU, einen fehlgeschlagenen Auftrag (`managed_job_failed`), ein Image, das länger als 7 Tage vom festgelegten Stand abweicht, und eine
-  Sicherung, die älter als 30 Tage ist. Ein Container, dessen Labels stimmen, dessen Konfiguration aber außerhalb von FriendFlix
-  geändert wurde (in Portainer kam ein Port oder ein Recht hinzu), ist `managed_tampered`: Er wird nie gestartet oder übernommen;
-  *Neu anlegen* ersetzt ihn aus der Vorlage. Direkt nach dem Start des Updaters, bis er den Status des Medienservers einmal gelesen
-  hat (die Prüfung der Image-Signatur kann bis zu 2 Minuten dauern), bleibt die Zeile neutral (`not_set_up` / `managed_starting`);
-  die Karte und der Medien-Schritt der Einrichtung zeigen *Medienserver-Status wird gelesen…* ohne Auswahl und Aktionen
-  (Angebotsgrund `starting`) und lesen alle 2 Sekunden neu.
+  fehlende GPU, einen fehlgeschlagenen Auftrag (`managed_job_failed`), ein Image, das länger als 7 Tage vom festgelegten Stand
+  abweicht, und eine Sicherung, die älter als 30 Tage ist. Ein Container, dessen Labels stimmen, dessen Konfiguration aber
+  außerhalb von FriendFlix geändert wurde (in Portainer kam ein Port oder ein Recht hinzu), ist `managed_tampered`: Er wird nie
+  gestartet oder übernommen; *Neu anlegen* ersetzt ihn aus der Vorlage. Direkt nach dem Start des Updaters, bis er den Status des
+  Medienservers einmal gelesen hat (die Prüfung der Image-Signatur kann bis zu 2 Minuten dauern), bleibt die Zeile neutral
+  (`not_set_up` / `managed_starting`); die Karte und der Medien-Schritt der Einrichtung zeigen *Medienserver-Status wird gelesen…*
+  ohne Auswahl und Aktionen (Angebotsgrund `starting`) und lesen alle 2 Sekunden neu.
 
 ## Updates
 

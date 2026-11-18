@@ -48,10 +48,11 @@ export interface MediaStatusDeps {
   jobs: Pick<MediaJobs, 'labelled' | 'guardInspect'>;
   facts(): Promise<EngineFacts>;
   pins(): Promise<PinRead>;
-  /** Supervisor.templateState(): compared with the render gids the last deploy recorded (never a helper); cached longer (templateTtlMs) */
+  /** Supervisor.templateState(): compared with the render gids the last deploy recorded (one inspect, never a helper) */
   templateState(): Promise<'current' | 'update_pending' | null>;
   now?(): number;
   ttlMs?: number;
+  /** how long a template state is reused (default 30 s; a job that ended reads it again at once) */
   templateTtlMs?: number;
 }
 

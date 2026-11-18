@@ -352,6 +352,34 @@ describe('supervision', () => {
     u.volumes.delete(baseVolume(BASE));
     await u.tick();
     expect(u.media().lastError).toBe('base_missing');
+    // a newer host code replaces an older one
+    const f = setup();
+    const fc = f.existing(SPEC, ferroPin(), 'v1.5.1');
+    f.updater.updateMedia((m) => { m.lastError = 'gpu_missing'; });
+    f.volumes.delete(baseVolume(BASE));
+    fc.running = false;
+    await f.tick();
+    expect(f.media().lastError).toBe('base_missing');
+  });
+
+  it("a job's code is never overwritten by the stop check", async () => {
+    const w = setup();
+    const c = w.existing(SPEC, ferroPin(), 'v1.5.1');
+    w.updater.updateMedia((m) => { m.lastError = 'restore_failed'; });
+    w.volumes.delete(baseVolume(BASE));
+    const hostCheck = vi.spyOn(w.jobs, 'hostCheck');
+    // exited while it should run: checked, and the base is missing
+    c.running = false;
+    c.finishedAt = '2026-11-17T14:05:00.000Z';
+    expect(w.media().desired!.run).toBe(true);
+    await w.tick();
+    expect(hostCheck).toHaveBeenCalledTimes(1);
+    await expect(hostCheck.mock.results[0]!.value).resolves.toBe('base_missing');
+    expect(w.media().lastError).toBe('restore_failed');
+    // nor cleared when it runs again
+    c.running = true;
+    await w.ticks(2);
+    expect(w.media().lastError).toBe('restore_failed');
   });
 
   it('a crash loop is checked at most every 10 minutes', async () => {

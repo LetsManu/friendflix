@@ -16,10 +16,10 @@ import { KINDS, type Folder, type Gpu, type Kind, type MediaError } from './type
  * it (or flagged as tampered when it fails the guard), and a container that should run but is missing is recreated (after a failed
  * recover, again every 10 min; the recover checks the base, folders and GPU itself). No helper runs in normal operation: a
  * running server is only inspected. A container that stopped although it should run is left alone (Docker's restart policy handles
- * a crash) and its reason checked once per stop (base, folders, GPU), at most every 10 min (a crash loop); once it runs again those
- * host codes go. A server the admin
- * stopped (`desired.run = false`) is never checked. It acts only on containers with both of our labels, never removes a volume and
- * never starts or checks a container after a failed rollback (its data may be half restored).
+ * a crash) and its reason checked once per stop (base, folders, GPU), at most every 10 min (a crash loop); a found code replaces
+ * only no error or another host code, and once it runs again those host codes go. A stop outside FriendFlix counts as unexpected; a
+ * server the admin stopped (`desired.run = false`) is never checked. It acts only on containers with both of our labels, never
+ * removes a volume and never starts or checks a container after a failed rollback (its data may be half restored).
  */
 
 export type TickResult = 'busy' | 'idle' | 'recover' | 'aside' | 'tampered';
@@ -141,8 +141,8 @@ export class Supervisor {
   /**
    * our guard-clean container under the real name: running, the host codes of a stop check go (any other code stays); stopped
    * although it should run (no job, no failed rollback), the base, folders and GPU are checked once per stop (its id and
-   * FinishedAt), at most every 10 min (a stop meanwhile is checked once that time passed), and a code found becomes lastError
-   * (nothing found: lastError stays)
+   * FinishedAt), at most every 10 min (a stop meanwhile is checked once that time passed); a code found becomes lastError only
+   * when there is none or it is a host code (a job's code such as restore_failed is never overwritten; nothing found: it stays)
    */
   private async watchStop(i: Obj): Promise<void> {
     const st = objOf(i.State);
@@ -160,7 +160,8 @@ export class Supervisor {
     this.checkedStop = { key, at: this.d.now() };
     let code: MediaError | null;
     try { code = await this.jobs.hostCheck(); } catch { return; }
-    if (code !== null) this.setError(code);
+    const current = this.u.mediaState().lastError;
+    if (code !== null && (current === null || HOST_CODES.includes(current))) this.setError(code);
   }
 
   /** the last job's rollback failed: nothing is started on its own */
