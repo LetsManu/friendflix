@@ -72,6 +72,8 @@ export class Docker {
 
   /** the compose files the next commands use */
   get files(): readonly string[] { return this.active; }
+  /** owner/repo whose images this Docker pulls, tags and verifies */
+  get repo(): string { return this.s.repo; }
 
   /**
    * Whose stack runs here, from the backend container's compose labels (stack.ts classifyStack): own = started from projectDir,
@@ -304,11 +306,6 @@ export class Docker {
     } catch { return null; }
   }
 
-  async pull(tag: string, services: readonly string[]): Promise<void> {
-    const r = await this.compose(tag, ['pull', '--quiet', ...services], 10 * MIN, Docker.names(services));
-    if (r.code !== 0) throw new StepError('pull_failed');
-  }
-
   /** recreates exactly these services from the images already pulled and verified (`--pull never`: no second, unverified pull) */
   async up(tag: string, services: readonly string[]): Promise<void> {
     const r = await this.compose(tag, ['up', '-d', '--no-deps', '--pull', 'never', ...services], 10 * MIN, Docker.names(services));
@@ -529,7 +526,7 @@ export class Docker {
   /**
    * verify for a local image named by tag or digest ref: the digest it carries (pinnedRef: that repository, a sha256 digest the
    * image really has), never a tag. Not limited to IMAGE_OF: the media server's pinned image is verified here too. For the callers
-   * that hold such a name: the update job until it pulls by digest, the media server's backend image and its pinned image.
+   * that hold such a name: the media server's backend image and its pinned image (the update job verifies digest refs: verify).
    */
   async verifyPulled(image: string): Promise<boolean> {
     const info = await this.imageInfo(image);

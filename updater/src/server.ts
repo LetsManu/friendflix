@@ -19,6 +19,7 @@ import { Supervisor } from './mediaserver/supervise.js';
 import { BACKUP_ID_RE, type MediaOp } from './mediaserver/types.js';
 import { FF_SERVICES, HEALTH_SERVICES, SELF_SERVICE, channelTag, parseChannelBody, parseLivetvBody, shaTag } from './policy.js';
 import { ReplayCache, deriveKey, precheck, streamBindingAsync, verify, type Verifier } from './protocol.js';
+import { registryDigest } from './registry.js';
 import { fileStore } from './state.js';
 
 type Route = 'status' | 'channel' | 'update' | 'rollback' | 'self-update' | 'livetv' | 'mediaserver';
@@ -312,7 +313,7 @@ export function handler(d: AppDeps) {
 }
 
 export function healthProbe(docker: Pick<Docker, 'ps'>, url: string, fetchImpl: typeof fetch = fetch): Ops['healthy'] {
-  return async (sha7) => {
+  return async (commit7) => {
     const ps = await docker.ps();
     for (const svc of HEALTH_SERVICES) {
       const st = ps.find((p) => p.service === svc);
@@ -321,7 +322,7 @@ export function healthProbe(docker: Pick<Docker, 'ps'>, url: string, fetchImpl: 
     const r = await fetchImpl(url, { signal: AbortSignal.timeout(3_000), redirect: 'error' });
     if (!r.ok) return false;
     const b = (await r.json().catch(() => null)) as { version?: unknown } | null;
-    return sha7 === null || b?.version === sha7;
+    return commit7 === null || b?.version === commit7;
   };
 }
 
@@ -357,10 +358,11 @@ export function livetvView(docker: Pick<Docker, 'livetvContainer'>, ttlMs = 10_0
   };
 }
 
-/** the job's view of Docker: the fixed command lines of docker.ts and the health probe */
+/** the job's view of Docker: the fixed command lines of docker.ts, the registry (uncached) and the health probe; `fetchImpl` serves both */
 export function dockerOps(docker: Docker, healthUrl: string, fetchImpl: typeof fetch = fetch): Ops {
   return {
-    images: (t, s) => docker.images(t, s), pull: (t, s) => docker.pull(t, s), verify: (i) => docker.verifyPulled(i), up: (t, s) => docker.up(t, s),
+    images: (t, s) => docker.images(t, s), registryDigest: (s, t) => registryDigest(docker.repo, s, t, fetchImpl),
+    pullDigest: (r) => docker.pullDigest(r), tag: (r, i) => docker.tag(r, i), verify: (r) => docker.verify(r), up: (t, s) => docker.up(t, s),
     imageInfo: (r) => docker.imageInfo(r), running: (s) => docker.running(s), spawnSelfUpdate: (t) => docker.spawnSelfUpdate(t),
     healthy: healthProbe(docker, healthUrl, fetchImpl), composeFiles: () => docker.files,
     ownStack: async () => { await docker.refreshFiles(); },

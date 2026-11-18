@@ -15,11 +15,15 @@ let release: () => void = () => {};
 let media: unknown;
 
 function ops(): Ops {
+  const D = 'sha256:' + 'd'.repeat(64);
   const info: ImageInfo = { repoDigests: [], commit: 'a'.repeat(40), version: '1.0.0' };
   return {
-    images: async (tag, s) => Object.fromEntries(s.map((x) => [x, `ghcr.io/letsmanu/friendflix-${x}:${tag}`])),
-    pull: async (tag) => { started.push(tag); await new Promise<void>((r) => { release = r; }); },
-    verify: async () => true, up: async () => {}, imageInfo: async () => info, running: async () => info, spawnSelfUpdate: async () => {}, healthy: async () => true,
+    // the job waits in its first step until the test releases it
+    images: async (tag, s) => { started.push(tag); await new Promise<void>((r) => { release = r; }); return Object.fromEntries(s.map((x) => [x, `ghcr.io/letsmanu/friendflix-${x}:${tag}`])); },
+    // every service already runs the registry's digest
+    registryDigest: async () => D, pullDigest: async () => {}, tag: async () => {},
+    running: async (s) => ({ ...info, repoDigests: [`ghcr.io/letsmanu/friendflix-${s}@${D}`], container: '1'.repeat(64) }),
+    verify: async () => true, up: async () => {}, imageInfo: async () => info, spawnSelfUpdate: async () => {}, healthy: async () => true,
     ownStack: async () => {}, stop: async () => {}, rm: async () => {}, imageRm: async () => {}, volumeRm: async () => {}, livetvContainer: async () => null, livetvNetwork: async () => {},
   };
 }

@@ -50,23 +50,21 @@ describe('docker command lines', () => {
   it('compose runs with fixed arguments, the tag only via FF_TAG, and an environment without secrets', async () => {
     process.env.INTERNAL_SECRET = 'must-never-reach-a-child-process';
     const { calls, docker } = fake();
-    await docker.pull('nightly', ['backend', 'web']);
     await docker.up('nightly', ['backend', 'web']);
     expect(calls[0]!.args).toEqual(['compose', '--project-directory', '/srv/friendflix', '-f', '/srv/friendflix/compose.prod.yaml', '-f', '/srv/friendflix/compose.secrets.yaml',
-      '--profile', 'updater', '--ansi', 'never', 'pull', '--quiet', 'backend', 'web']);
-    expect(calls[1]!.args.slice(11)).toEqual(['up', '-d', '--no-deps', '--pull', 'never', 'backend', 'web']);
+      '--profile', 'updater', '--ansi', 'never', 'up', '-d', '--no-deps', '--pull', 'never', 'backend', 'web']);
     for (const c of calls) {
       expect(c.env).toEqual({ PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp', PWD: '/srv/friendflix', DOCKER_HOST: 'tcp://docker-proxy:2375', DOCKER_CONFIG: '/tmp/.docker', FF_TAG: 'nightly' });
       expect(JSON.stringify(c)).not.toContain('must-never-reach');
     }
     delete process.env.INTERNAL_SECRET;
     expect(() => docker.env('latest;id')).toThrow('invalid tag');
-    await expect(docker.pull('$(id)', ['backend'])).rejects.toThrow('invalid tag');
+    await expect(docker.up('$(id)', ['backend'])).rejects.toThrow('invalid tag');
   });
 
   it('a failing command is a step error with a fixed code', async () => {
     const { docker } = fake((c) => (c.args.includes('ps') || fmt(c) ? undefined : { code: 1, stderr: 'Error: token ghp_secret123 denied' }));
-    await expect(docker.pull('latest', ['backend'])).rejects.toEqual(new StepError('pull_failed'));
+    await expect(docker.pullDigest(`ghcr.io/letsmanu/friendflix-backend@sha256:${'b'.repeat(64)}`)).rejects.toEqual(new StepError('pull_failed'));
     await expect(docker.up('latest', ['backend'])).rejects.toEqual(new StepError('restart_failed'));
     await expect(docker.spawnSelfUpdate('latest')).rejects.toEqual(new StepError('restart_failed'));
     await expect(docker.images('latest', ['backend'])).rejects.toEqual(new StepError('compose_config'));
@@ -132,10 +130,10 @@ describe('docker command lines', () => {
       return { calls, docker: new Docker({ projectDir: '/srv/friendflix', files: ['compose.prod.yaml'], autoFiles: true, repo: 'LetsManu/friendflix', dockerHost: 'tcp://docker-proxy:2375' }, run) };
     };
     const L = (files: string, dir = '/srv/friendflix') => ({ 'com.docker.compose.project': 'friendflix', 'com.docker.compose.project.working_dir': dir, 'com.docker.compose.project.config_files': files });
-    // a Plex stack started with -f compose.prod.yaml -f compose.plex.yaml (or COMPOSE_FILE): the pull uses both files
+    // a Plex stack started with -f compose.prod.yaml -f compose.plex.yaml (or COMPOSE_FILE): the recreate uses both files
     const plex = auto(L('/srv/friendflix/compose.prod.yaml,/srv/friendflix/compose.plex.yaml'));
     await plex.docker.images('latest', ['web']);
-    await plex.docker.pull('latest', ['web']);
+    await plex.docker.up('latest', ['web']);
     expect(plex.docker.files).toEqual(['compose.prod.yaml', 'compose.plex.yaml']);
     expect(plex.calls.at(-1)!.args.slice(0, 7)).toEqual(['compose', '--project-directory', '/srv/friendflix', '-f', '/srv/friendflix/compose.prod.yaml', '-f', '/srv/friendflix/compose.plex.yaml']);
     // our own stack with a file list that does not qualify: the configured list
