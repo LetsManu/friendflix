@@ -465,6 +465,20 @@ describe('notifications feed store: token lifetime, answers after a reset', () =
     expect(api.unhide).not.toHaveBeenCalled();
     expect(ids(s)).toEqual([]);
   });
+  it('undoLeft says how long Rückgängig may still be offered: the server\'s 30 s less a round trip', async () => {
+    vi.useFakeTimers();
+    const s = createFeed(fake());
+    await s.load('all');
+    expect(s.undoLeft('tok')).toBe(0);
+    await s.hide({ groups: ['a1'] });
+    expect(s.undoLeft('tok')).toBe(28_000);
+    vi.advanceTimersByTime(20_000);
+    expect(s.undoLeft('tok')).toBe(8_000);
+    vi.advanceTimersByTime(9_000);
+    expect(s.undoLeft('tok')).toBe(0);
+    s.reset();
+    expect(s.undoLeft('tok')).toBe(0);
+  });
   it('100 hides over time keep only the tokens of the last 30 s', async () => {
     vi.useFakeTimers();
     let n = 0;

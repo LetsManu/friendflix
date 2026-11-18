@@ -6,9 +6,9 @@
    * header (title, unread count, the settings gear, close; it never moves), the filter chips, a reserved 44-px slot for the *N neu*
    * pill (new entries never land above the reading position), the scroll list with its sections and rows, and the footer (*Alle
    * gelesen*, the clear button of the current filter). Scrolling to the end loads the next page into two reserved skeleton rows;
-   * the end text takes the same room. A clear can be undone from the toast for 5 s. A sign-out or profile switch while open loads
-   * the next person's first page. A modal dialog: Escape and the dim close it,
-   * Tab stays inside, the focus goes back to `trigger`. The caller mounts it while open and removes it on `close`.
+   * the end text takes the same room. A clear can be undone from the toast for 5 s (held open for keyboard use: until the server
+   * forgets the undo). A sign-out or profile switch while open loads the next person's first page. A modal dialog: Escape and the
+   * dim close it, Tab stays inside, the focus goes back to `trigger`. The caller mounts it while open and removes it on `close`.
    *   <NotificationSheet trigger={bellBtn} on:close={() => (bell = false)} />
    */
   import { createEventDispatcher, onMount, tick } from 'svelte';
@@ -104,9 +104,11 @@
     const r = await feedStore.hide(sel);
     if (!r) { failedToast(); return; }
     notify();
-    toast.info(tr('notes.cleared', { n: r.n }), {
+    const t = toast.info(tr('notes.cleared', { n: r.n }), {
       action: { label: tr('notes.undo'), run: async () => { if (await feedStore.undo(r.undo)) notify(); else failedToast(); } },
     });
+    // a toast held open (keyboard use) goes when the server forgets the undo, so Rückgängig never ends in "failed" for that
+    setTimeout(() => toast.close(t), feedStore.undoLeft(r.undo));
   }
   function pick(f: Filter) {
     if (f === s.filter && !failed) return;

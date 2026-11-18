@@ -36,6 +36,8 @@ export interface FeedStore extends Readable<FeedState> {
   hide(sel: Selection): Promise<{ undo: string; n: number } | null>;
   /** true when the entries are back */
   undo(token: string): Promise<boolean>;
+  /** ms Rückgängig may still be offered for `token` (the server's 30 s less UNDO_MARGIN_MS); 0 once it may not */
+  undoLeft(token: string): number;
 }
 
 interface Removed { group: FeedGroup; section: string; index: number; sectionIndex: number }
@@ -44,6 +46,8 @@ export type HeldTokens = Map<string, { at: number; removed: Removed[] | null }>;
 
 /** the server keeps an undo token for 30 s; one held longer than that is dead */
 const UNDO_TTL_MS = 30_000;
+/** the undo offer ends this much earlier: a press just before the end still reaches the server in time */
+const UNDO_MARGIN_MS = 2_000;
 
 const errorOf = (e: unknown) => apiCode(e) ?? 'error';
 const copy = (s: Section[]): Section[] => s.map((x) => ({ key: x.key, groups: [...x.groups] }));
@@ -203,6 +207,10 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
         if (e0 === epoch) update((s) => ({ ...s, error: errorOf(e) }));
         return null;
       }
+    },
+    undoLeft(token) {
+      const h = held.get(token);
+      return h ? Math.max(0, UNDO_TTL_MS - UNDO_MARGIN_MS - (Date.now() - h.at)) : 0;
     },
     async undo(token) {
       prune();

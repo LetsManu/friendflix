@@ -160,6 +160,22 @@ test.describe('notifications center', () => {
     await expect(row.locator('.items li.more')).toHaveText('+5 weitere');
   });
 
+  test.describe('a keyboard user keeps the undo toast open', () => {
+    test('it goes when the server forgets the undo (30 s), so Rückgängig never fails for that', async ({ page, api }) => {
+      await page.clock.install();
+      await open(page);
+      const clear = sheet(page).getByRole('button', { name: 'Alles leeren' });
+      await clear.focus();
+      await page.keyboard.press('Enter'); // keyboard use: the toast with its action stays (no countdown)
+      await expect(toasts(page).getByRole('button', { name: 'Rückgängig' })).toBeVisible();
+      await page.clock.runFor(20_000);
+      await expect(toasts(page).getByRole('button', { name: 'Rückgängig' })).toBeVisible();
+      await page.clock.runFor(10_000);
+      await expect(toasts(page).getByRole('button', { name: 'Rückgängig' })).toHaveCount(0);
+      expect(api.log.filter((l) => l.startsWith('POST /api/notifications/unhide'))).toEqual([]);
+    });
+  });
+
   test('a single row is removed with ✕ and can be undone', async ({ page, api }) => {
     await open(page);
     const row = rowOf(page, 'Nordlicht ist bereit');
