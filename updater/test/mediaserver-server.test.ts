@@ -12,7 +12,7 @@ import { Supervisor } from '../src/mediaserver/supervise.js';
 import { ReplayCache, deriveKey, sign, streamBinding, streamBindingAsync, type Verifier } from '../src/protocol.js';
 import { MAX_DERIVING, handler, warmMediaStatus, type AppDeps } from '../src/server.js';
 import { DEFAULT_STATE, memoryStore, type Job } from '../src/state.js';
-import { FACTS, PASSWORD, SOURCE, SPEC, ferroPin, okFolders, world } from './media-world.js';
+import { FACTS, FIRST_RUN_SEED, SOURCE, SPEC, ferroPin, okFolders, world } from './media-world.js';
 
 const key = deriveKey('media-server-test-secret-0123456789');
 const BACKUP = 'jellyfin-20261117-1402-10.11.3';
@@ -190,7 +190,7 @@ describe('the media status', () => {
     });
 
     expect((await post(base, '{"op":"base-request","path":"/srv/media"}')).status).toBe(200);
-    const apply = await post(base, JSON.stringify({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } }));
+    const apply = await post(base, JSON.stringify({ op: 'apply', spec: SPEC, firstRun: { password: FIRST_RUN_SEED } }));
     expect(apply.status).toBe(202);
     await w.updater.idle();
     expect(w.updater.snapshot().lastJob).toMatchObject({ action: 'mediaserver-apply', state: 'succeeded' });
@@ -206,7 +206,7 @@ describe('the media status', () => {
     });
     const display = /enter the code ([0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}) in Admin/.exec(printed[0]!)![1]!;
     const codeHash = w.store.state.media.pending!.codeHash;
-    for (const secret of [display, display.replaceAll('-', ''), PASSWORD, codeHash]) expect(text).not.toContain(secret);
+    for (const secret of [display, display.replaceAll('-', ''), FIRST_RUN_SEED, codeHash]) expect(text).not.toContain(secret);
   });
 
   it('pin.changed compares the backend build with the recorded pin source', async () => {

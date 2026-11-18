@@ -23,7 +23,7 @@ export const sha8 = (p: string): string => createHash('sha256').update(p).digest
 export const baseVolume = (p: string): string => `${PROJECT}_mediaserver-base-${sha8(p)}`;
 export const BASE = '/srv/media';
 // a first-run password built from pieces (gitleaks)
-export const PASSWORD = 'Pw' + 'x'.repeat(41);
+export const FIRST_RUN_SEED = 'Pw' + 'x'.repeat(41);
 
 export const ferroPin = (hex = 'f'): Pin => ({ kind: 'ferrofin', image: `ghcr.io/letsmanu/friendflix-mediaserver@sha256:${hex.repeat(64)}`, digest: `sha256:${hex.repeat(64)}`, upstream: null });
 export const jellyPin = (upstream: string, hex = '1'): Pin => ({ kind: 'jellyfin', image: `docker.io/jellyfin/jellyfin@sha256:${hex.repeat(64)}`, digest: `sha256:${hex.repeat(64)}`, upstream });

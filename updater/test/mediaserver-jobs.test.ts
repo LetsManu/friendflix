@@ -7,12 +7,12 @@ import { TemplateViolation } from '../src/mediaserver/guard.js';
 import { MediaService } from '../src/mediaserver/service.js';
 import type { Desired, DesiredSpec, Kind } from '../src/mediaserver/types.js';
 import type { MediaState } from '../src/state.js';
-import { BASE, FACTS, JSPEC, N, PASSWORD, PROJECT, SOURCE, SPEC, T0, UPSTREAM_LABEL, baseVolume, ferroPin, jellyPin, okFolders, world, type C, type Obj } from './media-world.js';
+import { BASE, FACTS, JSPEC, N, FIRST_RUN_SEED, PROJECT, SOURCE, SPEC, T0, UPSTREAM_LABEL, baseVolume, ferroPin, jellyPin, okFolders, world, type C, type Obj } from './media-world.js';
 
 describe('apply', () => {
   it('first apply creates volumes, container and egress, then is healthy', async () => {
     const w = world();
-    const job = await w.run({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } });
+    const job = await w.run({ op: 'apply', spec: SPEC, firstRun: { password: FIRST_RUN_SEED } });
     expect(job).toMatchObject({ action: 'mediaserver-apply', state: 'succeeded', error: null });
     expect(w.changes()).toEqual([
       `pull ${ferroPin().image}`, `createVolume ${N.data('ferrofin')}`, `createVolume ${N.cache('ferrofin')}`,
@@ -27,9 +27,9 @@ describe('apply', () => {
     expect(m.pinSource).toBe(SOURCE);
     expect(m.lastError).toBeNull();
     // Ferrofin's first create carries the administrator, or it would seed a passwordless one
-    expect(main.body.Env).toEqual(expect.arrayContaining(['FERROFIN_ADMIN_USER=friendflix-admin', `FERROFIN_ADMIN_PASSWORD=${PASSWORD}`]));
-    expect(JSON.stringify(w.updater.log.tail(200))).not.toContain(PASSWORD);
-    expect(JSON.stringify(w.store.state)).not.toContain(PASSWORD);
+    expect(main.body.Env).toEqual(expect.arrayContaining(['FERROFIN_ADMIN_USER=friendflix-admin', `FERROFIN_ADMIN_PASSWORD=${FIRST_RUN_SEED}`]));
+    expect(JSON.stringify(w.updater.log.tail(200))).not.toContain(FIRST_RUN_SEED);
+    expect(JSON.stringify(w.store.state)).not.toContain(FIRST_RUN_SEED);
     expect(w.updater.log.tail(200).join('\n')).toContain('media server created');
     // the media volumes are labelled, the volume creates run the helpers as the chosen user
     expect(w.volumes.get(N.data('ferrofin'))!.labels).toEqual({ 'friendflix.managed': 'mediaserver-data', 'friendflix.project': PROJECT });
@@ -60,7 +60,7 @@ describe('apply', () => {
     expect(w.verified).toEqual([]);
     expect(w.media().container).toMatchObject({ kind: 'jellyfin', upstream: '10.11.3' });
     // Jellyfin gets no password variable
-    expect(JSON.stringify(w.find(N.container)!.body.Env)).not.toContain('PASSWORD');
+    expect(JSON.stringify(w.find(N.container)!.body.Env)).not.toContain('FIRST_RUN_SEED');
   });
 
   it('recreate keeps the old container until the new one is healthy', async () => {
@@ -222,7 +222,7 @@ describe('apply', () => {
 
     it('ferrofin -> jellyfin -> ferrofin onto the surviving volume: older refused, newer snapshotted first', async () => {
       const w = world();
-      expect((await w.run({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } })).state).toBe('succeeded');
+      expect((await w.run({ op: 'apply', spec: SPEC, firstRun: { password: FIRST_RUN_SEED } })).state).toBe('succeeded');
       expect((await w.run({ op: 'apply', spec: JSPEC })).state).toBe('succeeded');
       expect(w.media()).toMatchObject({ container: { kind: 'jellyfin' }, dataUpstream: { ferrofin: 'v1.5.1', jellyfin: '10.11.3' } });
       expect(w.volumes.has(N.data('ferrofin'))).toBe(true);
@@ -245,7 +245,7 @@ describe('apply', () => {
 
     it('a kind switch back that fails restores its snapshot as the user that owns that data', async () => {
       const w = world();
-      expect((await w.run({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } })).state).toBe('succeeded');
+      expect((await w.run({ op: 'apply', spec: SPEC, firstRun: { password: FIRST_RUN_SEED } })).state).toBe('succeeded');
       expect((await w.run({ op: 'apply', spec: { ...JSPEC, uid: 1001, gid: 1001 } })).state).toBe('succeeded');
       const p = ferro(w, 'd', 'v1.6.0');
       w.cfg.healthOf = (c) => (c.body.Image === p.image ? 'unhealthy' : 'healthy');
@@ -306,7 +306,7 @@ describe('apply', () => {
     const w = world();
     const answer = w.cfg.answer;
     w.cfg.answer = (c) => (c.verb === 'gpu' ? { nodes: [{ node: 'renderD128', gid: 993, vendor: 'intel' }, { node: 'renderD129', gid: 994, vendor: 'amd' }] } : answer(c));
-    expect((await w.run({ op: 'apply', spec: { ...SPEC, gpu: 'dri' }, firstRun: { password: PASSWORD } })).state).toBe('succeeded');
+    expect((await w.run({ op: 'apply', spec: { ...SPEC, gpu: 'dri' }, firstRun: { password: FIRST_RUN_SEED } })).state).toBe('succeeded');
     expect(w.media().renderGids).toEqual([993, 994]);
     // a failed deploy keeps the record of the container that still runs
     w.cfg.answer = (c) => (c.verb === 'gpu' ? { nodes: [] } : answer(c));
@@ -324,7 +324,7 @@ describe('apply', () => {
     const w = world();
     // a render node with gid 0 would hand the media server the root group
     w.cfg.answer = (c) => (c.verb === 'gpu' ? { nodes: [{ node: 'renderD128', gid: 0, vendor: 'intel' }] } : okFolders(c));
-    const job = await w.run({ op: 'apply', spec: { ...SPEC, gpu: 'dri' }, firstRun: { password: PASSWORD } });
+    const job = await w.run({ op: 'apply', spec: { ...SPEC, gpu: 'dri' }, firstRun: { password: FIRST_RUN_SEED } });
     expect(job).toMatchObject({ state: 'failed', error: 'template_violation' });
     expect(w.changes()).toEqual([]);
     expect(w.created).toEqual([]);
@@ -344,7 +344,7 @@ describe('apply', () => {
 
   it('a password for jellyfin is refused by the template before anything changes', async () => {
     const w = world();
-    const job = await w.run({ op: 'apply', spec: JSPEC, firstRun: { password: PASSWORD } });
+    const job = await w.run({ op: 'apply', spec: JSPEC, firstRun: { password: FIRST_RUN_SEED } });
     expect(job).toMatchObject({ state: 'failed', error: 'template_violation' });
     expect(w.changes()).toEqual([]);
   });
@@ -367,7 +367,7 @@ describe('apply', () => {
       if (c.verb === 'gpu') return { nodes: [{ node: 'renderD128', gid: gid++, vendor: 'intel' }] };
       return okFolders(c);
     };
-    const job = await w.run({ op: 'apply', spec: { ...SPEC, gpu: 'dri', egress: false }, firstRun: { password: PASSWORD } });
+    const job = await w.run({ op: 'apply', spec: { ...SPEC, gpu: 'dri', egress: false }, firstRun: { password: FIRST_RUN_SEED } });
     expect(job.state).toBe('succeeded');
     expect(w.helperCalls.filter((c) => c.verb === 'gpu')).toHaveLength(2);
     expect((w.find(N.container)!.body.HostConfig as Obj).GroupAdd).toEqual(['994']);
@@ -427,7 +427,7 @@ describe('codes from check', () => {
   it('ferrofin without a cosign signature is not created', async () => {
     const w = world();
     w.cfg.verify = false;
-    const job = await w.run({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } });
+    const job = await w.run({ op: 'apply', spec: SPEC, firstRun: { password: FIRST_RUN_SEED } });
     expect(job).toMatchObject({ state: 'failed', error: 'verify_failed' });
     expect(job.media!.steps).toMatchObject({ pull: 'ok', verify: 'failed' });
     expect(w.calls.filter((c) => c.startsWith('create'))).toEqual([]);
@@ -436,7 +436,7 @@ describe('codes from check', () => {
   it('a failed pull changes nothing', async () => {
     const w = world();
     w.cfg.pull = async () => { throw new EngineError(500, 'pull_failed'); };
-    const job = await w.run({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } });
+    const job = await w.run({ op: 'apply', spec: SPEC, firstRun: { password: FIRST_RUN_SEED } });
     expect(job).toMatchObject({ state: 'failed', error: 'pull_failed' });
     expect(w.media().pinSource).toBe(SOURCE);
   });
@@ -573,7 +573,7 @@ describe('remove', () => {
 describe('finish-setup and hdr-test', () => {
   it('finish-setup recreates without the password', async () => {
     const w = world();
-    await w.run({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } });
+    await w.run({ op: 'apply', spec: SPEC, firstRun: { password: FIRST_RUN_SEED } });
     const first = w.find(N.container)!;
     const job = await w.run({ op: 'finish-setup' });
     expect(job).toMatchObject({ action: 'mediaserver-finish', state: 'succeeded' });
@@ -658,7 +658,7 @@ describe('base change and the job lock', () => {
     const w = world();
     let release!: () => void;
     w.cfg.pull = () => new Promise<void>((r) => { release = r; });
-    expect(w.jobs.start({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } })).toMatchObject({ ok: true });
+    expect(w.jobs.start({ op: 'apply', spec: SPEC, firstRun: { password: FIRST_RUN_SEED } })).toMatchObject({ ok: true });
     expect(w.jobs.start({ op: 'stop' })).toEqual({ ok: false, error: 'busy' });
     expect(w.jobs.start({ op: 'remove', data: false })).toEqual({ ok: false, error: 'busy' });
     await new Promise((r) => setTimeout(r, 0));
@@ -669,7 +669,7 @@ describe('base change and the job lock', () => {
 
   it('the job state survives in the state file without secrets', async () => {
     const w = world();
-    await w.run({ op: 'apply', spec: SPEC, firstRun: { password: PASSWORD } });
+    await w.run({ op: 'apply', spec: SPEC, firstRun: { password: FIRST_RUN_SEED } });
     const saved = w.store.state.media as MediaState;
     expect(saved.desired as Desired).toEqual({ ...SPEC, run: true });
     expect(saved.container!.kind as Kind).toBe('ferrofin');
