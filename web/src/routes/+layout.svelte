@@ -72,6 +72,7 @@
   import { exitTvApp, isTvApp } from '#lib/tvapp';
   import { applyFireTvViewport, isFireTvApp, postFireTv } from '#lib/firetv/detect';
   import { recordHistoryBase } from '#lib/webos/home';
+  import { loadBuild } from '#lib/version/build';
   import { rememberLgProbeHome } from '#lib/webos/probehome';
   import { PLAY_ART_NAME, playTransition, takePlayArt } from '#lib/player/transition';
 
@@ -151,6 +152,7 @@
   let barSrc: CastBarSource = engineSource();
   let barSess = barSrc.session;
   $: barSess = barSrc.session;
+  onMount(() => void loadBuild()); // the backend's version (footer, device caps): asked once at start, in every layout
   onMount(() => {
     if (!native.available) return;
     let retry: ReturnType<typeof setTimeout> | undefined, off: (() => void) | undefined, gone = false;

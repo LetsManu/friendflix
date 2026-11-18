@@ -68,6 +68,7 @@
   .help:hover:not(:disabled) { background: transparent; color: #fff; border-color: #fff; }
   .brand { display: inline-flex; align-items: center; gap: .45rem; }
   .version { margin-left: auto; font-size: .76rem; }
+  .version { min-width: 24ch; text-align: right; } /* the longest realistic label ("1.10.3-nightly · abc1234"): the box does not change when the answer arrives */
   .version.pending { visibility: hidden; } /* keeps its width: nothing jumps when /api/version answers */
   .foot.kids { background: #fffaf0; color: #5b6280; }
   .foot.kids .meta { margin-top: 0; }

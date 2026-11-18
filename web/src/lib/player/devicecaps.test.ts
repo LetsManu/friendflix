@@ -186,6 +186,19 @@ describe('this device: cache, sync claims, safe mode', () => {
     expect(codecs(deviceCaps())).toEqual(['h264', 'hevc', 'av1', 'vp9']);
   });
 
+  it('a cached probe read before the answer still sends the real version after the answer', async () => {
+    store = new Map(); now = 1_000_000;
+    store.set(CACHE_KEY, JSON.stringify({ v: PROBE_VERSION, ua: 'UA/1', at: now, hdr: env(all, withApi).hdrDisplay, caps: buildDeviceCaps(env(all), O, new Map()) }));
+    fresh(); _resetBuild();
+    const asking = loadBuild((async () => new Response(JSON.stringify({ sha: 'a', version: '6.6.6', codename: 'Eclair', build: 'release', label: '6.6.6' }))) as unknown as typeof fetch);
+    const warm = warmDeviceCaps(); // cache hit: the block is taken, the version is not known yet
+    expect(deviceCaps()!.appVersion).toBe('0.0.0');
+    await asking;
+    await warm;
+    expect(deviceCaps()!.appVersion).toBe('6.6.6');
+    expect(JSON.parse(store.get(CACHE_KEY)!).caps.appVersion).toBe('3.1.0'); // the cache is not touched
+  });
+
   it('another user agent, another probe version or an old entry probes again', async () => {
     store = new Map(); now = 1_000_000;
     store.set(CACHE_KEY, JSON.stringify({ v: PROBE_VERSION, ua: 'UA/0', at: now, caps: { ...buildDeviceCaps(env(all), O, new Map())!, audio: ['aac'] } }));

@@ -22,18 +22,39 @@ const { firstPlaybackRequest, playbackInfoBody, bodyKey, noEstimateStart } = awa
 const { entryFadeMs, playTransition } = await import('./transition');
 const { prefs, DEFAULT_PREFS } = await import('#lib/stores');
 const { serverCaps, capsFrom } = await import('#lib/capabilities');
+const { _resetBuild, appVersionNow, loadBuild } = await import('#lib/version/build');
+const answered = (version: string) => (async () => new Response(JSON.stringify({ sha: 'a', version, codename: 'Brezel', build: 'release', label: version }))) as unknown as typeof fetch;
 
 /** the body the player sends on its first request (no saved quality, no stored estimate -> 4 Mbit/s, network) */
 const playerBody = (itemId: string) => firstPlaybackRequest(itemId, DEFAULT_PREFS).body;
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-beforeEach(() => {
+beforeEach(async () => {
+  _resetBuild(); await loadBuild(answered('1.0.0')); // the backend's version is known unless a test says otherwise
   api.mockReset(); _resetPrefetch(); profile = 'p1'; prefs.set({ ...DEFAULT_PREFS }); serverCaps.set(capsFrom(undefined));
   store.clear();
 });
 afterEach(() => vi.useRealTimers());
 
 describe('prefetchPlayback / takePrefetched', () => {
+  it('a prefetch started before /api/version answered waits for it, so its body equals the player\'s (bodyKey)', async () => {
+    api.mockResolvedValue({ playSessionId: 'x' });
+    lgCapsMock.mockImplementation(() => ({ client: 'webos', appVersion: appVersionNow() }));
+    _resetBuild();
+    let answer!: () => void;
+    const slow = (() => new Promise<Response>((r) => { answer = () => r(new Response(JSON.stringify({ sha: 'a', version: '9.8.7', codename: 'Brezel', build: 'release', label: '9.8.7' }))); })) as unknown as typeof fetch;
+    void loadBuild(slow);
+    await flush();
+    prefetchPlayback('m1');
+    expect(api).not.toHaveBeenCalled(); // waits for the version
+    answer();
+    await flush(); await flush();
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(api.mock.calls[0]![1].body.caps.appVersion).toBe('9.8.7');
+    expect(takePrefetched('m1', playerBody('m1'))).not.toBeNull();
+    lgCapsMock.mockImplementation(() => null);
+  });
+
   it('posts the body the player sends first', () => {
     api.mockResolvedValue({ playSessionId: 'x' });
     prefetchPlayback('m1');

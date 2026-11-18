@@ -32,6 +32,7 @@ export function versionText(version: string, codename: string, b: BuildInfo | nu
 
 export const buildInfo = writable<BuildInfo | null>(null);
 let asked: Promise<BuildInfo | null> | null = null;
+let settled = false;
 
 /** the footer's version text; hidden (but with a placeholder's width) until /api/version answered */
 export function footerVersion(b: BuildInfo | null): { visible: boolean; text: string } {
@@ -44,7 +45,8 @@ export function loadBuild(fetchImpl: typeof fetch = fetch): Promise<BuildInfo | 
     .then(() => fetchImpl('/api/version', { cache: 'no-store' }))
     .then((r) => (r.ok ? r.json() : null))
     .then((j) => { const b = parseBuild(j); buildInfo.set(b); return b; })
-    .catch(() => null);
+    .catch(() => null)
+    .then((b) => { settled = true; return b; });
   return asked;
 }
 
@@ -60,5 +62,14 @@ export async function appVersion(): Promise<string> {
   return appVersionNow();
 }
 
+/**
+ * A wait for the backend's version, bounded like the device probe's (null when it is known, failed or never asked for:
+ * a request body built now carries it already). Starts the request when nothing asked yet.
+ */
+export function versionPending(ms = 400): Promise<void> | null {
+  if (settled) return null;
+  return Promise.race([loadBuild().then(() => undefined), new Promise<void>((r) => setTimeout(r, ms))]);
+}
+
 /** tests only */
-export function _resetBuild(): void { asked = null; buildInfo.set(null); }
+export function _resetBuild(): void { asked = null; settled = false; buildInfo.set(null); }

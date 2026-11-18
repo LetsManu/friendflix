@@ -137,7 +137,7 @@ export function buildLgCaps(m: MediaProbe | null, appVersion: string): ClientCap
   return buildTvCaps(m, { client: 'webos', appVersion, maxHeight: 2160, assumed: ASSUMED_CONTAINERS });
 }
 
-/** the probe-time block of the TV apps; the output facts are applied on top at every call (not cached) */
+/** the probe-time block of the TV apps; read synchronously with `appVersionNow()` (0.0.0 until the backend answered): callers await `appVersion()` before sending; the output facts are applied on top at every call (not cached) */
 let cached: ClientCapsBody | null | undefined;
 
 /**

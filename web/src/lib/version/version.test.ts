@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { get } from 'svelte/store';
 import { CODENAMES, codenameEntry, shortVersion } from './codenames';
-import { _resetBuild, appVersion, buildInfo, footerVersion, loadBuild } from './build';
+import { _resetBuild, appVersion, buildInfo, footerVersion, loadBuild, versionPending } from './build';
 import { EGG_START, eggTap, type EggState } from './egg';
 import { parseNotes, plainInline } from './notes';
 import de from '../i18n/locales/de/index';
@@ -58,6 +58,32 @@ describe('release notes', () => {
   it('plainInline strips tags but keeps the words', () => {
     expect(plainInline('<kbd>&lt;</kbd> and <kbd>&gt;</kbd>')).toBe('< and >');
     expect(parseNotes('')).toEqual([]);
+  });
+});
+
+describe('where the version is asked and shown', () => {
+  const src = (f: string) => readFileSync(new URL(f, import.meta.url), 'utf8');
+  it('the root layout starts loadBuild once at boot (the footer is not on every layout)', () => {
+    expect(src('../../routes/+layout.svelte')).toMatch(/onMount\(\(\) => void loadBuild\(\)\)/);
+  });
+  it('the footer: version span hidden while pending, width reserved, text from footerVersion', () => {
+    const f = src('../Footer.svelte');
+    expect(f).toMatch(/class:pending=\{!fv\.visible\}/);
+    expect(f).toMatch(/\.version\.pending \{ visibility: hidden; \}/);
+    expect(f).toMatch(/\.version \{ min-width: \d+ch;/);
+    expect(f).toMatch(/fv = footerVersion\(\$buildInfo\)/);
+    expect(f).not.toMatch(/APP_VERSION|version\.json/);
+  });
+  it('versionPending: waits (bounded) until answered, then null', async () => {
+    _resetBuild();
+    void loadBuild((() => new Promise<Response>(() => undefined)) as unknown as typeof fetch); // never answers
+    const w = versionPending(5);
+    expect(w).not.toBeNull();
+    await w; // gives up after the bound
+    _resetBuild();
+    await loadBuild((async () => { throw new Error('down'); }) as unknown as typeof fetch);
+    expect(versionPending()).toBeNull();
+    _resetBuild();
   });
 });
 
