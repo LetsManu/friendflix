@@ -140,7 +140,7 @@ Entries older than 90 days are deleted by a daily job, along with their `notific
    - /me no longer marks everything read on view.
    - The phone header has no bell, so *Mein Bereich*'s *Alle ({n})* opens the full-height sheet (the avatar, which goes to /me, keeps the unread dot).
 5. **Sections.**
-   - The web sends the viewer's IANA time zone (`tz`, validated against `Intl.supportedValuesOf('timeZone')` on the server, falling back to the server's `TZ`).
+   - The web sends the viewer's IANA time zone (`tz`). The server uses it only when both `Intl` and Postgres (`pg_timezone_names`) know it, and falls back to the server's `TZ`, then UTC. (`Intl.supportedValuesOf('timeZone')` was not used: it leaves out aliases such as `UTC`, and Intl alone accepts offsets such as `+05`, which Postgres reads with the sign inverted.)
    - *Heute* is the viewer's calendar today. *Diese Woche* is the six days before today. After that comes one section per calendar month.
    - A group belongs to the section of its newest entry. Same-key entries in an earlier section form their own group there.
 6. **Clear under a filter.** The clear button always removes what the current filter shows: *Alles leeren*, *<Kategorie> leeren*, or under *Ungelesen* the label *Ungelesene leeren*. `unread` and `categories[].n` are global, so they do not follow the filter.
