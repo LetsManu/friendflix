@@ -44,6 +44,13 @@ describe('channel logic', () => {
     expect(channelUpdate('pinned', { releaseNewer: true, behind: 3, pinnedDiffers: false })).toBe(false);
     expect(channelUpdate('pinned', { releaseNewer: false, behind: 0, pinnedDiffers: true })).toBe(true);
     expect(channelUpdate('pinned', { releaseNewer: true, behind: 3 })).toBeNull();
+    // nightly with the updater: a service's registry digest differs from what it runs; unknown falls back to commits behind
+    expect(channelUpdate('nightly', { releaseNewer: null, behind: 3, digestsDiffer: false })).toBe(false);
+    expect(channelUpdate('nightly', { releaseNewer: null, behind: 0, digestsDiffer: true })).toBe(true);
+    expect(channelUpdate('nightly', { releaseNewer: null, behind: 3, digestsDiffer: null })).toBe(true);
+    // a registry outage (unknown) never raises an update: commits behind decide
+    expect(channelUpdate('nightly', { releaseNewer: null, behind: 0, digestsDiffer: null })).toBe(false);
+    expect(channelUpdate('stable', { releaseNewer: false, behind: 3, digestsDiffer: true })).toBe(false);
   });
 
   it('the .env line per channel', () => {
@@ -78,12 +85,15 @@ describe('admin update + /api/version with channels', () => {
       if (url.endsWith('/releases/latest')) return json({ tag_name: release, name: release, html_url: 'https://github.com/x/r', published_at: '2026-10-01T00:00:00Z', body: '- x', draft: false, prerelease: false });
       if (url.includes('/actions/workflows/ci.yml/runs')) return json({ workflow_runs: [{ head_sha: NEWER, updated_at: '2026-10-02T00:00:00Z', html_url: 'https://github.com/x/runs/1' }] });
       if (url.includes('/compare/')) return json({ ahead_by: behind, commits: [] });
+      if (url === 'http://updater:7070/v1/status') return updaterStatus ? json(updaterStatus) : json({}, 500);
       return json({}, 404);
     }) as never;
     const admin = await env.login();
     return (q = '') => env.app.inject({ url: `/api/admin/update${q}`, cookies: admin.cookies }).then((r) => r.json());
   }
-  const reset = () => { calls = []; tag = TAG; behind = 0; release = 'v1.1.0'; };
+  /** the updater's /v1/status (UPDATER_URL set); null: it answers 500 */
+  let updaterStatus: unknown;
+  const reset = () => { calls = []; tag = TAG; behind = 0; release = 'v1.1.0'; updaterStatus = null; };
 
   it('a release build on the default stable channel: up to date while main moves on', async () => {
     reset(); behind = 4;
@@ -113,6 +123,35 @@ describe('admin update + /api/version with channels', () => {
     reset(); release = 'v1.2.0'; behind = 0;
     const stable = await setup({ GIT_SHA: MAIN });
     expect(await stable()).toMatchObject({ updateAvailable: true, channel: { selected: 'stable', running: 'nightly' } });
+  });
+
+  it('nightly with the updater: available iff a service\'s digest differs; unknown falls back to commits behind', async () => {
+    const svc = (service: string, changed: boolean | null) => ({ service, state: 'running', health: 'healthy', sha: null, version: null, commit: null,
+      digest: 'sha256:' + '1'.repeat(64), registry: changed === null ? null : 'sha256:' + (changed ? '2' : '1').repeat(64), changed });
+    const status = (services: unknown[], targetTag = 'nightly') => ({ channel: 'nightly', targetTag, services });
+    reset(); behind = 4;
+    const get = await setup({ GIT_SHA: MAIN, UPDATE_CHANNEL: 'nightly', UPDATER_URL: 'http://updater:7070' });
+    // every service runs the registry's digest: nothing to install although main moved on (docs-only commits build nothing)
+    // (a new updater image is the updater's own update, bootstrap follows the backend)
+    updaterStatus = status([svc('bootstrap', null), svc('backend', false), svc('web', false), svc('updater', true)]);
+    expect((await get()).updateAvailable).toBe(false);
+    expect(calls).toContain('http://updater:7070/v1/status');
+    behind = 0;
+    updaterStatus = status([svc('backend', false), svc('web', true)]);
+    expect((await get('?refresh=1')).updateAvailable).toBe(true);
+    // unknown (a registry outage, an updater from before digests, an updater that does not answer, another channel's tag): commits behind
+    behind = 3;
+    for (const u of [status([svc('backend', false), svc('web', null)]), status([{ service: 'backend', sha: 'sha-bbbbbbb' }]), null, status([svc('web', false)], 'latest')]) {
+      updaterStatus = u;
+      expect((await get('?refresh=1')).updateAvailable, JSON.stringify(u)).toBe(true);
+    }
+    // stable never asks the updater
+    await env.close();
+    reset(); behind = 3;
+    const stable = await setup({ GIT_SHA: TAG, UPDATER_URL: 'http://updater:7070' });
+    updaterStatus = status([svc('web', true)]);
+    expect((await stable()).updateAvailable).toBe(false);
+    expect(calls).not.toContain('http://updater:7070/v1/status');
   });
 
   it('annotated tags are peeled; the tag answer is cached like the update check', async () => {

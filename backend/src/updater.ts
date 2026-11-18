@@ -38,6 +38,11 @@ export type StepState = (typeof STEP_STATES)[number];
 /** succeeded_mediaserver_failed: an update that succeeded, whose media server phase failed (and was rolled back on its own) */
 const JOB_STATES = ['running', 'succeeded', 'failed', 'rolled_back', 'succeeded_mediaserver_failed'] as const;
 const TAG_RE = /^(latest|nightly|[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}|sha-[0-9a-f]{7})$/;
+/** the services an update compares and reports (updater/src/state.ts DIGEST_SERVICES; bootstrap follows backend) and what it did to each */
+export const REPORT_SERVICES = ['backend', 'gateway', 'web', 'livetv'] as const;
+const SERVICE_RESULTS = ['updated', 'unchanged'] as const;
+type ServiceResult = (typeof SERVICE_RESULTS)[number];
+const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 
 export function updaterKey(secret: string): Buffer {
   return createHmac('sha256', secret).update(KEY_LABEL).digest();
@@ -62,12 +67,28 @@ export interface UpdaterJob {
   startedAt: string; finishedAt: string | null; error: string | null;
   /** a media job (and the media phase of an update): its own steps; null for every other job and an updater from before the media server */
   media: { step: MediaStep | null; steps: Record<MediaStep, StepState> } | null;
+  /**
+   * per service what an update or rollback did: updated (a new container) or unchanged; null until the job got that far, for the
+   * other jobs and an updater from before digests
+   */
+  services: Partial<Record<(typeof REPORT_SERVICES)[number], ServiceResult>> | null;
+}
+/**
+ * what a service runs (updater/src/server.ts ServiceView): `sha` the sha-<7> of its image commit, `version` the backend's,
+ * `commit` that commit, `digest` the own digest of its image, `registry` the digest of the channel's tag in the registry,
+ * `changed` whether they differ (null unless both are known; an updater from before digests: all null)
+ */
+export interface UpdaterService {
+  service: string; state: string; health: string; sha: string | null; version: string | null;
+  commit: string | null; digest: string | null; registry: string | null; changed: boolean | null;
 }
 export interface UpdaterStatus {
   updater: { version: string | null; sha: string | null };
   channel: 'stable' | 'nightly' | 'pinned'; version: string | null; targetTag: string | null;
   current: string | null; previous: string | null; busy: boolean; job: UpdaterJob | null; log: string[];
-  services: Array<{ service: string; state: string; health: string; sha: string | null; version: string | null }>;
+  services: UpdaterService[];
+  /** whether a rollback has something to go back to (recorded digests or a legacy sha tag); null = an updater from before it (read `previous`) */
+  rollback: { available: boolean } | null;
   /**
    * whose stack it is (updater/src/stack.ts): own = started from the updater's project directory; foreign = another tool started
    * it (Portainer): the updater refuses to recreate it, an update goes through Portainer. null = unknown / an older updater.
@@ -105,7 +126,26 @@ function parseJob(raw: unknown): UpdaterJob | null {
   return {
     id: j.id, action, state, step: pick(j.step, STEP_NAMES), steps, from: tagOrNull(j.from), to,
     startedAt: short(j.startedAt, ISO) ?? '', finishedAt: short(j.finishedAt, ISO), error: short(j.error, /^[a-z_]{1,40}$/),
-    media: parseJobMedia(j.media),
+    media: parseJobMedia(j.media), services: parseJobServices(j.services),
+  };
+}
+
+/** only the known services, each updated or unchanged */
+function parseJobServices(raw: unknown): UpdaterJob['services'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  return Object.fromEntries(REPORT_SERVICES.flatMap((k) => { const v = pick(r[k], SERVICE_RESULTS); return v ? [[k, v]] : []; }));
+}
+
+function parseService(raw: unknown): UpdaterService | null {
+  const x = (raw ?? {}) as Record<string, unknown>;
+  const service = short(x.service, /^[a-z-]{1,20}$/);
+  if (!service) return null;
+  const digest = short(x.digest, DIGEST_RE), registry = short(x.registry, DIGEST_RE);
+  return {
+    service, state: short(x.state, /^[a-z]{1,20}$/) ?? 'unknown', health: short(x.health, /^[a-z]{0,20}$/) ?? '', sha: tagOrNull(x.sha), version: short(x.version, /^\d+\.\d+\.\d+$/),
+    // changed stands only on two digests that passed: anything else is unknown, never "the same"
+    commit: short(x.commit, /^[0-9a-f]{40}$/), digest, registry, changed: digest && registry && typeof x.changed === 'boolean' ? x.changed : null,
   };
 }
 
@@ -128,11 +168,8 @@ export function parseStatus(raw: unknown): UpdaterStatus | null {
     channel, version: short(o.version, /^\d+\.\d+\.\d+$/), targetTag: tagOrNull(o.targetTag),
     current: tagOrNull(o.current), previous: tagOrNull(o.previous), busy: o.busy === true, job: parseJob(o.job),
     log: Array.isArray(o.log) ? o.log.filter((l): l is string => typeof l === 'string').slice(-30).map((l) => l.slice(0, 300)) : [],
-    services: Array.isArray(o.services) ? o.services.slice(0, 10).flatMap((s) => {
-      const x = (s ?? {}) as Record<string, unknown>;
-      const service = short(x.service, /^[a-z-]{1,20}$/);
-      return service ? [{ service, state: short(x.state, /^[a-z]{1,20}$/) ?? 'unknown', health: short(x.health, /^[a-z]{0,20}$/) ?? '', sha: tagOrNull(x.sha), version: short(x.version, /^\d+\.\d+\.\d+$/) }] : [];
-    }) : [],
+    services: Array.isArray(o.services) ? o.services.slice(0, 10).flatMap((s) => { const v = parseService(s); return v ? [v] : []; }) : [],
+    rollback: o.rollback && typeof o.rollback === 'object' && typeof (o.rollback as { available?: unknown }).available === 'boolean' ? { available: (o.rollback as { available: boolean }).available } : null,
     stack: pick(o.stack, ['own', 'foreign'] as const),
     stackReason: pick(o.stackReason, ['own', 'working_dir', 'portainer', 'no_labels'] as const),
     stackDir: short(o.stackDir, PATH_RE), projectDir: short(o.projectDir, PATH_RE),

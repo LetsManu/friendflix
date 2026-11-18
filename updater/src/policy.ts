@@ -108,6 +108,26 @@ export function cosignIdentity(repo: string): { identityRegexp: string; issuer: 
 }
 
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
+
+/** a registry content digest: sha256 with 64 lowercase hex, nothing else */
+export function isDigest(v: unknown): v is string {
+  return typeof v === 'string' && DIGEST_RE.test(v);
+}
+
+/** ghcr.io/<owner>/<repo>-<image>@<digest>: the service's image of this repository pinned to a digest; throws on a bad digest or service */
+export function digestRef(repo: string, service: string, digest: string): string {
+  if (!Object.hasOwn(IMAGE_OF, service)) throw new Error('invalid service');
+  if (!isDigest(digest)) throw new Error('invalid digest');
+  return `${imageRepo(expectedImage(repo, service, 'latest'))}@${digest}`;
+}
+
+/** whether `ref` is exactly this repository's image of `service` pinned to a digest (what pull, tag and cosign may take) */
+export function isOwnDigestRef(repo: string, service: string, ref: string): boolean {
+  if (typeof ref !== 'string' || !Object.hasOwn(IMAGE_OF, service)) return false;
+  const digest = ref.slice(ref.lastIndexOf('@') + 1);
+  return isDigest(digest) && ref === digestRef(repo, service, digest);
+}
+
 /** the repo@sha256 reference cosign verifies; null unless it is exactly the expected repository with a sha256 digest */
 export function pinnedRef(image: string, repoDigests: readonly string[]): string | null {
   // a digest ref (the media server pin, repo@sha256:…) is pinned only by that very digest among the image's own

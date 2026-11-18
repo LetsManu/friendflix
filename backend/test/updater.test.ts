@@ -116,6 +116,34 @@ describe('updater signing', () => {
       { stack: 'foreign', stackReason: 'working_dir', stackDir: '/volume1/docker/friendflix', projectDir: '/project' });
     expect(parseStatus({ channel: 'stable', stackReason: 'evil', stackDir: '/x/<script>', projectDir: 'relative' })).toMatchObject({ stackReason: null, stackDir: null, projectDir: null });
   });
+
+  it('parseStatus keeps commit, digest, registry, changed only in their shapes', () => {
+    const D = 'sha256:' + '1'.repeat(64), R = 'sha256:' + '2'.repeat(64);
+    const s = parseStatus({ channel: 'nightly', services: [
+      { service: 'backend', state: 'running', health: 'healthy', sha: 'sha-1111111', version: '3.6.0', commit: '1'.repeat(40), digest: D, registry: R, changed: true },
+      { service: 'web', state: 'running', commit: 'abc', digest: 'sha256:xyz', registry: `ghcr.io/x@${R}`, changed: 'yes' },
+      { service: 'gateway', state: 'running', commit: 'A'.repeat(40), digest: D.toUpperCase(), registry: null, changed: false },
+    ] })!;
+    expect(s.services).toEqual([
+      { service: 'backend', state: 'running', health: 'healthy', sha: 'sha-1111111', version: '3.6.0', commit: '1'.repeat(40), digest: D, registry: R, changed: true },
+      { service: 'web', state: 'running', health: '', sha: null, version: null, commit: null, digest: null, registry: null, changed: null },
+      // changed only stands when both digests passed: an unreadable one makes it unknown
+      { service: 'gateway', state: 'running', health: '', sha: null, version: null, commit: null, digest: null, registry: null, changed: null },
+    ]);
+    expect(parseStatus({ channel: 'nightly', services: [{ service: 'web', digest: D, registry: 'x', changed: true }, { service: 'backend', digest: D, registry: D, changed: false }] })!.services.map((x) => x.changed)).toEqual([null, false]);
+    // an updater from before the fields: all null
+    expect(parseStatus({ channel: 'stable', services: [{ service: 'backend', sha: 'sha-1111111' }] })!.services[0]).toMatchObject({ commit: null, digest: null, registry: null, changed: null });
+  });
+
+  it('parseStatus keeps the job report (updated / unchanged per known service) and whether a rollback is possible', () => {
+    const job = { id: JOB_ID, action: 'update', state: 'succeeded', step: null, to: 'nightly', steps: {}, startedAt: '2026-11-17T10:00:00.000Z' };
+    const s = parseStatus({ channel: 'nightly', rollback: { available: true, refs: ['x'] }, job: { ...job, services: { backend: 'unchanged', web: 'updated', postgres: 'updated', gateway: '<b>', livetv: 'unchanged' } } })!;
+    expect(s.job!.services).toEqual({ backend: 'unchanged', web: 'updated', livetv: 'unchanged' });
+    expect(s.rollback).toEqual({ available: true });
+    expect(parseStatus({ channel: 'stable', rollback: { available: 'yes' }, job: { ...job, services: 'all' } })).toMatchObject({ rollback: null, job: { services: null } });
+    // an updater from before them
+    expect(parseStatus({ channel: 'stable', job })).toMatchObject({ rollback: null, job: { services: null } });
+  });
 });
 
 describe('GET /api/admin/updater', () => {

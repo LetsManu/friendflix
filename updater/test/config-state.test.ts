@@ -71,6 +71,34 @@ describe('updater state file', () => {
     expect(job).toMatchObject({ from: null, error: null, step: 'verify', steps: { pull: 'ok', verify: 'pending' }, startedAt: new Date(0).toISOString() });
   });
 
+  it('state: previousDigests survives a reload; a malformed entry is dropped', () => {
+    const d = (c: string) => `sha256:${c.repeat(64)}`;
+    const digests = { backend: `ghcr.io/letsmanu/friendflix-backend@${d('a')}`, gateway: `ghcr.io/letsmanu/friendflix-gateway@${d('b')}`,
+      web: `ghcr.io/letsmanu/friendflix-web@${d('c')}`, livetv: `ghcr.io/letsmanu/friendflix-livetv@${d('d')}` };
+    const dir = mkdtempSync(join(tmpdir(), 'ff-upd-'));
+    const s = fileStore(dir);
+    s.save({ ...DEFAULT_STATE, current: 'latest', previousDigests: digests });
+    expect(s.load()).toMatchObject({ current: 'latest', previous: null, previousDigests: digests });
+    // a bad entry is dropped, its siblings survive; nothing left = null
+    expect(sanitize({ previousDigests: { ...digests,
+      gateway: 'ghcr.io/letsmanu/friendflix-gateway:latest', web: `docker.io/evil/web@${d('c')}`, livetv: `ghcr.io/letsmanu/friendflix-livetv@${d('d')};id`,
+      bootstrap: `ghcr.io/letsmanu/friendflix-backend@${d('a')}`, postgres: `ghcr.io/x/postgres@${d('a')}`, ['__proto__']: `ghcr.io/x/y@${d('a')}` } }).previousDigests)
+      .toEqual({ backend: digests.backend });
+    for (const bad of [{ backend: `ghcr.io/letsmanu/friendflix-backend@sha256:${'A'.repeat(64)}` }, { backend: 42 }, [digests.backend], 'x', null]) {
+      expect(sanitize({ previousDigests: bad }).previousDigests, JSON.stringify(bad)).toBeNull();
+    }
+    // a file from before digests: null, the legacy sha tag kept
+    expect(sanitize({ previous: 'sha-abcdef1' })).toMatchObject({ previous: 'sha-abcdef1', previousDigests: null });
+  });
+
+  it('a job\'s per-service report keeps known services with updated / unchanged only', () => {
+    const job = (services: unknown) => sanitize({ lastJob: { id: '0123456789abcdef', action: 'update', state: 'succeeded', to: 'latest', services } }).lastJob!.services;
+    expect(job({ backend: 'updated', gateway: 'unchanged', web: 'unchanged', livetv: 'updated' })).toEqual({ backend: 'updated', gateway: 'unchanged', web: 'unchanged', livetv: 'updated' });
+    expect(job({ backend: 'updated', web: 'gone', bootstrap: 'updated', postgres: 'unchanged' })).toEqual({ backend: 'updated' });
+    expect(job(undefined)).toBeNull();
+    expect(job(['updated'])).toBeNull();
+  });
+
   it('an old state file without media loads with the defaults', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ff-upd-'));
     writeFileSync(join(dir, 'state.json'), JSON.stringify({ channel: 'nightly', version: null, current: 'nightly', previous: null, livetv: 'enabled', livetvError: null, livetvImage: null, lastJob: null }));

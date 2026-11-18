@@ -10,14 +10,18 @@ import { BASE, JSPEC, N, PROJECT, SOURCE, SPEC, baseVolume, jellyPin, ferroPin, 
 const OLD_SHA = 'a'.repeat(40), NEW_SHA = 'b'.repeat(40);
 const MIN = 60_000;
 
-/** FriendFlix's own update: everything pulls, verifies and gets healthy on the new build */
+/** FriendFlix's own update: every service changed in the registry, pulls, verifies and gets healthy on the new build */
 function coreOps(): Ops {
-  const info = (sha: string): ImageInfo => ({ repoDigests: [], gitSha: sha, version: '1.0.0' });
+  const OLD = 'sha256:' + 'a'.repeat(64), NEW = 'sha256:' + 'b'.repeat(64);
+  let runs = OLD;
+  const repo = (s: string) => `ghcr.io/letsmanu/friendflix-${s === 'bootstrap' ? 'backend' : s}`;
+  const info = (sha: string): ImageInfo => ({ repoDigests: [], commit: sha, version: '1.0.0' });
   return {
-    images: async (tag, services) => Object.fromEntries(services.map((s) => [s, `ghcr.io/letsmanu/friendflix-${s}:${tag}`])),
-    pull: async () => undefined, verify: async () => true, up: async () => undefined,
-    imageInfo: async (ref) => info(ref.endsWith(':latest') ? NEW_SHA : OLD_SHA),
-    running: async () => info(OLD_SHA),
+    images: async (tag, services) => Object.fromEntries(services.map((s) => [s, `${repo(s)}:${tag}`])),
+    registryDigest: async () => NEW, pullDigest: async () => undefined, tag: async () => undefined,
+    verify: async () => true, up: async () => { runs = NEW; },
+    imageInfo: async (ref) => info(ref.endsWith(NEW) ? NEW_SHA : OLD_SHA),
+    running: async (s) => ({ ...info(runs === NEW ? NEW_SHA : OLD_SHA), repoDigests: [`${repo(s)}@${runs}`], container: (runs === NEW ? '2' : '1').repeat(64) }),
     spawnSelfUpdate: async () => undefined, healthy: async () => true, ownStack: async () => undefined,
     stop: async () => undefined, rm: async () => undefined, imageRm: async () => undefined, volumeRm: async () => undefined,
     livetvContainer: async () => null, livetvNetwork: async () => undefined,
@@ -113,7 +117,7 @@ describe('the media phase of an update', () => {
     expect(job).toMatchObject({ action: 'update', state: 'succeeded_mediaserver_failed', error: 'unhealthy', steps: { health: 'ok', rollback: 'skipped' } });
     expect(job.media!.steps).toMatchObject({ health: 'failed', rollback: 'ok' });
     // FriendFlix stays on the new build, the old media server runs again
-    expect(w.updater.snapshot()).toMatchObject({ current: 'latest', previous: 'sha-aaaaaaa' });
+    expect(w.updater.snapshot()).toMatchObject({ current: 'latest', previous: null, previousDigests: { backend: `ghcr.io/letsmanu/friendflix-backend@sha256:${'a'.repeat(64)}` } });
     expect(w.find(N.container)).toMatchObject({ id: old.id, running: true });
     expect(w.find(N.old)).toBeUndefined();
     expect(w.media()).toMatchObject({ lastError: 'unhealthy', container: { id: old.id, upstream: '10.11.2' } });

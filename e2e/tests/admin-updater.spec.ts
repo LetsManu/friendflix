@@ -266,6 +266,61 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     await expect(card(page).getByRole('alert')).toContainText('INTERNAL_SECRET');
   });
 
+  test('per service under Installiert: what the registry has, after the update its report or "alles unverändert"; the rows never move', async ({ page, api }) => {
+    const D = (c: string) => `sha256:${c.repeat(64)}`;
+    const svc = (service: string, c: string, registry: string | null) => ({ service, state: 'running', health: 'healthy', sha: `sha-${c.repeat(7)}`, version: service === 'backend' ? '1.0.0' : null,
+      commit: c.repeat(40), digest: D(c), registry, changed: registry === null ? null : registry !== D(c) });
+    const services = () => [svc('bootstrap', '1', D('1')), svc('backend', '1', D('1')), svc('gateway', '2', null), svc('web', '3', D('9')), svc('updater', '4', D('4'))];
+    api.updater = { ...updaterState(true), downPolls: 0, services: services(), report: { backend: 'unchanged', gateway: 'unchanged', web: 'updated' } };
+    await page.goto('/admin/update');
+    const c = card(page);
+    const rows = c.locator('[data-services] tr');
+    await expect(rows).toHaveCount(4); // bootstrap follows the backend
+    await expect(rows.nth(0)).toContainText('backend');
+    await expect(rows.nth(0)).toContainText('1111111');
+    await expect(rows.nth(0)).toContainText('unverändert');
+    await expect(c.locator('tr[data-service="gateway"] td.st')).toHaveText(''); // the registry did not answer: no text, the same room
+    await expect(c.locator('tr[data-service="web"]')).toContainText('Update verfügbar');
+    await expect(c.locator('tr[data-service="updater"]')).toContainText('unverändert');
+    const heights = async () => Promise.all([0, 1, 2, 3].map(async (i) => (await rows.nth(i).boundingBox())!.height));
+    const h0 = await heights();
+    expect(new Set(h0).size).toBe(1);
+    const below = c.getByRole('heading', { name: 'Automatische Updates' });
+    await c.getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await c.getByRole('button', { name: 'Ja, starten' }).click();
+    await expect(c.locator('[data-step="verify"]')).toHaveAttribute('data-state', 'running');
+    const y0 = (await below.boundingBox())!.y;
+    await expect(c.locator('[data-result="succeeded"]')).toBeVisible({ timeout: 20_000 });
+    await expect(c.locator('tr[data-service="web"]')).toContainText('aktualisiert');
+    await expect(c.locator('tr[data-service="backend"]')).toContainText('unverändert');
+    expect(await heights()).toEqual(h0);
+    expect((await below.boundingBox())!.y).toBe(y0);
+
+    // nothing changed: one "alles unverändert" over the job's rows, the updater keeps its own row; still the same heights
+    api.updater = { ...updaterState(true), downPolls: 0, services: services().map((x) => ({ ...x, registry: x.digest, changed: x.service === 'gateway' ? null : false })),
+      report: { backend: 'unchanged', gateway: 'unchanged', web: 'unchanged' } };
+    await page.reload();
+    await c.getByRole('button', { name: 'Jetzt aktualisieren' }).click();
+    await c.getByRole('button', { name: 'Ja, starten' }).click();
+    await expect(c.locator('[data-result="succeeded"]')).toBeVisible({ timeout: 20_000 });
+    await expect(c.locator('[data-services] [data-all]')).toHaveText('alles unverändert');
+    await expect(c.locator('[data-services] [data-all]')).toHaveAttribute('rowspan', '3');
+    await expect(c.locator('tr[data-service="updater"]')).toContainText('unverändert');
+    expect(await heights()).toEqual(h0);
+  });
+
+  test('after an update by digests (no sha tag recorded) the rollback stays: the images before the last update', async ({ page, api }) => {
+    api.updater = { ...updaterState(true), previous: null, rollback: { available: true } };
+    await page.goto('/admin/update');
+    const c = card(page);
+    await expect(c.locator('[data-previous]')).toHaveText('Images vor dem letzten Update');
+    await c.getByRole('button', { name: 'Zurück zur vorherigen Version' }).click();
+    await expect(c.getByRole('group', { name: 'Zurück zu den Images vor dem letzten Update? FriendFlix startet kurz neu.' })).toBeVisible();
+    await c.getByRole('button', { name: 'Ja, starten' }).click();
+    await expect(c.locator('[data-result="succeeded"]')).toBeVisible({ timeout: 20_000 });
+    expect(api.updater.posts).toEqual(['rollback']);
+  });
+
   test('the rollback row: an update without one never shows it and the card keeps its height; a rollback appears in the kept slot, nothing below moves', async ({ page, api }) => {
     api.updater = { ...updaterState(true), downPolls: 0 };
     await page.goto('/admin/update');

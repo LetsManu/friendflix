@@ -30,6 +30,11 @@ export type LivetvError = (typeof LIVETV_ERRORS)[number];
 export type JobState = 'running' | 'succeeded' | 'failed' | 'rolled_back' | 'succeeded_mediaserver_failed';
 const JOB_STATES: readonly JobState[] = ['running', 'succeeded', 'failed', 'rolled_back', 'succeeded_mediaserver_failed'];
 
+export type JobServiceResult = 'updated' | 'unchanged';
+const SERVICE_RESULTS: readonly JobServiceResult[] = ['updated', 'unchanged'];
+/** the services a job reports and records digests for (bootstrap follows backend: same image, a one-shot container) */
+export const DIGEST_SERVICES = ['backend', 'gateway', 'web', 'livetv'] as const;
+
 export interface Job {
   id: string;
   action: JobAction;
@@ -44,6 +49,11 @@ export interface Job {
   finishedAt: string | null;
   /** a fixed error code (never command output) */
   error: string | null;
+  /**
+   * per service (backend, gateway, web, livetv; never bootstrap) what the job did: `updated` (a new container), `unchanged`
+   * (the same one). null until the job got that far, and for jobs that do not compare (self-update, livetv, media)
+   */
+  services: Record<string, JobServiceResult> | null;
   /** the media server phase: null for a core job that did none */
   media: { step: MediaStep | null; steps: Record<MediaStep, StepState> } | null;
 }
@@ -78,8 +88,13 @@ export interface State {
   version: string | null;
   /** the tag the FriendFlix services were last brought up with by the updater */
   current: string | null;
-  /** sha-<7> of the build that ran before the last successful update (the rollback target) */
+  /** legacy rollback target: sha-<7> of the build that ran before an update from before digests (null once previousDigests is set) */
   previous: string | null;
+  /**
+   * the rollback target: per service (backend, gateway, web, livetv) the own-repository digest ref (ghcr.io/…@sha256:…) it ran
+   * before the last update or rollback restarted anything
+   */
+  previousDigests: Record<string, string> | null;
   /** the optional livetv service (spec §4.2) */
   livetv: LivetvState;
   /** set when a job disabled livetv by itself (its image missing or unverified for the target build, or it did not get healthy) */
@@ -91,9 +106,10 @@ export interface State {
   media: MediaState;
 }
 
-export const DEFAULT_STATE: State = { channel: 'stable', version: null, current: null, previous: null, livetv: 'absent', livetvError: null, livetvImage: null, lastJob: null, media: DEFAULT_MEDIA };
+export const DEFAULT_STATE: State = { channel: 'stable', version: null, current: null, previous: null, previousDigests: null, livetv: 'absent', livetvError: null, livetvImage: null, lastJob: null, media: DEFAULT_MEDIA };
 
 const HEX64 = /^[0-9a-f]{64}$/;
+const DIGEST_REF = /^ghcr\.io\/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const iso = (v: unknown): string | null => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : null);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -206,12 +222,34 @@ export function sanitize(raw: unknown): State {
     version,
     current: isTag(o.current) ? o.current : null,
     previous: typeof o.previous === 'string' && SHA_TAG_RE.test(o.previous) ? o.previous : null,
+    previousDigests: sanitizeDigests(o.previousDigests),
     livetv: LIVETV_STATES.find((v) => v === o.livetv) ?? 'absent',
     livetvError: LIVETV_ERRORS.find((v) => v === o.livetvError) ?? null,
     livetvImage: typeof o.livetvImage === 'string' && /^sha256:[0-9a-f]{64}$/.test(o.livetvImage) ? o.livetvImage : null,
     lastJob: sanitizeJob(o.lastJob),
     media: sanitizeMedia(o.media),
   };
+}
+
+/** only the known services with a ghcr.io digest ref each; a bad entry is dropped, nothing left = null */
+function sanitizeDigests(raw: unknown): Record<string, string> | null {
+  if (!isObj(raw)) return null;
+  const out: Record<string, string> = {};
+  for (const k of DIGEST_SERVICES) {
+    const v = raw[k];
+    if (typeof v === 'string' && DIGEST_REF.test(v)) out[k] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function sanitizeServices(raw: unknown): Job['services'] {
+  if (!isObj(raw)) return null;
+  const out: Record<string, JobServiceResult> = {};
+  for (const k of DIGEST_SERVICES) {
+    const v = SERVICE_RESULTS.find((x) => x === raw[k]);
+    if (v) out[k] = v;
+  }
+  return out;
 }
 
 function sanitizeJob(raw: unknown): Job | null {
@@ -229,6 +267,7 @@ function sanitizeJob(raw: unknown): Job | null {
     step: (['pull', 'verify', 'restart', 'health', 'rollback'] as const).find((x) => x === j.step) ?? null, steps,
     from: isTag(j.from) ? j.from : null, to: j.to, startedAt: iso(j.startedAt) ?? new Date(0).toISOString(), finishedAt: iso(j.finishedAt),
     error: typeof j.error === 'string' && /^[a-z_]{1,40}$/.test(j.error) ? j.error : null,
+    services: sanitizeServices(j.services),
     media: sanitizeJobMedia(j.media),
   };
 }
