@@ -55,6 +55,7 @@ describe('swipe to remove', () => {
     expect(remove).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(1);
     expect(row.style.transform).toBe(''); // still in the page (nothing was removed): it comes back
+    vi.advanceTimersByTime(170); // 350 ms after letting go
     expect(click(row)).toBe(false);
   });
   it('a short drag springs back; a fling removes', () => {
@@ -86,6 +87,33 @@ describe('swipe to remove', () => {
     row.dispatchEvent(ev('pointerup', 100, 50, 60, { id: 2 }));
     expect(row.style.transform).toBeUndefined();
     expect(click(row)).toBe(false);
+  });
+  it('the click stays swallowed until the next touch or 350 ms (a flick inside the tap slop can click late)', () => {
+    const remove = vi.fn();
+    const row = new Row();
+    swipeToRemove(row as unknown as HTMLElement, { remove });
+    drag(row, [188, 186], { times: [16, 24] }); // a short fast flick: gone
+    vi.advanceTimersByTime(200);
+    expect(click(row)).toBe(true); // a late click of that touch
+    expect(click(row)).toBe(true); // (still within the 350 ms)
+    vi.advanceTimersByTime(150);
+    expect(click(row)).toBe(false);
+    drag(row, [180, 150], { times: [200, 600] }); // springs back
+    row.dispatchEvent(ev('pointerdown', 10, 10, 700, { type: 'mouse' })); // the next press: its click is its own
+    expect(click(row)).toBe(false);
+  });
+  it('a row sliding out ignores a second swipe: it is removed once', () => {
+    const remove = vi.fn();
+    const row = new Row();
+    swipeToRemove(row as unknown as HTMLElement, { remove });
+    drag(row, [150, 20]);
+    vi.advanceTimersByTime(100);
+    drag(row, [150, 20]);
+    vi.runAllTimers();
+    expect(remove).toHaveBeenCalledTimes(1);
+    drag(row, [150, 20]); // it stayed (nothing was removed): it can go again
+    vi.runAllTimers();
+    expect(remove).toHaveBeenCalledTimes(2);
   });
   it('a cancelled drag (the browser took over) springs back; disabled rows and a destroyed action do nothing', () => {
     const remove = vi.fn();

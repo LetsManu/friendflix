@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('#lib/api', () => ({ api: vi.fn() }));
 vi.mock('#lib/kids', async () => { const { writable } = await import('svelte/store'); return { kidsMode: writable(false) }; });
-const { setAppBadge, syncBadge } = await import('./badge');
+const { setAppBadge, syncBadge, badgeText } = await import('./badge');
 const { api } = await import('#lib/api');
 const { kidsMode } = await import('#lib/kids');
 const { updateBadge } = await import('./sw/push');
@@ -32,6 +32,9 @@ describe('app badge', () => {
     await updateBadge(mk(2)); expect(setB).toHaveBeenCalledWith(2);
     await updateBadge(mk(0)); expect(clearB).toHaveBeenCalledTimes(1);
     await expect(updateBadge({ registration: { showNotification: vi.fn() } })).resolves.toBeUndefined(); // no Badging API
+  });
+  it('a dot shows at most 99+', () => {
+    expect([badgeText(1), badgeText(45), badgeText(99), badgeText(100), badgeText(1234)]).toEqual(['1', '45', '99', '99+', '99+']);
   });
   it('syncBadge uses the counts endpoint and caps at 99', async () => {
     const nav = { setAppBadge: vi.fn().mockResolvedValue(undefined), clearAppBadge: vi.fn().mockResolvedValue(undefined) };

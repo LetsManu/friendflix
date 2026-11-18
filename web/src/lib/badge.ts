@@ -24,6 +24,9 @@ export async function setAppBadge(n: number, nav: BadgeNav | undefined = typeof 
   } catch { return false; }
 }
 
+/** what a count dot shows (the bell, the phone avatar): at most 99+, as the app badge; accessible names keep the real number */
+export const badgeText = (n: number): string => (n > 99 ? '99+' : String(n));
+
 let hooked = false;
 /**
  * Reads the unread count (the notifications center's counts: every unread entry, not only the legacy list's newest 30) and shows

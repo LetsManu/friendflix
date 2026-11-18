@@ -59,6 +59,7 @@ const es: Translation<typeof de> = {
     notifications: 'Notificaciones',
     all: 'Todas ({n})',
     noNotifications: 'No hay notificaciones',
+    notificationsError: 'No se pudieron cargar las notificaciones.',
     continueWatching: 'Continuar viendo',
     language: 'Idioma: {name}',
     logout: 'Cerrar sesión',

@@ -59,6 +59,7 @@ const tr: Translation<typeof de> = {
     notifications: 'Bildirimler',
     all: 'Tümü ({n})',
     noNotifications: 'Bildirim yok',
+    notificationsError: 'Bildirimler yüklenemedi.',
     continueWatching: 'İzlemeye devam et',
     language: 'Dil: {name}',
     logout: 'Oturumu kapat',

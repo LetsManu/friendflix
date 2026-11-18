@@ -295,6 +295,13 @@ test.describe('notifications center', () => {
     expect(legacy).toEqual([]); // the legacy list (30 at most) is not asked any more
   });
 
+  test('above 99 the bell shows 99+; its name keeps the real number', async ({ page }) => {
+    await page.route(/\/api\/notifications\/feed\?limit=0$/, (r) => r.fulfill({ json: { unread: 150, categories: [{ key: 'devices', n: 150 }] } }));
+    await page.goto('/watchlist');
+    await expect(bell(page).locator('.dot')).toHaveText('99+');
+    await expect(bell(page)).toHaveAccessibleName('Benachrichtigungen, 150 neu');
+  });
+
   test('another profile in place: the sheet shows nothing of the previous one', async ({ page, api }) => {
     await open(page);
     await page.keyboard.press('Escape');

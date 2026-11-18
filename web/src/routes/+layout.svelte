@@ -42,6 +42,7 @@
   import DeskBar from '#lib/desk/DeskBar.svelte';
   import { feedStore, latestCounts } from '#lib/notifications/store';
   import { counts as noteCounts } from '#lib/notifications/api';
+  import { badgeText } from '#lib/badge';
   import { deskActive, deskUi } from '#lib/desk/bar';
   import { historyIndex, trackNav } from '#lib/desk/back';
   import { railKey } from '#lib/tv/rail';
@@ -920,7 +921,7 @@
           <a class="mlogo" href={home} aria-label={$t('shell.nav.homeLink')} aria-current={path === home ? 'page' : undefined}>{#if mHead.logo}<img class="mlimg" src={mHead.logo} alt="" width="112" height="28" draggable="false" />{:else}{#if mHead.mark}<Logo size={28} label="" />{/if}{#if mHead.name}<span class="wm" aria-hidden="true">{$brand.name}</span>{/if}{/if}</a>
           <span class="sp">{#if castHeader && $barSess}<button type="button" class="icon-btn castind" aria-label={$t('player.castBar.castingTo', { device: $barSess.device })} on:click={openCastRemote}><Icon name="cast" size={24} /></button>{/if}</span>
           {#if $areas.library}<a class="icon-btn" class:lib-held={libHeld} class:lib-in={libIn} href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>{/if}
-          <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
+          <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{badgeText(unread)}</span>{/if}</a>
         </div>
         {#if chipsRoom}
           <nav class="chipbar" class:tucked={mTucked} class:lib-held={libHeld || !chips} class:lib-in={libIn} aria-label={$t('shell.cats.title')} inert={mTucked || undefined}>

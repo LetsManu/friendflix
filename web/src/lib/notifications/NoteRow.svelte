@@ -80,7 +80,8 @@
   .nr:not(.compact) { touch-action: pan-y; }
   /* Mein Bereich: one height for every row (64 px), so the reserved room of five rows fits: one title line, the action beside it */
   .nr.compact { grid-template-columns: minmax(0, 1fr) auto; }
-  .compact .main { height: 60px; padding-block: 8px; align-items: center; }
+  /* 60 px at the default text size (the room /me reserves); larger text grows the row */
+  .compact .main { min-height: 60px; padding-block: 8px; align-items: center; }
   .compact .ti { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .compact .act { grid-column: 2; grid-row: 1; align-self: center; margin: 0 4px 0 0; }
   .main { grid-column: 1; grid-row: 1; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; width: 100%; min-height: 44px; box-sizing: border-box;

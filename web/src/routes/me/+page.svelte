@@ -29,6 +29,8 @@
   const RECENT = 5;
   let me: Me | null = null, resume: Item[] | null = null;
   let recent: FeedGroup[] | null = null, total = 0, openGroups = new Set<string>();
+  /** the first load failed (rows already shown stay when a later one fails) */
+  let failed = false;
   /** *Alle ({n})* opens the notifications center (on a phone over the whole screen) */
   let sheet = false, allBtn: HTMLButtonElement | undefined;
   let tvApp = false; // TV app (LG, Fire TV): "Change server" (same as the header's account menu; the TV reaches it only here)
@@ -44,11 +46,12 @@
   /** the newest groups and how many entries there are; the rows shown stay until the answer is there */
   async function loadRecent() {
     if (get(kidsMode)) { recent = []; return; } // kids profiles have no notifications (the server answers 403 kids_profile)
+    failed = false;
     try {
       const f = await feed({ filter: 'all', limit: RECENT });
       recent = f.sections.flatMap((x) => x.groups).slice(0, RECENT);
       total = f.categories.reduce((n, c) => n + c.n, 0);
-    } catch { recent ??= []; }
+    } catch { failed = recent === null; }
   }
   /** a group opened or followed here is read (the bell's count follows); a refusal makes it unread again */
   async function read(id: string) {
@@ -104,8 +107,10 @@
     <div class="sech"><h2 id="h-notes">{$t('account.me.notifications')}</h2>{#if total > 0}<button type="button" class="lnk" aria-haspopup="dialog" aria-expanded={sheet}
       aria-controls={sheet ? 'ff-notes' : undefined} bind:this={allBtn} on:click={() => (sheet = true)}>{$t('account.me.all', { n: total })}</button>{/if}</div>
     <!-- the room of five rows, also while loading and when empty: nothing below moves when the answer comes -->
-    <div class="notes frost-flat frost-tile" aria-busy={recent === null} data-testid="me-notes">
-      {#if recent === null}
+    <div class="notes frost-flat frost-tile" aria-busy={recent === null && !failed} data-testid="me-notes">
+      {#if failed}
+        <div class="none" role="alert"><p>{$t('account.me.notificationsError')}</p><button type="button" class="ghost" on:click={loadRecent}>{$t('notes.retry')}</button></div>
+      {:else if recent === null}
         {#each Array(RECENT) as _, i (i)}<div class="nsk" aria-hidden="true"><Skeleton w="40px" h="40px" radius="12px" /><Skeleton lines={2} h=".8rem" /></div>{/each}
       {:else if !recent.length}<p class="muted none">{$t('account.me.noNotifications')}</p>
       {:else}
@@ -185,7 +190,10 @@
   .notes { box-sizing: border-box; min-height: calc(5 * 64px + 12px); padding: 6px 4px; box-shadow: inset 0 1px 0 var(--fr-hi), var(--fr-shadow-card); }
   .notes ul { list-style: none; margin: 0; padding: 0; }
   .nsk { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: center; height: 64px; box-sizing: border-box; padding: 2px 8px; }
-  .none { display: grid; place-items: center; min-height: calc(5 * 64px); margin: 0; text-align: center; }
+  .none { display: grid; place-items: center; align-content: center; gap: .6rem; min-height: calc(5 * 64px); margin: 0; text-align: center; }
+  .none p { margin: 0; }
+  .ghost { min-height: 44px; padding: 0 14px; border-radius: 12px; background: transparent; font-weight: 700; }
+  .ghost:hover:not(:disabled) { background: rgba(255, 255, 255, .1); }
   .bleed { margin: 0 calc(var(--pad-x) * -1) 1.4rem; }
   .groups { display: grid; grid-template-columns: 1fr; gap: 0; }
   @media (min-width: 900px) { .groups { grid-template-columns: repeat(3, 1fr); gap: 1.2rem; align-items: start; } }

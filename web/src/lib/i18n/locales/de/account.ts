@@ -56,6 +56,7 @@ export default {
     notifications: 'Benachrichtigungen',
     all: 'Alle ({n})',
     noNotifications: 'Keine Benachrichtigungen',
+    notificationsError: 'Benachrichtigungen konnten nicht geladen werden.',
     continueWatching: 'Weiterschauen',
     language: 'Sprache: {name}',
     logout: 'Abmelden',

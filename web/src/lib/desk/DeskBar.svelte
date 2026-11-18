@@ -34,6 +34,7 @@
   import { menuKeys } from '#lib/ui/menuKeys';
   import { openPopup, type PopupHandle } from '#lib/ui/popups';
   import NotificationSheet from '#lib/notifications/NotificationSheet.svelte';
+  import { badgeText } from '#lib/badge';
 
   /** the header tabs: Live-TV and Aufnahmen after Filme while the feature is on; without the Mediathek only those (roles redesign §6) */
   $: tabs = liveTabs(libraryTabs(HEADER_TABS, $areas.library), LIVE_HEADERS, $features.livetv);
@@ -492,7 +493,7 @@
     <div class="pop-anchor">
       <!-- the notifications: a side sheet (a modal dialog, portalled to <body>); the focus comes back here when it closes -->
       <button type="button" class="round frost" class:frost-safe={safe} aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-haspopup="dialog" aria-expanded={bell} aria-controls={bell ? 'ff-notes' : undefined} bind:this={bellBtn} on:click={toggleBell} use:clipSheen>
-        <span class="sclip" aria-hidden="true"></span><Icon name="bell" size={20} />{#if unread}<span class="dot">{unread}</span>{/if}
+        <span class="sclip" aria-hidden="true"></span><Icon name="bell" size={20} />{#if unread}<span class="dot">{badgeText(unread)}</span>{/if}
       </button>
       {#if bell}<NotificationSheet trigger={bellBtn} on:close={() => (bell = false)} />{/if}
     </div>

@@ -64,6 +64,7 @@ const pl: Translation<typeof de> = {
     notifications: 'Powiadomienia',
     all: 'Wszystkie ({n})',
     noNotifications: 'Brak powiadomień',
+    notificationsError: 'Nie udało się wczytać powiadomień.',
     continueWatching: 'Kontynuuj oglądanie',
     language: 'Język: {name}',
     logout: 'Wyloguj',

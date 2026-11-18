@@ -67,6 +67,45 @@ test.describe('notifications on a phone', () => {
     await expect(page.getByRole('button', { name: /Benachrichtigungen/ })).toHaveCount(0);
   });
 
+  test('above 99 the avatar dot shows 99+; its name keeps the real number', async ({ page }) => {
+    await page.route(/\/api\/notifications\/feed\?limit=0$/, (r) => r.fulfill({ json: { unread: 150, categories: [{ key: 'devices', n: 150 }] } }));
+    await page.goto('/watchlist');
+    const head = page.locator('header.nav.m');
+    await expect(head.locator('a.avatar .dot')).toHaveText('99+');
+    await expect(head.getByRole('link', { name: 'Mein Bereich, 150 neue Benachrichtigungen' })).toBeVisible();
+  });
+
+  test('larger text: the rows of Mein Bereich grow instead of overflowing', async ({ page }) => {
+    await page.goto('/me');
+    const list = mine(page).locator('li.nr');
+    await expect(list).toHaveCount(5);
+    await page.evaluate(() => { document.documentElement.style.fontSize = '150%'; });
+    const fits = await mine(page).locator('li.nr .main').evaluateAll((els) => els.map((el) => el.scrollHeight <= el.clientHeight + 1));
+    expect(fits).toEqual([true, true, true, true, true]);
+    expect((await list.first().boundingBox())!.height).toBeGreaterThan(64);
+  });
+
+  test.describe('a failed load', () => {
+    test.use({ allowedConsole: /status of 500/ });
+    test('Mein Bereich shows the error with Nochmal in the same room', async ({ page }) => {
+      let fail = true;
+      await page.route(/\/api\/notifications\/feed\?.*limit=5/, (r) => (fail ? r.fulfill({ status: 500, json: { error: 'x' } }) : r.fallback()));
+      await page.goto('/me');
+      const err = mine(page).getByRole('alert');
+      await expect(err).toContainText('Benachrichtigungen konnten nicht geladen werden.');
+      await expect(mine(page).getByText('Keine Benachrichtigungen')).toHaveCount(0);
+      const box = (await mine(page).boundingBox())!;
+      expect(Math.round(box.height)).toBeGreaterThanOrEqual(5 * 64 + 12);
+      const again = err.getByRole('button', { name: 'Nochmal' });
+      expect((await again.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      fail = false;
+      await again.tap();
+      await expect(mine(page).locator('li.nr')).toHaveCount(5);
+      const after = (await mine(page).boundingBox())!;
+      expect([Math.round(after.y), Math.round(after.height)]).toEqual([Math.round(box.y), Math.round(box.height)]);
+    });
+  });
+
   test('Mein Bereich shows the newest 5 groups and does not mark read', async ({ page, api }) => {
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });

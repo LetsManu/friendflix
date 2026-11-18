@@ -23,6 +23,8 @@ export const REMOVE_SHARE = 0.4;
 export const FLING_PX_MS = 0.5;
 const FLING_WINDOW_MS = 100;
 const OUT_MS = 180;
+/** how long the click a drag may still end with is swallowed (a short flick stays inside the browser's tap slop and can click late) */
+const SWALLOW_MS = 350;
 const BACK_MS = 260;
 /** a slight overshoot: the spring back */
 const SPRING = 'cubic-bezier(.3, 1.4, .5, 1)';
@@ -39,25 +41,32 @@ export function swipeToRemove(node: HTMLElement, options: SwipeOptions) {
   let pointer = -1, x0 = 0, y0 = 0, dx = 0, width = 1;
   let samples: Array<{ x: number; t: number }> = [];
   let outTimer: ReturnType<typeof setTimeout> | undefined;
+  /** sliding out: a second swipe must not remove it again */
+  let leaving = false;
+  /** ends the swallowing of the last drag's click */
+  let unswallow: (() => void) | null = null;
 
   const paint = (x: number, transition: string) => {
     node.style.transition = transition;
     node.style.transform = x ? `translateX(${x}px)` : '';
     node.style.opacity = x ? String(Math.max(0.2, 1 - (-x / width) * 0.8)) : '';
   };
-  /** the click a drag would end with must not open or follow the row */
+  /** the click a drag would end with must not open or follow the row: swallowed until the next press or SWALLOW_MS */
   const swallowClick = () => {
+    unswallow?.();
     const stop = (e: Event) => { e.preventDefault(); e.stopPropagation(); };
-    node.addEventListener('click', stop, { capture: true, once: true });
-    setTimeout(() => node.removeEventListener('click', stop, { capture: true }), 0);
+    const timer = setTimeout(() => unswallow?.(), SWALLOW_MS);
+    node.addEventListener('click', stop, { capture: true });
+    unswallow = () => { clearTimeout(timer); node.removeEventListener('click', stop, { capture: true }); unswallow = null; };
   };
   const back = () => paint(0, still() ? 'none' : `transform ${BACK_MS}ms ${SPRING}, opacity ${BACK_MS}ms linear`);
   /** the row is gone once `remove` ran; one that stays (nothing was removed) comes back */
   const gone = () => {
     opts.remove();
-    outTimer = setTimeout(() => { if (node.isConnected) paint(0, 'none'); }, 0);
+    outTimer = setTimeout(() => { if (node.isConnected) { leaving = false; paint(0, 'none'); } }, 0);
   };
   const out = () => {
+    leaving = true;
     if (still()) { gone(); return; }
     paint(-width, `transform ${OUT_MS}ms ease-in, opacity ${OUT_MS}ms linear`);
     outTimer = setTimeout(gone, OUT_MS);
@@ -69,7 +78,8 @@ export function swipeToRemove(node: HTMLElement, options: SwipeOptions) {
   };
 
   const down = (e: PointerEvent) => {
-    if (opts.enabled === false || e.pointerType !== 'touch' || !e.isPrimary || phase !== 'idle') return;
+    unswallow?.(); // a new press: its click is its own
+    if (leaving || opts.enabled === false || e.pointerType !== 'touch' || !e.isPrimary || phase !== 'idle') return;
     phase = 'pending';
     pointer = e.pointerId;
     x0 = e.clientX; y0 = e.clientY; dx = 0;
@@ -113,6 +123,7 @@ export function swipeToRemove(node: HTMLElement, options: SwipeOptions) {
     update(o: SwipeOptions) { opts = o; },
     destroy() {
       clearTimeout(outTimer);
+      unswallow?.();
       node.removeEventListener('pointerdown', down);
       node.removeEventListener('pointermove', move);
       node.removeEventListener('pointerup', up);
