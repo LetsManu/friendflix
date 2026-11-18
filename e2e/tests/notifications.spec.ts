@@ -139,7 +139,8 @@ test.describe('notifications center', () => {
     await s.getByRole('button', { name: 'Geräte leeren' }).click();
     await expect(rows(page)).toHaveCount(0);
     await expect(s.getByText('Keine Benachrichtigungen')).toBeVisible();
-    expect(api.log.some((l) => l.startsWith('POST /api/notifications/hide {"category":"devices"}'))).toBe(true);
+    // bounded to the feed's snapshot (the newest entry id when the page loaded, 75): entries that arrive meanwhile stay
+    expect(api.log.some((l) => l.startsWith('POST /api/notifications/hide {"category":"devices","max":75}'))).toBe(true);
     await expect(toasts(page).getByText('6 Benachrichtigungen entfernt')).toBeVisible();
     await toasts(page).getByRole('button', { name: 'Rückgängig' }).click();
     await expect(rowOf(page, TV)).toBeVisible();

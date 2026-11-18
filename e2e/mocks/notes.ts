@@ -97,7 +97,8 @@ function feed(st: NotesMock, filter: string, cursor: string | null, limit = PAGE
       items: es.slice(0, ITEMS).map((x) => ({ id: x.id, title: x.title, body: x.body, at: x.at })),
     });
   }
-  return { sections, next: start + limit < all.length ? String(start + limit) : null, ...counts(st) };
+  // the snapshot (the newest visible id; the mock has no paging snapshot, so later pages answer the current one)
+  return { sections, next: start + limit < all.length ? String(start + limit) : null, max: Math.max(0, ...visible(st).map((e) => e.id)), ...counts(st) };
 }
 
 /** the visible entries a selection names (ids, feed group ids, a filter up to the page's newest id `max`) */

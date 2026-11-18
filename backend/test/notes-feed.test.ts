@@ -177,8 +177,10 @@ describe('notifications feed', () => {
   const nextOf = (f: Feed) => (f.next ? decodeCursor(f.next) : null);
 
   it('rows arriving between pages neither lift a group off the unseen pages nor show up on them', async () => {
-    await seventy();
+    const ids = await seventy();
     const p1 = await feed(env.ctx, ua, 'de', opts(), NOW);
+    // the snapshot: the newest visible row id when the first page was loaded (a clear by filter stops there)
+    expect(p1.max).toBe(Math.max(...ids));
     expect(pageTitles(p1)).toEqual(Array.from({ length: 30 }, (_, i) => `G${i}`));
     // a brand-new group, and a new row for G65 (still unseen, on page 3), both newer than everything on page 1
     await seed([{ title: 'Neu', at: NOW }, { title: 'G65', at: NOW }]);
@@ -188,10 +190,13 @@ describe('notifications feed', () => {
     expect(pageTitles(p2)).toEqual(Array.from({ length: 30 }, (_, i) => `G${i + 30}`));
     expect(pageTitles(p3)).toEqual(Array.from({ length: 10 }, (_, i) => `G${i + 60}`));
     expect(p3.next).toBeNull();
+    expect([p2.max, p3.max]).toEqual([p1.max, p1.max]);
     // G65 keeps the shape it had when paging started
     expect(groups(p3).find((g) => g.title === 'G65')).toMatchObject({ count: 1, at: minutesAgo(66).toISOString() });
     // a fresh first page sees both
-    expect(pageTitles(await feed(env.ctx, ua, 'de', opts(), later)).slice(0, 2)).toEqual(['G65', 'Neu']);
+    const fresh = await feed(env.ctx, ua, 'de', opts(), later);
+    expect(pageTitles(fresh).slice(0, 2)).toEqual(['G65', 'Neu']);
+    expect(fresh.max).toBe(Math.max(...ids) + 2);
   });
 
   it('a local midnight between pages keeps the sections of the first page', async () => {
@@ -270,7 +275,7 @@ describe('notifications feed', () => {
     expect(Object.keys(r.json()).sort()).toEqual(['categories', 'unread']);
     expect(r.json()).toEqual({ unread: 1, categories: [{ key: 'downloads', n: 1 }, { key: 'devices', n: 1 }] });
     // empty parameters are the defaults (a full page)
-    expect(Object.keys((await get(a, '/api/notifications/feed?cursor=&filter=&tz=&limit=')).json()).sort()).toEqual(['categories', 'next', 'sections', 'unread']);
+    expect(Object.keys((await get(a, '/api/notifications/feed?cursor=&filter=&tz=&limit=')).json()).sort()).toEqual(['categories', 'max', 'next', 'sections', 'unread']);
   });
 
   it('bad input', async () => {

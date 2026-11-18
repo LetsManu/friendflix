@@ -11,7 +11,7 @@ const g = (id: string, over: Partial<FeedGroup> = {}): FeedGroup => {
   const base = { id, kind: 'k', category: 'other' as const, title: id, body: null, link: null, at: '2026-10-01T00:00:00Z', count: 1, unread: true, items: [{ id: Number(id.replace(/\D/g, '')) || 1, title: id, body: null, at: '2026-10-01T00:00:00Z' }], ...over };
   return { ...base, unreadCount: over.unreadCount ?? (base.unread ? base.count : 0) };
 };
-const page = (sections: Array<[string, string[]]>, next: string | null = null, unread = 3): Feed => ({ sections: sections.map(([key, ids]) => ({ key, groups: ids.map((i) => g(i)) })), next, unread, categories: [] });
+const page = (sections: Array<[string, string[]]>, next: string | null = null, unread = 3): Feed => ({ sections: sections.map(([key, ids]) => ({ key, groups: ids.map((i) => g(i)) })), next, unread, categories: [], max: 99 });
 const fake = (over: Partial<NotesApi> = {}): NotesApi => ({
   feed: vi.fn(async () => page([['today', ['a1']]])),
   // no count reload by default (it fails: the local counts stay), so the baseline tests see the store's own arithmetic
@@ -181,7 +181,7 @@ const deferred = <T>() => {
   return { promise, resolve, reject };
 };
 const bigGroup = (id: string, count: number, over: Partial<FeedGroup> = {}) => g(id, { count, ...over });
-const pageOf = (groups: FeedGroup[], unread: number, next: string | null = null): Feed => ({ sections: [{ key: 'today', groups }], next, unread, categories: [] });
+const pageOf = (groups: FeedGroup[], unread: number, next: string | null = null): Feed => ({ sections: [{ key: 'today', groups }], next, unread, categories: [], max: 99 });
 
 describe('notifications feed store: baseline, reset, concurrency', () => {
   it('noteFresh counts against the baseline lowered by local read and hide', async () => {
@@ -238,20 +238,28 @@ describe('notifications feed store: baseline, reset, concurrency', () => {
     await s.read({ groups: ['a1'] });
     expect(get(s).fresh).toBe(0);
   });
-  it('a clear or read by filter sends the newest row id the page knows, so rows that arrived since stay', async () => {
+  it('a clear or read by filter sends the first page\'s snapshot, so rows that arrived since stay', async () => {
     const hide = vi.fn(async () => ({ undo: 'tok', n: 2 }));
     const markRead = vi.fn(async () => ({ ok: true }));
-    const feed = vi.fn().mockResolvedValueOnce(pageOf([g('a1', { items: [{ id: 7, title: 'x', body: null, at: '' }, { id: 3, title: 'y', body: null, at: '' }] }), g('a9')], 3, 'c'))
-      .mockResolvedValueOnce(pageOf([g('b12')], 0));
+    const feed = vi.fn().mockResolvedValueOnce({ ...pageOf([g('a1'), g('a9')], 3, 'c'), max: 40 }).mockResolvedValueOnce({ ...pageOf([g('b12')], 3), max: 40 })
+      .mockResolvedValueOnce({ ...pageOf([g('a50')], 3), max: 55 });
     const s = createFeed(fake({ feed, hide, markRead }));
+    await s.hide({ category: 'all' }); // nothing loaded: no snapshot to send
+    expect(hide).toHaveBeenLastCalledWith({ category: 'all' });
     await s.load('devices');
     await s.read({ category: 'unread' });
-    expect(markRead).toHaveBeenLastCalledWith({ category: 'unread', max: 9 });
+    expect(markRead).toHaveBeenLastCalledWith({ category: 'unread', max: 40 });
     await s.more();
     await s.hide({ category: 'devices' });
-    expect(hide).toHaveBeenLastCalledWith({ category: 'devices', max: 12 });
+    expect(hide).toHaveBeenLastCalledWith({ category: 'devices', max: 40 });
     await s.hide({ groups: ['x'] }); // ids and groups carry their own bound
     expect(hide).toHaveBeenLastCalledWith({ groups: ['x'] });
+    await s.refresh();
+    await s.hide({ category: 'devices' });
+    expect(hide).toHaveBeenLastCalledWith({ category: 'devices', max: 55 });
+    s.reset();
+    await s.hide({ category: 'all' });
+    expect(hide).toHaveBeenLastCalledWith({ category: 'all' });
   });
   it('a failed read or hide and an undo restore the baseline', async () => {
     const feed = vi.fn(async () => pageOf([bigGroup('a1', 2), bigGroup('a2', 1)], 3));

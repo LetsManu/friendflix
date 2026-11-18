@@ -9,9 +9,10 @@ export interface FeedItem { id: number; title: string; body: string | null; at: 
 export interface FeedGroup { id: string; kind: string; category: Category; title: string; body: string | null; link: string | null; at: string; count: number; unread: boolean; unreadCount: number; items: FeedItem[] }
 export interface Section { key: SectionKey; groups: FeedGroup[] }
 export interface Counts { unread: number; categories: Array<{ key: Category; n: number }> }
-export interface Feed extends Counts { sections: Section[]; next: string | null }
+/** `max`: the newest entry id when the first page was loaded (later pages keep it); a read or clear by filter sends it back */
+export interface Feed extends Counts { sections: Section[]; next: string | null; max: number }
 /**
- * What read / hide act on; nothing at all means everything (read only). `max`: the newest entry id the page knows; a category then
+ * What read / hide act on; nothing at all means everything (read only). `max`: the feed's snapshot (Feed.max); a category then
  * leaves out entries that arrived since (the store adds it).
  */
 export interface Selection { ids?: number[]; groups?: string[]; category?: Filter; max?: number }

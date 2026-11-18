@@ -63,6 +63,8 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
   let baseUnread = 0;
   /** the layout's last unread count since this page loaded (null: none yet), so a new baseline corrects the pill as well */
   let lastNow: number | null = null;
+  /** the first page's snapshot (Feed.max: the newest entry id then); 0 before a page arrived */
+  let snapMax = 0;
   const freshOf = (base: number) => (lastNow === null ? 0 : Math.max(0, lastNow - base));
   /** the page's unread baseline, mirrored into the state for the sheet's header, and the pill counted against it */
   const setBase = (n: number) => {
@@ -95,6 +97,7 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
       const f: Feed = await api.feed({ filter });
       if (g !== gen) return;
       baseUnread = f.unread;
+      snapMax = f.max;
       lastNow = null; // a count from before this page would be counted against the new baseline
       update((s) => ({ ...s, sections: f.sections, next: f.next, loading: 'idle', fresh: 0, open: s.open, unread: f.unread, categories: f.categories }));
     } catch (e) {
@@ -102,12 +105,8 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
     }
   };
 
-  /** a selection by filter, bounded to the newest entry the page knows: entries that arrived since (the pill) are not touched */
-  const bounded = (sel: Selection): Selection => {
-    if (sel.category === undefined || sel.max !== undefined) return sel;
-    const ids = state.sections.flatMap((x) => x.groups.flatMap((g) => g.items.map((i) => i.id)));
-    return ids.length ? { ...sel, max: Math.max(...ids) } : sel;
-  };
+  /** a selection by filter, bounded to the page's snapshot: entries that arrived since (the pill) are not touched */
+  const bounded = (sel: Selection): Selection => (sel.category === undefined || sel.max !== undefined || snapMax <= 0 ? sel : { ...sel, max: snapMax });
   const removeGroups = (sel: Selection): Removed[] => {
     const out: Removed[] = [];
     state.sections.forEach((sec, sectionIndex) => sec.groups.forEach((group, index) => { if (hits(group, sel)) out.push({ group, section: sec.key, index, sectionIndex }); }));
@@ -131,7 +130,7 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
   return {
     subscribe,
     load: (filter) => first(filter, false),
-    reset() { gen++; epoch++; baseUnread = 0; lastNow = null; held.clear(); set(initial()); },
+    reset() { gen++; epoch++; baseUnread = 0; lastNow = null; snapMax = 0; held.clear(); set(initial()); },
     refresh: () => first(state.filter, true),
     async more() {
       if (!state.next || state.loading !== 'idle') return;

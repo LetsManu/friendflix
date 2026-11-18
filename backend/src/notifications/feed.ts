@@ -16,7 +16,8 @@ export type FeedFilter = 'all' | 'unread' | Category;
 export interface FeedItem { id: number; title: string; body: string | null; at: string }
 export interface FeedGroup { id: string; kind: string; category: Category; title: string; body: string | null; link: string | null; at: string; count: number; unread: boolean; unreadCount: number; items: FeedItem[] }
 export interface FeedCounts { unread: number; categories: Array<{ key: Category; n: number }> }
-export interface Feed extends FeedCounts { sections: Array<{ key: SectionKey; groups: FeedGroup[] }>; next: string | null }
+/** `max`: the newest visible row id when the first page was loaded (the snapshot later pages keep; a read or clear by filter sends it back) */
+export interface Feed extends FeedCounts { sections: Array<{ key: SectionKey; groups: FeedGroup[] }>; next: string | null; max: number }
 
 /**
  * The shared SQL fragments below expect this FROM: `n` = the notification, `u` = the person (`$1` = their user id),
@@ -213,5 +214,5 @@ export async function feed(
   }
   const end = page[page.length - 1];
   const next = g.rows.length > limit && end ? encodeCursor({ now: snap.now.toISOString(), max: snap.max, at: end.at_us, id: Number(end.last_id) }) : null;
-  return { sections, next, ...countsOf(perKind) };
+  return { sections, next, max: snap.max, ...countsOf(perKind) };
 }
