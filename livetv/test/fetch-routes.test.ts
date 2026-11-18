@@ -85,7 +85,7 @@ beforeAll(async () => {
   await new Promise<void>((r) => provider.listen(0, '127.0.0.1', r));
   port = (provider.address() as AddressInfo).port;
   const app = createApp({
-    verifier: { key, cache: new ReplayCache(), notBefore: Date.now() - 1000 }, version: null, bootId: '0123456789abcdef',
+    verifier: { key, cache: new ReplayCache(), notBefore: Date.now() - 1000 }, image: null, bootId: '0123456789abcdef',
     system: async () => ({}) as SystemView, routes: [...fetchRoutes({ guard, run }), ...parseRoutes({ maxBytes: PARSE_TEST_MAX })], warn: (m) => warnings.push(m),
   });
   api = http.createServer((req, res) => { void app(req, res); });

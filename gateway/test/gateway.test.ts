@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { isTrustedPeer, serviceHosts, setUntrustedPeers, watchUntrustedHost, watchUntrustedHosts } from '../src/peers.js';
 import { authClientIp, baseHeaders, blocksDirectStream, castHlsSubAllowed, compatPlaylist, createGateway, hlsAttrs, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
+import { imageCommit } from '../src/env.js';
 import { UPSTREAMS } from '../src/upstream/index.js';
 
 const ID = 'a'.repeat(32);
@@ -320,6 +321,18 @@ describe('baseHeaders', () => {
 });
 
 describe('gateway', () => {
+  it('gateway /health names its image commit', async () => {
+    const IMG = '9'.repeat(40);
+    for (const [image, want] of [[IMG, IMG], [undefined, null]] as const) {
+      const g = createGateway({ upstreamUrl: 'http://127.0.0.1:1', backendUrl: 'http://127.0.0.1:1', internalSecret: 's3cret-s3cret-s3cret', ...(image ? { image } : {}) });
+      const port = await listen(g.server);
+      try { expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toEqual({ status: 'ok', image: want }); } finally { g.server.close(); }
+    }
+    expect(imageCommit({ FF_IMAGE_COMMIT: IMG, GIT_SHA: 'a'.repeat(40) })).toBe(IMG);
+    expect(imageCommit({ GIT_SHA: 'a'.repeat(40) })).toBe('a'.repeat(40));
+    expect(imageCommit({ FF_IMAGE_COMMIT: 'dev', GIT_SHA: 'dev' })).toBeNull();
+    expect(imageCommit({})).toBeNull();
+  });
   it('sends nosniff and CORP on every answer (an image for the app: same-origin; an error and the health check too)', async () => {
     const img = await get(`/media/Items/${ID}/Images/Primary?maxWidth=600`);
     expect(img.headers.get('x-content-type-options')).toBe('nosniff');

@@ -49,7 +49,15 @@ describe('updater config', () => {
     ];
     for (const b of bad) expect(() => loadConfig({ INTERNAL_SECRET: SECRET, ...b }), JSON.stringify(b)).toThrow();
     expect(loadConfig({ INTERNAL_SECRET: SECRET, UPDATER_COMPOSE_FILES: 'compose.prod.yaml, compose.secrets.yaml', UPDATER_PROJECT_DIR: '/srv/friend flix', COMPOSE_PROJECT_NAME: 'ff', GIT_SHA: 'a'.repeat(40), APP_VERSION: '1.1.0' }))
-      .toMatchObject({ composeFiles: ['compose.prod.yaml', 'compose.secrets.yaml'], composeFilesAuto: false, projectDir: '/srv/friend flix', projectName: 'ff', gitSha: 'a'.repeat(40), version: '1.1.0' });
+      .toMatchObject({ composeFiles: ['compose.prod.yaml', 'compose.secrets.yaml'], composeFilesAuto: false, projectDir: '/srv/friend flix', projectName: 'ff', gitSha: 'a'.repeat(40), version: null });
+  });
+
+  it('updater config: no version, sha from FF_IMAGE_COMMIT', () => {
+    const A = 'a'.repeat(40), B = 'b'.repeat(40);
+    expect(loadConfig({ INTERNAL_SECRET: SECRET, FF_IMAGE_COMMIT: A, GIT_SHA: B, APP_VERSION: '1.1.0' })).toMatchObject({ gitSha: A, version: null });
+    expect(loadConfig({ INTERNAL_SECRET: SECRET, GIT_SHA: B })).toMatchObject({ gitSha: B, version: null });
+    expect(loadConfig({ INTERNAL_SECRET: SECRET, FF_IMAGE_COMMIT: 'dev', GIT_SHA: B }).gitSha).toBe(B);
+    expect(loadConfig({ INTERNAL_SECRET: SECRET, FF_IMAGE_COMMIT: 'dev' }).gitSha).toBeNull();
   });
 });
 

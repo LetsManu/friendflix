@@ -17,7 +17,7 @@ export interface LivetvConfig {
   libraryDir: string;
   /** LIVETV_SRT_PORTS, parsed: livetv listens on exactly these (spec §3.5) */
   srtPorts: number[];
-  version: string | null;
+  image: string | null;
 }
 
 const GB = 1024 ** 3;
@@ -60,6 +60,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): LivetvConfig {
     recordingsDir: '/recordings',
     libraryDir: '/library',
     srtPorts: parseSrtPorts(env.LIVETV_SRT_PORTS),
-    version: env.APP_VERSION && /^[0-9]+\.[0-9]+\.[0-9]+$/.test(env.APP_VERSION) ? env.APP_VERSION : null,
+    image: [env.FF_IMAGE_COMMIT, env.GIT_SHA].find((v) => v !== undefined && /^[0-9a-f]{40}$/.test(v)) ?? null,
   };
 }

@@ -7,7 +7,7 @@ import { ZodError } from 'zod';
 import { timingSafeEqual } from 'node:crypto';
 import { buildInfo } from './channel.js';
 import type { Ctx } from './ctx.js';
-import { MIN_ANDROID } from './version.js';
+import { MIN_ANDROID, imageCommit } from './version.js';
 import { loadSession } from './session.js';
 import { authOrigin } from './oidc.js';
 import { noteUntrustedForwarding, trustProxy } from './netaddr.js';
@@ -283,7 +283,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
     if (sent.length !== want.length || !timingSafeEqual(sent, want)) return reply.code(403).send({ error: 'csrf' });
   });
 
-  app.get('/health', async () => ({ status: 'ok', version: ctx.cfg.GIT_SHA.slice(0, 7) }));
+  app.get('/health', async () => ({ status: 'ok', version: imageCommit(ctx.cfg).slice(0, 7) }));
   // unauthenticated: the update page polls it while the backend restarts
   // public and harmless (the web footer shows the same): release version, codename, build sha, and whether the build is the
   // release commit or a nightly one (label "1.1.0-nightly · abc1234"); the GitHub lookup is cached and waited for 2.5 s at most.

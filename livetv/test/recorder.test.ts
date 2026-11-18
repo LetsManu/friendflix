@@ -285,7 +285,7 @@ describe('the recording routes', () => {
   let base = '';
   beforeEach(async () => {
     const app = createApp({
-      verifier: { key, cache: new ReplayCache(), notBefore: Date.now() - 1000 }, version: null, bootId: '0123456789abcdef',
+      verifier: { key, cache: new ReplayCache(), notBefore: Date.now() - 1000 }, image: null, bootId: '0123456789abcdef',
       system: async () => ({}) as SystemView, routes: recordingRoutes(recorder, { now: () => clock }), warn: (m) => logs.push(m),
     });
     api = http.createServer((req, res) => { void app(req, res); });

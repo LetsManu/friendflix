@@ -18,14 +18,17 @@ const E = { LIVETV_KEY_FILE: keyFile };
 describe('loadConfig', () => {
   it('defaults: port 8090, 6 GB cache, SRT 9000-9009, no version; the key from the file', () => {
     const c = loadConfig(E);
-    expect(c).toEqual({ port: 8090, key: Buffer.from(KEY_HEX, 'hex'), cacheDir: '/cache', cacheMaxBytes: 6 * 1024 ** 3, recordingsDir: '/recordings', libraryDir: '/library', srtPorts: [9000, 9001, 9002, 9003, 9004, 9005, 9006, 9007, 9008, 9009], version: null });
+    expect(c).toEqual({ port: 8090, key: Buffer.from(KEY_HEX, 'hex'), cacheDir: '/cache', cacheMaxBytes: 6 * 1024 ** 3, recordingsDir: '/recordings', libraryDir: '/library', srtPorts: [9000, 9001, 9002, 9003, 9004, 9005, 9006, 9007, 9008, 9009], image: null });
     expect(KEY_FILE).toBe('/run/friendflix-livetv/livetv_key');
   });
 
   it('reads every value and checks it', () => {
-    const c = loadConfig({ ...E, PORT: '18090', LIVETV_CACHE_MAX_GB: '2.5', LIVETV_SRT_PORTS: '9100', APP_VERSION: '3.4.0' });
-    expect(c).toMatchObject({ port: 18090, cacheMaxBytes: Math.floor(2.5 * 1024 ** 3), srtPorts: [9100], version: '3.4.0' });
-    expect(loadConfig({ ...E, APP_VERSION: 'dev' }).version).toBeNull();
+    const c = loadConfig({ ...E, PORT: '18090', LIVETV_CACHE_MAX_GB: '2.5', LIVETV_SRT_PORTS: '9100', FF_IMAGE_COMMIT: 'a'.repeat(40) });
+    expect(c).toMatchObject({ port: 18090, cacheMaxBytes: Math.floor(2.5 * 1024 ** 3), srtPorts: [9100], image: 'a'.repeat(40) });
+    expect(loadConfig({ ...E, FF_IMAGE_COMMIT: 'dev' }).image).toBeNull();
+    expect(loadConfig({ ...E, GIT_SHA: 'b'.repeat(40) }).image).toBe('b'.repeat(40)); // an image from before FF_IMAGE_COMMIT
+    expect(loadConfig({ ...E, FF_IMAGE_COMMIT: 'a'.repeat(40), GIT_SHA: 'b'.repeat(40) }).image).toBe('a'.repeat(40));
+    expect(loadConfig({ ...E, APP_VERSION: '3.4.0' }).image).toBeNull();
     expect(() => loadConfig({ ...E, PORT: '80' })).toThrow(/PORT/);
     expect(() => loadConfig({ ...E, PORT: 'x' })).toThrow(/PORT/);
     for (const gb of ['0', '-1', 'abc', '1e3', '100001']) expect(() => loadConfig({ ...E, LIVETV_CACHE_MAX_GB: gb }), gb).toThrow(/LIVETV_CACHE_MAX_GB/);

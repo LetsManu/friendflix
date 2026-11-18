@@ -233,7 +233,7 @@ describe('livetvStream', () => {
 describe('livetvHealth', () => {
   it('unsigned GET /healthz with a fresh 32-hex nonce: api, version, bootId and a proof that checks out', async () => {
     const ctx = healthCtx(realHealth);
-    expect(await livetvHealth(ctx)).toEqual({ api: 1, version: '3.4.0', bootId: '0123456789abcdef', proof: 'ok' });
+    expect(await livetvHealth(ctx)).toEqual({ api: 1, version: '3.4.0', image: null, bootId: '0123456789abcdef', proof: 'ok' });
     expect(await livetvHealth(ctx)).toMatchObject({ proof: 'ok' });
     const [a, b] = ctx.health.map(nonceOf);
     expect(ctx.health[0]!.url).toBe(`${BASE}/healthz?n=${a}`);
@@ -283,9 +283,19 @@ describe('livetvHealth', () => {
     } finally { vi.useRealTimers(); warn.mockRestore(); }
   });
 
+  it('backend livetv client keeps a 40-hex version', async () => {
+    const sha = 'c'.repeat(40);
+    const proof = (s: Seen) => healthProof(livetvKey(SECRET), nonceOf(s));
+    expect(await livetvHealth(healthCtx((s) => json({ ok: true, api: 1, version: sha, image: sha, bootId: '0123456789abcdef', proof: proof(s) })))).toEqual({ api: 1, version: sha, image: sha, bootId: '0123456789abcdef', proof: 'ok' });
+    // a livetv that only names the commit as its version still has an image
+    expect(await livetvHealth(healthCtx((s) => json({ ok: true, api: 1, version: sha, bootId: '0123456789abcdef', proof: proof(s) })))).toMatchObject({ version: sha, image: sha });
+    // not 40 hex: dropped
+    expect(await livetvHealth(healthCtx((s) => json({ ok: true, api: 1, version: 'abc1234', image: 'abc1234', bootId: '0123456789abcdef', proof: proof(s) })))).toMatchObject({ version: null, image: null });
+  });
+
   it('a version that is not X.Y.Z is null; anything malformed or unreachable is null', async () => {
     const proof = (s: Seen) => healthProof(livetvKey(SECRET), nonceOf(s));
-    expect(await livetvHealth(healthCtx((s) => json({ ok: true, api: 2, version: '<b>', bootId: 'fedcba9876543210', proof: proof(s) })))).toEqual({ api: 2, version: null, bootId: 'fedcba9876543210', proof: 'ok' });
+    expect(await livetvHealth(healthCtx((s) => json({ ok: true, api: 2, version: '<b>', bootId: 'fedcba9876543210', proof: proof(s) })))).toEqual({ api: 2, version: null, image: null, bootId: 'fedcba9876543210', proof: 'ok' });
     for (const bad of [{ ok: false, api: 1, version: null, bootId: '0123456789abcdef' }, { ok: true, api: '1', bootId: '0123456789abcdef' }, { ok: true, api: 1, bootId: 'nope' }, { ok: true, api: 1.5, bootId: '0123456789abcdef' }, null]) {
       expect(await livetvHealth(healthCtx((s) => json(bad && { ...bad, proof: proof(s) }))), JSON.stringify(bad)).toBeNull();
     }

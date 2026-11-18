@@ -209,7 +209,7 @@ export const SETTINGS: readonly SettingDef[] = [
 
 /** Per container or per deployment, or shared with a container that reads env only: env > default, read-only in Admin -> Settings. */
 export const ENV_ONLY_KEYS: readonly string[] = ['PORT', 'DIGEST_DAY', 'DIGEST_HOUR', 'MEDIA_SERVER', 'METRICS_TOKEN', 'ROLE_TEMPLATES',
-  'OIDC_ALLOW_INSECURE', 'PREVIEW_DIR', 'UPDATE_REPO', 'DOWNLOAD_DIR', 'BACKGROUND_JOBS', 'GATEWAY_URL', 'UPDATER_URL', 'LIVETV_URL',
+  'OIDC_ALLOW_INSECURE', 'PREVIEW_DIR', 'UPDATE_REPO', 'DOWNLOAD_DIR', 'BACKGROUND_JOBS', 'GATEWAY_URL', 'UPDATER_URL', 'LIVETV_URL', 'WEB_INTERNAL_URL',
   // database pool limits: read once when the pool opens, before the settings store exists (db.ts poolOptions)
   'DB_CONNECT_TIMEOUT_MS', 'DB_STATEMENT_TIMEOUT_MS', 'DB_IDLE_TX_TIMEOUT_MS', 'DB_LONG_STATEMENT_TIMEOUT_MS',
   // expert tuning of the recommendation engine v2 (Admin -> Settings, group recommendations, says they are set in .env)
@@ -217,7 +217,7 @@ export const ENV_ONLY_KEYS: readonly string[] = ['PORT', 'DIGEST_DAY', 'DIGEST_H
 /** Needed before the database can be read: env (incl. _FILE) > bootstrap volume file > default; never stored in the database. */
 export const BOOTSTRAP_KEYS: readonly string[] = ['DATABASE_URL', 'REDIS_URL', 'APP_ENC_KEY', 'INTERNAL_SECRET'];
 /** Baked into the image at build time. */
-export const BUILD_KEYS: readonly string[] = ['GIT_SHA', 'BUILD_TIME', 'APP_VERSION', 'APP_CODENAME'];
+export const BUILD_KEYS: readonly string[] = ['GIT_SHA', 'FF_IMAGE_COMMIT', 'BUILD_TIME', 'APP_VERSION', 'APP_CODENAME'];
 
 const byKey = new Map(SETTINGS.map((s) => [s.key, s]));
 

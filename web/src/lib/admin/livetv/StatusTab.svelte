@@ -230,7 +230,7 @@
     {:else}
       <p class="ok" role="status"><Icon name="check" size={18} />{$t('adminLive.mini.running')}</p>
     {/if}
-    <dl class="ver"><div><dt>{$t('adminLive.mini.version')}</dt><dd><code>{s.version ?? st?.version ?? '–'}</code></dd></div></dl>
+    <dl class="ver"><div><dt>{$t('adminLive.mini.version')}</dt><dd><code>{(s.version ?? st?.version ?? '–').replace(/^([0-9a-f]{7})[0-9a-f]{33}$/, '$1')}</code></dd></div></dl>
 
     <UpdaterNotes {s} />
 

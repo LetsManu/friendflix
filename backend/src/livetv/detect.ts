@@ -12,7 +12,7 @@ import type { Encoder, LivetvSystem } from './wire.js';
  * the sync read for `featureFlags` and the summary, `detectLivetv` refreshes it (one check at a time), `livetvDetectTick` runs it
  * every minute.
  */
-export interface LivetvState { reachable: boolean; installed: boolean; version: string | null; bootId: string | null; checkedAt: number }
+export interface LivetvState { reachable: boolean; installed: boolean; version: string | null; image: string | null; bootId: string | null; checkedAt: number }
 
 /**
  * how the benchmark after enabling went: `started` = launched (it runs in the background; its result appears on the conversions
@@ -56,7 +56,7 @@ async function check(ctx: Ctx, slot: Slot, strict: boolean, tick: boolean): Prom
     slot.state = { ...prev, reachable: false, checkedAt: Date.now() };
     return slot.state;
   }
-  const next: LivetvState = { reachable: h !== null, installed: ok && h.api === 1, version: ok ? h.version : null, bootId: ok ? h.bootId : null, checkedAt: Date.now() };
+  const next: LivetvState = { reachable: h !== null, installed: ok && h.api === 1, version: ok ? h.version : null, image: ok ? h.image : null, bootId: ok ? h.bootId : null, checkedAt: Date.now() };
   const was = prev?.installed; // undefined until the first look: a backend that starts next to a running livetv is not "just enabled"
   slot.state = next;
   if (!next.installed) { slot.bench = null; slot.appearance++; } // the outcome belongs to this appearance

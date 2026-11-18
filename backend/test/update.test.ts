@@ -156,6 +156,17 @@ describe('admin update', () => {
     expect((await env.app.inject('/health')).json().version).toBe(CUR.slice(0, 7));
   });
 
+  it('/health answers FF_IMAGE_COMMIT[0:7], else GIT_SHA[0:7]', async () => {
+    await setup({ FF_IMAGE_COMMIT: 'd'.repeat(40) });
+    expect((await env.app.inject('/health')).json()).toEqual({ status: 'ok', version: 'ddddddd' });
+    await env.close();
+    await setup({ FF_IMAGE_COMMIT: undefined });
+    expect((await env.app.inject('/health')).json()).toEqual({ status: 'ok', version: CUR.slice(0, 7) });
+    await env.close();
+    await setup({ FF_IMAGE_COMMIT: 'dev' }); // not 40 hex: the GIT_SHA of older images stands in
+    expect((await env.app.inject('/health')).json().version).toBe(CUR.slice(0, 7));
+  });
+
   it('not configured -> 409', async () => {
     const { post } = await setup();
     expect((await post()).statusCode).toBe(409);

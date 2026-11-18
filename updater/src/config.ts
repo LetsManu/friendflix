@@ -61,11 +61,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): UpdaterConfig {
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('PORT must be 1024-65535');
   const backendHealthUrl = env.UPDATER_BACKEND_HEALTH_URL || 'http://backend:3000/health';
   if (!/^http:\/\/[a-z0-9][a-z0-9.-]{0,62}(:[0-9]{2,5})?\/[a-z]{0,20}$/.test(backendHealthUrl)) throw new Error('UPDATER_BACKEND_HEALTH_URL must be an internal http URL');
-  const sha = env.GIT_SHA && /^[0-9a-f]{40}$/.test(env.GIT_SHA) ? env.GIT_SHA : null;
+  const sha = [env.FF_IMAGE_COMMIT, env.GIT_SHA].find((v) => v !== undefined && /^[0-9a-f]{40}$/.test(v)) ?? null;
   return {
     port, secret: secret(env), projectDir, composeFiles, composeFilesAuto, projectName, repo, dockerHost,
     stateDir: env.UPDATER_STATE_DIR || '/state', backendHealthUrl,
-    version: env.APP_VERSION && /^[0-9]+\.[0-9]+\.[0-9]+$/.test(env.APP_VERSION) ? env.APP_VERSION : null, gitSha: sha,
+    version: null, gitSha: sha,
     ...(env.HOSTNAME && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(env.HOSTNAME) ? { self: env.HOSTNAME } : {}),
   };
 }
