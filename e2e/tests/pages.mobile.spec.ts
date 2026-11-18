@@ -8,7 +8,7 @@ test.describe('account and news pages (phone)', () => {
   test('/me renders with the tab bar and no horizontal overflow', async ({ page }) => {
     await page.goto('/me');
     await expect(page.getByRole('list', { name: 'Schnellzugriff' })).toBeVisible();
-    await expect(page.getByText('Anna hat dich zur Liste „Annas Klassiker“ eingeladen')).toBeVisible();
+    await expect(page.getByTestId('me-notes').getByText('Nordlicht ist bereit')).toBeVisible();
     await expect(page.locator('.tabbar')).toBeVisible();
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });

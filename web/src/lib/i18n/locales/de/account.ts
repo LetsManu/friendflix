@@ -54,7 +54,6 @@ export default {
     manageProfiles: 'Profile bearbeiten',
     quick: 'Schnellzugriff',
     notifications: 'Benachrichtigungen',
-    less: 'Weniger',
     all: 'Alle ({n})',
     noNotifications: 'Keine Benachrichtigungen',
     continueWatching: 'Weiterschauen',

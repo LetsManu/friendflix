@@ -57,7 +57,6 @@ const it: Translation<typeof de> = {
     manageProfiles: 'Modifica profili',
     quick: 'Accesso rapido',
     notifications: 'Notifiche',
-    less: 'Meno',
     all: 'Tutte ({n})',
     noNotifications: 'Nessuna notifica',
     continueWatching: 'Continua a guardare',

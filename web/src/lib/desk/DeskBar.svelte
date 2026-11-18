@@ -34,7 +34,6 @@
   import { menuKeys } from '#lib/ui/menuKeys';
   import { openPopup, type PopupHandle } from '#lib/ui/popups';
   import NotificationSheet from '#lib/notifications/NotificationSheet.svelte';
-  import { feedStore } from '#lib/notifications/store';
 
   /** the header tabs: Live-TV and Aufnahmen after Filme while the feature is on; without the Mediathek only those (roles redesign §6) */
   $: tabs = liveTabs(libraryTabs(HEADER_TABS, $areas.library), LIVE_HEADERS, $features.livetv);
@@ -59,11 +58,11 @@
   export let lgApp = false;
   /** the current page with its query (where a profile switch comes back to) */
   export let here = '/';
-  export let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
+  /** every unread entry (the notifications center's counts, no cap): the bell's badge */
+  export let unread = 0;
   export let onHelp: () => void = () => {};
 
   const page = pageStore();
-  $: unread = notes.filter((n) => !n.read).length;
 
   // ---- solid pill once scrolled (24 px) or on pages without a billboard ----
   let scrollY = 0;
@@ -130,9 +129,6 @@
     if (bell) { shut(); return; }
     shut(); claim(); bell = true;
   }
-  // the layout reloaded the list (the 60-s poll, `ff-notes`): an open sheet shows the new unread entries as its *N neu* pill
-  let notesSeen = notes;
-  $: if (notes !== notesSeen) { notesSeen = notes; if (bell) feedStore.noteFresh(unread); }
   type Prof = { id: string; name: string; avatar: string; hasPin: boolean; active?: boolean };
   /** the other profiles (null: not loaded); profLoading: the request runs (the menu shows placeholder rows of the final height) */
   let others: Prof[] | null = null, profLoading = false, profFailedAt = -Infinity;

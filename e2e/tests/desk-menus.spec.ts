@@ -324,7 +324,7 @@ test.describe('header menus', () => {
   test('notifications: the bell opens the sheet (a titled dialog), unread rows marked, rows 44 px', async ({ page }) => {
     await page.goto('/watchlist');
     const bell = bar(page).getByRole('button', { name: /Benachrichtigungen/ });
-    await expect(bell.locator('.dot')).toHaveText('1');
+    await expect(bell.locator('.dot')).toHaveText('8'); // every unread entry of the feed (mocks/notes.ts)
     await expect(bell).toHaveAttribute('aria-haspopup', 'dialog');
     await bell.click();
     const notes = page.locator('#ff-notes');

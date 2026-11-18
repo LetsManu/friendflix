@@ -23,7 +23,7 @@
   import { uid } from '#lib/ui/ids';
   import NoteRow from './NoteRow.svelte';
   import { categoryKey, sectionLabel } from './look';
-  import { feedStore } from './store';
+  import { feedStore, latestCounts } from './store';
   import type { Category, Filter, Selection } from './types';
 
   /** the element the focus returns to on close (the bell) */
@@ -62,6 +62,9 @@
     freshSeen = s.fresh;
     if (s.fresh > 0 && s.loading === 'idle' && s.open.size === 0 && list && list.scrollTop <= 1) void loadFirst(s.filter, true);
   }
+  // the layout read the counts again (the 60-s poll, `ff-notes`): what arrived since the first page becomes the *N neu* pill
+  let countsSeen = get(latestCounts);
+  $: if ($latestCounts !== countsSeen) { countsSeen = $latestCounts; if ($latestCounts) feedStore.noteFresh($latestCounts.unread); }
   // the end of the list in view (or still in view after a page arrived): the next page; after a failed one only Nochmal goes on
   $: watchTail(io, tail, s.loading, s.next, failed);
 

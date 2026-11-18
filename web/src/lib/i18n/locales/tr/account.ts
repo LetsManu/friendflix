@@ -57,7 +57,6 @@ const tr: Translation<typeof de> = {
     manageProfiles: 'Profilleri düzenle',
     quick: 'Hızlı erişim',
     notifications: 'Bildirimler',
-    less: 'Daha az',
     all: 'Tümü ({n})',
     noNotifications: 'Bildirim yok',
     continueWatching: 'İzlemeye devam et',

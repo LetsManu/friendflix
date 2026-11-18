@@ -119,6 +119,7 @@ describe('notifications feed store', () => {
     await s.load('all');
     await s.hide({ category: 'unread' });
     expect(counts).toHaveBeenCalledTimes(1);
+    await flush();
     expect(get(s)).toMatchObject({ unread: 0, categories: [{ key: 'series', n: 9 }] });
     s.noteFresh(0);
     expect(get(s).fresh).toBe(0);
@@ -137,6 +138,16 @@ describe('notifications feed store', () => {
     d.resolve({ unread: 7, categories: [{ key: 'series', n: 7 }] });
     await h;
     expect(get(s)).toMatchObject({ unread: 0, categories: [] });
+  });
+  it('a clear answers (the undo toast) without waiting for the count reload', async () => {
+    const d = deferred<{ unread: number; categories: Array<{ key: 'series'; n: number }> }>();
+    const s = createFeed(fake({ feed: vi.fn(async () => pageOf([bigGroup('a1', 2), bigGroup('a2', 1)], 3)), counts: vi.fn(() => d.promise) }));
+    await s.load('all');
+    expect(await s.hide({ groups: ['a1'] })).toEqual({ undo: 'tok', n: 1 });
+    expect(get(s).unread).toBe(1); // the local count until the server's arrives
+    d.resolve({ unread: 4, categories: [{ key: 'series', n: 4 }] });
+    await flush();
+    expect(get(s)).toMatchObject({ unread: 4, categories: [{ key: 'series', n: 4 }] });
   });
   it('a failed count reload keeps the local counts', async () => {
     const s = createFeed(fake({ feed: vi.fn(async () => pageOf([bigGroup('a1', 2), bigGroup('a2', 1)], 3)), counts: vi.fn(async () => { throw new Error('x'); }) }));
@@ -157,6 +168,8 @@ describe('notifications feed store', () => {
   });
 });
 
+/** lets answers already given (a count reload that runs on its own) arrive */
+const flush = () => new Promise<void>((r) => setTimeout(r, 0));
 const deferred = <T>() => {
   let resolve!: (v: T) => void;
   let reject!: (e: unknown) => void;

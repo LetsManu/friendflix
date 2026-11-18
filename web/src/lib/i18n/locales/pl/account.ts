@@ -62,7 +62,6 @@ const pl: Translation<typeof de> = {
     manageProfiles: 'Edytuj profile',
     quick: 'Szybki dostęp',
     notifications: 'Powiadomienia',
-    less: 'Mniej',
     all: 'Wszystkie ({n})',
     noNotifications: 'Brak powiadomień',
     continueWatching: 'Kontynuuj oglądanie',

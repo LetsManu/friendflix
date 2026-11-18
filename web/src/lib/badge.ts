@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { get } from 'svelte/store';
-import { api } from '#lib/api';
 import { kidsMode } from '#lib/kids';
+import { counts } from '#lib/notifications/api';
 
 /**
  * App icon badge (Badging API, installed PWA on phone/desktop): the number of unread notifications - new episodes of followed
@@ -24,12 +24,10 @@ export async function setAppBadge(n: number, nav: BadgeNav | undefined = typeof 
   } catch { return false; }
 }
 
-/** Unread entries of a /api/notifications answer. */
-export const unreadCount = (notes: ReadonlyArray<{ read?: boolean }> | undefined): number => (notes ?? []).filter((n) => !n.read).length;
-
 let hooked = false;
 /**
- * Reads the unread count and shows it on the app icon. Never throws (kids profiles get 403 and a signed-out visitor 401: badge cleared).
+ * Reads the unread count (the notifications center's counts: every unread entry, not only the legacy list's newest 30) and shows
+ * it on the app icon (at most 99). Never throws (kids profiles get 403 and a signed-out visitor 401: badge cleared).
  * The first call also re-syncs whenever the tab becomes visible again.
  */
 export async function syncBadge(): Promise<void> {
@@ -39,7 +37,6 @@ export async function syncBadge(): Promise<void> {
   }
   if (get(kidsMode)) { await setAppBadge(0); return; } // kids profiles have no notifications (the request would be a 403 kids_profile)
   try {
-    const r = await api<{ notifications?: Array<{ read?: boolean }> }>('/api/notifications');
-    await setAppBadge(unreadCount(r.notifications));
+    await setAppBadge((await counts()).unread);
   } catch { await setAppBadge(0); }
 }

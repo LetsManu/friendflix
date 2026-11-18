@@ -8,7 +8,8 @@
    *   - a single entry with a link: that link (marks it read; the action pill beside it is then for the pointer only);
    *   - an unread single entry without a link: a button that marks it read (the focus then goes to its ✕);
    *   - a read single entry without a link: plain text, nothing to press.
-   * ✕ removes it (shown on hover or focus; always on touch, 44 px). `compact` (Mein Bereich): no ✕.
+   * ✕ removes it (shown on hover or focus; always on touch, 44 px); on touch a swipe to the left removes it too (swipe.ts).
+   * `compact` (Mein Bereich): nothing removes it, every row has the same height (one title line, the action beside it).
    *   <NoteRow {group} open={…} on:toggle on:read on:hide on:follow />
    */
   import { createEventDispatcher, tick } from 'svelte';
@@ -16,6 +17,7 @@
   import { fmtDateTime, fmtRelative, locale, t } from '#lib/i18n';
   import { uid } from '#lib/ui/ids';
   import { actionKeyOf, iconOf, toneOf } from './look';
+  import { swipeToRemove } from './swipe';
   import type { FeedGroup } from './types';
 
   export let group: FeedGroup;
@@ -50,7 +52,8 @@
   </span>
 {/snippet}
 
-<li class="nr" class:compact class:unread={group.unread} data-group={group.id} bind:this={row} tabindex="-1">
+<li class="nr" class:compact class:unread={group.unread} data-group={group.id} bind:this={row} tabindex="-1"
+  use:swipeToRemove={{ remove: () => dispatch('hide', group.id), enabled: !compact }}>
   {#if kind === 'link'}
     <a class="main" href={group.link} aria-label={name} aria-describedby={group.body ? `${id}-b` : undefined} on:click={() => dispatch('follow', group.id)}>{@render face(true)}</a>
   {:else if kind === 'still'}
@@ -73,7 +76,13 @@
 <style>
   /* every row has the same spacing: 4 px around, 10 px inside the button; the ✕ column is always reserved (it only fades in) */
   .nr { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 40px; column-gap: 2px; padding: 2px 0; list-style: none; }
-  .nr.compact { grid-template-columns: minmax(0, 1fr); }
+  /* the row moves under the finger to the left (swipe.ts); the page still scrolls up and down */
+  .nr:not(.compact) { touch-action: pan-y; }
+  /* Mein Bereich: one height for every row (64 px), so the reserved room of five rows fits: one title line, the action beside it */
+  .nr.compact { grid-template-columns: minmax(0, 1fr) auto; }
+  .compact .main { height: 60px; padding-block: 8px; align-items: center; }
+  .compact .ti { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .compact .act { grid-column: 2; grid-row: 1; align-self: center; margin: 0 4px 0 0; }
   .main { grid-column: 1; grid-row: 1; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; width: 100%; min-height: 44px; box-sizing: border-box;
     padding: 10px 8px; margin: 0; text-decoration: none; border: 0; border-radius: 14px; background: transparent; color: #fff; text-align: left; font: inherit; cursor: pointer; }
   .main:hover { background: rgba(255, 255, 255, .08); text-decoration: none; }

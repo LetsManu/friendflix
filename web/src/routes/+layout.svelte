@@ -40,7 +40,8 @@
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
   import DeskBar from '#lib/desk/DeskBar.svelte';
-  import { feedStore } from '#lib/notifications/store';
+  import { feedStore, latestCounts } from '#lib/notifications/store';
+  import { counts as noteCounts } from '#lib/notifications/api';
   import { deskActive, deskUi } from '#lib/desk/bar';
   import { historyIndex, trackNav } from '#lib/desk/back';
   import { railKey } from '#lib/tv/rail';
@@ -87,7 +88,8 @@
   let lgApp = false;
   let tvApp = false; // a TV app (LG, Fire TV) runs this page as its whole UI
   let pending = false, checking = false;
-  let notes: Array<{ id: number; title: string; link?: string; read: boolean }> = [];
+  /** every unread notification (the notifications center's counts, no cap): the bell's badge and the phone avatar's dot */
+  let unread = 0;
   let railOpen = false;
   let scrolled = false, help = false;
   let sentinel: HTMLElement;
@@ -253,7 +255,6 @@
   let stopBanner: (() => void) | null = null;
   $: if (showBanner && !stopBanner) stopBanner = startBanner();
   $: if (!showBanner && stopBanner) { stopBanner(); stopBanner = null; }
-  $: unread = notes.filter((n) => !n.read).length;
   $: if (path) { catOpen = false; catGone(); closePreview(); }
   $: chips = $mobile && showsChips(path) && !kidsUi && $areas.library;
   /**
@@ -318,9 +319,20 @@
 
   // the notifications center's feed (lib/notifications/store.ts) keeps nothing of another person or profile: a sign-out or a profile switch empties it
   let notesOwner: string | null = null;
-  $: notesOwnerNow = me ? `${me.id}|${me.profile?.id ?? ''}` : null;
-  $: if (notesOwnerNow !== notesOwner) { if (notesOwner !== null) feedStore.reset(); notesOwner = notesOwnerNow; }
-  async function loadNotes() { if (me?.kids) return; try { notes = (await api('/api/notifications')).notifications; } catch { /* ignore */ } } // kids: 403 kids_profile
+  const ownerOf = (m: Me | null) => (m ? `${m.id}|${m.profile?.id ?? ''}` : null);
+  $: notesOwnerNow = ownerOf(me);
+  $: if (notesOwnerNow !== notesOwner) { if (notesOwner !== null) { feedStore.reset(); unread = 0; latestCounts.set(null); if (me) void loadNotes(); } notesOwner = notesOwnerNow; }
+  /** the unread count (kids: none, the request would be a 403 kids_profile); an answer for the previous person is dropped */
+  async function loadNotes() {
+    if (me?.kids) { unread = 0; return; }
+    const owner = ownerOf(me);
+    try {
+      const c = await noteCounts();
+      if (owner !== ownerOf(me)) return;
+      unread = c.unread;
+      latestCounts.set(c);
+    } catch { /* ignore */ }
+  }
   $: here = publicPage ? path : path + $page.url.search; // (the prerendered /offline page has no search params)
   const HELP = [['shell.help.searchT', 'shell.help.searchD'], ['shell.help.playerT', 'shell.help.playerD'], ['shell.help.deviceT', 'shell.help.deviceD'], ['shell.help.tvT', 'shell.help.tvD'], ['shell.help.languageT', 'shell.help.languageD'], ['shell.help.moreT', 'shell.help.moreD']] as const;
 
@@ -920,7 +932,7 @@
         {/if}
       </header>
     {:else if desk}
-      <DeskBar bind:this={deskBar} {path} {home} {heroPage} {me} {who} {faceStyle} {multi} {admin} {canDownload} {lgApp} {here} {notes} held={libHeld} fadeIn={libIn} onHelp={() => (help = true)} />
+      <DeskBar bind:this={deskBar} {path} {home} {heroPage} {me} {who} {faceStyle} {multi} {admin} {canDownload} {lgApp} {here} {unread} held={libHeld} fadeIn={libIn} onHelp={() => (help = true)} />
     {/if}
     <TabBar {path} {canDownload} held={libHeld} fadeIn={libIn} />
     {#if (catOpen || catLeaving) && $mobile}

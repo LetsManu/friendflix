@@ -3,7 +3,7 @@
 /**
  * The notifications center (backend/src/notifications): a stateful feed of 70 groups over 3 pages (30 groups each), sections
  * *Heute*, *Diese Woche* and the previous calendar month, six "TV connected" entries in one group, one broadcast. GET
- * /api/notifications/feed (limit=0: the counts only), POST /read, /hide (an undo token) and /unhide. The legacy GET
+ * /api/notifications/feed (limit=0: the counts only; limit=5: Mein Bereich's newest five groups), POST /read, /hide (an undo token) and /unhide. The legacy GET
  * /api/notifications keeps its fixed answer unless `legacyFromFeed` (then: the newest 30 visible entries, so its unread count
  * matches the feed's).
  */
@@ -80,7 +80,7 @@ function counts(st: NotesMock) {
   return { unread: vis.filter((e) => !e.read).length, categories: NOTE_CATEGORIES.map((key) => ({ key, n: vis.filter((e) => e.category === key).length })).filter((c) => c.n > 0) };
 }
 
-function feed(st: NotesMock, filter: string, cursor: string | null) {
+function feed(st: NotesMock, filter: string, cursor: string | null, limit = PAGE) {
   const groups = new Map<string, NoteEntry[]>();
   for (const e of visible(st).filter((x) => shows(x, filter))) {
     const id = groupIdOf(e);
@@ -89,7 +89,7 @@ function feed(st: NotesMock, filter: string, cursor: string | null) {
   const all = [...groups.entries()];
   const start = cursor ? Number(cursor) : 0;
   const sections: Array<{ key: string; groups: unknown[] }> = [];
-  for (const [id, es] of all.slice(start, start + PAGE)) {
+  for (const [id, es] of all.slice(start, start + limit)) {
     const top = es[0]!, key = sectionOf(top.at);
     if (sections.at(-1)?.key !== key) sections.push({ key, groups: [] });
     sections.at(-1)!.groups.push({
@@ -97,7 +97,7 @@ function feed(st: NotesMock, filter: string, cursor: string | null) {
       items: es.slice(0, ITEMS).map((x) => ({ id: x.id, title: x.title, body: x.body, at: x.at })),
     });
   }
-  return { sections, next: start + PAGE < all.length ? String(start + PAGE) : null, ...counts(st) };
+  return { sections, next: start + limit < all.length ? String(start + limit) : null, ...counts(st) };
 }
 
 /** the visible entries a selection names (ids, feed group ids, a filter) */
@@ -115,7 +115,8 @@ export function notesRoute(st: NotesMock, m: string, p: string, sp: URLSearchPar
   }
   if (p === '/api/notifications/feed' && m === 'GET') {
     if (sp.get('limit') === '0') return J(counts(st));
-    return J(feed(st, sp.get('filter') || 'all', sp.get('cursor')));
+    const limit = sp.get('limit');
+    return J(feed(st, sp.get('filter') || 'all', sp.get('cursor'), limit ? Math.min(Math.max(1, Number(limit)), PAGE) : PAGE));
   }
   if (p === '/api/notifications/read' && m === 'POST') {
     const sel = body();
@@ -139,9 +140,10 @@ export function notesRoute(st: NotesMock, m: string, p: string, sp: URLSearchPar
   return null;
 }
 
-/** a new unread entry today (the newest), as the backend would add it */
+/** a new unread entry today (the newest: also shortly after midnight, when the fixed ones crowd into the first minutes), as the backend would add it */
 export function addNote(st: NotesMock, title = 'Hafenkanal ist bereit'): NoteEntry {
-  const e: NoteEntry = { id: st.nextId++, kind: 'download_ready', category: 'downloads', title, body: 'Zum Ansehen ohne Internet gespeichert.', link: '/downloads', at: new Date().toISOString(), read: false, hidden: false };
+  const at = new Date(Math.max(Date.now(), ...st.entries.map((x) => Date.parse(x.at) + 1000))).toISOString();
+  const e: NoteEntry = { id: st.nextId++, kind: 'download_ready', category: 'downloads', title, body: 'Zum Ansehen ohne Internet gespeichert.', link: '/downloads', at, read: false, hidden: false };
   st.entries.push(e);
   return e;
 }

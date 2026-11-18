@@ -9,7 +9,7 @@ test.describe('account and news pages', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Mein Bereich' })).toBeAttached();
     await expect(page.getByRole('list', { name: 'Schnellzugriff' })).toBeVisible();
     await expect(page.getByRole('heading', { level: 2, name: 'Benachrichtigungen' })).toBeVisible();
-    await expect(page.getByText('Anna hat dich zur Liste „Annas Klassiker“ eingeladen')).toBeVisible();
+    await expect(page.getByTestId('me-notes').getByText('Nordlicht ist bereit')).toBeVisible();
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 

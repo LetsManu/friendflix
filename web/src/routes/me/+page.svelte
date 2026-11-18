@@ -12,14 +12,25 @@
   import { perms } from '#lib/perms';
   import { logout } from '#lib/session';
   import { goto } from '$app/navigation';
-  import { locale, localeName, t, type TKey } from '#lib/i18n';
+  import { locale, localeName, t, tr, type TKey } from '#lib/i18n';
   import { isTvApp } from '#lib/tvapp';
   import { isFireTvApp, postFireTv } from '#lib/firetv/detect';
   import { changeServerViaHome } from '#lib/webos/home';
   import { toast } from '#lib/ui/toast';
+  import Skeleton from '#lib/ui/Skeleton.svelte';
+  import { kidsMode } from '#lib/kids';
+  import { mobile } from '#lib/viewport';
+  import NoteRow from '#lib/notifications/NoteRow.svelte';
+  import NotificationSheet from '#lib/notifications/NotificationSheet.svelte';
+  import { feed, markRead } from '#lib/notifications/api';
+  import type { FeedGroup } from '#lib/notifications/types';
 
-  type Note = { id: number; title: string; link?: string; read: boolean };
-  let me: Me | null = null, notes: Note[] | null = null, resume: Item[] | null = null, allNotes = false;
+  /** the notifications shown here: the newest groups (null: loading) */
+  const RECENT = 5;
+  let me: Me | null = null, resume: Item[] | null = null;
+  let recent: FeedGroup[] | null = null, total = 0, openGroups = new Set<string>();
+  /** *Alle ({n})* opens the notifications center (on a phone over the whole screen) */
+  let sheet = false, allBtn: HTMLButtonElement | undefined;
   let tvApp = false; // TV app (LG, Fire TV): "Change server" (same as the header's account menu; the TV reaches it only here)
 
   onMount(() => {
@@ -27,12 +38,31 @@
     api<Me>('/api/me').then((m) => (me = m)).catch(() => undefined);
     // Weiterschauen is library data (a person without libraries gets none: roles redesign §6)
     if (get(areas).library) api('/api/library/resume').then((r) => (resume = get(areas).library ? r.items : [])).catch(() => (resume = []));
-    api('/api/notifications').then(async (r) => {
-      notes = r.notifications;
-      // seeing them here counts as reading (same as opening the bell)
-      if (notes!.some((n) => !n.read)) { await api('/api/notifications/read', { method: 'POST' }).catch(() => undefined); setTimeout(() => window.dispatchEvent(new Event('ff-notes')), 1200); }
-    }).catch(() => (notes = []));
+    // seeing them here reads nothing: a group is read when it is opened or followed (as in the notifications center)
+    void loadRecent();
   });
+  /** the newest groups and how many entries there are; the rows shown stay until the answer is there */
+  async function loadRecent() {
+    if (get(kidsMode)) { recent = []; return; } // kids profiles have no notifications (the server answers 403 kids_profile)
+    try {
+      const f = await feed({ filter: 'all', limit: RECENT });
+      recent = f.sections.flatMap((x) => x.groups).slice(0, RECENT);
+      total = f.categories.reduce((n, c) => n + c.n, 0);
+    } catch { recent ??= []; }
+  }
+  /** a group opened or followed here is read (the bell's count follows); a refusal makes it unread again */
+  async function read(id: string) {
+    const flip = (unread: boolean) => (recent = (recent ?? []).map((g) => (g.id === id ? { ...g, unread } : g)));
+    flip(false);
+    try {
+      await markRead({ groups: [id] });
+      window.dispatchEvent(new Event('ff-notes'));
+    } catch { flip(true); toast.error(tr('common.failed')); }
+  }
+  function toggle(id: string) { const o = new Set(openGroups); if (!o.delete(id)) o.add(id); openGroups = o; }
+  function follow(id: string) { if (recent?.find((g) => g.id === id)?.unread) void read(id); }
+  /** the center may have read or cleared some: the list here catches up */
+  function sheetClosed() { sheet = false; void loadRecent(); }
   /** Fire TV: the app opens its server screen; LG: back to the app's start page */
   function changeServer() {
     const stuck = () => toast.info($t('shell.account.changeServerBlue'));
@@ -52,7 +82,6 @@
   $: groups = groupLinks(linksFor(canDownload).filter(([href]) => linkShown($serverCaps, href, $features, $perms, $areas)));
   $: admin = Boolean(me?.isAdmin && me?.profile?.isOwner);
   $: owner = Boolean(me?.profile?.isOwner && !me.kids); // the account page is the owner profile's
-  $: shown = notes ? (allNotes ? notes : notes.slice(0, 5)) : [];
   $: tiles = ($areas.library ? [['/watchlist', 'shell.menu.myList', 'plus'], ...(canDownload ? [['/downloads', 'shell.menu.downloads', 'download']] : []), ['/lists', 'shell.menu.lists', 'list'], ['/history', 'shell.menu.history', 'calendar']] : []) as Array<[string, TKey, string]>;
 </script>
 
@@ -72,17 +101,23 @@
   </ul>{/if}
 
   <section aria-labelledby="h-notes">
-    <div class="sech"><h2 id="h-notes">{$t('account.me.notifications')}</h2>{#if notes && notes.length > 5}<button type="button" class="lnk" aria-expanded={allNotes} on:click={() => (allNotes = !allNotes)}>{allNotes ? $t('account.me.less') : $t('account.me.all', { n: notes.length })}</button>{/if}</div>
-    {#if notes === null}<div class="skeleton nsk"></div>
-    {:else if !notes.length}<p class="muted pad">{$t('account.me.noNotifications')}</p>
-    {:else}
-      <ul class="notes frost-flat frost-tile">
-        {#each shown as n (n.id)}
-          <li class:muted={n.read}>{#if n.link}<a class="fill-hover" href={n.link}><span class="nd" class:unread={!n.read} aria-hidden="true"></span><span class="nt">{n.title}</span><Icon name="chevron-right" size={18} /></a>{:else}<span class="plainn"><span class="nd" class:unread={!n.read} aria-hidden="true"></span><span class="nt">{n.title}</span></span>{/if}</li>
-        {/each}
-      </ul>
-    {/if}
+    <div class="sech"><h2 id="h-notes">{$t('account.me.notifications')}</h2>{#if total > 0}<button type="button" class="lnk" aria-haspopup="dialog" aria-expanded={sheet}
+      aria-controls={sheet ? 'ff-notes' : undefined} bind:this={allBtn} on:click={() => (sheet = true)}>{$t('account.me.all', { n: total })}</button>{/if}</div>
+    <!-- the room of five rows, also while loading and when empty: nothing below moves when the answer comes -->
+    <div class="notes frost-flat frost-tile" aria-busy={recent === null} data-testid="me-notes">
+      {#if recent === null}
+        {#each Array(RECENT) as _, i (i)}<div class="nsk" aria-hidden="true"><Skeleton w="40px" h="40px" radius="12px" /><Skeleton lines={2} h=".8rem" /></div>{/each}
+      {:else if !recent.length}<p class="muted none">{$t('account.me.noNotifications')}</p>
+      {:else}
+        <ul>
+          {#each recent as g (g.id)}
+            <NoteRow compact group={g} open={openGroups.has(g.id)} on:toggle={(e) => toggle(e.detail)} on:read={(e) => read(e.detail)} on:follow={(e) => follow(e.detail)} />
+          {/each}
+        </ul>
+      {/if}
+    </div>
   </section>
+  {#if sheet}<NotificationSheet full={$mobile} trigger={allBtn} on:close={sheetClosed} />{/if}
 
   {#if resume === null || resume.length}
     <div class="bleed"><Row title={$t('account.me.continueWatching')} items={resume} landscape removable on:remove={(e) => removeResume(e.detail.id)} /></div>
@@ -134,23 +169,23 @@
   /* the tiles' hover lights the edge (.edge-hover, faded by opacity), never the fill (more milk would cost the text its contrast) */
   .ti { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.08); }
   section { margin-bottom: 1.4rem; }
-  .sech { display: flex; align-items: baseline; justify-content: space-between; }
+  /* the heading row keeps the room of the Alle button (44 px), also before it shows */
+  .sech { display: flex; align-items: center; justify-content: space-between; min-height: 44px; margin-bottom: .5rem; }
+  .sech h2 { margin: 0; }
   h2 { font-size: 1.1rem; font-weight: 700; margin: 0 0 .5rem; }
   .gh { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--mut); margin: 0 0 .3rem .2rem; }
-  .lnk { background: transparent; color: var(--link); padding: 0 .4rem; font-weight: 600; }
+  .lnk { min-height: 44px; background: transparent; color: var(--link); padding: 0 .4rem; font-weight: 600; }
   .lnk:hover:not(:disabled) { background: transparent; text-decoration: underline; }
-  .pad { padding: .4rem 0; margin: 0; }
   /* glass cards (glass spec §6); a row on hover: 12 px corners on a darker fill that fades in (.fill-hover, as in the admin; a
      lighter one would cost the text its AA) */
-  .notes, .lst { list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px; box-shadow: inset 0 1px 0 var(--fr-hi), var(--fr-shadow-card); }
-  .notes a, .plainn, .lst a { display: flex; align-items: center; gap: .8rem; min-height: 48px; padding: .5rem 1rem; border-radius: 12px; }
-  .nt { flex: 1; min-width: 0; font-size: .93rem; }
-  .nd { flex: none; width: 8px; height: 8px; border-radius: 50%; background: transparent; }
-  .nd.unread { background: var(--acc); }
-  li.muted { color: var(--mut); }
-  .nsk { height: 120px; border-radius: var(--fr-r-tile); }
+  .lst { list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px; box-shadow: inset 0 1px 0 var(--fr-hi), var(--fr-shadow-card); }
+  .lst a { display: flex; align-items: center; gap: .8rem; min-height: 48px; padding: .5rem 1rem; border-radius: 12px; }
   .lst a :global(svg:last-child) { margin-left: auto; color: var(--mut); }
-  .notes a :global(svg:last-child) { color: var(--mut); }
+  /* five rows of 64 px (NoteRow compact) and the card's padding: the loading rows, the list and the empty text share it */
+  .notes { box-sizing: border-box; min-height: calc(5 * 64px + 12px); padding: 6px 4px; box-shadow: inset 0 1px 0 var(--fr-hi), var(--fr-shadow-card); }
+  .notes ul { list-style: none; margin: 0; padding: 0; }
+  .nsk { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: center; height: 64px; box-sizing: border-box; padding: 2px 8px; }
+  .none { display: grid; place-items: center; min-height: calc(5 * 64px); margin: 0; text-align: center; }
   .bleed { margin: 0 calc(var(--pad-x) * -1) 1.4rem; }
   .groups { display: grid; grid-template-columns: 1fr; gap: 0; }
   @media (min-width: 900px) { .groups { grid-template-columns: repeat(3, 1fr); gap: 1.2rem; align-items: start; } }

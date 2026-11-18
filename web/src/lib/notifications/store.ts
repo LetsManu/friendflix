@@ -179,7 +179,7 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
         const r = await api.hide(sel);
         // the answer time is no earlier than the server's: a token pruned by it is surely dead there
         if (e0 === epoch) held.set(r.undo, { at: Date.now(), removed: g0 === gen ? removed : null });
-        await recount(e0);
+        void recount(e0); // on its own: the undo toast does not wait for it (an answer for an earlier person is dropped)
         return { undo: r.undo, n: r.n };
       } catch (e) {
         if (g0 === gen) { setBase(baseUnread + lowered); restore(removed); }
@@ -216,3 +216,8 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
 
 /** The shared instance the sheet and the badge use. */
 export const feedStore = createFeed();
+/**
+ * The counts the layout read last (the 60-s poll and `ff-notes`; null after a sign-out or a profile switch). Every answer is a new
+ * object, so an open sheet sees each one and shows the entries that arrived since its first page as its *N neu* pill.
+ */
+export const latestCounts = writable<Counts | null>(null);

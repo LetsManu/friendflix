@@ -11,7 +11,7 @@ import { addNote, prevMonthLabel } from '../mocks/notes.js';
  * new entries show as a pill in its reserved slot; nothing above the reading position moves. 1440×900, the suite's motion.
  */
 test.use({ viewport: { width: 1440, height: 900 } });
-test.beforeEach(({ api }) => { api.notes.legacyFromFeed = true; }); // the bell's count follows the feed (8 unread)
+// the bell's count is the feed's (GET /api/notifications/feed?limit=0): 8 unread
 
 const bell = (page: Page) => page.locator('[data-desk-bar]').getByRole('button', { name: /Benachrichtigungen/ });
 const sheet = (page: Page) => page.getByRole('dialog', { name: 'Benachrichtigungen' });
@@ -283,6 +283,40 @@ test.describe('notifications center', () => {
       await s.locator('.tail').getByRole('button', { name: 'Nochmal' }).click();
       await expect(rows(page)).toHaveCount(60);
     });
+  });
+
+  test('the bell shows 45 when 45 are unread (no cap at the legacy list\'s 30)', async ({ page }) => {
+    const legacy: string[] = [];
+    page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/notifications') legacy.push(r.url()); });
+    await page.route(/\/api\/notifications\/feed\?limit=0$/, (r) => r.fulfill({ json: { unread: 45, categories: [{ key: 'devices', n: 45 }] } }));
+    await page.goto('/watchlist');
+    await expect(bell(page).locator('.dot')).toHaveText('45');
+    await expect(bell(page)).toHaveAccessibleName('Benachrichtigungen, 45 neu');
+    expect(legacy).toEqual([]); // the legacy list (30 at most) is not asked any more
+  });
+
+  test('another profile in place: the sheet shows nothing of the previous one', async ({ page, api }) => {
+    await open(page);
+    await page.keyboard.press('Escape');
+    await expect(sheet(page)).toHaveCount(0);
+    // /api/me now answers another profile (as after a switch in another tab) with its own notifications
+    await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, profile: { id: 'p2', name: 'Anna', avatar: 'a2', isOwner: false } } }));
+    api.notes.entries = [{ id: 500, kind: 'recommend', category: 'social', title: 'Ben Muster hat dir „Nordlicht“ empfohlen', body: null, link: '/new', at: new Date().toISOString(), read: false, hidden: false }];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    await page.route(/\/api\/notifications\/feed\?filter=/, async (r) => { await gate; await r.fallback(); });
+    await page.evaluate(() => window.dispatchEvent(new Event('ff-me-changed')));
+    await expect(page.locator('[data-desk-bar]').getByRole('button', { name: 'Profilmenü (Anna)' })).toBeVisible();
+    await expect(bell(page).locator('.dot')).toHaveText('1'); // the new profile's count, at once
+    await bell(page).click();
+    // while its first page loads: the skeleton, not the previous profile's rows
+    await expect(sheet(page).locator('.list .sk')).toHaveCount(6);
+    await expect(rows(page)).toHaveCount(0);
+    await expect(sheet(page).getByTestId('notes-unread')).toHaveCount(0);
+    release();
+    await expect(rows(page)).toHaveCount(1);
+    await expect(rowOf(page, 'Ben Muster')).toBeVisible();
+    await expect(rowOf(page, TV)).toHaveCount(0);
   });
 
   test('kids profile: no bell', async ({ page, api }) => {
