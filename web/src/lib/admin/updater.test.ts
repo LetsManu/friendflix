@@ -6,7 +6,7 @@ import { hasKey, setLocale, tr, trDynamic } from '#lib/i18n';
 import { mediaErrorText } from './mediaserver/model';
 import { ApiError } from '#lib/api';
 import {
-  MEDIA_JOB_ACTIONS, MEDIA_STEPS, MEDIA_TAB, TIME_RE, canRollback, failReason, foreignMode, foreignText, isMediaJob, isRunning, jobTone, mediaActionLabel, mediaFailedText, nextPoll,
+  MEDIA_JOB_ACTIONS, MEDIA_STEPS, MEDIA_TAB, TIME_RE, canRollback, failReason, previousText, rollbackConfirm, serviceRows, foreignMode, foreignText, isMediaJob, isRunning, jobTone, mediaActionLabel, mediaFailedText, nextPoll,
   portainerMissing, redeployResult, redeployRunning, redeploySteps, startError, statusOf, visibleMediaSteps, visibleSteps, type Redeploy, type UpdaterJob, type UpdaterStatus,
 } from './updater';
 
@@ -51,6 +51,11 @@ describe('updater panel logic', () => {
     expect(canRollback(status({ busy: true }))).toBe(false);
     expect(canRollback(status({ job: job() }))).toBe(false);
     expect(canRollback(null)).toBe(false);
+    // after an update by digests the updater records no sha tag, only that a rollback is possible
+    expect(canRollback(status({ previous: null, rollback: { available: true } }))).toBe(true);
+    expect(canRollback(status({ previous: null, rollback: { available: false } }))).toBe(false);
+    expect(canRollback(status({ previous: null, rollback: { available: true }, busy: true }))).toBe(false);
+    expect(canRollback(status({ previous: 'sha-aaaaaaa', rollback: { available: false } }))).toBe(true); // a legacy sha tag still counts
     expect(nextPoll(false)).toBe(2000);
     expect(nextPoll(true)).toBe(3000);
     for (const ok of ['00:00', '04:00', '23:59']) expect(TIME_RE.test(ok)).toBe(true);
@@ -172,6 +177,66 @@ describe('updater panel logic', () => {
     expect(foreignMode({ present: true, status: status({ stack: 'own' }), portainer: { configured: false, mode: null, missing: ['PORTAINER_STACK_ID'] } })).toBeNull();
     expect(foreignText('manual', null)).toContain('PORTAINER_STACK_ID');
     expect(failReason('compose_config')).toContain('Portainer');
+  });
+});
+
+describe('per service under Installiert', () => {
+  const D = (c: string) => `sha256:${c.repeat(64)}`;
+  const svc = (service: string, changed: boolean | null, commit: string | null = '1'.repeat(40)) =>
+    ({ service, state: 'running', health: 'healthy', sha: commit ? `sha-${commit.slice(0, 7)}` : null, version: null, commit, digest: D('1'), registry: changed === null ? null : D(changed ? '2' : '1'), changed });
+  const done = (services: UpdaterJob['services'], over: Partial<UpdaterJob> = {}) => job({ state: 'succeeded', step: null, finishedAt: '2026-10-18T04:02:00.000Z', services, ...over });
+
+  it('per-service text: available, unchanged, updated, all unchanged', () => {
+    // before a job: what the registry has (bootstrap follows the backend: not listed; the updater last); unknown: no text, the row keeps its room
+    const services = [svc('updater', true, null), svc('web', true), svc('bootstrap', false), svc('backend', false), svc('gateway', null, '2'.repeat(40))];
+    const before = serviceRows(status({ services }));
+    expect(before.rows).toEqual([
+      { service: 'backend', commit: '1111111', mark: 'unchanged', text: 'unverändert' },
+      { service: 'gateway', commit: '2222222', mark: null, text: '' },
+      { service: 'web', commit: '1111111', mark: 'changed', text: 'Update verfügbar' },
+      { service: 'updater', commit: null, mark: 'changed', text: 'Update verfügbar' },
+    ]);
+    expect([before.all, before.span]).toEqual(['', 0]);
+    // after an update: its report (the updater is no part of it: what the registry says)
+    const after = serviceRows(status({ services: [svc('backend', false), svc('web', false), svc('gateway', false), svc('updater', true)], job: done({ backend: 'unchanged', gateway: 'unchanged', web: 'updated' }) }));
+    expect(after.rows.map((r) => [r.service, r.mark, r.text])).toEqual([['backend', 'unchanged', 'unverändert'], ['gateway', 'unchanged', 'unverändert'], ['web', 'updated', 'aktualisiert'], ['updater', 'changed', 'Update verfügbar']]);
+    expect(after.all).toBe('');
+    // nothing changed: one "alles unverändert" over the report's rows (livetv's too), the updater's row keeps its own
+    const same = serviceRows(status({ services: [svc('backend', false), svc('gateway', false), svc('web', false), svc('livetv', false), svc('updater', false)], job: done({ backend: 'unchanged', gateway: 'unchanged', web: 'unchanged', livetv: 'unchanged' }) }));
+    expect([same.all, same.span]).toEqual(['alles unverändert', 4]);
+    expect(same.rows.map((r) => r.mark)).toEqual(['unchanged', 'unchanged', 'unchanged', 'unchanged', 'unchanged']);
+    // a newer build since (or the update rolled back): the registry's word again; so while a job runs, after another kind of job, on a foreign stack
+    const report = { backend: 'unchanged', web: 'unchanged' } as const;
+    for (const s of [
+      status({ services: [svc('backend', false), svc('web', true)], job: done(report) }),
+      status({ services: [svc('backend', false), svc('web', false)], job: job({ services: report }) }),
+      status({ services: [svc('backend', false), svc('web', false)], job: done(report, { action: 'livetv-enable' }) }),
+      status({ services: [svc('backend', false), svc('web', false)], job: done(report), stack: 'foreign' }),
+      status({ services: [svc('backend', false), svc('web', false)], job: done({}) }),
+    ]) expect(serviceRows(s).all, JSON.stringify(s.job)).toBe('');
+    // a rollback reports the same way
+    expect(serviceRows(status({ services: [svc('backend', false)], job: done({ backend: 'updated' }, { action: 'rollback' }) })).rows[0]!.text).toBe('aktualisiert');
+    // an older backend: no commit (the sha tag's 7), nothing about the registry; nothing listed at all
+    expect(serviceRows(status({ services: [{ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-abcdef1', version: '1.0.0' }] })).rows)
+      .toEqual([{ service: 'backend', commit: 'abcdef1', mark: null, text: '' }]);
+    expect(serviceRows(null)).toEqual({ rows: [], all: '', span: 0 });
+  });
+
+  it('per-service texts in every language', async () => {
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
+      await setLocale(l);
+      for (const k of ['svcChanged', 'svcUnchanged', 'svcUpdated', 'allUnchanged', 'previousImages', 'confirm.rollbackImages']) expect(hasKey(`admin.update.updater.${k}`), `${l} ${k}`).toBe(true);
+    }
+    await setLocale('en');
+    expect(serviceRows(status({ services: [svc('backend', true)] })).rows[0]!.text).toBe('Update available');
+  });
+
+  it('the previous build: its sha tag, else (after an update by digests) the images before it, else none', () => {
+    expect(previousText(status())).toEqual({ text: 'sha-aaaaaaa', code: true });
+    expect(previousText(status({ previous: null, rollback: { available: true } }))).toEqual({ text: 'Images vor dem letzten Update', code: false });
+    expect(previousText(status({ previous: null, rollback: { available: false } }))).toEqual({ text: 'keine', code: true });
+    expect(rollbackConfirm(status())).toBe('Zurück zu sha-aaaaaaa? FriendFlix startet kurz neu.');
+    expect(rollbackConfirm(status({ previous: null, rollback: { available: true } }))).toBe('Zurück zu den Images vor dem letzten Update? FriendFlix startet kurz neu.');
   });
 });
 

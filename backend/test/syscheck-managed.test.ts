@@ -35,13 +35,13 @@ const viewOf = (s: MediaStatus | null, kind: MediaManaged['kind'] = 'jellyfin'):
 });
 const coreJob = (o: Partial<UpdaterJob>): UpdaterJob => ({
   id: '00000000000000a1', action: 'update', state: 'succeeded', step: null, steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'ok', rollback: 'skipped' },
-  from: 'latest', to: 'latest', startedAt: ago(1), finishedAt: ago(1), error: null, media: null, ...o,
+  from: 'latest', to: 'latest', startedAt: ago(1), finishedAt: ago(1), error: null, media: null, services: null, ...o,
 });
 const updater = (s: MediaStatus | null, job: UpdaterJob | null = null): UpdaterView => ({
   present: true,
   status: {
     updater: { version: '3.3.0', sha: null }, channel: 'stable', version: null, targetTag: 'latest', current: 'latest', previous: null, busy: false, job, log: [],
-    services: [], stack: 'own', stackReason: 'own', stackDir: null, projectDir: null, livetv: null, mediaserver: s,
+    services: [], rollback: null, stack: 'own', stackReason: 'own', stackDir: null, projectDir: null, livetv: null, mediaserver: s,
   } satisfies UpdaterStatus,
 });
 

@@ -40,13 +40,14 @@ export function versionLabel(version: string, sha: string, kind: BuildKind | nul
 
 /**
  * Is there an update on this channel? stable: a newer release than the installed version (null before the first release).
- * nightly: newer commits on main than the installed sha (null when unknown). pinned: a different version than the installed one
- * (null without a version).
+ * nightly: with the updater, whether a service's registry digest of the channel's tag differs from what it runs (`digestsDiffer`;
+ * a commit that touched no image builds nothing new); unknown or without the updater, newer commits on main than the installed
+ * sha (null when unknown). pinned: a different version than the installed one (null without a version).
  */
-export function channelUpdate(channel: Channel, s: { releaseNewer: boolean | null; behind: number | null; pinnedDiffers?: boolean | null }): boolean | null {
+export function channelUpdate(channel: Channel, s: { releaseNewer: boolean | null; behind: number | null; pinnedDiffers?: boolean | null; digestsDiffer?: boolean | null }): boolean | null {
   if (channel === 'stable') return s.releaseNewer;
   if (channel === 'pinned') return s.pinnedDiffers ?? null;
-  return s.behind === null ? null : s.behind > 0;
+  return s.digestsDiffer ?? (s.behind === null ? null : s.behind > 0);
 }
 
 /** the image tag of a channel (compose.prod.yaml: image tag ${FF_TAG:-latest}); pinned without a version: the stable tag */

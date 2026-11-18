@@ -185,14 +185,90 @@ describe('health probe and service view', () => {
     let n = 0, t = 0;
     const d = { psView: async () => { n++; return [{ service: 'backend', name: 'ff-backend-1', state: 'running', health: 'healthy' }]; },
       containerImage: async () => 'sha256:' + 'e'.repeat(64), imageInfo: async () => ({ repoDigests: [], commit: 'c'.repeat(40), version: '1.1.0' }) };
-    const view = servicesView(d, 10_000, () => t);
+    const view = servicesView(d, 'example/friendflix', () => false, 10_000, () => t);
     const v = await view();
-    expect(v.find((s) => s.service === 'backend')).toEqual({ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-ccccccc', version: '1.1.0' });
-    expect(v.find((s) => s.service === 'web')).toEqual({ service: 'web', state: 'missing', health: '', sha: null, version: null });
+    expect(v.find((s) => s.service === 'backend')).toEqual({ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-ccccccc', version: '1.1.0', commit: 'c'.repeat(40), digests: [] });
+    expect(v.find((s) => s.service === 'web')).toEqual({ service: 'web', state: 'missing', health: '', sha: null, version: null, commit: null, digests: [] });
     await view();
     expect(n).toBe(1);
     t = 20_000;
     await view();
     expect(n).toBe(2);
+  });
+
+  it('status lists digest, commit, registry digest and changed per service; registry errors give null', async () => {
+    const D = (c: string) => `sha256:${c.repeat(64)}`;
+    const repo = (svc: string) => `ghcr.io/example/friendflix-${svc === 'bootstrap' ? 'backend' : svc}`;
+    // what each service's image carries: an own digest (plus a foreign one that never counts), none for a dev build
+    const carries: Record<string, string[]> = {
+      backend: [`ghcr.io/evil/friendflix-backend@${D('9')}`, `${repo('backend')}@${D('1')}`], gateway: [`${repo('gateway')}@${D('2')}`],
+      web: [`${repo('web')}@${D('3')}`], updater: [], livetv: [`${repo('livetv')}@${D('5')}`],
+    };
+    let livetv = false;
+    const d = {
+      psView: async () => ['backend', 'gateway', 'web', 'updater', 'livetv'].map((s) => ({ service: s, name: `ff-${s}-1`, state: 'running', health: 'healthy' })),
+      containerImage: async (name: string) => `sha256:${name.slice(3, 4)}${'0'.repeat(63)}`,
+      imageInfo: async (id: string) => {
+        const svc = ['backend', 'gateway', 'web', 'updater', 'livetv'].find((s) => s[0] === id[7])!;
+        return { repoDigests: carries[svc]!, commit: svc === 'updater' ? null : '4'.repeat(40), version: '3.6.0' };
+      },
+    };
+    const view = servicesView(d, 'example/friendflix', () => livetv, 0);
+    expect((await view()).map((s) => s.service)).toEqual(['bootstrap', 'backend', 'gateway', 'web', 'updater']);
+    // the registry: backend as running, web moved on, gateway's lookup failed (null); asked for the channel's tag only
+    const asked: string[] = [];
+    const registry = async (svc: string, tag: string) => { asked.push(`${svc}:${tag}`); return ({ backend: D('1'), bootstrap: D('1'), web: D('6'), updater: D('7'), livetv: D('5') } as Record<string, string>)[svc] ?? null; };
+    // livetv enabled: listed and looked up
+    livetv = true;
+    const withLivetv = new Updater(ops(), memoryStore({ ...DEFAULT_STATE, livetv: 'enabled' }), { sleep: async () => {} });
+    const s = await status({ updater: withLivetv, verifier, services: view, registry, self: { version: null, sha: null } });
+    expect(asked.every((a) => a.endsWith(':latest'))).toBe(true);
+    const by = Object.fromEntries(s.services.map((x) => [x.service, x]));
+    expect(by.backend).toEqual({ service: 'backend', state: 'running', health: 'healthy', sha: 'sha-4444444', version: '3.6.0', commit: '4'.repeat(40), digest: D('1'), registry: D('1'), changed: false });
+    expect(by.web).toMatchObject({ digest: D('3'), registry: D('6'), changed: true, version: null }); // version: the backend's only
+    expect(by.gateway).toMatchObject({ digest: D('2'), registry: null, changed: null });
+    expect(by.updater).toMatchObject({ digest: null, registry: D('7'), changed: null, commit: null, sha: null });
+    expect(by.livetv).toMatchObject({ digest: D('5'), registry: D('5'), changed: false }); // listed while enabled
+    expect(JSON.stringify(s.services)).not.toContain('evil');
+    expect(JSON.stringify(s.services)).not.toContain('digests');
+    // pinned without a version: no tag, nothing asked
+    asked.length = 0;
+    const pinned = new Updater(ops(), memoryStore({ ...DEFAULT_STATE, channel: 'pinned', version: null }), { sleep: async () => {} });
+    const none = await status({ updater: pinned, verifier, services: view, registry, self: { version: null, sha: null } });
+    expect(asked).toEqual([]);
+    expect(none.services.every((x) => x.registry === null && x.changed === null)).toBe(true);
+  });
+
+  it('a slow registry never holds the status: past the bound the last answer (none yet: null), the lookup goes on', async () => {
+    const D = 'sha256:' + '1'.repeat(64);
+    const services = async () => [{ service: 'backend', state: 'running', health: 'healthy', sha: null, version: null, commit: null, digests: [D] }];
+    let answer: (d: string) => void = () => {};
+    const pending = new Promise<string | null>((r) => { answer = r; });
+    const slow = () => pending;
+    const deps = { updater, verifier, services, self: { version: null, sha: null }, limits: { registryMs: 20 } };
+    const t0 = Date.now();
+    const first = await status({ ...deps, registry: slow });
+    expect(Date.now() - t0).toBeLessThan(1_000);
+    expect(first.services[0]).toMatchObject({ registry: null, changed: null });
+    answer(D);
+    await new Promise((r) => setTimeout(r, 0));
+    // the next read is late again: it shows what the last lookup answered
+    expect((await status({ ...deps, registry: slow })).services[0]).toMatchObject({ registry: D, changed: false });
+    // a registry that throws: null
+    expect((await status({ ...deps, registry: async () => { throw new Error('x'); } })).services[0]).toMatchObject({ registry: null, changed: null });
+  });
+
+  it('status passes the job report through and says whether a rollback is possible (never the digests)', async () => {
+    const st = (over: Partial<typeof DEFAULT_STATE>) => new Updater(ops(), memoryStore({ ...DEFAULT_STATE, ...over }), { sleep: async () => {} });
+    const base = { verifier, services: async () => [], self: { version: null, sha: null } };
+    expect((await status({ ...base, updater: st({}) })).rollback).toEqual({ available: false });
+    expect((await status({ ...base, updater: st({ previous: 'sha-1234567' }) })).rollback).toEqual({ available: true });
+    const ref = `ghcr.io/example/friendflix-web@sha256:${'3'.repeat(64)}`;
+    const s = await status({ ...base, updater: st({ previousDigests: { web: ref } }) });
+    expect(s.rollback).toEqual({ available: true });
+    expect(JSON.stringify(s)).not.toContain('sha256:');
+    const job = { id: '0123456789abcdef', action: 'update' as const, state: 'succeeded' as const, step: null, steps: { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'ok' as const, rollback: 'skipped' as const },
+      from: null, to: 'latest', startedAt: '2026-11-17T10:00:00.000Z', finishedAt: '2026-11-17T10:01:00.000Z', error: null, services: { backend: 'unchanged' as const, web: 'updated' as const }, media: null };
+    expect((await status({ ...base, updater: st({ lastJob: job }) })).job?.services).toEqual({ backend: 'unchanged', web: 'updated' });
   });
 });
