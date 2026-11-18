@@ -239,7 +239,7 @@ const fr: Translation<typeof de> = {
       updateNow: 'Mettre à jour maintenant',
       rollback: 'Revenir à la version précédente',
       selfUpdate: 'Mettre à jour le programme de mise à jour',
-      selfHint: 'Met à jour uniquement le conteneur de mise à jour (version {version}).',
+      selfHint: 'Met à jour uniquement le conteneur de mise à jour (build {sha}).',
       advanced: 'Le programme de mise à jour lui-même',
       confirm: {
         update: 'Mettre à jour vers {tag} maintenant ? FriendFlix redémarre brièvement, les lectures en cours sont interrompues.',

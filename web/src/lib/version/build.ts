@@ -14,14 +14,17 @@ export interface BuildInfo { sha: string; version: string; codename: string; bui
 
 const KINDS: readonly string[] = ['release', 'nightly', 'dev'];
 
-/** Lenient parse of /api/version; null when it carries no build information. */
+/**
+ * Lenient parse of /api/version; null when it carries no version (or no label/sha). An unknown build kind (`build: null`: the
+ * tag lookup had no answer, e.g. no egress, a rate limit or a slow cold lookup) keeps the answer: the version is still known.
+ */
 export function parseBuild(raw: unknown): BuildInfo | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
+  if (typeof r.version !== 'string' || !r.version || typeof r.label !== 'string' || typeof r.sha !== 'string') return null;
   const build = typeof r.build === 'string' && KINDS.includes(r.build) ? (r.build as BuildKind) : null;
-  if (!build || typeof r.label !== 'string' || typeof r.sha !== 'string') return null;
   const channel = r.channel === 'stable' || r.channel === 'nightly' ? r.channel : null;
-  return { sha: r.sha, version: typeof r.version === 'string' ? r.version : '', codename: typeof r.codename === 'string' ? r.codename : '', build, channel, label: r.label };
+  return { sha: r.sha, version: r.version, codename: typeof r.codename === 'string' ? r.codename : '', build, channel, label: r.label };
 }
 
 /** "1.1.0-nightly · abc1234" for a nightly build, else "1.1.0 · Arancini" as before (a dev build and an unknown one too) */

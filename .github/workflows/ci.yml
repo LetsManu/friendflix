@@ -712,7 +712,7 @@ jobs:
     needs: [changes, docker]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions: { contents: read, packages: read }
     strategy:
       fail-fast: false

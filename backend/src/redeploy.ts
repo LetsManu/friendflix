@@ -95,12 +95,19 @@ const START_VALUE = /^(sha256:[0-9a-f]{64}|[0-9a-f]{40})$/;
 const fromServicesOk = (v: unknown): boolean => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
   && Object.entries(v as object).every(([k, x]) => (SERVICES as readonly string[]).includes(k) && str(x, START_VALUE));
 
-/** the stored record, only in exactly this shape (an older or tampered value is ignored, never trusted) */
+/**
+ * the stored record, only in exactly this shape (a tampered value is ignored, never trusted). One older shape is read: the last
+ * redeploy started by a backend before per-service start values (no `source`, no `fromServices`, `from` = its GIT_SHA), i.e. the
+ * redeploy that installs this backend. It counts as learnt from that backend alone ('self', no service start values): it ends
+ * once this backend runs another commit than `from` and every listed service is healthy, instead of being lost (no view, and a
+ * new start refused as busy until its timeout).
+ */
 function parse(raw: string | null): Rec | null {
   if (!raw) return null;
   let o: Record<string, unknown>;
   try { o = JSON.parse(raw) as Record<string, unknown>; } catch { return null; }
   if (!o || typeof o !== 'object' || o.v !== 1) return null;
+  if (!('source' in o) && !('fromServices' in o)) o = { ...o, source: 'self', fromServices: {} };
   const ok = str(o.id, /^[0-9a-f]{16}$/) && (o.mode === 'webhook' || o.mode === 'api') && typeof o.startedAt === 'number' && Number.isFinite(o.startedAt)
     && str(o.from, /^[A-Za-z0-9._-]{1,64}$/) && (o.source === 'updater' || o.source === 'probes' || o.source === 'self') && fromServicesOk(o.fromServices) && str(o.tag, /^[A-Za-z0-9._-]{1,64}$/) && typeof o.updater === 'boolean' && (o.forced === undefined || typeof o.forced === 'boolean')
     && (o.restarted === undefined || (Array.isArray(o.restarted) && o.restarted.length <= SERVICES.length && o.restarted.every((x) => (SERVICES as readonly unknown[]).includes(x))))

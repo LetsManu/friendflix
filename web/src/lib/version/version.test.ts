@@ -98,6 +98,11 @@ describe('version from the backend', () => {
     expect(footerVersion(get(buildInfo))).toEqual({ visible: true, text: '2.3.4 · Brezel' });
     expect(footerVersion({ ...answer, build: 'nightly', label: '2.3.4-nightly · bbbbbbb' } as never)).toEqual({ visible: true, text: '2.3.4-nightly · bbbbbbb' });
   });
+  it('build: null (the tag lookup had no answer) still shows the version and sends it in the caps', async () => {
+    await loadBuild(ok({ ...answer, build: null, channel: null }));
+    expect(footerVersion(get(buildInfo))).toEqual({ visible: true, text: '2.3.4 · Brezel' });
+    expect(await appVersion()).toBe('2.3.4');
+  });
   it('caps send the backend\'s version, 0.0.0 when it is unknown', async () => {
     let calls = 0;
     const f = (async () => { calls++; return new Response(JSON.stringify(answer)); }) as unknown as typeof fetch;

@@ -259,7 +259,7 @@ const pl: Translation<typeof de> = {
       updateNow: 'Aktualizuj teraz',
       rollback: 'Wróć do poprzedniej wersji',
       selfUpdate: 'Zaktualizuj aktualizator',
-      selfHint: 'Aktualizuje tylko kontener aktualizatora (wersja {version}).',
+      selfHint: 'Aktualizuje tylko kontener aktualizatora (build {sha}).',
       advanced: 'Sam aktualizator',
       confirm: {
         update: 'Zaktualizować teraz do {tag}? FriendFlix na chwilę się zrestartuje, trwające odtwarzania zostaną przerwane.',

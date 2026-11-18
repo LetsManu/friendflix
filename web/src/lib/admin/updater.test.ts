@@ -7,7 +7,7 @@ import { mediaErrorText } from './mediaserver/model';
 import { ApiError } from '#lib/api';
 import {
   MEDIA_JOB_ACTIONS, MEDIA_STEPS, MEDIA_TAB, TIME_RE, canRollback, failReason, previousText, rollbackConfirm, serviceRows, foreignMode, foreignText, isMediaJob, isRunning, jobTone, mediaActionLabel, mediaFailedText, nextPoll,
-  portainerMissing, redeployResult, redeployRunning, redeploySteps, startError, statusOf, visibleMediaSteps, visibleSteps, type Redeploy, type UpdaterJob, type UpdaterStatus,
+  portainerMissing, redeployResult, redeployRunning, redeploySteps, startError, statusOf, updaterBuild, visibleMediaSteps, visibleSteps, type Redeploy, type UpdaterJob, type UpdaterStatus,
 } from './updater';
 
 const job = (over: Partial<UpdaterJob> = {}): UpdaterJob => ({
@@ -109,6 +109,18 @@ describe('updater panel logic', () => {
       expect(failReason(c)).toBe(tr(`admin.update.updater.failReason.${c}` as 'admin.update.updater.failReason.unknown'));
       expect(failReason(c)).not.toBe(tr('admin.update.updater.failReason.unknown'));
     }
+  });
+
+  it('the self-update hint names the updater\'s image commit (its version is not baked in), "none" without a CI commit', async () => {
+    await setLocale('de');
+    expect(updaterBuild(status({ updater: { version: null, sha: 'c'.repeat(40) } }))).toBe('ccccccc');
+    expect(updaterBuild(status({ updater: { version: null, sha: 'dev' } }))).toBeNull();
+    expect(updaterBuild(status({ updater: { version: null, sha: null } }))).toBeNull();
+    expect(updaterBuild(null)).toBeNull();
+    expect(tr('admin.update.updater.selfHint', { sha: 'ccccccc' })).toBe('Aktualisiert nur den Updater-Container (Build ccccccc).');
+    const card = readFileSync(new URL('./UpdaterCard.svelte', import.meta.url), 'utf8');
+    expect(card).toMatch(/selfHint', \{ sha: updaterBuild\(s\) \?\? \$t\('admin\.update\.updater\.none'\) \}/);
+    expect(card).not.toMatch(/s\.updater\.version/);
   });
 
   it('every updater string exists in all seven languages', async () => {

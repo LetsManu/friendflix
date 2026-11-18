@@ -12,12 +12,18 @@ afterEach(async () => { await setLocale('de'); });
 
 describe('build info (footer, /api/version)', () => {
   it('parses leniently: older backends and junk give null', () => {
-    expect(parseBuild({ sha: 'x', version: '1.1.0', codename: 'Arancini' })).toBeNull();
+    expect(parseBuild({ sha: 'x', version: '1.1.0', codename: 'Arancini' })).toBeNull(); // no label
     expect(parseBuild(null)).toBeNull();
-    expect(parseBuild({ sha: 'x', build: 'weird', label: '1' })).toBeNull();
-    expect(parseBuild({ sha: 'abc', build: 'nightly', channel: 'nightly', label: '1.1.0-nightly · abc1234' }))
-      .toEqual({ sha: 'abc', version: '', codename: '', build: 'nightly', channel: 'nightly', label: '1.1.0-nightly · abc1234' });
-    expect(parseBuild({ sha: 'dev', build: 'dev', channel: null, label: '1.1.0' })?.channel).toBeNull();
+    expect(parseBuild({ sha: 'x', build: 'weird', label: '1' })).toBeNull(); // no version
+    expect(parseBuild({ sha: 'x', version: '', build: 'release', label: '1' })).toBeNull();
+    expect(parseBuild({ sha: 'abc', version: '1.1.0', build: 'nightly', channel: 'nightly', label: '1.1.0-nightly · abc1234' }))
+      .toEqual({ sha: 'abc', version: '1.1.0', codename: '', build: 'nightly', channel: 'nightly', label: '1.1.0-nightly · abc1234' });
+    expect(parseBuild({ sha: 'dev', version: '1.1.0', build: 'dev', channel: null, label: '1.1.0' })?.channel).toBeNull();
+  });
+  it('an unknown build kind (build: null, the tag lookup had no answer) keeps the version', () => {
+    expect(parseBuild({ sha: 'a'.repeat(40), version: '1.1.0', codename: 'Arancini', build: null, channel: null, label: '1.1.0' }))
+      .toEqual({ sha: 'a'.repeat(40), version: '1.1.0', codename: 'Arancini', build: null, channel: null, label: '1.1.0' });
+    expect(parseBuild({ sha: 'a', version: '1.1.0', build: 'weird', label: '1.1.0' })?.build).toBeNull();
   });
   it('version text: "-nightly · sha" only for a nightly build; release, dev and unknown stay as today', () => {
     expect(versionText('1.1.0', 'Arancini', null)).toBe('1.1.0 · Arancini');
@@ -28,7 +34,7 @@ describe('build info (footer, /api/version)', () => {
   });
   it('loadBuild asks once and fills the store; a failure leaves it empty', async () => {
     let calls = 0;
-    const f = (async () => { calls++; return new Response(JSON.stringify({ sha: 'b', build: 'nightly', channel: 'nightly', label: '1.1.0-nightly · bbbbbbb' })); }) as unknown as typeof fetch;
+    const f = (async () => { calls++; return new Response(JSON.stringify({ sha: 'b', version: '1.1.0', build: 'nightly', channel: 'nightly', label: '1.1.0-nightly · bbbbbbb' })); }) as unknown as typeof fetch;
     await Promise.all([loadBuild(f), loadBuild(f)]);
     expect(calls).toBe(1);
     expect(get(buildInfo)?.label).toBe('1.1.0-nightly · bbbbbbb');

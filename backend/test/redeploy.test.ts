@@ -169,6 +169,32 @@ describe('Portainer redeploy phases', () => {
     }
   });
 
+  it('a legacy record (written by the backend before this one: no source, no fromServices) ends done once the new backend runs and the services are healthy', async () => {
+    const legacy = (updater: boolean) => JSON.stringify({
+      v: 1, id: '0123456789abcdef', mode: 'api', startedAt: T0, from: OLD, tag: 'latest', updater, answer: 'pending', answeredAt: null, sync: false, changed: false,
+      error: null, step: null, status: null, code: null, final: null, finishedAt: null, at: null,
+    });
+    // with an updater: read as learnt from that backend alone; the services still starting wait, all healthy on the new commit is done
+    const kv = new MemoryKV();
+    await kv.set(REDEPLOY_KEY, legacy(true), 60);
+    await kv.set(REDEPLOY_LOCK, '0123456789abcdef', 60);
+    const fresh = ctxOf(NEW, kv);
+    expect(await claimRedeploy(fresh, T0 + 60_000)).toBeNull(); // still running: busy
+    expect(await view(fresh, all(NEW, { web: svc('web', NEW, 'running', 'starting') }), T0 + 60_000, T0 + 50_000)).toMatchObject({ id: '0123456789abcdef', phase: 'health', running: true });
+    expect(await view(fresh, all(NEW), T0 + 70_000, T0 + 50_000)).toMatchObject({ phase: 'done', running: false, finishedAt: new Date(T0 + 70_000).toISOString() });
+    expect(await kv.get(REDEPLOY_LOCK)).toBeNull();
+    expect(JSON.parse((await kv.get(REDEPLOY_KEY))!)).toMatchObject({ final: 'done', source: 'self', fromServices: {} });
+    expect(await claimRedeploy(fresh, T0 + 80_000)).toMatch(/^[0-9a-f]{16}$/); // the slot is free again
+    // without an updater: this backend's own commit differs from the old GIT_SHA, so it is done
+    const kv2 = new MemoryKV();
+    await kv2.set(REDEPLOY_KEY, legacy(false), 60);
+    expect(await view(ctxOf(NEW, kv2, false), undefined, T0 + 60_000, T0 + 50_000)).toMatchObject({ phase: 'done' });
+    // read by a backend still on the old commit (same build): not done, it waits (pulling)
+    const kv3 = new MemoryKV();
+    await kv3.set(REDEPLOY_KEY, legacy(true), 60);
+    expect(await view(ctxOf(OLD, kv3), all(OLD), T0 + 60_000, BEFORE)).toMatchObject({ phase: 'pulling', running: true });
+  });
+
   it('a mid-redeploy "self" answer (a service not answering while recreated) does not count as a new build', async () => {
     // no updater: the start knew every service (probes), web is newest; then web is down while Portainer recreates it, the
     // installed build falls back to this backend's own commit, which is not "another build"
