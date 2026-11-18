@@ -4,6 +4,9 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Upgrade notes
+- **Portainer stacks: *Jetzt aktualisieren* also updates the updater.** In a stack that Portainer runs (or another tool), *Updater aktualisieren* stays greyed out: the updater never replaces its own container there. *Jetzt aktualisieren* redeploys the whole stack through Portainer, pulls every image (the updater's too) and, for a stack from Git, fetches the compose file again, so the 4.0.0 compose changes arrive without editing anything. Check that the stack's Git reference is `main` and, with the webhook, that *Re-pull image* is on. The 4.0.0 note "Update the updater first" applies to stacks the updater runs itself. *Admin → Update* now says this under the greyed-out button.
+
 ### Fixed
 - **The managed media server no longer starts check containers on its own.** Folders and the GPU are checked when you set it up or change it, and before it is recreated. If it stops unexpectedly, the base, folders and GPU are checked once (at most every 10 minutes). If recreating a missing server fails, it is tried again every 10 minutes.
 
