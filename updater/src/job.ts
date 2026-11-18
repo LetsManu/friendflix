@@ -90,6 +90,9 @@ const LIVETV = [LIVETV_SERVICE] as const;
 /** the services an update compares and reports (bootstrap runs the backend's image: it follows the backend) */
 const CORE: readonly string[] = FF_SERVICES.filter((s) => s !== 'bootstrap');
 
+/** the livetv code of a failure: its own code when it is one, else pull_failed (a registry failure, a pull, anything else) */
+const livetvCode = (e: unknown): LivetvError => LIVETV_ERRORS.find((c) => e instanceof StepError && c === e.code) ?? 'pull_failed';
+
 /** `image`'s repository pinned to `digest` (images() checked the repository) */
 function refOf(image: string, digest: string): string {
   if (!isDigest(digest)) throw new StepError('registry_failed');
@@ -288,10 +291,10 @@ export class Updater {
   }
 
   /**
-   * targets that bring the services back to recorded digest refs (`digests`; a service without one is left as it is). An image
-   * no longer on the host (pruned) is pulled by digest; those refs are returned in `pulled` and must be verified before use.
+   * targets that bring the services back to recorded digest refs (`digests`; a service without one is left as it is), and the
+   * pull of every one no longer on the host (pruned): those refs are returned in `pulled` and must be verified before use
    */
-  private async restoreTargets(images: Record<string, string>, digests: Record<string, string>, services: readonly string[]): Promise<{ targets: Targets; pulled: string[] }> {
+  private async restoreTargetsPullingPruned(images: Record<string, string>, digests: Record<string, string>, services: readonly string[]): Promise<{ targets: Targets; pulled: string[] }> {
     const wanted = services.filter((s) => digests[s]);
     // every recorded ref must name the very repository compose runs for its service (docker.ts checks it again), before any pull
     for (const s of wanted) {
@@ -397,7 +400,7 @@ export class Updater {
       if (t.changed) await this.ops.pullDigest(t.ref);
     } catch (e) {
       // the real code (a changed config, an unexpected image, compose failing, the registry, the pull), with its fixed detail
-      const code = LIVETV_ERRORS.find((c) => e instanceof StepError && c === e.code) ?? 'pull_failed';
+      const code = livetvCode(e);
       const detail = e instanceof StepError ? e.detail ?? (e.code !== code ? e.code : null) : null;
       this.log.add(`livetv: ${code}${detail ? ` (${detail})` : ''}`);
       return code;
@@ -411,11 +414,11 @@ export class Updater {
   private async restoreLivetv(tag: string, ref: string | undefined): Promise<LivetvPlan> {
     if (this.state.livetv !== 'enabled' || !ref) return 'off';
     try {
-      const { targets, pulled } = await this.restoreTargets(await this.ops.images(tag, LIVETV), { [LIVETV_SERVICE]: ref }, LIVETV);
+      const { targets, pulled } = await this.restoreTargetsPullingPruned(await this.ops.images(tag, LIVETV), { [LIVETV_SERVICE]: ref }, LIVETV);
       await this.verifyRefs(pulled);
       return targets[LIVETV_SERVICE]!;
     } catch (e) {
-      const code = LIVETV_ERRORS.find((c) => e instanceof StepError && c === e.code) ?? 'pull_failed';
+      const code = livetvCode(e);
       this.log.add(`livetv: ${code}`);
       return code;
     }
@@ -507,7 +510,9 @@ export class Updater {
       // nothing was restarted
       return this.finishJob(job, 'failed', (e as StepError).code);
     }
-    // what runs now is what a rollback goes back to; recorded before anything restarts
+    // what runs now is what a rollback goes back to; recorded before anything restarts (a crash there finds it). An update that
+    // rolls back puts the earlier target back: the services run `prev` again, a rollback to it would change nothing.
+    const earlier = { previousDigests: this.state.previousDigests, previous: this.state.previous };
     const prev = this.ownRefs([...Object.values(core), ...(typeof livetv === 'object' ? [livetv] : [])]);
     if (Object.keys(prev).length) { this.state.previousDigests = prev; this.state.previous = null; this.persist(); }
     try {
@@ -523,12 +528,14 @@ export class Updater {
       try {
         await this.step(job, 'rollback', async () => {
           const images = Object.fromEntries(Object.values(core).map((t) => [t.service, t.image]));
-          const { targets, pulled } = await this.restoreTargets(images, prev, CORE);
+          const { targets, pulled } = await this.restoreTargetsPullingPruned(images, prev, CORE);
           await this.verifyRefs(pulled);
           await this.bringUp(job, job.to, targets, await this.restoreLivetv(job.to, prev.livetv), false);
         });
-        // the services run the previous digests under the local tags of job.to
+        // the services run the previous digests under the local tags of job.to; the rollback target is the one from before
         this.state.current = job.to;
+        this.state.previousDigests = earlier.previousDigests;
+        this.state.previous = earlier.previous;
         return this.finishJob(job, 'rolled_back', code);
       } catch {
         return this.finishJob(job, 'failed', 'rollback_failed');
@@ -567,7 +574,7 @@ export class Updater {
       core = await this.step(job, 'pull', async () => {
         const images = await this.ops.images(job.to, FF_SERVICES);
         this.logFiles();
-        const r = await this.restoreTargets(images, digests, CORE);
+        const r = await this.restoreTargetsPullingPruned(images, digests, CORE);
         pulled.push(...r.pulled);
         const from = shaTag(r.targets.backend?.before?.commit);
         if (from) job.from = from;

@@ -262,9 +262,38 @@ describe('update job', () => {
       'up latest bootstrap,backend,gateway,web', 'recreate gateway', 'recreate web',
     ]);
     expect(store.state.lastJob).toMatchObject({ state: 'rolled_back', error: 'unhealthy', steps: { restart: 'ok', health: 'failed', rollback: 'ok' }, services: null });
-    expect(store.state.previousDigests).toEqual(PREV);
+    // the services run PREV again: the rollback target stays what it was before the update (none here)
+    expect(store.state.previousDigests).toBeNull();
     expect(w.runs).toMatchObject({ backend: 'a', gateway: 'a', web: 'a' });
     expect(u.log.tail().some((l) => l.endsWith('rolling back to the previous digests'))).toBe(true);
+  });
+
+  it('an update that rolls back leaves the earlier rollback target in place: a manual rollback still goes there', async () => {
+    // the stack runs a; the rollback target from an earlier update is z (digit c); the update to b never gets healthy
+    const Z = { backend: ref('backend', 'c'), gateway: ref('gateway', 'c'), web: ref('web', 'c') };
+    const w = world({ unhealthy: ['b'] });
+    const { u, store } = make(w, { previousDigests: Z, previous: null });
+    const seen: Array<State['previousDigests']> = [];
+    const up = w.ops.up;
+    w.ops.up = async (tag, services) => { seen.push(structuredClone(store.state.previousDigests)); return up(tag, services); };
+    u.start('update');
+    await u.idle();
+    expect(store.state.lastJob).toMatchObject({ state: 'rolled_back', error: 'unhealthy' });
+    // while it restarted, the state named what ran before it (a crash there must find a target); afterwards z again
+    expect(seen[0]).toEqual(PREV);
+    expect(store.state).toMatchObject({ previousDigests: Z, previous: null });
+    w.calls.length = 0;
+    u.start('rollback');
+    await u.idle();
+    expect(store.state.lastJob).toMatchObject({ action: 'rollback', state: 'succeeded' });
+    expect(w.runs).toMatchObject({ backend: 'c', gateway: 'c', web: 'c' });
+    expect(store.state.previousDigests).toEqual(PREV);
+    // a legacy sha previous comes back the same way
+    const l = world({ unhealthy: ['b'] });
+    const m = make(l, { previous: 'sha-1234567' });
+    m.u.start('update');
+    await m.u.idle();
+    expect(m.store.state).toMatchObject({ previous: 'sha-1234567', previousDigests: null, lastJob: { state: 'rolled_back' } });
   });
 
   it('the automatic rollback checks the previous backend commit, pulls a pruned previous image by digest and verifies it first', async () => {
@@ -349,7 +378,8 @@ describe('update job', () => {
     u.start('update');
     await u.idle();
     expect(w.calls.filter((c) => c.startsWith('registry'))).toEqual(ALL.map((s) => `registry ${s} nightly`));
-    // every service gets its nightly tag (compose runs <image>:nightly from now on), web the new digest
+    // every service gets its nightly tag (compose runs <image>:nightly from now on), web the new digest. The fake recreates by
+    // digest only; real compose may also recreate the others once, since their image string changes (latest -> nightly)
     expect(changing(w)).toEqual([
       `pull ${ref('web', 'c')}`, `verify ${ref('web', 'c')}`,
       `tag ${ref('backend', 'a')} ${img('backend')}:nightly`, `tag ${ref('gateway', 'a')} ${img('gateway')}:nightly`, `tag ${ref('web', 'c')} ${img('web')}:nightly`,
