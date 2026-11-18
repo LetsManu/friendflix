@@ -13,15 +13,22 @@ import { KINDS, type Folder, type Gpu, type Kind, type MediaError } from './type
 /**
  * Minimal supervision of the managed media server (spec "Lifecycle", Controller's call: never fighting the owner). Every 60 s while
  * no job runs: a recreate interrupted by a restart is settled, a labelled container of this project is adopted when the state lost
- * it (or flagged as tampered when it fails the guard), a container that should run but is missing is recreated, and every 10 min the
- * base, folders and GPU are checked. A stopped container is left alone. It acts only on containers with both of our labels, never
- * removes a volume and never starts a container after a failed rollback (its data may be half restored).
+ * it (or flagged as tampered when it fails the guard), and a container that should run but is missing is recreated (after a failed
+ * recover, again every 10 min; the recover checks the base, folders and GPU itself). No helper runs in normal operation: a
+ * running server is only inspected. A container that stopped although it should run is left alone (Docker's restart policy handles
+ * a crash) and its reason checked once per stop (base, folders, GPU); once it runs again those host codes go. A server the admin
+ * stopped (`desired.run = false`) is never checked. It acts only on containers with both of our labels, never removes a volume and
+ * never starts or checks a container after a failed rollback (its data may be half restored).
  */
 
 export type TickResult = 'busy' | 'idle' | 'recover' | 'aside' | 'tampered';
 
-/** the folder and GPU re-check (spec "Times": 10 min) */
-const CHECK_MS = 10 * 60_000;
+/** a server that should run but is missing is recreated again this long after a failed recover (spec "Times": 10 min) */
+const RETRY_MS = 10 * 60_000;
+/** what the stop check reports; only these go when the container runs again */
+const HOST_CODES: readonly MediaError[] = ['base_missing', 'folder_missing', 'gpu_missing', 'nvidia_missing'];
+/** Docker states of a container that stopped (`restarting`: the restart policy brings it back after a stop) */
+const STOPPED = ['exited', 'dead', 'restarting'];
 const FERROFIN_UPSTREAM_LABEL = 'io.github.letsmanu.friendflix.mediaserver.ferrofin';
 const OCI_VERSION_LABEL = 'org.opencontainers.image.version';
 const UPSTREAM_RE = /^[A-Za-z0-9._+-]{1,64}$/;
@@ -53,14 +60,16 @@ function healthyNow(i: Obj): boolean {
   return st.Running === true && (health === undefined || health === 'healthy');
 }
 
-export class Supervisor {
-  private readonly every: number;
-  /** when the folder and GPU check last ran (the first one is due one interval after the start) */
-  private lastCheck: number;
+type Owned = 'missing' | 'foreign' | 'tampered' | 'ok' | 'busy' | 'unknown';
 
-  constructor(private readonly d: JobDeps & { jobs: MediaJobs; checkEveryMs?: number }) {
-    this.every = d.checkEveryMs ?? CHECK_MS;
-    this.lastCheck = d.now();
+export class Supervisor {
+  /** when the last recover started (the first retry of a failed one is due one interval after the start) */
+  private lastRecover: number;
+  /** the stop the last stop check ran for (container id and State.FinishedAt); in memory only */
+  private checkedStop: string | null = null;
+
+  constructor(private readonly d: JobDeps & { jobs: MediaJobs }) {
+    this.lastRecover = d.now();
   }
 
   private get u() { return this.d.updater; }
@@ -103,26 +112,50 @@ export class Supervisor {
     if (!facts || !project) return 'idle';
     const aside = await this.recoverAside(project);
     if (aside !== 'none') return aside;
-    const owned = await this.own(project, facts);
+    const { owned, i } = await this.own(project, facts);
     if (owned === 'tampered' || owned === 'busy' || owned === 'unknown') return owned === 'unknown' ? 'idle' : owned;
+    if (owned === 'ok' && i) await this.watchStop(i);
 
-    if (this.d.now() - this.lastCheck >= this.every) {
-      this.lastCheck = this.d.now();
-      await this.check();
-    }
-    // a container that should run is missing: recreated, unless the last recover failed (lastError stays until the check clears it)
-    // or the last rollback failed (the data may be half restored: Admin decides)
+    // a container that should run is missing: recreated, unless the last rollback failed (the data may be half restored: Admin
+    // decides); after a failed recover (lastError set) again every 10 min, the recover's own check records what is still missing
     const m = this.u.mediaState();
-    if (owned === 'missing' && m.desired?.run && m.lastError === null && !this.held()) {
+    if (owned === 'missing' && m.desired?.run && !this.held()) {
+      if (m.lastError !== null && this.d.now() - this.lastRecover < RETRY_MS) return 'idle';
       if (this.u.busy) return 'busy';
       const started = this.jobs.recover();
-      return started.ok ? 'recover' : 'busy';
+      if (!started.ok) return 'busy';
+      this.lastRecover = this.d.now();
+      return 'recover';
     }
     return 'idle';
   }
 
+  /** for the status view: compared with the render gids the last deploy recorded, never through a helper */
   templateState(): Promise<'current' | 'update_pending' | null> {
-    return this.jobs.templateState();
+    return this.jobs.templateState('recorded');
+  }
+
+  /**
+   * our guard-clean container under the real name: running, the host codes of a stop check go (any other code stays); stopped
+   * although it should run (no job, no failed rollback), the base, folders and GPU are checked once per stop (its id and
+   * FinishedAt) and a code found becomes lastError (nothing found: lastError stays)
+   */
+  private async watchStop(i: Obj): Promise<void> {
+    const st = objOf(i.State);
+    const status = typeof st.Status === 'string' ? st.Status : '';
+    const m = this.u.mediaState();
+    if (status === 'running') {
+      if (m.lastError !== null && HOST_CODES.includes(m.lastError)) this.setError(null);
+      return;
+    }
+    if (!STOPPED.includes(status) || !m.desired?.run || this.held() || this.u.busy) return;
+    const stop = `${String(i.Id)}@${typeof st.FinishedAt === 'string' ? st.FinishedAt : ''}`;
+    if (stop === this.checkedStop) return;
+    // once per stop, also when the check cannot run (no helper every round)
+    this.checkedStop = stop;
+    let code: MediaError | null;
+    try { code = await this.jobs.hostCheck(); } catch { return; }
+    if (code !== null) this.setError(code);
   }
 
   /** the last job's rollback failed: nothing is started on its own */
@@ -183,25 +216,25 @@ export class Supervisor {
    * the container under the real name: 'missing'; 'foreign' (not ours: never touched); 'tampered' (ours, refused by the guard:
    * never started or adopted); 'ok' (guard-clean, adopted when the state has no container)
    */
-  private async own(project: string, facts: EngineFacts): Promise<'missing' | 'foreign' | 'tampered' | 'ok' | 'busy' | 'unknown'> {
+  private async own(project: string, facts: EngineFacts): Promise<{ owned: Owned; i?: Obj }> {
     let i: Obj | null;
-    try { i = await this.engine.inspectContainer(names(project).container); } catch { return 'unknown'; }
-    if (!i) return 'missing';
-    if (!this.jobs.labelled(i, project)) return 'foreign';
+    try { i = await this.engine.inspectContainer(names(project).container); } catch { return { owned: 'unknown' }; }
+    if (!i) return { owned: 'missing' };
+    if (!this.jobs.labelled(i, project)) return { owned: 'foreign' };
     const m = this.u.mediaState();
     if (!(await this.clean(i, project, m.desired?.gpu ?? gpuOf(i)))) {
       if (!m.tampered) {
         this.u.updateMedia((s) => { s.tampered = true; });
         this.u.log.add('media server container changed outside FriendFlix');
       }
-      return 'tampered';
+      return { owned: 'tampered' };
     }
     if (m.tampered) this.u.updateMedia((s) => { s.tampered = false; });
     if (!m.container) {
-      if (this.u.busy) return 'busy';
+      if (this.u.busy) return { owned: 'busy' };
       await this.adopt(project, i, m.desired?.run ?? objOf(i.State).Running === true, facts);
     }
-    return 'ok';
+    return { owned: 'ok', i };
   }
 
   /**
@@ -228,7 +261,8 @@ export class Supervisor {
     if (gpu === 'dri') {
       try { render = await this.jobs.hostRenderGids({ uid, gid }); } catch { return false; }
     }
-    const extra = listOf(h.GroupAdd).map(Number).filter((g) => !render.includes(g));
+    const groupAdd = listOf(h.GroupAdd).map(Number);
+    const extra = groupAdd.filter((g) => !render.includes(g));
     const egressNet = facts?.egressNetwork ?? names(project).egress;
     const egress = Object.keys(objOf(objOf(i.NetworkSettings).Networks)).includes(egressNet);
     const tz = listOf(c.Env).find((e): e is string => typeof e === 'string' && e.startsWith('TZ='))?.slice(3) ?? '';
@@ -249,6 +283,8 @@ export class Supervisor {
       const known = s.dataUpstream[kind];
       if (upstream !== UNKNOWN_UPSTREAM && (known === undefined || older(known, upstream))) s.dataUpstream[kind] = upstream;
       s.desired = { ...parsed.spec, run };
+      // the render gids it was built with, for the status view's template comparison
+      s.renderGids = gpu === 'dri' ? [...new Set(groupAdd.filter((g) => render.includes(g)))] : [];
       s.tampered = false;
       if (base) adoptBase(s, base, new Date(this.d.now()).toISOString());
     });
@@ -275,13 +311,6 @@ export class Supervisor {
     if (!v || v.labels['friendflix.managed'] !== 'mediaserver-base' || v.labels['friendflix.project'] !== project || typeof path !== 'string') return null;
     if (checkBasePath(path, { dockerRoot: null, stackDir: null }) !== null || names(project).base(path) !== volume) return null;
     return { path, volume };
-  }
-
-  /** the folder and GPU check: lastError is the code it found, or null; unchanged when the check cannot run */
-  private async check(): Promise<void> {
-    let code: MediaError | null;
-    try { code = await this.jobs.hostCheck(); } catch { return; }
-    this.setError(code);
   }
 
   /** lastError, written only when it changes */

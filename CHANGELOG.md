@@ -4,6 +4,9 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Fixed
+- **The managed media server no longer starts check containers on its own.** Folders and the GPU are checked when you set up, change or start it. If it stops unexpectedly, the reason is checked once. A server whose folder was missing is retried every 10 minutes.
+
 ## [4.0.0] – Donut – 2026-11-18
 
 ### Upgrade notes

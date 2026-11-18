@@ -78,6 +78,11 @@ export interface MediaState {
    * deploy's snapshot read it, not the container.
    */
   dataUpstream: Partial<Record<Kind, string>>;
+  /**
+   * the render gids the last successful deploy built the container with (empty without the dri GPU); the status view compares the
+   * template with them instead of running a helper. Absent in a state file from before them.
+   */
+  renderGids?: number[];
 }
 
 export const DEFAULT_MEDIA: MediaState = { base: null, pending: null, desired: null, container: null, pinSource: null, backups: [], hdr: null, lastError: null, tampered: false, dataUpstream: {} };
@@ -193,10 +198,18 @@ function sanitizeDataUpstream(raw: unknown, container: MediaState['container']):
   return out;
 }
 
+/** at most 4 distinct gids from 1 to 65535 (the template's limits); anything else is not a record */
+function sanitizeRenderGids(raw: unknown): number[] | undefined {
+  if (!Array.isArray(raw) || raw.length > 4) return undefined;
+  if (!raw.every((g) => typeof g === 'number' && Number.isInteger(g) && g >= 1 && g <= 65535)) return undefined;
+  return [...new Set(raw as number[])];
+}
+
 /** every field of the media section is re-validated on its own; a wrong one falls back to its default, its siblings survive */
 export function sanitizeMedia(raw: unknown): MediaState {
   const o = isObj(raw) ? raw : {};
   const container = sanitizeContainer(o.container);
+  const renderGids = sanitizeRenderGids(o.renderGids);
   return {
     base: sanitizeBase(o.base),
     pending: sanitizePending(o.pending),
@@ -208,6 +221,7 @@ export function sanitizeMedia(raw: unknown): MediaState {
     lastError: MEDIA_ERRORS.find((c) => c === o.lastError) ?? null,
     tampered: o.tampered === true,
     dataUpstream: sanitizeDataUpstream(o.dataUpstream, container),
+    ...(renderGids ? { renderGids } : {}),
   };
 }
 

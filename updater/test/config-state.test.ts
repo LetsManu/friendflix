@@ -138,6 +138,11 @@ describe('updater state file', () => {
     expect(sanitize({ media: older }).media.dataUpstream).toEqual({ jellyfin: '10.10.7' });
     expect(sanitize({ media: { ...older, container: null } }).media.dataUpstream).toEqual({});
     expect(sanitize({ media: { ...media, dataUpstream: { jellyfin: '../x', ferrofin: 'v1.5.1', other: '1.0.0' } } }).media.dataUpstream).toEqual({ ferrofin: 'v1.5.1' });
+    // the render gids of the last deploy: optional (a state from before them loads without), a bad list is dropped
+    expect(sanitize({ media: { ...media, renderGids: [993, 994] } }).media).toEqual({ ...media, renderGids: [993, 994] });
+    expect(sanitize({ media: { ...media, renderGids: [] } }).media.renderGids).toEqual([]);
+    expect('renderGids' in sanitize({ media }).media).toBe(false);
+    for (const bad of [[0], [993, 'x'], [70000], [1, 2, 3, 4, 5], 'x', [1.5]]) expect('renderGids' in sanitize({ media: { ...media, renderGids: bad } }).media).toBe(false);
     const steps = { check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'ok', create: 'ok', start: 'ok', health: 'failed', rollback: 'skipped' };
     const job = sanitize({ lastJob: { id: '0123456789abcdef', action: 'mediaserver-apply', state: 'succeeded_mediaserver_failed', to: 'latest', media: { step: 'health', steps } } }).lastJob!;
     expect(job).toMatchObject({ action: 'mediaserver-apply', state: 'succeeded_mediaserver_failed', media: { step: 'health', steps } });

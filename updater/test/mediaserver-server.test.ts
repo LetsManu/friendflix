@@ -8,10 +8,11 @@ import { Updater } from '../src/job.js';
 import type { MediaOp } from '../src/mediaserver/types.js';
 import { MediaService } from '../src/mediaserver/service.js';
 import { STARTING_VIEW, mediaStatusView, type MediaStatusView } from '../src/mediaserver/status.js';
+import { Supervisor } from '../src/mediaserver/supervise.js';
 import { ReplayCache, deriveKey, sign, streamBinding, streamBindingAsync, type Verifier } from '../src/protocol.js';
 import { MAX_DERIVING, handler, warmMediaStatus, type AppDeps } from '../src/server.js';
 import { DEFAULT_STATE, memoryStore, type Job } from '../src/state.js';
-import { FACTS, PASSWORD, SOURCE, SPEC, ferroPin, world } from './media-world.js';
+import { FACTS, PASSWORD, SOURCE, SPEC, ferroPin, okFolders, world } from './media-world.js';
 
 const key = deriveKey('media-server-test-secret-0123456789');
 const BACKUP = 'jellyfin-20261117-1402-10.11.3';
@@ -239,6 +240,33 @@ describe('the media status', () => {
     expect(cv.container).toMatchObject({ tampered: false });
   });
 
+  it('the status view runs no helper: the template is compared with the render gids recorded at the deploy', async () => {
+    const w = world();
+    // the host's render group changed since the deploy: only a deploy or an update reads it again
+    w.cfg.answer = (c) => (c.verb === 'gpu' ? { nodes: [{ node: 'renderD128', gid: 994, vendor: 'intel' }] } : okFolders(c));
+    w.existing({ ...SPEC, gpu: 'dri' }, ferroPin(), 'v1.5.1', { renderGids: [993] });
+    // wired as server.ts wires it
+    const sup = new Supervisor({ ...w.deps, jobs: w.jobs });
+    const view = () => mediaStatusView({ updater: w.updater, engine: w.deps.engine, jobs: w.jobs, facts: w.deps.facts, pins: w.deps.pins, templateState: () => sup.templateState(), now: () => w.clock.t })();
+    expect((await view()).container).toMatchObject({ state: 'running', template: 'current' });
+    // recorded gids the container was not built with: an update is pending
+    w.updater.updateMedia((m) => { m.renderGids = [992]; });
+    expect((await view()).container!.template).toBe('update_pending');
+    // a state from before the record: unknown with the dri GPU (shown as current), never a helper
+    w.updater.updateMedia((m) => { delete m.renderGids; });
+    expect(await sup.templateState()).toBeNull();
+    expect((await view()).container!.template).toBe('current');
+    expect(w.helperCalls).toEqual([]);
+    // without the dri GPU an old state compares with no render gids
+    const o = world();
+    o.existing(SPEC, ferroPin(), 'v1.5.1');
+    o.updater.updateMedia((m) => { delete m.renderGids; });
+    expect(await new Supervisor({ ...o.deps, jobs: o.jobs }).templateState()).toBe('current');
+    o.updater.updateMedia((m) => { m.desired!.tz = 'Europe/Vienna'; });
+    expect(await new Supervisor({ ...o.deps, jobs: o.jobs }).templateState()).toBe('update_pending');
+    expect(o.helperCalls).toEqual([]);
+  });
+
   it('status view is cached for 10 s', async () => {
     const w = world();
     w.existing(SPEC, ferroPin(), 'v1.5.1');
@@ -257,7 +285,7 @@ describe('the media status', () => {
     expect((await view()).error).toBe('gpu_missing');
     t = 10_000;
     await view();
-    expect([facts, templates]).toEqual([2, 1]); // the template state (a helper with the dri GPU) is kept 30 s
+    expect([facts, templates]).toEqual([2, 1]); // the template state is kept 30 s
     t = 40_000;
     await view();
     expect([facts, templates]).toEqual([3, 2]);

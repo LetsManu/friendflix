@@ -47,7 +47,7 @@ export interface MediaStatusDeps {
   jobs: Pick<MediaJobs, 'labelled' | 'guardInspect'>;
   facts(): Promise<EngineFacts>;
   pins(): Promise<PinRead>;
-  /** Supervisor.templateState(): with the dri GPU it runs a helper, so it is cached longer (templateTtlMs) */
+  /** Supervisor.templateState(): compared with the render gids the last deploy recorded (never a helper); cached longer (templateTtlMs) */
   templateState(): Promise<'current' | 'update_pending' | null>;
   now?(): number;
   ttlMs?: number;

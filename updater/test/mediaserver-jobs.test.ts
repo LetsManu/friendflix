@@ -302,6 +302,24 @@ describe('apply', () => {
     expect(w.find(N.container)).toBe(foreign);
   });
 
+  it('a deploy records the render gids it built the container with; remove forgets them', async () => {
+    const w = world();
+    const answer = w.cfg.answer;
+    w.cfg.answer = (c) => (c.verb === 'gpu' ? { nodes: [{ node: 'renderD128', gid: 993, vendor: 'intel' }, { node: 'renderD129', gid: 994, vendor: 'amd' }] } : answer(c));
+    expect((await w.run({ op: 'apply', spec: { ...SPEC, gpu: 'dri' }, firstRun: { password: PASSWORD } })).state).toBe('succeeded');
+    expect(w.media().renderGids).toEqual([993, 994]);
+    // a failed deploy keeps the record of the container that still runs
+    w.cfg.answer = (c) => (c.verb === 'gpu' ? { nodes: [] } : answer(c));
+    expect((await w.run({ op: 'apply', spec: { ...SPEC, gpu: 'dri' } }))).toMatchObject({ state: 'failed', error: 'gpu_missing' });
+    expect(w.media().renderGids).toEqual([993, 994]);
+    // without the dri GPU: none
+    w.cfg.answer = answer;
+    expect((await w.run({ op: 'apply', spec: SPEC })).state).toBe('succeeded');
+    expect(w.media().renderGids).toEqual([]);
+    expect((await w.run({ op: 'remove', data: false })).state).toBe('succeeded');
+    expect(w.media().renderGids).toBeUndefined();
+  });
+
   it('template violation is final', async () => {
     const w = world();
     // a render node with gid 0 would hand the media server the root group

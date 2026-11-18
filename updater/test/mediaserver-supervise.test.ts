@@ -44,9 +44,9 @@ function setup(o: Parameters<typeof world>[0] = {}) {
     await w.updater.idle();
     return r;
   };
-  /** ten rounds: the first folder and GPU check is due 10 minutes after the supervisor started */
-  const tenMinutes = async () => { for (let i = 0; i < 10; i++) await tick(); };
-  return { ...w, sup, update, tick, tenMinutes };
+  /** `n` rounds, each 60 s after the last */
+  const ticks = async (n: number) => { for (let i = 0; i < n; i++) await tick(); };
+  return { ...w, sup, update, tick, ticks };
 }
 
 const gpuAnswer = (gid: number) => (c: HelperCall) => {
@@ -86,13 +86,19 @@ describe('the media phase of an update', () => {
     g.cfg.answer = gpuAnswer(993);
     const dri = { ...JSPEC, gpu: 'dri' as const };
     g.existing(dri, jellyPin('10.11.3'), '10.11.3', { renderGids: [992] });
-    expect(await g.sup.templateState()).toBe('update_pending');
+    // the status view compares with the gids recorded at the deploy (no helper); the phase reads them fresh through a helper
+    expect(await g.sup.templateState()).toBe('current');
+    expect(g.helperCalls).toEqual([]);
+    expect(await g.jobs.templateState()).toBe('update_pending');
+    expect(g.helperCalls.map((c) => c.verb)).toEqual(['gpu']);
     const gpuDeploy = vi.spyOn(g.jobs, 'deploy');
     const regid = await g.update();
     expect(regid.state).toBe('succeeded');
     expect(gpuDeploy).toHaveBeenCalledTimes(1);
     expect((g.find(N.container)!.body.HostConfig as { GroupAdd: string[] }).GroupAdd).toEqual(['993']);
+    expect(g.media().renderGids).toEqual([993]);
     expect(await g.sup.templateState()).toBe('current');
+    expect(await g.jobs.templateState()).toBe('current');
 
     // a server stopped on purpose is not moved (its status keeps the pending update)
     const st = setup();
@@ -160,12 +166,15 @@ describe('supervision', () => {
     expect(await w.tick()).toBe('idle');
     expect(w.updater.snapshot().lastJob!.id).toBe(job.id);
 
-    // a stopped container is a choice (or Docker's restart policy will handle a crash)
+    // a stopped container is never started or recreated (Docker's restart policy handles a crash); only its reason is checked
     const s = setup();
     s.existing(SPEC, ferroPin(), 'v1.5.1').running = false;
     expect(await s.tick()).toBe('idle');
+    expect(await s.tick()).toBe('idle');
     expect(s.updater.snapshot().lastJob).toBeNull();
     expect(s.changes()).toEqual([]);
+    expect(s.helperCalls.map((c) => c.verb)).toEqual(['check']);
+    expect(s.media().lastError).toBeNull();
 
     // stopped on purpose and then deleted: not recreated
     const d = setup();
@@ -182,59 +191,179 @@ describe('supervision', () => {
     const job = w.updater.snapshot().lastJob!;
     expect(job).toMatchObject({ action: 'mediaserver-recover', state: 'failed', error: 'base_missing' });
     expect(w.media().lastError).toBe('base_missing');
-    // within the check interval: no new job
+    // within the retry interval: no new job, no helper
+    const helpers = w.helperCalls.length;
     for (let i = 0; i < 8; i++) expect(await w.tick()).toBe('idle');
     expect(w.updater.snapshot().lastJob!.id).toBe(job.id);
+    expect(w.helperCalls.length).toBe(helpers);
     expect(w.calls.filter((c) => c.startsWith('removeVolume') || c.startsWith('createVolume'))).toEqual([]);
     expect(w.media().lastError).toBe('base_missing');
-    // the share is back: the 10-minute check clears the error, the round after recreates
+    // the share is back: the retry 10 minutes after the failed recover recreates it and clears the error
     w.volumes.set(baseVolume(BASE), { labels: { 'friendflix.managed': 'mediaserver-base', 'friendflix.project': PROJECT }, options: { type: 'none', o: 'bind,ro', device: BASE } });
     for (let i = 0; i < 3 && w.updater.snapshot().lastJob!.id === job.id; i++) await w.tick();
     expect(w.updater.snapshot().lastJob).toMatchObject({ action: 'mediaserver-recover', state: 'succeeded' });
     expect(w.media().lastError).toBeNull();
 
-    // with the container still there, a vanished base is only reported: the container is not stopped or removed
+    // with the container still running, nothing is checked: the container is not stopped or removed
     const u = setup();
     u.existing(SPEC, ferroPin(), 'v1.5.1');
     u.volumes.delete(baseVolume(BASE));
-    await u.tenMinutes();
-    expect(u.media().lastError).toBe('base_missing');
+    await u.ticks(20);
+    expect(u.media().lastError).toBeNull();
+    expect(u.helperCalls).toEqual([]);
     expect(u.changes()).toEqual([]);
     expect(u.find(N.container)!.running).toBe(true);
   });
 
-  it('the folder and GPU check runs every 10 minutes', async () => {
-    const w = setup();
-    w.existing(SPEC, ferroPin(), 'v1.5.1');
-    let answer: 'ok' | 'folder_missing' = 'folder_missing';
-    w.cfg.answer = (c) => (c.verb === 'check' && c.args[0] === 'folders'
-      ? { folders: (JSON.parse(c.args[1]!) as string[]).map((rel) => ({ rel, code: rel === 'Serien' ? answer : 'ok' })) }
-      : { error: 'invalid_body' });
-    const runs = () => w.helperCalls.filter((c) => c.verb === 'check').length;
-    for (let i = 0; i < 9; i++) await w.tick();
-    expect(runs()).toBe(0);
-    await w.tick();
-    expect(runs()).toBe(1);
-    expect(w.media().lastError).toBe('folder_missing');
-    answer = 'ok';
-    for (let i = 0; i < 9; i++) await w.tick();
-    expect(runs()).toBe(1);
-    expect(w.media().lastError).toBe('folder_missing');
-    await w.tick();
-    expect(runs()).toBe(2);
-    expect(w.media().lastError).toBeNull();
+  it('a running, healthy server starts no helper', async () => {
+    for (const spec of [SPEC, { ...SPEC, gpu: 'dri' as const }, { ...SPEC, gpu: 'nvidia' as const }]) {
+      const w = setup();
+      w.existing(spec, ferroPin(), 'v1.5.1', { renderGids: [993] });
+      for (let i = 0; i < 30; i++) expect(await w.tick()).toBe('idle');
+      // no helper ran and nothing was created (an NVIDIA server without the toolkit is no longer flagged on its own)
+      expect(w.helperCalls).toEqual([]);
+      expect(w.calls).toEqual([]);
+      expect(w.media().lastError).toBeNull();
+    }
+  });
 
-    // a chosen GPU that went away
+  it('a missing server whose recover failed is retried every 10 minutes, never while held or busy', async () => {
+    const w = setup();
+    w.containers.delete(w.existing(SPEC, ferroPin(), 'v1.5.1').id);
+    let serien: 'ok' | 'folder_missing' = 'folder_missing';
+    w.cfg.answer = (c) => {
+      if (c.verb === 'check' && c.args[0] === 'folders') return { folders: (JSON.parse(c.args[1]!) as string[]).map((rel) => ({ rel, code: rel === 'Serien' ? serien : 'ok' })) };
+      if (c.verb === 'check' && c.args[0] === 'data') return { owner: 1000 };
+      return { error: 'invalid_body' };
+    };
+    const recover = vi.spyOn(w.jobs, 'recover');
+    const hostCheck = vi.spyOn(w.jobs, 'hostCheck');
+    expect(await w.tick()).toBe('recover');
+    expect(w.updater.snapshot().lastJob).toMatchObject({ action: 'mediaserver-recover', state: 'failed', error: 'folder_missing' });
+    expect(w.media().lastError).toBe('folder_missing');
+    // not before 10 minutes
+    for (let i = 0; i < 9; i++) expect(await w.tick()).toBe('idle');
+    expect(recover).toHaveBeenCalledTimes(1);
+    expect(await w.tick()).toBe('recover');
+    expect(recover).toHaveBeenCalledTimes(2);
+    expect(w.media().lastError).toBe('folder_missing');
+    // the folder is back: the next retry recreates the server and clears the error
+    serien = 'ok';
+    for (let i = 0; i < 9; i++) expect(await w.tick()).toBe('idle');
+    expect(await w.tick()).toBe('recover');
+    expect(w.updater.snapshot().lastJob).toMatchObject({ action: 'mediaserver-recover', state: 'succeeded' });
+    expect(w.media().lastError).toBeNull();
+    expect(w.find(N.container)!.running).toBe(true);
+    // the recover ran the checks itself, the supervisor never did
+    expect(hostCheck).not.toHaveBeenCalled();
+    const helpers = w.helperCalls.length;
+    await w.ticks(15);
+    expect(recover).toHaveBeenCalledTimes(3);
+    expect(w.helperCalls.length).toBe(helpers);
+
+    // after a failed rollback: never retried (its data may be half restored)
+    const h = setup();
+    h.containers.delete(h.existing(SPEC, ferroPin(), 'v1.5.1').id);
+    const media = { step: 'rollback' as const, steps: { check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'ok', create: 'ok', start: 'ok', health: 'failed', rollback: 'failed' } as const };
+    h.updater.startMediaJob('mediaserver-update', async (job) => { job.media = structuredClone(media); h.updater.finishJob(job, 'failed', 'unhealthy'); });
+    await h.updater.idle();
+    h.updater.updateMedia((m) => { m.lastError = 'unhealthy'; });
+    const heldRecover = vi.spyOn(h.jobs, 'recover');
+    for (let i = 0; i < 25; i++) expect(await h.tick()).toBe('idle');
+    expect(heldRecover).not.toHaveBeenCalled();
+    expect(h.helperCalls).toEqual([]);
+
+    // while a job runs: nothing
+    const b = setup();
+    b.containers.delete(b.existing(SPEC, ferroPin(), 'v1.5.1').id);
+    b.updater.updateMedia((m) => { m.lastError = 'folder_missing'; });
+    const busyRecover = vi.spyOn(b.jobs, 'recover');
+    let release!: () => void;
+    b.updater.startMediaJob('mediaserver-stop', () => new Promise<void>((r) => { release = r; }));
+    b.clock.t += 11 * MIN;
+    expect(await b.sup.tick()).toBe('busy');
+    release();
+    await b.updater.idle();
+    expect(busyRecover).not.toHaveBeenCalled();
+  });
+
+  it('an unexpected stop is checked once per stop', async () => {
+    const w = setup();
+    const c = w.existing(SPEC, ferroPin(), 'v1.5.1');
+    let serien: 'ok' | 'folder_missing' = 'folder_missing';
+    w.cfg.answer = (x) => (x.verb === 'check' && x.args[0] === 'folders'
+      ? { folders: (JSON.parse(x.args[1]!) as string[]).map((rel) => ({ rel, code: rel === 'Serien' ? serien : 'ok' })) }
+      : { error: 'invalid_body' });
+    const hostCheck = vi.spyOn(w.jobs, 'hostCheck');
+    // the server stopped on its own (desired.run stays true)
+    c.running = false;
+    c.finishedAt = '2026-11-17T14:05:00.000Z';
+    expect(await w.tick()).toBe('idle');
+    expect(hostCheck).toHaveBeenCalledTimes(1);
+    expect(w.media().lastError).toBe('folder_missing');
+    // the same stop: not again
+    await w.ticks(12);
+    expect(hostCheck).toHaveBeenCalledTimes(1);
+    // Docker restarted it and it stopped again: checked again
+    c.status = 'restarting';
+    c.finishedAt = '2026-11-17T14:20:00.000Z';
+    await w.tick();
+    expect(hostCheck).toHaveBeenCalledTimes(2);
+    c.status = 'dead';
+    c.finishedAt = '2026-11-17T14:21:00.000Z';
+    await w.tick();
+    expect(hostCheck).toHaveBeenCalledTimes(3);
+    expect(w.media().lastError).toBe('folder_missing');
+    // running again: the host code goes, without a helper
+    delete c.status;
+    c.running = true;
+    await w.tick();
+    expect(w.media().lastError).toBeNull();
+    expect(hostCheck).toHaveBeenCalledTimes(3);
+    // a check that finds nothing leaves the error as it is
+    serien = 'ok';
+    w.updater.updateMedia((m) => { m.lastError = 'interrupted'; });
+    c.running = false;
+    c.finishedAt = '2026-11-17T15:00:00.000Z';
+    await w.tick();
+    expect(hostCheck).toHaveBeenCalledTimes(4);
+    expect(w.media().lastError).toBe('interrupted');
+    // running again: any other code stays
+    c.running = true;
+    await w.ticks(3);
+    expect(w.media().lastError).toBe('interrupted');
+    expect(w.changes()).toEqual([]);
+    expect(w.updater.snapshot().lastJob).toBeNull();
+
+    // a chosen GPU that went away; an NVIDIA server without the toolkit
     const g = setup();
-    g.cfg.answer = (c) => (c.verb === 'gpu' ? { nodes: [] } : okFolders(c));
-    g.existing({ ...SPEC, gpu: 'dri' }, ferroPin(), 'v1.5.1', { renderGids: [993] });
-    await g.tenMinutes();
+    g.cfg.answer = (x) => (x.verb === 'gpu' ? { nodes: [] } : okFolders(x));
+    g.existing({ ...SPEC, gpu: 'dri' }, ferroPin(), 'v1.5.1', { renderGids: [993] }).running = false;
+    await g.tick();
     expect(g.media().lastError).toBe('gpu_missing');
     const nv = setup();
-    nv.existing({ ...SPEC, gpu: 'nvidia' }, ferroPin(), 'v1.5.1');
-    await nv.tenMinutes();
+    nv.existing({ ...SPEC, gpu: 'nvidia' }, ferroPin(), 'v1.5.1').running = false;
+    await nv.tick();
     expect(nv.media().lastError).toBe('nvidia_missing');
     expect(nv.changes()).toEqual([]);
+    // a vanished base
+    const u = setup();
+    u.existing(SPEC, ferroPin(), 'v1.5.1').running = false;
+    u.volumes.delete(baseVolume(BASE));
+    await u.tick();
+    expect(u.media().lastError).toBe('base_missing');
+  });
+
+  it("a stop by the admin is never diagnosed", async () => {
+    const w = setup();
+    w.existing(SPEC, ferroPin(), 'v1.5.1');
+    expect((await w.run({ op: 'stop' })).state).toBe('succeeded');
+    expect(w.find(N.container)!.running).toBe(false);
+    const hostCheck = vi.spyOn(w.jobs, 'hostCheck');
+    await w.ticks(15);
+    expect(hostCheck).not.toHaveBeenCalled();
+    expect(w.helperCalls).toEqual([]);
+    expect(w.changes()).toEqual([`stop ${N.container}`]);
   });
 
   it('nothing runs while a job does', async () => {
@@ -373,9 +502,12 @@ describe('adoption and ownership', () => {
     const dri = { ...SPEC, gpu: 'dri' as const, mediaGid: 1001 };
     g.existing(dri, ferroPin(), 'v1.5.1', { renderGids: [993] });
     g.images.get(ferroPin().image)!.labels['io.github.letsmanu.friendflix.mediaserver.ferrofin'] = 'v1.5.1';
-    g.updater.updateMedia((m) => { m.container = null; m.desired = null; });
+    g.updater.updateMedia((m) => { m.container = null; m.desired = null; delete m.renderGids; });
     expect(await g.tick()).toBe('idle');
     expect(g.media().desired).toEqual({ ...dri, run: true });
+    // the render gids the container was built with are recorded (the media group is not one)
+    expect(g.media().renderGids).toEqual([993]);
+    expect(await g.sup.templateState()).toBe('current');
     expect(g.media().container).toMatchObject({ kind: 'ferrofin', upstream: 'v1.5.1' });
     const h = setup();
     h.existing(JSPEC, jellyPin('10.11.3'), '10.11.3');
