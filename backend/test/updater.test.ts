@@ -624,17 +624,20 @@ describe('POST /api/admin/updater/:action', () => {
     await stamp();
     fake.stack = 'foreign';
     e2.ctx.cfg = { ...e2.ctx.cfg, PORTAINER_WEBHOOK_URL: HOOK, GIT_SHA: 'a'.repeat(40) };
+    const A = 'a'.repeat(40), B = 'b'.repeat(40);
+    // each service's image commit and digest (GitHub knows neither commit's time here: the installed build is this backend's own)
+    const svc = (service: string, commit: string, state = 'running', health = 'healthy') => ({ service, state, health, sha: `sha-${commit.slice(0, 7)}`, version: null, commit, digest: `sha256:${commit[0]!.repeat(64)}` });
+    fake.services = [svc('backend', A), svc('gateway', A), svc('web', A)];
     expect((await post('update')).statusCode).toBe(202);
     const view = async () => (await e2.app.inject({ url: '/api/admin/updater', cookies: a2.cookies })).json().redeploy;
-    const svc = (service: string, sha: string, state = 'running', health = 'healthy') => ({ service, state, health, sha, version: null });
-    expect(await view()).toMatchObject({ mode: 'webhook', tag: 'latest', phase: 'pulling', running: true, services: { updated: 0, total: 1 } });
-    fake.services = [svc('backend', 'sha-aaaaaaa'), svc('gateway', 'sha-bbbbbbb'), svc('web', 'sha-aaaaaaa', 'exited', '')];
+    expect(await view()).toMatchObject({ mode: 'webhook', tag: 'latest', phase: 'pulling', running: true, services: { updated: 0, total: 3 } });
+    fake.services = [svc('backend', A), svc('gateway', B), svc('web', A, 'exited', '')];
     expect(await view()).toMatchObject({ phase: 'recreating', services: { updated: 1, total: 3 } });
     // Portainer recreated this backend: the new one (another build) reads the same record from the kv store
-    e2.ctx.cfg = { ...e2.ctx.cfg, GIT_SHA: 'b'.repeat(40) };
-    fake.services = [svc('backend', 'sha-bbbbbbb'), svc('gateway', 'sha-bbbbbbb'), svc('web', 'sha-bbbbbbb', 'running', 'starting')];
+    e2.ctx.cfg = { ...e2.ctx.cfg, GIT_SHA: B };
+    fake.services = [svc('backend', B), svc('gateway', B), svc('web', B, 'running', 'starting')];
     expect(await view()).toMatchObject({ phase: 'health', running: true, services: { updated: 3, total: 3 } });
-    fake.services = [svc('backend', 'sha-bbbbbbb'), svc('gateway', 'sha-bbbbbbb'), svc('web', 'sha-bbbbbbb')];
+    fake.services = [svc('backend', B), svc('gateway', B), svc('web', B)];
     expect(await view()).toMatchObject({ phase: 'done', running: false });
   });
 

@@ -3,14 +3,15 @@
 import { audit } from './audit.js';
 import { buildInfo, channelTag, channelUpdate, envLine, hookWithTag, withTag, type BuildKind, type Channel, type RunningChannel } from './channel.js';
 import type { Ctx } from './ctx.js';
+import { cachedInstalled, installedBuild } from './installed.js';
 import { abandonRedeploy, beginRedeploy, claimRedeploy, settleRedeploy } from './redeploy.js';
 import { REPORT_SERVICES, updaterView } from './updater.js';
-import { appVersion, codenameFor, compareSemver, parseSemver } from './version.js';
+import { appVersion, codenameFor, compareSemver, imageCommit, parseSemver } from './version.js';
 
 const TTL = 600;
 const CACHE_MS = 'update:info:';
-/** the kv key of the cached GitHub answer for this build */
-const infoKey = (cfg: Ctx['cfg']): string => `${CACHE_MS}${cfg.UPDATE_REPO}:${cfg.GIT_SHA}:${appVersion(cfg).version}`;
+/** the kv key of the cached GitHub answer for the installed build (installed.ts) */
+const infoKey = (cfg: Ctx['cfg'], installed: string): string => `${CACHE_MS}${cfg.UPDATE_REPO}:${installed}:${appVersion(cfg).version}`;
 const GH = 'https://api.github.com';
 
 export interface Latest { sha: string; date: string; runUrl: string }
@@ -93,13 +94,13 @@ async function fetchRelease(ctx: Ctx): Promise<Release | null> {
   return { version, codename: codenameFor(version), tag, name: r.name || tag, url: r.html_url ?? '', publishedAt: r.published_at ?? null, notes: (r.body ?? '').slice(0, NOTES_MAX) };
 }
 
-async function fetchMain(ctx: Ctx): Promise<Pick<Fetched, 'latest' | 'behind' | 'commits'> | null> {
+/** the newest green CI run on main and how far the installed build `cur` is behind it */
+async function fetchMain(ctx: Ctx, cur: string): Promise<Pick<Fetched, 'latest' | 'behind' | 'commits'> | null> {
   const repo = ctx.cfg.UPDATE_REPO;
   const runs = await gh<{ workflow_runs?: Array<{ head_sha: string; updated_at: string; html_url: string }> }>(ctx, `/repos/${repo}/actions/workflows/ci.yml/runs?branch=main&status=success&event=push&per_page=1`);
   const run = runs?.workflow_runs?.[0];
   if (!run) return null;
   const latest: Latest = { sha: run.head_sha, date: run.updated_at, runUrl: run.html_url };
-  const cur = ctx.cfg.GIT_SHA;
   if (cur === 'dev' || cur === latest.sha) return { latest, behind: cur === latest.sha ? 0 : null, commits: [] };
   try {
     const cmp = (await gh<{ ahead_by: number; commits?: Array<{ sha: string; html_url: string; commit: { message: string; author?: { name?: string; date?: string } }; author?: { login?: string } | null }> }>(ctx, `/repos/${repo}/compare/${cur}...${latest.sha}`))!;
@@ -112,8 +113,8 @@ async function fetchMain(ctx: Ctx): Promise<Pick<Fetched, 'latest' | 'behind' | 
   }
 }
 
-async function fetchLatest(ctx: Ctx): Promise<Fetched> {
-  const [release, main] = await Promise.all([fetchRelease(ctx), fetchMain(ctx)]);
+async function fetchLatest(ctx: Ctx, cur: string): Promise<Fetched> {
+  const [release, main] = await Promise.all([fetchRelease(ctx), fetchMain(ctx, cur)]);
   if (!release && !main) throw new Error('no release and no successful CI run found');
   return { release, ...(main ?? { latest: null, behind: null, commits: [] }) };
 }
@@ -121,7 +122,7 @@ async function fetchLatest(ctx: Ctx): Promise<Fetched> {
 /** The newest release's version from the cached GitHub answer only (no request); null when nothing is cached or there is no release. */
 export async function cachedReleaseVersion(ctx: Pick<Ctx, 'kv' | 'cfg'>): Promise<string | null> {
   try {
-    const hit = await ctx.kv.get(infoKey(ctx.cfg));
+    const hit = await ctx.kv.get(infoKey(ctx.cfg, (await cachedInstalled(ctx))?.commit ?? imageCommit(ctx.cfg)));
     return hit ? ((JSON.parse(hit) as Partial<Fetched>).release?.version ?? null) : null;
   } catch {
     return null;
@@ -146,27 +147,29 @@ async function updaterDigestsDiffer(ctx: Ctx): Promise<boolean | null> {
 /**
  * Installed vs newest release (stable channel) or vs the newest CI build on main (nightly channel: commits ahead; on stable
  * secondary info, and the only comparison before the first release). GitHub answers are cached for 10 min (unauthenticated limit: 60/h); an outage never throws.
+ * "Installed" is the installed build (installed.ts): its commit is compared and "built at" is its commit time.
  */
 export async function updateInfo(ctx: Ctx, refresh = false): Promise<UpdateInfo> {
   const ver = appVersion(ctx.cfg);
-  const base = { current: { sha: ctx.cfg.GIT_SHA, builtAt: ctx.cfg.BUILD_TIME ?? null, ...ver }, portainer: portainerSetup(ctx), autoUpdateNote: true as const };
+  const installed = await installedBuild(ctx, { fresh: refresh });
+  const base = { current: { sha: installed.commit, builtAt: installed.time, ...ver }, portainer: portainerSetup(ctx), autoUpdateNote: true as const };
   const selected: Channel = ctx.cfg.UPDATE_CHANNEL;
   const pinned = selected === 'pinned' ? (ctx.cfg.UPDATE_VERSION ?? null) : null;
   let locked = false;
   try { locked = ctx.settings.sources().UPDATE_CHANNEL === 'env'; } catch { /* no store (tests): not locked */ }
-  const [b, digestsDiffer] = await Promise.all([buildInfo(ctx, { refresh }), selected === 'nightly' ? updaterDigestsDiffer(ctx) : Promise.resolve(null)]);
+  const [b, digestsDiffer] = await Promise.all([buildInfo(ctx, { refresh, installed }), selected === 'nightly' ? updaterDigestsDiffer(ctx) : Promise.resolve(null)]);
   const channel = { selected, version: pinned, running: b.channel, build: b.build, label: b.label, locked, envLine: envLine(selected, pinned) };
   const withState = (f: Fetched): UpdateInfo => ({
     ...base, ...f, channel,
     updateAvailable: channelUpdate(selected, { releaseNewer: f.release ? compareSemver(f.release.version, ver.version) > 0 : null, behind: f.behind, pinnedDiffers: pinned ? pinned !== ver.version : null, digestsDiffer }),
   });
-  const key = infoKey(ctx.cfg);
+  const key = infoKey(ctx.cfg, installed.commit);
   if (!refresh) {
     const hit = await ctx.kv.get(key).catch(() => null);
     if (hit) return withState(JSON.parse(hit) as Fetched);
   }
   try {
-    const f = await fetchLatest(ctx);
+    const f = await fetchLatest(ctx, installed.commit);
     await ctx.kv.set(key, JSON.stringify(f), TTL).catch(() => undefined);
     return withState(f);
   } catch (e) {

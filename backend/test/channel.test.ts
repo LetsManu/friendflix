@@ -85,6 +85,8 @@ describe('admin update + /api/version with channels', () => {
       if (url.endsWith('/releases/latest')) return json({ tag_name: release, name: release, html_url: 'https://github.com/x/r', published_at: '2026-10-01T00:00:00Z', body: '- x', draft: false, prerelease: false });
       if (url.includes('/actions/workflows/ci.yml/runs')) return json({ workflow_runs: [{ head_sha: NEWER, updated_at: '2026-10-02T00:00:00Z', html_url: 'https://github.com/x/runs/1' }] });
       if (url.includes('/compare/')) return json({ ahead_by: behind, commits: [] });
+      const commit = /\/commits\/([0-9a-f]{40})$/.exec(url)?.[1];
+      if (commit) return times[commit] ? json({ sha: commit, commit: { committer: { date: times[commit] } } }) : json({ message: 'Not Found' }, 404);
       if (url === 'http://updater:7070/v1/status') return updaterStatus ? json(updaterStatus) : json({}, 500);
       return json({}, 404);
     }) as never;
@@ -93,7 +95,9 @@ describe('admin update + /api/version with channels', () => {
   }
   /** the updater's /v1/status (UPDATER_URL set); null: it answers 500 */
   let updaterStatus: unknown;
-  const reset = () => { calls = []; tag = TAG; behind = 0; release = 'v1.1.0'; updaterStatus = null; };
+  /** commit times as GitHub answers them (GET /repos/{repo}/commits/{sha}); missing: 404 */
+  let times: Record<string, string>;
+  const reset = () => { calls = []; tag = TAG; behind = 0; release = 'v1.1.0'; updaterStatus = null; times = {}; };
 
   it('a release build on the default stable channel: up to date while main moves on', async () => {
     reset(); behind = 4;
@@ -145,13 +149,28 @@ describe('admin update + /api/version with channels', () => {
       updaterStatus = u;
       expect((await get('?refresh=1')).updateAvailable, JSON.stringify(u)).toBe(true);
     }
-    // stable never asks the updater
+    // stable never goes by the digests (the updater is still asked which build is installed)
     await env.close();
     reset(); behind = 3;
     const stable = await setup({ GIT_SHA: TAG, UPDATER_URL: 'http://updater:7070' });
     updaterStatus = status([svc('web', true)]);
     expect((await stable()).updateAvailable).toBe(false);
-    expect(calls).not.toContain('http://updater:7070/v1/status');
+  });
+
+  it('nightly label and kind use the installed build', async () => {
+    const svc = (service: string, commit: string) => ({ service, state: 'running', health: 'healthy', sha: null, version: null, commit, digest: null, registry: null, changed: null });
+    const listing = { channel: 'nightly', targetTag: 'nightly', services: [svc('backend', MAIN), svc('gateway', MAIN), svc('web', NEWER)] };
+    // the backend was carried (its image built at MAIN), web was built later at NEWER: NEWER is the build that runs
+    reset(); tag = null; updaterStatus = listing; times = { [MAIN]: '2026-10-01T00:00:00Z', [NEWER]: '2026-10-02T00:00:00Z' };
+    const get = await setup({ GIT_SHA: MAIN, UPDATE_CHANNEL: 'nightly', UPDATER_URL: 'http://updater:7070' });
+    expect((await get()).channel).toMatchObject({ build: 'nightly', running: 'nightly', label: '1.1.0-nightly · ddddddd' });
+    expect((await env.app.inject('/api/version')).json()).toMatchObject({ sha: NEWER, build: 'nightly', channel: 'nightly', label: '1.1.0-nightly · ddddddd' });
+    // tag v1.1.0 points at the installed build (not at the backend's own commit): a release
+    await env.close();
+    reset(); tag = NEWER; updaterStatus = listing; times = { [MAIN]: '2026-10-01T00:00:00Z', [NEWER]: '2026-10-02T00:00:00Z' };
+    const rel = await setup({ GIT_SHA: MAIN, UPDATER_URL: 'http://updater:7070' });
+    expect((await rel()).channel).toMatchObject({ build: 'release', running: 'stable', label: '1.1.0' });
+    expect((await env.app.inject('/api/version')).json()).toMatchObject({ sha: NEWER, build: 'release', label: '1.1.0' });
   });
 
   it('annotated tags are peeled; the tag answer is cached like the update check', async () => {

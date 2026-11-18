@@ -1,14 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Ctx } from './ctx.js';
-import { appVersion } from './version.js';
+import { installedBuild, type InstalledBuild } from './installed.js';
+import { appVersion, imageCommit } from './version.js';
 
 /**
  * Update channels (docs/operations.md "Release-Kanäle"). The images decide what runs: `FF_TAG=latest` follows the releases
  * (stable), `FF_TAG=nightly` every green commit on main, `FF_TAG=X.Y.Z` a fixed version (pinned). The backend never gets the
  * Docker socket: without the updater (updater.ts, compose.no-updater.yaml) the UPDATE_CHANNEL setting only chooses what Admin -> Update compares
  * against and which `.env` line it suggests; with it, the updater installs that channel's tag. The channel a build actually runs is derived from its commit: a release build is exactly the commit of
- * the tag v<version> (the image is re-tagged, never rebuilt, so the sha is the same); any other CI build is a nightly one.
+ * the tag v<version> (the images are re-tagged, never rebuilt); any other CI build is a nightly one. "Its commit" is the installed
+ * build (installed.ts: the newest image commit of the running services), not this backend's own image commit.
  */
 export type Channel = 'stable' | 'nightly' | 'pinned';
 /** a channel a build can run on (a pinned version is a release, so it runs on stable) */
@@ -20,7 +22,7 @@ const TTL = 600;
 const ERR_TTL = 60;
 const GH = 'https://api.github.com';
 
-/** CI bakes the full commit sha into the image (GIT_SHA build arg); local builds carry 'dev' */
+/** CI bakes the full commit sha into the image (FF_IMAGE_COMMIT, older images GIT_SHA); local builds carry 'dev' */
 export const isCiSha = (sha: string | null | undefined): boolean => /^[0-9a-f]{40}$/.test(String(sha ?? ''));
 
 /** `tagSha`: the commit of tag v<version>; null = no such tag; undefined = unknown (GitHub not reachable) -> null */
@@ -132,18 +134,18 @@ export async function tagCommit(ctx: Ctx, version: string, refresh = false): Pro
 export interface BuildInfo { sha: string; version: string; codename: string; build: BuildKind | null; channel: RunningChannel | null; label: string }
 
 /**
- * What this build is. A dev build asks GitHub nothing. `waitMs` bounds the wait for an uncached GitHub answer (the public
- * /api/version is polled during an update): when it runs out the answer says "unknown" and the lookup finishes in the background.
+ * What the installed build is (`installed`: already looked up by the caller). A dev build asks GitHub nothing. `waitMs` bounds the
+ * wait for uncached answers (the public /api/version is polled during an update): when it runs out the answer says "unknown" (this
+ * backend's own commit, of an unknown kind) and the lookups finish in the background.
  */
-export async function buildInfo(ctx: Ctx, opts: { refresh?: boolean; waitMs?: number } = {}): Promise<BuildInfo> {
-  const sha = ctx.cfg.GIT_SHA;
+export async function buildInfo(ctx: Ctx, opts: { refresh?: boolean; waitMs?: number; installed?: InstalledBuild } = {}): Promise<BuildInfo> {
   const ver = appVersion(ctx.cfg);
+  const deadline = opts.waitMs === undefined ? null : new Promise<undefined>((res) => setTimeout(res, opts.waitMs, undefined).unref());
+  const bounded = <T>(p: Promise<T>): Promise<T | undefined> => (deadline ? Promise.race([p, deadline]) : p);
+  const installed = opts.installed ?? await bounded(installedBuild(ctx, { fresh: opts.refresh }));
+  const sha = installed?.commit ?? imageCommit(ctx.cfg);
   let tag: string | null | undefined;
-  if (isCiSha(sha)) {
-    const lookup = tagCommit(ctx, ver.version, opts.refresh);
-    tag = opts.waitMs === undefined ? await lookup
-      : await Promise.race([lookup, new Promise<undefined>((res) => setTimeout(res, opts.waitMs, undefined).unref())]);
-  }
+  if (installed && isCiSha(sha)) tag = await bounded(tagCommit(ctx, ver.version, opts.refresh));
   const build = buildKind(sha, tag);
   return { sha, ...ver, build, channel: runningChannel(build), label: versionLabel(ver.version, sha, build) };
 }

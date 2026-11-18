@@ -26,7 +26,7 @@ const fake = {
   image: false,
   livetv: 'down' as 'down' | 'api1' | 'api2' | 'impostor' | 'wrongProof', stack: undefined as 'own' | 'foreign' | undefined, hasUpdater: true, livetvState: undefined as unknown, status: 200,
   calls: [] as Array<{ method: string; path: string; body: string; sigOk: boolean }>, systemCalls: 0,
-  reset() { Object.assign(this, { job: null, livetv: 'down', stack: 'own', hasUpdater: true, livetvState: { state: 'disabled', container: null, error: null }, status: 200, calls: [], systemCalls: 0 }); },
+  reset() { Object.assign(this, { job: null, image: false, livetv: 'down', stack: 'own', hasUpdater: true, livetvState: { state: 'disabled', container: null, error: null }, status: 200, calls: [], systemCalls: 0 }); },
 };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
 function sigOk(key: string, label: string, method: string, path: string, body: string, h: Record<string, string>, p: string): boolean {

@@ -11,6 +11,8 @@ const VERSION_JSON = JSON.parse(readFileSync(new URL('../../version.json', impor
 
 const CUR = 'c'.repeat(40);
 const NEW = 'd'.repeat(40);
+/** a web image built after the backend's (the backend carried) */
+const WEB = 'e'.repeat(40);
 const HOOK = 'https://portainer.example.com/api/stacks/webhooks/secret-token-uuid';
 const KEY = 'ptr_supersecretkey';
 
@@ -24,6 +26,10 @@ let redirect = false;
 let putAnswer: unknown = null;
 /** GitHub releases/latest answer; null = no release published (404) */
 let release: any;
+/** commit times as GitHub answers them (GET /repos/{repo}/commits/{sha}); missing: 404 */
+let times: Record<string, string>;
+/** what the web service's /_app/version.json names (null: 404) */
+let webVersion: string | null;
 const host = (u: string) => new URL(u).host;
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
 const mockFetch = (gh: 'ok' | 'fail' = 'ok') => vi.fn(async (input: any, init: RequestInit = {}) => {
@@ -34,7 +40,12 @@ const mockFetch = (gh: 'ok' | 'fail' = 'ok') => vi.fn(async (input: any, init: R
     if (url.endsWith('/releases/latest')) return release ? json(release) : json({ message: 'Not Found' }, 404);
     if (url.includes('/actions/workflows/ci.yml/runs')) return json({ workflow_runs: [{ head_sha: NEW, updated_at: '2026-01-02T00:00:00Z', html_url: 'https://github.com/x/runs/1' }] });
     if (url.includes(`/compare/${CUR}...${NEW}`)) return json({ ahead_by: 2, commits: [1, 2].map((n) => ({ sha: `s${n}`, html_url: `https://github.com/c/${n}`, commit: { message: `msg ${n}\n\nbody`, author: { name: 'Ann', date: '2026-01-01T00:00:00Z' } } })) });
+    if (url.includes(`/compare/${WEB}...${NEW}`)) return json({ ahead_by: 1, commits: [] });
+    const commit = /\/commits\/([0-9a-f]{40})$/.exec(url)?.[1];
+    if (commit && times[commit]) return json({ sha: commit, commit: { committer: { date: times[commit] } } });
   }
+  if (host(url) === 'web:3000' && url.endsWith('/_app/version.json')) return webVersion ? json({ version: webVersion }) : json({}, 404);
+  if (host(url) === 'gateway:4000' && url.endsWith('/health')) return json({ status: 'ok', image: CUR });
   if (redirect && host(url) === 'portainer.example.com') return new Response(null, { status: 301, headers: { location: `https://elsewhere.example.net${new URL(url).pathname}` } });
   if (url.endsWith('/api/stacks/7/file')) return json({ StackFileContent: 'services: {}' });
   if (url.includes('/api/stacks/7') && (init.method ?? 'GET') === 'GET') return json(stack);
@@ -52,7 +63,7 @@ async function setup(cfg: Record<string, unknown> = {}, gh: 'ok' | 'fail' = 'ok'
 }
 const ghCalls = () => seen.filter((s) => host(s.url) === 'api.github.com').length;
 
-beforeEach(() => { seen = []; release = null; redirect = false; putAnswer = null; stack = { Env: [{ name: 'A', value: '1' }, { name: 'B', value: 'x y' }], GitConfig: null }; });
+beforeEach(() => { seen = []; release = null; times = { [CUR]: '2026-01-01T00:00:00Z' }; webVersion = null; redirect = false; putAnswer = null; stack = { Env: [{ name: 'A', value: '1' }, { name: 'B', value: 'x y' }], GitConfig: null }; });
 afterEach(() => env?.close());
 
 describe('admin update', () => {
@@ -68,12 +79,26 @@ describe('admin update', () => {
     expect(b.release).toBeNull();
     expect(b.updateAvailable).toBeNull();
     expect(b.portainer).toEqual({ configured: false, mode: null, missing: [] });
-    expect(ghCalls()).toBe(4); // release, CI run, compare, tag commit of the installed version
+    expect(ghCalls()).toBe(5); // release, CI run, compare, tag commit of the installed version, commit time of the installed build
     await get();
-    expect(ghCalls()).toBe(4);
+    expect(ghCalls()).toBe(5);
     await get('?refresh=1');
-    expect(ghCalls()).toBe(8);
-    expect(seen[0]!.headers['user-agent']).toBe('friendflix');
+    expect(ghCalls()).toBe(9); // a commit's time stays cached
+    expect(b.current.builtAt).toBe('2026-01-01T00:00:00Z'); // the installed build's commit time
+    expect(seen.filter((s) => host(s.url) === 'api.github.com').every((s) => s.headers['user-agent'] === 'friendflix')).toBe(true);
+  });
+
+  it('behind and builtAt come from the installed build', async () => {
+    // web runs a newer image than the backend (the backend was carried): the comparison starts at web's commit, its time is "built at"
+    webVersion = WEB; times[WEB] = '2026-01-05T00:00:00Z';
+    const { get } = await setup();
+    const b = (await get()).json();
+    expect(b.current).toMatchObject({ sha: WEB, builtAt: '2026-01-05T00:00:00Z' });
+    expect(b.behind).toBe(1);
+    expect(seen.some((s) => s.url.includes(`/compare/${WEB}...${NEW}`))).toBe(true);
+    expect(seen.some((s) => s.url.includes(`/compare/${CUR}...`))).toBe(false);
+    // the GitHub answer is cached under the installed build
+    expect(await env.kv.get(`update:info:${env.ctx.cfg.UPDATE_REPO}:${WEB}:${VERSION_JSON.version}`)).not.toBeNull();
   });
 
   it('GitHub failure gives latest null, not a 500', async () => {
@@ -310,12 +335,12 @@ describe('admin update', () => {
     const a = await setup(api);
     const r = await a.post();
     expect([r.statusCode, r.json()]).toEqual([502, { error: 'portainer', status: 301, step: 'stack' }]);
-    expect(seen.filter((s) => host(s.url) !== 'api.github.com').map((s) => [host(s.url), s.redirect])).toEqual([['portainer.example.com', 'manual']]);
+    expect(seen.filter((s) => host(s.url).startsWith('portainer')).map((s) => [host(s.url), s.redirect])).toEqual([['portainer.example.com', 'manual']]);
     expect(seen.some((s) => host(s.url) === 'elsewhere.example.net')).toBe(false);
     await env.close(); seen = [];
     const w = await setup({ PORTAINER_WEBHOOK_URL: HOOK });
     expect((await w.post()).json()).toMatchObject({ error: 'portainer', status: 301, step: 'webhook' });
-    expect(seen.filter((s) => host(s.url) !== 'api.github.com').map((s) => s.redirect)).toEqual(['manual']);
+    expect(seen.filter((s) => host(s.url).startsWith('portainer')).map((s) => s.redirect)).toEqual(['manual']);
   });
 
   it('api mode, git stack with stored credentials: authentication on with the stored user and an empty password (Portainer keeps the stored one)', async () => {
