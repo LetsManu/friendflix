@@ -151,7 +151,7 @@ async function expectGrows(menu: Locator, trigger: Locator) {
 test.describe('glass menus', () => {
   test.beforeEach(({ page }) => fullMotion(page));
 
-  test('profile, bell, categories and ⋯ menus are glass cards that grow from their button', async ({ page }) => {
+  test('profile, categories and ⋯ menus are glass cards that grow from their button; the bell opens a glass sheet', async ({ page }) => {
     // a 220 ms open can finish before the first poll after click() returns: run the page's animations at a tenth of the speed
     // (durations and keyframes read the same, only the timeline is slower), so `anim()` always catches the menu mid-flight
     const cdp = await page.context().newCDPSession(page);
@@ -172,8 +172,10 @@ test.describe('glass menus', () => {
 
     const bell = bar.getByRole('button', { name: /Benachrichtigungen/ });
     await bell.click();
-    const notes = bar.locator('.drop.wide');
-    await expectGrows(notes, bell);
+    const notes = page.getByRole('dialog', { name: 'Benachrichtigungen' });
+    await expect(notes).toHaveClass(/(^|\s)frost(\s|$)/);
+    await expect(notes).toHaveClass(/frost-sheet/);
+    await settled(notes);
     await page.keyboard.press('Escape');
     await expect(notes).toHaveCount(0);
     await expect(bell).toBeFocused();
@@ -328,10 +330,12 @@ test.describe('glass menus', () => {
     await textPasses(page, menu.getByRole('menuitem', { name: 'Konto & Einstellungen' }));
     await page.keyboard.press('Escape');
     await bar.getByRole('button', { name: /Benachrichtigungen/ }).click();
-    const notes = bar.locator('.drop.wide');
+    const notes = page.getByRole('dialog', { name: 'Benachrichtigungen' });
+    await expect(notes.locator('li.nr').first()).toBeVisible();
     await settled(notes);
     await page.mouse.move(2, 790);
-    await textPasses(page, notes);
+    // the parts in view (later rows and chips scroll out of it): header, the selected and a plain chip, a section label, the first rows, the footer
+    for (const part of [notes.locator('header'), notes.locator('.chip').nth(0), notes.locator('.chip').nth(1), notes.locator('h3').first(), notes.locator('li.nr').nth(0), notes.locator('li.nr').nth(1), notes.locator('footer')]) await textPasses(page, part);
     await page.keyboard.press('Escape');
     await bar.locator('.pill').getByRole('button', { name: 'Kategorien' }).click();
     const cats = page.getByRole('region', { name: 'Kategorien' });

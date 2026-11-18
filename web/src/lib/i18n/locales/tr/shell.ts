@@ -50,7 +50,6 @@ const tr: Translation<typeof de> = {
   bell: {
     label: 'Bildirimler',
     unread: 'Bildirimler, {n} yeni',
-    empty: 'Bildirim yok',
   },
   account: {
     label: 'Profil menüsü',

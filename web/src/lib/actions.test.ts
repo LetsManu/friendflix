@@ -18,7 +18,7 @@ function dialog(controls: Ctl[]) {
   const node = {
     querySelectorAll: () => controls,
     querySelector: () => controls[0] ?? null,
-    contains: (x: unknown) => controls.includes(x as Ctl),
+    contains: (x: unknown): boolean => x === node || controls.includes(x as Ctl), // a node contains itself, as in the DOM
     addEventListener: (t: string, f: (e: KeyboardEvent) => void) => listeners.set(t, f),
     removeEventListener: (t: string) => listeners.delete(t),
   };
@@ -77,6 +77,17 @@ describe('dialogKeys', () => {
     const mid = d.press('Tab'); // in the middle: the browser moves the focus itself
     expect(mid.preventDefault).not.toHaveBeenCalled();
     expect(doc.activeElement).toBe(b);
+  });
+
+  it('Shift+Tab on the dialog itself (its first focus, tabindex -1) wraps to the last control', () => {
+    const [a, b, c] = [new Ctl('a'), new Ctl('b'), new Ctl('c')];
+    const d = dialog([a, b, c]);
+    dialogKeys(d.node, { close: () => undefined });
+    doc.activeElement = d.node;
+    expect(d.press('Tab', true).preventDefault).toHaveBeenCalled();
+    expect(doc.activeElement).toBe(c);
+    doc.activeElement = d.node;
+    expect(d.press('Tab').preventDefault).not.toHaveBeenCalled(); // forward: the browser's own next stop is the first control
   });
 
   it('Tab pulls a focus that escaped back to the first control; without controls Tab does nothing', () => {

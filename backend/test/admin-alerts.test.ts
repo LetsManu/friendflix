@@ -12,6 +12,7 @@ import * as notify from '../src/notify.js';
 import { line, registerChecks, resetChecksForTests, type GroupCheck } from '../src/syscheck/engine.js';
 import type { CheckId, CheckLine, CheckStatus } from '../src/syscheck/types.js';
 import { syscheckAlertTick } from '../src/syscheckAlerts.js';
+import { notesRetentionTick } from '../src/notifications/retention.js';
 import type { UpdaterJob } from '../src/updater.js';
 import { updateInfo } from '../src/updates.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
@@ -105,6 +106,17 @@ describe('update available', () => {
     expect(await updateAlertTick(env.ctx, at(17))).toBe(2);
     expect((await notices('update_available')).slice(2).map((x) => x.title)).toEqual(['Neue Version verfügbar: 3.6.1', 'Neue Version verfügbar: 3.6.1']);
     expect(await mails('update')).toHaveLength(4);
+  });
+
+  it('retention keeps the notice that marks a version as told: the tick does not tell it again 90 days later', async () => {
+    expect(await updateAlertTick(env.ctx, at(16))).toBe(2);
+    const later = new Date(Date.now() + 91 * 86_400_000); // the notices were stored now
+    await env.kv.del(`notes:retention:${dayKey(later)}`);
+    await notesRetentionTick(env.ctx, later);
+    await nextUpdateWindow();
+    expect(await updateAlertTick(env.ctx, later)).toBe(0);
+    expect(await notices('update_available')).toHaveLength(2);
+    expect(await mails('update')).toHaveLength(2);
   });
 
   it('the pinned channel alerts once for its version', async () => {

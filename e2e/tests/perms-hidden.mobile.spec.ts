@@ -47,8 +47,10 @@ for (const denied of [true, false]) {
       if (denied) api.perms = { ...DENIED };
       await page.goto('/me');
       await expect(page.getByRole('link', { name: 'Heute Abend' }).first()).toBeVisible();
-      await expect(page.getByRole('link', { name: 'Watch-Party' })).toHaveCount(denied ? 0 : 1);
-      await expect(page.getByRole('link', { name: 'Filmabend' })).toHaveCount(denied ? 0 : 1);
+      // the quick links only: a notification row may name a Watch-Party or a Filmabend in its own link
+      const quick = page.locator('main section:not([aria-labelledby="h-notes"])');
+      await expect(quick.getByRole('link', { name: 'Watch-Party' })).toHaveCount(denied ? 0 : 1);
+      await expect(quick.getByRole('link', { name: 'Filmabend' })).toHaveCount(denied ? 0 : 1);
     });
 
     test('/party', async ({ page, api }) => {

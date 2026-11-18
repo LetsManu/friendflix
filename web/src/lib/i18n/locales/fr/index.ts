@@ -36,6 +36,7 @@ import adminConv from './adminConv';
 import adminLive from './adminLive';
 import syscheck from './syscheck';
 import mediaserver from './mediaserver';
+import notes from './notes';
 
-const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, postplay, reco, ui, adminPeople, adminContent, serverText, tv, desk, live, adminConv, adminLive, syscheck, mediaserver };
+const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, postplay, reco, ui, adminPeople, adminContent, serverText, tv, desk, live, adminConv, adminLive, syscheck, mediaserver, notes };
 export default dict;

@@ -108,7 +108,7 @@ describe('reminders', () => {
 
   it('MEDIA_AVAILABLE fires once per user; a requester only gets avail-', async () => {
     await env.pool.query('truncate reminders');
-    await env.pool.query('truncate notifications');
+    await env.pool.query('truncate notifications cascade');
     const [ua, ub] = [await uid('Admin'), await uid('Bea')];
     await env.pool.query("insert into seerr_requests(seerr_request_id,user_id,media_type,tmdb_id,title) values (77,$1,'movie',700,'Dunmoor 3')", [ub]);
     for (const w of [a, b]) expect((await call(w, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 700 })).statusCode).toBe(200);
@@ -128,7 +128,7 @@ describe('reminders', () => {
 
   it('the reminder links to the title only for a recipient who can see it', async () => {
     await env.pool.query('truncate reminders');
-    await env.pool.query('truncate notifications');
+    await env.pool.query('truncate notifications cascade');
     const [ua, ub] = [await uid('Admin'), await uid('Bea')];
     for (const w of [a, b]) expect((await call(w, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1300 })).statusCode).toBe(200);
     await own('movie:1300', MOVIE);
@@ -147,7 +147,7 @@ describe('reminders', () => {
 
   it('a film that has just arrived is not in the (stale) index yet: the available webhook does not consume the reminder, the safety net fires it with the link', async () => {
     await env.pool.query('truncate reminders');
-    await env.pool.query('truncate notifications');
+    await env.pool.query('truncate notifications cascade');
     await env.ctx.jf.findByTmdb(1, 'movie'); // the index exists
     expect((await call(a, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1400 })).statusCode).toBe(200);
     library.set('movie:1400', MOVIE); // arrived in the library, the index does not know yet
@@ -167,7 +167,7 @@ describe('reminders', () => {
 
   it('tick fallback finds titles via Jellyfin', async () => {
     await env.pool.query('truncate reminders');
-    await env.pool.query('truncate notifications');
+    await env.pool.query('truncate notifications cascade');
     mediaStatus['movie:800'] = undefined;
     expect((await call(a, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 800 })).statusCode).toBe(200);
     await reminderTick(env.ctx);
@@ -180,7 +180,7 @@ describe('reminders', () => {
 
   it('episode reminder + follow + calendar job -> one notification', async () => {
     await env.pool.query('truncate reminders');
-    await env.pool.query('truncate notifications');
+    await env.pool.query('truncate notifications cascade');
     episodes.set(EP, { virtual: true });
     const r = await call(a, 'POST', '/api/reminders', { episodeId: EP });
     expect(r.json()).toMatchObject({ coveredByFollow: false });
@@ -217,7 +217,7 @@ describe('reminders', () => {
 
   it('ItemAdded webhook needs the secret and fires movie + episode reminders', async () => {
     await env.pool.query('truncate reminders');
-    await env.pool.query('truncate notifications');
+    await env.pool.query('truncate notifications cascade');
     episodes.set(EP2, { virtual: true });
     expect((await call(a, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 900 })).statusCode).toBe(200);
     expect((await call(a, 'POST', '/api/reminders', { episodeId: EP2 })).statusCode).toBe(200);
@@ -240,7 +240,7 @@ describe('reminders', () => {
 
   it('a re-armed reminder notifies again (dedupe per reminder id)', async () => {
     await env.pool.query('truncate reminders');
-    await env.pool.query('truncate notifications');
+    await env.pool.query('truncate notifications cascade');
     await own('movie:1000', MOVIE);
     mediaStatus['movie:1000'] = undefined;
     for (let i = 0; i < 2; i++) {
@@ -254,7 +254,7 @@ describe('reminders', () => {
 
   it('a requester is only skipped when the avail- notice really exists', async () => {
     await env.pool.query('truncate reminders');
-    await env.pool.query('truncate notifications');
+    await env.pool.query('truncate notifications cascade');
     const ua = await uid('Admin');
     await env.pool.query("insert into seerr_requests(seerr_request_id,user_id,media_type,tmdb_id,title) values (88,$1,'movie',1100,'Hearth 2')", [ua]);
     await own('movie:1100', MOVIE);
@@ -262,7 +262,7 @@ describe('reminders', () => {
     await reminderTick(env.ctx); // no avail-88 notice was ever created -> the reminder must notify
     expect(await notes('reminder')).toHaveLength(1);
     await env.pool.query('truncate reminders');
-    await env.pool.query('truncate notifications');
+    await env.pool.query('truncate notifications cascade');
     await env.pool.query("insert into notifications(user_id, kind, title, dedupe) values ($1,'available','x','avail-88')", [ua]);
     expect((await call(a, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1100 })).statusCode).toBe(200);
     await reminderTick(env.ctx);
@@ -271,7 +271,7 @@ describe('reminders', () => {
 
   it('a series reminder needs at least one real episode', async () => {
     await env.pool.query('truncate reminders');
-    await env.pool.query('truncate notifications');
+    await env.pool.query('truncate notifications cascade');
     await own('tv:1396', SERIES);
     seriesHasFile = false;
     expect((await call(a, 'POST', '/api/reminders', { mediaType: 'tv', tmdbId: 1396 })).statusCode).toBe(200);

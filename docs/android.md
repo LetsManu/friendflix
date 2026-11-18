@@ -152,6 +152,7 @@ When the app starts and the server cannot be reached (no network, flight mode, t
 Server notifications (a new episode of a series you follow, a request that is done, an approved device, invitations and so on) reach the phone without any third-party push service:
 
 - A background job asks your server for new notifications (`GET /api/notifications`, with the session of the app) about every 10–20 minutes (Android may delay it further). Android decides the exact time and delays it more in battery saver or Doze; it is not instant.
+- The list keeps its shape (the newest 30, same fields). Entries a person cleared in the web app's notifications center are left out, and *read* follows the same rule as there. Notifications older than 90 days are deleted by the server ([personal.md](personal.md#benachrichtigungen-glocke-und-mein-bereich)).
 - Only new items are shown. The first run after signing in shows nothing (it only notes what is there), and items you already read in the web UI are skipped. The app does not mark items as read on the server.
 - Tapping a notification opens the matching page in the app; a link to a title plays it in the native player.
 - Each category is its own Android notification channel, so you can also change sound and importance per category in Android's settings.
