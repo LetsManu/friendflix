@@ -54,7 +54,9 @@ FROM intel-opencl-${TARGETARCH} AS intel-opencl
 # --- the image: Ferrofin v1.5.1, pinned by digest (the multi-arch index; bump tag + digest together) ---
 FROM ghcr.io/mangoleaf/ferrofin:v1.5.1@sha256:5980a3c29c0bab564793f4fcf786e737b91a9eba26e9fb1d6f1c203ccb56580a
 ARG TARGETARCH
-ARG GIT_SHA=dev
+# the image commit (CI: the newest commit that changed this image's inputs, .github/images.json; `dev` locally): only in the
+# revision label below, not as an ENV (the managed media server's env stays as Ferrofin sets it)
+ARG FF_IMAGE_COMMIT=dev
 # hadolint ignore=DL3066
 USER root
 # 0001: dpkg -i, not apt: every dependency (libc6, libstdc++6, libgcc-s1, zlib1g, libzstd1 and the OpenCL ICD loader
@@ -105,15 +107,15 @@ USER ferrofin
 # else, no answer within 4 s included, exits 1 (Docker: unhealthy).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8096 && printf 'GET /health HTTP/1.0\\r\\nHost: 127.0.0.1\\r\\n\\r\\n' >&3 && IFS= read -r -t 4 status <&3 && [[ $status == 'HTTP/1.'[01]' 200 '* ]] || exit 1"]
-# CI's docker/metadata-action sets title/description/licenses/source/revision/version/created too (ci.yml passes this image's
-# values for title, description and licenses, so the repository's AGPL default does not land on it). GPL-3.0-only is the
-# licence of the Ferrofin server; the other parts keep theirs (NOTICE).
+# CI's build action (.github/actions/build-image) writes title/description/licenses/source/url/revision/created too (this
+# image's own title, description and licence, not the AGPL of the other images; revision = the image commit, created = its
+# commit time). GPL-3.0-only is the licence of the Ferrofin server; the other parts keep theirs (NOTICE).
 LABEL org.opencontainers.image.title="FriendFlix media server (Ferrofin)" \
   org.opencontainers.image.description="Ferrofin v1.5.1 with FriendFlix's numbered changes (0001: Intel OpenCL runtime; 0003: healthcheck; 0004: no web client, API only; 0005: state directories for any user). Trial." \
   org.opencontainers.image.source="https://github.com/LetsManu/friendflix" \
   org.opencontainers.image.documentation="https://github.com/LetsManu/friendflix/blob/main/mediaserver/README.md" \
   org.opencontainers.image.licenses="GPL-3.0-only" \
-  org.opencontainers.image.revision="${GIT_SHA}" \
+  org.opencontainers.image.revision="${FF_IMAGE_COMMIT}" \
   org.opencontainers.image.base.name="ghcr.io/mangoleaf/ferrofin:v1.5.1" \
   org.opencontainers.image.base.digest="sha256:5980a3c29c0bab564793f4fcf786e737b91a9eba26e9fb1d6f1c203ccb56580a" \
   io.github.letsmanu.friendflix.mediaserver.ferrofin="v1.5.1" \

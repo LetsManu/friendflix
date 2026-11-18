@@ -3,7 +3,7 @@
     "The change map (scripts/changed-images.mjs): per image its Dockerfile, input globs (`**` any depth, `*` one segment, `!glob` excludes, `@image` adds that image's inputs), shared groups, argsFrom (repository files fed in as build arguments), whether it is a required check and whether `reproducible` covers it.",
     "An image's image commit is the newest first-parent commit that touched one of its inputs. When in doubt, count more as input, never less: a missed input ships a stale image.",
     "`exclude` applies everywhere; `.dockerignore` drops apply only to an image's own `inputs`, never to `groups`, `full` or `argsFrom`. Changing a `full` file makes the run full.",
-    "version.json is an input of every Node image until Stage C (Task C4): today all five bake APP_VERSION. Until Stage C every image also bakes the run commit (GIT_SHA), so a `carry` in Stage A is a report, never acted on. mediaserver becomes required in Stage D."
+    "version.json is an input of the backend only: it is the one image that bakes APP_VERSION / APP_CODENAME; the other images take the version from the backend's /api/version. Every image bakes its own image commit (FF_IMAGE_COMMIT, SOURCE_DATE_EPOCH = its commit time), never the run commit, so an image with the same image commit is the same image. mediaserver becomes required in Stage D."
   ],
   "exclude": ["**/*.md"],
   "full": [".github/images.json", "scripts/changed-images.mjs"],
@@ -40,32 +40,32 @@
     "gateway": {
       "dockerfile": "gateway/Dockerfile",
       "groups": ["all", "node-common"],
-      "inputs": ["gateway/**", "version.json"],
-      "argsFrom": ["version.json"],
+      "inputs": ["gateway/**"],
+      "argsFrom": [],
       "required": true,
       "reproducible": true
     },
     "web": {
       "dockerfile": "web/Dockerfile",
       "groups": ["all", "node-common"],
-      "inputs": ["web/**", "codenames.json", "version.json"],
-      "argsFrom": ["version.json"],
+      "inputs": ["web/**", "codenames.json"],
+      "argsFrom": [],
       "required": true,
       "reproducible": true
     },
     "updater": {
       "dockerfile": "updater/Dockerfile",
       "groups": ["all", "node-common"],
-      "inputs": ["updater/**", "version.json", "scripts/mediahelper-smoke.sh"],
-      "argsFrom": ["version.json"],
+      "inputs": ["updater/**", "scripts/mediahelper-smoke.sh"],
+      "argsFrom": [],
       "required": false,
       "reproducible": true
     },
     "livetv": {
       "dockerfile": "livetv/Dockerfile",
       "groups": ["all", "node-common"],
-      "inputs": ["livetv/**", "version.json"],
-      "argsFrom": ["version.json"],
+      "inputs": ["livetv/**"],
+      "argsFrom": [],
       "required": false,
       "reproducible": false
     },

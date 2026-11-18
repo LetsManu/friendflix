@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Builds one FriendFlix image: everything that shapes an image's bytes lives here (build args, labels, outputs,
 # SBOM/provenance, the BuildKit pin), so this file is an input of every image in the change map (.github/images.json).
+# An image is built for its image commit (`commit`, `time`: the plan's images.<service>.commit / .time), never for the run
+# commit: FF_IMAGE_COMMIT, SOURCE_DATE_EPOCH and the revision/created labels all come from it, so an image whose inputs did
+# not change comes out byte-identical at a later commit. Only the backend bakes the version (version.json).
 #   publish 'false'  build with load:true as friendflix-<service>:ci (no push, forks cannot write packages), gha cache
 #   publish 'true'   build without cache import, push <image>:<tag> with SBOM + SLSA provenance (mode=max); the caller
 #                    logs in to GHCR first
@@ -14,6 +17,12 @@ inputs:
     required: true
   publish:
     description: "'true' pushes the candidate, 'false' builds locally"
+    required: true
+  commit:
+    description: the image commit (40 hex, the plan's images.<service>.commit) - FF_IMAGE_COMMIT and the revision label
+    required: true
+  time:
+    description: its commit time (Unix seconds, the plan's images.<service>.time) - SOURCE_DATE_EPOCH and the created label
     required: true
   image:
     description: image name without tag, ghcr.io/<owner>/<repo>-<service> (publish only)
@@ -46,10 +55,13 @@ runs:
     - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       with:
         driver-opts: image=${{ inputs.buildkit-image }}
-    # SOURCE_DATE_EPOCH = commit time: image/history timestamps, rewrite-timestamp, BUILD_TIME and the `created` label
-    # all derive from it, never from the clock, so a rebuild of the commit reproduces them. The Node images also bake
-    # APP_VERSION / APP_CODENAME from version.json (BUILD_TIME only into the published candidate); mediaserver takes neither.
-    - name: Build arguments (commit time, version.json)
+    # SOURCE_DATE_EPOCH = the image commit's time: image/history timestamps, rewrite-timestamp and the `created` label all
+    # derive from it, never from the clock, so a rebuild of the same inputs reproduces them. FF_IMAGE_COMMIT = the image
+    # commit. Only the backend bakes APP_VERSION / APP_CODENAME from version.json.
+    # The OCI labels (published candidate only) are written here from git facts alone (no metadata-action: it read the
+    # repository description and stamped `.version` = the run's ref): title, source, url, licenses, revision = the image
+    # commit, created = its time; mediaserver its own title, description and licence; backend the media server pins.
+    - name: Build arguments and labels (image commit, its time, version.json)
       id: ver
       shell: bash
       env:
@@ -57,6 +69,14 @@ runs:
         PUBLISH: ${{ inputs.publish }}
         IMAGE: ${{ inputs.image }}
         TAG: ${{ inputs.tag }}
+        COMMIT: ${{ inputs.commit }}
+        TIME: ${{ inputs.time }}
+        PINS: ${{ inputs.mediaserver-pins }}
+        REPOSITORY: ${{ github.repository }}
+        # Ferrofin is GPL-3.0-only, not the repository's AGPL; the description names the README the image follows
+        MEDIASERVER_TITLE: FriendFlix media server (Ferrofin)
+        MEDIASERVER_DESCRIPTION: Ferrofin with FriendFlix's numbered changes (mediaserver/README.md). Trial.
+        MEDIASERVER_LICENSES: GPL-3.0-only
       run: |
         set -euo pipefail
         case "$PUBLISH" in
@@ -64,18 +84,32 @@ runs:
           false) ;;
           *) echo "::error::build-image: publish must be 'true' or 'false', got '$PUBLISH'"; exit 1 ;;
         esac
-        sde=$(git log -1 --format=%ct)
-        build_time=$(date -u -d "@$sde" +%Y-%m-%dT%H:%M:%SZ)
-        args=("SOURCE_DATE_EPOCH=$sde" "GIT_SHA=$GITHUB_SHA")
-        if [ "$SERVICE" != mediaserver ]; then
-          [ "$PUBLISH" != true ] || args+=("BUILD_TIME=$build_time")
+        [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::build-image: commit must be 40 hex (the plan's image commit), got '$COMMIT'"; exit 1; }
+        [[ "$TIME" =~ ^[1-9][0-9]*$ ]] || { echo "::error::build-image: time must be the image commit's Unix time, got '$TIME'"; exit 1; }
+        case "$PINS" in *$'\n'* | *$'\r'*) echo "::error::build-image: mediaserver-pins contains a line break"; exit 1 ;; esac
+        created=$(date -u -d "@$TIME" +%Y-%m-%dT%H:%M:%SZ)
+        args=("SOURCE_DATE_EPOCH=$TIME" "FF_IMAGE_COMMIT=$COMMIT")
+        if [ "$SERVICE" = backend ]; then
           args+=("APP_VERSION=$(jq -er .version version.json)" "APP_CODENAME=$(jq -er .codename version.json)")
         fi
+        url="https://github.com/${REPOSITORY}"
+        if [ "$SERVICE" = mediaserver ]; then
+          labels=("org.opencontainers.image.title=$MEDIASERVER_TITLE" "org.opencontainers.image.description=$MEDIASERVER_DESCRIPTION" "org.opencontainers.image.licenses=$MEDIASERVER_LICENSES")
+        else
+          labels=("org.opencontainers.image.title=friendflix-$SERVICE" "org.opencontainers.image.licenses=AGPL-3.0-or-later")
+        fi
+        labels+=("org.opencontainers.image.source=$url" "org.opencontainers.image.url=$url" "org.opencontainers.image.revision=$COMMIT" "org.opencontainers.image.created=$created")
+        if [ "$SERVICE" = backend ] && [ -n "$PINS" ]; then
+          labels+=("io.github.letsmanu.friendflix.mediaserver.pins=$PINS")
+        fi
+        echo "image commit $COMMIT, SOURCE_DATE_EPOCH $TIME ($created)"
         {
-          echo "build_time=$build_time"
           echo "args<<FF_BUILD_ARGS"
           printf '%s\n' "${args[@]}"
           echo "FF_BUILD_ARGS"
+          echo "labels<<FF_LABELS"
+          printf '%s\n' "${labels[@]}"
+          echo "FF_LABELS"
         } >> "$GITHUB_OUTPUT"
     # ---- publish 'false': build locally, the caller scans and discards ----
     - name: Build (PR / other dispatch, not pushed)
@@ -91,29 +125,6 @@ runs:
         cache-from: type=gha,scope=${{ inputs.service }}
         cache-to: type=gha,mode=max,scope=${{ inputs.service }}
     # ---- publish 'true': build once, push the candidate tag ----
-    - name: OCI labels
-      id: meta
-      if: inputs.publish == 'true' && inputs.service != 'mediaserver'
-      uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-      with:
-        images: ${{ inputs.image }}
-        # default would be the clock; the commit time keeps the label (part of the image config) reproducible
-        labels: |
-          org.opencontainers.image.created=${{ steps.ver.outputs.build_time }}
-          ${{ inputs.service == 'backend' && inputs.mediaserver-pins != '' && format('io.github.letsmanu.friendflix.mediaserver.pins={0}', inputs.mediaserver-pins) || '' }}
-    - name: OCI labels (mediaserver)
-      id: meta-mediaserver
-      if: inputs.publish == 'true' && inputs.service == 'mediaserver'
-      uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-      with:
-        images: ${{ inputs.image }}
-        # commit time, not the clock; its own title, description and licence (Ferrofin is GPL-3.0-only), not the
-        # repository's AGPL default
-        labels: |
-          org.opencontainers.image.created=${{ steps.ver.outputs.build_time }}
-          org.opencontainers.image.title=FriendFlix media server (Ferrofin)
-          org.opencontainers.image.description=Ferrofin with FriendFlix's numbered changes (mediaserver/README.md). Trial.
-          org.opencontainers.image.licenses=GPL-3.0-only
     - name: Build and push candidate
       id: push
       if: inputs.publish == 'true'
@@ -124,7 +135,7 @@ runs:
         platforms: linux/amd64
         # push = image exporter; rewrite-timestamp clamps every file mtime to SOURCE_DATE_EPOCH (reproducible layers)
         outputs: type=image,name=${{ inputs.image }}:${{ inputs.tag }},push=true,oci-mediatypes=true,compression=gzip,rewrite-timestamp=true
-        labels: ${{ steps.meta.outputs.labels || steps.meta-mediaserver.outputs.labels }}
+        labels: ${{ steps.ver.outputs.labels }}
         build-args: ${{ steps.ver.outputs.args }}
         # No cache import for what gets published: rewrite-timestamp only clamps mtimes NEWER than SOURCE_DATE_EPOCH, so
         # a layer reused from an older commit's cache keeps that build's (older) mtimes and the image would differ from

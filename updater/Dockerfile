@@ -28,11 +28,10 @@ COPY livetv/package.json livetv/
 RUN npm ci --omit=dev -w updater && mkdir -p updater/node_modules
 
 FROM node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216
-ARG GIT_SHA=dev
-ARG BUILD_TIME=
-ARG APP_VERSION=
-ARG APP_CODENAME=
-ENV GIT_SHA=$GIT_SHA BUILD_TIME=$BUILD_TIME APP_VERSION=$APP_VERSION APP_CODENAME=$APP_CODENAME
+# the image commit: the newest commit that changed this image's inputs (CI passes it with SOURCE_DATE_EPOCH = its commit time,
+# .github/images.json); `dev` locally
+ARG FF_IMAGE_COMMIT=dev
+ENV FF_IMAGE_COMMIT=$FF_IMAGE_COMMIT
 # read-only root fs: every tool writes below /tmp (tmpfs in compose); the state volume is /state
 ENV NODE_ENV=production HOME=/tmp DOCKER_CONFIG=/tmp/.docker
 WORKDIR /app

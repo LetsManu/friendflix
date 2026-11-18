@@ -19,13 +19,16 @@
 # The build itself (build args, labels, PR load + cache, push with SBOM/provenance, the pinned BuildKit) lives in the
 # composite action .github/actions/build-image, which every image job calls: it is an input of every image in the change
 # map (.github/images.json), so a change to how images are built counts as a change of every image.
-# Images carry APP_VERSION / APP_CODENAME from version.json next to GIT_SHA.
-# Reproducible builds (docs/reproducible-builds.md): SOURCE_DATE_EPOCH = commit time, rewrite-timestamp=true, pinned
-# BuildKit (the action's `buildkit-image` default), BUILD_TIME and the `created` label derived from the commit time; the
-# published candidate is built without cache import. The `reproducible` job rebuilds every image from scratch and requires
-# the same digest.
-# `changes` (first job) prints the change plan (scripts/changed-images.mjs): per image build or carry and the test classes,
-# to its log and step summary. Report only for now: nothing needs it, every image still builds and every job runs in full.
+# Each image is built for its image commit (the newest commit that changed its inputs, from the change plan): it carries
+# FF_IMAGE_COMMIT and the revision label = that commit, never the run commit; only the backend also carries APP_VERSION /
+# APP_CODENAME from version.json.
+# Reproducible builds (docs/reproducible-builds.md): SOURCE_DATE_EPOCH = the image commit's time, rewrite-timestamp=true,
+# pinned BuildKit (the action's `buildkit-image` default), the `created` label derived from that time; the published
+# candidate is built without cache import. The `reproducible` job rebuilds every image from scratch and requires the same
+# digest.
+# `changes` (first job) prints the change plan (scripts/changed-images.mjs): per image build or carry, its image commit and
+# time, and the test classes, to its log and step summary. `docker`, `mediaserver-image` and `reproducible` read each image's
+# commit and time from it and fail without a valid plan (step `Plan`); every image still builds and every job runs in full.
 # mediaserver (trial, mediaserver/README.md) is the thin FriendFlix image on top of the pinned Ferrofin release: no Rust or
 # Node build, only image-level changes. It has its OWN jobs (`mediaserver-image`, `publish-mediaserver`) that nothing else
 # needs, so it can never block or cancel the other images: built, SBOM'd, signed and published the same way, but its Trivy
@@ -48,7 +51,8 @@ jobs:
   # table in the step summary. Pull requests compare the image commits at the merge commit with those at the PR base;
   # other events build everything. Full history: an image commit is the newest commit that touched the image's inputs.
   changes:
-    # report only until Stage D (D2 removes this): a failed report must not make the main run non-success (backend updates.ts reads only successful runs)
+    # until Stage D (D2 removes this). It no longer hides a failure: the jobs that read the plan (docker, mediaserver-image,
+    # reproducible) fail closed without a valid one in their step Plan.
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -381,7 +385,8 @@ jobs:
     # the pins from the backend image, which cosign signs with the build). `!cancelled()` keeps every image building when that
     # job failed or was skipped: the label then has no ferrofin entry and the updater treats Ferrofin as not pinned. This is the
     # one wait between the two job families; the ci-changed-only project (Stage D) removes it with its own reuse of the digest.
-    needs: mediaserver-image
+    # `changes`: the image commit and its time come from the plan (step Plan fails closed without one).
+    needs: [changes, mediaserver-image]
     if: ${{ !cancelled() }}
     # push events upload the candidate image to GHCR; PRs only build+scan locally
     permissions:
@@ -395,6 +400,19 @@ jobs:
       # push (main / v* tags) or a dispatch on main / a v* tag: push the candidate to GHCR; everything else builds locally
       PUBLISHABLE: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) }}
     steps:
+      # The change plan, checked before anything else (it runs before checkout): a plan that is missing, failed or does not
+      # parse turns this job red, never skipped or green. The same step, byte for byte, in every job that reads the plan.
+      - name: Plan
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          PLAN: ${{ needs.changes.outputs.plan }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGES_RESULT" != success ] || ! jq -e '.images' <<< "$PLAN" > /dev/null; then
+            echo "::error::kein gültiger Plan (changes: $CHANGES_RESULT)"
+            exit 1
+          fi
+          jq -c '.images | map_values({action, commit, time})' <<< "$PLAN"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Image name (GHCR needs lowercase)
         id: img
@@ -419,7 +437,7 @@ jobs:
           echo "pins: $pins"
           echo "value=$pins" >> "$GITHUB_OUTPUT"
       # pull_request / other dispatch: local friendflix-<svc>:ci; push (main / v* tags) or publishable dispatch: built once,
-      # pushed as the candidate ci-<sha> (outputs.ref = that exact digest)
+      # pushed as the candidate ci-<sha> (outputs.ref = that exact digest). Built for the image commit of the plan.
       - name: Build
         id: build
         uses: ./.github/actions/build-image
@@ -428,6 +446,8 @@ jobs:
           publish: ${{ env.PUBLISHABLE }}
           image: ${{ steps.img.outputs.name }}
           tag: ci-${{ github.sha }}
+          commit: ${{ fromJSON(needs.changes.outputs.plan).images[matrix.service].commit }}
+          time: ${{ fromJSON(needs.changes.outputs.plan).images[matrix.service].time }}
           mediaserver-pins: ${{ steps.pins.outputs.value }}
       # ---- pull_request: scan the local image, discard ----
       - name: Scan (PR / other dispatch)
@@ -523,6 +543,9 @@ jobs:
   # Not a required status check (docs/operations.md) and exempt from `reproducible` (docs/reproducible-builds.md).
   mediaserver-image:
     runs-on: ubuntu-latest
+    # the image commit and its time come from the plan (step Plan fails closed without one)
+    needs: changes
+    if: ${{ !cancelled() }}
     # the pushed digest (publishable runs only; empty otherwise, and empty when the smoke test failed): the backend image's pin
     # label names it
     outputs:
@@ -535,6 +558,19 @@ jobs:
       SERVICE: mediaserver
       PUBLISHABLE: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) }}
     steps:
+      # The change plan, checked before anything else (it runs before checkout): a plan that is missing, failed or does not
+      # parse turns this job red, never skipped or green. The same step, byte for byte, in every job that reads the plan.
+      - name: Plan
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          PLAN: ${{ needs.changes.outputs.plan }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGES_RESULT" != success ] || ! jq -e '.images' <<< "$PLAN" > /dev/null; then
+            echo "::error::kein gültiger Plan (changes: $CHANGES_RESULT)"
+            exit 1
+          fi
+          jq -c '.images | map_values({action, commit, time})' <<< "$PLAN"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Dependabot bumps only the FROM line: a bump is complete only when the labels, NOTICE and both scripts name the same
       # Ferrofin tag and digest (mediaserver/README.md "New Ferrofin release")
@@ -565,7 +601,7 @@ jobs:
         if: env.PUBLISHABLE == 'true'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
-      # the same build action as `docker` (mediaserver: linux/amd64, only SOURCE_DATE_EPOCH + GIT_SHA, its own labels)
+      # the same build action as `docker` (mediaserver: linux/amd64, only SOURCE_DATE_EPOCH + FF_IMAGE_COMMIT, its own labels)
       - name: Build
         id: build
         uses: ./.github/actions/build-image
@@ -574,6 +610,8 @@ jobs:
           publish: ${{ env.PUBLISHABLE }}
           image: ${{ steps.img.outputs.name }}
           tag: ci-${{ github.sha }}
+          commit: ${{ fromJSON(needs.changes.outputs.plan).images.mediaserver.commit }}
+          time: ${{ fromJSON(needs.changes.outputs.plan).images.mediaserver.time }}
       # Runs the image as the updater's container template does (read-only root, no capabilities, fresh named volumes, a uid other
       # than the image's): the API answers, /web/ is 404 (change 0004), health turns healthy (0003), /data and /cache are
       # writable (0005); compares its `docker inspect` with the updater's inspect fixture (scripts/mediaserver-smoke.sh).
@@ -629,10 +667,14 @@ jobs:
           skip-setup-trivy: true
   # Reproducible builds (OpenSSF build_reproducible, docs/reproducible-builds.md): each image is rebuilt from scratch by
   # scripts/reproduce-image.sh (fresh docker-container builder with the build action's BuildKit pin, --no-cache, context =
-  # git archive, SOURCE_DATE_EPOCH = commit time, rewrite-timestamp, no SBOM/provenance) and its image manifest digest must match:
-  #   push / publishable dispatch  the ci-<sha> candidate the docker job pushed (other runner, minutes earlier; its labels
-  #                                and build-arg ENVs are copied, see the script) - proves the published bytes reproduce
+  # git archive, FF_IMAGE_COMMIT = the image commit, SOURCE_DATE_EPOCH = its commit time, rewrite-timestamp, no
+  # SBOM/provenance) and its image manifest digest must match:
+  #   push / publishable dispatch  the ci-<sha> candidate the docker job pushed (other runner, minutes earlier; built at its
+  #                                revision label = the image commit, its labels and build-arg ENVs are copied, see the
+  #                                script) - proves the published bytes reproduce
   #   pull_request / other         a second rebuild in another fresh builder (two clean builds, compared)
+  # Full history (the image commit and its time come from git) and Node (the script asks the ref's own
+  # scripts/changed-images.mjs for the image commit).
   # Runs on PRs too (per service in parallel, only after `docker` passed) so a change that breaks reproducibility is caught
   # before merge, and publish waits for it. Attestations are not compared: they are separate manifests carrying build times.
   # livetv is NOT in this matrix (documented exemption): its runtime stage installs jellyfin-ffmpeg7 with apt from the live
@@ -643,7 +685,8 @@ jobs:
   # dpkg-installed Intel debs; two identical builds have not been shown yet.
   # Not scheduled: a later rebuild differs as soon as Alpine ships a newer apk package (see the Dockerfiles).
   reproducible:
-    needs: docker
+    needs: [changes, docker]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: { contents: read, packages: read }
@@ -654,8 +697,28 @@ jobs:
       SERVICE: ${{ matrix.service }}
       PUBLISHABLE: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) }}
     steps:
+      # The change plan, checked before anything else (it runs before checkout): a plan that is missing, failed or does not
+      # parse turns this job red, never skipped or green. The same step, byte for byte, in every job that reads the plan.
+      - name: Plan
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          PLAN: ${{ needs.changes.outputs.plan }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGES_RESULT" != success ] || ! jq -e '.images' <<< "$PLAN" > /dev/null; then
+            echo "::error::kein gültiger Plan (changes: $CHANGES_RESULT)"
+            exit 1
+          fi
+          jq -c '.images | map_values({action, commit, time})' <<< "$PLAN"
+      # only after every `docker` leg passed (this job runs on !cancelled() for the Plan check, so it fails instead of skipping)
+      - name: Images built
+        env:
+          DOCKER_RESULT: ${{ needs.docker.result }}
+        run: '[ "$DOCKER_RESULT" = success ] || { echo "::error::docker did not pass ($DOCKER_RESULT): nothing to reproduce"; exit 1; }'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with: { persist-credentials: false }
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 26 }
       - name: Log in to GHCR
         if: env.PUBLISHABLE == 'true'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4

@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import process from 'node:process';
 import { URL, fileURLToPath } from 'node:url';
@@ -262,7 +262,8 @@ test('real map: every image has a commit at HEAD; node-common reaches all five N
     for (const image of node) assert.equal(isInput(map, image, path), true, `${path} → ${image}`);
     assert.equal(isInput(map, 'mediaserver', path), false, `${path} → mediaserver`);
   }
-  for (const image of node) assert.equal(isInput(map, image, 'version.json'), true, `version.json → ${image}`);
+  // the version lives only in the backend image (Stage C): version.json changes no other image
+  for (const image of IMAGES) assert.equal(isInput(map, image, 'version.json'), image === 'backend', `version.json → ${image}`);
   // backend: tests and docs are not inputs; the media server is (through its pin)
   assert.equal(isInput(map, 'backend', 'backend/test/health.test.ts'), false);
   assert.equal(isInput(map, 'backend', 'backend/README.md'), false);
@@ -310,6 +311,43 @@ test('CLI: an empty --pr-base on push is absent; pull_request without one fails'
 
 test('COPY guard: the real Dockerfiles are covered', () => {
   assert.deepEqual(copyGuard(REPO, loadMap()), []);
+});
+
+test('COPY guard with the new map: version.json is an input and argsFrom of backend only, and the Dockerfiles still pass', () => {
+  const map = loadMap();
+  for (const [name, def] of Object.entries(map.images)) {
+    const own = def.inputs.includes('version.json') || def.argsFrom.includes('version.json');
+    assert.equal(own, name === 'backend', `version.json in ${name}`);
+  }
+  assert.deepEqual(map.images.backend.argsFrom, ['version.json']);
+  assert.deepEqual(copyGuard(REPO, map), []);
+});
+
+test('no Dockerfile mentions GIT_SHA or BUILD_TIME; every final stage sets FF_IMAGE_COMMIT; only backend sets APP_VERSION', () => {
+  for (const [name, def] of Object.entries(loadMap().images)) {
+    const text = readFileSync(join(REPO, def.dockerfile), 'utf8');
+    assert.doesNotMatch(text, /GIT_SHA|BUILD_TIME/, `${def.dockerfile} still names the run commit or build time`);
+    const stages = text.split(/^FROM\s/m);
+    const last = stages[stages.length - 1];
+    assert.match(last, /^ARG FF_IMAGE_COMMIT=dev$/m, `${def.dockerfile}: final stage ARG FF_IMAGE_COMMIT=dev`);
+    if (name === 'mediaserver') {
+      // the trial image keeps its env as the managed media server's fixture has it: the image commit goes into its revision label
+      assert.match(last, /org\.opencontainers\.image\.revision="\$\{FF_IMAGE_COMMIT\}"/, `${def.dockerfile}: revision label`);
+    } else {
+      assert.match(last, /^ENV FF_IMAGE_COMMIT=\$FF_IMAGE_COMMIT\b/m, `${def.dockerfile}: final stage ENV FF_IMAGE_COMMIT`);
+    }
+    assert.equal(/APP_VERSION|APP_CODENAME/.test(text), name === 'backend', `${def.dockerfile}: APP_VERSION only in backend`);
+  }
+  // web names its SvelteKit build after the image commit (kit-version.ts), in the build stage, and copies no version.json
+  const web = readFileSync(join(REPO, 'web/Dockerfile'), 'utf8').split(/^FROM\s/m)[1];
+  assert.match(web, /^ARG FF_IMAGE_COMMIT=dev$/m);
+  assert.match(web, /^ARG SOURCE_DATE_EPOCH$/m);
+  assert.match(web, /^COPY codenames\.json \.\/$/m);
+  assert.doesNotMatch(web, /^(?:COPY|ADD)\b.*version\.json/m);
+  const backend = readFileSync(join(REPO, 'backend/Dockerfile'), 'utf8').split(/^FROM\s/m).pop();
+  assert.match(backend, /^ARG APP_VERSION=$/m);
+  assert.match(backend, /^ARG APP_CODENAME=$/m);
+  assert.match(backend, /^ENV FF_IMAGE_COMMIT=\$FF_IMAGE_COMMIT APP_VERSION=\$APP_VERSION APP_CODENAME=\$APP_CODENAME$/m);
 });
 
 test('COPY guard: an uncovered COPY source fails', () => {
@@ -424,6 +462,68 @@ test('build action: its real reads are version.json and the image\'s Dockerfile 
   const bare = loadMap();
   for (const def of Object.values(bare.images)) def.argsFrom = [];
   assert.deepEqual(copyGuard(REPO, bare), [".github/actions/build-image/action.yml: reads version.json, which is in no image's argsFrom"]);
+});
+
+test('build action: commit and time are required inputs, the labels are written from them (no metadata-action, no .version)', () => {
+  const text = readFileSync(ACTION, 'utf8');
+  for (const input of ['commit', 'time']) assert.match(text, new RegExp(`^ {2}${input}:\\n(?: {4}.*\\n)*? {4}required: true$`, 'm'), input);
+  const code = text.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  assert.doesNotMatch(code, /metadata-action/);
+  assert.doesNotMatch(code, /image\.version|GIT_SHA|BUILD_TIME|GITHUB_SHA|git log/);
+  for (const key of ['title', 'source', 'url', 'licenses', 'revision', 'created']) assert.match(text, new RegExp(`org\\.opencontainers\\.image\\.${key}=`), key);
+  assert.match(text, /"FF_IMAGE_COMMIT=\$COMMIT"/);
+  assert.match(text, /"SOURCE_DATE_EPOCH=\$TIME"/);
+});
+
+/** a stand-in for `docker buildx build`: logs the --build-arg values to $FAKE_LOG and writes an OCI tarball with one manifest */
+const FAKE_DOCKER = `#!/usr/bin/env bash
+set -euo pipefail
+[ "$1 $2" = "buildx build" ] || { echo "fake docker: $*" >&2; exit 1; }
+: > "$FAKE_LOG"; out=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --build-arg) printf '%s\\n' "$2" >> "$FAKE_LOG"; shift ;;
+    --output) out=$(sed -n 's/^type=oci,dest=\\([^,]*\\),.*/\\1/p' <<< "$2"); shift ;;
+  esac
+  shift
+done
+d=$(mktemp -d)
+printf '{"manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:${'1'.repeat(64)}"}]}' > "$d/index.json"
+tar -cf "$out" -C "$d" index.json
+rm -rf "$d"
+`;
+
+test('reproduce-image.sh builds for the image commit (the ref\'s own script), else the ref; an old Dockerfile for the ref with GIT_SHA', () => {
+  const bin = tmpDir();
+  const log = join(bin, 'args.txt');
+  writeFileSync(join(bin, 'docker'), FAKE_DOCKER, { mode: 0o755 });
+  const r = tmpRepo();
+  const map = { exclude: [], full: [], groups: {}, images: { gateway: { dockerfile: 'gateway/Dockerfile', groups: [], inputs: ['gateway/**'], argsFrom: [] } } };
+  const c1 = r.commit('init', {
+    '.github/images.json': JSON.stringify(map),
+    'scripts/changed-images.mjs': readFileSync(SCRIPT, 'utf8'),
+    'version.json': '{ "version": "1.0.0", "codename": "Test" }\n',
+    'gateway/Dockerfile': 'FROM scratch\nARG FF_IMAGE_COMMIT=dev\nENV FF_IMAGE_COMMIT=$FF_IMAGE_COMMIT\n',
+  });
+  const c2 = r.commit('not an input', { 'other.txt': 'x\n' });
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, BUILDER: 'fake', FAKE_LOG: log };
+  const args = (ref) => {
+    const out = spawnSync('bash', [join(REPO, 'scripts/reproduce-image.sh'), 'gateway', '--ref', ref], { cwd: r.root, encoding: 'utf8', env });
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, `sha256:${'1'.repeat(64)}\n`);
+    return readFileSync(log, 'utf8').trim().split('\n');
+  };
+  const time = (c) => r.git('log', '-1', '--format=%ct', c);
+  // c2 changed no input of gateway: built for c1 and c1's time, as CI builds it
+  assert.deepEqual(args(c2), [`SOURCE_DATE_EPOCH=${time(c1)}`, `FF_IMAGE_COMMIT=${c1}`]);
+  // a ref without scripts/changed-images.mjs: the ref itself
+  rmSync(join(r.root, 'scripts'), { recursive: true });
+  const c3 = r.commit('no script');
+  assert.deepEqual(args(c3), [`SOURCE_DATE_EPOCH=${time(c3)}`, `FF_IMAGE_COMMIT=${c3}`]);
+  // a Dockerfile from before FF_IMAGE_COMMIT: GIT_SHA = the ref, BUILD_TIME = its time, the version from version.json
+  const c4 = r.commit('old', { 'gateway/Dockerfile': 'FROM scratch\nARG GIT_SHA=dev\nARG BUILD_TIME=\nARG APP_VERSION=\nARG APP_CODENAME=\n' });
+  const iso = new Date(Number(time(c4)) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  assert.deepEqual(args(c4), [`SOURCE_DATE_EPOCH=${time(c4)}`, `GIT_SHA=${c4}`, `BUILD_TIME=${iso}`, 'APP_VERSION=1.0.0', 'APP_CODENAME=Test']);
 });
 
 test('reproduce-image.sh --buildkit-image reads the action\'s pin', () => {

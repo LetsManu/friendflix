@@ -10,22 +10,20 @@ COPY web/package.json web/
 COPY updater/package.json updater/
 COPY livetv/package.json livetv/
 RUN npm ci
-# the footer shows version.json; the codename list is shared with backend + release script
-COPY version.json codenames.json ./
+# the codename list is shared with backend + release script; the version itself comes from the backend (/api/version)
+COPY codenames.json ./
 COPY web web
-# SvelteKit's version.name (service worker cache, _app/version.json) = git sha, else SOURCE_DATE_EPOCH - never the
-# build clock (web/src/lib/version/kit-version.ts), so a rebuild of the same commit is byte-identical
-ARG GIT_SHA=dev
+# SvelteKit's version.name (service worker cache, _app/version.json) = the image commit, else SOURCE_DATE_EPOCH - never
+# the build clock (web/src/lib/version/kit-version.ts), so a rebuild of the same inputs is byte-identical
+ARG FF_IMAGE_COMMIT=dev
 ARG SOURCE_DATE_EPOCH
 RUN npm run build -w web
 
 FROM node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216
-ARG GIT_SHA=dev
-ARG BUILD_TIME=
-# release version + codename from version.json (CI passes them as build args; empty = the app reads version.json)
-ARG APP_VERSION=
-ARG APP_CODENAME=
-ENV GIT_SHA=$GIT_SHA BUILD_TIME=$BUILD_TIME APP_VERSION=$APP_VERSION APP_CODENAME=$APP_CODENAME
+# the image commit: the newest commit that changed this image's inputs (CI passes it with SOURCE_DATE_EPOCH = its commit time,
+# .github/images.json); `dev` locally
+ARG FF_IMAGE_COMMIT=dev
+ENV FF_IMAGE_COMMIT=$FF_IMAGE_COMMIT
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0
 WORKDIR /app
 # Runtime needs only node; the npm/yarn bundled in the base image only adds CVEs.
