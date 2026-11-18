@@ -916,7 +916,7 @@ test('--diff --ignore-label: a backend whose only difference is the media server
   const dir = tmpDir();
   const PIN = 'io.github.letsmanu.friendflix.mediaserver.pins';
   // the key the build action writes and the one the burn-in step ignores, for the backend only
-  assert.match(readFileSync(ACTION, 'utf8'), new RegExp(`"${PIN.replace(/\./g, '\\.')}=\\$PINS"`));
+  assert.ok(readFileSync(ACTION, 'utf8').includes(`"${PIN}=$PINS"`), 'the build action writes the pin label');
   const ci = readFileSync(join(REPO, '.github/workflows/ci.yml'), 'utf8');
   assert.deepEqual([...ci.matchAll(/--ignore-label (\S+)\)/g)].map((m) => m[1]), [PIN]);
   assert.match(ci, /if \[ "\$SERVICE" = backend \]; then ignore=\(--ignore-label /);

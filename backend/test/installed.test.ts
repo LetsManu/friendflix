@@ -65,7 +65,7 @@ describe('installed build', () => {
       services: [{ service: 'backend', commit: B, digest: dig('a') }, { service: 'gateway', commit: G, digest: dig('b') }, { service: 'web', commit: W, digest: dig('c') }, { service: 'livetv', commit: L, digest: dig('d') }],
     });
     // the services were not asked, the updater's commit time was not looked up
-    expect(f.calls.filter((c) => !c.startsWith('api.github.com') && c !== 'updater:7070/v1/status')).toEqual([]);
+    expect(f.calls.filter((c) => !c.startsWith('api.github.com/') && c !== 'updater:7070/v1/status')).toEqual([]);
     expect(f.calls).not.toContain(`api.github.com/repos/${REPO}/commits/${U}`);
     // cached: the build for 10 minutes, each commit time for a week
     expect(ttls[`update:installed:${REPO}`]).toBe(600);
