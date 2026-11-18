@@ -63,10 +63,13 @@ test.describe('admin: settings (Plex)', () => {
     await address.getByRole('textbox').fill(`http://plex.example.com:32400/?X-Plex-Token=${CANARY}`);
     await media.getByRole('button', { name: 'Testen' }).click();
     await expect(address.getByText('Bitte nur die Serveradresse eingeben')).toBeVisible();
+    // the Test hint above already carries the Save hint's text, so wait for the PUT's answer itself, not for that text
+    const saved = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/admin/settings' && r.request().method() === 'PUT');
     await media.getByRole('button', { name: 'Speichern' }).click();
+    expect((await saved).status()).toBe(400);
+    expect(api.settings.puts.map((p) => p.values)).toEqual([{ PLEX_URL: `http://plex.example.com:32400/?X-Plex-Token=${CANARY}` }]);
     await expect(address.getByText('Der Token gehört in das Feld Plex-Token.')).toBeVisible();
     await expect(address.getByRole('textbox')).toHaveAttribute('aria-invalid', 'true');
-    expect(api.settings.puts.map((p) => p.values)).toEqual([{ PLEX_URL: `http://plex.example.com:32400/?X-Plex-Token=${CANARY}` }]);
     // nothing was saved: after a reload the saved address shows, and the pasted token is nowhere on the page
     await page.reload();
     await expect(setting(page, 'Plex-Adresse').getByRole('textbox')).toHaveValue('http://plex.example.com:32400');
