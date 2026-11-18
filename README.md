@@ -300,6 +300,7 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `BACKGROUND_JOBS` | `true` | Download preparation/cleanup, language and picture-quality index, leaving-soon reminders, Jellyfin session polling (keep `true` on the single backend) |
 | `API_COMPRESSION` | `true` | gzip/brotli for JSON responses ≥ 1 KB; `false` if the proxy already compresses `/api` |
 | `GATEWAY_URL` | `http://gateway:4000` | Internal gateway address for the admin status page (only `/health` is called) |
+| `WEB_INTERNAL_URL` | `http://web:3000` | Internal web address; the backend reads the web image's commit from `/_app/version.json` when no updater is installed |
 | `HEALTH_DISK_WARN_PCT`, `HEALTH_DISK_CRIT_PCT` | `85`, `95` | Disk usage (percent) at which the status page and the banner turn amber / red (warn must be below crit, else both fall back to the defaults with a startup warning) |
 | `HEALTH_DB_WARN_GB` | `10` | Database size (GB) above which the status page warns |
 | `DB_CONNECT_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_TX_TIMEOUT_MS` | `5000`, `30000`, `300000` | Database pool limits (ms, `0` = none): how long a request waits for a free connection, after how long Postgres cancels a statement, and after how long it ends a session left idle inside a transaction. A stalled database then fails requests instead of filling the pool. Migrations run without a limit. `.env` only |
