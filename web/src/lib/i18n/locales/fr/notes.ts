@@ -34,5 +34,6 @@ const dict: Translation<typeof de> = {
   settings: 'Paramètres',
   close: 'Fermer',
   newLabel: 'nouvelle',
+  moreItems: { one: '+{n} autre', many: '+{n} autres', other: '+{n} autres' },
 };
 export default dict;

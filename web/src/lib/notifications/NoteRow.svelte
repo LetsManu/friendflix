@@ -4,7 +4,7 @@
   /**
    * One row of the notifications center (spec variant B): a 40-px icon tile (colour by category) with the unread dot, the title
    * with a count chip for a group, one body line, the relative time and at most one action link. The row itself is:
-   *   - a group: a button that opens it in place (its entries with date and time beneath) and marks it read;
+   *   - a group: a button that opens it in place (its newest entries with date and time beneath, then "+N weitere") and marks it read;
    *   - a single entry with a link: that link (marks it read; the action pill beside it is then for the pointer only);
    *   - an unread single entry without a link: a button that marks it read (the focus then goes to its ✕);
    *   - a read single entry without a link: plain text, nothing to press.
@@ -69,6 +69,7 @@
   {#if many && open}
     <ul class="items" id="{id}-i">
       {#each group.items as it (it.id)}<li><span class="it">{it.title}</span><time datetime={it.at}>{fmtDateTime(it.at)}</time></li>{/each}
+      {#if group.count > group.items.length}<li class="more">{$t('notes.moreItems', { n: group.count - group.items.length })}</li>{/if}
     </ul>
   {/if}
 </li>
@@ -117,6 +118,7 @@
   .items { grid-column: 1 / -1; grid-row: 3; margin: 0 0 6px 60px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
   .items li { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-left: 2px solid rgba(255, 255, 255, .18); font-size: .84rem; }
   .it { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .items .more { border-left-color: transparent; color: rgba(255, 255, 255, .9); }
   .items time { flex: none; font-size: .78rem; color: rgba(255, 255, 255, .9); font-variant-numeric: tabular-nums; }
   @media (pointer: coarse) {
     .nr { grid-template-columns: minmax(0, 1fr) 44px; }

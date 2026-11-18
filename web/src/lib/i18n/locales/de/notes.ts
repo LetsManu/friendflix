@@ -33,4 +33,6 @@ export default {
   settings: 'Einstellungen',
   close: 'Schließen',
   newLabel: 'neu',
+  /** an opened group lists its newest 20 entries; the rest */
+  moreItems: { one: '+{n} weitere', other: '+{n} weitere' },
 } as const;

@@ -149,6 +149,17 @@ test.describe('notifications center', () => {
     expect(api.notes.entries.filter((e) => e.hidden)).toEqual([]);
   });
 
+  test('a group with more entries than it lists says how many more there are', async ({ page, api }) => {
+    const tv = api.notes.entries.filter((e) => e.title === TV);
+    for (let k = 0; k < 19; k++) api.notes.entries.push({ ...tv[5]!, id: api.notes.nextId++, at: new Date(Date.parse(tv[5]!.at) - (k + 1) * 1000).toISOString(), body: `Hafenkanal · Flur ${k + 1}` });
+    await open(page);
+    const row = rowOf(page, TV);
+    await expect(row.locator('.cnt')).toHaveText('25×');
+    await row.locator('button.main').click();
+    await expect(row.locator('.items li:not(.more)')).toHaveCount(20);
+    await expect(row.locator('.items li.more')).toHaveText('+5 weitere');
+  });
+
   test('a single row is removed with ✕ and can be undone', async ({ page, api }) => {
     await open(page);
     const row = rowOf(page, 'Nordlicht ist bereit');

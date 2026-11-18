@@ -34,5 +34,6 @@ const dict: Translation<typeof de> = {
   settings: 'Ayarlar',
   close: 'Kapat',
   newLabel: 'yeni',
+  moreItems: { one: '+{n} tane daha', other: '+{n} tane daha' },
 };
 export default dict;
