@@ -5,7 +5,7 @@
  * canPlayType / MediaSource.isTypeSupported ('maybe' and 'probably' both count), so the server direct-plays those formats.
  * Shape and allowlists: backend/src/media/clientCaps.ts. DTS and TrueHD are never claimed (the web player cannot decode them).
  */
-import { APP_VERSION } from '#lib/version/codenames';
+import { appVersionNow } from '#lib/version/build';
 import { fireTvDisplayHeight, isFireTvApp } from '#lib/firetv/detect';
 import { capsSummary, deviceCaps, withOutput } from '#lib/player/devicecaps';
 import { isLgApp } from './detect';
@@ -155,7 +155,7 @@ export function appCaps(): ClientCapsBody | null {
  * without a window or when the TV confirms nothing. Diagnose reads it so it shows what the TV states, not the browser probe's guess.
  */
 export function tvBaseCaps(): ClientCapsBody | null {
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) return cached && { ...cached, appVersion: appVersionNow() };
   if (typeof window === 'undefined') return null;
   const lg = isLgApp();
   if (!lg && !isFireTvApp()) return null;
@@ -166,9 +166,9 @@ export function tvBaseCaps(): ClientCapsBody | null {
     probe = { canPlayType: (t) => v.canPlayType(t), isTypeSupported: ms?.isTypeSupported ? (t) => ms.isTypeSupported!(t) : undefined };
   } catch { /* no media element */ }
   cached = lg
-    ? buildLgCaps(probe, APP_VERSION)
-    : buildTvCaps(probe, { client: 'firetv', appVersion: APP_VERSION, maxHeight: fireTvDisplayHeight(), assumed: [] });
-  return cached;
+    ? buildLgCaps(probe, appVersionNow())
+    : buildTvCaps(probe, { client: 'firetv', appVersion: appVersionNow(), maxHeight: fireTvDisplayHeight(), assumed: [] });
+  return cached && { ...cached };
 }
 
 /** what the player and Diagnose read about this device's output: the TV app's own block in the LG / Fire TV app, else the browser probe */

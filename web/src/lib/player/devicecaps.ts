@@ -19,7 +19,7 @@
  * The result is cached per device (localStorage, keyed by user agent and probe version, 7 days). No probing (no media element): null,
  * and the server keeps its fixed browser list as before.
  */
-import { APP_VERSION } from '#lib/version/codenames';
+import { appVersion, appVersionNow } from '#lib/version/build';
 import { isTizenApp } from '#lib/tizen/detect';
 import { isLgApp } from '#lib/webos/detect';
 import { isFireTvApp } from '#lib/firetv/detect';
@@ -273,7 +273,7 @@ let probed: Out | null | undefined; // the async probe's result for this page lo
 let syncResult: Out | null | undefined;
 let running: Promise<void> | null = null;
 
-const opts = () => ({ client: (d().tizen ? 'tizen' : 'web') as ProbeClient, appVersion: APP_VERSION });
+const opts = () => ({ client: (d().tizen ? 'tizen' : 'web') as ProbeClient, appVersion: appVersionNow() });
 
 function read<T>(key: string): T | null {
   try { const raw = d().storage?.getItem(key); return raw ? (JSON.parse(raw) as T) : null; } catch { return null; }
@@ -291,7 +291,7 @@ export function inSafeMode(): boolean {
 function cached(): Out | null | undefined {
   const c = read<Cached>(CACHE_KEY);
   if (!c || c.v !== PROBE_VERSION || c.ua !== d().ua || d().now() - c.at >= CACHE_MS || c.at > d().now() || c.hdr !== d().env?.hdrDisplay) return undefined;
-  return c.caps ? { ...c.caps, client: opts().client, appVersion: APP_VERSION } : null;
+  return c.caps ? { ...c.caps, client: opts().client, appVersion: appVersionNow() } : null;
 }
 
 /** starts the asynchronous probe once per page load (cheap to call again); its result is cached for the device */
@@ -299,7 +299,8 @@ export function warmDeviceCaps(): Promise<void> {
   const env = d().env;
   if (!env || d().ownCaps || probed !== undefined) return Promise.resolve();
   if (cached() !== undefined) { probed = cached(); return Promise.resolve(); }
-  running ??= runDecodeQueries(env).then((res) => {
+  // the backend's version is awaited first (the caps schema needs SemVer); a failed answer is 0.0.0
+  running ??= appVersion().then(() => runDecodeQueries(env)).then((res) => {
     probed = buildDeviceCaps(env, opts(), res);
     write(CACHE_KEY, { v: PROBE_VERSION, ua: d().ua, at: d().now(), hdr: env.hdrDisplay, caps: probed } satisfies Cached);
   }, () => { probed = buildDeviceCaps(env, opts(), new Map()); }).finally(() => { running = null; });
