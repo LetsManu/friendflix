@@ -293,8 +293,11 @@ describe('notifications feed store: baseline, reset, concurrency', () => {
     d.resolve(page([['today', ['u1']]]));
     await p;
     s.toggle('u1');
+    const person = get(s).person;
     s.reset();
-    expect(get(s)).toMatchObject({ filter: 'all', sections: [], next: null, loading: 'idle', error: null, fresh: 0 });
+    expect(get(s)).toMatchObject({ filter: 'all', sections: [], next: null, loading: 'idle', error: null, fresh: 0, person: person + 1 });
+    await s.load('all'); // a load keeps the person (the sheet reloads only after a reset)
+    expect(get(s).person).toBe(person + 1);
     expect(get(s).open.size).toBe(0);
     const unhide = api.unhide as ReturnType<typeof vi.fn>;
     await s.undo('tok'); // the token is gone: the server is not asked and nothing comes back

@@ -18,6 +18,8 @@ export interface FeedState {
   unread: number;
   /** the categories with entries at the last load (global: they do not follow the filter) */
   categories: Counts['categories'];
+  /** bumped by reset(): the page belongs to another person now (an open sheet loads theirs) */
+  person: number;
 }
 
 export interface FeedStore extends Readable<FeedState> {
@@ -55,7 +57,8 @@ const unreadOf = (g: FeedGroup) => (g.unread ? g.unreadCount : 0);
 const everything = (sel: Selection) => !sel.ids?.length && !sel.groups?.length && sel.category === undefined;
 
 export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Map()): FeedStore {
-  const initial = (): FeedState => ({ filter: 'all', sections: [], next: null, loading: 'idle', error: null, fresh: 0, open: new Set(), unread: 0, categories: [] });
+  let epoch = 0; // bumped only by reset(): a newer person
+  const initial = (): FeedState => ({ filter: 'all', sections: [], next: null, loading: 'idle', error: null, fresh: 0, open: new Set(), unread: 0, categories: [], person: epoch });
   const { subscribe, update, set } = writable<FeedState>(initial());
   let state!: FeedState;
   subscribe((s) => (state = s));
@@ -71,7 +74,6 @@ export function createFeed(api: NotesApi = defaultApi, held: HeldTokens = new Ma
     baseUnread = n;
     update((s) => { const fresh = freshOf(n); return s.unread === n && s.fresh === fresh ? s : { ...s, unread: n, fresh }; });
   };
-  let epoch = 0; // bumped only by reset(): a newer person
   /**
    * The server's counts after a clear or its undo: the page only knows its own rows, so entries on pages not loaded (a clear by
    * filter) and the categories that went or came back are read again. A failure keeps the local counts.

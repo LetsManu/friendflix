@@ -338,6 +338,22 @@ test.describe('notifications center', () => {
     await expect(rowOf(page, TV)).toHaveCount(0);
   });
 
+  test('another profile in place while the sheet is open: it reloads with only the new profile\'s entries', async ({ page, api }) => {
+    await open(page);
+    await expect(bell(page).locator('.dot')).toHaveText('8');
+    await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, profile: { id: 'p2', name: 'Anna', avatar: 'a2', isOwner: false } } }));
+    // nothing unread there: no new count tells the sheet to reload, the switch itself does
+    api.notes.entries = [{ id: 500, kind: 'recommend', category: 'social', title: 'Ben Muster hat dir „Nordlicht“ empfohlen', body: null, link: '/new', at: new Date().toISOString(), read: true, hidden: false }];
+    await page.evaluate(() => window.dispatchEvent(new Event('ff-me-changed')));
+    await expect(bell(page).locator('.dot')).toHaveCount(0);
+    await expect(sheet(page)).toBeVisible();
+    await expect(rows(page)).toHaveCount(1);
+    await expect(rowOf(page, 'Ben Muster')).toBeVisible();
+    await expect(rowOf(page, TV)).toHaveCount(0);
+    await expect(sheet(page).getByTestId('notes-unread')).toHaveCount(0);
+    await expect(sheet(page).getByText('Keine Benachrichtigungen')).toHaveCount(0);
+  });
+
   test('kids profile: no bell', async ({ page, api }) => {
     const KID = { ...ME, profileCount: 3, kids: true, onboarded: true, profile: { id: 'p3', name: 'Mia', avatar: 'pink', isOwner: false, kids: true, maxRating: 6 } };
     await page.route('**/api/me', (r) => r.fulfill({ json: KID }));

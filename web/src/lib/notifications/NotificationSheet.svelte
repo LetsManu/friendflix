@@ -6,7 +6,8 @@
    * header (title, unread count, the settings gear, close; it never moves), the filter chips, a reserved 44-px slot for the *N neu*
    * pill (new entries never land above the reading position), the scroll list with its sections and rows, and the footer (*Alle
    * gelesen*, the clear button of the current filter). Scrolling to the end loads the next page into two reserved skeleton rows;
-   * the end text takes the same room. A clear can be undone from the toast for 5 s. A modal dialog: Escape and the dim close it,
+   * the end text takes the same room. A clear can be undone from the toast for 5 s. A sign-out or profile switch while open loads
+   * the next person's first page. A modal dialog: Escape and the dim close it,
    * Tab stays inside, the focus goes back to `trigger`. The caller mounts it while open and removes it on `close`.
    *   <NotificationSheet trigger={bellBtn} on:close={() => (bell = false)} />
    */
@@ -62,6 +63,9 @@
     freshSeen = s.fresh;
     if (s.fresh > 0 && s.loading === 'idle' && s.open.size === 0 && list && list.scrollTop <= 1) void loadFirst(s.filter, true);
   }
+  // a sign-out or profile switch while open (the layout's reset): the next person's first page, never "empty" until reopened
+  let personSeen = get(feedStore).person;
+  $: if (s.person !== personSeen) { personSeen = s.person; list?.scrollTo({ top: 0 }); void loadFirst(s.filter); }
   // the layout read the counts again (the 60-s poll, `ff-notes`): what arrived since the first page becomes the *N neu* pill
   let countsSeen = get(latestCounts);
   $: if ($latestCounts !== countsSeen) { countsSeen = $latestCounts; if ($latestCounts) feedStore.noteFresh($latestCounts.unread); }
