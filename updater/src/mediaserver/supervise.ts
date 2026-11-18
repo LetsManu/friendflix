@@ -16,7 +16,8 @@ import { KINDS, type Folder, type Gpu, type Kind, type MediaError } from './type
  * it (or flagged as tampered when it fails the guard), and a container that should run but is missing is recreated (after a failed
  * recover, again every 10 min; the recover checks the base, folders and GPU itself). No helper runs in normal operation: a
  * running server is only inspected. A container that stopped although it should run is left alone (Docker's restart policy handles
- * a crash) and its reason checked once per stop (base, folders, GPU); once it runs again those host codes go. A server the admin
+ * a crash) and its reason checked once per stop (base, folders, GPU), at most every 10 min (a crash loop); once it runs again those
+ * host codes go. A server the admin
  * stopped (`desired.run = false`) is never checked. It acts only on containers with both of our labels, never removes a volume and
  * never starts or checks a container after a failed rollback (its data may be half restored).
  */
@@ -25,6 +26,8 @@ export type TickResult = 'busy' | 'idle' | 'recover' | 'aside' | 'tampered';
 
 /** a server that should run but is missing is recreated again this long after a failed recover (spec "Times": 10 min) */
 const RETRY_MS = 10 * 60_000;
+/** the least time between two stop checks: a crash loop stops anew every round */
+const STOP_CHECK_MS = 10 * 60_000;
 /** what the stop check reports; only these go when the container runs again */
 const HOST_CODES: readonly MediaError[] = ['base_missing', 'folder_missing', 'gpu_missing', 'nvidia_missing'];
 /** Docker states of a container that stopped (`restarting`: the restart policy brings it back after a stop) */
@@ -65,8 +68,8 @@ type Owned = 'missing' | 'foreign' | 'tampered' | 'ok' | 'busy' | 'unknown';
 export class Supervisor {
   /** when the last recover started (the first retry of a failed one is due one interval after the start) */
   private lastRecover: number;
-  /** the stop the last stop check ran for (container id and State.FinishedAt); in memory only */
-  private checkedStop: string | null = null;
+  /** the stop the last stop check ran for (container id and State.FinishedAt) and when; in memory only */
+  private checkedStop: { key: string; at: number } | null = null;
 
   constructor(private readonly d: JobDeps & { jobs: MediaJobs }) {
     this.lastRecover = d.now();
@@ -138,7 +141,8 @@ export class Supervisor {
   /**
    * our guard-clean container under the real name: running, the host codes of a stop check go (any other code stays); stopped
    * although it should run (no job, no failed rollback), the base, folders and GPU are checked once per stop (its id and
-   * FinishedAt) and a code found becomes lastError (nothing found: lastError stays)
+   * FinishedAt), at most every 10 min (a stop meanwhile is checked once that time passed), and a code found becomes lastError
+   * (nothing found: lastError stays)
    */
   private async watchStop(i: Obj): Promise<void> {
     const st = objOf(i.State);
@@ -149,10 +153,11 @@ export class Supervisor {
       return;
     }
     if (!STOPPED.includes(status) || !m.desired?.run || this.held() || this.u.busy) return;
-    const stop = `${String(i.Id)}@${typeof st.FinishedAt === 'string' ? st.FinishedAt : ''}`;
-    if (stop === this.checkedStop) return;
+    const key = `${String(i.Id)}@${typeof st.FinishedAt === 'string' ? st.FinishedAt : ''}`;
+    const last = this.checkedStop;
+    if (last && (last.key === key || this.d.now() - last.at < STOP_CHECK_MS)) return;
     // once per stop, also when the check cannot run (no helper every round)
-    this.checkedStop = stop;
+    this.checkedStop = { key, at: this.d.now() };
     let code: MediaError | null;
     try { code = await this.jobs.hostCheck(); } catch { return; }
     if (code !== null) this.setError(code);

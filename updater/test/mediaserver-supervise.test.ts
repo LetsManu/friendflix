@@ -304,30 +304,30 @@ describe('supervision', () => {
     // the same stop: not again
     await w.ticks(12);
     expect(hostCheck).toHaveBeenCalledTimes(1);
-    // Docker restarted it and it stopped again: checked again
+    // Docker restarted it and it stopped again (13 min after the first check): checked again
     c.status = 'restarting';
     c.finishedAt = '2026-11-17T14:20:00.000Z';
     await w.tick();
     expect(hostCheck).toHaveBeenCalledTimes(2);
-    c.status = 'dead';
-    c.finishedAt = '2026-11-17T14:21:00.000Z';
-    await w.tick();
-    expect(hostCheck).toHaveBeenCalledTimes(3);
     expect(w.media().lastError).toBe('folder_missing');
     // running again: the host code goes, without a helper
     delete c.status;
     c.running = true;
     await w.tick();
     expect(w.media().lastError).toBeNull();
-    expect(hostCheck).toHaveBeenCalledTimes(3);
-    // a check that finds nothing leaves the error as it is
+    expect(hostCheck).toHaveBeenCalledTimes(2);
+    // a check that finds nothing leaves the error as it is (the stop is checked once 10 min passed since the last check)
     serien = 'ok';
     w.updater.updateMedia((m) => { m.lastError = 'interrupted'; });
     c.running = false;
+    c.status = 'dead';
     c.finishedAt = '2026-11-17T15:00:00.000Z';
+    await w.ticks(8);
+    expect(hostCheck).toHaveBeenCalledTimes(2);
     await w.tick();
-    expect(hostCheck).toHaveBeenCalledTimes(4);
+    expect(hostCheck).toHaveBeenCalledTimes(3);
     expect(w.media().lastError).toBe('interrupted');
+    delete c.status;
     // running again: any other code stays
     c.running = true;
     await w.ticks(3);
@@ -352,6 +352,29 @@ describe('supervision', () => {
     u.volumes.delete(baseVolume(BASE));
     await u.tick();
     expect(u.media().lastError).toBe('base_missing');
+  });
+
+  it('a crash loop is checked at most every 10 minutes', async () => {
+    const w = setup();
+    const c = w.existing(SPEC, ferroPin(), 'v1.5.1');
+    const hostCheck = vi.spyOn(w.jobs, 'hostCheck');
+    /** Docker brought it back and it crashed again: a new FinishedAt every round */
+    const crash = (n: number) => { c.running = false; c.status = n % 2 ? 'restarting' : 'exited'; c.finishedAt = new Date(w.clock.t + 1).toISOString(); };
+    // the first stop is checked at once
+    crash(0);
+    await w.tick();
+    expect(hostCheck).toHaveBeenCalledTimes(1);
+    // nine more stops within 10 minutes: none checked
+    for (let n = 1; n < 10; n++) { crash(n); await w.tick(); }
+    expect(hostCheck).toHaveBeenCalledTimes(1);
+    // 10 minutes after the last check: the next stop is
+    crash(10);
+    await w.tick();
+    expect(hostCheck).toHaveBeenCalledTimes(2);
+    for (let n = 11; n < 20; n++) { crash(n); await w.tick(); }
+    expect(hostCheck).toHaveBeenCalledTimes(2);
+    expect(w.helperCalls.filter((h) => h.verb === 'check')).toHaveLength(2);
+    expect(w.changes()).toEqual([]);
   });
 
   it("a stop by the admin is never diagnosed", async () => {

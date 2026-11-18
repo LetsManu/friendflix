@@ -17,7 +17,8 @@ import { KINDS, type BackupMeta, type Desired, type Gpu, type HdrResult, type Ki
 export type ContainerHealth = 'healthy' | 'unhealthy' | 'starting' | '';
 export interface MediaContainerView {
   state: string; health: ContainerHealth; kind: Kind; image: { digest: string; upstream: string };
-  template: 'current' | 'update_pending'; tampered: boolean; createdAt: string;
+  /** null: unknown (no answer, a container the state does not record, or the dri GPU without recorded render gids) */
+  template: 'current' | 'update_pending' | null; tampered: boolean; createdAt: string;
 }
 export interface MediaStatusView {
   available: boolean;
@@ -159,7 +160,7 @@ export function mediaStatusView(d: MediaStatusDeps): () => Promise<MediaStatusVi
       container = {
         state: s.state, health: s.health, kind,
         image: adopted ? { digest: adopted.digest, upstream: adopted.upstream } : { digest: s.digest, upstream: UNKNOWN_UPSTREAM },
-        template: v.template ?? 'current',
+        template: v.template,
         // a container the state does not record: also tampered when it fails the guard (the supervisor never adopts it)
         tampered: m.tampered || (!adopted && s.clean === false),
         createdAt: s.createdAt,

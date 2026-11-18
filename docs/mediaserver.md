@@ -112,12 +112,18 @@ The wizard's media step offers the same path under the setup session; it ends wh
   dropped and listed. *Zurücksetzen* (clearing the base) needs no code but only works while no managed container exists.
 - **Actions** on the card: *Starten*, *Stoppen*, *Neu starten*, *Aktualisieren*, *Sicherung*, *Wiederherstellen*, *Protokoll*
   (the last 300 lines, secrets replaced by `…`, never stored) and *Entfernen*. A stop is your choice: the updater never restarts a
-  container you stopped, in Admin or outside. A container that is *missing* is recreated within a minute.
+  container you stopped, in Admin or outside. A container that is *missing* is recreated within a minute; if that fails (for
+  example because a folder is missing), it is tried again every 10 minutes.
+- **Checks:** the base, the folders and the GPU are checked in short-lived helper containers when you set the server up or change
+  it, before each recreate, and once when the server stops unexpectedly (at most every 10 minutes). While the server runs,
+  nothing is checked: a share that disappears while the server keeps running is noticed when the server next stops or is
+  recreated.
 - **Entfernen** keeps the data, cache and backup volumes; *Daten löschen* (typing the kind's name) removes data and cache of both
   kinds (also those a switch left behind), never the backups. Afterwards FriendFlix goes back to the saved external server when there is one.
 - **Systemcheck:** the line *Verwalteter Medienserver* (`media.managed`) reports a missing or unhealthy container, a base or folder
-  that disappeared (for example an unmounted NAS share), a missing GPU, a failed job (`managed_job_failed`), an image that
-  differs from its pin for more than 7 days and a backup older than 30 days. A container whose labels are right but whose
+  that one of these checks found missing (for example an unmounted NAS share), a missing GPU, a failed job
+  (`managed_job_failed`), an image that differs from its pin for more than 7 days and a backup older than 30 days. A container
+  whose labels are right but whose
   configuration was changed outside FriendFlix (a port or privileges added in Portainer) is `managed_tampered`: it is never
   started or adopted; *Neu anlegen* replaces it from the template. Right after the updater starts, until it has read the media
   server's status once (checking the image signature can take up to 2 minutes), the line stays neutral (`not_set_up` /

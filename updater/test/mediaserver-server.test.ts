@@ -252,10 +252,10 @@ describe('the media status', () => {
     // recorded gids the container was not built with: an update is pending
     w.updater.updateMedia((m) => { m.renderGids = [992]; });
     expect((await view()).container!.template).toBe('update_pending');
-    // a state from before the record: unknown with the dri GPU (shown as current), never a helper
+    // a state from before the record: unknown with the dri GPU, never a helper
     w.updater.updateMedia((m) => { delete m.renderGids; });
     expect(await sup.templateState()).toBeNull();
-    expect((await view()).container!.template).toBe('current');
+    expect((await view()).container).toMatchObject({ state: 'running', template: null });
     expect(w.helperCalls).toEqual([]);
     // without the dri GPU an old state compares with no render gids
     const o = world();
