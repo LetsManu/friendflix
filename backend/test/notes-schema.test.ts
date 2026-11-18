@@ -109,4 +109,8 @@ describe('notification_state', () => {
     await env.pool.query('delete from users where id=$1', [u]);
     expect((await env.pool.query('select 1 from notification_state where notification_id=$1', [id2])).rowCount).toBe(0);
   });
+  it('indexes notification_id, so the cascade from a deleted notification does not scan the table', async () => {
+    const r = await env.pool.query<{ indexdef: string }>("select indexdef from pg_indexes where tablename = 'notification_state' and indexname = 'notification_state_note'");
+    expect(r.rows[0]?.indexdef).toMatch(/\(notification_id\)$/);
+  });
 });

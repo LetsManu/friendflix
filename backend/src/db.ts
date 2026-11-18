@@ -1384,6 +1384,7 @@ export const MIGRATIONS: string[] = [
   // 61: notifications center. group_key folds repeated notices into one group (kind|message key, see notifications/categories.ts);
   // A join title counts one level (a nested join adds an empty part), as groupKey() does.
   // hidden_at = cleared by the owner; notification_state holds read/hidden per person for broadcasts (user_id null). Rerunnable.
+  // notification_state_note: the cascade from a deleted notification (retention) looks rows up by notification_id alone.
   `
   alter table notifications add column if not exists group_key text;
   alter table notifications add column if not exists hidden_at timestamptz;
@@ -1403,6 +1404,7 @@ export const MIGRATIONS: string[] = [
     primary key (user_id, notification_id)
   );
   create index if not exists notifications_created on notifications(created_at);
+  create index if not exists notification_state_note on notification_state(notification_id);
   `,
 ];
 
