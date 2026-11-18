@@ -37,9 +37,10 @@ const boomKey: Route = { method: 'GET', path: /^\/v1\/streams\/([^/]+)\/preview\
 const boomSeg: Route = { method: 'GET', path: /^\/s\/([0-9a-f]{32})\/(boom\.ts)$/, handle: async () => { throw new Error('x'); } };
 
 let server: Server, base: string, verifier: Verifier, warnings: string[];
+const IMAGE = 'f'.repeat(40);
 const deps = (): AppDeps => ({
   get verifier() { return verifier; },
-  version: '3.4.0', bootId: '0123456789abcdef',
+  image: IMAGE, bootId: '0123456789abcdef',
   system: async () => SYSTEM,
   routes: [echo, quiet, own, boom, boomKey, boomSeg],
   warn: (m) => warnings.push(m),
@@ -61,12 +62,12 @@ const call = (method: string, path: string, body = '', o: { headers?: Record<str
   fetch(base + path, { method, body: method === 'GET' ? undefined : body, headers: { ...(o.unsigned ? {} : sign(key, method, path, body)), ...(body ? { 'content-type': 'application/json' } : {}), ...o.headers } });
 
 describe('livetv HTTP API', () => {
-  it('/healthz is open: ok, api 1, version and a 16-hex boot id', async () => {
+  it('livetv healthz: version and image are the image commit', async () => {
     const r = await fetch(`${base}/healthz`);
     expect(r.status).toBe(200);
     expect(r.headers.get('cache-control')).toBe('no-store');
     const b = await r.json() as Record<string, unknown>;
-    expect(b).toEqual({ ok: true, api: 1, version: '3.4.0', bootId: '0123456789abcdef' });
+    expect(b).toEqual({ ok: true, api: 1, version: IMAGE, image: IMAGE, bootId: '0123456789abcdef' });
     expect(b.bootId).toMatch(/^[0-9a-f]{16}$/);
     expect((await fetch(`${base}/healthz`, { method: 'POST' })).status).toBe(405);
   });
@@ -76,7 +77,7 @@ describe('livetv HTTP API', () => {
     for (const h of vectors.health) {
       const r = await fetch(`${base}/healthz?n=${h.nonce}`);
       expect(r.status).toBe(200);
-      expect(await r.json()).toEqual({ ok: true, api: 1, version: '3.4.0', bootId: '0123456789abcdef', proof: h.proof });
+      expect(await r.json()).toEqual({ ok: true, api: 1, version: IMAGE, image: IMAGE, bootId: '0123456789abcdef', proof: h.proof });
     }
     // another key, another proof: a host without the key cannot answer it
     verifier = { key, cache: new ReplayCache(), notBefore: 0 };
@@ -232,11 +233,11 @@ describe('start', () => {
     const logs: string[] = [];
     const dir = mkdtempSync(join(tmpdir(), 'ff-livetv-start-'));
     writeFileSync(join(dir, 'livetv_key'), deriveKey('start-test-secret-0123456789').toString('hex'));
-    const s = await start({ PORT: String(port), LIVETV_KEY_FILE: join(dir, 'livetv_key'), APP_VERSION: '3.4.0', LIVETV_SRT_PORTS: '9000' }, { log: (m) => logs.push(m), host: '127.0.0.1' });
+    const s = await start({ PORT: String(port), LIVETV_KEY_FILE: join(dir, 'livetv_key'), FF_IMAGE_COMMIT: IMAGE, LIVETV_SRT_PORTS: '9000' }, { log: (m) => logs.push(m), host: '127.0.0.1' });
     try {
       const h = await (await fetch(`http://127.0.0.1:${port}/healthz`)).json() as { bootId: string; version: string };
       expect(h.bootId).toMatch(/^[0-9a-f]{16}$/);
-      expect(h.version).toBe('3.4.0');
+      expect(h).toMatchObject({ version: IMAGE, image: IMAGE });
       const k = deriveKey('start-test-secret-0123456789');
       const r = await fetch(`http://127.0.0.1:${port}/v1/system`, { headers: sign(k, 'GET', '/v1/system', '') });
       expect(r.status).toBe(200);

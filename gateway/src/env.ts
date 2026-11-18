@@ -37,5 +37,10 @@ export function internalSecret(env: NodeJS.ProcessEnv): string {
   return fromFile;
 }
 
+/** the commit of this image's sources: FF_IMAGE_COMMIT, else GIT_SHA of an older image (40 hex either way); null otherwise, e.g. `dev` */
+export function imageCommit(env: NodeJS.ProcessEnv): string | null {
+  return [env.FF_IMAGE_COMMIT, env.GIT_SHA].find((v) => v !== undefined && /^[0-9a-f]{40}$/.test(v)) ?? null;
+}
+
 /** RECORDINGS_DIR (Live TV Phase 3): the recordings volume, mounted read-only; unset = `/media/r/` answers 503 */
 export const recordingsDir = (env: NodeJS.ProcessEnv): string | undefined => env.RECORDINGS_DIR?.trim() || undefined;

@@ -301,6 +301,7 @@ Eine neue Installation braucht davon nichts: Einrichtungsassistent und *Admin �
 | `BACKGROUND_JOBS` | `true` | Download-Vorbereitung/-Aufräumen, Sprach- und Bildqualitäts-Index, Bald-weg-Erinnerungen, Jellyfin-Session-Polling (auf dem einzigen Backend `true` lassen) |
 | `API_COMPRESSION` | `true` | gzip/brotli für JSON-Antworten ab 1 KB; `false`, wenn der Proxy `/api` schon komprimiert |
 | `GATEWAY_URL` | `http://gateway:4000` | Interne Gateway-Adresse für die Status-Seite im Admin-Bereich (nur `/health` wird abgefragt) |
+| `WEB_INTERNAL_URL` | `http://web:3000` | Interne Web-Adresse; ohne Updater liest das Backend den Commit des Web-Images aus `/_app/version.json` |
 | `HEALTH_DISK_WARN_PCT`, `HEALTH_DISK_CRIT_PCT` | `85`, `95` | Belegung (Prozent), ab der Status-Seite und Warnband gelb / rot werden (Warnwert muss unter dem kritischen liegen, sonst gelten beide Standardwerte, mit Warnung beim Start) |
 | `HEALTH_DB_WARN_GB` | `10` | Datenbankgröße (GB), ab der die Status-Seite warnt |
 | `DB_CONNECT_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_TX_TIMEOUT_MS` | `5000`, `30000`, `300000` | Grenzen des Datenbank-Pools (ms, `0` = keine): wie lange eine Anfrage auf eine freie Verbindung wartet, nach welcher Zeit Postgres eine Anweisung abbricht und nach welcher Zeit es eine Sitzung beendet, die untätig in einer Transaktion hängt. Eine hängende Datenbank lässt Anfragen dann scheitern, statt den Pool zu füllen. Migrationen laufen ohne Grenze. Nur in der `.env` |

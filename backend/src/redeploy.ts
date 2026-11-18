@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomBytes } from 'node:crypto';
 import type { Ctx } from './ctx.js';
+import { installedBuild, type InstalledBuild } from './installed.js';
+import { imageCommit } from './version.js';
 
 /**
  * What became of "Update now" after it was handed to Portainer (updates.ts redeployViaPortainer). Portainer gives no progress of
@@ -19,10 +21,13 @@ import type { Ctx } from './ctx.js';
  *               when a service was already seen changed or the stack ended in error)
  *   timeout     no end within 15 minutes (`at`: the phase it hung in)
  *
- * Judging the services needs the updater's listing. Without an updater (UPDATER_URL unset, or none answered when the redeploy
- * began) this backend's own build decides alone; with one that does not answer right now (Portainer recreates it too) the phase
- * waits instead of ending. One redeploy at a time (claimRedeploy). Only fixed codes, HTTP statuses and tags are stored: never a
- * URL, a key or Portainer's message text.
+ * "Another build" is the installed build (installed.ts, asked fresh on every read) against the one recorded at the start; with images
+ * built only when they changed, a service is on the new build when its digest (or, unlisted, its image commit) differs from the
+ * one recorded at the start, and a service that keeps its image (carried) is not waited for. Judging the services needs the
+ * updater's listing. Without an updater (UPDATER_URL unset, or none answered when the redeploy began) the installed build decides
+ * alone; with one that does not answer right now (Portainer recreates it too) the phase waits instead of ending. One redeploy at a
+ * time (claimRedeploy). Only fixed codes, HTTP statuses, tags, commits and digests are stored: never a URL, a key or Portainer's
+ * message text.
  */
 export type RedeployPhase = 'pulling' | 'recreating' | 'health' | 'done' | 'unchanged' | 'failed' | 'timeout';
 const PHASES: readonly RedeployPhase[] = ['pulling', 'recreating', 'health', 'done', 'unchanged', 'failed', 'timeout'];
@@ -41,8 +46,11 @@ export const BOOTED_AT = Date.now() - Math.round(process.uptime() * 1000);
 
 interface Rec {
   v: 1;
-  id: string; mode: 'webhook' | 'api'; startedAt: number; from: string; tag: string;
-  /** an updater listed the services when the redeploy began (else this backend's build decides alone) */
+  /** `from`: the installed build at the start (its commit), `source`: where it was learnt (installed.ts) */
+  id: string; mode: 'webhook' | 'api'; startedAt: number; from: string; source: InstalledBuild['source']; tag: string;
+  /** per service what it ran at the start: the digest the updater listed, else its image commit (unknown ones left out) */
+  fromServices: Partial<Record<(typeof SERVICES)[number], string>>;
+  /** an updater listed the services when the redeploy began (else the installed build decides alone) */
   updater: boolean;
   /**
    * "reload anyway" of the same build: a restart of this backend is then the change; with a listing it ends once that restart was
@@ -77,20 +85,31 @@ export interface RedeployView {
   at: RedeployPhase | null;
 }
 
-export interface ServiceSeen { service: string; state: string; health: string; sha: string | null }
+/** a service as the updater lists it: its image commit, the digest it runs, whether the registry has another digest for the tag */
+export interface ServiceSeen { service: string; state: string; health: string; commit: string | null; digest: string | null; changed?: boolean | null }
 
 const str = (v: unknown, re: RegExp): v is string => typeof v === 'string' && re.test(v);
 const numOrNull = (v: unknown): v is number | null => v === null || (typeof v === 'number' && Number.isFinite(v));
 const phaseOrNull = (v: unknown): v is RedeployPhase | null => v === null || PHASES.includes(v as RedeployPhase);
+const START_VALUE = /^(sha256:[0-9a-f]{64}|[0-9a-f]{40})$/;
+const fromServicesOk = (v: unknown): boolean => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
+  && Object.entries(v as object).every(([k, x]) => (SERVICES as readonly string[]).includes(k) && str(x, START_VALUE));
 
-/** the stored record, only in exactly this shape (an older or tampered value is ignored, never trusted) */
+/**
+ * the stored record, only in exactly this shape (a tampered value is ignored, never trusted). One older shape is read: the last
+ * redeploy started by a backend before per-service start values (no `source`, no `fromServices`, `from` = its GIT_SHA), i.e. the
+ * redeploy that installs this backend. It counts as learnt from that backend alone ('self', no service start values): it ends
+ * once this backend runs another commit than `from` and every listed service is healthy, instead of being lost (no view, and a
+ * new start refused as busy until its timeout).
+ */
 function parse(raw: string | null): Rec | null {
   if (!raw) return null;
   let o: Record<string, unknown>;
   try { o = JSON.parse(raw) as Record<string, unknown>; } catch { return null; }
   if (!o || typeof o !== 'object' || o.v !== 1) return null;
+  if (!('source' in o) && !('fromServices' in o)) o = { ...o, source: 'self', fromServices: {} };
   const ok = str(o.id, /^[0-9a-f]{16}$/) && (o.mode === 'webhook' || o.mode === 'api') && typeof o.startedAt === 'number' && Number.isFinite(o.startedAt)
-    && str(o.from, /^[A-Za-z0-9._-]{1,64}$/) && str(o.tag, /^[A-Za-z0-9._-]{1,64}$/) && typeof o.updater === 'boolean' && (o.forced === undefined || typeof o.forced === 'boolean')
+    && str(o.from, /^[A-Za-z0-9._-]{1,64}$/) && (o.source === 'updater' || o.source === 'probes' || o.source === 'self') && fromServicesOk(o.fromServices) && str(o.tag, /^[A-Za-z0-9._-]{1,64}$/) && typeof o.updater === 'boolean' && (o.forced === undefined || typeof o.forced === 'boolean')
     && (o.restarted === undefined || (Array.isArray(o.restarted) && o.restarted.length <= SERVICES.length && o.restarted.every((x) => (SERVICES as readonly unknown[]).includes(x))))
     && (o.answer === 'pending' || o.answer === 'ok' || o.answer === 'failed') && numOrNull(o.answeredAt) && typeof o.sync === 'boolean' && typeof o.changed === 'boolean'
     && (o.error === null || str(o.error, /^[a-z_]{1,40}$/)) && (o.step === null || str(o.step, /^[a-z_]{1,20}$/)) && numOrNull(o.status)
@@ -147,8 +166,14 @@ const release = (ctx: Ctx, id: string) => ctx.kv.delIfEquals(REDEPLOY_LOCK, id).
 export async function beginRedeploy(ctx: Ctx, id: string, mode: 'webhook' | 'api', tag: string, updater: boolean, now = Date.now(), waitMs = 3_000, forced = false): Promise<boolean> {
   // the slot first: a record must never stay "pending" for a redeploy that was not sent (a phantom "pulling", busy for 15 min)
   if (!(await ctx.kv.refreshIfEquals(REDEPLOY_LOCK, id, HOLD_S).catch(() => false))) return false;
+  // what runs now: the installed build and per service its digest (listed) or image commit
+  const installed = await installedBuild(ctx, { fresh: true });
+  const fromServices = Object.fromEntries(installed.services.flatMap((s) => {
+    const v = s.digest ?? s.commit;
+    return (SERVICES as readonly string[]).includes(s.service) && v && START_VALUE.test(v) ? [[s.service, v]] : [];
+  }));
   const ok = await locked(ctx, () => write(ctx, {
-    v: 1, id, mode, startedAt: now, from: ctx.cfg.GIT_SHA, tag, updater, ...(forced ? { forced: true } : {}), answer: 'pending', answeredAt: null, sync: false, changed: false,
+    v: 1, id, mode, startedAt: now, from: installed.commit, source: installed.source, fromServices, tag, updater, ...(forced ? { forced: true } : {}), answer: 'pending', answeredAt: null, sync: false, changed: false,
     error: null, step: null, status: null, code: null, final: null, finishedAt: null, at: null,
   }), waitMs);
   return ok === true;
@@ -206,16 +231,27 @@ export function redeployView(ctx: Ctx, services: readonly ServiceSeen[] | null |
 async function judge(ctx: Ctx, services: readonly ServiceSeen[] | null | undefined, now: number, bootedAt: number, again: boolean): Promise<RedeployView | null> {
   const r = await read(ctx);
   if (!r) return null;
-  const fromTag = /^[0-9a-f]{7,40}$/.test(r.from) ? `sha-${r.from.slice(0, 7)}` : null;
   const seen = services?.filter((s) => (SERVICES as readonly string[]).includes(s.service)) ?? [];
-  const onNew = (s: ServiceSeen) => s.state === 'running' && s.sha !== null && fromTag !== null && s.sha !== fromTag;
+  // what a service ran at the start (a digest, or recorded without one an image commit) and what it runs now, compared alike
+  const was = (s: ServiceSeen) => r.fromServices[s.service as (typeof SERVICES)[number]];
+  const runs = (s: ServiceSeen, start: string) => (start.startsWith('sha256:') ? s.digest : s.commit);
+  // a service on the new build: it runs another value than at the start
+  const onNew = (s: ServiceSeen) => { const v = was(s); return s.state === 'running' && v !== undefined && runs(s, v) !== null && runs(s, v) !== v; };
+  // a service that still runs what it ran at the start
+  const onStart = (s: ServiceSeen) => { const v = was(s); return v !== undefined && runs(s, v) === v; };
   const counts = seen.length ? { updated: seen.filter(onNew).length, total: seen.length } : null;
   let phase: RedeployPhase = r.final ?? 'pulling';
   if (!r.final) {
-    // none: judge by this backend alone; down: an updater that listed the services at the start does not answer now
+    // none: judge by the installed build alone; down: an updater that listed the services at the start does not answer now
     const listing = services === undefined || !r.updater ? 'none' : seen.length ? 'list' : 'down';
     const changedNow = listing === 'list' && seen.some((s) => s.state !== 'running' || onNew(s));
-    const newBuild = ctx.cfg.GIT_SHA !== r.from;
+    // a fallback answer now ('self': a service not answering while it is recreated, a commit time GitHub does not give) is not
+    // "another build" when the start knew better; from a fallback at the start too, this backend's own commit decides
+    const fresh = await installedBuild(ctx, { fresh: true });
+    const newBuild = fresh.source !== 'self' ? fresh.commit !== r.from : r.source === 'self' && imageCommit(ctx.cfg) !== r.from;
+    // still to be recreated: on its start value unless the registry says its tag has that very digest (a carried service); an
+    // unknown registry answer (an outage, an older updater) waits, so a carried newest service may wait until the timeout
+    const waiting = (s: ServiceSeen) => newBuild && s.changed !== false && onStart(s);
     const restarted = bootedAt > r.startedAt;
     // a forced reload of the same build: this backend recreated is the change. With a listing (no per-service start times to prove
     // each one was recreated), it ends once the backend restarted and, on a later poll, every service runs healthy: the first read
@@ -228,9 +264,9 @@ async function judge(ctx: Ctx, services: readonly ServiceSeen[] | null | undefin
     // a restart of the same build alone proves nothing (a crash, a reboot): only with a change seen, or Portainer saying done
     if (newBuild || (changed && (restarted || finished))) {
       if (listing === 'list') {
-        const pending = seen.filter((s) => !healthy(s) || (newBuild && fromTag !== null && s.sha === fromTag));
+        const pending = seen.filter((s) => !healthy(s) || waiting(s));
         phase = !pending.length ? (r.forced === true && !newBuild && !known.includes('backend') ? 'recreating' : 'done')
-          : pending.some((s) => s.state !== 'running' || (newBuild && s.sha === fromTag)) ? 'recreating' : 'health';
+          : pending.some((s) => s.state !== 'running' || waiting(s)) ? 'recreating' : 'health';
       } else {
         phase = listing === 'none' ? 'done' : 'health';
       }

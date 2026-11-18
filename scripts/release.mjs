@@ -4,16 +4,16 @@
 /**
  * Cuts a FriendFlix release (used by .github/workflows/release.yml, runnable locally with --dry-run):
  *   1. bumps version.json (SemVer; a new MAJOR also takes the next codename from codenames.json, A–Z cinema snacks)
- *   2. syncs "version" in every package.json (root + workspaces) and in package-lock.json
- *   3. turns CHANGELOG "## [Unreleased]" into "## [x.y.z] – Codename – YYYY-MM-DD" with a fresh empty Unreleased above
- * It never commits, tags or pushes; the workflow does that. Refuses when the Unreleased section is empty.
+ *   2. turns CHANGELOG "## [Unreleased]" into "## [x.y.z] – Codename – YYYY-MM-DD" with a fresh empty Unreleased above
+ * version.json is the only version file (package.json and package-lock.json say 0.0.0 once), so a release changes the
+ * inputs of the backend image alone. It never commits, tags or pushes; the workflow does that. Refuses when the Unreleased section is empty.
  *
  * Usage: node scripts/release.mjs <patch|minor|major|none> [--dry-run] [--notes <file>] [--date YYYY-MM-DD]
  * Prints a JSON summary ({ version, codename, tag, previous, files }) on stdout; --notes writes the release notes
  * (the changelog section without its heading) to a file.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import console from 'node:console';
 import process from 'node:process';
 import { URL, fileURLToPath } from 'node:url';
@@ -21,8 +21,6 @@ import { URL, fileURLToPath } from 'node:url';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 /** codename list in alphabetical order (shared with backend/src/version.ts and web/src/lib/version/codenames.ts) */
 export const CODENAMES = JSON.parse(readFileSync(new URL('../codenames.json', import.meta.url), 'utf8')).map((c) => c.name);
-/** package.json files whose "version" follows version.json (missing ones are skipped, e.g. e2e has none today) */
-export const PACKAGES = ['package.json', 'backend/package.json', 'web/package.json', 'gateway/package.json', 'updater/package.json', 'livetv/package.json', 'e2e/package.json'];
 /** `none` releases the version already in version.json (the first release, 1.0.0) as long as its tag does not exist */
 const KINDS = ['patch', 'minor', 'major', 'none'];
 
@@ -78,33 +76,6 @@ export function cutChangelog(text, version, codename, date) {
   return { text: out, notes };
 }
 
-/**
- * Sets the TOP-LEVEL "version" of a package.json text, keeping its formatting. A small scanner tracks strings and
- * nesting depth, so a "version" key inside a nested object (e.g. a config block) is never touched.
- */
-export function setPackageVersion(json, version) {
-  JSON.parse(json); // must be valid JSON
-  let depth = 0;
-  for (let i = 0; i < json.length; i++) {
-    const c = json[i];
-    if (c === '{' || c === '[') depth++;
-    else if (c === '}' || c === ']') depth--;
-    else if (c === '"') {
-      let j = i + 1;
-      while (json[j] !== '"') j += json[j] === '\\' ? 2 : 1;
-      const isKey = depth === 1 && /^\s*:/.test(json.slice(j + 1));
-      if (isKey && json.slice(i + 1, j) === 'version') {
-        const m = /^(\s*:\s*")((?:[^"\\]|\\.)*)"/.exec(json.slice(j + 1));
-        if (!m) throw new Error('package.json "version" is not a string');
-        const start = j + 1 + m[1].length;
-        return json.slice(0, start) + version + json.slice(start + m[2].length);
-      }
-      i = j;
-    }
-  }
-  throw new Error('package.json has no "version" field');
-}
-
 /** body of the `## [version] …` section of a changelog (the notes of an already cut release) */
 export function changelogSection(text, version) {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`not a release version: ${version}`);
@@ -116,15 +87,6 @@ export function changelogSection(text, version) {
   const rest = lines.slice(at + 1).join('\n');
   const next = rest.search(/^## /m);
   return (next < 0 ? rest : rest.slice(0, next)).trim();
-}
-
-/** package-lock.json: root + workspace entries follow the new version (keeps `npm ci` in sync) */
-export function setLockVersions(json, version, workspaces) {
-  const lock = JSON.parse(json);
-  lock.version = version;
-  if (lock.packages?.['']) lock.packages[''].version = version;
-  for (const w of workspaces) if (lock.packages?.[w]) lock.packages[w].version = version;
-  return `${JSON.stringify(lock, null, 2)}\n`;
 }
 
 /** git tags of `root` (the workflow checks out with fetch-depth 0, so all tags are there) */
@@ -144,12 +106,6 @@ export function release({ root = ROOT, kind, date = new Date().toISOString().sli
     ['version.json', `{ "version": ${JSON.stringify(next.version)}, "codename": ${JSON.stringify(next.codename)} }\n`],
     ['CHANGELOG.md', cut.text],
   ]);
-  const pkgs = PACKAGES.filter((f) => existsSync(p(f)));
-  for (const f of pkgs) writes.set(f, setPackageVersion(readFileSync(p(f), 'utf8'), next.version));
-  if (existsSync(p('package-lock.json'))) {
-    const workspaces = pkgs.filter((f) => f !== 'package.json').map((f) => f.replace(/\/package\.json$/, ''));
-    writes.set('package-lock.json', setLockVersions(readFileSync(p('package-lock.json'), 'utf8'), next.version, workspaces));
-  }
   if (!dryRun) for (const [f, text] of writes) writeFileSync(p(f), text);
   return { summary: { version: next.version, codename: next.codename, tag: `v${next.version}`, previous: info.version, date, dryRun, files: [...writes.keys()] }, notes: cut.notes };
 }

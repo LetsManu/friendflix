@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { APP_VERSION } from '#lib/version/codenames';
+import { _resetBuild, loadBuild } from '#lib/version/build';
 import {
   _resetDeviceCaps, avoidedUntil, AVOID_KEY, AVOID_MS, buildDeviceCaps, CACHE_KEY, capsPending, capsSummary, confirmsType, measureChannelsWith, remeasureOutput, decodeQueries, deviceCaps, inSafeMode, isFormatFailure, isProbedBlock, MIME,
   noteDirectFailure, noteHlsFailure, outputChannels, withOutput, clientWhy, PROBE_VERSION, runDecodeQueries, SAFE_KEY, SAFE_MS, setStereoOnly, STEREO_KEY, stereoOnly, warmDeviceCaps, type DecodeQuery, type DeviceDeps, type ProbeEnv,
@@ -173,15 +173,30 @@ describe('this device: cache, sync claims, safe mode', () => {
 
   it('before the probe answers: the conservative sync block; afterwards the probed one, cached for the user agent', async () => {
     store = new Map(); now = 1_000_000; fresh();
+    _resetBuild();
+    await loadBuild((async () => new Response(JSON.stringify({ sha: 'a', version: '4.5.6', codename: 'Eclair', build: 'release', label: '4.5.6' }))) as unknown as typeof fetch);
     expect(codecs(deviceCaps())).toEqual(['h264']);
     await warmDeviceCaps();
     expect(codecs(deviceCaps())).toEqual(['h264', 'hevc', 'av1', 'vp9']);
-    expect(deviceCaps()!.appVersion).toBe(APP_VERSION);
+    expect(deviceCaps()!.appVersion).toBe('4.5.6'); // the backend's answer, awaited before the probe builds the block
     const saved = JSON.parse(store.get(CACHE_KEY)!);
     expect(saved).toMatchObject({ v: PROBE_VERSION, ua: 'UA/1', at: now });
     // next page load: straight from the cache, no decode call
     fresh({ env: env(all, { decodingInfo: async () => { throw new Error('must not run'); } }) });
     expect(codecs(deviceCaps())).toEqual(['h264', 'hevc', 'av1', 'vp9']);
+  });
+
+  it('a cached probe read before the answer still sends the real version after the answer', async () => {
+    store = new Map(); now = 1_000_000;
+    store.set(CACHE_KEY, JSON.stringify({ v: PROBE_VERSION, ua: 'UA/1', at: now, hdr: env(all, withApi).hdrDisplay, caps: buildDeviceCaps(env(all), O, new Map()) }));
+    fresh(); _resetBuild();
+    const asking = loadBuild((async () => new Response(JSON.stringify({ sha: 'a', version: '6.6.6', codename: 'Eclair', build: 'release', label: '6.6.6' }))) as unknown as typeof fetch);
+    const warm = warmDeviceCaps(); // cache hit: the block is taken, the version is not known yet
+    expect(deviceCaps()!.appVersion).toBe('0.0.0');
+    await asking;
+    await warm;
+    expect(deviceCaps()!.appVersion).toBe('6.6.6');
+    expect(JSON.parse(store.get(CACHE_KEY)!).caps.appVersion).toBe('3.1.0'); // the cache is not touched
   });
 
   it('another user agent, another probe version or an old entry probes again', async () => {

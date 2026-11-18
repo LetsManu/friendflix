@@ -6,52 +6,60 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 The container images (`ghcr.io/letsmanu/friendflix-{backend,gateway,web,updater}`; `livetv` and `mediaserver` are exempt, see below) are built so that building the same commit
 again – on another machine, at another time, with an empty cache – gives **the same bytes**: the same image manifest
-digest. Anyone can rebuild a release and check that the published image contains exactly what the source says, and
+digest. Each image is built for its **image commit** (the newest commit that changed its inputs, `.github/images.json`),
+not for the commit of the CI run, so a later commit that leaves an image's inputs alone gives that image's bytes again. Anyone can rebuild a release and check that the published image contains exactly what the source says, and
 nothing an attacker slipped into the build machine. CI checks it for every pull request and every image it publishes
 (job `reproducible` in [ci.yml](../.github/workflows/ci.yml)).
 
 ## Check a published image yourself
 
-You need git, jq and Docker with buildx (Linux or macOS; on Apple silicon the amd64 build runs emulated and is slow).
+You need git (a full clone: the image commit is found in the history), jq, Node and Docker with buildx (Linux or macOS; on
+Apple silicon the amd64 build runs emulated and is slow).
 
 ```bash
 git clone https://github.com/LetsManu/friendflix && cd friendflix
-git checkout v1.4.0                       # the release (or commit) you want to check
 
 IMG=ghcr.io/letsmanu/friendflix-backend:1.4.0       # gateway / web the same way; :latest, :<short sha> work too
-scripts/reproduce-image.sh backend --ref v1.4.0 --compare "$IMG"
+scripts/reproduce-image.sh backend --compare "$IMG"   # builds the image's revision (its image commit); --ref v1.4.0 works too
 # reproduce-image: OK: rebuilt backend is identical to ghcr.io/letsmanu/friendflix-backend:1.4.0 (sha256:…)
 ```
 
 What the script does (it is short – read it before you trust it):
 
 1. Takes the build context from `git archive <ref>`: only committed files, every mtime = commit time, modes 644/755.
-   Your local changes, untracked files, umask or `core.autocrlf` cannot leak in.
-2. `SOURCE_DATE_EPOCH=$(git log -1 --format=%ct <ref>)` – the commit time is the only "time" in the build.
+   Your local changes, untracked files, umask or `core.autocrlf` cannot leak in. With `--compare` the ref defaults to
+   the image's `org.opencontainers.image.revision` label – its image commit; any later commit with the same inputs (the
+   release tag, say) gives the same bytes.
+2. `SOURCE_DATE_EPOCH` = the commit time of the image commit – the only "time" in the build. With `--compare` that is
+   the published image's `FF_IMAGE_COMMIT` (images from before it: `GIT_SHA`); without, the image commit that the ref's
+   own `scripts/changed-images.mjs image-commit <service> --ref <ref>` names, as CI builds it.
 3. Creates a fresh, throw-away BuildKit builder with the BuildKit image pinned in the build action
    (`.github/actions/build-image/action.yml`, the `default:` of input `buildkit-image`; older refs: `BUILDKIT_IMAGE` in
    `ci.yml`; another BuildKit version may legitimately produce different bytes) and builds with `--no-cache --pull`,
    `--provenance=false --sbom=false` and `--output type=oci,…,oci-mediatypes=true,compression=gzip,rewrite-timestamp=true`.
-4. With `--compare`, copies the image's labels and the build-arg ENVs (`GIT_SHA`, `BUILD_TIME`, `APP_VERSION`,
-   `APP_CODENAME`) from the published image into the rebuild – they are metadata the release pipeline sets – and compares
-   the rebuilt manifest digest with the published **linux/amd64 image manifest** digest. Anything else – every layer, the
-   rest of the config, `created`, the history – must come out identical.
+4. With `--compare`, copies the image's labels and the build-arg ENVs (`FF_IMAGE_COMMIT`; backend also `APP_VERSION`,
+   `APP_CODENAME`; images from before `FF_IMAGE_COMMIT` carry `GIT_SHA`, `BUILD_TIME`, `APP_VERSION`, `APP_CODENAME`)
+   from the published image into the rebuild – they are metadata the release pipeline sets – and compares the rebuilt
+   manifest digest with the published **linux/amd64 image manifest** digest. Anything else – every layer, the rest of
+   the config, `created`, the history – must come out identical. Only build arguments the Dockerfile at the ref declares
+   are passed.
 
 By hand, without the script, the core of it is:
 
 ```bash
-export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+read -r COMMIT SOURCE_DATE_EPOCH < <(node scripts/changed-images.mjs image-commit backend)   # "<sha> <epoch>"
+export SOURCE_DATE_EPOCH
 docker buildx create --name repro --driver docker-container --driver-opt image=$(scripts/reproduce-image.sh --buildkit-image)
 docker buildx build --builder repro --no-cache --pull --platform linux/amd64 --provenance=false --sbom=false \
-  --build-arg SOURCE_DATE_EPOCH --build-arg GIT_SHA=$(git rev-parse HEAD) \
-  --build-arg BUILD_TIME=$(date -u -d @$SOURCE_DATE_EPOCH +%Y-%m-%dT%H:%M:%SZ) \
+  --build-arg SOURCE_DATE_EPOCH --build-arg FF_IMAGE_COMMIT=$COMMIT \
   --build-arg APP_VERSION=$(jq -r .version version.json) --build-arg APP_CODENAME=$(jq -r .codename version.json) \
-  --label org.opencontainers.image.created=… \
+  --label org.opencontainers.image.revision=$COMMIT --label org.opencontainers.image.created=… \
   -f backend/Dockerfile --output type=oci,dest=backend.tar,oci-mediatypes=true,compression=gzip,rewrite-timestamp=true .
 tar -xOf backend.tar index.json | jq -r '.manifests[0].digest'
 docker buildx imagetools inspect --raw "$IMG" | jq -r '.manifests[] | select(.platform.architecture=="amd64") | .digest'
 ```
-Pass every label of the published image as `--label` (`docker buildx imagetools inspect "$IMG" --format '{{json .Image}}' | jq .config.Labels`).
+`APP_VERSION` / `APP_CODENAME` only for the backend: the other images do not carry the version. Pass every label of the
+published image as `--label` (`docker buildx imagetools inspect "$IMG" --format '{{json .Image}}' | jq .config.Labels`).
 Build from a fresh clone (`git archive` in the script): files whose mtime is older than the commit are not clamped.
 
 ## What is compared, and what is not
@@ -61,13 +69,18 @@ Build from a fresh clone (`git archive` in the script): files whose mtime is old
 | Image manifest (linux/amd64): config + all layers | **yes – this is the digest that is compared** | see below |
 | Image index digest (what `:tag` points to) | no | also lists the attestation manifests |
 | BuildKit SBOM + SLSA provenance (in the index), cosign signature, GitHub attestations | no | contain build times, run IDs, signatures; separate manifests that *point to* the image manifest |
-| Labels `org.opencontainers.image.*` | yes, with the release's values | `created` = commit time; `version`/`revision`/`source` come from docker/metadata-action and are copied by `--compare` |
+| Labels `org.opencontainers.image.*` | yes, with the release's values | written by the build action from git only: `revision` = the image commit, `created` = its commit time, `title`, `source`, `url`, `licenses`; no `version` (the release lives in the backend's `APP_VERSION`). `--compare` copies them; images from before the image commit also carry docker/metadata-action's `version` and `description` |
 
 ## How the build is made deterministic
 
-- **Timestamps:** `SOURCE_DATE_EPOCH` = commit time is passed to every build. BuildKit uses it for the config's `created`
-  and history entries, and `rewrite-timestamp=true` clamps every file mtime in every layer to it. `BUILD_TIME` (shown in
-  *Admin → Update*) and the `org.opencontainers.image.created` label are derived from it, not from the clock.
+- **The image commit, not the run commit:** every image carries `FF_IMAGE_COMMIT` = its image commit (from the change
+  plan) and the `revision` label with the same value, and nothing else about the run: no `GIT_SHA`, no `BUILD_TIME`, no
+  `version` label. The release version (`APP_VERSION` / `APP_CODENAME` from `version.json`) is baked into the backend
+  only; the other images take it from the backend. So an image whose inputs did not change comes out bit for bit the
+  same at a later commit.
+- **Timestamps:** `SOURCE_DATE_EPOCH` = the image commit's time is passed to every build. BuildKit uses it for the
+  config's `created` and history entries, and `rewrite-timestamp=true` clamps every file mtime in every layer to it. The
+  `org.opencontainers.image.created` label is derived from it, not from the clock.
 - **No cache for what is published:** `rewrite-timestamp` only clamps mtimes *newer* than `SOURCE_DATE_EPOCH`. A layer
   reused from an older commit's cache keeps that build's older mtimes, so the candidate that CI pushes is built with
   `no-cache` (it still exports its layers as cache for PR builds).
@@ -76,10 +89,11 @@ Build from a fresh clone (`git archive` in the script): files whose mtime is old
   (`npm ci`). Two clean `npm ci` runs produce byte-identical `node_modules` (mtimes are clamped).
 - **App build output:** `tsc` (backend, gateway) is deterministic. The web app's SvelteKit `version.name` defaulted to
   `Date.now()` and ended up in `_app/version.json`, the service worker, the prerendered `/offline` page and the server
-  chunks; it is now the git sha (else `SOURCE_DATE_EPOCH`) – [kit-version.ts](../web/src/lib/version/kit-version.ts).
-  Two `vite build`s of the same commit are byte-identical.
+  chunks; it is now the web image's image commit (`FF_IMAGE_COMMIT`, else `SOURCE_DATE_EPOCH`) –
+  [kit-version.ts](../web/src/lib/version/kit-version.ts), so the service worker cache only turns over when the web
+  image changed. Two `vite build`s of the same inputs are byte-identical.
 - **Nothing build-time-dependent in the runtime stage:** only `dist`/`build` output, production `node_modules`,
-  `package.json` and `version.json` are copied; npm caches stay in the build stages.
+  `package.json` and (backend only) `version.json` are copied; npm caches stay in the build stages.
 
 ## Alpine packages: the one limit (ruling)
 
@@ -121,6 +135,26 @@ release image, pinned by digest, plus Intel's OpenCL runtime installed with `dpk
 and sha256 (nothing comes from a live repository). Whether two clean builds give the same digest has not been shown yet. It is
 built, scanned, SBOM'd and cosign-signed like the others, in its own jobs (`mediaserver-image`, `publish-mediaserver`) that
 the other images never wait for; its Trivy findings are reported, not a gate (see the top of `ci.yml`). To lift the exemption, show two identical builds with `scripts/reproduce-image.sh` and add it to the job's matrix.
+
+## Burn-in before CI carries unchanged images
+
+On every publishable run the change plan (`scripts/changed-images.mjs`, report mode) looks for the newest `main` commit
+whose images were all published (`sha-<7>`) and marks an image "carry" when that base is cosign-signed by this repository and
+its `revision` label is the image's image commit. Nothing acts on that yet: every image is still built. For each such image the
+`reproducible (x)` leg compares its fresh rebuild with that base and leaves an annotation (title `burn-in`), never a failure:
+
+- `<x> gleich <digest>` – the linux/amd64 image manifests are identical;
+- `<x> zählt (…)` – the bytes differ, but `reproduce-image.sh --diff` finds the same contents (`gleicher Inhalt`) or only files
+  outside `app/` that OS packages own (`nur OS-Pakete`);
+- `<x> setzt zurück: <cause>` – a file under `app/` or the config's Env, Labels, Cmd, Entrypoint, WorkingDir or User differs:
+  an input that `.github/images.json` misses. Add it to the map; the count starts again;
+- `<x> kein Burn-in (<Grund>)` – no comparison was possible (e.g. the base could not be pulled): neutral.
+
+The backend's media server pin label (`io.github.letsmanu.friendflix.mediaserver.pins`) is ignored: it holds the digest of
+the `mediaserver` image built in the same run, which changes until CI carries that image too; the notice then ends in
+`; Medienserver-Pin ignoriert`. CI only starts carrying unchanged images (Stage D) after **20 counting `main` runs in a row**:
+`scripts/burnin-status.sh [N]` lists the last N runs as `zählt`, `setzt zurück` or `kein Burn-in` (neutral runs are skipped)
+and prints the streak.
 
 ## When the `reproducible` check fails
 

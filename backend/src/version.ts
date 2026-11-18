@@ -48,6 +48,14 @@ function versionFile(): AppVersion | null {
   return fromFile;
 }
 
+/**
+ * the commit of this image's sources: FF_IMAGE_COMMIT when it is 40 hex, else GIT_SHA (images from before FF_IMAGE_COMMIT), else
+ * 'dev'. Not the commit of the stack: with images built only when they changed, the images of one stack carry different commits.
+ */
+export function imageCommit(cfg: { FF_IMAGE_COMMIT?: string | undefined; GIT_SHA?: string | undefined }): string {
+  return cfg.FF_IMAGE_COMMIT && /^[0-9a-f]{40}$/.test(cfg.FF_IMAGE_COMMIT) ? cfg.FF_IMAGE_COMMIT : cfg.GIT_SHA || 'dev';
+}
+
 /** installed version: APP_VERSION / APP_CODENAME (baked into the image at build time), else version.json, else 0.0.0 */
 export function appVersion(cfg: { APP_VERSION?: string | undefined; APP_CODENAME?: string | undefined }): AppVersion {
   const v = cfg.APP_VERSION?.replace(/^v/, '');

@@ -44,12 +44,10 @@ RUN apt-get update \
   && test -s /jellyfin.gpg
 
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
-ARG GIT_SHA=dev
-ARG BUILD_TIME=
-# release version + codename from version.json (CI passes them as build args)
-ARG APP_VERSION=
-ARG APP_CODENAME=
-ENV GIT_SHA=$GIT_SHA BUILD_TIME=$BUILD_TIME APP_VERSION=$APP_VERSION APP_CODENAME=$APP_CODENAME
+# the image commit: the newest commit that changed this image's inputs (CI passes it with SOURCE_DATE_EPOCH = its commit time,
+# .github/images.json); `dev` locally
+ARG FF_IMAGE_COMMIT=dev
+ENV FF_IMAGE_COMMIT=$FF_IMAGE_COMMIT
 # read-only root fs: only /tmp (tmpfs in compose), /cache and /recordings (volumes) are written
 ENV NODE_ENV=production HOME=/tmp
 WORKDIR /app

@@ -30,7 +30,7 @@
   import { toast } from '#lib/ui/toast';
   import {
     TIME_RE, canRollback, foreignMode, foreignText, installedOf, mediaPhaseMemo, isRunning, mergeView, portainerMissing, previousText, redeployRunning, rollbackConfirm, serviceRows, shownActivity,
-    startError, statusOf, tagText,
+    startError, statusOf, tagText, updaterBuild,
     type UpdaterAction, type UpdaterJob, type UpdaterView,
   } from './updater';
 
@@ -225,7 +225,7 @@
 
     <details class="self">
       <summary>{$t('admin.update.updater.advanced')}</summary>
-      <p class="muted small">{$t('admin.update.updater.selfHint', { version: s.updater.version ?? $t('admin.update.updater.none') })}</p>
+      <p class="muted small">{$t('admin.update.updater.selfHint', { sha: updaterBuild(s) ?? $t('admin.update.updater.none') })}</p>
       <Button variant="secondary" icon="refresh" pending={$busyKeys.has('updater:self-update')} disabled={running || s.busy || confirming !== null || foreign !== null} on:click={() => (confirming = 'self-update')}>{$t('admin.update.updater.selfUpdate')}</Button>
     </details>
   {/if}

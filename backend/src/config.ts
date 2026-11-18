@@ -203,6 +203,13 @@ export const configSchema = z.object({
   PREVIEW_WARM: z.enum(['true', 'false']).default('true'),
   /** baked into the images at build time (Dockerfile ARG), 'dev' when built locally */
   GIT_SHA: z.string().default('dev').transform((v) => v || 'dev'),
+  /**
+   * the commit of this image's own sources (Dockerfile ENV, 40 hex; 'dev' locally). Images from before it only carry GIT_SHA:
+   * read it through imageCommit() (version.ts), never directly.
+   */
+  FF_IMAGE_COMMIT: opt,
+  /** where the web app answers on the internal network */
+  WEB_INTERNAL_URL: z.string().default('http://web:3000'),
   BUILD_TIME: opt,
   /** release version + codename from version.json, baked into the images at build time; unset = read version.json */
   APP_VERSION: opt,

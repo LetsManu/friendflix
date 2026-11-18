@@ -23,9 +23,10 @@ const SYSTEM = {
 const fake = {
   /** the job the updater status reports (default none) */
   job: null as unknown,
+  image: false,
   livetv: 'down' as 'down' | 'api1' | 'api2' | 'impostor' | 'wrongProof', stack: undefined as 'own' | 'foreign' | undefined, hasUpdater: true, livetvState: undefined as unknown, status: 200,
   calls: [] as Array<{ method: string; path: string; body: string; sigOk: boolean }>, systemCalls: 0,
-  reset() { Object.assign(this, { job: null, livetv: 'down', stack: 'own', hasUpdater: true, livetvState: { state: 'disabled', container: null, error: null }, status: 200, calls: [], systemCalls: 0 }); },
+  reset() { Object.assign(this, { job: null, image: false, livetv: 'down', stack: 'own', hasUpdater: true, livetvState: { state: 'disabled', container: null, error: null }, status: 200, calls: [], systemCalls: 0 }); },
 };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
 function sigOk(key: string, label: string, method: string, path: string, body: string, h: Record<string, string>, p: string): boolean {
@@ -45,7 +46,7 @@ const fakeFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<
       const n = u.searchParams.get('n') ?? '';
       const key = fake.livetv === 'wrongProof' ? Buffer.from(SECRET) : createHmac('sha256', SECRET).update('friendflix-livetv/v1').digest();
       const proof = fake.livetv === 'impostor' ? {} : { proof: createHmac('sha256', key).update(`healthz:${n}`).digest('hex') };
-      return json({ ok: true, api: fake.livetv === 'api2' ? 2 : 1, version: '1.0.0', bootId: '0123456789abcdef', ...proof });
+      return json({ ok: true, api: fake.livetv === 'api2' ? 2 : 1, version: '1.0.0', ...(fake.image ? { image: 'e'.repeat(40) } : {}), bootId: '0123456789abcdef', ...proof });
     }
     if (u.pathname === '/v1/system') { fake.systemCalls++; return sigOk('x', 'friendflix-livetv/v1', method, u.pathname, body, h, 'livetv') ? json(SYSTEM) : json({ error: 'bad_signature' }, 401); }
     return json({ error: 'not_found' }, 404);
@@ -90,6 +91,16 @@ beforeEach(async () => {
 });
 
 describe('detection', () => {
+  it('backend livetv detect keeps image', async () => {
+    fake.livetv = 'api1';
+    expect(await detectLivetv(env.ctx, 0)).toMatchObject({ installed: true, version: '1.0.0', image: null });
+    fake.image = true;
+    expect(await detectLivetv(env.ctx, 0)).toMatchObject({ installed: true, image: 'e'.repeat(40) });
+    fake.livetv = 'impostor';
+    expect(await detectLivetv(env.ctx, 0)).toMatchObject({ installed: false, image: null });
+    fake.image = false;
+  });
+
   it('installed needs a reachable livetv with api 1', async () => {
     fake.livetv = 'api1';
     expect(await detectLivetv(env.ctx, 0)).toMatchObject({ reachable: true, installed: true, version: '1.0.0', bootId: '0123456789abcdef' });

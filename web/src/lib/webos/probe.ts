@@ -29,6 +29,7 @@ import { loadHls } from '#lib/player/hls';
 import { fetchProbeTarget, type ProbeTarget } from '#lib/tvprobe/target';
 import { isTvApp } from '#lib/tvapp';
 import { fireTvOs, isFireTvApp, type FireWin } from '#lib/firetv/detect';
+import { versionPending } from '#lib/version/build';
 import { appCaps, confirmedTypes, hlsClaim, type MediaProbe } from './caps';
 import { webosVersion, type LgWin } from './detect';
 import { goToAppHome } from './home';
@@ -310,7 +311,7 @@ export function realLgDeps(win: Window & typeof globalThis = window, fetchImpl: 
     media,
     os: fire ? fireTvOs(win as unknown as FireWin) : webosVersion(win),
     palm: !fire && typeof (win as unknown as LgWin).PalmSystem !== 'undefined',
-    fetchTarget: () => fetchProbeTarget(win, fetchImpl, { caps: appCaps() ?? undefined }),
+    fetchTarget: async () => { await versionPending(); return fetchProbeTarget(win, fetchImpl, { caps: appCaps() ?? undefined }); },
     now: () => Date.now(),
     createVideo: () => {
       const v = doc.createElement('video');

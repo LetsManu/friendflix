@@ -131,6 +131,7 @@ services:
       BACKGROUND_JOBS: ${BACKGROUND_JOBS:-true}
       # admin health page: gateway address (only /health is called)
       GATEWAY_URL: ${GATEWAY_URL:-http://gateway:4000}
+      WEB_INTERNAL_URL: ${WEB_INTERNAL_URL:-http://web:3000}
       # the optional livetv service (profile livetv); while it is off the name does not resolve and Live TV counts as not installed
       LIVETV_URL: ${LIVETV_URL:-http://livetv:8090}
       # database pool limits in ms (0 = none); empty = the defaults 5000 / 30000 / 300000 / 600000 (README, Configuration)

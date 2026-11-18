@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Manuel Weißböck
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Cuts a release by hand (Actions → Release → Run workflow, on main):
-#   bump version.json (a major bump takes the next codename; `none` keeps it - first release), sync every package.json +
-#   package-lock.json, turn CHANGELOG "## [Unreleased]" into "## [x.y.z] – Codename – date" (scripts/release.mjs, tested),
+#   bump version.json (a major bump takes the next codename; `none` keeps it - first release; the only version file,
+#   package.json and package-lock.json stay 0.0.0), turn CHANGELOG "## [Unreleased]" into "## [x.y.z] – Codename – date" (scripts/release.mjs, tested),
 #   commit "release: vX.Y.Z Codename", tag vX.Y.Z, push both, create the GitHub Release with that changelog section as notes.
 # Token: the optional secret RELEASE_TOKEN (fine-grained PAT or GitHub App token, contents: write on this repo only; the
 #   one actor allowed to bypass the main/tag rulesets) is used for checkout + push. Its pushes start CI by themselves.
@@ -70,7 +70,7 @@ jobs:
             echo "codename=$codename"
             echo "resume=$resume"
           } >> "$GITHUB_OUTPUT"
-      - name: Bump version, sync packages, cut changelog
+      - name: Bump version.json, cut changelog
         if: steps.plan.outputs.resume != 'true'
         env:
           BUMP: ${{ inputs.bump }}

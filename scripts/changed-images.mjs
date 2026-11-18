@@ -8,19 +8,27 @@
  *     commit, a rename counts on both sides, a revert is a new commit); equal image commits mean equal inputs
  *   - the change classes (docs only, version.json, code, map/script → full) decide what test, e2e and dast run
  * The guards (copyGuard, docsGuard) fail a build context or a docs reader that the map or `test:docs` does not cover.
- * Stage A only reports: a pull request compares the image commits at its base and its merge commit, every other event builds all.
+ * A pull request compares the image commits at its base and its merge commit. Other events only report (Stage C): with a registry
+ * (publishable runs) the plan walks back to the newest first-parent commit whose images were all published (`sha-<7>`) and says per
+ * image whether it could be carried (its base is signed by this repository and its revision label is the image commit); nothing
+ * acts on that yet, every image still builds. A registry or cosign error only costs the base (`keine Basis`, a warning).
  *
  * Usage:
  *   node scripts/changed-images.mjs plan --event <e> --sha <s> [--pr-base <s>] [--full] [--summary <file>]
+ *                                        [--registry ghcr.io/<owner>/<repo> --repo <owner>/<repo>]
  *     prints the plan as one JSON line; --summary appends a Markdown table (for $GITHUB_STEP_SUMMARY); an empty --pr-base
- *     counts as absent, a pull_request needs one
+ *     counts as absent, a pull_request needs one. --registry (lower case, images <registry>-<image>) turns on the base walk:
+ *     digests and the revision label via `docker buildx imagetools inspect`, signatures via `cosign verify` with the identity
+ *     rule of --repo (as GitHub spells it); warnings go to stderr as ::warning lines
  *   node scripts/changed-images.mjs image-commit <image> [--ref <r>]   prints "<sha> <epoch>"
+ *   node scripts/changed-images.mjs identity --repo <owner>/<repo>      prints the cosign identity regexp
  */
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import console from 'node:console';
 import process from 'node:process';
+import { clearTimeout, setTimeout } from 'node:timers';
 import { URL, fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -206,21 +214,174 @@ export function classify(map, files, built) {
 
 const ALL_FULL = (reason) => ({ tests: 'full', e2e: true, dast: true, full: true, reason });
 
+/** how far the base walk goes back: the run commit and its first-parent ancestors */
+const BASE_WALK = 50;
+export const COSIGN_ISSUER = 'https://token.actions.githubusercontent.com';
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** the cosign identity of this repository's signatures: publish.yml on main or a plain vX.Y.Z tag (= updater/src/policy.ts cosignIdentity) */
+export function identityRegexp(repo) {
+  return `^https://github\\.com/${escapeRe(repo)}/\\.github/workflows/publish\\.yml@refs/(heads/main|tags/v[0-9]+\\.[0-9]+\\.[0-9]+)$`;
+}
+
+/** the first of at most `max` commits (run commit first, then its first-parent ancestors) that `published` accepts; errors pass on */
+export async function findBase({ ancestors, published, max = BASE_WALK }) {
+  for (const commit of ancestors.slice(0, max)) if (await published(commit)) return commit;
+  return null;
+}
+
+const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
+const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
+const TAG_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+const REF_RE = /^([a-z0-9][a-z0-9._-]*)@(sha256:[0-9a-f]{64})$/;
+const PREFIX_RE = /^ghcr\.io\/[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
+const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/;
+const oneLine = (s) => String(s).replace(/\s+/g, ' ').trim().slice(0, 300);
+
+/** all registry and cosign work of one plan, together (the `changes` job has 10 minutes; report mode never blocks) */
+const DEADLINE_MS = 240_000;
+/** one docker or cosign command */
+const COMMAND_TIMEOUT_MS = 30_000;
+
+/** a program without a shell, as { code, stdout, stderr }; a missing program, a timeout or an abort (`signal`) throws */
+function runCommand(cmd, args, { timeoutMs = COMMAND_TIMEOUT_MS, signal } = {}) {
+  return new Promise((done, fail) => {
+    execFile(cmd, args, { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 << 20, signal }, (err, stdout, stderr) => {
+      if (err && typeof err.code !== 'number') { fail(new Error(`${cmd}: ${err.killed ? 'timeout' : (err.code ?? err.message)}`)); return; }
+      done({ code: err ? err.code : 0, stdout, stderr });
+    });
+  });
+}
+
+/**
+ * The registry plan() asks, for ghcr.io/<owner>/<repo>-<image> (`prefix` in lower case, as publish.yml names the images):
+ *   digest(image, tag)  the tag's digest (`docker buildx imagetools inspect`), null when the tag does not exist
+ *   revision(ref)       the org.opencontainers.image.revision label (linux/amd64) of `<image>@<digest>`, null without one
+ *   verify(ref)         `cosign verify` of `<image>@<digest>` with this repository's identity rule: true / false (no matching signature)
+ * Any other failure (registry down, denied, cosign missing, a 30 s timeout) throws; plan() turns that into "keine Basis".
+ * `signal` aborts commands still running (the CLI aborts once the plan is printed, e.g. after the planning deadline).
+ */
+export function ghcrRegistry({ prefix, repo, signal, run = (cmd, args) => runCommand(cmd, args, { signal }) }) {
+  if (!PREFIX_RE.test(prefix ?? '')) throw new Error(`--registry: ghcr.io/<owner>/<repo> in lower case expected, not "${prefix}"`);
+  if (!REPO_RE.test(repo ?? '')) throw new Error(`--repo: <owner>/<repo> expected, not "${repo}"`);
+  const failed = (what, r) => new Error(`${what}: ${oneLine(r.stderr) || `exit ${r.code}`}`);
+  const full = (ref) => {
+    const m = REF_RE.exec(ref);
+    if (!m) throw new Error(`not an <image>@<digest> ref: "${ref}"`);
+    return `${prefix}-${m[1]}@${m[2]}`;
+  };
+  return {
+    async digest(image, tag) {
+      if (!NAME_RE.test(image)) throw new Error(`bad image name "${image}"`);
+      if (!TAG_RE.test(tag)) throw new Error(`bad tag "${tag}"`);
+      const name = `${prefix}-${image}:${tag}`;
+      const r = await run('docker', ['buildx', 'imagetools', 'inspect', name, '--format', '{{.Manifest.Digest}}']);
+      if (r.code !== 0) {
+        if (/not found|manifest unknown/i.test(r.stderr)) return null;
+        throw failed(name, r);
+      }
+      const digest = r.stdout.trim();
+      if (!DIGEST_RE.test(digest)) throw new Error(`${name}: no digest in the answer`);
+      return digest;
+    },
+    async revision(ref) {
+      const name = full(ref);
+      const r = await run('docker', ['buildx', 'imagetools', 'inspect', name, '--format', '{{json .Image}}']);
+      if (r.code !== 0) throw failed(name, r);
+      let image = JSON.parse(r.stdout);
+      if (!image?.rootfs && !image?.config) image = image?.['linux/amd64']; // an index answers per platform
+      const label = image?.config?.Labels?.['org.opencontainers.image.revision'];
+      return typeof label === 'string' && label ? label : null;
+    },
+    async verify(ref) {
+      const name = full(ref);
+      const r = await run('cosign', ['verify', '--certificate-identity-regexp', identityRegexp(repo), '--certificate-oidc-issuer', COSIGN_ISSUER, name]);
+      if (r.code === 0) return true;
+      if (/no (matching )?signatures/i.test(r.stderr)) return false;
+      throw failed(`cosign verify ${name}`, r);
+    },
+  };
+}
+
+/** a GitHub Actions warning on stderr (stdout carries the plan) */
+const warnLine = (message) => console.error(`::warning title=Änderungsplan::${String(message).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}`);
+const errText = (e) => oneLine(e instanceof Error ? e.message : e);
+
+/**
+ * The base of a report run: the newest of the first BASE_WALK first-parent commits (run commit first) for which every image has
+ * `sha-<7>`, and per image { digest, revision, verified } of that tag. A registry error in the walk means no base; an error for one
+ * image means no base for that image. Every registry call shares one deadline (`deadlineMs` from the start of the walk): once it
+ * has passed, the image being judged and every one after it have no base, with a single warning. Nothing here throws.
+ */
+async function walkBase(root, map, head, registry, warn, deadlineMs) {
+  const names = Object.keys(map.images);
+  const ancestors = git(root, ['rev-list', '--first-parent', `--max-count=${BASE_WALK}`, head, '--']).split('\n').filter(Boolean);
+  const end = Date.now() + deadlineMs;
+  const expired = new Error(`Frist von ${deadlineMs / 1000} s für Registry und cosign abgelaufen`);
+  /** a registry call, or `expired` once the deadline has passed (a stalled call is left behind, never awaited) */
+  const within = (call) => {
+    const left = end - Date.now();
+    if (left <= 0) return Promise.reject(expired);
+    let timer;
+    const late = new Promise((_, fail) => { timer = setTimeout(() => fail(expired), left); });
+    return Promise.race([Promise.resolve().then(call), late]).finally(() => clearTimeout(timer));
+  };
+  const digests = new Map();
+  const published = async (commit) => {
+    const found = {};
+    for (const name of names) {
+      const digest = await within(() => registry.digest(name, `sha-${commit.slice(0, 7)}`));
+      if (!digest) return false;
+      found[name] = digest;
+    }
+    digests.set(commit, found);
+    return true;
+  };
+  let commit;
+  try {
+    commit = await findBase({ ancestors, published });
+  } catch (e) {
+    warn(e === expired ? `${expired.message}: Basis-Suche abgebrochen, alle Images ohne Basis` : `Basis-Suche fehlgeschlagen, alle Images ohne Basis: ${errText(e)}`);
+    return { commit: null, images: {} };
+  }
+  if (!commit) return { commit: null, images: {} };
+  const images = {};
+  let late = null;
+  for (const name of names) {
+    if (late) { images[name] = null; late.push(name); continue; }
+    const digest = digests.get(commit)[name];
+    try {
+      const ref = `${name}@${digest}`;
+      const revision = await within(() => registry.revision(ref));
+      const verified = (await within(() => registry.verify(ref))) === true;
+      images[name] = { digest, revision: typeof revision === 'string' ? revision : null, verified };
+    } catch (e) {
+      images[name] = null;
+      if (e === expired) late = [name];
+      else warn(`${name}: Basis ${String(digest).slice(0, 19)} nicht prüfbar, ohne Basis: ${errText(e)}`);
+    }
+  }
+  if (late) warn(`${expired.message}: ohne Basis: ${late.join(', ')}`);
+  return { commit, images };
+}
+
 /**
  * The plan for one CI run. pull_request: an image is carried iff its image commits at `sha` and `prBase` are equal, classes from
- * the files changed between them. Any other event (Stage A): report only, every image builds, classes full; `full` → mode full.
+ * the files changed between them. `full` → mode full, everything builds. Any other run reports (classes full, every image built
+ * for now): without a registry with reason "kein Vergleich (nur Bericht)"; with one per image `carry` iff its base is verified
+ * and its revision label is the image commit, else `build` ("Eingaben geändert" / "Basis nicht signiert" / "keine Basis").
  */
-export function plan({ root = ROOT, map = loadMap(root), event, sha, prBase, full = false }) {
+export async function plan({ root = ROOT, map = loadMap(root), event, sha, prBase, full = false, registry = null, warn = warnLine, deadlineMs = DEADLINE_MS }) {
   const head = resolve(root, sha);
   const at = imageCommits(root, map, head);
-  const entry = (name, action, reason) => ({
+  const entry = (name, action, reason, base = null) => ({
     action,
     reason,
     commit: at[name].commit,
     time: at[name].time,
     required: map.images[name].required === true,
     reproducible: map.images[name].reproducible === true,
-    base: null,
+    base,
   });
   const names = Object.keys(map.images);
   if (event === 'pull_request') {
@@ -234,8 +395,20 @@ export function plan({ root = ROOT, map = loadMap(root), event, sha, prBase, ful
     return { v: 1, event, mode: 'compare', sha: head, base: { commit: base }, classes: classify(map, changedFiles(root, base, head), built), images };
   }
   const [mode, reason] = full ? ['full', 'alles bauen'] : ['report', 'kein Vergleich (nur Bericht)'];
-  const images = Object.fromEntries(names.map((n) => [n, entry(n, 'build', reason)]));
-  return { v: 1, event, mode, sha: head, base: null, classes: ALL_FULL(reason), images };
+  if (full || !registry) {
+    const images = Object.fromEntries(names.map((n) => [n, entry(n, 'build', reason)]));
+    return { v: 1, event, mode, sha: head, base: null, classes: ALL_FULL(reason), images };
+  }
+  const walked = await walkBase(root, map, head, registry, warn, deadlineMs);
+  const judge = (n) => {
+    const base = walked.images[n] ?? null;
+    if (!base) return entry(n, 'build', 'keine Basis');
+    if (!base.verified) return entry(n, 'build', 'Basis nicht signiert', base);
+    if (base.revision === at[n].commit) return entry(n, 'carry', `unverändert seit ${at[n].commit.slice(0, 7)}`, base);
+    return entry(n, 'build', 'Eingaben geändert', base);
+  };
+  const images = Object.fromEntries(names.map((n) => [n, judge(n)]));
+  return { v: 1, event, mode, sha: head, base: walked.commit ? { commit: walked.commit } : null, classes: ALL_FULL(reason), images };
 }
 
 /** every tracked file of the checkout (git ls-files) */
@@ -396,16 +569,27 @@ function summary(p) {
   ].join('\n');
 }
 
-function main(argv) {
+const USAGE = 'usage: changed-images.mjs plan --event <e> --sha <s> [--pr-base <s>] [--full] [--summary <file>] [--registry ghcr.io/<owner>/<repo> --repo <owner>/<repo>]'
+  + ' | image-commit <image> [--ref <r>] | identity --repo <owner>/<repo>';
+
+async function main(argv) {
   const [command, ...rest] = argv;
   if (command === 'plan') {
     const { values } = parseArgs({
       args: rest,
-      options: { event: { type: 'string' }, sha: { type: 'string' }, 'pr-base': { type: 'string' }, full: { type: 'boolean' }, summary: { type: 'string' } },
+      options: {
+        event: { type: 'string' }, sha: { type: 'string' }, 'pr-base': { type: 'string' }, full: { type: 'boolean' }, summary: { type: 'string' },
+        registry: { type: 'string' }, repo: { type: 'string' },
+      },
     });
     if (!values.event) throw new Error('--event fehlt');
     if (!values.sha) throw new Error('--sha fehlt');
-    const p = plan({ event: values.event, sha: values.sha, prBase: values['pr-base'] || undefined, full: values.full === true });
+    if (values.registry && !values.repo) throw new Error('--repo fehlt (die Identität für cosign verify)');
+    // commands still running once the plan is made (left behind at the deadline) are killed, so the job ends with the plan
+    const stop = new globalThis.AbortController();
+    const registry = values.registry ? ghcrRegistry({ prefix: values.registry, repo: values.repo, signal: stop.signal }) : null;
+    const p = await plan({ event: values.event, sha: values.sha, prBase: values['pr-base'] || undefined, full: values.full === true, registry });
+    stop.abort();
     if (values.summary) appendFileSync(values.summary, summary(p));
     console.log(JSON.stringify(p));
     return;
@@ -420,9 +604,15 @@ function main(argv) {
     console.log(`${found.commit} ${found.time}`);
     return;
   }
-  throw new Error('usage: changed-images.mjs plan --event <e> --sha <s> [--pr-base <s>] [--full] [--summary <file>] | image-commit <image> [--ref <r>]');
+  if (command === 'identity') {
+    const { values } = parseArgs({ args: rest, options: { repo: { type: 'string' } } });
+    if (!REPO_RE.test(values.repo ?? '')) throw new Error('identity --repo <owner>/<repo>');
+    console.log(identityRegexp(values.repo));
+    return;
+  }
+  throw new Error(USAGE);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  try { main(process.argv.slice(2)); } catch (e) { console.error(`changed-images: ${e instanceof Error ? e.message : e}`); process.exit(1); }
+  main(process.argv.slice(2)).catch((e) => { console.error(`changed-images: ${e instanceof Error ? e.message : e}`); process.exit(1); });
 }

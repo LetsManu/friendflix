@@ -38,6 +38,7 @@
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
   import { speedLabel, SPEEDS } from '#lib/player/bar';
+  import { appVersion } from '#lib/version/build';
   import { appCaps, playerCapsSummary } from '#lib/webos/caps';
   import { avoidedUntil, capsPending, clientWhy, isFormatFailure, isProbedBlock, noteDirectFailure, noteHlsFailure, remeasureOutput, setStereoOnly, stereoOnly } from '#lib/player/devicecaps';
   import { firstFrameMs, watchFirstFrame } from '#lib/player/firstframe';
@@ -565,6 +566,7 @@
     const sentBps = wantBps();
     // first start: the device's decode probe (bounded) answers first, so this body equals the play button's prefetch body
     if (first) { const w = capsPending(); if (w) await w; }
+    await appVersion(); // the caps carry the backend's version (0.0.0 when it cannot be asked)
     const fell = pendingFallback; pendingFallback = null;
     // no ABR yet, no saved quality and nothing measured: the 720p start is a guess (the server keeps the copy fallback for it)
     const startRung = !abr && reqHint === 'network' && noEstimateStart(quality, loadStoredEstimate());

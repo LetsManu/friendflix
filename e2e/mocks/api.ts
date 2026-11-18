@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { readFileSync } from 'node:fs';
 import type { BrowserContext, Route } from '@playwright/test';
 import { ME, byName, episodes, hex, items, nolan, people, seedLists, type MockItem, type MockList, MOVIE, MOVIE2, SERIES } from './fixtures.js';
 import { pngFor } from './png.js';
@@ -12,6 +13,8 @@ import { livetvMedia, livetvRoute, livetvState, type LivetvMock } from './livetv
 import { brandAdminRoute, brandAdminState, type BrandAdminMock } from './brand.js';
 import { notesRoute, notesState, type NotesMock } from './notes.js';
 
+/** the repo's version.json: only the backend knows the version, its GET /api/version carries it to the footer and the egg */
+const APP = JSON.parse(readFileSync(new URL('../../version.json', import.meta.url), 'utf8')) as { version: string; codename: string };
 /** E-mail stage C: the person and admin mail types, in the backend's order */
 const PERSON_MAIL_TYPES = ['available', 'recording', 'licence', 'digest'] as const;
 const ADMIN_MAIL_TYPES = ['update', 'updatefailed', 'syscheck', 'storage'] as const;
@@ -630,8 +633,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (p === '/api/profiles') return J({ profiles: PROFILES, max: 5, activeId: 'p1' });
     if ((mm = p.match(/^\/api\/profiles\/([^/]+)\/select$/)) && m === 'POST') return J({ ok: true });
 
-    // public build info (footer, update page): the version itself comes from version.json in the bundle
-    if (p === '/api/version' && m === 'GET') return J({ version: '1.0.0', codename: 'Arancini', ...st.build });
+    // public build info (footer, version egg, update page): only the backend knows the version, so the mock answers with the repo's version.json
+    if (p === '/api/version' && m === 'GET') return J({ version: APP.version, codename: APP.codename, ...st.build });
     // Admin → Update with the channel: the selection is the UPDATE_CHANNEL setting (so the switch's save shows up here)
     if (p === '/api/admin/update' && m === 'GET') {
       const item = st.settings.groups.flatMap((g) => g.items).find((i) => i.key === 'UPDATE_CHANNEL');

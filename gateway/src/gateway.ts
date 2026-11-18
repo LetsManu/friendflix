@@ -44,6 +44,8 @@ export interface GatewayOptions {
   livetvUrl?: string;
   /** the recordings volume, mounted read-only (Live TV Phase 3, `RECORDINGS_DIR`); without it `/media/r/` answers 503 */
   recordingsDir?: string;
+  /** this image's commit (40 hex), told by /health; null/absent = unknown */
+  image?: string | null;
 }
 
 /** a token's progress goes to the backend at once when its part changes, else at most this often */
@@ -686,7 +688,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
 
   async function handle(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://x');
-    if (url.pathname === '/health') return end(res, 200, '{"status":"ok"}', 'application/json');
+    if (url.pathname === '/health') return end(res, 200, JSON.stringify({ status: 'ok', image: opts.image ?? null }), 'application/json');
     if (url.pathname === '/metrics') {
       if (!metricsAllowed(clientKey(req))) return end(res, 429, 'too many requests', 'text/plain', { 'retry-after': '60' });
       if (opts.metricsToken && !bearerMatches(req.headers.authorization, opts.metricsToken)) return end(res, 401, 'unauthorized');

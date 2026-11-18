@@ -8,7 +8,7 @@ vi.mock('./detect', () => ({ isLgApp: () => lg.on }));
 vi.mock('#lib/firetv/detect', () => ({ isFireTvApp: () => fire.on, fireTvDisplayHeight: () => fire.height }));
 const dev = vi.hoisted(() => ({ block: null as unknown, out: (c: unknown): unknown => c }));
 vi.mock('#lib/player/devicecaps', () => ({ deviceCaps: () => dev.block, withOutput: (c: unknown) => dev.out(c) }));
-import { APP_VERSION } from '#lib/version/codenames';
+import { _resetBuild, loadBuild } from '#lib/version/build';
 import { _resetAppCaps, appCaps, buildLgCaps, buildTvCaps, confirmedTypes, hlsClaim, tvBaseCaps, type MediaProbe } from './caps';
 
 const all: MediaProbe = { canPlayType: () => 'probably', isTypeSupported: () => true };
@@ -162,7 +162,7 @@ describe('appCaps', () => {
     stub(); lg.on = true; _resetAppCaps();
     const a = appCaps()!;
     expect(a.client).toBe('webos');
-    expect(a.appVersion).toBe(APP_VERSION);
+    expect(a.appVersion).toBe('0.0.0'); // the backend has not answered (in tests: no request)
     expect(a.containers).toContain('mkv');
     expect(a.video.every((v) => v.maxHeight === 2160)).toBe(true);
     expect(appCaps()).toEqual(a);
@@ -170,11 +170,19 @@ describe('appCaps', () => {
     expect(appCaps()).toEqual(a);
   });
 
+  it('sends the backend\'s version once it answered, also for a block cached before', async () => {
+    stub(); lg.on = true; _resetAppCaps(); _resetBuild();
+    expect(appCaps()!.appVersion).toBe('0.0.0');
+    await loadBuild((async () => new Response(JSON.stringify({ sha: 'a', version: '7.8.9', codename: 'Gnocchi', build: 'release', label: '7.8.9' }))) as unknown as typeof fetch);
+    expect(appCaps()!.appVersion).toBe('7.8.9');
+    _resetBuild();
+  });
+
   it('builds the Fire TV block with the display height and no assumed containers', () => {
     stub(); fire.on = true; fire.height = 2160; _resetAppCaps();
     const a = appCaps()!;
     expect(a.client).toBe('firetv');
-    expect(a.appVersion).toBe(APP_VERSION);
+    expect(a.appVersion).toBe('0.0.0'); // the backend has not answered (in tests: no request)
     expect(a.video.every((v) => v.maxHeight === 2160)).toBe(true);
     expect(a.containers).not.toContain('mkv');
     fire.height = 1080; _resetAppCaps();

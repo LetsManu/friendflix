@@ -239,7 +239,7 @@ const it: Translation<typeof de> = {
       updateNow: 'Aggiorna ora',
       rollback: 'Torna alla versione precedente',
       selfUpdate: 'Aggiorna l’updater',
-      selfHint: 'Aggiorna solo il container updater (versione {version}).',
+      selfHint: 'Aggiorna solo il container updater (build {sha}).',
       advanced: 'L’updater stesso',
       confirm: {
         update: 'Aggiornare ora a {tag}? FriendFlix si riavvia brevemente, le riproduzioni in corso si interrompono.',

@@ -22,7 +22,9 @@ import type { Ctx } from '../ctx.js';
  */
 const KEY_LABEL = 'friendflix-livetv/v1';
 const CODE_RE = /^[a-z_]{1,40}$/;
-const VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
+/** an older livetv answers its SemVer, one with FF_IMAGE_COMMIT its image commit (40 hex) */
+const VERSION_RE = /^(?:[0-9]+\.[0-9]+\.[0-9]+|[0-9a-f]{40})$/;
+const IMAGE_RE = /^[0-9a-f]{40}$/;
 const BOOT_ID_RE = /^[0-9a-f]{16}$/;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 3_000;
@@ -171,7 +173,7 @@ export async function livetvStream(ctx: Ctx, path: string, body: unknown, o: { t
 }
 
 /** the health answer: `proof` ok = livetv proved its key for our nonce; missing / wrong = whoever answered did not */
-export interface LivetvHealth { api: number; version: string | null; bootId: string; proof: 'ok' | 'missing' | 'wrong' }
+export interface LivetvHealth { api: number; version: string | null; image: string | null; bootId: string; proof: 'ok' | 'missing' | 'wrong' }
 
 /** per context: when the last proof succeeded (0 = none standing), a renewal in flight, when a failed proof was last logged */
 interface ProofSlot { at: number; flight: Promise<boolean> | null; warnedAt: number }
@@ -210,7 +212,9 @@ export async function livetvHealth(ctx: Ctx): Promise<LivetvHealth | null> {
     const want = Buffer.from(healthProof(livetvKey(ctx.cfg.INTERNAL_SECRET), nonce), 'hex');
     const got = typeof j.proof === 'string' && /^[0-9a-f]{64}$/.test(j.proof) ? Buffer.from(j.proof, 'hex') : null;
     const proof = got === null ? (j.proof === undefined ? 'missing' : 'wrong') : timingSafeEqual(got, want) ? 'ok' : 'wrong';
-    h = { api: j.api as number, version: typeof j.version === 'string' && VERSION_RE.test(j.version) ? j.version : null, bootId: j.bootId, proof };
+    const version = typeof j.version === 'string' && VERSION_RE.test(j.version) ? j.version : null;
+    const image = typeof j.image === 'string' && IMAGE_RE.test(j.image) ? j.image : version !== null && IMAGE_RE.test(version) ? version : null;
+    h = { api: j.api as number, version, image, bootId: j.bootId, proof };
   } catch {
     return null;
   }

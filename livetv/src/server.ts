@@ -74,7 +74,8 @@ export interface Route {
 
 export interface AppDeps {
   verifier: Verifier;
-  version: string | null;
+  /** this image's commit (40 hex) or null; answered as `version` too (older backends read that field) */
+  image: string | null;
   /** 16 hex, random per process: a change tells the backend that livetv restarted (and lost its ingest set) */
   bootId: string;
   system: () => Promise<SystemView>;
@@ -172,7 +173,7 @@ export function createApp(deps: AppDeps): (req: IncomingMessage, res: ServerResp
     try {
       if (path === '/healthz') {
         if (method !== 'GET') return send(res, 405, { error: 'method_not_allowed' });
-        const health = { ok: true, api: API_VERSION, version: deps.version, bootId: deps.bootId };
+        const health = { ok: true, api: API_VERSION, version: deps.image, image: deps.image, bootId: deps.bootId };
         // the Docker health check asks without a nonce; the backend's detection asks with one and checks the proof (1b review I2)
         const q = new URLSearchParams(target.slice(path.length + 1));
         if (!q.has('n')) return send(res, 200, health);
@@ -269,7 +270,7 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
     ...benchmarkRoutes({ run, encoders: listEncoders, log }), ...fileRoutes(streams), ...ingestRoutes(ingest, { ports: cfg.srtPorts }),
     ...recordingRoutes(recorder, { library }),
   ];
-  const app = createApp({ verifier, version: cfg.version, bootId: randomBytes(8).toString('hex'), system, routes, warn: log });
+  const app = createApp({ verifier, image: cfg.image, bootId: randomBytes(8).toString('hex'), system, routes, warn: log });
   const server = createServer((req, res) => { void app(req, res); });
   // the outer bound for receiving a request: the longest route's own (createApp cuts every other request off after REQUEST_TIMEOUT_MS)
   server.requestTimeout = Math.max(REQUEST_TIMEOUT_MS, ...routes.map((r) => r.bodyTimeoutMs ?? 0)) + 5_000;
@@ -277,7 +278,7 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   server.on('close', () => { ingest.close(); recorder?.close(); });
   await new Promise<void>((resolve) => server.listen(cfg.port, o.host ?? '0.0.0.0', resolve));
   const srt = cfg.srtPorts.length === 1 ? `${cfg.srtPorts[0]}` : `${cfg.srtPorts[0]}-${cfg.srtPorts.at(-1)}`;
-  log(`listening on :${cfg.port} (api ${API_VERSION}, version ${cfg.version ?? 'dev'}, SRT ports ${srt}, cache ${(cfg.cacheMaxBytes / 1024 ** 3).toFixed(1)} GB)`);
+  log(`listening on :${cfg.port} (api ${API_VERSION}, image ${cfg.image?.slice(0, 7) ?? 'dev'}, SRT ports ${srt}, cache ${(cfg.cacheMaxBytes / 1024 ** 3).toFixed(1)} GB)`);
   return server;
 }
 

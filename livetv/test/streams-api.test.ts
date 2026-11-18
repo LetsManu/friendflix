@@ -43,7 +43,7 @@ describe('the streams API', () => {
     root = await mkdtemp(join(tmpdir(), 'ltv-streams-'));
     streams = new Streams({ root, maxBytes: 1024 ** 3, drivers: { passthrough: oneSegment }, log: (m) => logs.push(m) });
     const app = createApp({
-      verifier: { key, cache: new ReplayCache(), notBefore: Date.now() - 1000 }, version: null, bootId: '0123456789abcdef',
+      verifier: { key, cache: new ReplayCache(), notBefore: Date.now() - 1000 }, image: null, bootId: '0123456789abcdef',
       system: async () => ({}) as SystemView, routes: [...streamRoutes(streams), ...fileRoutes(streams)], warn: (m) => logs.push(m),
     });
     api = http.createServer((req, res) => { void app(req, res); });

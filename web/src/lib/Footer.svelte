@@ -10,8 +10,7 @@
   import { LOCALES, locale, t, type Locale } from '#lib/i18n';
   import { saveLanguage } from '#lib/stores';
   import VersionEgg from '#lib/version/VersionEgg.svelte';
-  import { APP_CODENAME, APP_VERSION } from '#lib/version/codenames';
-  import { buildInfo, loadBuild, versionText } from '#lib/version/build';
+  import { buildInfo, footerVersion, loadBuild } from '#lib/version/build';
   /** opens the help dialog of the layout */
   export let onHelp: () => void = () => undefined;
   /** kids profile: no link columns (party, lists, stats … are not for kids), language and help stay */
@@ -26,7 +25,8 @@
     try { await saveLanguage(l); } catch { langErr = true; sel.value = $locale; }
   }
   // a nightly build shows "1.1.0-nightly · abc1234" (the backend knows whether its commit is the release tag)
-  onMount(() => loadBuild());
+  onMount(() => void loadBuild());
+  $: fv = footerVersion($buildInfo);
 </script>
 
 <footer class="foot" class:kids aria-label={$t('shell.footer.label')}>
@@ -45,7 +45,7 @@
       {#if langErr}<span class="err" role="alert">{$t('account.language.saveFailed')}</span>{/if}
       <button type="button" class="help" on:click={onHelp}>{$t('shell.footer.help')}</button>
       <span class="brand"><Logo size={18} label="" /> {$t('shell.footer.tagline')}{#if $brand.brand.byline.trim()}<span class="by"> · {$brand.brand.byline.trim()}</span>{/if}</span>
-      <span class="version"><VersionEgg version={APP_VERSION} codename={APP_CODENAME} label="{$t('common.appName')} {versionText(APP_VERSION, APP_CODENAME, $buildInfo)}" /></span>
+      <span class="version" class:pending={!fv.visible}><VersionEgg version={$buildInfo?.version ?? '0.0.0'} codename={$buildInfo?.codename ?? ''} label="{$t('common.appName')} {fv.text}" /></span>
     </div>
   </div>
 </footer>
@@ -68,6 +68,8 @@
   .help:hover:not(:disabled) { background: transparent; color: #fff; border-color: #fff; }
   .brand { display: inline-flex; align-items: center; gap: .45rem; }
   .version { margin-left: auto; font-size: .76rem; }
+  .version { min-width: 24ch; text-align: right; } /* the longest realistic label ("1.10.3-nightly · abc1234"): the box does not change when the answer arrives */
+  .version.pending { visibility: hidden; } /* keeps its width: nothing jumps when /api/version answers */
   .foot.kids { background: #fffaf0; color: #5b6280; }
   .foot.kids .meta { margin-top: 0; }
   .foot.kids .lang select, .foot.kids .help { color: #20233a; border-color: #9aa0b8; border-radius: 99px; }

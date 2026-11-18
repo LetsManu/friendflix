@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { scrub } from './clientErrors.js';
 import type { Ctx } from './ctx.js';
+import { imageCommit } from './version.js';
 
 /**
  * Block 22: aggregated error log for the admin health page. Fingerprints, not events: one entry per source + code (+ item)
@@ -66,7 +67,7 @@ export function cleanRelease(r: string | undefined): string | undefined {
 
 function releaseOf(cfg: KvCtx['cfg']): string | undefined {
   if (!cfg) return undefined;
-  return cfg.APP_VERSION ?? (cfg.GIT_SHA ? cfg.GIT_SHA.slice(0, 7) : undefined);
+  return cfg.APP_VERSION ?? imageCommit(cfg).slice(0, 7);
 }
 
 /** per-hour counts of an entry (hour index → n): counts are windowed, never lifetime totals */

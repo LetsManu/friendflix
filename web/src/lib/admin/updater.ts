@@ -318,6 +318,12 @@ export function mergeView(prev: UpdaterView, next: UpdaterView): { view: Updater
   return busy ? { view: { ...next, present: true, status: ps } as UpdaterView, away: true } : { view: next, away: false };
 }
 
+/** the updater's own image commit, short (its version is not baked in any more): null without a CI commit (a local build) */
+export const updaterBuild = (s: Pick<UpdaterStatus, 'updater'> | null | undefined): string | null => {
+  const sha = s?.updater?.sha;
+  return sha && /^[0-9a-f]{40}$/.test(sha) ? sha.slice(0, 7) : null;
+};
+
 /** what is installed: the build the backend service runs (its version and sha tag); without a listing the updater's record */
 export function installedOf(s: UpdaterStatus | null): { version: string | null; tag: string } | null {
   const b = s?.services.find((x) => x.service === 'backend' && x.sha);

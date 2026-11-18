@@ -238,7 +238,7 @@ export default {
       updateNow: 'Jetzt aktualisieren',
       rollback: 'Zurück zur vorherigen Version',
       selfUpdate: 'Updater aktualisieren',
-      selfHint: 'Aktualisiert nur den Updater-Container (Version {version}).',
+      selfHint: 'Aktualisiert nur den Updater-Container (Build {sha}).',
       advanced: 'Updater selbst',
       confirm: {
         update: 'Jetzt auf {tag} aktualisieren? FriendFlix startet kurz neu, laufende Streams brechen ab.',

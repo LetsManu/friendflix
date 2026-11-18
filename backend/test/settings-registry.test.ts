@@ -21,11 +21,11 @@ const def = (key: string) => {
 describe('key classification', () => {
   it('every key of the config schema is in exactly one of SETTINGS, ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS', () => {
     const keys = Object.keys(configSchema.shape);
-    expect(keys).toHaveLength(128); // + the six MAIL_*, + the eight LIVETV_RECORD_* (Phase 3), + DB_CONNECT/STATEMENT/IDLE_TX/LONG_STATEMENT_TIMEOUT_MS, + LIVETV_DVR_MINUTES, LIVETV_MAX_BITRATE, + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
+    expect(keys).toHaveLength(130); // + the six MAIL_*, + the eight LIVETV_RECORD_* (Phase 3), + DB_CONNECT/STATEMENT/IDLE_TX/LONG_STATEMENT_TIMEOUT_MS, + LIVETV_DVR_MINUTES, LIVETV_MAX_BITRATE, + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
     const classes = [SETTINGS.map((s) => s.key), ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS];
     for (const k of keys) expect(classes.filter((c) => c.includes(k)), k).toHaveLength(1);
     expect(classes.flat().sort()).toEqual([...keys].sort()); // nothing outside the schema, no duplicates
-    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 26, 4, 94]); // + the six MAIL_*, + the eight LIVETV_RECORD_*, + DB_*_TIMEOUT_MS (4 env-only), + LIVETV_DVR_MINUTES, LIVETV_MAX_BITRATE, + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
+    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 27, 5, 94]); // + the six MAIL_*, + the eight LIVETV_RECORD_*, + DB_*_TIMEOUT_MS (4 env-only), + LIVETV_DVR_MINUTES, LIVETV_MAX_BITRATE, + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
     expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(93);
     expect(SETTINGS.filter((s) => s.visible === false).map((s) => s.key)).toEqual(['LIVETV_WANTED']);
   });

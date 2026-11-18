@@ -25,12 +25,14 @@ COPY livetv/package.json livetv/
 RUN npm ci --omit=dev -w backend && mkdir -p backend/node_modules
 
 FROM node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216
-ARG GIT_SHA=dev
-ARG BUILD_TIME=
-# release version + codename from version.json (CI passes them as build args; empty = the app reads version.json)
+# the image commit: the newest commit that changed this image's inputs (CI passes it with SOURCE_DATE_EPOCH = its commit time,
+# .github/images.json); `dev` locally
+ARG FF_IMAGE_COMMIT=dev
+# release version + codename from version.json (CI passes them as build args; empty = the app reads version.json). Only the
+# backend carries the version: the other images take it from the backend's /api/version
 ARG APP_VERSION=
 ARG APP_CODENAME=
-ENV GIT_SHA=$GIT_SHA BUILD_TIME=$BUILD_TIME APP_VERSION=$APP_VERSION APP_CODENAME=$APP_CODENAME
+ENV FF_IMAGE_COMMIT=$FF_IMAGE_COMMIT APP_VERSION=$APP_VERSION APP_CODENAME=$APP_CODENAME
 ENV NODE_ENV=production
 WORKDIR /app
 # Runtime needs only node; the npm/yarn bundled in the base image only adds CVEs.

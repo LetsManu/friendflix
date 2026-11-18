@@ -6,6 +6,7 @@ import { api, getActiveProfile } from '#lib/api';
 import { serverCaps } from '#lib/capabilities';
 import { prefs } from '#lib/stores';
 import { capsPending, warmDeviceCaps } from './devicecaps';
+import { versionPending } from '#lib/version/build';
 import { loadHls } from './hls';
 import { bodyKey, firstPlaybackRequest, type InfoBody, type PlaybackDto } from './infobody';
 import { markPlayArt } from './transition';
@@ -89,7 +90,9 @@ export function prefetchPlayback(itemId: string, o: { audio?: string; startSec?:
   if (hold) { const h = hold; void h.then(() => { if (!hold) prefetchPlayback(itemId, o, waited); }); return; } // never before the stop settled
   // the decode probe still runs: wait for it (bounded, as the player does) so both bodies carry the same capability block
   // (once, like the player: a probe slower than the bound is not waited for again)
-  const w = waited ? null : capsPending();
+  // the backend's version too (same bound): a body with 0.0.0 would differ from the player's and the answer would be thrown away
+  const cp = waited ? null : capsPending(), vp = waited ? null : versionPending();
+  const w = cp && vp ? Promise.all([cp, vp]).then(() => undefined) : cp ?? vp;
   if (w) { void w.then(() => prefetchPlayback(itemId, o, true)); return; }
   const { body } = firstPlaybackRequest(itemId, get(prefs), o.audio ?? '', o.startSec);
   const key = bodyKey(body), profile = getActiveProfile(), now = Date.now();
