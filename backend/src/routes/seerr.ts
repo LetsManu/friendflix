@@ -384,7 +384,7 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     const cursor = typeof raw === 'string' ? decodeCursor(raw) : null;
     if (raw !== null && !cursor) return reply.code(400).send({ error: 'invalid_cursor' });
     const limit = q.limit === undefined || q.limit === '' ? FEED_PAGE : Number(q.limit);
-    if (!Number.isInteger(limit) || limit < 0) return reply.code(400).send({ error: 'bad_request' });
+    if (!Number.isInteger(limit) || limit < 0) return reply.code(400).send({ error: 'invalid_limit' });
     if (limit === 0) return feedCounts(ctx, req.user!.id);
     const lang = await effectiveLanguage(ctx, req.profile?.id ?? req.user!.id);
     return feed(ctx, req.user!.id, lang, { tz: typeof q.tz === 'string' ? q.tz : '', filter, cursor, limit: Math.min(limit, FEED_PAGE) });

@@ -285,8 +285,10 @@ describe('notifications feed', () => {
     expect(await err('cursor=%%%garbage')).toEqual([400, 'invalid_cursor']);
     expect(await err(`cursor=${Buffer.from('{"s":"today"}').toString('base64url')}`)).toEqual([400, 'invalid_cursor']);
     expect(await err(`cursor=${Buffer.from('{"s":"x","at":"2026-11-17T00:00:00.000Z","id":1}').toString('base64url')}`)).toEqual([400, 'invalid_cursor']);
-    expect(await err('limit=-1')).toEqual([400, 'bad_request']);
-    expect(await err('limit=abc')).toEqual([400, 'bad_request']);
+    expect(await err('limit=-1')).toEqual([400, 'invalid_limit']);
+    expect(await err('limit=abc')).toEqual([400, 'invalid_limit']);
+    expect(await err('limit=2.5')).toEqual([400, 'invalid_limit']);
+    expect(await err('limit=1&limit=2')).toEqual([400, 'invalid_limit']);
   });
 
   it('limit is capped at 30', async () => {
