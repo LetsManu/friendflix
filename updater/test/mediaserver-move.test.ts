@@ -104,7 +104,8 @@ describe('the move', () => {
     expect(m.move).toEqual({ source: recorded(w), folders: FOLDERS, phase: 'ready', abort: false, uid: 1000, gid: 1000, reached: 'deployed', before: { desired: null, container: null } });
     // the copy is Ferrofin's now (adopted): no longer marked as a move's copy
     expect(m.moveCopy).toBeUndefined();
-    expect(m.source).toEqual(recorded(w));
+    // recorded for the way back only once the backend switched (migrate-done): the move holds it until then
+    expect(m.source).toBeUndefined();
     expect(m.desired).toEqual({ ...MSPEC, run: true });
     expect(m.dataUpstream.ferrofin).toBe('v1.5.1');
     expect(m.lastError).toBeNull();
@@ -179,7 +180,7 @@ describe('the move', () => {
       const w = setup();
       w.cfg.facts = { ...w.cfg.facts, dockerRoot: null };
       expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'template_violation' });
-      expect(w.updater.log.tail(200).some((l) => l.endsWith('Docker-Datenordner unbekannt'))).toBe(true);
+      expect(w.updater.log.tail(200).some((l) => l.endsWith('Docker data root unknown'))).toBe(true);
       expect(w.src.running).toBe(true);
       expect(w.helperCalls.some((c) => c.mounts.some((m) => m.Target === '/source'))).toBe(false);
     });
@@ -525,11 +526,13 @@ describe('review round 1', () => {
       const made = w.existing(MSPEC, ferroPin(), 'v1.5.1');
       w.updater.updateMedia((m) => { m.container = rec.container; m.desired = rec.desired; });
       unfinished(w, 'deploy', { uid: 1500, gid: 1500, before: { desired: rec.desired, container: rec.container } });
-      w.src.running = false;
+      // the source was recreated meanwhile (a new id): only a rematch with the scan finds it, as the move user
+      w.containers.delete(w.src.id);
+      const again = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.3', mounts: MOUNTS, running: false });
       await settleAtStart(w);
       expect(w.containers.has(made.id)).toBe(false);
       expect(w.find(N.container)?.id).toBe(before.id);
-      expect(w.src.running).toBe(true);
+      expect(again.running).toBe(true);
       expect(w.media()).toMatchObject({ move: { phase: 'aborted' }, desired: rec.desired, container: rec.container });
       expect(w.helperCalls.filter((c) => c.verb === 'migrate-scan').map((c) => c.user)).toEqual(['1500:1500']);
     });
@@ -694,9 +697,18 @@ describe('review round 1', () => {
   it('re-review: a scan that fails is never read as "not the source": the move keeps retrying and starts it later', async () => {
     const w = setup();
     let scanBroken = false;
+    let again: C | null = null;
     w.cfg.answer = ((orig) => (c: HelperCall) => (c.verb === 'migrate-scan' && c.args[0] === 'id' && scanBroken ? { error: 'helper_timeout' } : orig(c)))(w.cfg.answer);
-    w.data.copyAnswer = (c) => { if (c.args[0] === 'final') { scanBroken = true; return { error: 'helper_failed' }; } return null; };
+    // the source recreated while the copy ran (a new id: the recorded container is gone, only a rematch with the scan finds it)
+    w.data.copyAnswer = (c) => {
+      if (c.args[0] !== 'final') return null;
+      scanBroken = true;
+      w.containers.delete(w.src.id);
+      again = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.3', mounts: MOUNTS, running: false });
+      return { error: 'helper_failed' };
+    };
     expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'helper_failed' });
+    w.src = again!;
     expect(w.src.running).toBe(false);
     expect(w.media()).toMatchObject({ move: { phase: 'running', abort: true }, lastError: 'helper_failed' });
     for (let i = 0; i < 4; i++) {
@@ -744,5 +756,95 @@ describe('review round 1', () => {
     expect(w.updater.snapshot().lastJob!.media!.steps.stop_source).toBe('failed');
     expect(w.calls.includes('stop jellyfin')).toBe(false);
     expect(w.src.running).toBe(true);
+  });
+});
+
+describe('final review', () => {
+  const statusOf = (w: W) => mediaStatusView({ updater: w.updater, engine: w.deps.engine, jobs: w.jobs, facts: w.deps.facts, pins: w.deps.pins, templateState: async () => null, now: () => w.clock.t, ttlMs: 0 })();
+
+  it('I2: a source recreated with a new id (same /config) shows its own state, not missing', async () => {
+    const w = setup();
+    await w.run(w.op);
+    expect(w.jobs.migrateDone()).toBe(true);
+    w.containers.delete(w.src.id);
+    const helpers = w.helperCalls.length;
+    // a redeploy: the new container on the recorded /config, stopped, and an unrelated running one elsewhere
+    const again = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.4', mounts: MOUNTS, running: false });
+    w.foreign({ name: 'other', image: 'example/app:1', mounts: [bind('/srv/other/config', '/config')] });
+    expect((await statusOf(w)).source).toEqual({ name: 'jellyfin', state: 'exited', version: '10.11.3' });
+    // a running one on that /config is preferred over a stopped one
+    w.foreign({ name: 'jellyfin-b', image: 'jellyfin/jellyfin:10.11.4', mounts: MOUNTS });
+    expect((await statusOf(w)).source).toMatchObject({ state: 'running' });
+    // nothing on that /config any more: missing
+    for (const c of [...w.containers.values()]) if (c.raw && (c.raw.Mounts as InspectMount[]).some((m) => m.Source === CONF)) w.containers.delete(c.id);
+    expect(again.id).not.toBe(w.src.id);
+    expect((await statusOf(w)).source).toMatchObject({ state: 'missing' });
+    // the status ran no helper (no scan of anybody's /config)
+    expect(w.helperCalls).toHaveLength(helpers);
+  });
+
+  it('M7: a move aborted after ready records no source; a later move from another /config is not refused', async () => {
+    const w = setup();
+    expect(await w.run(w.op)).toMatchObject({ state: 'succeeded' });
+    expect(w.media().move).toMatchObject({ phase: 'ready' });
+    // the way back's view still finds the source while the move is ready
+    expect((await statusOf(w)).source).toMatchObject({ name: 'jellyfin', state: 'exited' });
+    expect(w.media().source).toBeUndefined();
+    expect(await w.run({ op: 'migrate-abort' })).toMatchObject({ state: 'succeeded' });
+    expect(w.media().source).toBeUndefined();
+    // the owner moved Jellyfin to another /config folder (same server): the next move takes it
+    w.containers.delete(w.src.id);
+    const moved = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.3', mounts: [bind('/srv/jf2/config', '/config'), ...MOUNTS.slice(1)] });
+    w.cfg.servers.set('/srv/jf2/config', OURS);
+    w.data.adopted = false;
+    expect(await w.run({ ...w.op, source: moved.id })).toMatchObject({ state: 'succeeded' });
+    expect(w.jobs.migrateDone()).toBe(true);
+    expect(w.media().source).toMatchObject({ id: moved.id, config: { type: 'bind', source: '/srv/jf2/config' } });
+  });
+
+  it('T5: a move found running after a restart starts the recorded source even while every helper fails', async () => {
+    for (const failure of ['template_violation', 'helper_timeout'] as const) {
+      const w = setup();
+      w.updater.updateMedia((m) => { m.move = { source: recorded(w), folders: FOLDERS, phase: 'running', abort: false, uid: 1000, gid: 1000, reached: 'stop', before: { desired: null, container: null } }; });
+      w.src.running = false;
+      // a bind /config with an unknown Docker data root (fail closed), or a scan helper that never answers
+      if (failure === 'template_violation') w.cfg.facts = { ...w.cfg.facts, dockerRoot: null };
+      else w.cfg.answer = ((orig) => (c: HelperCall) => (c.verb === 'migrate-scan' ? { error: 'helper_timeout' } : orig(c)))(w.cfg.answer);
+      await w.sup.startup();
+      await w.updater.idle();
+      expect(w.src.running, failure).toBe(true);
+      expect(w.media().move, failure).toMatchObject({ phase: 'aborted' });
+      expect(w.calls.filter((c) => c.startsWith('start ')), failure).toEqual(['start jellyfin']);
+    }
+  });
+
+  it('T5: the fast path is only for the recorded container on its /config while nothing else there runs', async () => {
+    const w = setup();
+    w.updater.updateMedia((m) => { m.move = { source: recorded(w), folders: FOLDERS, phase: 'running', abort: false, uid: 1000, gid: 1000, reached: 'stop', before: { desired: null, container: null } }; });
+    w.src.running = false;
+    w.cfg.facts = { ...w.cfg.facts, dockerRoot: null };
+    // a sibling on the same /config runs: never a second server on one database, and no scan can decide it
+    const sibling = w.foreign({ name: 'jellyfin-twin', image: 'example/app:1', mounts: [bind(CONF, '/config')] });
+    await w.sup.startup();
+    await w.updater.idle();
+    expect(w.src.running).toBe(false);
+    expect(w.media().move).toMatchObject({ phase: 'running', abort: true });
+    sibling.running = false;
+    w.clock.t += 11 * MIN;
+    expect(await w.sup.tick()).toBe('move');
+    await w.updater.idle();
+    expect(w.src.running).toBe(true);
+    expect(sibling.running).toBe(false);
+  });
+
+  it('M4: the status says when the data volume holds an aborted move\'s copy', async () => {
+    const w = setup();
+    expect((await statusOf(w)).moveCopy).toBe(false);
+    w.data.copyAnswer = (c) => (c.args[0] === 'final' ? { error: 'helper_failed' } : null);
+    expect(await w.run(w.op)).toMatchObject({ state: 'failed' });
+    expect((await statusOf(w)).moveCopy).toBe(true);
+    expect(await w.run({ op: 'remove', data: true })).toMatchObject({ state: 'succeeded' });
+    expect((await statusOf(w)).moveCopy).toBe(false);
+    expect(w.volumes.has(N.data('ferrofin'))).toBe(false);
   });
 });

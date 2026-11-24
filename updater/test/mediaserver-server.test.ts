@@ -23,7 +23,7 @@ const b64 = (s: string): string => Buffer.from(s, 'utf8').toString('base64url');
 const VIEW: MediaStatusView = {
   available: true, reason: null, base: { set: false, path: null, pending: false, expiresAt: null }, desired: null, container: null, pin: null,
   pins: { ferrofin: true, jellyfin: true }, engine: { api: '1.47', logs: true, arch: 'amd64', nvidia: false }, error: null, backups: [], hdr: null,
-  move: null, source: null,
+  move: null, source: null, moveCopy: false,
 };
 
 const servers: Server[] = [];

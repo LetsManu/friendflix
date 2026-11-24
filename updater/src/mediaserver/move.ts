@@ -8,7 +8,7 @@ import type { EngineFacts } from './facts.js';
 import { assertHelper } from './guard.js';
 import type { Pin, PinRead } from './pins.js';
 import { SCAN_HELPER_MS, SYNC_HELPER_MS } from './service.js';
-import { onConfig, rematch, scanSource, type ScanResult, type SourceConfig, type SourceDeps } from './source.js';
+import { onConfig, recordedStill, rematch, scanSource, type ScanResult, type SourceConfig, type SourceDeps } from './source.js';
 import { names, seedSpec, uidSupported, volumeSpec, type HelperMount, type HelperVerb } from './template.js';
 import { MEDIA_ERRORS, MOVE_STAGES, type BackupMeta, type DesiredSpec, type Kind, type MediaError, type MediaOp, type MediaStep, type MoveStage, type MoveState, type RecordedSource } from './types.js';
 
@@ -95,7 +95,7 @@ function sourceDeps(k: MoveKit, r: { facts: EngineFacts; runner: Runner }, user:
     scan: async (config, mode) => {
       // a bind source is checked against the Docker data root; an unknown one refuses every bind (fail closed)
       if (config.type === 'bind' && !r.facts.dockerRoot) {
-        k.updater.log.add('Docker-Datenordner unbekannt');
+        k.updater.log.add('Docker data root unknown');
         fail('template_violation');
       }
       return k.helper(r.runner, user, 'migrate-scan', mode === 'id' ? ['id'] : [], [{ kind: 'source', type: config.type, source: config.source }],
@@ -192,7 +192,11 @@ const moveUser = (mv: MoveState | undefined): User | undefined =>
 export async function startSource(k: MoveKit, rec: RecordedSource, user?: User): Promise<'started' | 'running'> {
   const r = await k.ready();
   const m = k.updater.mediaState();
-  const id = await rematch(sourceDeps(k, r, user ?? moveUser(m.move) ?? userOf(m.desired, DEFAULT_USER), null), rec, { strict: true });
+  // the recorded container still on its /config, nothing else there running: no scan helper needed (one that keeps failing, a bind
+  // /config with an unknown Docker data root, would otherwise keep the source stopped); anything else is rematched with the scan
+  const id = (await recordedStill(k.engine, rec))
+    ? rec.id
+    : await rematch(sourceDeps(k, r, user ?? moveUser(m.move) ?? userOf(m.desired, DEFAULT_USER), null), rec, { strict: true });
   if (id === null) return fail((await onConfig(k.engine, rec.config)) === 0 ? 'source_missing' : 'source_mismatch');
   if (id !== rec.id) {
     k.updater.updateMedia((s) => {
@@ -366,12 +370,13 @@ export async function migrateJob(k: MoveKit, job: Job, op: MigrateOp): Promise<v
     });
     between(k);
     // the source stays stopped (nothing may keep writing to it); the backend's phases follow, then migrate-done or migrate-abort.
-    // The volume is Ferrofin's now (adopted at the deployed version).
+    // The volume is Ferrofin's now (adopted at the deployed version). The source is recorded for the way back only by migrate-done
+    // (the backend switched): until then the move holds it, and a move that ends aborted leaves no record that would refuse the next
+    // move's source.
     k.updater.updateMedia((m) => {
       delete m.moveCopy;
       if (!m.move) return;
       m.move.phase = 'ready';
-      m.source = m.move.source;
       m.lastError = null;
     });
     k.updater.log.add('media move ready');

@@ -287,16 +287,40 @@ export async function rematch(deps: Pick<SourceDeps, 'engine' | 'scan'>, recorde
 }
 
 /**
+ * The recorded container itself, without a helper (a restart whose scan helper keeps failing must still start the source): its id
+ * still exists, it is a Jellyfin candidate (none of ours) mounting the recorded /config mount source, and no other container on that
+ * /config runs. Its server id was read when it was recorded, and a container's mounts never change. False when any of that does not
+ * hold (the caller rematches with a scan); an inspect that fails throws (not decidable now).
+ */
+export async function recordedStill(engine: Engine, recorded: RecordedSource): Promise<boolean> {
+  if (!CONTAINER_ID_RE.test(recorded.id)) return false;
+  const i = await engine.inspectContainer(recorded.id);
+  if (!candidateOf(i) || i.Id !== recorded.id || !sameConfig(configOf(i), recorded.config)) return false;
+  for (const l of await engine.allContainers()) {
+    if (l.id === recorded.id || l.state !== 'running') continue;
+    const o = await engine.inspectContainer(l.id);
+    // gone since the list: not running any more
+    if (o !== null && sameConfig(configOf(o), recorded.config)) return false;
+  }
+  return true;
+}
+
+/** the Docker states of the containers on this engine (any image) that mount this /config; an inspect that fails throws */
+export async function configStates(engine: Pick<Engine, 'allContainers' | 'inspectContainer'>, config: SourceConfig): Promise<string[]> {
+  const out: string[] = [];
+  for (const l of await engine.allContainers()) {
+    const i = await engine.inspectContainer(l.id);
+    if (i && sameConfig(configOf(i), config)) out.push(isObj(i.State) && typeof i.State.Status === 'string' ? i.State.Status : l.state);
+  }
+  return out;
+}
+
+/**
  * how many containers on this engine (any image, running or not) mount this /config: 0 means the recorded source is gone for good
  * (nothing could become it again); an inspect that fails throws (not decidable now, never read as gone)
  */
 export async function onConfig(engine: Engine, config: SourceConfig): Promise<number> {
-  let n = 0;
-  for (const l of await engine.allContainers()) {
-    const i = await engine.inspectContainer(l.id);
-    if (i && sameConfig(configOf(i), config)) n++;
-  }
-  return n;
+  return (await configStates(engine, config)).length;
 }
 
 /** the candidate list for the move sheet: each with `matches` from a scan of its server id (the first MAX_SCANNED; null beyond) */
