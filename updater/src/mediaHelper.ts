@@ -342,7 +342,8 @@ const DB_RE = /\.db(-wal|-shm)?$/;
 /** the temporary name a file is written under before its rename (one per folder at a time) */
 const TEMP = '.ffmigrate.part';
 
-interface CopyItem { from: string; to: string; what: 'db' | 'xml' | 'file' | 'tree' | 'trickplay' }
+/** `keep`: never pruned by `final` (metadata: orphaned images are harmless) */
+interface CopyItem { from: string; to: string; what: 'db' | 'xml' | 'file' | 'tree' | 'trickplay'; keep?: true }
 
 /**
  * What is copied, source (by layout) → Ferrofin's data dir (FERROFIN_DATA_DIR; the official layout, as `mediaserver/try.sh`
@@ -366,7 +367,7 @@ function copyPlan(l: SourceLayout): CopyItem[] {
     { from: `${p.data}/collections`, to: 'data/collections', what: 'tree' },
     { from: `${p.data}/trickplay`, to: 'data/trickplay', what: 'trickplay' },
     { from: p.root, to: 'root/default', what: 'tree' },
-    { from: p.metadata, to: 'metadata', what: 'tree' },
+    { from: p.metadata, to: 'metadata', what: 'tree', keep: true },
     { from: p.config, to: 'config', what: 'xml' },
   ];
 }
@@ -401,7 +402,7 @@ function kindOf(root: string, rel: string): 'file' | 'dir' | null {
 
 /** a small regular file, opened without following a final symlink */
 function readSmall(p: string, max: number): string {
-  const fd = openSync(p, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const fd = openSync(p, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const st = fstatSync(fd);
     if (!st.isFile() || st.size > max) throw new Error('not a small file');
@@ -540,7 +541,8 @@ function differs(target: string, st: Stats): boolean {
  */
 function copyOne(from: string, target: string): boolean {
   let fd: number;
-  try { fd = openSync(from, constants.O_RDONLY | constants.O_NOFOLLOW); } catch (e) {
+  // O_NONBLOCK: a FIFO swapped in after the lstat cannot hang the open; fstat below then skips it
+  try { fd = openSync(from, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ELOOP') return false;
     throw e;
@@ -659,31 +661,70 @@ function adjustConfig(dst: string): string[] {
   return out;
 }
 
+/** removes `rel` below the target root, whatever it is: rm unlinks a symlink itself and never follows one */
+function remove(dst: string, rel: string): void {
+  rmSync(join(dst, rel), { recursive: true, force: true });
+}
+
+/** every entry below the target folder `rel` that the source did not have (`seen`), recursing only into real folders */
+function prune(dst: string, rel: string, seen: Set<string>): void {
+  for (const name of names(join(dst, rel))) {
+    const r = `${rel}/${name}`;
+    if (!seen.has(r)) remove(dst, r);
+    else if (lst(join(dst, r))?.isDirectory()) prune(dst, r, seen);
+  }
+}
+
+/** leftover temporary files of an interrupted copy anywhere in the target (real folders only) */
+function sweepTemp(dst: string, rel = ''): void {
+  for (const name of names(rel === '' ? dst : join(dst, rel))) {
+    const r = sub(rel, name);
+    if (name.endsWith(TEMP)) remove(dst, r);
+    else if (lst(join(dst, r))?.isDirectory()) sweepTemp(dst, r);
+  }
+}
+
 /**
  * helper `migrate-copy`: `/source` (read-only) → `/data` (Ferrofin's data volume). `bulk` (Jellyfin running) copies every file of
- * the plan except the database files when it differs from the target; `final` (Jellyfin stopped) copies the database files always
- * (and removes database files the source does not have: a stale WAL next to a fresh database corrupts it), every other file that
- * differs, then adjusts the copied XMLs. Writes go only below `dst`.
+ * the plan except the database files when it differs from the target, and removes nothing. `final` (Jellyfin stopped) makes the
+ * target match the source (the volume is kept after an abort, so a retry may find an older copy): it removes leftover temp files
+ * and every `data/*.pre-ferrofin*` (else `adopted` would pass for an old adoption), copies the database files always and every
+ * other file that differs, removes what the source no longer has under each plan item except `metadata` (libraries, playlists,
+ * collections, trickplay, `config/*.xml`, database files: a stale WAL next to a fresh database corrupts it), removes trickplay when
+ * it is not chosen, then adjusts the copied XMLs. Writes and removals go only below `dst`.
  */
 export async function copySource(src: string, dst: string, o: { pass: 'bulk' | 'final'; trickplay: boolean; layout: SourceLayout }): Promise<{ copied: number; adjusted: string[] }> {
   if (detectLayout(src) !== o.layout) throw new HelperError('source_layout');
+  const final = o.pass === 'final';
   try {
     let copied = 0;
+    if (final) sweepTemp(dst);
     for (const item of copyPlan(o.layout)) {
-      if ((item.what === 'trickplay' && !o.trickplay) || (item.what === 'db' && o.pass === 'bulk')) continue;
+      if (item.what === 'db' && !final) continue;
+      if (item.what === 'trickplay' && !o.trickplay) {
+        if (final) remove(dst, item.to);
+        continue;
+      }
+      if (item.what === 'db' && kindOf(dst, item.to) === 'dir') {
+        for (const name of names(join(dst, item.to))) if (name.includes('.pre-ferrofin')) remove(dst, `${item.to}/${name}`);
+      }
       const seen = new Set<string>();
       each(src, item, (from, to, st) => {
         seen.add(to);
         const target = join(dst, to);
         if ((item.what === 'db' || differs(target, st)) && copyOne(join(src, from), target)) copied++;
-      }, (to) => ensureDir(dst, to));
-      if (item.what === 'db' && kindOf(dst, item.to) === 'dir') {
-        for (const name of names(join(dst, item.to))) {
-          if (DB_RE.test(name) && !seen.has(`${item.to}/${name}`) && !lst(join(dst, item.to, name))?.isDirectory()) rmSync(join(dst, item.to, name), { force: true });
-        }
+      }, (to) => { seen.add(to); ensureDir(dst, to); });
+      if (!final || item.keep || item.what === 'file') continue;
+      if (item.what === 'tree' || item.what === 'trickplay') {
+        if (seen.has(item.to)) prune(dst, item.to, seen);
+        else remove(dst, item.to);
+      } else {
+        // `data/` and `config/` hold more than this item (and always exist in a detected layout): only its own pattern is pruned
+        const re = item.what === 'db' ? DB_RE : /\.xml$/;
+        for (const name of names(join(dst, item.to))) if (re.test(name) && !seen.has(`${item.to}/${name}`)) remove(dst, `${item.to}/${name}`);
       }
     }
-    return { copied, adjusted: o.pass === 'final' ? adjustConfig(dst) : [] };
+    return { copied, adjusted: final ? adjustConfig(dst) : [] };
   } catch (e) {
     throw new HelperError((e as NodeJS.ErrnoException).code === 'ENOSPC' ? 'no_space' : 'helper_failed');
   }

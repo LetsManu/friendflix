@@ -296,6 +296,58 @@ describe('migrate-copy', () => {
     expect(existsSync(join(dst, 'root/default/Filme/options.xml'))).toBe(true);
   });
 
+  it('final prunes what the source no longer has (not metadata), stale adoption backups and temp files', async () => {
+    jellyfin('official');
+    put(src, 'root/default/Serien/options.xml', libOptions(''));
+    put(src, 'data/playlists/Morgen/playlist.xml', 40);
+    put(src, 'data/collections/Alt [boxset]/collection.xml', 40);
+    put(src, 'config/dlna.xml', '<DlnaOptions />');
+    put(src, 'metadata/library/cd/cdef/poster.jpg', 100);
+    await copySource(src, dst, { pass: 'final', trickplay: true, layout: 'official' });
+    expect(existsSync(join(dst, 'root/default/Serien/options.xml'))).toBe(true);
+    expect(existsSync(join(dst, 'data/trickplay/abcd'))).toBe(true);
+    // a retry days later: Jellyfin lost a library, a playlist, a collection, a config file and an image meanwhile
+    rmSync(join(src, 'root/default/Serien'), { recursive: true });
+    rmSync(join(src, 'data/playlists/Morgen'), { recursive: true });
+    rmSync(join(src, 'data/collections'), { recursive: true });
+    rmSync(join(src, 'config/dlna.xml'));
+    rmSync(join(src, 'metadata/library/cd'), { recursive: true });
+    // Ferrofin adopted the earlier copy, and an interrupted copy left temp files
+    put(dst, 'data/jellyfin.db.pre-ferrofin', 10);
+    put(dst, 'data/jellyfin.db.pre-ferrofin.1', 10);
+    put(dst, 'metadata/library/ab/.ffmigrate.part', 10);
+    put(dst, 'root/default/Filme/.ffmigrate.part', 10);
+    // a symlink in the target is removed, never followed
+    const outside = join(root, 'outside');
+    put(outside, 'keep.txt', 'x');
+    symlinkSync(outside, join(dst, 'root/default/Link'));
+    expect(checkAdopted(dst)).toBe(true);
+    const before = treeHash(src);
+    await copySource(src, dst, { pass: 'final', trickplay: false, layout: 'official' });
+    expect(treeHash(src)).toBe(before);
+    expect(checkAdopted(dst)).toBe(false);
+    for (const rel of [
+      'root/default/Serien', 'root/default/Link', 'data/playlists/Morgen', 'data/collections', 'config/dlna.xml', 'data/trickplay',
+      'data/jellyfin.db.pre-ferrofin', 'data/jellyfin.db.pre-ferrofin.1', 'metadata/library/ab/.ffmigrate.part', 'root/default/Filme/.ffmigrate.part',
+    ]) expect(existsSync(join(dst, rel)), rel).toBe(false);
+    expect(readFileSync(join(outside, 'keep.txt'), 'utf8')).toBe('x');
+    expect(existsSync(join(dst, 'root/default/Filme/options.xml'))).toBe(true);
+    expect(existsSync(join(dst, 'data/playlists/Abend/playlist.xml'))).toBe(true);
+    expect(existsSync(join(dst, 'config/network.xml'))).toBe(true);
+    expect(existsSync(join(dst, 'data/jellyfin.db'))).toBe(true);
+    // metadata is never pruned: an orphaned image is harmless
+    expect(existsSync(join(dst, 'metadata/library/cd/cdef/poster.jpg'))).toBe(true);
+  });
+
+  it('bulk prunes nothing', async () => {
+    jellyfin('official');
+    put(dst, 'root/default/Alt/options.xml', 10);
+    put(dst, 'data/jellyfin.db.pre-ferrofin', 10);
+    await copySource(src, dst, { pass: 'bulk', trickplay: false, layout: 'official' });
+    expect(existsSync(join(dst, 'root/default/Alt/options.xml'))).toBe(true);
+    expect(checkAdopted(dst)).toBe(true);
+  });
+
   it('copy refuses a layout other than the one found', async () => {
     jellyfin('official');
     await expect(copySource(src, dst, { pass: 'bulk', trickplay: false, layout: 'linuxserver' })).rejects.toThrow('source_layout');
