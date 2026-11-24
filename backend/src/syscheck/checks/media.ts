@@ -53,6 +53,8 @@ export async function managedLine(env: CheckEnv, view: MediaView | null, updater
   const managedKind = view.managed.kind;
   const s = 'status' in updater ? updater.status.mediaserver : null;
   const c = s?.container ?? null;
+  // a way back could not point the request service back at the old Jellyfin: requests fail until done, whatever the managed server does
+  if (view.mode === 'external' && view.move.requestsWarning) return bad(id, 'warning', 'managed_requests_not_moved', o);
   if (view.mode === 'external' && !c) return bad(id, 'not_set_up', 'managed_off', o);
   if (!s) return managedKind ? bad(id, 'warning', 'managed_no_updater', o) : bad(id, 'not_set_up', 'managed_off', o);
   // the updater has not read the media status yet since it started (a pin verify can take minutes): pending, never a warning

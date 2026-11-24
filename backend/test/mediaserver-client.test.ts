@@ -21,7 +21,7 @@ const fullStatus = () => ({
   error: null,
   backups: [{ id: 'ferrofin-20261117-1000-1.2.3', kind: 'ferrofin', upstream: '1.2.3', at: '2026-11-17T10:00:00.000Z', tag: 'manual', size: 1234 }],
   hdr: { kind: 'ferrofin', at: '2026-11-17T10:05:00.000Z', opencl: 'pass', qsv: 'fail' },
-  move: null, source: null,
+  move: null, source: null, moveCopy: false,
 });
 const CONTAINER = 'c'.repeat(64);
 const SERVER_ID = 'f'.repeat(32);
@@ -83,7 +83,7 @@ describe('parseMediaStatus', () => {
     const starting = {
       available: false, reason: 'starting', base: { set: false, path: null, pending: false, expiresAt: null }, desired: null, container: null, pin: null,
       pins: { ferrofin: false, jellyfin: false }, engine: { api: null, logs: false, arch: null, nvidia: false }, error: null, backups: [], hdr: null,
-      move: null, source: null,
+      move: null, source: null, moveCopy: false,
     };
     expect(parseMediaStatus(starting)).toEqual(starting);
     expect(parseMediaStatus({ ...starting, reason: 'whatever' })!.reason).toBeNull();
@@ -132,6 +132,14 @@ describe('parseMediaStatus', () => {
     expect(parseMediaStatus({ ...fullStatus(), move: { ...move, step: 'bogus', abort: 'yes' } })!.move).toEqual({ ...move, step: null, abort: false });
     expect(parseMediaStatus({ ...fullStatus(), source: { name: 'jellyfin', state: 'Exited!', version: 7 } })!.source).toEqual({ name: 'jellyfin', state: 'unknown', version: null });
     expect(parseMediaStatus({ ...fullStatus(), source: { name: '' } })!.source).toBeNull();
+  });
+
+  it('final review: the move copy flag, and an upload\'s archive date only for uploads', () => {
+    expect(parseMediaStatus({ ...fullStatus(), moveCopy: true })!.moveCopy).toBe(true);
+    expect(parseMediaStatus({ ...fullStatus(), moveCopy: 'yes' })!.moveCopy).toBe(false);
+    const up = { id: 'ferrofin-20261117-1100-1.2.3', kind: 'ferrofin', upstream: '1.2.3', at: '2026-11-17T11:00:00.000Z', tag: 'upload', size: 1 };
+    const backups = [{ ...up, createdAt: '2026-11-01T10:00:00.000Z' }, { ...up, tag: 'manual', createdAt: '2026-11-01T10:00:00.000Z' }, { ...up, createdAt: '/srv/x' }];
+    expect(parseMediaStatus({ ...fullStatus(), backups })!.backups).toEqual([{ ...up, createdAt: '2026-11-01T10:00:00.000Z' }, { ...up, tag: 'manual' }, up]);
   });
 
   it('move jobs parse with their steps', () => {

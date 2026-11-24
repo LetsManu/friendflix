@@ -15,10 +15,11 @@ const CODES = /^[a-z_]{1,40}(,[a-z_]{1,40})*$/;
 const SETTING_NAMES = /^[A-Z][A-Z0-9_]{1,40}(,[A-Z][A-Z0-9_]{1,40})*$/;
 const PARAM_KEY = /^[a-z][a-zA-Z0-9]{0,30}$/;
 /**
- * a Docker container name, only as the param `source` (media.managed: the Jellyfin a move came from): a letter, then letters, digits,
- * `_` and `-`; no dot, colon or slash, so never an address, a host name, a URL or a path (a name with a dot is dropped)
+ * a Docker container name, only as the param `source` (media.managed: the Jellyfin a move came from), in Docker's own character set
+ * (a letter or digit, then letters, digits, `_`, `.` and `-`; as mediaserver/client.ts reads it): no colon, slash or space, so never a
+ * URL or a path
  */
-const CONTAINER_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const CODE = /^[a-z][a-z0-9_]{0,59}$/;
 const DOCS = /^[a-z-]+\.md(#[a-z0-9-]+)?$/;
 /** an app-internal path ('/admin/status#login'); never another origin (`//host`) */

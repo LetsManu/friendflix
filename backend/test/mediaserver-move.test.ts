@@ -205,13 +205,16 @@ const req = {
   settings: reqSettings(),
   /** paths the request service answers with this status instead */
   fail: {} as Record<string, number>,
+  /** paths that do not answer at all (the network fails) */
+  down: new Set<string>(),
   calls: [] as Array<{ method: string; path: string; body: any; key: string | undefined }>,
 };
-const resetReq = () => Object.assign(req, { settings: reqSettings(), fail: {}, calls: [] });
+const resetReq = () => Object.assign(req, { settings: reqSettings(), fail: {}, down: new Set<string>(), calls: [] });
 const reqCalls = (method: string, path: string) => req.calls.filter((c) => c.method === method && c.path === path);
 const reqRoute = (method: string, path: string, answer: (body: any) => { status?: number; json?: unknown }): Record<string, Handler> => ({
   [`${method} /api/v1${path}`]: (_u, init, body) => {
     req.calls.push({ method, path, body, key: (init.headers as Record<string, string> | undefined)?.['X-Api-Key'] });
+    if (req.down.has(`${method} ${path}`)) throw new TypeError('fetch failed');
     const failed = req.fail[`${method} ${path}`];
     return failed ? { status: failed, json: { message: 'no' } } : answer(body);
   },
@@ -686,14 +689,42 @@ describe('the move: the backend phases after the copy', () => {
       expect(await tick()).toBe('done');
       await warned();
       expect(reqCalls('POST', '/settings/jellyfin')).toEqual([]);
-      // pointed over, but the sync is refused: still a warning (its libraries may be stale)
-      resetReq();
-      await seedMove('requests');
-      req.fail['POST /settings/jellyfin/library/sync'] = 404;
-      expect(await tick()).toBe('done');
-      await warned();
-      expect(req.settings).toMatchObject(REQ_MANAGED);
-      expect((await readManaged(env.pool)).requestsPrev).toEqual({ hostname: 'jellyfin.example.com', port: 8920, useSsl: true, urlBase: '/jf' });
+    });
+
+    it('final review m1/m4: a sync refused after the connection was set is no warning (the ids survived); every cause is logged as a code', async () => {
+      const warnings: Array<{ o: Record<string, unknown>; m: string }> = [];
+      const log = { warn: (o: object, m: string) => { warnings.push({ o: o as Record<string, unknown>, m }); } };
+      // pointed over, but the library sync (or the scan after it) is refused: done without the warning, the refusal logged
+      for (const path of ['POST /settings/jellyfin/library/sync', 'POST /settings/jellyfin/sync']) {
+        resetReq();
+        warnings.length = 0;
+        await seedMove('requests');
+        req.fail[path] = 404;
+        expect(await moveTick(env.ctx, log), path).toBe('done');
+        const m = await readManaged(env.pool);
+        expect(m.move, path).toMatchObject({ phase: 'done', requestsWarning: false });
+        expect(req.settings, path).toMatchObject(REQ_MANAGED);
+        expect(warnings, path).toEqual([{ o: { cause: 'refused' }, m: expect.stringContaining('sync') }]);
+        await env.pool.query('delete from audit_log');
+      }
+      // the cause when the connection cannot be read or set: a code, never a value
+      const cases: Array<[string, () => void]> = [
+        ['refused', () => { req.fail['POST /settings/jellyfin'] = 500; }],
+        ['refused', () => { req.fail['GET /settings/jellyfin'] = 404; }],
+        ['unexpected_settings', () => { req.settings = { ...reqSettings(), ip: '' }; }],
+        ['unreachable', () => { req.down.add('GET /settings/jellyfin'); }],
+        ['unreachable', () => { req.down.add('POST /settings/jellyfin'); }],
+      ];
+      for (const [cause, arrange] of cases) {
+        resetReq();
+        warnings.length = 0;
+        arrange();
+        await seedMove('requests');
+        expect(await moveTick(env.ctx, log), cause).toBe('done');
+        expect((await readManaged(env.pool)).move, cause).toMatchObject({ requestsWarning: true });
+        expect(warnings.map((w) => w.o), cause).toEqual([{ cause }, { phase: 'requests' }]);
+      }
+      expect(JSON.stringify(warnings)).not.toMatch(/example\.com|key-|mediaserver:/);
     });
 
     it('no request service: skipped', async () => {
@@ -891,7 +922,7 @@ describe('the move: the backend phases after the copy', () => {
       // the old Jellyfin is stopped: it answers once the source job started it
       old.before = async () => { if (fake.media.source?.state !== 'running') throw new TypeError('fetch failed'); };
     };
-    const back = (o: Record<string, number> = {}) => goBack(env.ctx, null, { waitMs: 3_000, stepMs: 5, lockWaitMs: 0, ...o });
+    const back = (o: Parameters<typeof goBack>[2] = {}) => goBack(env.ctx, null, { waitMs: 3_000, stepMs: 5, lockWaitMs: 0, ...o });
 
     /** the account `uid` and its profiles: on Jellyfin as before the move, plus what Ferrofin got since */
     const seedAccounts = async () => {
@@ -1275,6 +1306,47 @@ describe('the move: the backend phases after the copy', () => {
       expect(env.ctx.cfg.JELLYFIN_URL).toBe(MANAGED);
     });
 
+    it('final review m2/m3: the way back with the request service on the managed server and nothing saved, or none at all', async () => {
+      const warnings: Array<{ o: Record<string, unknown>; m: string }> = [];
+      const log = { warn: (o: object, m: string) => { warnings.push({ o: o as Record<string, unknown>, m }); } };
+      await seedAccounts();
+      // it points at the managed server, but nothing was saved to point it back to: the warning, logged with its cause
+      await seedMoved();
+      req.settings = { ...reqSettings(), ...REQ_MANAGED };
+      expect(await back({ log })).toEqual({ ok: true });
+      let m = await readManaged(env.pool);
+      expect(m.move).toMatchObject({ back: 'done', requestsWarning: true });
+      expect(reqCalls('POST', '/settings/jellyfin')).toEqual([]);
+      expect(warnings.map((w) => w.o)).toEqual([{ cause: 'nothing_saved' }]);
+      expect(JSON.stringify(warnings)).not.toMatch(/example\.com|key-/);
+      // a restore the request service refuses is logged with its cause too
+      resetFake();
+      resetReq();
+      warnings.length = 0;
+      await seedMoved();
+      await writeManaged(env.ctx, { requestsPrev: { hostname: 'jellyfin.example.com', port: 8920, useSsl: true, urlBase: '/jf' } });
+      req.settings = { ...reqSettings(), ...REQ_MANAGED };
+      req.fail['POST /settings/jellyfin'] = 500;
+      expect(await back({ log })).toEqual({ ok: true });
+      expect((await readManaged(env.pool)).move).toMatchObject({ back: 'done', requestsWarning: true });
+      expect(warnings.map((w) => w.o)).toEqual([{ cause: 'refused' }]);
+      // no request service on the way back: the warning a move left is cleared, the saved connection kept
+      resetFake();
+      resetReq();
+      warnings.length = 0;
+      await env.ctx.settings.save({ REQUESTS_URL: null }, null);
+      expect(env.ctx.seerr).toBeNull();
+      await seedMoved({ requestsWarning: true });
+      const PREV = { hostname: 'jellyfin.example.com', port: 8920, useSsl: true, urlBase: '/jf' };
+      await writeManaged(env.ctx, { requestsPrev: PREV });
+      expect(await back({ log })).toEqual({ ok: true });
+      m = await readManaged(env.pool);
+      expect(m.move).toMatchObject({ back: 'done', requestsWarning: false });
+      expect(m.requestsPrev).toEqual(PREV);
+      expect(req.calls).toEqual([]);
+      expect(warnings).toEqual([]);
+    });
+
     it('a repeated move that fails after its repair leaves FriendFlix\'s ids as they were; a first move never repairs', async () => {
       const uid = await seedUser({ user: hex(0xa1) });
       const pid = await seedProfile(uid, hex(0xb2), 'lea-neu', 'pw-b2');
@@ -1292,6 +1364,46 @@ describe('the move: the backend phases after the copy', () => {
       expect(await tick()).toBe('failed');
       expect((await readManaged(env.pool)).move).toMatchObject({ error: 'ids_mismatch', errorMeta: { users: { total: 2, missing: 1 } } });
       expect(server.calls.filter((c) => c.method === 'POST')).toEqual([]);
+    });
+  });
+  describe('final review', () => {
+    it('(a) the switch drops the libraries an earlier managed server recorded: the moved server\'s are Jellyfin\'s own', async () => {
+      await writeManaged(env.ctx, { libraries: [{ slug: 'filme', name: 'Filme', type: 'movies', rel: 'Filme', created: true }] });
+      await seedMove('switch');
+      expect(await tick()).toBe('requests');
+      const m = await readManaged(env.pool);
+      expect(m).toMatchObject({ kind: 'ferrofin', libraries: [] });
+    });
+
+    it('M6: a copy recorded before its job id waits while the route may still start it, follows the updater, and ends as interrupted', async () => {
+      const fresh = () => new Date(Date.now()).toISOString();
+      await seedMove('copying', { jobId: null, startedAt: fresh() });
+      fake.job = null;
+      fake.media.move = null;
+      // the updater has not started it yet (or still checks before it records the move)
+      expect(await tick()).toBe('waiting');
+      fake.busy = true;
+      fake.job = job('mediaserver-migrate', 'running');
+      expect(await tick()).toBe('waiting');
+      // the backend restarted before it stored the id: the updater's move is followed all the same
+      fake.busy = false;
+      fake.job = job('mediaserver-migrate', 'succeeded');
+      fake.media.move = updMove('ready');
+      expect(await tick()).toBe('nfo');
+      // a job that failed before it recorded a move, with no id stored: its end is not known, interrupted once the grace is over
+      await seedMove('copying', { jobId: null, startedAt: fresh() });
+      fake.media.move = null;
+      fake.job = job('mediaserver-migrate', 'failed');
+      expect(await tick()).toBe('waiting');
+      await seedMove('copying', { jobId: null, startedAt: new Date(Date.now() - 5 * 60_000).toISOString() });
+      expect(await tick()).toBe('failed');
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'interrupted', failedIn: 'copying' });
+      // an aborted move the updater shows ends the copy with its code, id or not
+      await seedMove('copying', { jobId: null, startedAt: fresh() });
+      fake.media.move = updMove('aborted');
+      fake.media.error = 'no_space';
+      expect(await tick()).toBe('failed');
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'no_space' });
     });
   });
 });

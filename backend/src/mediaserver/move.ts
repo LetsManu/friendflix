@@ -10,7 +10,7 @@ import { addressOnly } from '../media/address.js';
 import { MediaSetupError } from '../media/types.js';
 import { kidsPolicy } from '../profiles.js';
 import { effectiveRole } from '../roles.js';
-import type { JellyfinConnection, SeerrClient } from '../seerr/client.js';
+import { SeerrError, type JellyfinConnection, type SeerrClient } from '../seerr/client.js';
 import { writeRows } from '../settings/repo.js';
 import { updaterView, type TickLog, type UpdaterStatus } from '../updater.js';
 import { applyRole } from '../users.js';
@@ -430,7 +430,7 @@ async function repairBack(ctx: Ctx): Promise<void> {
 }
 
 type Next = MovePhase | 'waiting';
-interface Phase { ctx: Ctx; m: MediaManaged; rec: MoveRecord; status: UpdaterStatus | null }
+interface Phase { ctx: Ctx; m: MediaManaged; rec: MoveRecord; status: UpdaterStatus | null; log?: TickLog }
 
 /**
  * The updater's move during the backend's phases before the switch: `ready` goes on; an updater that is not there, runs a job or still
@@ -451,13 +451,25 @@ const currentKey = (ctx: Ctx): string => {
   return key;
 };
 
-/** `copying`: the updater's copy job (stage 2 "The move" 1–6) ends `ready` (the new server runs, the old one is stopped), or its code */
+/**
+ * how long a move recorded without its job id (the route records it before it asks the updater, then adds the id) waits for the
+ * updater to show it before it counts as interrupted: the route's start answers within its 30-s call, a check before the move is
+ * recorded shows as a busy updater
+ */
+const START_GRACE_MS = 120_000;
+
+/**
+ * `copying`: the updater's copy job (stage 2 "The move" 1–6) ends `ready` (the new server runs, the old one is stopped), or its code.
+ * The updater's move is followed whatever the job id: a record without one (its start not answered yet, or a backend that stopped
+ * before it stored the id) waits START_GRACE_MS for the updater to show it.
+ */
 async function copying({ rec, status }: Phase): Promise<Next> {
   const ms = status?.mediaserver;
   if (!status || !ms) return 'waiting';
   const move = ms.move;
   if (move?.phase === 'ready') return 'nfo';
   if (move?.phase === 'running') return 'waiting';
+  if (rec.jobId === null && move?.phase !== 'aborted' && (status.busy || !(Date.now() - Date.parse(rec.startedAt) > START_GRACE_MS))) return 'waiting';
   const j = status.job;
   if (j && j.id === rec.jobId) {
     if (j.state === 'running') return 'waiting';
@@ -564,8 +576,10 @@ async function switchPhase({ ctx, m, rec, status }: Phase): Promise<Next | { nex
       for (const l of rec.relinks ?? []) {
         await c.query(`update ${TABLE[l.table]} set jellyfin_user_id = $1, jellyfin_username = $2 where id = $3 and jellyfin_user_id = $4`, [l.to, l.name, l.row, l.from]);
       }
+      // the moved server's libraries are Jellyfin's own (copied); an earlier managed server's entries (stage 1, an earlier move) name
+      // libraries that are not in it
       await writeManaged({ db: c, encKey: ctx.encKey }, {
-        externalUrl: url, externalKey: key, kind: 'ferrofin', setup: 'done', setupError: null,
+        externalUrl: url, externalKey: key, kind: 'ferrofin', setup: 'done', setupError: null, libraries: [],
         migratedFrom: { name: source.name, version: source.version, at: new Date(Date.now()).toISOString() },
       });
       await auditInTx({ db: c }, null, 'mediaserver.moved', undefined, { name: source.name });
@@ -596,11 +610,42 @@ const REQUESTS_TARGET: JellyfinConnection = (() => {
 })();
 const onManaged = (c: JellyfinConnection): boolean => c.hostname.toLowerCase() === REQUESTS_TARGET.hostname && c.port === REQUESTS_TARGET.port
   && c.useSsl === REQUESTS_TARGET.useSsl && c.urlBase.replace(/\/+$/, '') === REQUESTS_TARGET.urlBase;
-/** the request service's connection as it can be saved for the way back; null when it cannot be read or is none (requestsPrev) */
-const connectionOf = (seerr: SeerrClient): Promise<JellyfinConnection | null> => seerr.jellyfinSettings().then(requestsPrev, () => null);
-/** points the request service at `to` (same key: it checks the server answers before it saves), then syncs; false on any refusal */
-const repoint = (seerr: SeerrClient, to: JellyfinConnection): Promise<boolean> =>
-  seerr.setJellyfinSettings(to).then(() => seerr.syncJellyfinLibraries()).then(() => true, () => false);
+/**
+ * why the request service's connection could not be read or set, as a code for the log (never a value): `unreachable` (no answer),
+ * `refused` (an HTTP error), `unexpected_settings` (an answer that is not a connection FriendFlix can save), `nothing_saved` (the way
+ * back has no saved connection to restore)
+ */
+type RequestsCause = 'unreachable' | 'refused' | 'unexpected_settings' | 'nothing_saved';
+const causeOf = (e: unknown): RequestsCause => (e instanceof SeerrError ? (e.status === 0 ? 'unexpected_settings' : 'refused') : 'unreachable');
+/** the request service's connection as it can be saved for the way back, or why it cannot be read as one (requestsPrev) */
+async function connectionOf(seerr: SeerrClient): Promise<{ c: JellyfinConnection } | { cause: RequestsCause }> {
+  try {
+    const c = requestsPrev(await seerr.jellyfinSettings());
+    return c ? { c } : { cause: 'unexpected_settings' };
+  } catch (e) {
+    return { cause: causeOf(e) };
+  }
+}
+/**
+ * points the request service at `to` (same key: it checks the server answers before it saves), then syncs; the cause when the
+ * connection is not set, else null. A library sync or scan refused after the connection was set is no failure (the user and item ids
+ * survived the move, its list follows with its own next sync): logged only.
+ */
+async function repoint(seerr: SeerrClient, to: JellyfinConnection, log?: TickLog): Promise<RequestsCause | null> {
+  try {
+    await seerr.setJellyfinSettings(to);
+  } catch (e) {
+    return causeOf(e);
+  }
+  try {
+    await seerr.syncJellyfinLibraries();
+  } catch (e) {
+    log?.warn({ cause: causeOf(e) }, 'media move: the request service did not start its library sync; its next sync follows');
+  }
+  return null;
+}
+/** a connection the request service could not be pointed at or back to: its cause, logged */
+const REQUESTS_FAILED = 'media move: the request service connection could not be read or set; Admin shows the manual step';
 
 /**
  * `requests` (spec "The move" 10): with a request service set up in FriendFlix, its Jellyfin connection is pointed at the managed server
@@ -611,13 +656,17 @@ const repoint = (seerr: SeerrClient, to: JellyfinConnection): Promise<boolean> =
  * `requestsWarning` (Admin shows the manual step, the Systemcheck warns) and the move is `done`. Audited `mediaserver.requests_repointed`
  * `{ok}` with the phase change (advance). No request service: nothing to do, nothing audited.
  */
-async function requests({ ctx }: Phase): Promise<PhaseResult> {
+async function requests({ ctx, log }: Phase): Promise<PhaseResult> {
   const seerr = ctx.seerr;
   if (!seerr) return 'done';
   const prev = await connectionOf(seerr);
-  if (!prev) return { next: 'done', requests: { ok: false } };
-  if (!onManaged(prev)) await writeManaged(ctx, { requestsPrev: prev });
-  return { next: 'done', requests: { ok: await repoint(seerr, REQUESTS_TARGET) } };
+  let cause: RequestsCause | null = 'cause' in prev ? prev.cause : null;
+  if ('c' in prev) {
+    if (!onManaged(prev.c)) await writeManaged(ctx, { requestsPrev: prev.c });
+    cause = await repoint(seerr, REQUESTS_TARGET, log);
+  }
+  if (cause) log?.warn({ cause }, REQUESTS_FAILED);
+  return { next: 'done', requests: { ok: cause === null } };
 }
 
 /** a phase's result: the next phase, with a switched move's warning, or (`requests`) whether the request service followed */
@@ -724,7 +773,7 @@ export async function moveTick(ctx: Ctx, log?: TickLog): Promise<MovePhase | 'id
     const run = PHASES[rec.phase]!;
     let result: PhaseResult;
     try {
-      result = await run({ ctx, m, rec, status });
+      result = await run({ ctx, m, rec, status, log });
     } catch (e) {
       // the switch and the copy fail only on purpose (a DB error retries the phase); the phases before the switch on anything
       if (!(e instanceof MoveFailed) && !ABORTABLE.includes(rec.phase)) throw e;
@@ -756,7 +805,7 @@ export async function moveTick(ctx: Ctx, log?: TickLog): Promise<MovePhase | 'id
 export type BackError = MediaError | 'jellyfin_unreachable' | 'not_moved' | 'no_external' | 'busy' | 'not_available' | 'updater_error' | 'url_pinned' | 'unexpected';
 export type BackResult = { ok: true } | { ok: false; error: BackError };
 /** for tests: the wait for the old Jellyfin, the pause between its checks, and how long to wait for the move's tick lock */
-export interface BackOptions { waitMs?: number; stepMs?: number; lockWaitMs?: number }
+export interface BackOptions { waitMs?: number; stepMs?: number; lockWaitMs?: number; log?: TickLog }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const BACK_CODES: readonly string[] = [...MEDIA_ERRORS, 'busy', 'not_available'];
@@ -821,13 +870,15 @@ async function answersWithKey(ctx: Ctx, url: string, key: string): Promise<'ok' 
  * goes on either way. Audited `mediaserver.requests_repointed` `{ok, back: true}` when it restored or failed. No request service: nothing
  * done, the saved connection kept.
  */
-async function pointRequestsBack(ctx: Ctx, m: MediaManaged, actor: string | null): Promise<void> {
+async function pointRequestsBack(ctx: Ctx, m: MediaManaged, actor: string | null, log?: TickLog): Promise<void> {
   const seerr = ctx.seerr;
   let outcome: 'none' | 'ok' | 'failed' = 'none';
   if (seerr) {
     const cur = await connectionOf(seerr);
-    if (!cur) outcome = 'failed';
-    else if (onManaged(cur)) outcome = m.requestsPrev && (await repoint(seerr, m.requestsPrev)) ? 'ok' : 'failed';
+    let cause: RequestsCause | null = 'cause' in cur ? cur.cause : null;
+    if ('c' in cur && onManaged(cur.c)) cause = m.requestsPrev ? await repoint(seerr, m.requestsPrev, log) : 'nothing_saved';
+    outcome = cause ? 'failed' : 'c' in cur && onManaged(cur.c) ? 'ok' : 'none';
+    if (cause) log?.warn({ cause }, 'media way back: the request service could not be pointed back; Admin shows the manual step');
   }
   const clearPrev = seerr !== null && outcome !== 'failed';
   await inTransaction(ctx.db, async (c) => {
@@ -843,11 +894,11 @@ async function pointRequestsBack(ctx: Ctx, m: MediaManaged, actor: string | null
  * stop job succeeded, else the next tick tries again; then the users repaired on the old Jellyfin (repairBack: the stored way back).
  * Each step is recorded once done; true when all is. A repair failure throws (the tick tries again).
  */
-async function finishBack(ctx: Ctx, actor: string | null, stepMs = BACK_STEP_MS): Promise<boolean> {
+async function finishBack(ctx: Ctx, actor: string | null, stepMs = BACK_STEP_MS, log?: TickLog): Promise<boolean> {
   const m = await readManaged(ctx.db);
   let back = m.move?.back;
   if (back === 'switched') {
-    if (!m.move?.requestsBack) await pointRequestsBack(ctx, m, actor);
+    if (!m.move?.requestsBack) await pointRequestsBack(ctx, m, actor, log);
     const view = await updaterView(ctx);
     if (!('status' in view)) return false;
     const ms = view.status.mediaserver;
@@ -881,7 +932,7 @@ async function resumeBack(ctx: Ctx, rec: MoveRecord, log?: TickLog): Promise<'do
     return 'failed';
   }
   try {
-    return (await finishBack(ctx, null)) ? 'done' : 'waiting';
+    return (await finishBack(ctx, null, BACK_STEP_MS, log)) ? 'done' : 'waiting';
   } catch (e) {
     log?.warn({ code: failureOf(e).code }, 'media way back: stopping the managed server or repairing the users failed; trying again');
     return 'waiting';
@@ -961,7 +1012,7 @@ async function backPlan(ctx: Ctx): Promise<BackPlan> {
 async function backRun(ctx: Ctx, actor: string | null, o: BackOptions, plan: Exclude<BackPlan, { error: BackError }>): Promise<BackResult> {
   const stepMs = o.stepMs ?? BACK_STEP_MS;
   if ('resume' in plan) {
-    await finishBack(ctx, actor, stepMs).catch(() => false);
+    await finishBack(ctx, actor, stepMs, o.log).catch(() => false);
     return { ok: true };
   }
   const { url, key, name } = plan;
@@ -1000,6 +1051,6 @@ async function backRun(ctx: Ctx, actor: string | null, o: BackOptions, plan: Exc
   // the settings changed outside save(): reload here, the other instances on the published rev
   await ctx.settings.announce();
   if (!committed) return fail('unexpected');
-  await finishBack(ctx, actor, stepMs).catch(() => false);
+  await finishBack(ctx, actor, stepMs, o.log).catch(() => false);
   return { ok: true };
 }

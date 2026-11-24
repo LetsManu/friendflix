@@ -256,6 +256,24 @@ async function toExternal(ctx: Ctx, restore: boolean, actor: string | null): Pro
   await audit(ctx, actor, 'mediaserver.mode', undefined, { from: 'managed', to: 'external' });
 }
 
+/**
+ * A moved server whose old Jellyfin is still there, or not known to be gone (stage 2 "After the move"): it leaves only through the way
+ * back (/back starts that Jellyfin, repairs its users and points FriendFlix at it). Removing it or switching to an address would leave
+ * the old Jellyfin stopped with no way back in Admin: refused with `use_way_back`. Once its container is gone the stage 1 switch (an
+ * address) and a remove are open; after a way back `migratedFrom` is null, so the stopped Ferrofin can be removed.
+ */
+const wayBackOnly = (managed: MediaManaged, status: MediaStatus | null): boolean => managed.migratedFrom !== null && status?.source?.state !== 'missing';
+
+/**
+ * a backup a moved server cannot restore: taken before its move (its database has other user and item ids than the moved one; an
+ * upload counts by when its archive was made, and one that does not say is not known to be later): `backup_premove`
+ */
+export function beforeMove(managed: Pick<MediaManaged, 'migratedFrom'>, b: MediaBackup): boolean {
+  if (!managed.migratedFrom) return false;
+  const taken = b.tag === 'upload' ? b.createdAt : b.at;
+  return taken === undefined || !(Date.parse(taken) >= Date.parse(managed.migratedFrom.at));
+}
+
 interface Libraries { chosen: LibraryEntry[]; kept: LibraryEntry[]; changed: Array<{ from: LibraryEntry; to: LibraryEntry }> }
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 /**
@@ -451,11 +469,19 @@ function ops(ctx: Ctx) {
         await audit(ctx, actor, 'mediaserver.action', undefined, { op: 'retry' });
         return { ok: true };
       }
-      const managed = a.op === 'remove' ? await readManaged(ctx.db) : null;
+      const loaded = a.op === 'remove' || a.op === 'restore' ? await load(ctx) : null;
+      const managed = loaded?.managed ?? null;
+      if (a.op === 'remove' && wayBackOnly(loaded!.managed, loaded!.status)) return reply.code(409).send({ error: 'use_way_back' });
+      if (a.op === 'restore' && loaded!.managed.migratedFrom) {
+        // a moved server: only a backup from its move on (the date comes from the updater's list; without one nothing is restored)
+        if (!loaded!.status) return reply.code(409).send({ error: 'not_available' });
+        const b = loaded!.status.backups.find((x) => x.id === a.id);
+        if (b && beforeMove(loaded!.managed, b)) return reply.code(409).send({ error: 'backup_premove' });
+      }
       const r = await startMediaJob(ctx, a, actor, {});
       // a removed managed server is no longer the media server: FriendFlix switches to external, both connection settings emptied (a
       // leftover container removed while external leaves the external connection alone)
-      if (r.ok && managed?.kind) await toExternal(ctx, false, actor);
+      if (r.ok && a.op === 'remove' && managed?.kind) await toExternal(ctx, false, actor);
       return jobAnswer(reply, r);
     },
   });
@@ -519,13 +545,18 @@ function moveOps(ctx: Ctx) {
       const gpu = await detectedGpu(ctx);
       const user = gate.status?.desired ? { uid: gate.status.desired.uid, gid: gate.status.desired.gid } : MOVE_USER;
       const body = { op: 'migrate', source: b.source, trickplay: b.trickplay, gpu, uid: user.uid, gid: user.gid, tz: containerTz(), serverId: gate.serverId };
+      // the move is recorded before its job is asked for (jobId null; the tick follows the updater's move without one), so a record
+      // that cannot be written starts nothing, and a backend that stops between the start and the id still follows the copy. A move
+      // after a way back (or after a failed attempt at one) repairs the users on the copy before its check (mediaserver/move.ts verify)
+      const prev = gate.managed.move;
+      const repeat = prev?.back === 'done' || prev?.repeat === true;
+      const startedAt = new Date().toISOString();
+      await writeManaged(ctx, { move: { phase: 'copying', error: null, jobId: null, startedAt, requestsWarning: false, ...(repeat ? { repeat } : {}) } });
       const r = await startMediaJob(ctx, body, actor, { trickplay: b.trickplay, gpu }, 'mediaserver.move');
-      if (r.ok && 'job' in r) {
-        // a move after a way back (or after a failed attempt at one) repairs the users on the copy before its check (mediaserver/move.ts verify)
-        const prev = gate.managed.move;
-        const repeat = prev?.back === 'done' || prev?.repeat === true;
-        await writeManaged(ctx, { move: { phase: 'copying', error: null, jobId: r.job.id, startedAt: new Date().toISOString(), requestsWarning: false, ...(repeat ? { repeat } : {}) } });
-      }
+      // only this record (its start time), while it still waits for its copy: a tick may have moved it on meanwhile
+      const patch = r.ok ? { jobId: 'job' in r ? r.job.id : null } : { phase: 'failed', error: r.error, failedIn: 'copying' };
+      await ctx.db.query("update media_managed set move = move || $1::jsonb, updated_at = now() where id = 1 and move->>'startedAt' = $2 and move->>'phase' = 'copying'",
+        [JSON.stringify(patch), startedAt]);
       return jobAnswer(reply, r);
     },
   });
@@ -560,8 +591,8 @@ function moveOps(ctx: Ctx) {
   // `mediaserver.back` by the way back itself. A refusal leaves FriendFlix as it was.
   const back = op({
     body: S.none, reauth: () => true,
-    run: async (_b, reply, actor) => {
-      const r = await startBack(ctx, actor);
+    run: async (_b, reply, actor, req) => {
+      const r = await startBack(ctx, actor, { log: req.log });
       if (!r.ok) return reply.code(409).send({ error: r.error });
       void r.done.catch(() => undefined);
       return reply.code(202).send({});
@@ -670,6 +701,8 @@ function backupStreamRoutes(app: FastifyInstance, ctx: Ctx, guard: Hook, P: stri
       }
       const actor = req.user!.id;
       await audit(ctx, actor, 'mediaserver.backup_upload', undefined, { size });
+      // a moved server never restores a backup from before its move (kept: it can be downloaded again)
+      if (beforeMove(await readManaged(ctx.db), backup)) return reply.code(409).send({ error: 'backup_premove', backup });
       const started = await startMediaJob(ctx, { op: 'restore', id: backup.id }, actor, {});
       // the upload is kept as a backup either way: a refused restore (busy, no_target) can be started from the list later
       if (!started.ok) return reply.code(started.status).send({ error: started.error, backup });
@@ -766,7 +799,8 @@ export function adminMediaserverRoutes(app: FastifyInstance, ctx: Ctx) {
       // a moved install goes back through /back, which repairs the users (profiles made on Ferrofin get a Jellyfin user); this switch
       // would skip that
       const moved = managed.migratedFrom !== null || (managed.move !== null && ACTIVE_PHASES.includes(managed.move.phase)) || backUnderWay(managed.move);
-      if (b.restore && moved) return reply.code(409).send({ error: 'use_way_back' });
+      // while its old Jellyfin is there, a moved server switches only through the way back (no switch would start that Jellyfin)
+      if (wayBackOnly(managed, status) || (b.restore && moved)) return reply.code(409).send({ error: 'use_way_back' });
       if (b.restore && !managed.externalUrl) return reply.code(409).send({ error: 'no_external' });
       // the managed container is stopped, not removed (spec "Switching")
       if (status?.container) {

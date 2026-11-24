@@ -29,7 +29,8 @@ const MOVE_PHASES = ['running', 'ready', 'aborted', 'done'] as const;
 export interface MediaMove { phase: (typeof MOVE_PHASES)[number]; step: MediaStep | null; source: { name: string; version: string | null }; folders: MediaFolder[]; abort: boolean }
 /** the Jellyfin a move came from as Docker shows it now (`missing`: its recorded container is gone) */
 export interface MediaSource { name: string; state: string; version: string | null }
-export interface MediaBackup { id: string; kind: Kind; upstream: string; at: string; tag: (typeof TAGS)[number]; size: number }
+/** `createdAt`, uploads only: when the archive was made (`at` is when it was uploaded); a moved server compares it with its move */
+export interface MediaBackup { id: string; kind: Kind; upstream: string; at: string; tag: (typeof TAGS)[number]; size: number; createdAt?: string }
 /** the `mediaserver` part of the updater's status (updater/src/mediaserver/status.ts MediaStatusView) */
 export interface MediaStatus {
   available: boolean;
@@ -45,6 +46,8 @@ export interface MediaStatus {
   hdr: { kind: Kind; at: string; opencl: (typeof RESULT)[number]; qsv: (typeof RESULT)[number] } | null;
   move: MediaMove | null;
   source: MediaSource | null;
+  /** the Ferrofin data volume holds the copy of a move that did not finish (*Entfernen* with the data removes it) */
+  moveCopy: boolean;
 }
 
 type Obj = Record<string, unknown>;
@@ -135,7 +138,8 @@ function backup(v: unknown): MediaBackup | null {
   const o = objOf(v);
   const bid = re(o.id, BACKUP_ID), kind = pick(o.kind, KINDS), upstream = re(o.upstream, VERSION), at = re(o.at, ISO), tag = pick(o.tag, TAGS);
   const size = typeof o.size === 'number' && Number.isSafeInteger(o.size) && o.size >= 0 ? o.size : null;
-  return bid && kind && upstream && at && tag && size !== null ? { id: bid, kind, upstream, at, tag, size } : null;
+  const createdAt = tag === 'upload' ? re(o.createdAt, ISO) : null;
+  return bid && kind && upstream && at && tag && size !== null ? { id: bid, kind, upstream, at, tag, size, ...(createdAt ? { createdAt } : {}) } : null;
 }
 
 /** Only known fields with checked values (like updater.ts parseStatus); null = an updater from before the media server, or an answer that is not an object. */
@@ -155,7 +159,7 @@ export function parseMediaStatus(raw: unknown): MediaStatus | null {
     error: pick(raw.error, MEDIA_ERRORS),
     backups: Array.isArray(raw.backups) ? raw.backups.slice(0, MAX_BACKUPS).flatMap((b) => backup(b) ?? []) : [],
     hdr: hdrKind && hdrAt && opencl && qsv ? { kind: hdrKind, at: hdrAt, opencl, qsv } : null,
-    move: move(raw.move), source: source(raw.source),
+    move: move(raw.move), source: source(raw.source), moveCopy: raw.moveCopy === true,
   };
 }
 
