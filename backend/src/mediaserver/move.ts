@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { randomInt } from 'node:crypto';
 import { auditInTx } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { decrypt, encrypt, randomPassword, randomToken } from '../crypto.js';
@@ -301,7 +302,7 @@ async function passwordOf(ctx: Ctx, r: LinkedRow): Promise<string> {
 async function identityFor(t: Target, r: LinkedRow, pw: string): Promise<{ id: string; name: string; adopted: boolean }> {
   const base = r.name && USER_NAME.test(r.name) ? r.name : r.table === 'users' ? 'freund' : 'profil';
   for (let attempt = 0; ; attempt++) {
-    const name = attempt === 0 ? base : `${base}${Math.floor(100 + Math.random() * 900)}`;
+    const name = attempt === 0 ? base : `${base}${randomInt(100, 1000)}`;
     let made: { id: string } | null = null;
     try {
       made = await t.ctx.jf.admin.createIdentity(name, pw);
