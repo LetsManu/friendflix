@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { MediaService } from '../src/mediaserver/service.js';
+import { MediaService, SCAN_HELPER_MS, SYNC_HELPER_MS } from '../src/mediaserver/service.js';
 import { JELLYFIN_REPOS, SourceError, classifyMounts, findCandidates, rematch, scanSource, type SourceDeps } from '../src/mediaserver/source.js';
 import type { RecordedSource } from '../src/mediaserver/types.js';
 import { BASE, JSPEC, T0, jellyPin, world, type InspectMount } from './media-world.js';
@@ -65,11 +65,13 @@ describe('finding the source', () => {
       { id: ours.id, name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', state: 'running', matches: true },
       { id: copy.id, name: 'jellyfin-test', image: 'jellyfin/jellyfin:10.10.3', state: 'exited', matches: false },
     ] });
-    // each /config mounted read-only at /source, as Docker recorded it; the helper runs as the configured user, never root
-    expect(w.helperCalls.map((c) => [c.verb, c.mounts, c.user])).toEqual(expect.arrayContaining([
-      ['migrate-scan', [{ Type: 'bind', Source: CONF, Target: '/source', ReadOnly: true }], '1000:1000'],
-      ['migrate-scan', [{ Type: 'volume', Source: 'jf_config', Target: '/source', ReadOnly: true, VolumeOptions: { NoCopy: true } }], '1000:1000'],
+    // each /config mounted read-only at /source, as Docker recorded it; the helper runs as the configured user, never root; only
+    // the id-only scan (no sizes) within the short limit
+    expect(w.helperCalls.map((c) => [c.verb, c.args, c.mounts, c.user, c.limit])).toEqual(expect.arrayContaining([
+      ['migrate-scan', ['id'], [{ Type: 'bind', Source: CONF, Target: '/source', ReadOnly: true }], '1000:1000', SYNC_HELPER_MS],
+      ['migrate-scan', ['id'], [{ Type: 'volume', Source: 'jf_config', Target: '/source', ReadOnly: true, VolumeOptions: { NoCopy: true } }], '1000:1000', SYNC_HELPER_MS],
     ]));
+    expect(w.helperCalls).toHaveLength(2);
     // nothing was started, stopped or created besides the helpers
     expect(w.changes().filter((c) => !c.endsWith('helper'))).toEqual([]);
 
@@ -92,6 +94,9 @@ describe('finding the source', () => {
     // with the right id it scans
     s.w.cfg.servers.set(CONF, OURS);
     expect(await scan(s, c.id)).toHaveProperty('scan');
+    // the chosen source gets the sized scan, with its longer limit
+    expect(s.w.helperCalls.map((x) => [x.args, x.limit]).at(-1)).toEqual([[], SCAN_HELPER_MS]);
+    expect(SCAN_HELPER_MS).toBe(120_000);
   });
 
   it('only a Jellyfin candidate can be scanned: another image, our own containers and an unknown id are source_missing', async () => {
@@ -122,14 +127,16 @@ describe('reading the source', () => {
       mounts: [
         config(), bind('/srv/jellyfin/cache', '/cache'), bind('/srv/jellyfin/transcodes', '/transcodes'), bind('/dev/dri', '/dev/dri'),
         bind('/var/run/docker.sock', '/var/run/docker.sock'), bind('/etc/localtime', '/etc/localtime'), vol('a'.repeat(64), '/cache/extra'),
-        bind(`${BASE}/Filme`, '/movies'), vol('tv', '/data/tv'),
+        bind('/srv/jellyfin/tc', '/data/transcodes'), bind('/srv/jellyfin/tc2', '/Transcode'),
+        bind(`${BASE}/Filme`, '/movies'), vol('tv', '/data/tv'), bind(`${BASE}/Umkodiert`, '/data/transcoded'),
       ],
     });
     w.cfg.servers.set(CONF, OURS);
     const r = await scanSource(await s.deps(), c.id, OURS);
     expect(r).toEqual({
       source: { id: c.id, name: 'jellyfin', image: 'jellyfin/jellyfin:latest', config: { type: 'bind', source: CONF }, serverId: OURS, version: '10.10.3', at: new Date(T0).toISOString() },
-      folders: [{ rel: 'Filme', target: '/movies', migrated: true }, { rel: 'Serien/HD', target: '/data/tv', migrated: true }],
+      // a container path that merely contains "transcode" is media; only a transcode(s) component is skipped
+      folders: [{ rel: 'Filme', target: '/movies', migrated: true }, { rel: 'Serien/HD', target: '/data/tv', migrated: true }, { rel: 'Umkodiert', target: '/data/transcoded', migrated: true }],
       layout: 'official', bytes: 5_000_000, trickplayBytes: 1_000_000, plugins: ['Open Subtitles'], nfo: false,
     });
 
@@ -160,7 +167,7 @@ describe('reading the source', () => {
       mounts: [
         config(), bind(`${BASE}/Filme`, '/movies'), bind('/mnt/elsewhere/music', '/music'), vol('nfs', '/nfs'), vol('outside', '/tv'),
         // inside the base, but at a path a migrated Ferrofin cannot use (data itself, a system tree, too deep, nested in another)
-        bind(`${BASE}/Serien`, '/data'), bind(`${BASE}/Doku`, '/usr/share/doku'), bind(`${BASE}/Kinder`, '/a/b/c/d'), bind(`${BASE}/Filme/4K`, '/movies/4k'),
+        bind(`${BASE}/Serien`, '/data'), bind(`${BASE}/Doku`, '/usr/share/doku'), bind(`${BASE}/Kinder`, '/a/b/c/d'),
         // a base look-alike next to it is not inside it
         bind(`${BASE}-old/Filme`, '/old'),
       ],
@@ -169,8 +176,8 @@ describe('reading the source', () => {
     const a = await scan(s, c.id);
     expect(a).toEqual({
       error: 'source_outside_base',
-      outside: ['/a/b/c/d', '/data', '/movies/4k', '/music', '/nfs', '/old', '/tv', '/usr/share/doku'],
-      refused: ['/a/b/c/d', '/data', '/movies/4k', '/usr/share/doku'],
+      outside: ['/a/b/c/d', '/data', '/music', '/nfs', '/old', '/tv', '/usr/share/doku'],
+      refused: ['/a/b/c/d', '/data', '/usr/share/doku'],
     });
     for (const host of ['/mnt', BASE, 'export', '192.0.2.10', CONF]) expect(JSON.stringify(a), host).not.toContain(host);
     const e = await scanSource(await s.deps(), c.id, OURS).catch((x: unknown) => x);
@@ -178,9 +185,49 @@ describe('reading the source', () => {
     expect(String((e as Error).message)).toBe('source_outside_base');
   });
 
+  it('a nested mount that shows the same files as its parent is dropped as redundant', async () => {
+    const s = setup();
+    s.w.cfg.servers.set(CONF, OURS);
+    const c = s.w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin', mounts: [config(), bind(`${BASE}/Filme`, '/movies'), bind(`${BASE}/Filme/4K`, '/movies/4K'), bind(`${BASE}/Serien`, '/tv')] });
+    expect((await scanSource(await s.deps(), c.id, OURS)).folders).toEqual([{ rel: 'Filme', target: '/movies', migrated: true }, { rel: 'Serien', target: '/tv', migrated: true }]);
+  });
+
+  it('the whole base plus an inner folder at its matching path: the inner one is dropped', async () => {
+    const s = setup();
+    s.w.cfg.servers.set(CONF, OURS);
+    const c = s.w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin', mounts: [config(), bind(`${BASE}/Filme`, '/media/Filme'), bind(BASE, '/media'), bind(`${BASE}/Serien/HD`, '/media/Serien/HD')] });
+    expect((await scanSource(await s.deps(), c.id, OURS)).folders).toEqual([{ rel: '', target: '/media', migrated: true }]);
+  });
+
+  it('inconsistent nesting refuses the move with source_nested (container paths only)', async () => {
+    const s = setup();
+    s.w.cfg.servers.set(CONF, OURS).set('/srv/b/config', OURS).set('/srv/c/config', OURS);
+    // nested targets, but the inner one shows another folder than the outer one has there
+    const a = s.w.foreign({ name: 'a', image: 'jellyfin/jellyfin', mounts: [config(), bind(`${BASE}/Filme`, '/movies'), bind(`${BASE}/Filme/4K`, '/movies/4k')] });
+    expect(await scan(s, a.id)).toEqual({ error: 'source_nested', nested: ['/movies', '/movies/4k'] });
+    // overlapping folders at unrelated paths (the base and a folder in it; one folder at two paths)
+    const b = s.w.foreign({ name: 'b', image: 'jellyfin/jellyfin', mounts: [config('/srv/b/config'), bind(BASE, '/library'), bind(`${BASE}/Filme`, '/movies')] });
+    expect(await scan(s, b.id)).toEqual({ error: 'source_nested', nested: ['/library', '/movies'] });
+    const c = s.w.foreign({ name: 'c', image: 'jellyfin/jellyfin', mounts: [config('/srv/c/config'), bind(`${BASE}/Filme`, '/movies'), bind(`${BASE}/Filme`, '/films')] });
+    expect(await scan(s, c.id)).toEqual({ error: 'source_nested', nested: ['/films', '/movies'] });
+    await expect(scanSource(await s.deps(), c.id, OURS)).rejects.toMatchObject({ code: 'source_nested' });
+    expect(JSON.stringify(await scan(s, c.id))).not.toContain(BASE);
+  });
+
+  it('more than 20 kept folders is too_many_folders', async () => {
+    const s = setup();
+    s.w.cfg.servers.set(CONF, OURS);
+    const media = (n: number): InspectMount[] => Array.from({ length: n }, (_x, k) => bind(`${BASE}/F${k}`, `/m/f${k}`));
+    const ok = s.w.foreign({ name: 'ok', image: 'jellyfin/jellyfin', mounts: [config(), ...media(20)] });
+    expect((await scanSource(await s.deps(), ok.id, OURS)).folders).toHaveLength(20);
+    s.w.containers.delete(ok.id);
+    const many = s.w.foreign({ name: 'many', image: 'jellyfin/jellyfin', mounts: [config(), ...media(21)] });
+    expect(await scan(s, many.id)).toEqual({ error: 'too_many_folders' });
+  });
+
   it('classifyMounts keeps a volume as the config and never a host path in outside', () => {
     const r = classifyMounts({ Mounts: [vol('jf_config', '/config'), bind('/volume1/video', '/video')] }, { path: BASE });
-    expect(r).toEqual({ config: { type: 'volume', source: 'jf_config' }, media: [], outside: ['/video'], refused: [] });
+    expect(r).toEqual({ config: { type: 'volume', source: 'jf_config' }, media: [], outside: ['/video'], refused: [], nested: [] });
     expect(classifyMounts({ Mounts: [config()] }, { path: BASE }, {}).config).toEqual({ type: 'bind', source: CONF });
     expect(classifyMounts({}, { path: BASE }).config).toBeNull();
   });
@@ -230,6 +277,33 @@ describe('the recorded source', () => {
     // the same /config, but the server there is another one now
     w.cfg.servers.set(CONF, OTHER);
     expect(await rematch(await s.deps(), recorded(now.id))).toBeNull();
+    // only the id-only scan runs (never the sized one)
+    expect(w.helperCalls.every((c) => c.args[0] === 'id' && c.limit === SYNC_HELPER_MS)).toBe(true);
+  });
+
+  it('recorded + another running on the same /config → null (never two Jellyfins on one database)', async () => {
+    const s = setup();
+    const { w } = s;
+    w.cfg.servers.set(CONF, OURS);
+    const old = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', mounts: [config()], running: false });
+    const sibling = w.foreign({ name: 'jellyfin-new', image: 'jellyfin/jellyfin:10.11.0', mounts: [config()] });
+    expect(await rematch(await s.deps(), recorded(old.id))).toBeNull();
+    // any image counts as a sibling (another Jellyfin build on the same /config)
+    w.containers.delete(sibling.id);
+    const hotio = w.foreign({ name: 'hotio', image: 'ghcr.io/hotio/jellyfin:release', mounts: [config()] });
+    expect(await rematch(await s.deps(), recorded(old.id))).toBeNull();
+    // stopped, it no longer blocks
+    hotio.running = false;
+    expect(await rematch(await s.deps(), recorded(old.id))).toBe(old.id);
+  });
+
+  it('two non-recorded containers on the recorded /config → null', async () => {
+    const s = setup();
+    const { w } = s;
+    w.cfg.servers.set(CONF, OURS);
+    w.foreign({ name: 'jellyfin-a', image: 'jellyfin/jellyfin:10.11.0', mounts: [config()], running: false });
+    w.foreign({ name: 'jellyfin-b', image: 'jellyfin/jellyfin:10.11.0', mounts: [config()], running: false });
+    expect(await rematch(await s.deps(), recorded('f'.repeat(64)))).toBeNull();
   });
 
   it('a container with the same name but another config source is not the source', async () => {

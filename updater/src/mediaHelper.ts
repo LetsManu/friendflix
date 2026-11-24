@@ -501,6 +501,12 @@ function nfoOn(src: string, l: SourceLayout): boolean {
 
 export interface SourceScan { layout: SourceLayout; serverId: string; bytes: number; trickplayBytes: number; plugins: string[]; nfo: boolean }
 
+/** helper `migrate-scan id`: the layout and the server id only (no tree is walked, so it stays fast on a large library) */
+export function identifySource(src: string): { layout: SourceLayout; serverId: string } {
+  const layout = detectLayout(src);
+  return { layout, serverId: serverIdOf(src, layout) };
+}
+
 /** helper `migrate-scan`: reads `/source` only */
 export function scanSource(src: string): SourceScan {
   const layout = detectLayout(src);
@@ -755,6 +761,7 @@ async function answer(args: string[]): Promise<unknown> {
   }
   if (verb === 'restore' && args.length === 3) return restoreBackup({ data: '/data', backups: '/backups' }, backupArgs(a, b));
   if (verb === 'migrate-scan' && args.length === 1) return scanSource('/source');
+  if (verb === 'migrate-scan' && args.length === 2 && a === 'id') return identifySource('/source');
   if (verb === 'migrate-copy' && args.length === 5) {
     const [, pass, trickplay, layout, uid] = args;
     const l = LAYOUT_NAMES.find((x) => x === layout);

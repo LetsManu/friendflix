@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FFMPEG_DIR } from '../src/mediaserver/template.js';
-import { adjustXml, checkAdopted, copySource, main, scanSource } from '../src/mediaHelper.js';
+import { adjustXml, checkAdopted, copySource, identifySource, main, scanSource } from '../src/mediaHelper.js';
 
 let root: string;
 let src: string;
@@ -138,6 +138,22 @@ describe('migrate-scan', () => {
     expect(scanSource(src)).toEqual({
       layout: 'linuxserver', serverId: SERVER_ID, bytes: b.bytes, trickplayBytes: b.trickplay, plugins: ['Fanart', 'Open Subtitles'], nfo: true,
     });
+  });
+
+  it('scan id: only the layout and the server id, without walking metadata or trickplay', async () => {
+    jellyfin('official');
+    const walked = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      expect(identifySource(src)).toEqual({ layout: 'official', serverId: SERVER_ID });
+      expect(await main(['migrate-scan', 'id'])).toBe(2); // no /source in the test process
+      expect(walked).toHaveBeenCalledWith(expect.stringMatching(/^\{"error":"(source_layout|helper_failed)"\}\n$/));
+    } finally { walked.mockRestore(); }
+    rmSync(src, { recursive: true });
+    mkdirSync(src);
+    jellyfin('linuxserver');
+    expect(identifySource(src)).toEqual({ layout: 'linuxserver', serverId: SERVER_ID });
+    rmSync(join(src, 'data/data/device.txt'));
+    expect(() => identifySource(src)).toThrow('source_layout');
   });
 
   it('scan: nfo from a library without its own savers that saves local metadata; a server id with dashes', () => {
@@ -373,6 +389,7 @@ describe('check data and the verbs', () => {
       const other = String((process.getuid?.() ?? 0) + 1);
       for (const args of [
         ['migrate-scan', 'x'],
+        ['migrate-scan', 'id', 'x'],
         ['migrate-copy', 'bulk', '0', 'official'],
         ['migrate-copy', 'half', '0', 'official', other],
         ['migrate-copy', 'bulk', '2', 'official', other],

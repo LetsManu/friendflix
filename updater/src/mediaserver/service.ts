@@ -28,6 +28,8 @@ export interface MediaDeps {
 
 /** the limit of a helper that only reads (spec "Times": sync operations 25 s) */
 export const SYNC_HELPER_MS = 25_000;
+/** the sized scan of the chosen Jellyfin: it walks the whole metadata and trickplay tree (large on a NAS) */
+export const SCAN_HELPER_MS = 120_000;
 const CODE_TTL_MS = 30 * 60_000;
 const MAX_FAILURES = 5;
 const REQUESTS_PER_WINDOW = 3;
@@ -50,7 +52,7 @@ export interface GpuResult { dri: Array<{ node: string; gid: number; vendor: 'in
 export interface ScanView { source: { id: string; name: string; image: string; version: string | null }; folders: ScanResult['folders']; layout: ScanResult['layout']; bytes: number; trickplayBytes: number; plugins: string[]; nfo: boolean }
 export type MoveScanResult =
   | { candidates: Array<Candidate & { matches: boolean | null }>; scan?: ScanView }
-  | { error: MediaError | 'not_available'; outside?: string[]; refused?: string[] };
+  | { error: MediaError | 'not_available'; outside?: string[]; refused?: string[]; nested?: string[] };
 
 const STATUS: Record<'path_invalid' | 'path_refused' | 'base_missing' | 'not_available', 400 | 409> = { path_invalid: 400, path_refused: 400, base_missing: 409, not_available: 409 };
 const fail = (error: keyof typeof STATUS): RequestResult => ({ ok: false, status: STATUS[error], error });
@@ -88,10 +90,10 @@ export class MediaService {
    * One helper run: its JSON answer, or a StepError carrying the helper's own error code (a helper that exited 2 still answers
    * with a JSON object: `{"error":"<code>"}`) or the code runHelper gave.
    */
-  private async helper(r: Ready, verb: HelperVerb, args: string[], mounts: HelperMount[], bind?: string, source?: SourceExpect): Promise<Obj> {
+  private async helper(r: Ready, verb: HelperVerb, args: string[], mounts: HelperMount[], bind?: string, source?: SourceExpect, limitMs = SYNC_HELPER_MS): Promise<Obj> {
     const u = this.user();
     const req = helperSpec({ verb, args, uid: u.uid, gid: u.gid, groups: u.groups, mounts }, { project: r.project, image: r.image });
-    const answer = await this.d.helper(this.d.engine, req, { project: r.project, uid: u.uid, gid: u.gid, image: r.image, verb, ...(bind !== undefined ? { bind } : {}), ...(source ? { source, dockerRoot: r.facts.dockerRoot } : {}) }, SYNC_HELPER_MS);
+    const answer = await this.d.helper(this.d.engine, req, { project: r.project, uid: u.uid, gid: u.gid, image: r.image, verb, ...(bind !== undefined ? { bind } : {}), ...(source ? { source, dockerRoot: r.facts.dockerRoot } : {}) }, limitMs);
     if ('error' in answer) throw new StepError(typeof answer.error === 'string' && /^[a-z_]{1,40}$/.test(answer.error) ? answer.error : 'helper_failed');
     return answer;
   }
@@ -316,7 +318,8 @@ export class MediaService {
     const base = this.d.updater.mediaState().base;
     return {
       engine: this.d.engine, base: base ? { path: base.path } : null, now: () => this.d.now(),
-      scan: (config) => this.helper(r, 'migrate-scan', [], [{ kind: 'source', type: config.type, source: config.source }], undefined, config),
+      scan: (config, mode) => this.helper(r, 'migrate-scan', mode === 'id' ? ['id'] : [], [{ kind: 'source', type: config.type, source: config.source }], undefined, config,
+        mode === 'id' ? SYNC_HELPER_MS : SCAN_HELPER_MS),
     };
   }
 
@@ -337,6 +340,7 @@ export class MediaService {
       return { candidates, scan: { source: { id, name, image, version }, folders: s.folders, layout: s.layout, bytes: s.bytes, trickplayBytes: s.trickplayBytes, plugins: s.plugins, nfo: s.nfo } };
     } catch (e) {
       if (e instanceof SourceError && e.code === 'source_outside_base') return { error: e.code, outside: e.outside, refused: e.refused };
+      if (e instanceof SourceError && e.code === 'source_nested') return { error: e.code, nested: e.nested };
       if (e instanceof TemplateViolation) return { error: 'template_violation' };
       const code = e instanceof StepError || e instanceof EngineError ? e.code : '';
       return { error: (MEDIA_ERRORS as readonly string[]).includes(code) ? code as MediaError : 'helper_failed' };

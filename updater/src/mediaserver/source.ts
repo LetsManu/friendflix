@@ -17,16 +17,18 @@ import type { Folder, MediaError, RecordedSource } from './types.js';
 export const JELLYFIN_REPOS = ['jellyfin/jellyfin', 'docker.io/jellyfin/jellyfin', 'linuxserver/jellyfin', 'lscr.io/linuxserver/jellyfin'] as const;
 /** at most this many candidates are scanned for their server id in one candidate list */
 export const MAX_SCANNED = 5;
+/** at most this many media folders (as parse.ts and jobs.ts) */
+const MAX_FOLDERS = 20;
 
 export interface Candidate { id: string; name: string; image: string; state: string }
 export type SourceConfig = RecordedSource['config'];
 export type Layout = 'official' | 'linuxserver';
 export interface ScanResult { source: RecordedSource; folders: Folder[]; bytes: number; trickplayBytes: number; plugins: string[]; nfo: boolean; layout: Layout }
-export interface Mounts { config: SourceConfig | null; media: Folder[]; outside: string[]; refused: string[] }
+export interface Mounts { config: SourceConfig | null; media: Folder[]; outside: string[]; refused: string[]; nested: string[] }
 
-/** a scan failure; `outside` / `refused` (container paths only) for source_outside_base */
+/** a scan failure; container paths only: `outside` / `refused` for source_outside_base, `nested` for source_nested */
 export class SourceError extends StepError {
-  constructor(code: MediaError, readonly outside: string[] = [], readonly refused: string[] = []) { super(code); }
+  constructor(code: MediaError, readonly outside: string[] = [], readonly refused: string[] = [], readonly nested: string[] = []) { super(code); }
 }
 
 export interface SourceDeps {
@@ -34,8 +36,11 @@ export interface SourceDeps {
   /** the confirmed base folder (host path); null before one is confirmed */
   base: { path: string } | null;
   now(): number;
-  /** the `migrate-scan` helper on this `/config`, mounted read-only at /source; its JSON answer (a StepError with its code otherwise) */
-  scan(config: SourceConfig): Promise<Record<string, unknown>>;
+  /**
+   * the `migrate-scan` helper on this `/config`, mounted read-only at /source; its JSON answer (a StepError with its code otherwise).
+   * `id`: only the layout and the server id (fast; candidate lists and rematch); `sized`: also sizes, plugins and nfo (the chosen one)
+   */
+  scan(config: SourceConfig, mode: 'id' | 'sized'): Promise<Record<string, unknown>>;
 }
 
 type Obj = Record<string, unknown>;
@@ -116,7 +121,7 @@ function skipped(m: Obj): boolean {
   const src = str(m.Source);
   const dst = str(m.Destination);
   if (type === 'tmpfs') return true;
-  if (dst === '/cache' || dst.startsWith('/cache/') || /transcode/i.test(dst)) return true;
+  if (dst === '/cache' || dst.startsWith('/cache/') || dst.split('/').some((c) => /^transcodes?$/i.test(c))) return true;
   if ([src, dst].some((p) => p === '/dev' || p.startsWith('/dev/'))) return true;
   if ([src, dst].some((p) => /docker\.sock|containerd/.test(p))) return true;
   return type === 'bind' && TIME_FILES.includes(dst);
@@ -150,14 +155,35 @@ export function classifyMounts(inspect: Obj, base: { path: string }, devices: Re
     if (!isMigratedTarget(dst) || !isRel(rel, 0, 3)) { refused.push(dst); continue; }
     kept.push({ rel, target: dst, migrated: true });
   }
-  // a target at or below another cannot be kept (a symlink in the outer share could move the inner mount)
-  const media: Folder[] = [];
-  for (const f of kept) {
-    if (kept.some((g) => g !== f && f.target.startsWith(g.target + '/'))) refused.push(f.target);
-    else media.push(f);
-  }
+  const { media, nested } = unnest(kept);
   refused.sort();
-  return { config: configOf(inspect), media, outside: [...outside, ...refused].sort(), refused };
+  return { config: configOf(inspect), media, outside: [...outside, ...refused].sort(), refused, nested };
+}
+
+/** `rel` lies below `parent` (the base itself, '', is above every other folder) */
+const relBelow = (rel: string, parent: string): boolean => (parent === '' ? rel !== '' : rel.startsWith(parent + '/'));
+
+/**
+ * Overlapping media mounts: an inner mount at exactly the path where its outer one already shows the same folder (`/movies` ←
+ * Filme and `/movies/4K` ← Filme/4K) adds nothing and is dropped. Any other overlap (a target below another showing another folder,
+ * one folder at two paths, a folder and its parent at unrelated paths) is `nested`: the move cannot keep both paths the database knows.
+ */
+function unnest(kept: Folder[]): { media: Folder[]; nested: string[] } {
+  const redundant = new Set<Folder>();
+  const nested = new Set<string>();
+  for (const f of kept) {
+    for (const g of kept) {
+      if (f === g) continue;
+      if (f.target.startsWith(g.target + '/')) {
+        const sub = f.target.slice(g.target.length + 1);
+        if (f.rel === (g.rel === '' ? sub : `${g.rel}/${sub}`)) redundant.add(f);
+        else { nested.add(f.target); nested.add(g.target); }
+      } else if (!g.target.startsWith(f.target + '/') && (f.rel === g.rel || relBelow(f.rel, g.rel))) {
+        nested.add(f.target); nested.add(g.target);
+      }
+    }
+  }
+  return { media: kept.filter((f) => !redundant.has(f)), nested: [...nested].sort() };
 }
 
 /** the host path of each local volume among the mounts that is a bind (`device` an absolute host path, `o` with `bind`) */
@@ -175,12 +201,19 @@ async function devicesOf(engine: Engine, i: Obj): Promise<Record<string, string>
   return out;
 }
 
-/** the helper's answer, checked field by field; anything else is helper_failed */
+/** the id-only answer: the layout and the server id */
+function parseId(a: Record<string, unknown>): { layout: Layout; serverId: string } {
+  const { layout, serverId } = a;
+  if ((layout !== 'official' && layout !== 'linuxserver') || typeof serverId !== 'string' || !SERVER_ID_RE.test(serverId)) fail('helper_failed');
+  return { layout: layout as Layout, serverId: serverId as string };
+}
+
+/** the helper's sized answer, checked field by field; anything else is helper_failed */
 function parseScan(a: Record<string, unknown>): { layout: Layout; serverId: string; bytes: number; trickplayBytes: number; plugins: string[]; nfo: boolean } {
   const size = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
   const { layout, serverId, bytes, trickplayBytes, plugins, nfo } = a;
-  if ((layout !== 'official' && layout !== 'linuxserver') || typeof serverId !== 'string' || !SERVER_ID_RE.test(serverId) || !size(bytes) || !size(trickplayBytes)
-    || typeof nfo !== 'boolean' || !Array.isArray(plugins) || plugins.length > 50 || !plugins.every((p) => typeof p === 'string' && p.length <= 100)) fail('helper_failed');
+  parseId(a);
+  if (!size(bytes) || !size(trickplayBytes) || typeof nfo !== 'boolean' || !Array.isArray(plugins) || plugins.length > 50 || !plugins.every((p) => typeof p === 'string' && p.length <= 100)) fail('helper_failed');
   return { layout: layout as Layout, serverId: serverId as string, bytes: bytes as number, trickplayBytes: trickplayBytes as number, plugins: plugins as string[], nfo: nfo as boolean };
 }
 
@@ -194,10 +227,10 @@ async function versionOf(engine: Engine, i: Obj): Promise<string | null> {
   return tag !== null && VERSION_RE.test(tag) ? tag : null;
 }
 
-/** the server id in this container's /config (a scan); null when it has none or cannot be scanned */
+/** the server id in this container's /config (an id-only scan); null when it has none or cannot be scanned */
 export async function serverIdOf(deps: Pick<SourceDeps, 'scan'>, config: SourceConfig | null): Promise<string | null> {
   if (!config) return null;
-  try { return parseScan(await deps.scan(config)).serverId; } catch { return null; }
+  try { return parseId(await deps.scan(config, 'id')).serverId; } catch { return null; }
 }
 
 /**
@@ -211,10 +244,12 @@ export async function scanSource(deps: SourceDeps, id: string, expectServerId: s
   const i = await deps.engine.inspectContainer(id);
   if (!candidateOf(i) || i.Id !== id) return fail('source_missing');
   const config = configOf(i) ?? fail('source_layout');
-  const scan = parseScan(await deps.scan(config));
+  const scan = parseScan(await deps.scan(config, 'sized'));
   if (scan.serverId !== expectServerId) fail('source_mismatch');
   const m = classifyMounts(i, base, await devicesOf(deps.engine, i));
   if (m.outside.length > 0) throw new SourceError('source_outside_base', m.outside, m.refused);
+  if (m.nested.length > 0) throw new SourceError('source_nested', [], [], m.nested);
+  if (m.media.length > MAX_FOLDERS) fail('too_many_folders');
   const source: RecordedSource = {
     id, name: str(i.Name).replace(/^\//, ''), image: configImage(i), config, serverId: scan.serverId,
     version: await versionOf(deps.engine, i), at: new Date(deps.now()).toISOString(),
@@ -226,16 +261,22 @@ const sameConfig = (a: SourceConfig | null, b: SourceConfig): boolean => a !== n
 
 /**
  * The recorded source today (stage 2 "A recreated source"): a Jellyfin candidate (none of ours) with the same /config mount source,
- * where a scan of that /config finds the recorded server id. The recorded id when it is among them; otherwise exactly one other
- * (several = not decidable = null). The caller replaces the recorded id and audits it.
+ * where an id-only scan of that /config finds the recorded server id. The recorded id when it is among them; otherwise exactly one
+ * other (several = not decidable = null). Null as well while any other container on that /config runs, whatever its image: starting
+ * the source next to it would put two servers on one database. The caller replaces the recorded id and audits it.
  */
 export async function rematch(deps: Pick<SourceDeps, 'engine' | 'scan'>, recorded: RecordedSource): Promise<string | null> {
   const found = (await candidates(deps.engine)).filter((x) => sameConfig(configOf(x.inspect), recorded.config)).map((x) => x.c.id);
-  if (found.length === 0) return null;
+  const chosen = found.includes(recorded.id) ? recorded.id : found.length === 1 ? found[0]! : null;
+  if (chosen === null) return null;
+  for (const l of await deps.engine.allContainers()) {
+    if (l.id === chosen || l.state !== 'running') continue;
+    const i = await deps.engine.inspectContainer(l.id).catch(() => null);
+    // a running container that cannot be read may be on the same /config: not decidable
+    if (i === null || sameConfig(configOf(i), recorded.config)) return null;
+  }
   // they all mount the one /config: one scan answers for all of them
-  if ((await serverIdOf(deps, recorded.config)) !== recorded.serverId) return null;
-  if (found.includes(recorded.id)) return recorded.id;
-  return found.length === 1 ? found[0]! : null;
+  return (await serverIdOf(deps, recorded.config)) === recorded.serverId ? chosen : null;
 }
 
 /** the candidate list for the move sheet: each with `matches` from a scan of its server id (the first MAX_SCANNED; null beyond) */

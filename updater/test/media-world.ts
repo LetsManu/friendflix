@@ -43,7 +43,7 @@ export interface InspectMount { Type: string; Source: string; Destination: strin
 export interface Foreign { name: string; image: string; mounts: InspectMount[]; running?: boolean; labels?: Record<string, string>; imageId?: string }
 /** what the scan helper answers for a source whose /config is this (bind path or volume name) */
 export const scanAnswer = (serverId: string): Obj => ({ layout: 'official', serverId, bytes: 5_000_000, trickplayBytes: 1_000_000, plugins: ['Open Subtitles'], nfo: false });
-export interface HelperCall { verb: string; args: string[]; mounts: Obj[]; user: string }
+export interface HelperCall { verb: string; args: string[]; mounts: Obj[]; user: string; limit?: number }
 export type Answer = Obj | Error;
 
 export function okFolders(c: HelperCall): Obj {
@@ -83,7 +83,9 @@ export function world(o: { facts?: Partial<EngineFacts>; ops?: Ops; state?: Part
       if (c.verb === 'restore') return { ok: true };
       if (c.verb === 'migrate-scan') {
         const id = cfg.servers.get(String(c.mounts.find((m) => m.Target === '/source')?.Source));
-        return id ? scanAnswer(id) : { error: 'source_layout' };
+        if (!id) return { error: 'source_layout' };
+        // `migrate-scan id`: the layout and the server id only
+        return c.args[0] === 'id' ? { layout: 'official', serverId: id } : scanAnswer(id);
       }
       return { error: 'invalid_body' };
     },
@@ -168,10 +170,10 @@ export function world(o: { facts?: Partial<EngineFacts>; ops?: Ops; state?: Part
     engine, updater, repo: 'LetsManu/friendflix', now: () => clock.t, print: () => undefined,
     facts: async () => cfg.facts,
     // the real guard runs on every helper body the jobs build
-    helper: async (_e: Engine, req: { body: Obj }, expect: Parameters<typeof assertHelper>[1]) => {
+    helper: async (_e: Engine, req: { body: Obj }, expect: Parameters<typeof assertHelper>[1], limit?: number) => {
       assertHelper(req.body, expect);
       const cmd = req.body.Cmd as string[];
-      const call = { verb: cmd[2]!, args: cmd.slice(3), mounts: ((req.body.HostConfig as Obj).Mounts as Obj[] | undefined) ?? [], user: String(req.body.User) };
+      const call: HelperCall = { verb: cmd[2]!, args: cmd.slice(3), mounts: ((req.body.HostConfig as Obj).Mounts as Obj[] | undefined) ?? [], user: String(req.body.User), limit };
       calls.push(`helper ${call.verb}${call.args[0] && call.verb === 'check' ? ` ${call.args[0]}` : ''}`);
       helperCalls.push(call);
       const a = cfg.answer(call);
