@@ -249,7 +249,13 @@ export class Engine {
   async listNetworks(labels: Record<string, string>): Promise<Array<{ id: string; name: string; containers: string[] }>> {
     const filters = JSON.stringify({ label: Object.entries(labels).map(([k, v]) => `${k}=${v}`) });
     const res = await this.call({ method: 'GET', path: '/networks', query: { filters } }, Engine.generic);
-    return this.array(res).map((n) => ({ id: str(n.Id), name: str(n.Name), containers: isObj(n.Containers) ? Object.keys(n.Containers) : [] }));
+    // the list answer leaves Containers empty (Docker API >= 1.28); only the network's own inspect names the attached containers
+    return Promise.all(this.array(res).map(async (n) => {
+      const id = str(n.Id);
+      const one = await this.call({ method: 'GET', path: `/networks/${plain(id)}` }, (s) => (s === 404 ? null : Engine.generic(s)));
+      const j = one.status === 404 ? null : this.json(one);
+      return { id, name: str(n.Name), containers: j && isObj(j.Containers) ? Object.keys(j.Containers) : [] };
+    }));
   }
 
   async connect(network: string, container: string): Promise<void> {

@@ -53,8 +53,9 @@ COPY --chown=node:node deploy/authentik/*.yaml deploy/authentik/
 # ffmpeg: remuxes prepared offline downloads (HLS fMP4 -> faststart MP4, stream copy only). Not version-pinned on purpose
 # (pins vanish from the Alpine mirrors, see above): reproducible as long as Alpine v3.x has not shipped a newer ffmpeg or
 # dependency since the build. No font package is installed, so the fontconfig trigger writes no (mtime-bearing) cache;
-# the rm keeps it that way should a dependency ever pull fonts in.
-RUN apk add --no-cache ffmpeg && rm -rf /var/log/apk.log /var/cache/fontconfig/* && mkdir -p /data/previews /data/downloads && chown node:node /data/previews /data/downloads
+# the rm keeps it that way should a dependency ever pull fonts in. libxml2 (an ffmpeg dependency) as a minimum version for
+# CVE-2026-86144 (2.13.9-r3), like zlib/musl above: a no-op once ffmpeg's resolution brings it anyway; remove it then.
+RUN apk add --no-cache ffmpeg 'libxml2>=2.13.9-r3' && rm -rf /var/log/apk.log /var/cache/fontconfig/* && mkdir -p /data/previews /data/downloads && chown node:node /data/previews /data/downloads
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 CMD wget -qO- http://127.0.0.1:3000/health || exit 1
