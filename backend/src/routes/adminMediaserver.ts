@@ -11,7 +11,7 @@ import { addressOnly } from '../media/address.js';
 import { MediaSetupError } from '../media/types.js';
 import { BACKUP_ID, decodePassphrase, mediaDownload, mediaOp, mediaScan, mediaUpload, parseMediaStatus, startMediaJob, type MediaBackup, type MediaStatus } from '../mediaserver/client.js';
 import { recordApplyFirstRun } from '../mediaserver/firstRun.js';
-import { ACTIVE_PHASES, backUnderWay, freshScan, goBack, readScan, scanRunning, startScan, SWITCHED_PHASES, withMoveLock, type MoveScanRecord } from '../mediaserver/move.js';
+import { ACTIVE_PHASES, backUnderWay, freshScan, readScan, scanRunning, startBack, startScan, SWITCHED_PHASES, withMoveLock, type MoveScanRecord } from '../mediaserver/move.js';
 import { libraryReferences, referenced } from '../mediaserver/references.js';
 import { deleteLibrary, managedKey, MANAGED_URL, publicInfo, renameLibrary } from '../mediaserver/serverApi.js';
 import { adminPassword, claimAdminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged, type MigratedFrom, type MoveRecord, type SetupStep } from '../mediaserver/store.js';
@@ -544,13 +544,17 @@ function moveOps(ctx: Ctx) {
     },
   });
 
-  // the way back (mediaserver/move.ts goBack): it checks that a move is recorded and audits `mediaserver.back` with its switch; every
-  // refusal is a code and leaves FriendFlix as it was. It waits for the old Jellyfin (up to 3 minutes) under the move's tick lock.
+  // the way back (mediaserver/move.ts startBack): the checks that need no wait answer at once (409 with the code); otherwise 202 and
+  // it runs in the background under the move's tick lock (it may wait up to 3 minutes for the old Jellyfin: longer than a reverse proxy
+  // waits for an answer). The page follows move.state.back / backError to `done` or `failed` with its code; the switch is audited
+  // `mediaserver.back` by the way back itself. A refusal leaves FriendFlix as it was.
   const back = op({
     body: S.none, reauth: () => true,
     run: async (_b, reply, actor) => {
-      const r = await goBack(ctx, actor);
-      return r.ok ? { ok: true } : reply.code(409).send({ error: r.error });
+      const r = await startBack(ctx, actor);
+      if (!r.ok) return reply.code(409).send({ error: r.error });
+      void r.done.catch(() => undefined);
+      return reply.code(202).send({});
     },
   });
 
@@ -749,6 +753,10 @@ export function adminMediaserverRoutes(app: FastifyInstance, ctx: Ctx) {
     run: async (b, reply, who) => {
       const { managed, status } = await load(ctx);
       if (!managed.kind) return reply.code(409).send({ error: 'not_managed' });
+      // a moved install goes back through /back, which repairs the users (profiles made on Ferrofin get a Jellyfin user); this switch
+      // would skip that
+      const moved = managed.migratedFrom !== null || (managed.move !== null && ACTIVE_PHASES.includes(managed.move.phase)) || backUnderWay(managed.move);
+      if (b.restore && moved) return reply.code(409).send({ error: 'use_way_back' });
       if (b.restore && !managed.externalUrl) return reply.code(409).send({ error: 'no_external' });
       // the managed container is stopped, not removed (spec "Switching")
       if (status?.container) {

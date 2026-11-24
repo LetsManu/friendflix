@@ -41,13 +41,15 @@ export interface Relink { table: 'users' | 'profiles'; row: string; from: string
  * request service could not be pointed at the new server (Admin and the Systemcheck show the manual step). `errorMeta`: the numbers of
  * a failed id check (`ids_mismatch`), or the warning of a switched move; `abortPending`: the move failed and the updater has not taken
  * its abort yet (the tick sends it again until it does); `tries`: the phase's failures retried so far (a server still starting; reset
- * when the phase changes); `rounds`: the `nfo` ticks that found a saver still on; `repeat`: a move after a way back (its `verify` repairs
- * the users first), `relinks` what that repair created; `back`/`backError`: the way back after this move. Each is absent when unset.
+ * when the phase changes); `rounds`: the `nfo` ticks whose count of libraries with a saver still on did not drop, `nfoLeft` that count at
+ * the last tick; `repeat`: a move after a way back (its `verify` repairs the users first), `relinks` what that repair created,
+ * `policyPending` the users a repair made whose policy is not written yet; `back`/`backError`: the way back after this move. Each is
+ * absent when unset.
  */
 export interface MoveRecord {
   phase: MovePhase; error: string | null; jobId: string | null; startedAt: string; requestsWarning: boolean;
-  errorMeta?: IdCheck | MoveWarning; abortPending?: true; tries?: number; rounds?: number;
-  repeat?: true; relinks?: Relink[]; back?: BackStep; backError?: string;
+  errorMeta?: IdCheck | MoveWarning; abortPending?: true; tries?: number; rounds?: number; nfoLeft?: number;
+  repeat?: true; relinks?: Relink[]; policyPending?: string[]; back?: BackStep; backError?: string;
 }
 /** the request service's Jellyfin connection before the move (the way back restores it); its API key is not part of it */
 export interface RequestsPrev { hostname: string; port: number; useSsl: boolean; urlBase: string }
@@ -120,12 +122,14 @@ function moveRecord(raw: unknown): MoveRecord | null {
   const phase = MOVE_PHASES.find((p) => p === o?.phase), startedAt = re(o?.startedAt, ISO_RE);
   if (!o || !phase || !startedAt) return null;
   const errorMeta = objOf(o.errorMeta)?.warning === 'updater_aborted' ? { warning: 'updater_aborted' as const } : idCheck(o.errorMeta);
-  const tries = count(o.tries), rounds = count(o.rounds), links = relinks(o.relinks);
+  const tries = count(o.tries), rounds = count(o.rounds), nfoLeft = count(o.nfoLeft), links = relinks(o.relinks);
+  const policy = Array.isArray(o.policyPending) ? o.policyPending.slice(0, MAX_RELINKS).filter((x): x is string => typeof x === 'string' && SERVER_USER_RE.test(x)) : [];
   const back = BACK_STEPS.find((b) => b === o.back), backError = re(o.backError, CODE_RE);
   return {
     phase, error: re(o.error, CODE_RE), jobId: re(o.jobId, JOB_ID_RE), startedAt, requestsWarning: o.requestsWarning === true,
     ...(errorMeta ? { errorMeta } : {}), ...(o.abortPending === true ? { abortPending: true as const } : {}), ...(tries ? { tries } : {}),
-    ...(rounds ? { rounds } : {}), ...(o.repeat === true ? { repeat: true as const } : {}), ...(links.length ? { relinks: links } : {}),
+    ...(rounds ? { rounds } : {}), ...(nfoLeft !== null ? { nfoLeft } : {}), ...(o.repeat === true ? { repeat: true as const } : {}),
+    ...(links.length ? { relinks: links } : {}), ...(policy.length ? { policyPending: policy } : {}),
     ...(back ? { back } : {}), ...(back && backError ? { backError } : {}),
   };
 }

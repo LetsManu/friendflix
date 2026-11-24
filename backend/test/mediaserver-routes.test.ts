@@ -639,12 +639,40 @@ describe('admin routes', () => {
       // the old container is gone: the stage 1 way back (an address) applies
       fake.answer['source-start'] = { status: 409, json: { error: 'no_target' } };
       const back = await req(admin, 'POST', '/back');
-      expect(back.statusCode).toBe(409);
-      expect(back.json()).toEqual({ error: 'source_missing' });
+      // it runs in the background: the page follows it in the view
+      expect(back.statusCode).toBe(202);
+      let state = (await moveView()).state;
+      for (let i = 0; i < 200 && state?.back === 'starting'; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        state = (await moveView()).state;
+      }
+      expect(state).toMatchObject({ back: 'failed', backError: 'source_missing' });
       expect(await audits('mediaserver.back')).toEqual([]);
       expect((await readManaged(env.pool)).kind).toBe('ferrofin');
       expect(opBodies('stop')).toEqual([]);
-      expect(await moveView()).toMatchObject({ state: { back: 'failed', backError: 'source_missing' } });
+    });
+
+    it('stage 1\'s switch back to the external server is refused while a move is recorded: the way back repairs the users (c2)', async () => {
+      await reauth(admin);
+      const at = '2026-11-24T10:00:00.000Z';
+      const done = { phase: 'done', error: null, jobId: null, startedAt: at, requestsWarning: false } as const;
+      await writeManaged(env.ctx, { kind: 'ferrofin', setup: 'done', externalUrl: 'http://jellyfin:8096', externalKey: 'adminkey', migratedFrom: { name: 'jellyfin', version: '10.10.3', at } });
+      const mode = (restore: boolean) => req(admin, 'POST', '/mode', { mode: 'external', restore });
+      const r = await mode(true);
+      expect(r.statusCode).toBe(409);
+      expect(r.json()).toEqual({ error: 'use_way_back' });
+      // a way back not finished, or a move under way, the same
+      await writeManaged(env.ctx, { migratedFrom: null, move: { ...done, back: 'starting' } });
+      expect((await mode(true)).json()).toEqual({ error: 'use_way_back' });
+      await writeManaged(env.ctx, { move: { ...done, phase: 'requests' } });
+      expect((await mode(true)).json()).toEqual({ error: 'use_way_back' });
+      expect(opBodies('stop')).toEqual([]);
+      expect((await readManaged(env.pool)).kind).toBe('ferrofin');
+      // a way back done: stage 1's switch is open again
+      offset += 3 * 60_000;
+      await reauth(admin);
+      await writeManaged(env.ctx, { move: { ...done, back: 'done' } });
+      expect((await mode(true)).json()).toEqual({ ok: true });
     });
 
     it('a move after a way back repairs the users before its check; none starts while a way back is unfinished', async () => {

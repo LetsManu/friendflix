@@ -183,14 +183,14 @@ describe('media.managed', () => {
       s.container!.image.upstream = '1.2.3';
     };
     /** the view of a moved install: managed Ferrofin, where it came from, the request service's state */
-    const moved = (o: { from?: MediaView['managed']['migratedFrom']; requestsWarning?: boolean; edit?: (s: MediaStatus) => void } = {}) => {
+    const moved = (o: { from?: MediaView['managed']['migratedFrom']; requestsWarning?: boolean; edit?: (s: MediaStatus) => void; sourceState?: string | null } = {}) => {
       const s = status();
       ferrofin(s);
       o.edit?.(s);
       const v = viewOf(s, 'ferrofin');
       const from = o.from === undefined ? FROM : o.from;
       v.managed.migratedFrom = from;
-      v.move = { ...v.move, migratedFrom: from, sourceState: 'exited', requestsWarning: o.requestsWarning === true };
+      v.move = { ...v.move, migratedFrom: from, sourceState: o.sourceState === undefined ? 'exited' : o.sourceState, requestsWarning: o.requestsWarning === true };
       return managedLine(env, v, updater(s));
     };
 
@@ -205,6 +205,11 @@ describe('media.managed', () => {
         const l = await moved({ from: { ...FROM, name } });
         expect(l).toMatchObject({ status: 'ok', cause: 'managed_migrated' });
         expect(l.params).toEqual({ kind: 'ferrofin', upstream: '1.2.3' });
+      }
+      // "stopped" only when Docker shows it stopped: running unused (a refused way back started it), gone, or not known
+      for (const [state, cause] of [['created', 'managed_migrated'], ['dead', 'managed_migrated'], ['running', 'managed_migrated_running'], ['restarting', 'managed_migrated_running'],
+        ['missing', 'managed_migrated_gone'], [null, 'managed_migrated_unknown'], ['unknown', 'managed_migrated_unknown']] as const) {
+        expect(await moved({ sourceState: state }), String(state)).toMatchObject({ status: 'ok', cause, params: { source: 'jellyfin' } });
       }
       // never moved: the plain ok line
       expect(await moved({ from: null })).toEqual({ id: 'media.managed', group: 'media', status: 'ok', href: '/admin/settings?tab=media', docs: 'mediaserver.md',

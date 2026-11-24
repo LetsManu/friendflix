@@ -77,10 +77,21 @@ export async function managedLine(env: CheckEnv, view: MediaView | null, updater
   const newest = s.backups.reduce<string | null>((a, b) => (a === null || Date.parse(b.at) > Date.parse(a) ? b.at : a), null);
   if (newest ? olderThan(newest, BACKUP_OLD_MS) : c !== null && olderThan(c.createdAt, BACKUP_OLD_MS)) return bad(id, 'warning', 'managed_backup_old', o);
   const params = { kind: c?.kind ?? managedKind ?? undefined, upstream: c?.image.upstream };
-  // moved from an existing Jellyfin (stage 2): an info line, the old Jellyfin is stopped and kept for the way back
+  // moved from an existing Jellyfin (stage 2): an info line saying where from, and what the old container is doing as Docker shows it
   const from = managedKind ? view.managed.migratedFrom : null;
-  if (from) return line(id, 'ok', { ...o, cause: 'managed_migrated', params: { ...params, source: from.name } });
+  if (from) return line(id, 'ok', { ...o, cause: migratedCause(view.move.sourceState), params: { ...params, source: from.name } });
   return line(id, 'ok', { ...o, params });
+}
+
+/**
+ * the info line after a move by the old container's Docker state: stopped and kept for the way back (`managed_migrated`, only when
+ * Docker shows it stopped), running unused (a way back that was refused after it started it), gone (`missing`: the way back needs an
+ * address), or not known (no state read)
+ */
+function migratedCause(state: string | null): string {
+  if (state === 'exited' || state === 'created' || state === 'dead') return 'managed_migrated';
+  if (state === 'running' || state === 'restarting' || state === 'paused') return 'managed_migrated_running';
+  return state === 'missing' ? 'managed_migrated_gone' : 'managed_migrated_unknown';
 }
 
 /**
