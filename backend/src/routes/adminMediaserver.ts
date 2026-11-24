@@ -39,7 +39,7 @@ export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 
  */
 export interface MoveView {
   offered: boolean; reason: OfferReason | null; scan: MoveScanRecord | null;
-  state: (Omit<MoveRecord, 'requestsWarning' | 'abortPending'> & { step: MediaStep | null; abort: boolean }) | null;
+  state: (Omit<MoveRecord, 'requestsWarning' | 'abortPending' | 'tries'> & { step: MediaStep | null; abort: boolean }) | null;
   migratedFrom: MigratedFrom | null; sourceState: string | null; requestsWarning: boolean;
 }
 export interface MediaView {

@@ -20,13 +20,20 @@ export interface MigratedFrom { name: string; version: string | null; at: string
 /** the id check of a move (`verify`): linked users checked and missing on the new server, item ids sampled and missing */
 export interface IdCheck { users: { total: number; missing: number }; items: { sampled: number; missing: number } }
 /**
+ * a switched move whose updater no longer held it as ready when told the switch was made (`updater_aborted`: its move shows aborted, so
+ * the new server may be gone and the old Jellyfin started; the way back applies)
+ */
+export interface MoveWarning { warning: 'updater_aborted' }
+/**
  * a move as the backend follows it: its phase, the code it failed with, the updater job of its copy, when it started, and whether the
  * request service could not be pointed at the new server (Admin and the Systemcheck show the manual step). `errorMeta`: the numbers of
- * a failed id check (`ids_mismatch`); `abortPending`: the move failed and the updater has not taken its abort yet (the tick sends it
- * again until it does). Both are absent when unset.
+ * a failed id check (`ids_mismatch`), or the warning of a switched move; `abortPending`: the move failed and the updater has not taken
+ * its abort yet (the tick sends it again until it does); `tries`: the phase's failures retried so far (a server still starting; reset
+ * when the phase changes). Each is absent when unset.
  */
 export interface MoveRecord {
-  phase: MovePhase; error: string | null; jobId: string | null; startedAt: string; requestsWarning: boolean; errorMeta?: IdCheck; abortPending?: true;
+  phase: MovePhase; error: string | null; jobId: string | null; startedAt: string; requestsWarning: boolean;
+  errorMeta?: IdCheck | MoveWarning; abortPending?: true; tries?: number;
 }
 /** the request service's Jellyfin connection before the move (the way back restores it); its API key is not part of it */
 export interface RequestsPrev { hostname: string; port: number; useSsl: boolean; urlBase: string }
@@ -82,10 +89,11 @@ function moveRecord(raw: unknown): MoveRecord | null {
   const o = objOf(raw);
   const phase = MOVE_PHASES.find((p) => p === o?.phase), startedAt = re(o?.startedAt, ISO_RE);
   if (!o || !phase || !startedAt) return null;
-  const errorMeta = idCheck(o.errorMeta);
+  const errorMeta = objOf(o.errorMeta)?.warning === 'updater_aborted' ? { warning: 'updater_aborted' as const } : idCheck(o.errorMeta);
+  const tries = count(o.tries);
   return {
     phase, error: re(o.error, CODE_RE), jobId: re(o.jobId, JOB_ID_RE), startedAt, requestsWarning: o.requestsWarning === true,
-    ...(errorMeta ? { errorMeta } : {}), ...(o.abortPending === true ? { abortPending: true as const } : {}),
+    ...(errorMeta ? { errorMeta } : {}), ...(o.abortPending === true ? { abortPending: true as const } : {}), ...(tries ? { tries } : {}),
   };
 }
 function requestsPrev(raw: unknown): RequestsPrev | null {

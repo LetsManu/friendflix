@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { auditInTx } from '../audit.js';
 import type { Ctx } from '../ctx.js';
-import { randomToken } from '../crypto.js';
+import { decrypt, randomToken } from '../crypto.js';
 import { inTransaction } from '../db.js';
 import { JellyfinClient, JellyfinError } from '../jellyfin/client.js';
 import { addressOnly } from '../media/address.js';
 import { MediaSetupError } from '../media/types.js';
 import { writeRows } from '../settings/repo.js';
 import { updaterView, type TickLog, type UpdaterStatus } from '../updater.js';
-import { mediaOp, mediaScan, startMediaJob, type MediaError, type MoveScan } from './client.js';
-import { MANAGED_URL, nfoSaversOff } from './serverApi.js';
-import { readManaged, writeManaged, type IdCheck, type MediaManaged, type MoveRecord, type MovePhase } from './store.js';
+import { encodingHw, mediaOp, mediaScan, startMediaJob, type MediaError, type MoveScan } from './client.js';
+import { MANAGED_URL, NFO_PER_CALL, nfoSaversOff, setEncoding, TIMEOUT_MS as SERVER_CALL_MS } from './serverApi.js';
+import { readManaged, writeManaged, type IdCheck, type MediaManaged, type MoveRecord, type MovePhase, type MoveWarning } from './store.js';
 
 /**
  * The backend's half of a move from an existing Jellyfin to the managed Ferrofin (docs/superpowers/specs/2026-11-24-mediaserver-stage2-
@@ -107,24 +107,37 @@ export async function goBack(_ctx: Ctx, _actor: string | null): Promise<{ ok: tr
 
 // ---------------------------------------------------------------- the backend's phases (spec "The move" 7–10)
 
-/**
- * One tick across instances (like the first run's `media:managed:tick`); the abort route holds it too while it reads the phase, asks the
- * updater and marks the move failed, so an abort and a phase step never interleave. Longer than a tick's worst case: the id check's
- * deadline plus an abort sent after it.
- */
-export const MOVE_LOCK = 'media:move:tick';
-const LOCK_TTL_S = 120;
 /** the id check as a whole (every user and the item sample); a server that does not answer within it fails the check */
 const VERIFY_DEADLINE_MS = 45_000;
 /** the newest item references the id check samples, how many it looks up at once, and the share that must resolve (deleted titles) */
 const SAMPLE = 200;
 const PARALLEL = 8;
 const RESOLVE_PERCENT = 98;
+/** a phase's failures that may be a server still starting (unreachable, 5xx) are retried this often, one per tick, before the abort */
+const MAX_RETRIES = 3;
 const CODE = /^[a-z][a-z0-9_]{0,39}$/;
 
-/** a phase failure with its code (and, for `ids_mismatch`, the numbers) */
+/**
+ * One tick across instances (like the first run's `media:managed:tick`); the abort route holds it too while it reads the phase, asks the
+ * updater and marks the move failed, so an abort and a phase step never interleave. Its TTL is the worst case of one tick, from the
+ * deadlines of the calls it makes: the updater's status read (updater.ts updaterCall, 5 s), the slowest phase, then an abort sent after
+ * a failure (mediaOp, 30 s), plus a margin for the database (its own statement timeout bounds each query; a tick runs a handful).
+ * Phases: `nfo` reads the libraries, changes at most NFO_PER_CALL, then (once none is left) asks the updater for the GPU and reads and
+ * writes the encoding settings; `verify` is bounded by VERIFY_DEADLINE_MS; `switch` is one transaction and migrate-done (mediaOp).
+ */
+export const MOVE_LOCK = 'media:move:tick';
+const STATUS_READ_S = 5;
+const UPDATER_OP_S = 30;
+const SERVER_CALL_S = SERVER_CALL_MS / 1000;
+const DB_MARGIN_S = 20;
+const NFO_WORST_S = SERVER_CALL_S * (1 + NFO_PER_CALL) + UPDATER_OP_S + 2 * SERVER_CALL_S;
+const VERIFY_WORST_S = VERIFY_DEADLINE_MS / 1000;
+const SWITCH_WORST_S = UPDATER_OP_S + STATUS_READ_S;
+const LOCK_TTL_S = STATUS_READ_S + Math.max(NFO_WORST_S, VERIFY_WORST_S, SWITCH_WORST_S) + UPDATER_OP_S + DB_MARGIN_S;
+
+/** a phase failure with its code (and, for `ids_mismatch`, the numbers); `retry`: it may pass on a later tick (a server still starting) */
 class MoveFailed extends Error {
-  constructor(readonly code: string, readonly meta?: IdCheck) {
+  constructor(readonly code: string, readonly meta?: IdCheck, readonly retry = false) {
     super(`media move failed: ${code}`);
   }
 }
@@ -158,27 +171,41 @@ async function each<T>(items: readonly T[], n: number, fn: (x: T) => Promise<voi
 }
 
 /**
+ * The item references the id check samples (plan Task 7): these 8 tables and columns, each with the time of its reference. Only these;
+ * a table added later is added here by its own change.
+ */
+const ITEM_SOURCES: ReadonlyArray<{ table: string; id: string; at: string }> = [
+  { table: 'watchlist', id: 'item_id', at: 'added_at' },
+  { table: 'play_seconds', id: 'item_id', at: 'day::timestamptz' },
+  { table: 'list_items', id: 'item_id', at: 'added_at' },
+  { table: 'bookmarks', id: 'item_id', at: 'created_at' },
+  { table: 'thumbs', id: 'item_id', at: 'created_at' },
+  { table: 'ratings', id: 'item_id', at: 'created_at' },
+  { table: 'reminders', id: 'jf_item_id', at: 'created_at' },
+  { table: 'livetv_recordings', id: 'jellyfin_item_id', at: 'created_at' },
+];
+/**
+ * The sample: each table's own 200 newest distinct ids (by their newest reference there), merged, each id by its newest reference
+ * overall, the 200 newest. The same result as ranking every reference at once: an id among the overall 200 is among the 200 of the
+ * table holding its newest reference (200 ids ahead of it there would be ahead of it overall). Per table by id, not by row: a table
+ * holding one id many times (watch time per day) would otherwise crowd the others out.
+ */
+const SAMPLE_SQL = `select id from (${ITEM_SOURCES.map((t) => `(select ${t.id} as id, max(${t.at}) as at from ${t.table}
+    where ${t.id} ~ '^[0-9a-fA-F]{32}$' group by ${t.id} order by at desc, id limit $1)`).join(' union all ')}) r
+  group by id order by max(at) desc, id limit $1`;
+
+/**
  * The id check (`verify`, spec "The move" 8) against the new server with the copied key: every media server user id on `users` and
- * `profiles` must resolve; of the up to 200 newest item ids FriendFlix references (watch list, watch time, lists, bookmarks, thumbs,
+ * `profiles` must resolve; of the up to 200 newest item ids referenced in ITEM_SOURCES (watch list, watch time, lists, bookmarks, thumbs,
  * ratings, episode reminders, Live TV recordings exported to the library; each id once, by its newest reference) at least 98 % must
- * (deleted titles may be gone). Only ids shaped like media server item ids are sampled. Any lookup that fails otherwise throws.
+ * (deleted titles may be gone). Only ids shaped like media server item ids are sampled. Any lookup that fails otherwise throws (a 5xx
+ * never counts as missing).
  */
 export async function verifyIds(ctx: Pick<Ctx, 'db'>, client: Pick<JellyfinClient, 'userExists' | 'itemById'>, signal?: AbortSignal): Promise<IdCheck> {
   const users = (await ctx.db.query<{ id: string }>(
     `select jellyfin_user_id as id from users where jellyfin_user_id <> ''
      union select jellyfin_user_id from profiles where jellyfin_user_id is not null and jellyfin_user_id <> ''`)).rows.map((r) => r.id);
-  // every item reference FriendFlix keeps (db.ts); a table added later that holds media server item ids belongs here too
-  const items = (await ctx.db.query<{ id: string }>(
-    `select item_id as id from (
-       select item_id, added_at as at from watchlist
-       union all select item_id, day::timestamptz from play_seconds
-       union all select item_id, added_at from list_items
-       union all select item_id, created_at from bookmarks
-       union all select item_id, created_at from thumbs
-       union all select item_id, created_at from ratings
-       union all select jf_item_id, created_at from reminders where jf_item_id is not null
-       union all select jellyfin_item_id, created_at from livetv_recordings where jellyfin_item_id is not null
-     ) r where item_id ~ '^[0-9a-fA-F]{32}$' group by item_id order by max(at) desc, item_id limit $1`, [SAMPLE])).rows.map((r) => r.id);
+  const items = (await ctx.db.query<{ id: string }>(SAMPLE_SQL, [SAMPLE])).rows.map((r) => r.id);
   let usersMissing = 0;
   let itemsMissing = 0;
   await each(users, PARALLEL, async (id) => { if (!(await client.userExists(id, signal))) usersMissing++; });
@@ -229,10 +256,21 @@ async function copying({ rec, status }: Phase): Promise<Next> {
   throw new MoveFailed('interrupted');
 }
 
-/** `nfo` (spec "The move" 7): the NFO saver off in every library (the media are read-only), with FriendFlix's current key (copied along) */
+/**
+ * `nfo` (spec "The move" 7, and 4's "hardware acceleration from the GPU detection"): the NFO saver off in every library (the media are
+ * read-only), a few libraries per tick, with FriendFlix's current key (copied along); once none is left, the encoding settings for the
+ * move's GPU (the updater's desired state of the moved server) with stage 1's helpers. Both overwrite what they set, so the phase runs
+ * again as a whole after a restart.
+ */
 async function nfo({ ctx, status }: Phase): Promise<Next> {
   if (stillReady(status) === 'waiting') return 'waiting';
-  await nfoSaversOff(ctx.fetchImpl, MANAGED_URL, currentKey(ctx));
+  const key = currentKey(ctx);
+  if ((await nfoSaversOff(ctx.fetchImpl, MANAGED_URL, key)) > 0) return 'waiting';
+  const gpu = status!.mediaserver!.desired?.gpu;
+  if (!gpu) throw new MoveFailed('unexpected');
+  const hw = await encodingHw(ctx, gpu);
+  if (!hw.ok) throw new MoveFailed(hw.code, undefined, hw.code === 'unreachable');
+  await setEncoding(ctx.fetchImpl, MANAGED_URL, key, hw.hw);
   return 'verify';
 }
 
@@ -252,26 +290,39 @@ async function verify({ ctx, status }: Phase): Promise<Next> {
  */
 const switched = (m: MediaManaged): boolean => m.kind === 'ferrofin' && m.migratedFrom !== null;
 
+/** a stored setting as the transaction sees it (repo.ts: plain values as JSON, secrets encrypted); null when there is no row */
+async function settingRow(c: Pick<Ctx['db'], 'query'>, ctx: Pick<Ctx, 'encKey'>, key: string): Promise<string | null> {
+  const r = (await c.query<{ value: unknown; enc: string | null }>('select value, enc from settings where key = $1 for update', [key])).rows[0];
+  if (!r) return null;
+  if (r.enc) { try { return decrypt(ctx.encKey, r.enc); } catch { return null; } }
+  return typeof r.value === 'string' ? r.value : null;
+}
+
 /**
- * `switch` (spec "The move" 9): in one transaction the current address and key become the way back, the media server address becomes
- * the managed server (the key stays: it came along with the copy), managed mode Ferrofin with its setup done, and where the move came
- * from; then the updater is told (`migrate-done`: the move ends, the old Jellyfin stays stopped and recorded). A committed switch is
- * never made again (a restart after the commit only sends `migrate-done` again). Before the commit FriendFlix is unchanged, so a switch
- * that cannot be made fails (and aborts) like the phases before it.
+ * `switch` (spec "The move" 9): in one transaction the stored address and key (read in it, under a row lock) become the way back, the
+ * media server address becomes the managed server (the key stays: it came along with the copy, and the phases before used it), managed
+ * mode Ferrofin with its setup done, and where the move came from; then the updater is told (`migrate-done`: the move ends, the old
+ * Jellyfin stays stopped and recorded). A committed switch is never made again (a restart after the commit only sends `migrate-done`
+ * again). Before the commit FriendFlix is unchanged, so a switch that cannot be made fails (and aborts) like the phases before it.
+ *
+ * `no_target` to migrate-done counts as delivered only when the updater shows no move (an earlier migrate-done whose answer a restart
+ * lost); one it shows aborted (the new server removed, the old one started after the commit) is recorded as the move's warning
+ * (`updater_aborted`: Admin offers the way back); anything else waits.
  */
-async function switchPhase({ ctx, m, status }: Phase): Promise<Next> {
+async function switchPhase({ ctx, m, status }: Phase): Promise<Next | { next: MovePhase; meta: MoveWarning }> {
   if (!switched(m)) {
     if (stillReady(status) === 'waiting') return 'waiting';
     const source = status!.mediaserver!.move!.source;
     if (m.kind !== null) throw new MoveFailed('unexpected');
-    if (ctx.settings.sources().JELLYFIN_URL === 'env') throw new MoveFailed('url_pinned');
-    const key = currentKey(ctx);
-    const url = addressOnly(ctx.cfg.JELLYFIN_URL ?? '').replace(/\/+$/, '');
-    if (!url || url === MANAGED_URL) throw new MoveFailed('unexpected');
+    if (ctx.settings.sources().JELLYFIN_URL === 'env' || ctx.settings.sources().JELLYFIN_ADMIN_API_KEY === 'env') throw new MoveFailed('url_pinned');
     const committed = await inTransaction(ctx.db, async (c) => {
       const row = (await c.query<{ phase: string | null; kind: string | null }>("select move->>'phase' as phase, kind from media_managed where id = 1 for update")).rows[0];
       // an abort, or another instance that switched meanwhile
       if (row?.phase !== 'switch' || row.kind !== null) return false;
+      const url = addressOnly((await settingRow(c, ctx, 'JELLYFIN_URL')) ?? '').replace(/\/+$/, '');
+      const key = await settingRow(c, ctx, 'JELLYFIN_ADMIN_API_KEY');
+      // nothing to go back to, or the managed server already (the rollback leaves FriendFlix as it was)
+      if (!url || url === MANAGED_URL || !key) throw new MoveFailed('unexpected');
       await writeRows(c, ctx.encKey, { JELLYFIN_URL: MANAGED_URL }, null);
       await writeManaged({ db: c, encKey: ctx.encKey }, {
         externalUrl: url, externalKey: key, kind: 'ferrofin', setup: 'done', setupError: null,
@@ -286,9 +337,14 @@ async function switchPhase({ ctx, m, status }: Phase): Promise<Next> {
   }
   const r = await mediaOp(ctx, { op: 'migrate-done' });
   if (r?.status === 200) return 'requests';
-  // no move left to end: migrate-done arrived before (its answer lost in a restart)
   const error = (r?.json as { error?: unknown } | null)?.error;
-  if (r?.status === 409 && error === 'no_target') return 'requests';
+  if (r?.status !== 409 || error !== 'no_target') return 'waiting';
+  // the status after the refusal (the one read before may predate an earlier migrate-done)
+  const after = await updaterView(ctx);
+  const ms = 'status' in after ? after.status.mediaserver : null;
+  if (!ms) return 'waiting';
+  if (ms.move === null) return 'requests';
+  if (ms.move.phase === 'aborted') return { next: 'requests', meta: { warning: 'updater_aborted' } };
   return 'waiting';
 }
 
@@ -297,21 +353,29 @@ async function requests(): Promise<Next> {
   return 'done';
 }
 
-const PHASES: Partial<Record<MovePhase, (p: Phase) => Promise<Next>>> = { copying, nfo, verify, switch: switchPhase, requests };
+type PhaseResult = Next | { next: MovePhase; meta: MoveWarning };
+const PHASES: Partial<Record<MovePhase, (p: Phase) => Promise<PhaseResult>>> = { copying, nfo, verify, switch: switchPhase, requests };
 /** the phases in which any failure aborts the move (FriendFlix is unchanged; the updater's copy waits as `ready`) */
 const ABORTABLE: readonly MovePhase[] = ['nfo', 'verify'];
 
-/** the phase changes only while it is still the one this tick ran (an abort meanwhile wins) */
-async function advance(ctx: Ctx, from: MovePhase, to: MovePhase): Promise<boolean> {
-  const r = await ctx.db.query(`update media_managed set move = move || jsonb_build_object('phase', $2::text, 'error', null), updated_at = now()
-    where id = 1 and move->>'phase' = $1`, [from, to]);
+/** the phase changes only while it is still the one this tick ran (an abort meanwhile wins); its retries start over */
+async function advance(ctx: Ctx, from: MovePhase, to: MovePhase, meta?: MoveWarning): Promise<boolean> {
+  const patch = { phase: to, error: null, ...(meta ? { errorMeta: meta } : {}) };
+  const r = await ctx.db.query(`update media_managed set move = (move - 'tries') || $2::jsonb, updated_at = now()
+    where id = 1 and move->>'phase' = $1`, [from, JSON.stringify(patch)]);
+  return r.rowCount === 1;
+}
+
+/** one more retry of the phase (only while it is still in `from`) */
+async function retried(ctx: Ctx, from: MovePhase, tries: number): Promise<boolean> {
+  const r = await ctx.db.query("update media_managed set move = move || jsonb_build_object('tries', $2::int), updated_at = now() where id = 1 and move->>'phase' = $1", [from, tries]);
   return r.rowCount === 1;
 }
 
 /** marks the move failed (only while it is still in `from`) with its abort pending; false when the phase changed meanwhile */
 async function markFailed(ctx: Ctx, from: MovePhase, code: string, meta?: IdCheck): Promise<boolean> {
   const patch = { phase: 'failed', error: code, abortPending: true, ...(meta ? { errorMeta: meta } : {}) };
-  const r = await ctx.db.query("update media_managed set move = move || $2::jsonb, updated_at = now() where id = 1 and move->>'phase' = $1", [from, JSON.stringify(patch)]);
+  const r = await ctx.db.query("update media_managed set move = (move - 'tries') || $2::jsonb, updated_at = now() where id = 1 and move->>'phase' = $1", [from, JSON.stringify(patch)]);
   return r.rowCount === 1;
 }
 
@@ -325,14 +389,20 @@ async function sendAbort(ctx: Ctx, rec: MoveRecord): Promise<void> {
   await ctx.db.query("update media_managed set move = move - 'abortPending', updated_at = now() where id = 1 and move->>'phase' = 'failed'");
 }
 
-const codeOf = (e: unknown): string => {
-  if (e instanceof MoveFailed) return e.code;
-  if (e instanceof MediaSetupError) return safeCode(e.code, 'unexpected');
-  if (e instanceof JellyfinError) return e.status === 401 || e.status === 403 ? 'unauthorized' : 'unexpected';
+/** a failure's code, and whether it may be a server still starting (unreachable, a deadline, a 5xx): retried before the abort */
+function failureOf(e: unknown): { code: string; retry: boolean } {
+  if (e instanceof MoveFailed) return { code: e.code, retry: e.retry };
+  if (e instanceof MediaSetupError) {
+    return { code: safeCode(e.code, 'unexpected'), retry: e.code === 'unreachable' || (e.code === 'unexpected' && /^http_5\d\d$/.test(e.detail ?? '')) };
+  }
+  if (e instanceof JellyfinError) {
+    if (e.status === 401 || e.status === 403) return { code: 'unauthorized', retry: false };
+    return { code: e.status >= 500 ? 'unreachable' : 'unexpected', retry: e.status >= 500 };
+  }
   // fetch's network failure and a deadline
-  if (e instanceof TypeError || (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError'))) return 'unreachable';
-  return 'unexpected';
-};
+  if (e instanceof TypeError || (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError'))) return { code: 'unreachable', retry: true };
+  return { code: 'unexpected', retry: false };
+}
 
 /** whether the tick has something to do: a phase under way, or a failed move whose abort the updater has not taken yet */
 const pending = (rec: MoveRecord | null): rec is MoveRecord => rec !== null && (ACTIVE_PHASES.includes(rec.phase) || (rec.phase === 'failed' && rec.abortPending === true));
@@ -340,12 +410,13 @@ const pending = (rec: MoveRecord | null): rec is MoveRecord => rec !== null && (
 /**
  * One tick of the move after the updater's copy (spec "The move" 7–10; server.ts runs it every 10 s next to the first run's tick):
  * `idle` unless a move is under way, `locked` while another tick or the abort route holds MOVE_LOCK, `waiting` while a phase waits (the
- * copy, the updater, migrate-done), else the phase the move is on now.
+ * copy, the updater, migrate-done, more libraries, a retry), else the phase the move is on now.
  *
  * Every phase is idempotent and re-read under the lock, so a backend restart in any phase resumes it (a committed switch is not made
  * again). A ready copy always ends with exactly one of `migrate-done` (only from `switch`, after the switch committed) or `migrate-abort`
- * (any failure before the commit; sent again until the updater takes it). Phase changes are conditional on the phase this tick read: an
- * abort written meanwhile is never overwritten. Codes only: no address, key, server id or server text reaches the record or a log.
+ * (any failure before the commit; sent again until the updater takes it). A failure that may be a server still starting is retried up to
+ * MAX_RETRIES ticks first. Phase changes are conditional on the phase this tick read: an abort written meanwhile is never overwritten.
+ * Codes only: no address, key, server id or server text reaches the record or a log.
  */
 export async function moveTick(ctx: Ctx, log?: TickLog): Promise<MovePhase | 'idle' | 'locked' | 'waiting'> {
   if (!pending((await readManaged(ctx.db)).move)) return 'idle';
@@ -362,13 +433,18 @@ export async function moveTick(ctx: Ctx, log?: TickLog): Promise<MovePhase | 'id
       return 'failed';
     }
     const run = PHASES[rec.phase]!;
-    let next: Next;
+    let result: PhaseResult;
     try {
-      next = await run({ ctx, m, rec, status });
+      result = await run({ ctx, m, rec, status });
     } catch (e) {
       // the switch and the copy fail only on purpose (a DB error retries the phase); the phases before the switch on anything
       if (!(e instanceof MoveFailed) && !ABORTABLE.includes(rec.phase)) throw e;
-      const code = codeOf(e);
+      const { code, retry } = failureOf(e);
+      const tries = rec.tries ?? 0;
+      if (retry && tries < MAX_RETRIES) {
+        log?.warn({ phase: rec.phase, code, try: tries + 1 }, 'media move phase failed; trying again');
+        return (await retried(ctx, rec.phase, tries + 1)) ? 'waiting' : (await readManaged(ctx.db)).move?.phase ?? 'idle';
+      }
       log?.warn({ phase: rec.phase, code }, 'media move failed; aborting it');
       if (await markFailed(ctx, rec.phase, code, e instanceof MoveFailed ? e.meta : undefined)) {
         await sendAbort(ctx, { ...rec, phase: 'failed', error: code });
@@ -376,8 +452,9 @@ export async function moveTick(ctx: Ctx, log?: TickLog): Promise<MovePhase | 'id
       }
       return (await readManaged(ctx.db)).move?.phase ?? 'idle';
     }
-    if (next === 'waiting') return 'waiting';
-    if (await advance(ctx, rec.phase, next)) return next;
+    if (result === 'waiting') return 'waiting';
+    const { next, meta } = typeof result === 'string' ? { next: result, meta: undefined } : result;
+    if (await advance(ctx, rec.phase, next, meta)) return next;
     return (await readManaged(ctx.db)).move?.phase ?? 'idle';
   } finally {
     await ctx.kv.delIfEquals(MOVE_LOCK, token).catch(() => undefined);

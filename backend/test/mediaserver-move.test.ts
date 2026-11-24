@@ -41,8 +41,11 @@ const fake = {
   bodies: [] as Array<Record<string, any>>,
   /** ops the updater refuses with this code */
   refuse: {} as Record<string, string>,
+  /** the render nodes the gpu op detects */
+  dri: [{ node: 'renderD129', gid: 44, vendor: 'intel' }] as Array<Record<string, unknown>>,
 };
-const resetFake = () => Object.assign(fake, { media: media(), job: job('mediaserver-migrate', 'succeeded', COPY_JOB), busy: false, up: true, bodies: [], refuse: {} });
+const resetFake = () => Object.assign(fake, { media: media(), job: job('mediaserver-migrate', 'succeeded', COPY_JOB), busy: false, up: true, bodies: [], refuse: {},
+  dri: [{ node: 'renderD129', gid: 44, vendor: 'intel' }] });
 const opBodies = (op: string) => fake.bodies.filter((b) => b.op === op);
 
 // ---------------------------------------------------------------- the fake Ferrofin (the copied database)
@@ -55,10 +58,14 @@ const server = {
   items: new Set<string>(),
   libs: [] as Lib[],
   calls: [] as Call[],
+  encoding: { EncoderAppPath: '/usr/lib/jellyfin-ffmpeg/ffmpeg', HardwareAccelerationType: 'none' } as Record<string, unknown>,
   /** runs before a call is answered (a concurrent writer) */
   before: null as ((c: Call) => Promise<void>) | null,
+  /** a status to answer instead (a server still starting: 503) */
+  fail: null as ((c: Call) => number | null) | null,
 };
-const resetServer = () => Object.assign(server, { up: true, users: new Set<string>(), items: new Set<string>(), libs: [], calls: [], before: null });
+const resetServer = () => Object.assign(server, { up: true, users: new Set<string>(), items: new Set<string>(), libs: [], calls: [],
+  encoding: { EncoderAppPath: '/usr/lib/jellyfin-ffmpeg/ffmpeg', HardwareAccelerationType: 'none' }, before: null, fail: null });
 const calls = (method: string, path: string) => server.calls.filter((c) => c.method === method && c.path === path);
 const tokenOf = (h: string | null) => /Token="([^"]*)"/.exec(h ?? '')?.[1] ?? null;
 
@@ -66,6 +73,8 @@ function serverAnswer(c: Call): Response {
   const j = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
   const none = (status = 204) => new Response(null, { status });
   if (c.token !== KEY) return none(401);
+  const failed = server.fail?.(c);
+  if (failed) return none(failed);
   if (c.method === 'GET' && c.path.startsWith('/Users/')) {
     const id = c.path.slice('/Users/'.length);
     return server.users.has(id) ? j({ Id: id, Name: 'x', Policy: {} }) : none(404);
@@ -78,6 +87,8 @@ function serverAnswer(c: Call): Response {
       lib.LibraryOptions = c.body.LibraryOptions;
       return none();
     }
+    case 'GET /System/Configuration/encoding': return j(server.encoding);
+    case 'POST /System/Configuration/encoding': server.encoding = c.body; return none();
     case 'GET /Items': {
       const id = c.query.get('ids')!;
       return j({ Items: server.items.has(id) ? [{ Id: id, Name: 'x', Type: 'Movie' }] : [] });
@@ -106,6 +117,7 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
   fake.bodies.push(body);
   const refused = fake.refuse[body.op];
   if (refused) return j({ error: refused }, 409);
+  if (body.op === 'gpu') return j({ dri: fake.dri, nvidia: false });
   if (body.op === 'migrate-done') {
     if (fake.media.move?.phase !== 'ready') return j({ error: 'no_target' }, 409);
     fake.media.move = null;
@@ -208,6 +220,9 @@ describe('the move: the backend phases after the copy', () => {
     expect(opBodies('migrate-done')).toEqual([{ op: 'migrate-done' }]);
     expect(opBodies('migrate-abort')).toEqual([]);
     expect(env.ctx.cfg.JELLYFIN_URL).toBe(MANAGED);
+    // the encoding for the move's GPU (none here: software), the other fields kept
+    expect(server.encoding).toEqual({ EncoderAppPath: '/usr/lib/jellyfin-ffmpeg/ffmpeg', HardwareAccelerationType: 'none', EnableTonemapping: true, TonemappingAlgorithm: 'bt2390', HardwareDecodingCodecs: [] });
+    expect(opBodies('gpu')).toEqual([]);
     // every linked user checked, every item of the sample
     expect(calls('GET', `/Users/${hex(0xa1)}`)).toHaveLength(1);
     expect(calls('GET', `/Users/${hex(0xa2)}`)).toHaveLength(1);
@@ -285,8 +300,15 @@ describe('the move: the backend phases after the copy', () => {
       server.up = false;
       fake.refuse['migrate-abort'] = 'busy';
       await seedMove('verify');
+      // a server still starting: three more tries, then the abort
+      for (let i = 1; i <= 3; i++) {
+        expect(await tick()).toBe('waiting');
+        expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'verify', tries: i });
+      }
+      expect(opBodies('migrate-abort')).toEqual([]);
       expect(await tick()).toBe('failed');
       expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'unreachable', abortPending: true });
+      expect((await readManaged(env.pool)).move!.tries).toBeUndefined();
       // the abort is sent again until the updater takes it
       expect(await tick()).toBe('failed');
       expect(opBodies('migrate-abort')).toHaveLength(2);
@@ -338,6 +360,152 @@ describe('the move: the backend phases after the copy', () => {
     expect(r.users).toEqual({ total: 1, missing: 0 });
     expect(r.items).toEqual({ sampled: 8, missing: 0 });
     expect(calls('GET', '/Items').map((c) => c.query.get('ids')).sort()).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map(hex));
+  });
+
+  describe('hardware encoding in the nfo phase (c2)', () => {
+    it('the move\'s GPU: the detected render node and vendor, again after a restart', async () => {
+      library({ SaveLocalMetadata: false, MetadataSavers: [] });
+      fake.media.desired.gpu = 'dri';
+      await seedMove('nfo');
+      expect(await tick()).toBe('verify');
+      expect(opBodies('gpu')).toEqual([{ op: 'gpu' }]);
+      expect(server.encoding).toMatchObject({ EncoderAppPath: '/usr/lib/jellyfin-ffmpeg/ffmpeg', HardwareAccelerationType: 'qsv', VaapiDevice: '/dev/dri/renderD129', EnableTonemapping: true });
+      // the same phase again: the same settings
+      const first = structuredClone(server.encoding);
+      await seedMove('nfo');
+      expect(await tick()).toBe('verify');
+      expect(server.encoding).toEqual(first);
+    });
+
+    it('the savers first, a few libraries per tick; the encoding once none is left', async () => {
+      server.libs = Array.from({ length: 8 }, (_, i) => ({ Name: `L${i}`, ItemId: hex(0xf00 + i), Locations: [`/m${i}`], LibraryOptions: { SaveLocalMetadata: true } }));
+      await seedMove('nfo');
+      expect(await tick()).toBe('waiting');
+      expect(calls('POST', '/Library/VirtualFolders/LibraryOptions')).toHaveLength(6);
+      expect(calls('POST', '/System/Configuration/encoding')).toEqual([]);
+      expect(await tick()).toBe('verify');
+      expect(calls('POST', '/Library/VirtualFolders/LibraryOptions')).toHaveLength(8);
+      expect(calls('POST', '/System/Configuration/encoding')).toHaveLength(1);
+    });
+
+    it('an encoding failure counts like any nfo failure: retried, then the abort', async () => {
+      library({ SaveLocalMetadata: false, MetadataSavers: [] });
+      server.fail = (c) => (c.path === '/System/Configuration/encoding' && c.method === 'POST' ? 503 : null);
+      await seedMove('nfo');
+      expect([await tick(), await tick(), await tick()]).toEqual(['waiting', 'waiting', 'waiting']);
+      expect(await tick()).toBe('failed');
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'unexpected' });
+      expect(opBodies('migrate-abort')).toHaveLength(1);
+      expect(env.ctx.cfg.JELLYFIN_URL).toBe(OLD);
+    });
+
+    it('a GPU detection the updater refuses aborts at once; one it cannot answer is retried', async () => {
+      library({ SaveLocalMetadata: false, MetadataSavers: [] });
+      fake.media.desired.gpu = 'dri';
+      fake.refuse.gpu = 'no_network';
+      await seedMove('nfo');
+      expect(await tick()).toBe('failed');
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'no_network' });
+      resetFake();
+      fake.media.desired.gpu = 'dri';
+      fake.refuse.gpu = 'unreachable_answer';
+      await seedMove('nfo');
+      expect(await tick()).toBe('waiting');
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'nfo', tries: 1 });
+      delete fake.refuse.gpu;
+      expect(await tick()).toBe('verify');
+      // the next phase starts its tries over
+      expect((await readManaged(env.pool)).move!.tries).toBeUndefined();
+    });
+  });
+
+  describe('a server still starting (m2, m6)', () => {
+    it('two 503s, then the check passes', async () => {
+      await seedUser({ user: hex(0xa1) });
+      server.users = new Set([hex(0xa1)]);
+      let n = 0;
+      server.fail = (c) => (c.path.startsWith('/Users/') && ++n <= 2 ? 503 : null);
+      await seedMove('verify');
+      expect(await tick()).toBe('waiting');
+      expect(await tick()).toBe('waiting');
+      expect(await tick()).toBe('switch');
+      expect((await readManaged(env.pool)).move!.tries).toBeUndefined();
+      expect(opBodies('migrate-abort')).toEqual([]);
+    });
+
+    it('5xx on every lookup: never counted missing, the fourth failure aborts', async () => {
+      const uid = await seedUser({ user: hex(0xa1) });
+      server.users = new Set([hex(0xa1)]);
+      await seedItems(uid, 3);
+      for (let i = 1; i <= 3; i++) server.items.add(hex(i));
+      server.fail = (c) => (c.path === '/Items' ? 500 : null);
+      await seedMove('verify');
+      expect([await tick(), await tick(), await tick()]).toEqual(['waiting', 'waiting', 'waiting']);
+      expect(await tick()).toBe('failed');
+      const m = await readManaged(env.pool);
+      expect(m.move).toMatchObject({ phase: 'failed', error: 'unreachable' });
+      expect(m.move!.errorMeta).toBeUndefined();
+      expect(opBodies('migrate-abort')).toHaveLength(1);
+      // the same for the user lookup
+      resetFake();
+      server.fail = (c) => (c.path.startsWith('/Users/') ? 502 : null);
+      await seedMove('verify');
+      expect([await tick(), await tick(), await tick(), await tick()]).toEqual(['waiting', 'waiting', 'waiting', 'failed']);
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'unreachable' });
+      expect((await readManaged(env.pool)).move!.errorMeta).toBeUndefined();
+    });
+
+    it('no item referenced and every user present: the check passes', async () => {
+      await seedUser({ user: hex(0xa1), profile: hex(0xa2) });
+      server.users = new Set([hex(0xa1), hex(0xa2)]);
+      await seedMove('verify');
+      expect(await tick()).toBe('switch');
+      expect(calls('GET', '/Items')).toEqual([]);
+      const client = new JellyfinClient(MANAGED, KEY, fetchImpl);
+      expect(await verifyIds(env.ctx, client)).toEqual({ users: { total: 2, missing: 0 }, items: { sampled: 0, missing: 0 } });
+    });
+  });
+
+  it('the sample ranks ids, not rows: one id referenced on many days never crowds the others out (m1)', async () => {
+    const uid = await seedUser({ user: hex(0xa1) });
+    server.users = new Set([hex(0xa1)]);
+    // watch time: items 1–3 on each of the last 300 days, items 4–250 once, before that
+    await env.pool.query(`insert into play_seconds(user_id, item_id, day, seconds, item_name)
+      select $1, lpad(to_hex(i), 32, '0'), current_date - d, 60, 'x' from generate_series(1, 3) i, generate_series(0, 299) d`, [uid]);
+    await env.pool.query(`insert into play_seconds(user_id, item_id, day, seconds, item_name)
+      select $1, lpad(to_hex(i), 32, '0'), current_date - 300 - i, 60, 'x' from generate_series(4, 250) i`, [uid]);
+    for (let i = 1; i <= 250; i++) server.items.add(hex(i));
+    const client = new JellyfinClient(MANAGED, KEY, fetchImpl);
+    expect(await verifyIds(env.ctx, client)).toEqual({ users: { total: 1, missing: 0 }, items: { sampled: 200, missing: 0 } });
+    expect(calls('GET', '/Items').map((c) => c.query.get('ids')).sort()).toEqual(Array.from({ length: 200 }, (_, i) => hex(i + 1)));
+  });
+
+  it('the way back is the stored address, read in the switch transaction (m4)', async () => {
+    await seedMove('switch');
+    // another instance saved a new address that this one has not reloaded yet
+    await env.pool.query("update settings set value = to_jsonb('http://jellyfin2.example.com:8096'::text) where key = 'JELLYFIN_URL'");
+    expect(env.ctx.cfg.JELLYFIN_URL).toBe(OLD);
+    expect(await tick()).toBe('requests');
+    expect((await readManaged(env.pool)).externalUrl).toBe('http://jellyfin2.example.com:8096');
+    expect(await externalKey(env.ctx)).toBe(KEY);
+  });
+
+  it('migrate-done refused after the commit: delivered only without a move, a warning for an aborted one (m5)', async () => {
+    await seedMove('switch');
+    fake.refuse['migrate-done'] = 'busy';
+    expect(await tick()).toBe('waiting');
+    // the updater still settles a move: wait
+    fake.refuse['migrate-done'] = 'no_target';
+    fake.media.move = updMove('running');
+    expect(await tick()).toBe('waiting');
+    expect((await readManaged(env.pool)).move!.phase).toBe('switch');
+    // it shows the move aborted: the switch stands, with the warning (the way back applies)
+    fake.media.move = updMove('aborted');
+    expect(await tick()).toBe('requests');
+    expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'requests', errorMeta: { warning: 'updater_aborted' } });
+    expect(await tick()).toBe('done');
+    expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'done', errorMeta: { warning: 'updater_aborted' } });
+    expect(opBodies('migrate-abort')).toEqual([]);
   });
 
   it('switch keeps the key and saves the way back', async () => {

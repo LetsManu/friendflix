@@ -164,6 +164,30 @@ export function mediaOp(ctx: Ctx, body: Record<string, unknown>): Promise<{ stat
   return updaterCall(ctx, 'POST', '/v1/mediaserver', JSON.stringify(body), 30_000);
 }
 
+const RENDER_NODE = /^renderD[0-9]{1,4}$/;
+/** the hardware a server's encoding settings are made for (mediaserver/serverApi.ts setEncoding) */
+export interface EncodingHw { gpu: 'off' | 'dri' | 'nvidia'; vendor: 'intel' | 'amd' | 'other' | null; node: string | null }
+/**
+ * The encoding hardware for the server's GPU choice (spec "GPU"; stage 1's `hwaccel` step and a move's `nfo` phase): for a render node the
+ * updater's detection names it and its vendor (a known vendor first, else the first node). The updater's refusal is its code
+ * (`unreachable` when there is none or it is not one of MEDIA_ERRORS).
+ */
+export async function encodingHw(ctx: Ctx, gpu: EncodingHw['gpu']): Promise<{ ok: true; hw: EncodingHw } | { ok: false; code: string }> {
+  if (gpu !== 'dri') return { ok: true, hw: { gpu, vendor: null, node: null } };
+  const r = await mediaOp(ctx, { op: 'gpu' });
+  if (r?.status !== 200) {
+    const e = (r?.json as { error?: unknown } | null)?.error;
+    return { ok: false, code: typeof e === 'string' && (MEDIA_ERRORS as readonly string[]).includes(e) ? e : 'unreachable' };
+  }
+  const dri = (r.json as { dri?: unknown } | null)?.dri;
+  const nodes = (Array.isArray(dri) ? dri : []).flatMap((d): Array<{ node: string; vendor: 'intel' | 'amd' | 'other' }> => {
+    const o = (d ?? {}) as Record<string, unknown>;
+    return typeof o.node === 'string' && RENDER_NODE.test(o.node) ? [{ node: o.node, vendor: o.vendor === 'intel' || o.vendor === 'amd' ? o.vendor : 'other' }] : [];
+  });
+  const pick = nodes.find((n) => n.vendor !== 'other') ?? nodes[0];
+  return { ok: true, hw: { gpu, vendor: pick?.vendor ?? null, node: pick?.node ?? null } };
+}
+
 /** the job action an op starts (updater/src/mediaserver/jobs.ts): a move's abort is (or answers) the move's job, the source start its own */
 const JOB_OF: Record<string, string> = { 'finish-setup': 'finish', 'migrate-abort': 'migrate', 'source-start': 'source' };
 const jobAction = (op: string) => `mediaserver-${JOB_OF[op] ?? op}` as const;

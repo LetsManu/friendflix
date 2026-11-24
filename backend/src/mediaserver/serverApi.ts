@@ -14,7 +14,8 @@ import type { LibraryEntry } from './store.js';
 
 /** the managed server on the internal `media` network (hostname `mediaserver`, never published) */
 export const MANAGED_URL = 'http://mediaserver:8096';
-const TIMEOUT_MS = 5_000;
+/** each request's deadline (a move's tick lock is sized from it: mediaserver/move.ts) */
+export const TIMEOUT_MS = 5_000;
 const DEVICE_ID = 'friendflix-managed';
 const ITEM_ID = /^[0-9a-f]{32}$/;
 const SERVER_ID = /^[0-9a-f]{32}$/;
@@ -47,7 +48,8 @@ async function call(f: typeof fetch, base: string, method: 'GET' | 'POST' | 'DEL
   cancel(r);
   if (r.status >= 300 && r.status < 400) throw new MediaSetupError('unreachable', 'redirect');
   if (r.status === 401 || r.status === 403) throw new MediaSetupError('unauthorized');
-  throw new MediaSetupError('unexpected');
+  // the status as detail (a server still starting answers 5xx; a move's phases retry those)
+  throw new MediaSetupError('unexpected', `http_${r.status}`);
 }
 
 /** a JSON body within the deadline; a stalled or oversized body is unreachable */
@@ -204,16 +206,19 @@ export async function refreshLibraries(f: typeof fetch, base: string, key: strin
   await call(f, base, 'POST', '/Library/Refresh', { key }).then(done);
 }
 
+/** the libraries one call of nfoSaversOff changes at most (bounds a tick: mediaserver/move.ts sizes its lock from it) */
+export const NFO_PER_CALL = 6;
+
 /**
  * A move's `nfo` phase (stage 2 "The move" 7; the recipe in mediaserver/try.sh): the migrated media are mounted read-only, so every
  * library whose options save local metadata or name metadata savers (or name none: the server's defaults, the NFO saver among them)
  * gets `SaveLocalMetadata: false` and `MetadataSavers: []`, its other options kept. Libraries already off are left alone, so a second
- * run posts nothing. Returns how many libraries were changed.
+ * run posts nothing. At most `max` libraries per call; returns how many are still on afterwards (0: done; the caller calls again).
  */
-export async function nfoSaversOff(f: typeof fetch, base: string, key: string): Promise<number> {
+export async function nfoSaversOff(f: typeof fetch, base: string, key: string, max = NFO_PER_CALL): Promise<number> {
   const list = await json(await call(f, base, 'GET', '/Library/VirtualFolders', { key }), 1024 * 1024);
   if (!Array.isArray(list)) throw new MediaSetupError('unexpected');
-  let changed = 0;
+  let left = 0;
   for (const x of list) {
     const o = obj(x);
     const options = obj(o?.LibraryOptions) ?? {};
@@ -221,8 +226,9 @@ export async function nfoSaversOff(f: typeof fetch, base: string, key: string): 
     if (options.SaveLocalMetadata === false && Array.isArray(savers) && savers.length === 0) continue;
     // a library without an id cannot be changed: its saver would stay on (fail closed)
     if (typeof o?.ItemId !== 'string' || !ITEM_ID.test(o.ItemId)) throw new MediaSetupError('unexpected');
+    if (max <= 0) { left++; continue; }
     await call(f, base, 'POST', '/Library/VirtualFolders/LibraryOptions', { key, body: { Id: o.ItemId, LibraryOptions: { ...options, SaveLocalMetadata: false, MetadataSavers: [] } } }).then(done);
-    changed++;
+    max--;
   }
-  return changed;
+  return left;
 }
