@@ -11,7 +11,7 @@ import { addressOnly } from '../media/address.js';
 import { MediaSetupError } from '../media/types.js';
 import { BACKUP_ID, decodePassphrase, mediaDownload, mediaOp, mediaScan, mediaUpload, parseMediaStatus, startMediaJob, type MediaBackup, type MediaStatus } from '../mediaserver/client.js';
 import { recordApplyFirstRun } from '../mediaserver/firstRun.js';
-import { ACTIVE_PHASES, goBack, SWITCHED_PHASES } from '../mediaserver/move.js';
+import { ACTIVE_PHASES, freshScan, goBack, readScan, scanRunning, startScan, SWITCHED_PHASES, type MoveScanRecord } from '../mediaserver/move.js';
 import { libraryReferences, referenced } from '../mediaserver/references.js';
 import { deleteLibrary, managedKey, MANAGED_URL, publicInfo, renameLibrary } from '../mediaserver/serverApi.js';
 import { adminPassword, claimAdminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged, type MigratedFrom, type MoveRecord, type SetupStep } from '../mediaserver/store.js';
@@ -34,10 +34,11 @@ export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 
  * on, the connection is not pinned in .env and the updater can run the media server; `reason` why it cannot (null: nothing keeps it from
  * being offered, or there is nothing to move: no linked ids, a managed server, Plex's own stage); `state` the move as the backend follows
  * it (with the step and abort flag of the updater's job); `migratedFrom` the Jellyfin a move came from; `sourceState` that container's
- * Docker state (`missing` once it is gone); `requestsWarning` the request service still points at the old Jellyfin.
+ * Docker state (`missing` once it is gone); `requestsWarning` the request service still points at the old Jellyfin; `scan` the
+ * background scan of the chosen Jellyfin (mediaserver/move.ts MoveScanRecord). Not offered while a move is under way.
  */
 export interface MoveView {
-  offered: boolean; reason: OfferReason | null;
+  offered: boolean; reason: OfferReason | null; scan: MoveScanRecord | null;
   state: (Omit<MoveRecord, 'requestsWarning'> & { step: MediaStep | null; abort: boolean }) | null;
   migratedFrom: MigratedFrom | null; sourceState: string | null; requestsWarning: boolean;
 }
@@ -123,17 +124,24 @@ function currentJellyfin(ctx: Ctx): string | null {
   return url && url !== MANAGED_URL ? url : null;
 }
 
-/** whether the move is offered (MoveView): the updater's reasons first, then an external Jellyfin with linked ids */
-async function moveOffer(ctx: Ctx, view: UpdaterView, managed: MediaManaged): Promise<Pick<MoveView, 'offered' | 'reason'>> {
+/**
+ * a move under way: the backend follows one (its active phases), or the updater holds an unfinished one (running, or copied and waiting
+ * for the backend; an aborted or done move is history)
+ */
+const moving = (managed: MediaManaged, status: MediaStatus | null): boolean =>
+  (managed.move !== null && ACTIVE_PHASES.includes(managed.move.phase)) || status?.move?.phase === 'running' || status?.move?.phase === 'ready';
+
+/** whether the move is offered (MoveView): the updater's reasons first, then an external Jellyfin with linked ids and no move under way */
+async function moveOffer(ctx: Ctx, view: UpdaterView, managed: MediaManaged, status: MediaStatus | null): Promise<Pick<MoveView, 'offered' | 'reason'>> {
   const reason = updaterReason(ctx, view);
   if (reason) return { offered: false, reason };
-  return { offered: managed.kind === null && currentJellyfin(ctx) !== null && (await idsInUse(ctx.db)), reason: null };
+  return { offered: managed.kind === null && !moving(managed, status) && currentJellyfin(ctx) !== null && (await idsInUse(ctx.db)), reason: null };
 }
 
-function moveView(managed: MediaManaged, status: MediaStatus | null, offer: Pick<MoveView, 'offered' | 'reason'>): MoveView {
+function moveView(managed: MediaManaged, status: MediaStatus | null, offer: Pick<MoveView, 'offered' | 'reason'>, scan: MoveScanRecord | null): MoveView {
   const rec = managed.move;
   return {
-    ...offer,
+    ...offer, scan,
     state: rec ? { phase: rec.phase, error: rec.error, jobId: rec.jobId, startedAt: rec.startedAt, step: status?.move?.step ?? null, abort: status?.move?.abort === true } : null,
     migratedFrom: managed.migratedFrom, sourceState: status?.source?.state ?? null, requestsWarning: rec?.requestsWarning === true,
   };
@@ -149,7 +157,7 @@ async function load(ctx: Ctx, read?: UpdaterView): Promise<Loaded> {
 export async function mediaView(ctx: Ctx, read?: UpdaterView): Promise<MediaView> {
   const { view, managed, status } = await load(ctx, read);
   const reason = await offerReason(ctx, view, managed);
-  const move = moveView(managed, status, await moveOffer(ctx, view, managed));
+  const move = moveView(managed, status, await moveOffer(ctx, view, managed, status), await readScan(ctx));
   return {
     mode: managed.kind ? 'managed' : 'external',
     offer: { managed: reason === null, reason },
@@ -445,7 +453,9 @@ function ops(ctx: Ctx) {
  */
 async function moveGate(ctx: Ctx): Promise<{ error: string } | { status: MediaStatus | null; managed: MediaManaged; serverId: string }> {
   const { view, managed, status } = await load(ctx);
-  const offer = await moveOffer(ctx, view, managed);
+  // one move at a time: a move under way is `busy`, not "not offered"
+  if (moving(managed, status) && !updaterReason(ctx, view)) return { error: 'busy' };
+  const offer = await moveOffer(ctx, view, managed, status);
   if (!offer.offered) return { error: offer.reason ?? 'not_offered' };
   const info = await publicInfo(ctx.fetchImpl, currentJellyfin(ctx)!);
   return info?.id ? { status, managed, serverId: info.id } : { error: 'jellyfin_unreachable' };
@@ -464,14 +474,21 @@ async function detectedGpu(ctx: Ctx): Promise<(typeof GPUS)[number]> {
  * its abort and the way back. Codes only; the server id the backend adds is never part of an answer.
  */
 function moveOps(ctx: Ctx) {
+  // the candidate list answers at once (each candidate's id scan: at most 45 s); the sized scan of one candidate runs in the background
+  // (mediaserver/move.ts startScan; the view shows it as move.scan); one scan at a time
   const scan = op({
     body: S.moveScan,
     run: async (b, reply) => {
       const gate = await moveGate(ctx);
       if ('error' in gate) return reply.code(409).send({ error: gate.error });
-      const r = await mediaScan(ctx, b.source, gate.serverId);
+      if (await scanRunning(ctx)) return reply.code(409).send({ error: 'busy' });
+      if (b.source !== undefined) {
+        const started = await startScan(ctx, b.source, gate.serverId);
+        return started ? reply.code(202).send({ scan: started }) : reply.code(409).send({ error: 'busy' });
+      }
+      const r = await mediaScan(ctx, undefined, gate.serverId);
       if (!r.ok) return reply.code(r.status).send({ error: r.error, outside: r.outside, refused: r.refused, nested: r.nested });
-      return { candidates: r.candidates, scan: r.scan };
+      return { candidates: r.candidates };
     },
   });
 
@@ -481,7 +498,8 @@ function moveOps(ctx: Ctx) {
     run: async (b, reply, actor) => {
       const gate = await moveGate(ctx);
       if ('error' in gate) return reply.code(409).send({ error: gate.error });
-      if (gate.managed.move && ACTIVE_PHASES.includes(gate.managed.move.phase)) return reply.code(409).send({ error: 'busy' });
+      // the admin confirmed what a scan of this very container showed, a short while ago
+      if (!(await freshScan(ctx, b.source))) return reply.code(409).send({ error: 'scan_required' });
       const gpu = await detectedGpu(ctx);
       const user = gate.status?.desired ? { uid: gate.status.desired.uid, gid: gate.status.desired.gid } : MOVE_USER;
       const body = { op: 'migrate', source: b.source, trickplay: b.trickplay, gpu, uid: user.uid, gid: user.gid, tz: containerTz(), serverId: gate.serverId };
@@ -502,8 +520,12 @@ function moveOps(ctx: Ctx) {
       const phase = m.move?.phase ?? null;
       if (phase && SWITCHED_PHASES.includes(phase)) return reply.code(409).send({ error: 'not_abortable' });
       const r = await startMediaJob(ctx, { op: 'migrate-abort' }, actor, { phase }, 'mediaserver.move_abort');
-      // the copy's job reports its own end; the backend's phases end here
-      if (r.ok && m.move && (phase === 'nfo' || phase === 'verify')) await writeManaged(ctx, { move: { ...m.move, phase: 'failed', error: 'move_aborted' } });
+      // an abort the copy's own job carries out is read from that job's end; one the updater runs as a new job (the copy was done,
+      // whatever phase the backend shows) ends the move here, so no phase continues after it
+      const ownJob = r.ok && 'job' in r && r.job.id === m.move?.jobId;
+      if (r.ok && m.move && ACTIVE_PHASES.includes(m.move.phase) && (phase === 'nfo' || phase === 'verify' || !ownJob)) {
+        await writeManaged(ctx, { move: { ...m.move, phase: 'failed', error: 'move_aborted' } });
+      }
       return jobAnswer(reply, r);
     },
   });
@@ -530,7 +552,7 @@ const LIMITS = {
   apply: limit(3, '2 minutes', 'apply'), action: limit(3, '2 minutes', 'action'), clear: limit(3, '2 minutes', 'base-clear'), logs: limit(20, '1 minute', 'logs'),
   libraries: limit(20, '1 minute', 'libraries'), libraryDelete: limit(3, '2 minutes', 'library-delete'), mode: limit(3, '2 minutes', 'mode'),
   download: limit(3, '2 minutes', 'backup-download'), upload: limit(3, '10 minutes', 'backup-upload'),
-  moveScan: limit(3, '2 minutes', 'move-scan'), move: limit(3, '2 minutes', 'move'), moveAbort: limit(3, '2 minutes', 'move-abort'), back: limit(3, '2 minutes', 'back'),
+  moveScan: limit(6, '2 minutes', 'move-scan'), move: limit(3, '2 minutes', 'move'), moveAbort: limit(3, '2 minutes', 'move-abort'), back: limit(3, '2 minutes', 'back'),
 };
 
 type Hook = (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;

@@ -33,7 +33,7 @@ const managed = (kind: MediaManaged['kind'] = 'jellyfin'): MediaManaged => ({
 const viewOf = (s: MediaStatus | null, kind: MediaManaged['kind'] = 'jellyfin'): MediaView => ({
   mode: kind ? 'managed' : 'external', offer: { managed: true, reason: null }, kinds: { ferrofin: false, jellyfin: true }, status: s, managed: managed(kind),
   external: { url: null, hasKey: false }, livetvLibraryPath: null,
-  move: { offered: false, reason: null, state: null, migratedFrom: null, sourceState: null, requestsWarning: false },
+  move: { offered: false, reason: null, scan: null, state: null, migratedFrom: null, sourceState: null, requestsWarning: false },
 });
 const coreJob = (o: Partial<UpdaterJob>): UpdaterJob => ({
   id: '00000000000000a1', action: 'update', state: 'succeeded', step: null, steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'ok', rollback: 'skipped' },

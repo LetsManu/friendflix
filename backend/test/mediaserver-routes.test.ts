@@ -39,6 +39,8 @@ const fake = {
   /** what the current Jellyfin answers at /System/Info/Public (null: it does not answer) */
   info: { Id: SERVER_ID, StartupWizardCompleted: true } as Record<string, unknown> | null,
   infoCalls: [] as string[],
+  /** while set, the sized scan answers only once it resolves */
+  scanHold: null as Promise<void> | null,
 };
 const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const u = new URL(String(input));
@@ -55,6 +57,7 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
   if (u.pathname !== '/v1/mediaserver') return j({ error: 'not_found' }, 404);
   const body = JSON.parse(String(init?.body)) as Record<string, any>;
   fake.bodies.push(body);
+  if (body.op === 'migrate-scan' && body.source && fake.scanHold) await fake.scanHold;
   const fixed = fake.answer[body.op];
   if (fixed) return j(fixed.json, fixed.status);
   switch (body.op) {
@@ -75,7 +78,7 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
 
 const ctxPatch = (c: TestEnv['ctx']) => { c.fetchImpl = fetchImpl; c.cfg = { ...c.cfg, UPDATER_URL: 'http://updater:7070', INTERNAL_SECRET: SECRET }; };
 const opBodies = (op: string) => fake.bodies.filter((b) => b.op === op);
-const resetFake = () => { Object.assign(fake, { media: media(), answer: {}, bodies: [], info: { Id: SERVER_ID, StartupWizardCompleted: true }, infoCalls: [] }); };
+const resetFake = () => { Object.assign(fake, { media: media(), answer: {}, bodies: [], info: { Id: SERVER_ID, StartupWizardCompleted: true }, infoCalls: [], scanHold: null }); };
 const FOLDERS = [{ rel: 'Filme', name: 'Filme', type: 'movies' }, { rel: 'Serien/Neu', name: 'Serien', type: 'tvshows' }];
 const applyBody = (extra: Record<string, unknown> = {}) => ({ kind: 'ferrofin', folders: FOLDERS, uid: 1000, gid: 1000, gpu: 'dri', mediaGid: null, egress: true, ...extra });
 
@@ -110,6 +113,7 @@ describe('admin routes', () => {
     admin = await env.login(ADMIN);
     resetFake();
     await env.pool.query('delete from audit_log; delete from media_managed');
+    await env.kv.del('media:move:scan');
     for (const k of await env.kv.keys('updater:pending:')) await env.kv.del(k);
   });
 
@@ -382,11 +386,16 @@ describe('admin routes', () => {
   describe('the move from an external Jellyfin', () => {
     const linked = () => env.pool.query("update users set jellyfin_user_id = 'j1'");
     const moveView = async () => (await req(admin, 'GET', '')).json().move;
+    /** a done scan of the source, as the sheet gets one before the move */
+    const scanned = async (source = CONTAINER) => {
+      expect((await req(admin, 'POST', '/move/scan', { source })).statusCode).toBe(202);
+      await vi.waitFor(async () => expect((await moveView()).scan?.state).toBe('done'));
+    };
 
     it('move offered only for an external Jellyfin with linked ids', async () => {
       await linked();
       fake.media = { ...media(), source: { name: 'jellyfin', state: 'exited', version: '10.10.3' } };
-      expect(await moveView()).toEqual({ offered: true, reason: null, state: null, migratedFrom: null, sourceState: 'exited', requestsWarning: false });
+      expect(await moveView()).toEqual({ offered: true, reason: null, scan: null, state: null, migratedFrom: null, sourceState: 'exited', requestsWarning: false });
       // the fresh managed server is refused for the same install
       expect((await req(admin, 'GET', '')).json().offer).toEqual({ managed: false, reason: 'ids_in_use' });
       // nothing depends on the ids: nothing to move (a fresh server is offered instead)
@@ -401,6 +410,19 @@ describe('admin routes', () => {
       await env.ctx.settings.save({ JELLYFIN_URL: null, JELLYFIN_ADMIN_API_KEY: null }, null);
       expect(await moveView()).toMatchObject({ offered: false, reason: null });
       await env.ctx.settings.save({ JELLYFIN_URL: 'http://jellyfin:8096', JELLYFIN_ADMIN_API_KEY: 'adminkey' }, null);
+      // a move under way: the backend follows one, or the updater holds an unfinished one (an aborted one is history)
+      await writeManaged(env.ctx, { move: { phase: 'nfo', error: null, jobId: null, startedAt: '2026-11-24T09:00:00.000Z', requestsWarning: false } });
+      expect(await moveView()).toMatchObject({ offered: false, reason: null, state: { phase: 'nfo' } });
+      await writeManaged(env.ctx, { move: { phase: 'failed', error: 'no_space', jobId: null, startedAt: '2026-11-24T09:00:00.000Z', requestsWarning: false } });
+      expect(await moveView()).toMatchObject({ offered: true });
+      const upd = { step: null, source: { name: 'jellyfin', version: '10.10.3' }, folders: [], abort: false };
+      for (const phase of ['running', 'ready']) {
+        fake.media = { ...media(), move: { ...upd, phase } };
+        expect(await moveView(), phase).toMatchObject({ offered: false });
+      }
+      fake.media = { ...media(), move: { ...upd, phase: 'aborted' } };
+      expect(await moveView()).toMatchObject({ offered: true });
+      await env.pool.query('delete from media_managed');
       // the updater cannot run the media server
       fake.media = { ...media(), available: false, reason: 'engine_old' };
       expect(await moveView()).toMatchObject({ offered: false, reason: 'engine_old' });
@@ -432,21 +454,72 @@ describe('admin routes', () => {
       expect(fake.infoCalls).toEqual([]);
     });
 
-    it('the scan: the backend adds the server id of the current Jellyfin, never shows it', async () => {
+    it('the scan: the list answers at once, the chosen one runs in the background; the server id never shows', async () => {
       await linked();
       const list = await req(admin, 'POST', '/move/scan', {});
       expect(list.statusCode).toBe(200);
-      expect(list.json()).toEqual({ candidates: [{ id: CONTAINER, name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', state: 'running', matches: true }], scan: null });
+      expect(list.json()).toEqual({ candidates: [{ id: CONTAINER, name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', state: 'running', matches: true }] });
       expect(fake.infoCalls).toEqual(['http://jellyfin:8096']);
+      let release!: () => void;
+      fake.scanHold = new Promise((r) => { release = r; });
       const one = await req(admin, 'POST', '/move/scan', { source: CONTAINER });
-      expect(one.json().scan).toMatchObject({ source: { id: CONTAINER, name: 'jellyfin' }, folders: [{ rel: 'Filme', target: '/movies', migrated: true }], bytes: 1000, plugins: ['Fanart'] });
+      expect(one.statusCode).toBe(202);
+      expect(one.json().scan).toMatchObject({ source: CONTAINER, state: 'running' });
+      expect((await moveView()).scan).toMatchObject({ source: CONTAINER, state: 'running' });
+      // one scan at a time
+      for (const body of [{ source: CONTAINER }, {}]) {
+        const busy = await req(admin, 'POST', '/move/scan', body);
+        expect(busy.statusCode).toBe(409);
+        expect(busy.json()).toEqual({ error: 'busy' });
+      }
+      release();
+      await vi.waitFor(async () => expect((await moveView()).scan?.state).toBe('done'));
+      const v = await moveView();
+      expect(v.scan).toMatchObject({ source: CONTAINER, state: 'done', result: { source: { id: CONTAINER, name: 'jellyfin' }, folders: [{ rel: 'Filme', target: '/movies', migrated: true }], bytes: 1000, plugins: ['Fanart'] } });
       expect(opBodies('migrate-scan')).toEqual([{ op: 'migrate-scan', serverId: SERVER_ID }, { op: 'migrate-scan', serverId: SERVER_ID, source: CONTAINER }]);
-      expect(JSON.stringify([list.json(), one.json()])).not.toContain(SERVER_ID);
-      // refusals with the container paths the sheet shows
-      fake.answer['migrate-scan'] = { status: 409, json: { error: 'source_outside_base', outside: ['/movies'], refused: [] } };
-      expect((await req(admin, 'POST', '/move/scan', { source: CONTAINER })).json()).toEqual({ error: 'source_outside_base', outside: ['/movies'], refused: [], nested: [] });
-      // three scans in two minutes, like apply
+      expect(JSON.stringify([list.json(), one.json(), v])).not.toContain(SERVER_ID);
+      // six scans in two minutes: four so far
+      expect((await req(admin, 'POST', '/move/scan', {})).statusCode).toBe(200);
+      expect((await req(admin, 'POST', '/move/scan', {})).statusCode).toBe(200);
       expect((await req(admin, 'POST', '/move/scan', {})).statusCode).toBe(429);
+    });
+
+    it('a failed scan shows its code and the container paths in the view', async () => {
+      await linked();
+      const failed = async () => {
+        expect((await req(admin, 'POST', '/move/scan', { source: CONTAINER })).statusCode).toBe(202);
+        await vi.waitFor(async () => expect((await moveView()).scan?.state).toBe('failed'));
+        return (await moveView()).scan;
+      };
+      fake.answer['migrate-scan'] = { status: 409, json: { error: 'source_outside_base', outside: ['/movies'], refused: ['/srv'] } };
+      expect(await failed()).toMatchObject({ source: CONTAINER, state: 'failed', error: 'source_outside_base', outside: ['/movies'], refused: ['/srv'], nested: [] });
+      fake.answer['migrate-scan'] = { status: 409, json: { error: 'source_nested', nested: ['/media/tv'] } };
+      expect(await failed()).toMatchObject({ state: 'failed', error: 'source_nested', outside: [], nested: ['/media/tv'] });
+      // an answer without a scan of that container is no scan
+      fake.answer['migrate-scan'] = { status: 200, json: { candidates: [] } };
+      expect(await failed()).toMatchObject({ state: 'failed', error: 'updater_error' });
+      expect((await failed()).result).toBeUndefined();
+    });
+
+    it('the move needs a fresh done scan of the same container', async () => {
+      await linked();
+      await reauth(admin);
+      const move = async () => (await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false })).json();
+      expect(await move()).toEqual({ error: 'scan_required' });
+      // a scan of another container, a failed one, a stale one
+      const at = (ms: number) => new Date(Date.now() - ms).toISOString();
+      const result = { source: { id: CONTAINER, name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', version: '10.10.3' }, folders: [], layout: 'official', bytes: 1, trickplayBytes: 0, plugins: [], nfo: false };
+      await env.kv.set('media:move:scan', JSON.stringify({ source: 'd'.repeat(64), state: 'done', result: { ...result, source: { ...result.source, id: 'd'.repeat(64) } }, at: at(0) }), 600);
+      expect(await move()).toEqual({ error: 'scan_required' });
+      await env.kv.set('media:move:scan', JSON.stringify({ source: CONTAINER, state: 'failed', error: 'no_space', at: at(0) }), 600);
+      expect(await move()).toEqual({ error: 'scan_required' });
+      offset += 3 * 60_000;
+      await reauth(admin);
+      await env.kv.set('media:move:scan', JSON.stringify({ source: CONTAINER, state: 'done', result, at: at(11 * 60_000) }), 600);
+      expect(await move()).toEqual({ error: 'scan_required' });
+      expect(opBodies('migrate')).toEqual([]);
+      await env.kv.set('media:move:scan', JSON.stringify({ source: CONTAINER, state: 'done', result, at: at(60_000) }), 600);
+      expect((await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false })).statusCode).toBe(202);
     });
 
     it('a Jellyfin that does not tell its server id cannot be scanned or moved', async () => {
@@ -465,6 +538,7 @@ describe('admin routes', () => {
       await linked();
       await reauth(admin);
       fake.media = { ...media(), container: null, desired: { kind: 'ferrofin', folders: [], uid: 1500, gid: 1500, gpu: 'off', mediaGid: null, egress: true, run: false } };
+      await scanned();
       const r = await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: true });
       expect(r.statusCode).toBe(202);
       const jobId = r.json().job.id as string;
@@ -482,7 +556,8 @@ describe('admin routes', () => {
       expect(await audits('mediaserver.move')).toEqual([{ actor: adminId, meta: { trickplay: true, gpu: 'dri' } }]);
       expect(JSON.parse((await env.kv.get(`updater:pending:${jobId}`))!)).toMatchObject({ action: 'mediaserver', op: 'migrate' });
       fake.media = { ...media(), move: { phase: 'running', step: 'copy_bulk', source: { name: 'jellyfin', version: '10.10.3' }, folders: [], abort: false } };
-      expect(await moveView()).toMatchObject({ offered: true, state: { phase: 'copying', error: null, jobId, step: 'copy_bulk', abort: false } });
+      // not offered while it runs
+      expect(await moveView()).toMatchObject({ offered: false, state: { phase: 'copying', error: null, jobId, step: 'copy_bulk', abort: false } });
       // one move at a time: refused while one is under way, before anything is sent
       offset += 3 * 60_000;
       await reauth(admin);
@@ -498,6 +573,7 @@ describe('admin routes', () => {
       fake.media = { ...media(), container: null, desired: null };
       fake.answer.gpu = { status: 200, json: { dri: [], nvidia: false } };
       fake.answer.migrate = { status: 409, json: { error: 'busy' } };
+      await scanned();
       const r = await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false });
       expect(r.statusCode).toBe(409);
       expect(r.json()).toEqual({ error: 'busy' });
@@ -513,29 +589,37 @@ describe('admin routes', () => {
       expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'copying', error: null });
     });
 
-    it('abort: sent to the updater and audited; after the switch it is refused', async () => {
-      const move = (phase: string) => writeManaged(env.ctx, { move: { phase: phase as 'copying', error: null, jobId: '0000000000000001', startedAt: '2026-11-24T09:00:00.000Z', requestsWarning: false } });
+    it('abort: sent to the updater and audited; an abort run as its own job ends the move; after the switch it is refused', async () => {
+      const COPY_JOB = 'aaaaaaaaaaaaaaaa';
+      const move = (phase: string) => writeManaged(env.ctx, { move: { phase: phase as 'copying', error: null, jobId: COPY_JOB, startedAt: '2026-11-24T09:00:00.000Z', requestsWarning: false } });
+      const answer = (id: string) => { fake.answer['migrate-abort'] = { status: 202, json: { job: { ...job('mediaserver-migrate'), id } } }; };
+      // the copy's job is still running: it carries the abort out, its end is read by the move's phases
       await move('copying');
+      answer(COPY_JOB);
       const r = await req(admin, 'POST', '/move/abort');
       expect(r.statusCode).toBe(202);
-      expect(r.json().job.action).toBe('mediaserver-migrate');
+      expect(r.json().job).toMatchObject({ id: COPY_JOB, action: 'mediaserver-migrate' });
       expect(opBodies('migrate-abort')).toEqual([{ op: 'migrate-abort' }]);
-      // the copy's job ends aborted: the move's own phases read that
       expect((await readManaged(env.pool)).move!.phase).toBe('copying');
-      // during the backend's phases the updater runs the abort as its own job; the move has failed
+      // the copy finished (the backend has not moved on yet): the updater runs the abort as a new job, the move has failed
+      answer('bbbbbbbbbbbbbbbb');
+      expect((await req(admin, 'POST', '/move/abort')).statusCode).toBe(202);
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'move_aborted' });
+      // during the backend's phases the move has failed too
       await move('verify');
+      answer('cccccccccccccccc');
       expect((await req(admin, 'POST', '/move/abort')).statusCode).toBe(202);
       expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'move_aborted' });
       const adminId = (await env.pool.query<{ id: string }>("select id from users where authentik_sub='sub-admin'")).rows[0]!.id;
-      expect(await audits('mediaserver.move_abort')).toEqual([{ actor: adminId, meta: { phase: 'copying' } }, { actor: adminId, meta: { phase: 'verify' } }]);
+      expect(await audits('mediaserver.move_abort')).toEqual([{ actor: adminId, meta: { phase: 'copying' } }, { actor: adminId, meta: { phase: 'copying' } }, { actor: adminId, meta: { phase: 'verify' } }]);
       // FriendFlix uses the new server from the switch on: no abort there (the way back is /back)
+      offset += 3 * 60_000;
       await move('switch');
       const late = await req(admin, 'POST', '/move/abort');
       expect(late.statusCode).toBe(409);
       expect(late.json()).toEqual({ error: 'not_abortable' });
-      expect(opBodies('migrate-abort')).toHaveLength(2);
+      expect(opBodies('migrate-abort')).toHaveLength(3);
       // an updater with nothing to abort answers its code
-      offset += 3 * 60_000;
       await env.pool.query('delete from media_managed');
       fake.answer['migrate-abort'] = { status: 409, json: { error: 'no_target' } };
       expect((await req(admin, 'POST', '/move/abort')).json()).toEqual({ error: 'no_target' });
