@@ -36,7 +36,13 @@ export const SPEC: DesiredSpec = { kind: 'ferrofin', folders: [{ rel: 'Filme', t
 export const JSPEC: DesiredSpec = { ...SPEC, kind: 'jellyfin', egress: false };
 
 /** `status` overrides the Docker status (`restarting`, `dead`); `finishedAt` is State.FinishedAt (set by stop) */
-export interface C { id: string; name: string; body: Obj; running: boolean; health: string | null; networks: string[]; host: Obj; status?: string; finishedAt?: string }
+export interface C { id: string; name: string; body: Obj; running: boolean; health: string | null; networks: string[]; host: Obj; status?: string; finishedAt?: string; raw?: Obj }
+/** a mount as Docker's container inspect records it (`Mounts`) */
+export interface InspectMount { Type: string; Source: string; Destination: string; Name?: string; Driver?: string; RW?: boolean }
+/** a container FriendFlix did not create (an existing Jellyfin, anything else on the engine) */
+export interface Foreign { name: string; image: string; mounts: InspectMount[]; running?: boolean; labels?: Record<string, string>; imageId?: string }
+/** what the scan helper answers for a source whose /config is this (bind path or volume name) */
+export const scanAnswer = (serverId: string): Obj => ({ layout: 'official', serverId, bytes: 5_000_000, trickplayBytes: 1_000_000, plugins: ['Open Subtitles'], nfo: false });
 export interface HelperCall { verb: string; args: string[]; mounts: Obj[]; user: string }
 export type Answer = Obj | Error;
 
@@ -66,6 +72,8 @@ export function world(o: { facts?: Partial<EngineFacts>; ops?: Ops; state?: Part
     pull: null as null | (() => Promise<void>),
     /** remove() of this container fails after the engine let it go (a removal already in progress answers an error) */
     failRemove: (_c: C): boolean => false,
+    /** the server id each source /config (bind path or volume name) holds */
+    servers: new Map<string, string>(),
     hdr: { exit1: 0, lines2: ['RESULT vpp FAIL the VA driver has no HDR tone mapper', 'RESULT qsv FAIL ffmpeg exit 1'] },
     answer: (c: HelperCall): Answer => {
       if (c.verb === 'check' && c.args[0] === 'folders') return okFolders(c);
@@ -73,6 +81,10 @@ export function world(o: { facts?: Partial<EngineFacts>; ops?: Ops; state?: Part
       if (c.verb === 'gpu') return { nodes: [{ node: 'renderD128', gid: 993, vendor: 'intel' }] };
       if (c.verb === 'backup') return { size: 4096 };
       if (c.verb === 'restore') return { ok: true };
+      if (c.verb === 'migrate-scan') {
+        const id = cfg.servers.get(String(c.mounts.find((m) => m.Target === '/source')?.Source));
+        return id ? scanAnswer(id) : { error: 'source_layout' };
+      }
       return { error: 'invalid_body' };
     },
   };
@@ -81,6 +93,7 @@ export function world(o: { facts?: Partial<EngineFacts>; ops?: Ops; state?: Part
   const label = (c: C): string => (isHelper(c.body) ? 'helper' : c.name);
 
   function inspect(c: C): Obj {
+    if (c.raw) return { ...c.raw, Id: c.id, Name: `/${c.name}`, State: { Running: c.running, Status: c.running ? 'running' : 'exited' } };
     const b = c.body;
     const hc = (b.HostConfig ?? {}) as Obj;
     const mounts = (hc.Mounts ?? []) as Obj[];
@@ -99,6 +112,8 @@ export function world(o: { facts?: Partial<EngineFacts>; ops?: Ops; state?: Part
     listContainers: async (labels: Record<string, string>) => [...containers.values()]
       .filter((c) => Object.entries(labels).every(([k, v]) => (c.body.Labels as Obj | undefined)?.[k] === v))
       .map((c) => ({ id: c.id, names: [c.name], state: c.running ? 'running' : 'exited', labels: (c.body.Labels ?? {}) as Record<string, string> })),
+    allContainers: async () => [...containers.values()]
+      .map((c) => ({ id: c.id, names: [c.name], state: c.running ? 'running' : 'exited', image: String(c.body.Image), labels: (c.body.Labels ?? {}) as Record<string, string> })),
     create: async (req: { name: string; body: Obj }) => {
       if (find(req.name)) throw new EngineError(409, 'name_taken');
       const id = (next++).toString(16).padStart(64, '0');
@@ -196,8 +211,18 @@ export function world(o: { facts?: Partial<EngineFacts>; ops?: Ops; state?: Part
     return c;
   }
 
+  /** a container another tool created: its inspect as Docker records it (Config.Image, Mounts), not built from a template */
+  function foreign(x: Foreign): C {
+    const id = (next++).toString(16).padStart(64, '0');
+    const labels = x.labels ?? {};
+    const raw: Obj = { Image: x.imageId ?? `sha256:${'7'.repeat(64)}`, Config: { Image: x.image, Labels: labels }, HostConfig: {}, Mounts: x.mounts };
+    const c: C = { id, name: x.name, body: { Image: x.image, Labels: labels }, running: x.running !== false, health: null, networks: [], host: {}, raw };
+    containers.set(id, c);
+    return c;
+  }
+
   return {
-    jobs, deps, updater, store, clock, calls, created, removedWith, containers, volumes, images, cfg, helperCalls, verified, existing, find, jellyImage,
+    jobs, deps, updater, store, clock, calls, created, removedWith, containers, volumes, images, cfg, helperCalls, verified, existing, find, jellyImage, foreign,
     media: (): MediaState => updater.mediaState(),
     /** the engine calls that change something, without helper runs */
     changes: (): string[] => calls.filter((c) => !c.startsWith('helper ')),

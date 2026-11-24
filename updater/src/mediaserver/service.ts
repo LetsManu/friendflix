@@ -6,13 +6,14 @@ import type { StartResult, Updater } from '../job.js';
 import type { Job, MediaState } from '../state.js';
 import { EngineError, type Engine } from './engine.js';
 import type { EngineFacts } from './facts.js';
-import type { SourceExpect } from './guard.js';
+import { TemplateViolation, type SourceExpect } from './guard.js';
 import type { runHelper } from './helpers.js';
 import { baseCodeLogLine, hashBaseCode, newBaseCode, normalizeBaseCode } from './code.js';
 import { redactLine } from './logs.js';
 import { checkBasePath, isRel } from './paths.js';
+import { SourceError, findCandidates, listCandidates, scanSource, type Candidate, type ScanResult, type SourceDeps } from './source.js';
 import { helperSpec, volumeSpec, names, type HelperMount, type HelperVerb } from './template.js';
-import type { DesiredSpec } from './types.js';
+import { MEDIA_ERRORS, type DesiredSpec, type MediaError } from './types.js';
 
 export interface MediaDeps {
   engine: Engine;
@@ -45,6 +46,11 @@ export type ConfirmResult =
 export interface BrowseEntry { name: string; symlink: boolean; unreadable: boolean }
 export type BrowseResult = { entries: BrowseEntry[]; truncated: boolean } | { error: 'no_base' | 'base_missing' | 'invalid_body' };
 export interface GpuResult { dri: Array<{ node: string; gid: number; vendor: 'intel' | 'amd' | 'other' }>; nvidia: boolean }
+/** a scan as the move sheet sees it: no host path (the recorded /config source stays here) and no server id */
+export interface ScanView { source: { id: string; name: string; image: string; version: string | null }; folders: ScanResult['folders']; layout: ScanResult['layout']; bytes: number; trickplayBytes: number; plugins: string[]; nfo: boolean }
+export type MoveScanResult =
+  | { candidates: Array<Candidate & { matches: boolean | null }>; scan?: ScanView }
+  | { error: MediaError | 'not_available'; outside?: string[]; refused?: string[] };
 
 const STATUS: Record<'path_invalid' | 'path_refused' | 'base_missing' | 'not_available', 400 | 409> = { path_invalid: 400, path_refused: 400, base_missing: 409, not_available: 409 };
 const fail = (error: keyof typeof STATUS): RequestResult => ({ ok: false, status: STATUS[error], error });
@@ -298,6 +304,43 @@ export class MediaService {
       }
     }
     return { dri, nvidia };
+  }
+
+  /**
+   * what source.ts needs: the engine, the confirmed base and the `migrate-scan` helper on a /config, mounted read-only at /source
+   * (the guard checks that mount against exactly this source and the engine's Docker root); null when no helper can run
+   */
+  async sourceDeps(): Promise<SourceDeps | null> {
+    const r = await this.ready();
+    if (!r) return null;
+    const base = this.d.updater.mediaState().base;
+    return {
+      engine: this.d.engine, base: base ? { path: base.path } : null, now: () => this.d.now(),
+      scan: (config) => this.helper(r, 'migrate-scan', [], [{ kind: 'source', type: config.type, source: config.source }], undefined, config),
+    };
+  }
+
+  /**
+   * migrate-scan: the Jellyfin containers on this engine, each with whether it is FriendFlix's server (`serverId`, which the
+   * backend read from it); with `source`, that candidate scanned as the source. Codes only: a refused media mount is named by its
+   * container path.
+   */
+  async moveScan(serverId: string, source?: string): Promise<MoveScanResult> {
+    const deps = await this.sourceDeps();
+    if (!deps) return { error: 'not_available' };
+    try {
+      if (source === undefined) return { candidates: await listCandidates(deps, serverId) };
+      const s = await scanSource(deps, source, serverId);
+      // the others are not scanned again: only the chosen one is known to match
+      const candidates = (await findCandidates(deps.engine)).map((c) => ({ ...c, matches: c.id === source ? true : null }));
+      const { id, name, image, version } = s.source;
+      return { candidates, scan: { source: { id, name, image, version }, folders: s.folders, layout: s.layout, bytes: s.bytes, trickplayBytes: s.trickplayBytes, plugins: s.plugins, nfo: s.nfo } };
+    } catch (e) {
+      if (e instanceof SourceError && e.code === 'source_outside_base') return { error: e.code, outside: e.outside, refused: e.refused };
+      if (e instanceof TemplateViolation) return { error: 'template_violation' };
+      const code = e instanceof StepError || e instanceof EngineError ? e.code : '';
+      return { error: (MEDIA_ERRORS as readonly string[]).includes(code) ? code as MediaError : 'helper_failed' };
+    }
   }
 
   /** the redacted tail of the managed container's log; only a container that carries this project's labels */

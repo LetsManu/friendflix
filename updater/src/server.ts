@@ -85,7 +85,7 @@ export interface AppDeps {
 }
 
 export interface MediaApi {
-  service: Pick<MediaService, 'request' | 'confirm' | 'clear' | 'browse' | 'gpu' | 'logs'>;
+  service: Pick<MediaService, 'request' | 'confirm' | 'clear' | 'browse' | 'gpu' | 'logs' | 'moveScan'>;
   jobs: Pick<MediaJobs, 'start'>;
   status(): Promise<MediaStatusView>;
   download(id: string, passphrase: string, res: ServerResponse): Promise<void>;
@@ -252,6 +252,10 @@ async function mediaOp(m: MediaApi, op: MediaOp): Promise<{ status: number; body
     case 'logs': {
       const r = await m.service.logs(op.tail);
       return 'error' in r ? { status: 409, body: { error: r.error } } : { status: 200, body: { lines: r.lines } };
+    }
+    case 'migrate-scan': {
+      const r = await m.service.moveScan(op.serverId, op.source);
+      return { status: 'error' in r ? 409 : 200, body: r };
     }
     default:
       return { status: 400, body: { error: 'invalid_body' } };

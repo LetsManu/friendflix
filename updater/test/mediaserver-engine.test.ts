@@ -120,6 +120,9 @@ describe('Engine client', () => {
     expect(await f.engine.inspectImage('a/b@sha256:' + 'b'.repeat(64))).toEqual({ id: 'sha256:i', repoDigests: ['r@sha256:d'], labels: { k: 'v' }, env: ['A=1'], entrypoint: ['/e'], cmd: null, volumes: ['/cache'], user: '1000' });
     expect(await f.engine.listContainers({ a: 'b' }, true)).toEqual([{ id: 'i1', names: ['n1'], state: 'running', labels: { l: 'm' } }]);
     expect(f.calls.at(-1)!.url).toBe('/v1.47/containers/json?all=1&filters=' + encodeURIComponent('{"label":["a=b"]}'));
+    // every container, without a label filter, with its image
+    expect(await f.engine.allContainers()).toEqual([{ id: 'i1', names: ['n1'], state: 'running', image: '', labels: { l: 'm' } }]);
+    expect(f.calls.at(-1)!.url).toBe('/v1.47/containers/json?all=1');
     expect(await f.engine.listNetworks({ a: 'b' })).toEqual([{ id: 'n1', name: 'p_media', containers: ['c1', 'c2'] }]);
     expect(await f.engine.info()).toEqual({ dockerRoot: '/var/lib/docker', nvidia: true });
   });

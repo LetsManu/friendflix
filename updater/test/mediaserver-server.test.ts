@@ -59,6 +59,10 @@ function fake() {
         browse: async () => { calls.push('browse'); return { entries: [{ name: 'Filme', symlink: false, unreadable: false }], truncated: false }; },
         gpu: async () => { calls.push('gpu'); return { dri: [], nvidia: false }; },
         logs: async () => { calls.push('logs'); return { lines: ['a'] }; },
+        moveScan: async (serverId, source) => {
+          calls.push(`moveScan ${serverId} ${source ?? '-'}`);
+          return source ? { error: 'source_outside_base', outside: ['/music'], refused: [] } : { candidates: [{ id: 'c'.repeat(64), name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', state: 'running', matches: true }] };
+        },
       },
       jobs: { start: (op) => f.start(op as MediaOp) },
       status: async () => f.view,
@@ -214,12 +218,14 @@ describe('stage 2 ops', () => {
     expect((await post(base, '{"op":"migrate-abort"}')).status).toBe(202);
     expect((await post(base, '{"op":"source-start"}')).status).toBe(202);
     expect(t.calls).toEqual(['start migrate', 'start migrate-abort', 'start source-start']);
-    // synchronous ops: not jobs (answered 400 until their service lands), never reach jobs.start
-    for (const b of [`{"op":"migrate-scan","serverId":"${SID}"}`, '{"op":"migrate-done"}']) {
-      const r = await post(base, b);
-      expect([r.status, await r.json()], b).toEqual([400, { error: 'invalid_body' }]);
-    }
-    expect(t.calls).toHaveLength(3);
+    // synchronous ops: not jobs, never reach jobs.start; migrate-done answers 400 until its service lands
+    const list = await post(base, `{"op":"migrate-scan","serverId":"${SID}"}`);
+    expect([list.status, await list.json()]).toEqual([200, { candidates: [{ id: 'c'.repeat(64), name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', state: 'running', matches: true }] }]);
+    const one = await post(base, `{"op":"migrate-scan","serverId":"${SID}","source":"${CID}"}`);
+    expect([one.status, await one.json()]).toEqual([409, { error: 'source_outside_base', outside: ['/music'], refused: [] }]);
+    const done = await post(base, '{"op":"migrate-done"}');
+    expect([done.status, await done.json()]).toEqual([400, { error: 'invalid_body' }]);
+    expect(t.calls).toEqual(['start migrate', 'start migrate-abort', 'start source-start', `moveScan ${SID} -`, `moveScan ${SID} ${CID}`]);
     t.f.view = { ...VIEW, available: false, reason: 'no_logs' };
     for (const b of [`{"op":"migrate-scan","serverId":"${SID}"}`, '{"op":"migrate-done"}', JSON.stringify(MIGRATE)]) expect((await post(base, b)).status, b).toBe(409);
     for (const b of ['{"op":"migrate-abort"}', '{"op":"source-start"}']) expect((await post(base, b)).status, b).toBe(202);
