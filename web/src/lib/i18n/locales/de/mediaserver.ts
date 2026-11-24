@@ -31,6 +31,7 @@ export default {
     updater_outdated: 'Der Updater ist zu alt: erst FriendFlix aktualisieren.',
     starting: 'Medienserver-Status wird gelesen…',
     image_missing: 'Für diesen FriendFlix-Stand gibt es kein Image dieses Servers. Wähle Jellyfin (offiziell, verwaltet).',
+    moved: 'Nach dem Umzug bleibt der Server Ferrofin.',
   },
   base: {
     title: 'Basisordner',
@@ -94,6 +95,10 @@ export default {
     livetvSave: 'Pfad setzen',
     livetvSaved: 'Aufnahme-Pfad gesetzt.',
     migrated: 'aus Jellyfin übernommen',
+    migratedWhole: 'der ganze Basisordner, aus Jellyfin übernommen',
+    migratedSame: 'Dieser Ordner ist schon aus Jellyfin übernommen.',
+    migratedOverlap: 'Dieser Ordner überschneidet sich mit einem aus Jellyfin übernommenen. Wähle einen daneben.',
+    wholeBase: 'Der ganze Basisordner ist schon übernommen – neue Ordner darin sind in Ferrofin schon sichtbar.',
     error: {
       none: 'Wähle mindestens einen Ordner.',
       too_many: 'Höchstens 20 Ordner.',

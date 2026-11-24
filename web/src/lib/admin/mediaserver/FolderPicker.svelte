@@ -21,7 +21,7 @@
   import { confirm } from '#lib/ui/confirm';
   import { toast } from '#lib/ui/toast';
   import type { BrowseEntry, FolderInput, LibraryEntry, LibraryType, MediaApi, MediaFolder } from './api';
-  import { MAX_FOLDERS, defaultName, mediaErrorText } from './model';
+  import { MAX_FOLDERS, defaultName, mediaErrorText, wholeBaseMigrated } from './model';
 
   export let api: MediaApi;
   export let call: <T>(fn: () => Promise<T>) => Promise<T>;
@@ -50,7 +50,11 @@
   const relOf = (name: string) => [...trail, name].join('/');
   // a chosen folder is at most 3 levels below the base: open up to the second level, pick up to the third
   $: canOpen = trail.length < 2;
-  $: canPick = trail.length < 3;
+  /** the whole base was taken over from Jellyfin: every folder below it is in Ferrofin already, nothing more to add */
+  $: whole = wholeBaseMigrated(migrated);
+  $: canPick = trail.length < 3 && !whole;
+  /** the updater's limit counts the migrated folders too */
+  $: full = rows.length + migrated.length >= MAX_FOLDERS;
 
   async function browse(to: string[]) {
     loading = true; browseError = '';
@@ -68,7 +72,7 @@
   const picked = (rel: string) => rows.some((r) => r.rel === rel);
   function pick(e: BrowseEntry) {
     const rel = relOf(e.name);
-    if (picked(rel) || rows.length >= MAX_FOLDERS) return;
+    if (picked(rel) || full || whole) return;
     rows = [...rows, { rel, name: defaultName(e.name), type: 'movies' }];
     dispatch('changed');
   }
@@ -135,7 +139,7 @@
             {:else}
               {#if e.unreadable}<span class="tag warn">{$t('mediaserver.folders.unreadable')}</span>{/if}
               {#if canPick}
-                <Button variant={picked(rel) ? 'glass' : 'secondary'} size="sm" icon={picked(rel) ? 'check' : 'plus'} disabled={disabled || picked(rel) || rows.length >= MAX_FOLDERS}
+                <Button variant={picked(rel) ? 'glass' : 'secondary'} size="sm" icon={picked(rel) ? 'check' : 'plus'} disabled={disabled || picked(rel) || full}
                   on:click={() => pick(e)}>{picked(rel) ? $t('mediaserver.folders.picked') : $t('mediaserver.folders.pick')}</Button>
               {/if}
             {/if}
@@ -144,13 +148,13 @@
       </ul>
     {/if}
   </div>
-  <p class="muted tiny">{truncated ? $t('mediaserver.folders.truncated') : !canPick ? $t('mediaserver.folders.deepest') : ''}</p>
+  <p class="muted tiny" data-testid="media-browser-note">{whole ? $t('mediaserver.folders.wholeBase') : truncated ? $t('mediaserver.folders.truncated') : !canPick ? $t('mediaserver.folders.deepest') : ''}</p>
 
   <h4>{$t('mediaserver.folders.chosen')}</h4>
   {#if migrated.length}
     <ul class="rows mig" data-testid="media-migrated">
       {#each migrated as f (f.target)}
-        <li data-migrated={f.target}><code class="rel">{f.target}</code><span class="muted tiny">{$t('mediaserver.folders.migrated')}</span></li>
+        <li data-migrated={f.target}><code class="rel">{f.target}</code><span class="muted tiny">{f.rel === '' ? $t('mediaserver.folders.migratedWhole') : $t('mediaserver.folders.migrated')}</span></li>
       {/each}
     </ul>
   {/if}

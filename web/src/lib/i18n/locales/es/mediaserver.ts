@@ -29,6 +29,7 @@ const dict: Translation<typeof de> = {
     updater_outdated: 'El actualizador es demasiado antiguo: actualiza primero FriendFlix.',
     starting: 'Leyendo el estado del servidor multimedia…',
     image_missing: 'Esta versión de FriendFlix no tiene imagen de este servidor. Elige Jellyfin (oficial, gestionado).',
+    moved: 'Después del traslado, el servidor sigue siendo Ferrofin.',
   },
   base: {
     title: 'Carpeta base',
@@ -92,6 +93,10 @@ const dict: Translation<typeof de> = {
     livetvSave: 'Poner ruta',
     livetvSaved: 'Ruta de grabaciones guardada.',
     migrated: 'trasladada desde Jellyfin',
+    migratedWhole: 'toda la carpeta base, trasladada desde Jellyfin',
+    migratedSame: 'Esta carpeta ya se trasladó desde Jellyfin.',
+    migratedOverlap: 'Esta carpeta se solapa con una trasladada desde Jellyfin. Elige una al lado.',
+    wholeBase: 'Toda la carpeta base ya está trasladada: las carpetas nuevas dentro ya se ven en Ferrofin.',
     error: {
       none: 'Elige al menos una carpeta.',
       too_many: 'Como máximo 20 carpetas.',

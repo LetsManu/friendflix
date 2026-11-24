@@ -447,6 +447,9 @@ test.describe('admin: Medienserver, the move from Jellyfin (desktop)', () => {
     await page.goto('/admin/settings?tab=media');
     const c = card(page);
     await expect(choices(page).getByRole('radio', { name: /Ferrofin \(eigener\)/ })).toHaveAttribute('aria-checked', 'true');
+    // the moved server stays Ferrofin: the other kind is off, with its reason
+    await expect(choices(page).getByRole('radio', { name: 'Jellyfin (offiziell, verwaltet)' })).toBeDisabled();
+    await expect(c.getByTestId('media-reasons')).toContainText('Nach dem Umzug bleibt der Server Ferrofin.');
     const mig = c.getByTestId('media-migrated');
     await expect(mig.locator('li')).toHaveCount(2);
     await expect(mig.locator('[data-migrated="/movies"]')).toContainText('aus Jellyfin übernommen');
@@ -495,5 +498,39 @@ test.describe('admin: Medienserver, the move from Jellyfin (desktop)', () => {
     await c.getByRole('button', { name: 'Von Jellyfin umziehen' }).click();
     await expect(dlg.getByTestId('move-summary')).toBeVisible({ timeout: 20_000 });
     expect(ms.calls.filter((x) => x.p.endsWith('/move/scan')).map((x) => x.body)).toEqual([{}, { source: MOVE_SOURCE }]);
+  });
+
+  test('after a move: a folder that overlaps a migrated one is named at once and never sent; a free one applies', async ({ page, api }) => {
+    const ms = api.admin.media;
+    movedMedia(ms);
+    await page.goto('/admin/settings?tab=media');
+    const c = card(page);
+    const list = c.getByTestId('media-browser');
+    await list.locator('[data-entry="Filme"]').getByRole('button', { name: 'Wählen' }).click();
+    await expect(c.locator('[data-row="Filme"]')).toContainText('Dieser Ordner ist schon aus Jellyfin übernommen.');
+    await list.getByRole('button', { name: 'Serien öffnen' }).click();
+    await list.locator('[data-entry="Animation"]').getByRole('button', { name: 'Wählen' }).click();
+    await expect(c.locator('[data-row="Serien/Animation"]')).toContainText('überschneidet sich mit einem aus Jellyfin übernommenen');
+    await c.getByTestId('media-apply').click();
+    await expect(c.getByTestId('media-apply-error')).toContainText('Dieser Ordner ist schon aus Jellyfin übernommen.');
+    expect(ms.calls.filter((x) => x.p.endsWith('/apply'))).toEqual([]);
+    await c.getByRole('button', { name: 'Filme entfernen' }).click();
+    await c.getByRole('button', { name: 'Animation entfernen' }).click();
+    await c.getByRole('navigation', { name: 'Ordner unter dem Basisordner' }).getByRole('button', { name: 'Basisordner' }).click();
+    await list.locator('[data-entry="Musik"]').getByRole('button', { name: 'Wählen' }).click();
+    await c.getByTestId('media-apply').click();
+    await expect.poll(() => ms.calls.filter((x) => x.p.endsWith('/apply')).map((x) => x.body.folders)).toEqual([[{ rel: 'Musik', name: 'Musik', type: 'movies' }]]);
+  });
+
+  test('after a move of the whole base: its row says so and no folder can be added', async ({ page, api }) => {
+    const ms = api.admin.media;
+    movedMedia(ms);
+    ms.status.desired.folders = [{ rel: '', target: '/media', migrated: true }];
+    await page.goto('/admin/settings?tab=media');
+    const c = card(page);
+    await expect(c.getByTestId('media-migrated').locator('[data-migrated="/media"]')).toContainText('der ganze Basisordner, aus Jellyfin übernommen');
+    await expect(c.getByTestId('media-browser-note')).toHaveText('Der ganze Basisordner ist schon übernommen – neue Ordner darin sind in Ferrofin schon sichtbar.');
+    await expect(c.getByTestId('media-browser').locator('[data-entry="Musik"]')).toBeVisible();
+    await expect(c.getByTestId('media-browser').getByRole('button', { name: 'Wählen' })).toHaveCount(0);
   });
 });

@@ -17,7 +17,8 @@ export const DEFAULT_MANAGED: Kind = 'jellyfin';
 /** kinds that carry *Test* and the docs link */
 export const TRIAL_KINDS: readonly Kind[] = ['ferrofin'];
 export const DOCS_HREF = 'https://github.com/LetsManu/friendflix/blob/main/docs/mediaserver.md';
-export type ReasonKey = OfferReason | 'image_missing';
+/** `moved`: a server a move made stays Ferrofin (the updater refuses another kind on its migrated spec) */
+export type ReasonKey = OfferReason | 'image_missing' | 'moved';
 
 /** the kind's own name (the typed confirmation of *Daten löschen*) */
 export const kindName = (k: Kind): string => (k === 'ferrofin' ? 'Ferrofin' : 'Jellyfin');
@@ -25,9 +26,13 @@ export const kindName = (k: Kind): string => (k === 'ferrofin' ? 'Ferrofin' : 'J
 /** the choice the server is on now: the managed kind, else the external server */
 export const currentChoice = (v: MediaView): Choice => (v.mode === 'managed' && v.managed.kind ? v.managed.kind : 'external');
 
-/** why a choice cannot be taken (null: it can): the backend's offer reason first, then a kind this build carries no image for */
+/**
+ * why a choice cannot be taken (null: it can): another kind on a moved server (it stays Ferrofin), the backend's offer reason, then a
+ * kind this build carries no image for
+ */
 export function choiceDisabled(v: MediaView, c: Choice): ReasonKey | null {
   if (c === 'external') return null;
+  if (v.mode === 'managed' && v.managed.kind && c !== v.managed.kind && moved(v)) return 'moved';
   if (!v.offer.managed) return v.offer.reason ?? 'no_updater';
   return v.kinds[c] === false ? 'image_missing' : null;
 }
@@ -64,11 +69,11 @@ const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().t
 /**
  * The chosen folders as the backend checks them (routes/adminMediaserver.ts S.apply and the updater): at least one, at most 20, a
  * library name of 1–60 characters, one library per name (trimmed, without regard to case: 400 invalid_body otherwise), no folder
- * inside another (folder_nested).
+ * inside another (folder_nested). `migrated`: a moved server's folders, which the backend adds to the same spec (they count).
  */
-export function folderRowsError(rows: ReadonlyArray<Pick<FolderInput, 'rel' | 'name' | 'type'>>): null | 'none' | 'too_many' | 'name' | 'duplicate_name' | 'nested' {
-  if (!rows.length) return 'none';
-  if (rows.length > MAX_FOLDERS) return 'too_many';
+export function folderRowsError(rows: ReadonlyArray<Pick<FolderInput, 'rel' | 'name' | 'type'>>, migrated = 0): null | 'none' | 'too_many' | 'name' | 'duplicate_name' | 'nested' {
+  if (!rows.length && !migrated) return 'none';
+  if (rows.length + migrated > MAX_FOLDERS) return 'too_many';
   if (rows.some((r) => r.name.length < 1 || r.name.length > 60 || r.name.trim() === '' || CONTROL.test(r.name))) return 'name';
   if (rows.some((r, i) => rows.some((o, j) => j < i && sameName(o.name, r.name)))) return 'duplicate_name';
   if (rows.some((r, i) => rows.some((o, j) => j !== i && (o.rel === r.rel || r.rel.startsWith(`${o.rel}/`))))) return 'nested';
@@ -95,6 +100,18 @@ export const nameTakenRow = (rows: ReadonlyArray<Pick<FolderInput, 'name'>>, kep
 const slugOf = (target: string) => target.replace(/^\/(ff)?media\//, '');
 /** a moved server's folders as the updater recorded them (read-only in the form; the backend sends them as recorded) */
 export const migratedFolders = (v: MediaView): MediaFolder[] => (v.status?.desired?.migrated ? v.status.desired.folders.filter((f) => f.migrated) : []);
+/** a server a move made (recorded by the updater, or by the backend) */
+const moved = (v: MediaView): boolean => v.status?.desired?.migrated === true || Boolean(v.move?.migratedFrom);
+/** the whole base folder was taken over (a migrated rel ''): every folder below it is visible in Ferrofin already */
+export const wholeBaseMigrated = (migrated: readonly MediaFolder[]): boolean => migrated.some((f) => f.rel === '');
+/**
+ * a chosen folder against the migrated ones (the updater refuses both as folder_nested): `same` it is one of them, `overlap` it lies
+ * inside one or holds one (any folder when the whole base was taken over); null when it is free
+ */
+export function migratedOverlap(rel: string, migrated: readonly MediaFolder[]): 'same' | 'overlap' | null {
+  if (migrated.some((f) => f.rel === rel)) return 'same';
+  return migrated.some((f) => f.rel === '' || rel.startsWith(`${f.rel}/`) || f.rel.startsWith(`${rel}/`)) ? 'overlap' : null;
+}
 /** the folders mounted now (or, before the first apply, every stored library) as editable rows */
 export function initialRows(v: MediaView): FolderInput[] {
   const d = v.status?.desired;
@@ -111,7 +128,8 @@ export function keptLibraries(v: MediaView): LibraryEntry[] {
 
 /**
  * The Live TV recordings folder (LIVETV_RECORD_LIBRARY_JF_PATH, spec "Subfolders", last point): a chosen folder named like the last
- * part of that path (compared without regard to case) whose library is stored offers to set the path to its target `/media/<slug>`;
+ * part of that path (compared without regard to case) whose library is stored offers to set the path to its target `/media/<slug>`
+ * (`/ffmedia/<slug>` on a moved server, where new folders mount);
  * null when none is chosen, the library is not stored yet (its slug comes with the apply) or the path already points there.
  */
 export function livetvOffer(v: MediaView, rows: ReadonlyArray<Pick<FolderInput, 'rel'>>): { rel: string; target: string } | null {
@@ -120,7 +138,7 @@ export function livetvOffer(v: MediaView, rows: ReadonlyArray<Pick<FolderInput, 
   const row = want ? rows.find((r) => last(r.rel) === want) : undefined;
   const lib = row ? v.managed.libraries.find((l) => l.rel === row.rel) : undefined;
   if (!row || !lib) return null;
-  const target = `/media/${lib.slug}`;
+  const target = `/${lib.ffmedia || v.status?.desired?.migrated ? 'ffmedia' : 'media'}/${lib.slug}`;
   return target === v.livetvLibraryPath ? null : { rel: row.rel, target };
 }
 

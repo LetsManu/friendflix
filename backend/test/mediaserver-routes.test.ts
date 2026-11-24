@@ -653,6 +653,8 @@ describe('admin routes', () => {
       await writeManaged(env.ctx, { setup: 'done' });
       expect((await req(admin, 'POST', '/apply', applyBody({ folders: [{ rel: 'Neu', name: 'Neu', type: 'movies' }] }))).statusCode).toBe(202);
       expect(opBodies('apply')[1]!.spec.folders).toEqual([...recorded, { rel: 'Neu', target: '/ffmedia/neu' }]);
+      // the library remembers that mount (the libraries step creates it there)
+      expect((await readManaged(env.pool)).libraries).toEqual([{ slug: 'neu', name: 'Neu', type: 'movies', rel: 'Neu', created: false, ffmedia: true }]);
       // a client cannot inject a migrated folder: the body refuses the flag and an empty rel, nothing is sent
       offset += 3 * 60_000;
       await reauth(admin);

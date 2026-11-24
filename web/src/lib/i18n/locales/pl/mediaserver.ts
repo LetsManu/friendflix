@@ -29,6 +29,7 @@ const dict: Translation<typeof de> = {
     updater_outdated: 'Program aktualizujący jest za stary: najpierw zaktualizuj FriendFlix.',
     starting: 'Odczytywanie stanu serwera multimediów…',
     image_missing: 'Ta wersja FriendFlix nie ma obrazu tego serwera. Wybierz Jellyfin (oficjalny, zarządzany).',
+    moved: 'Po przeprowadzce serwer pozostaje Ferrofin.',
   },
   base: {
     title: 'Folder bazowy',
@@ -92,6 +93,10 @@ const dict: Translation<typeof de> = {
     livetvSave: 'Ustaw ścieżkę',
     livetvSaved: 'Ścieżka nagrań ustawiona.',
     migrated: 'przejęty z Jellyfin',
+    migratedWhole: 'cały folder bazowy, przejęty z Jellyfin',
+    migratedSame: 'Ten folder jest już przejęty z Jellyfin.',
+    migratedOverlap: 'Ten folder nakłada się na folder przejęty z Jellyfin. Wybierz inny obok.',
+    wholeBase: 'Cały folder bazowy jest już przejęty – nowe foldery w nim są już widoczne w Ferrofin.',
     error: {
       none: 'Wybierz co najmniej jeden folder.',
       too_many: 'Najwyżej 20 folderów.',

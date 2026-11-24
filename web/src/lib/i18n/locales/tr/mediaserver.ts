@@ -29,6 +29,7 @@ const dict: Translation<typeof de> = {
     updater_outdated: 'Güncelleyici çok eski: önce FriendFlix’i güncelle.',
     starting: 'Medya sunucusu durumu okunuyor…',
     image_missing: 'Bu FriendFlix sürümünde bu sunucunun imajı yok. Jellyfin (resmî, yönetilen) seç.',
+    moved: 'Taşımadan sonra sunucu Ferrofin olarak kalır.',
   },
   base: {
     title: 'Temel klasör',
@@ -92,6 +93,10 @@ const dict: Translation<typeof de> = {
     livetvSave: 'Yolu ayarla',
     livetvSaved: 'Kayıt yolu ayarlandı.',
     migrated: 'Jellyfin’den devralındı',
+    migratedWhole: 'ana klasörün tamamı, Jellyfin’den devralındı',
+    migratedSame: 'Bu klasör zaten Jellyfin’den devralındı.',
+    migratedOverlap: 'Bu klasör Jellyfin’den devralınan bir klasörle çakışıyor. Yanındakilerden birini seç.',
+    wholeBase: 'Ana klasörün tamamı zaten devralındı – içindeki yeni klasörler Ferrofin’de zaten görünüyor.',
     error: {
       none: 'En az bir klasör seç.',
       too_many: 'En fazla 20 klasör.',

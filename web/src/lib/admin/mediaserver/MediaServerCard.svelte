@@ -38,7 +38,7 @@
   import { adminMediaApi, type FolderInput, type Gpu, type Kind, type MediaApi, type MediaView } from './api';
   import {
     actionsFor, backActive, choiceDisabled, currentChoice, folderRowsError, idError, initialRows, keptLibraries, kindName, livetvOffer, mediaErrorText, migratedFolders,
-    moveActive, moveFollow, nameTakenRow, setupActive, sourceLine, statusStarting, type ActionOp, type Choice,
+    migratedOverlap, wholeBaseMigrated, moveActive, moveFollow, nameTakenRow, setupActive, sourceLine, statusStarting, type ActionOp, type Choice,
   } from './model';
   import BackupDialogs from './BackupDialogs.svelte';
   import BaseFolder from './BaseFolder.svelte';
@@ -78,6 +78,8 @@
       // updater read the media status (the form starts from what is deployed)
       if (seenMode !== v.mode && !statusStarting(v)) { seenMode = v.mode; pick(currentChoice(v)); }
       mode = v.mode;
+      // the first view read after the backend took the way back is that attempt's (wayBack)
+      if (backPosted) { backPosted = false; backOwn = true; }
       return true;
     } catch {
       if (!view) { loadFailed = true; mode = 'external'; }
@@ -85,7 +87,8 @@
     }
   }
   $: starting = Boolean(view && statusStarting(view));
-  $: following = Boolean(job?.state === 'running' || starting || (view && view.mode === 'managed' && setupActive(view.managed)) || (view && api.scope === 'admin' && moveFollow(view)));
+  $: following = Boolean(job?.state === 'running' || starting || (view && view.mode === 'managed' && setupActive(view.managed)) || (view && api.scope === 'admin' && moveFollow(view))
+    || goingBack);
   let timer: ReturnType<typeof setTimeout> | undefined, gone = false;
   function schedule() {
     clearTimeout(timer);
@@ -124,6 +127,11 @@
   $: kept = view && isCurrent ? keptLibraries(view) : [];
   /** a moved server's folders (read-only; the backend sends them as recorded): they count as chosen */
   $: migrated = view && isCurrent ? migratedFolders(view) : [];
+  /** a chosen folder that is, lies in or holds a migrated one (the updater would refuse it as folder_nested): its row says so at once */
+  $: overlap = Object.fromEntries(rows.flatMap((r) => {
+    const o = migratedOverlap(r.rel, migrated);
+    return o ? [[r.rel, $t(o === 'same' ? 'mediaserver.folders.migratedSame' : wholeBaseMigrated(migrated) ? 'mediaserver.folders.wholeBase' : 'mediaserver.folders.migratedOverlap')]] : [];
+  })) as Record<string, string>;
   $: offer = view && isCurrent && api.scope === 'admin' ? livetvOffer(view, rows) : null;
   $: firstRun = !isCurrent || view?.managed.setup !== 'done';
   $: actions = view ? actionsFor(view) : [];
@@ -138,8 +146,10 @@
     if (!view || !managedKind) return;
     rowErrors = {}; applyError = '';
     if (!base.set) { applyError = tr('mediaserver.apply.needBase'); return; }
-    const bad = folderRowsError(rows);
-    if (bad && !(bad === 'none' && migrated.length)) { applyError = tr(`mediaserver.folders.error.${bad}`); return; }
+    const taken = rows.find((r) => overlap[r.rel]);
+    if (taken) { applyError = overlap[taken.rel]!; return; }
+    const bad = folderRowsError(rows, migrated.length);
+    if (bad) { applyError = tr(`mediaserver.folders.error.${bad}`); return; }
     if (uidErr || gidErr) { applyError = tr('mediaserver.user.idError'); return; }
     applying = true;
     try {
@@ -255,7 +265,7 @@
    * the view was read after the backend took it (it records `starting` before it answers), so an earlier attempt's `failed` still in
    * the view never ends this one
    */
-  let goingBack = false, backOwn = false, backError = '';
+  let goingBack = false, backOwn = false, backPosted = false, backError = '';
   $: if (goingBack && backOwn && mv?.state?.back === 'done') { goingBack = false; toast.success(tr('mediaserver.move.backDone')); }
   $: if (goingBack && backOwn && mv?.state?.back === 'failed') goingBack = false;
   $: backLine = backError
@@ -272,8 +282,9 @@
     backError = ''; goingBack = true; backOwn = false;
     try {
       await call(() => api.back());
+      // backOwn only from a view that was read (load() true): a failed read leaves it to the next poll
+      backPosted = true;
       await load();
-      backOwn = true;
       schedule();
     } catch (e) {
       goingBack = false;
@@ -357,7 +368,7 @@
         {#key managedKind}
           <BaseFolder {api} {call} {base} inUse={Boolean(view.status?.container)} disabled={locked || running} on:changed={() => load()} on:job={(e) => started(e.detail)} on:unreadable={(e) => (baseUnreadable = e.detail)} />
           {#if base.set}
-            <FolderPicker {api} {call} bind:rows libraries={isCurrent ? view.managed.libraries : []} {kept} {migrated} {rowErrors} livetv={offer} disabled={locked || running}
+            <FolderPicker {api} {call} bind:rows libraries={isCurrent ? view.managed.libraries : []} {kept} {migrated} rowErrors={{ ...overlap, ...rowErrors }} livetv={offer} disabled={locked || running}
               on:changed={() => { edited(); }} on:deleted={() => load()} on:livetv={(e) => saveLivetv(e.detail)} />
 
             <section class="sec" aria-labelledby="ms-user-t">

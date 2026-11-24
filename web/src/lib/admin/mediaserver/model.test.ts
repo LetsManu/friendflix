@@ -13,7 +13,7 @@ import tr_ from '#lib/i18n/locales/tr/index';
 import type { MediaManaged, MediaStatus, MediaView, MoveCandidate, MoveScan, MoveState, MoveView } from './api';
 import {
   ACTION_ORDER, DEFAULT_MANAGED, MOVE_STEPS, TRIAL_KINDS, actionsFor, autoCandidate, backActive, choiceDisabled, codeLogHint, countdown, currentChoice, folderRowsError, idError,
-  initialRows, defaultName, keptLibraries, kindName, livetvOffer, mediaErrorText, migratedFolders, moveAbortable, moveActive, moveFollow, moveResult, moveSteps, moveSummary, saveErrorText,
+  initialRows, defaultName, keptLibraries, kindName, livetvOffer, mediaErrorText, migratedFolders, migratedOverlap, wholeBaseMigrated, moveAbortable, moveActive, moveFollow, moveResult, moveSteps, moveSummary, saveErrorText,
   nameTakenRow, passphraseError, pinState, reasonText, scanFresh, setupSteps, sourceLine, statusStarting, versionCmp,
 } from './model';
 
@@ -68,6 +68,18 @@ describe('choices', () => {
     // the offer reason comes first; an offer without a reason still disables
     expect(choiceDisabled(view({ offer: { managed: false, reason: 'plex' }, kinds: { ferrofin: false, jellyfin: false } }), 'ferrofin')).toBe('plex');
     expect(choiceDisabled(view({ offer: { managed: false, reason: null } }), 'jellyfin')).toBe('no_updater');
+    // a moved server stays Ferrofin: another kind is off with its reason (the updater refuses it); the address stays open
+    const movedDesired = { kind: 'ferrofin' as const, folders: [{ rel: 'Filme', target: '/movies', migrated: true as const }], uid: 1000, gid: 1000, gpu: 'off' as const, mediaGid: null, egress: true, run: true, migrated: true as const };
+    const movedView = view({ mode: 'managed', managed: managed({ kind: 'ferrofin', setup: 'done' }), status: status({ desired: movedDesired }) });
+    expect(choiceDisabled(movedView, 'jellyfin')).toBe('moved');
+    expect(choiceDisabled(movedView, 'ferrofin')).toBeNull();
+    expect(choiceDisabled(movedView, 'external')).toBeNull();
+    expect(reasonText('moved')).toBe('Nach dem Umzug bleibt der Server Ferrofin.');
+    // recorded by the backend only (the updater's status not read yet)
+    const movedFrom = { offered: false, reason: null, scan: null, state: null, migratedFrom: { name: 'jellyfin', version: '10.11.0', at: '2026-11-24T10:00:00.000Z' }, sourceState: null, requestsWarning: false };
+    expect(choiceDisabled(view({ mode: 'managed', managed: managed({ kind: 'ferrofin' }), move: movedFrom }), 'jellyfin')).toBe('moved');
+    // a stage 1 managed server may change its kind
+    expect(choiceDisabled(view({ mode: 'managed', managed: managed({ kind: 'ferrofin' }) }), 'jellyfin')).toBeNull();
   });
 
   it('the reasons read as the spec words them', () => {
@@ -123,6 +135,26 @@ describe('backups', () => {
 
 describe('folders', () => {
   const row = (rel: string, name = rel, type = 'movies' as const) => ({ rel, name, type });
+  it('folderRowsError: the migrated folders count (none, the limit of 20 in total)', () => {
+    expect(folderRowsError([], 1)).toBeNull();
+    expect(folderRowsError(Array.from({ length: 18 }, (_, i) => row(`F${i}`)), 2)).toBeNull();
+    expect(folderRowsError(Array.from({ length: 19 }, (_, i) => row(`F${i}`)), 2)).toBe('too_many');
+  });
+
+  it('migratedOverlap / wholeBaseMigrated: a folder that is, lies in or holds a migrated one; the whole base holds every folder', () => {
+    const mig = [{ rel: 'Filme', target: '/movies', migrated: true as const }, { rel: 'Serien/Neu', target: '/tv', migrated: true as const }];
+    expect(migratedOverlap('Filme', mig)).toBe('same');
+    expect(migratedOverlap('Filme/Klassiker', mig)).toBe('overlap');
+    expect(migratedOverlap('Serien', mig)).toBe('overlap');
+    expect(migratedOverlap('Musik', mig)).toBeNull();
+    expect(migratedOverlap('Filmeabend', mig)).toBeNull();
+    expect(migratedOverlap('Musik', [])).toBeNull();
+    expect(wholeBaseMigrated(mig)).toBe(false);
+    const whole = [{ rel: '', target: '/media', migrated: true as const }];
+    expect(wholeBaseMigrated(whole)).toBe(true);
+    expect(migratedOverlap('Musik', whole)).toBe('overlap');
+  });
+
   it('folderRowsError: none, too many, a bad name, a name twice, one inside another', () => {
     expect(folderRowsError([])).toBe('none');
     expect(folderRowsError(Array.from({ length: 21 }, (_, i) => row(`F${i}`)))).toBe('too_many');
@@ -183,6 +215,12 @@ describe('folders', () => {
     expect(livetvOffer(v, [{ rel: 'Filme' }])).toBeNull();
     expect(livetvOffer({ ...v, managed: managed({ kind: 'jellyfin' }) }, [{ rel: 'TV/Aufnahmen' }])).toBeNull();
     expect(livetvOffer({ ...v, livetvLibraryPath: null }, [{ rel: 'TV/Aufnahmen' }])).toBeNull();
+    // after a move a new folder mounts at /ffmedia/<slug>: the library entry says so, or the migrated spec does
+    const moved = view({ mode: 'managed', managed: managed({ kind: 'ferrofin', libraries: [{ ...libs[0]!, ffmedia: true }] }), livetvLibraryPath: '/data/aufnahmen/' });
+    expect(livetvOffer(moved, [{ rel: 'TV/Aufnahmen' }])).toEqual({ rel: 'TV/Aufnahmen', target: '/ffmedia/aufnahmen' });
+    const spec = { kind: 'ferrofin' as const, folders: [{ rel: 'Filme', target: '/movies', migrated: true as const }], uid: 1000, gid: 1000, gpu: 'off' as const, mediaGid: null, egress: true, run: true, migrated: true as const };
+    expect(livetvOffer({ ...v, status: status({ desired: spec }) }, [{ rel: 'TV/Aufnahmen' }])).toEqual({ rel: 'TV/Aufnahmen', target: '/ffmedia/aufnahmen' });
+    expect(livetvOffer({ ...moved, livetvLibraryPath: '/ffmedia/aufnahmen' }, [{ rel: 'TV/Aufnahmen' }])).toBeNull();
   });
 
   it('defaultName: a picked folder\'s name cut at 60 without splitting a character', () => {

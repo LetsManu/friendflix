@@ -29,6 +29,7 @@ const dict: Translation<typeof de> = {
     updater_outdated: 'The updater is too old: update FriendFlix first.',
     starting: 'Reading the media server status…',
     image_missing: 'This FriendFlix build has no image of this server. Choose Jellyfin (official, managed).',
+    moved: 'After the move the server stays Ferrofin.',
   },
   base: {
     title: 'Base folder',
@@ -92,6 +93,10 @@ const dict: Translation<typeof de> = {
     livetvSave: 'Set path',
     livetvSaved: 'Recordings path set.',
     migrated: 'taken over from Jellyfin',
+    migratedWhole: 'the whole base folder, taken over from Jellyfin',
+    migratedSame: 'This folder is already taken over from Jellyfin.',
+    migratedOverlap: 'This folder overlaps one taken over from Jellyfin. Choose one next to it.',
+    wholeBase: 'The whole base folder is already taken over – new folders in it are already visible in Ferrofin.',
     error: {
       none: 'Choose at least one folder.',
       too_many: 'At most 20 folders.',

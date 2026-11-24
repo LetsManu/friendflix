@@ -29,6 +29,7 @@ const dict: Translation<typeof de> = {
     updater_outdated: 'Le programme de mise à jour est trop ancien : mettez d’abord FriendFlix à jour.',
     starting: 'Lecture de l’état du serveur multimédia…',
     image_missing: 'Cette version de FriendFlix n’a pas d’image de ce serveur. Choisissez Jellyfin (officiel, géré).',
+    moved: 'Après le déménagement, le serveur reste Ferrofin.',
   },
   base: {
     title: 'Dossier de base',
@@ -92,6 +93,10 @@ const dict: Translation<typeof de> = {
     livetvSave: 'Régler le chemin',
     livetvSaved: 'Chemin des enregistrements réglé.',
     migrated: 'repris de Jellyfin',
+    migratedWhole: 'tout le dossier de base, repris de Jellyfin',
+    migratedSame: 'Ce dossier est déjà repris de Jellyfin.',
+    migratedOverlap: 'Ce dossier chevauche un dossier repris de Jellyfin. Choisissez-en un à côté.',
+    wholeBase: 'Tout le dossier de base est déjà repris – les nouveaux dossiers qu’il contient sont déjà visibles dans Ferrofin.',
     error: {
       none: 'Choisissez au moins un dossier.',
       too_many: 'Au plus 20 dossiers.',

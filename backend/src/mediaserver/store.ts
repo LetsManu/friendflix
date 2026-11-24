@@ -12,7 +12,13 @@ import type { Db } from '../db.js';
 export type Kind = 'ferrofin' | 'jellyfin';
 export type LibraryType = 'movies' | 'tvshows' | 'music' | 'mixed';
 export type SetupStep = 'none' | 'applying' | 'first_run' | 'api_key' | 'libraries' | 'hwaccel' | 'finishing' | 'done' | 'failed';
-export interface LibraryEntry { slug: string; name: string; type: LibraryType; rel: string; created: boolean }
+/**
+ * a library FriendFlix made in the managed server for a chosen folder; `ffmedia`: its folder was added after a move and mounts at
+ * `/ffmedia/<slug>` (the apply route decides it with the mount; the libraries step creates the library there), else `/media/<slug>`
+ */
+export interface LibraryEntry { slug: string; name: string; type: LibraryType; rel: string; created: boolean; ffmedia?: true }
+/** the path a library's folder is mounted at in the managed server (the apply's target, the library's location) */
+export const libraryPath = (l: Pick<LibraryEntry, 'slug' | 'ffmedia'>): string => `/${l.ffmedia ? 'ffmedia' : 'media'}/${l.slug}`;
 /** the backend's phases of a move (stage 2): the updater copies (`copying`), then the backend's own phases, then `done` or `failed` */
 export type MovePhase = 'copying' | 'nfo' | 'verify' | 'switch' | 'requests' | 'done' | 'failed';
 /** the Jellyfin a move came from (container name and Jellyfin version, never a container or server id) and when it moved */
@@ -155,7 +161,7 @@ function libraries(raw: unknown): LibraryEntry[] {
     const o = (typeof x === 'object' && x !== null ? x : {}) as Record<string, unknown>;
     const type = LIBRARY_TYPES.find((t) => t === o.type);
     if (typeof o.slug !== 'string' || !SLUG_RE.test(o.slug) || typeof o.name !== 'string' || !type) return [];
-    return [{ slug: o.slug, name: o.name, type, rel: typeof o.rel === 'string' ? o.rel : '', created: o.created === true }];
+    return [{ slug: o.slug, name: o.name, type, rel: typeof o.rel === 'string' ? o.rel : '', created: o.created === true, ...(o.ffmedia === true ? { ffmedia: true as const } : {}) }];
   });
 }
 

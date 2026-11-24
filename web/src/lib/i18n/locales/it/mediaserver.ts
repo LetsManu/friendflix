@@ -29,6 +29,7 @@ const dict: Translation<typeof de> = {
     updater_outdated: 'Il programma di aggiornamento è troppo vecchio: aggiorna prima FriendFlix.',
     starting: 'Lettura dello stato del server multimediale…',
     image_missing: 'Questa versione di FriendFlix non ha un’immagine di questo server. Scegli Jellyfin (ufficiale, gestito).',
+    moved: 'Dopo il trasloco il server resta Ferrofin.',
   },
   base: {
     title: 'Cartella di base',
@@ -92,6 +93,10 @@ const dict: Translation<typeof de> = {
     livetvSave: 'Imposta percorso',
     livetvSaved: 'Percorso delle registrazioni impostato.',
     migrated: 'trasferita da Jellyfin',
+    migratedWhole: 'l’intera cartella base, trasferita da Jellyfin',
+    migratedSame: 'Questa cartella è già trasferita da Jellyfin.',
+    migratedOverlap: 'Questa cartella si sovrappone a una trasferita da Jellyfin. Scegline una accanto.',
+    wholeBase: 'L’intera cartella base è già trasferita: le nuove cartelle al suo interno sono già visibili in Ferrofin.',
     error: {
       none: 'Scegli almeno una cartella.',
       too_many: 'Al massimo 20 cartelle.',

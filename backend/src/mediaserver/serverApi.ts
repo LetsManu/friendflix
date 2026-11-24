@@ -4,7 +4,7 @@ import type { Config } from '../config.js';
 import { mediaBrowserHeader } from '../media/mediaBrowser.js';
 import { MediaSetupError } from '../media/types.js';
 import { smallJson } from '../settings/probeKit.js';
-import type { LibraryEntry } from './store.js';
+import { libraryPath, type LibraryEntry } from './store.js';
 
 /**
  * The managed media server's own API as the first run and the library routes use it (spec "First run", "Folder changes after the first
@@ -124,12 +124,12 @@ async function virtualFolders(f: typeof fetch, base: string, key: string): Promi
 const q = (v: Record<string, string>) => new URLSearchParams(v).toString();
 
 /**
- * The library of an entry (spec "First run" 5): `/media/<slug>`, real-time monitoring on, no local metadata and no savers (the media is
+ * The library of an entry (spec "First run" 5): its mount (`/media/<slug>`, after a move `/ffmedia/<slug>`: store.ts libraryPath), real-time monitoring on, no local metadata and no savers (the media is
  * read-only), the instance's metadata language. A no-op when a library of that name exists on that folder (a restart after the post, a
  * surviving server); `library_name_taken` when a library of that name exists on another folder (its folder would get no library).
  */
 export async function ensureLibrary(f: typeof fetch, base: string, key: string, lib: LibraryEntry, o: { language: string; country: string }): Promise<void> {
-  const path = `/media/${lib.slug}`;
+  const path = libraryPath(lib);
   const same = (await virtualFolders(f, base, key)).find((v) => v.name === lib.name);
   if (same?.locations.includes(path)) return;
   if (same) throw new MediaSetupError('library_name_taken');

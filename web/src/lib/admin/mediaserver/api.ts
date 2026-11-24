@@ -18,7 +18,8 @@ export type Gpu = 'off' | 'dri' | 'nvidia';
 export type LibraryType = 'movies' | 'tvshows' | 'music' | 'mixed';
 export type SetupStep = 'none' | 'applying' | 'first_run' | 'api_key' | 'libraries' | 'hwaccel' | 'finishing' | 'done' | 'failed';
 export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 'engine_old' | 'proxy_outdated' | 'no_project' | 'no_network' | 'updater_outdated' | 'starting';
-export interface LibraryEntry { slug: string; name: string; type: LibraryType; rel: string; created: boolean }
+/** `ffmedia`: a folder added after a move, mounted at `/ffmedia/<slug>` (else `/media/<slug>`) */
+export interface LibraryEntry { slug: string; name: string; type: LibraryType; rel: string; created: boolean; ffmedia?: true }
 export interface LibraryReferences { lists: number; resume: number; recordings: number }
 export interface MediaBackup { id: string; kind: Kind; upstream: string; at: string; tag: 'manual' | 'auto' | 'upload'; size: number }
 /** a folder of the media server; `migrated`: one a move took over (its target is the path the old Jellyfin used, `rel` '' the whole base) */

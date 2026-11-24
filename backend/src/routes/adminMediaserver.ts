@@ -14,7 +14,7 @@ import { recordApplyFirstRun } from '../mediaserver/firstRun.js';
 import { ACTIVE_PHASES, backUnderWay, freshScan, readScan, scanRunning, startBack, startScan, SWITCHED_PHASES, withMoveLock, type MoveScanRecord } from '../mediaserver/move.js';
 import { libraryReferences, referenced } from '../mediaserver/references.js';
 import { deleteLibrary, managedKey, MANAGED_URL, publicInfo, renameLibrary } from '../mediaserver/serverApi.js';
-import { adminPassword, claimAdminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged, type MigratedFrom, type MoveRecord, type SetupStep } from '../mediaserver/store.js';
+import { adminPassword, claimAdminPassword, externalKey, idsInUse, libraryPath, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged, type MigratedFrom, type MoveRecord, type SetupStep } from '../mediaserver/store.js';
 import { recentlyAuthenticated } from '../reauth.js';
 import { requireAdmin } from '../session.js';
 import { requireSetupSession } from '../setup/code.js';
@@ -420,18 +420,20 @@ function ops(ctx: Ctx) {
       // one), counted as folders; a new folder mounts below /ffmedia, never at a path the copied database may point at
       const migrated = status?.desired?.migrated === true && status.desired.kind === b.kind;
       const kept = migrated ? status!.desired!.folders.filter((f) => f.migrated).map((f) => ({ rel: f.rel, target: f.target, migrated: true as const })) : [];
+      // each library remembers where its folder mounts, so the libraries step creates it there (store.ts libraryPath)
+      const chosen = libs.chosen.map(({ ffmedia: _, ...l }): LibraryEntry => (migrated ? { ...l, ffmedia: true } : l));
       const spec = {
-        kind: b.kind, folders: [...kept, ...libs.chosen.map((l) => ({ rel: l.rel, target: `/${migrated ? 'ffmedia' : 'media'}/${l.slug}` }))],
+        kind: b.kind, folders: [...kept, ...chosen.map((l) => ({ rel: l.rel, target: libraryPath(l) }))],
         uid: b.uid, gid: b.gid, gpu: b.gpu, mediaGid: b.mediaGid, egress: b.egress, tz: containerTz(), ...(migrated ? { migrated: true as const } : {}),
       };
       const body = { op: 'apply', spec, ...(b.kind === 'ferrofin' && password ? { firstRun: { password } } : {}) };
       const r = await startMediaJob(ctx, body, actor, { kind: b.kind, folders: spec.folders.length, gpu: b.gpu, egress: b.egress });
       if (r.ok) {
         if ('job' in r) await recordApplyFirstRun(ctx, r.job.id, 'firstRun' in body);
-        const patch: ManagedPatch = { kind: b.kind, libraries: [...libs.chosen, ...libs.kept] };
+        const patch: ManagedPatch = { kind: b.kind, libraries: [...chosen, ...libs.kept] };
         // after the first run: a new (or retyped) library goes back to the libraries step, a changed GPU to the encoding settings; the
         // tick waits for this apply first
-        const again: SetupStep | null = firstRun ? null : libs.chosen.some((l) => !l.created) ? 'libraries' : status?.desired?.gpu !== b.gpu ? 'hwaccel' : null;
+        const again: SetupStep | null = firstRun ? null : chosen.some((l) => !l.created) ? 'libraries' : status?.desired?.gpu !== b.gpu ? 'hwaccel' : null;
         if (firstRun) await writeManaged(ctx, { ...patch, setup: 'applying', setupError: null, adminUser: ADMIN_USER });
         else await writeManaged(ctx, again ? { ...patch, setup: again, setupError: null } : patch);
       } else {
