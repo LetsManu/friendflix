@@ -37,8 +37,8 @@
   import { MEDIA_TAB, type UpdaterJob } from '../updater';
   import { adminMediaApi, type FolderInput, type Gpu, type Kind, type MediaApi, type MediaView } from './api';
   import {
-    actionsFor, backActive, choiceDisabled, currentChoice, folderRowsError, idError, initialRows, keptLibraries, kindName, livetvOffer, mediaErrorText, moveActive, moveFollow,
-    nameTakenRow, setupActive, sourceLine, statusStarting, type ActionOp, type Choice,
+    actionsFor, backActive, choiceDisabled, currentChoice, folderRowsError, idError, initialRows, keptLibraries, kindName, livetvOffer, mediaErrorText, migratedFolders,
+    moveActive, moveFollow, nameTakenRow, setupActive, sourceLine, statusStarting, type ActionOp, type Choice,
   } from './model';
   import BackupDialogs from './BackupDialogs.svelte';
   import BaseFolder from './BaseFolder.svelte';
@@ -122,6 +122,8 @@
   $: locked = !available || Boolean(view && managedKind && !isCurrent && choiceDisabled(view, managedKind));
   $: base = view?.status?.base ?? { set: false, path: null, pending: false, expiresAt: null };
   $: kept = view && isCurrent ? keptLibraries(view) : [];
+  /** a moved server's folders (read-only; the backend sends them as recorded): they count as chosen */
+  $: migrated = view && isCurrent ? migratedFolders(view) : [];
   $: offer = view && isCurrent && api.scope === 'admin' ? livetvOffer(view, rows) : null;
   $: firstRun = !isCurrent || view?.managed.setup !== 'done';
   $: actions = view ? actionsFor(view) : [];
@@ -137,7 +139,7 @@
     rowErrors = {}; applyError = '';
     if (!base.set) { applyError = tr('mediaserver.apply.needBase'); return; }
     const bad = folderRowsError(rows);
-    if (bad) { applyError = tr(`mediaserver.folders.error.${bad}`); return; }
+    if (bad && !(bad === 'none' && migrated.length)) { applyError = tr(`mediaserver.folders.error.${bad}`); return; }
     if (uidErr || gidErr) { applyError = tr('mediaserver.user.idError'); return; }
     applying = true;
     try {
@@ -248,24 +250,31 @@
   $: mv = api.scope === 'admin' ? view?.move ?? null : null;
   $: moved = Boolean(view && mv?.migratedFrom && view.mode === 'managed');
   $: source = view ? sourceLine(view) : null;
-  /** the way back asked for here: its end is told once (a toast when done, the reason when it failed) */
-  let goingBack = false, backError = '';
-  $: if (goingBack && mv?.state?.back === 'done') { goingBack = false; toast.success(tr('mediaserver.move.backDone')); }
-  $: if (goingBack && mv?.state?.back === 'failed') goingBack = false;
+  /**
+   * the way back asked for here: its end is told once (a toast when done, the reason when it failed). `backOwn` turns true only once
+   * the view was read after the backend took it (it records `starting` before it answers), so an earlier attempt's `failed` still in
+   * the view never ends this one
+   */
+  let goingBack = false, backOwn = false, backError = '';
+  $: if (goingBack && backOwn && mv?.state?.back === 'done') { goingBack = false; toast.success(tr('mediaserver.move.backDone')); }
+  $: if (goingBack && backOwn && mv?.state?.back === 'failed') goingBack = false;
   $: backLine = backError
+    || (goingBack && !backOwn ? tr('mediaserver.move.backRunning') : '')
     || (mv?.state?.back === 'failed' ? tr('mediaserver.move.backFailed', { reason: mediaErrorText(mv.state.backError) }) : '')
     || (view && backActive(view) ? tr('mediaserver.move.backRunning') : '');
-  $: backBad = Boolean(backError || mv?.state?.back === 'failed');
+  $: backBad = Boolean(backError || (!(goingBack && !backOwn) && mv?.state?.back === 'failed'));
   async function wayBack() {
     if (!view) return;
     // the old container is gone: the stage 1 switch (FriendFlix stops Ferrofin, the address is entered below)
     if (source === 'missing') { await toExternal(false); return; }
     const ok = await confirm({ title: tr('mediaserver.move.wayBackTitle'), body: tr('mediaserver.move.wayBackBody'), danger: true, confirmLabel: tr('mediaserver.move.wayBack') });
     if (!ok) return;
-    backError = ''; goingBack = true;
+    backError = ''; goingBack = true; backOwn = false;
     try {
       await call(() => api.back());
-      refresh();
+      await load();
+      backOwn = true;
+      schedule();
     } catch (e) {
       goingBack = false;
       backError = tr('mediaserver.move.backFailed', { reason: mediaErrorText(apiCode(e)) });
@@ -314,7 +323,9 @@
           <h3 id="ms-moved-t">{$t('mediaserver.move.moved', { name: mv.migratedFrom.name, date: fmtDate(mv.migratedFrom.at) })}</h3>
           {#if source}<p class="muted small">{$t(source === 'stopped' ? 'mediaserver.move.oldStopped' : source === 'running' ? 'mediaserver.move.oldRunning' : 'mediaserver.move.oldMissing')}</p>{/if}
           <div class="acts">
-            <Button variant="secondary" icon="arrow-left" pending={goingBack || backActive(view) || switching} disabled={running || backActive(view)} on:click={wayBack}>{$t('mediaserver.move.wayBack')}</Button>
+            <!-- the old container gone: the stage 1 switch (an address), under its own name -->
+            <Button variant="secondary" icon="arrow-left" pending={goingBack || backActive(view) || switching} disabled={running || backActive(view) || moveActive(view)}
+              on:click={wayBack}>{source === 'missing' ? $t('mediaserver.external.switch') : $t('mediaserver.move.wayBack')}</Button>
           </div>
           <p class="msg" class:err={backBad} role={backBad ? 'alert' : 'status'}>{backLine}</p>
         </section>
@@ -346,7 +357,7 @@
         {#key managedKind}
           <BaseFolder {api} {call} {base} inUse={Boolean(view.status?.container)} disabled={locked || running} on:changed={() => load()} on:job={(e) => started(e.detail)} on:unreadable={(e) => (baseUnreadable = e.detail)} />
           {#if base.set}
-            <FolderPicker {api} {call} bind:rows libraries={isCurrent ? view.managed.libraries : []} {kept} {rowErrors} livetv={offer} disabled={locked || running}
+            <FolderPicker {api} {call} bind:rows libraries={isCurrent ? view.managed.libraries : []} {kept} {migrated} {rowErrors} livetv={offer} disabled={locked || running}
               on:changed={() => { edited(); }} on:deleted={() => load()} on:livetv={(e) => saveLivetv(e.detail)} />
 
             <section class="sec" aria-labelledby="ms-user-t">

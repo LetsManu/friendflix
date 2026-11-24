@@ -65,6 +65,8 @@ export interface IdCheck { users: { total: number; missing: number }; items: { s
 export interface MoveState {
   phase: MovePhase; error: string | null; jobId: string | null; startedAt: string; errorMeta?: IdCheck | { warning: 'updater_aborted' };
   back?: BackStep; backError?: string; step: MoveJobStep | null; abort: boolean;
+  /** a failed move: the phase it failed (or was aborted) in */
+  failedIn?: Exclude<MovePhase, 'done' | 'failed'>;
 }
 /** the Jellyfin a move came from (container name and version) and when */
 export interface MigratedFrom { name: string; version: string | null; at: string }
@@ -72,6 +74,8 @@ export interface MigratedFrom { name: string; version: string | null; at: string
 export interface MoveView {
   offered: boolean; reason: OfferReason | null; scan: MoveScanRecord | null; state: MoveState | null;
   migratedFrom: MigratedFrom | null; sourceState: string | null; requestsWarning: boolean;
+  /** a request service is set up (the move points it over; absent from an older backend) */
+  requests?: boolean;
 }
 /** backend mediaserver/store.ts MediaManaged */
 export interface MediaManaged {

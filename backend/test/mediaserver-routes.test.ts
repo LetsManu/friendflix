@@ -395,7 +395,12 @@ describe('admin routes', () => {
     it('move offered only for an external Jellyfin with linked ids', async () => {
       await linked();
       fake.media = { ...media(), source: { name: 'jellyfin', state: 'exited', version: '10.10.3' } };
-      expect(await moveView()).toEqual({ offered: true, reason: null, scan: null, state: null, migratedFrom: null, sourceState: 'exited', requestsWarning: false });
+      expect(await moveView()).toEqual({ offered: true, reason: null, scan: null, state: null, migratedFrom: null, sourceState: 'exited', requestsWarning: false, requests: true });
+      // the sheet names the request service only when one is set up
+      await env.ctx.settings.save({ REQUESTS_URL: null, REQUESTS_API_KEY: null }, null);
+      expect(await moveView()).toMatchObject({ requests: false });
+      await env.ctx.settings.save({ REQUESTS_URL: 'http://requests:5055', REQUESTS_API_KEY: 'seerrkey' }, null);
+      expect(await moveView()).toMatchObject({ requests: true });
       // the fresh managed server is refused for the same install
       expect((await req(admin, 'GET', '')).json().offer).toEqual({ managed: false, reason: 'ids_in_use' });
       // nothing depends on the ids: nothing to move (a fresh server is offered instead)
@@ -604,12 +609,13 @@ describe('admin routes', () => {
       // the copy finished (the backend has not moved on yet): the updater runs the abort as a new job, the move has failed
       answer('bbbbbbbbbbbbbbbb');
       expect((await req(admin, 'POST', '/move/abort')).statusCode).toBe(202);
-      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'move_aborted' });
-      // during the backend's phases the move has failed too
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'move_aborted', failedIn: 'copying' });
+      // during the backend's phases the move has failed too, in the phase it was aborted in (the view names it)
       await move('verify');
       answer('cccccccccccccccc');
       expect((await req(admin, 'POST', '/move/abort')).statusCode).toBe(202);
-      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'move_aborted' });
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'move_aborted', failedIn: 'verify' });
+      expect((await req(admin, 'GET', '')).json().move.state).toMatchObject({ phase: 'failed', error: 'move_aborted', failedIn: 'verify' });
       const adminId = (await env.pool.query<{ id: string }>("select id from users where authentik_sub='sub-admin'")).rows[0]!.id;
       expect(await audits('mediaserver.move_abort')).toEqual([{ actor: adminId, meta: { phase: 'copying' } }, { actor: adminId, meta: { phase: 'copying' } }, { actor: adminId, meta: { phase: 'verify' } }]);
       // FriendFlix uses the new server from the switch on: no abort there (the way back is /back)
@@ -623,6 +629,45 @@ describe('admin routes', () => {
       await env.pool.query('delete from media_managed');
       fake.answer['migrate-abort'] = { status: 409, json: { error: 'no_target' } };
       expect((await req(admin, 'POST', '/move/abort')).json()).toEqual({ error: 'no_target' });
+    });
+
+    it('an apply after a move carries the recorded migrated folders; a client can never send one (c2)', async () => {
+      await reauth(admin);
+      await linked();
+      const at = '2026-11-24T10:00:00.000Z';
+      await writeManaged(env.ctx, { kind: 'ferrofin', setup: 'done', migratedFrom: { name: 'jellyfin', version: '10.10.3', at } });
+      const recorded = [{ rel: '', target: '/media', migrated: true }, { rel: 'Serien', target: '/data/tv', migrated: true }];
+      fake.media = { ...media(), desired: { kind: 'ferrofin', folders: recorded, uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: true, run: true, migrated: true } };
+      // only migrated folders and a new GPU: valid, the folders exactly as recorded
+      const r = await req(admin, 'POST', '/apply', applyBody({ folders: [], gpu: 'dri' }));
+      expect(r.statusCode).toBe(202);
+      const sent = opBodies('apply')[0]!.spec;
+      expect(sent).toMatchObject({ kind: 'ferrofin', gpu: 'dri', migrated: true });
+      expect(sent.folders).toEqual(recorded);
+      // the first run is not sent again; the GPU goes back to the encoding step
+      expect(opBodies('apply')[0]!.firstRun).toBeUndefined();
+      expect(await readManaged(env.pool)).toMatchObject({ setup: 'hwaccel' });
+      // a new folder mounts below /ffmedia next to them
+      offset += 3 * 60_000;
+      await reauth(admin);
+      await writeManaged(env.ctx, { setup: 'done' });
+      expect((await req(admin, 'POST', '/apply', applyBody({ folders: [{ rel: 'Neu', name: 'Neu', type: 'movies' }] }))).statusCode).toBe(202);
+      expect(opBodies('apply')[1]!.spec.folders).toEqual([...recorded, { rel: 'Neu', target: '/ffmedia/neu' }]);
+      // a client cannot inject a migrated folder: the body refuses the flag and an empty rel, nothing is sent
+      offset += 3 * 60_000;
+      await reauth(admin);
+      for (const folders of [[{ rel: 'Filme', name: 'Filme', type: 'movies', migrated: true }], [{ rel: '', name: 'Alles', type: 'mixed' }]]) {
+        const bad = await req(admin, 'POST', '/apply', applyBody({ folders }));
+        expect(bad.statusCode).toBe(400);
+      }
+      for (const extra of [{ migrated: true }, { target: '/movies' }]) expect((await req(admin, 'POST', '/apply', applyBody({ folders: [], ...extra }))).statusCode).toBe(400);
+      expect(opBodies('apply')).toHaveLength(2);
+      // without a recorded migrated spec nothing is merged (a stage 1 server)
+      fake.media = { ...media(), desired: { kind: 'ferrofin', folders: [{ rel: 'Filme', target: '/media/filme' }], uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: true, run: true } };
+      expect((await req(admin, 'POST', '/apply', applyBody({ folders: [{ rel: 'Filme', name: 'Filme', type: 'movies' }] }))).statusCode).toBe(202);
+      const plain = opBodies('apply')[2]!.spec;
+      expect(plain.migrated).toBeUndefined();
+      expect(plain.folders).toEqual([{ rel: 'Filme', target: '/media/filme' }]);
     });
 
     it('the way back: only after a move, never audited when it changed nothing', async () => {

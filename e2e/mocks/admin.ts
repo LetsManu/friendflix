@@ -2277,7 +2277,7 @@ export interface MediaMock {
 /** the source of the mocked move (a fictional container id) */
 export const MOVE_SOURCE = 'a'.repeat(64);
 export const moveView = (o: Record<string, unknown> = {}): any => ({
-  offered: false, reason: null, scan: null, state: null, migratedFrom: null, sourceState: null, requestsWarning: false, ...o,
+  offered: false, reason: null, scan: null, state: null, migratedFrom: null, sourceState: null, requestsWarning: false, requests: true, ...o,
 });
 export const moveScan = (o: Record<string, unknown> = {}): any => ({
   source: { id: MOVE_SOURCE, name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.0', version: '10.11.0' },
@@ -2352,7 +2352,7 @@ function advanceMove(ms: MediaMock): void {
       : { ...scan, state: 'done', result: { ...ms.scanResult, source: { ...ms.scanResult.source, id: scan.source } } };
   }
   const st = mv.state;
-  if (st && st.abort && st.phase !== 'done' && st.phase !== 'failed') { mv.state = { ...st, phase: 'failed', error: 'move_aborted', abort: false }; mv.offered = true; return; }
+  if (st && st.abort && st.phase !== 'done' && st.phase !== 'failed') { mv.state = { ...st, phase: 'failed', error: 'move_aborted', abort: false, failedIn: st.phase }; mv.offered = true; return; }
   if (st && !['done', 'failed'].includes(st.phase)) {
     let i = MOVE_SEQ.findIndex(([p, s]) => p === st.phase && s === st.step);
     for (let k = 0; k < 3 && i < MOVE_SEQ.length - 1; k++) i++;
@@ -2482,7 +2482,11 @@ function mediaserverRoute(ms: MediaMock, m: string, p: string, body: any, J: Rep
     const libs = body.folders.map((f: any) => ({ slug: f.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name: f.name, type: f.type, rel: f.rel, created: false }));
     ms.mode = 'managed';
     ms.managed = { ...ms.managed, kind: body.kind, libraries: libs, ...(first ? { setup: 'applying', setupError: null, adminUser: 'friendflix-admin', hasPassword: true } : {}) };
-    ms.status.desired = { kind: body.kind, folders: libs.map((l: any) => ({ rel: l.rel, target: `/media/${l.slug}` })), uid: body.uid, gid: body.gid, gpu: body.gpu, mediaGid: body.mediaGid, egress: body.egress, run: true };
+    // a moved server keeps its migrated folders as recorded (the backend merges them); a new folder mounts below /ffmedia
+    const mig = ms.status.desired?.migrated === true && ms.status.desired.kind === body.kind;
+    const kept = mig ? ms.status.desired.folders.filter((f: any) => f.migrated) : [];
+    ms.status.desired = { kind: body.kind, folders: [...kept, ...libs.map((l: any) => ({ rel: l.rel, target: `/${mig ? 'ffmedia' : 'media'}/${l.slug}` }))], uid: body.uid, gid: body.gid, gpu: body.gpu,
+      mediaGid: body.mediaGid, egress: body.egress, run: true, ...(mig ? { migrated: true } : {}) };
     ms.status.container = { state: 'running', health: 'starting', kind: body.kind, image: { digest: `sha256:${'a'.repeat(64)}`, upstream: '10.11.0' }, template: 'current', tampered: false, createdAt: new Date().toISOString() };
     ms.status.pin = { image: `docker.io/jellyfin/jellyfin:10.11.0@sha256:${'a'.repeat(64)}`, upstream: '10.11.0', changed: false };
     return J({ job: job('apply') }, 202);

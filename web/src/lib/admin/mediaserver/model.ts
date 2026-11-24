@@ -8,7 +8,7 @@
  * Svelte components only render what these say.
  */
 import { hasKey, tr, trDynamic } from '#lib/i18n';
-import type { FolderInput, Kind, LibraryEntry, MediaManaged, MediaView, MoveCandidate, MoveJobStep, MovePhase, MoveScan, MoveScanRecord, MoveState, OfferReason, SetupStep } from './api';
+import type { FolderInput, Kind, LibraryEntry, MediaFolder, MediaManaged, MediaView, MoveCandidate, MoveJobStep, MovePhase, MoveScan, MoveScanRecord, MoveState, OfferReason, SetupStep } from './api';
 
 export type Choice = Kind | 'external';
 export const CHOICES: readonly Choice[] = ['ferrofin', 'jellyfin', 'external'];
@@ -91,20 +91,22 @@ export function defaultName(name: string): string {
 export const nameTakenRow = (rows: ReadonlyArray<Pick<FolderInput, 'name'>>, kept: readonly LibraryEntry[]): number =>
   rows.findIndex((r) => kept.some((k) => sameName(k.name, r.name)));
 
-/** the slug of a mounted folder (`/media/<slug>`) */
-const slugOf = (target: string) => target.replace(/^\/media\//, '');
+/** the slug of a mounted folder (`/media/<slug>`; after a move `/ffmedia/<slug>`) */
+const slugOf = (target: string) => target.replace(/^\/(ff)?media\//, '');
+/** a moved server's folders as the updater recorded them (read-only in the form; the backend sends them as recorded) */
+export const migratedFolders = (v: MediaView): MediaFolder[] => (v.status?.desired?.migrated ? v.status.desired.folders.filter((f) => f.migrated) : []);
 /** the folders mounted now (or, before the first apply, every stored library) as editable rows */
 export function initialRows(v: MediaView): FolderInput[] {
   const d = v.status?.desired;
   const libs = v.managed.libraries;
-  const mounted = d ? libs.filter((l) => d.folders.some((f) => slugOf(f.target) === l.slug)) : libs;
+  const mounted = d ? libs.filter((l) => d.folders.some((f) => !f.migrated && slugOf(f.target) === l.slug)) : libs;
   return mounted.map((l) => ({ rel: l.rel, name: l.name, type: l.type }));
 }
 /** libraries whose folder was removed: they stay in the server (their items show as missing) until deleted on their own */
 export function keptLibraries(v: MediaView): LibraryEntry[] {
   const d = v.status?.desired;
   if (!d) return [];
-  return v.managed.libraries.filter((l) => l.created && !d.folders.some((f) => slugOf(f.target) === l.slug));
+  return v.managed.libraries.filter((l) => l.created && !d.folders.some((f) => !f.migrated && slugOf(f.target) === l.slug));
 }
 
 /**
@@ -242,8 +244,9 @@ function updaterRow(step: MoveJobStep): number {
 }
 /**
  * The step list's rows: before the current one done, the current one running (failed when the move failed there), the rest to do. A
- * copy the updater holds as `ready` waits for the backend's first phase. A failure without a step (the backend's phases) marks the id
- * check for `ids_mismatch`, otherwise no row: the result line says why.
+ * copy the updater holds as `ready` waits for the backend's first phase. A failure in one of the backend's phases (`failedIn`, an
+ * abort there included) marks that phase's row; one in the copy the step the updater stopped at; without either (an older record) the
+ * id check for `ids_mismatch`, otherwise no row: the result line says why.
  */
 export function moveSteps(v: MediaView): Array<{ step: MoveStepName; state: SetupRowState }> {
   const st = v.move?.state ?? null;
@@ -252,7 +255,9 @@ export function moveSteps(v: MediaView): Array<{ step: MoveStepName; state: Setu
   else if (st?.phase === 'copying') at = st.step ? updaterRow(st.step) : v.status?.move?.phase === 'ready' ? MOVE_STEPS.indexOf('nfo') : 0;
   else if (st?.phase === 'failed') {
     failed = true;
-    at = st.step ? updaterRow(st.step) : st.error === 'ids_mismatch' ? MOVE_STEPS.indexOf('verify') : -1;
+    // a phase of the backend: its row (the updater's job ended long before, its step is cleared); the copy: the step it stopped at
+    const phase = st.failedIn && st.failedIn !== 'copying' ? st.failedIn : null;
+    at = phase ? MOVE_STEPS.indexOf(phase as MoveStepName) : st.step ? updaterRow(st.step) : st.error === 'ids_mismatch' ? MOVE_STEPS.indexOf('verify') : -1;
   } else if (st) at = MOVE_STEPS.indexOf(st.phase as MoveStepName);
   return MOVE_STEPS.map((step, i) => ({ step, state: at < 0 || i > at ? 'todo' : i < at ? 'done' : failed ? 'failed' : 'running' }));
 }

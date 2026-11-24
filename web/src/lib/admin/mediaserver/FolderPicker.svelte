@@ -8,6 +8,8 @@
    * library stays; such kept libraries are listed with *Bibliothek löschen*, which counts the FriendFlix references first. Each row
    * keeps a note line from the start for its warning, the card's refusal (library_name_taken, library_referenced) or the Live TV
    * offer, and the browser list has a fixed height: nothing moves while a level loads or a note appears.
+   * A moved server's folders (stage 2: `migrated`, the updater's record) come first, read-only, with their container path and "aus
+   * Jellyfin übernommen": they carry Jellyfin's own libraries and are sent by the backend as recorded, never by this form.
    */
   import { createEventDispatcher, onMount } from 'svelte';
   import { apiCode } from '#lib/api';
@@ -18,7 +20,7 @@
   import Select from '#lib/ui/Select.svelte';
   import { confirm } from '#lib/ui/confirm';
   import { toast } from '#lib/ui/toast';
-  import type { BrowseEntry, FolderInput, LibraryEntry, LibraryType, MediaApi } from './api';
+  import type { BrowseEntry, FolderInput, LibraryEntry, LibraryType, MediaApi, MediaFolder } from './api';
   import { MAX_FOLDERS, defaultName, mediaErrorText } from './model';
 
   export let api: MediaApi;
@@ -33,6 +35,8 @@
   /** the Live TV recordings offer (model.ts livetvOffer) */
   export let livetv: { rel: string; target: string } | null = null;
   export let disabled = false;
+  /** a moved server's folders as the updater recorded them (read-only; they count as chosen) */
+  export let migrated: MediaFolder[] = [];
   /** changed: the rows were edited; deleted: a kept library is gone in the server (the card reads the view again) */
   const dispatch = createEventDispatcher<{ livetv: string; changed: void; deleted: string }>();
 
@@ -143,7 +147,14 @@
   <p class="muted tiny">{truncated ? $t('mediaserver.folders.truncated') : !canPick ? $t('mediaserver.folders.deepest') : ''}</p>
 
   <h4>{$t('mediaserver.folders.chosen')}</h4>
-  {#if !rows.length}<p class="muted small">{$t('mediaserver.folders.none')}</p>{/if}
+  {#if migrated.length}
+    <ul class="rows mig" data-testid="media-migrated">
+      {#each migrated as f (f.target)}
+        <li data-migrated={f.target}><code class="rel">{f.target}</code><span class="muted tiny">{$t('mediaserver.folders.migrated')}</span></li>
+      {/each}
+    </ul>
+  {/if}
+  {#if !rows.length && !migrated.length}<p class="muted small">{$t('mediaserver.folders.none')}</p>{/if}
   <ul class="rows">
     {#each rows as r (r.rel)}
       {@const n = note(r.rel)}
@@ -200,6 +211,8 @@
   .msg.err { color: var(--err-mark); }
   .rows, .kept { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
   .rows li { display: grid; gap: .3rem; padding: .5rem .6rem; border-radius: var(--fr-r-card); border: 1px solid var(--line); min-width: 0; }
+  .mig li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .2rem .8rem; min-height: 44px; }
+  .mig .rel { color: var(--fg); }
   .rel { font-size: .85rem; color: var(--mut); overflow-wrap: anywhere; }
   .ctl { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 44px; align-items: end; gap: .5rem; }
   .rm { width: 44px; height: 44px; padding: 0; background: transparent; color: var(--mut); border-radius: 50%; }

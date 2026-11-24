@@ -45,13 +45,15 @@ export interface Relink { table: 'users' | 'profiles'; row: string; from: string
  * when the phase changes); `rounds`: the `nfo` ticks whose count of libraries with a saver still on did not drop, `nfoLeft` that count at
  * the last tick; `repeat`: a move after a way back (its `verify` repairs the users first), `relinks` what that repair created,
  * `policyPending` the users a repair made whose policy is not written yet; `back`/`backError`: the way back after this move,
- * `requestsBack` that way back has pointed the request service back, or tried (never again: a retried stop does not repeat it). Each is
- * absent when unset.
+ * `requestsBack` that way back has pointed the request service back, or tried (never again: a retried stop does not repeat it);
+ * `failedIn`: the phase a failed move failed in (or was aborted in). Each is absent when unset.
  */
 export interface MoveRecord {
   phase: MovePhase; error: string | null; jobId: string | null; startedAt: string; requestsWarning: boolean;
   errorMeta?: IdCheck | MoveWarning; abortPending?: true; tries?: number; rounds?: number; nfoLeft?: number;
   repeat?: true; relinks?: Relink[]; policyPending?: string[]; back?: BackStep; backError?: string; requestsBack?: true;
+  /** a failed move: the phase it failed in (the copy's own step is the updater job's; Admin marks the phase's row) */
+  failedIn?: MovePhase;
 }
 /** the request service's Jellyfin connection before the move (the way back restores it); its API key is not part of it */
 export interface RequestsPrev { hostname: string; port: number; useSsl: boolean; urlBase: string }
@@ -127,12 +129,14 @@ function moveRecord(raw: unknown): MoveRecord | null {
   const tries = count(o.tries), rounds = count(o.rounds), nfoLeft = count(o.nfoLeft), links = relinks(o.relinks);
   const policy = Array.isArray(o.policyPending) ? o.policyPending.slice(0, MAX_RELINKS).filter((x): x is string => typeof x === 'string' && SERVER_USER_RE.test(x)) : [];
   const back = BACK_STEPS.find((b) => b === o.back), backError = re(o.backError, CODE_RE);
+  const failedIn = phase === 'failed' ? MOVE_PHASES.find((p) => p === o.failedIn && p !== 'done' && p !== 'failed') : undefined;
   return {
     phase, error: re(o.error, CODE_RE), jobId: re(o.jobId, JOB_ID_RE), startedAt, requestsWarning: o.requestsWarning === true,
     ...(errorMeta ? { errorMeta } : {}), ...(o.abortPending === true ? { abortPending: true as const } : {}), ...(tries ? { tries } : {}),
     ...(rounds ? { rounds } : {}), ...(nfoLeft !== null ? { nfoLeft } : {}), ...(o.repeat === true ? { repeat: true as const } : {}),
     ...(links.length ? { relinks: links } : {}), ...(policy.length ? { policyPending: policy } : {}),
     ...(back ? { back } : {}), ...(back && backError ? { backError } : {}), ...(back && o.requestsBack === true ? { requestsBack: true as const } : {}),
+    ...(failedIn ? { failedIn } : {}),
   };
 }
 /** a request service connection as it can be stored and restored (an empty host, a path in it, a port out of range: null) */

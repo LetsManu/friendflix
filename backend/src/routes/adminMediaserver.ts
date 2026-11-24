@@ -37,12 +37,14 @@ export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 
  * Docker state (`missing` once it is gone); `requestsWarning` the request service does not point at the server FriendFlix uses (a move
  * or a way back could not point it over: the manual step); `scan` the
  * background scan of the chosen Jellyfin (mediaserver/move.ts MoveScanRecord); `state.back` how far the way back got (`backError` its
- * code when it changed nothing). Not offered while a move or a way back is under way.
+ * code when it changed nothing); `state.failedIn` the phase a failed move failed in. Not offered while a move or a way back is under way.
  */
 export interface MoveView {
   offered: boolean; reason: OfferReason | null; scan: MoveScanRecord | null;
   state: (Omit<MoveRecord, 'requestsWarning' | 'abortPending' | 'tries' | 'rounds' | 'repeat' | 'relinks' | 'requestsBack'> & { step: MediaStep | null; abort: boolean }) | null;
   migratedFrom: MigratedFrom | null; sourceState: string | null; requestsWarning: boolean;
+  /** a request service is set up in FriendFlix (the move points it at the new server; the sheet names it only then) */
+  requests: boolean;
 }
 export interface MediaView {
   /** managed = media_managed.kind is set */
@@ -140,16 +142,17 @@ async function moveOffer(ctx: Ctx, view: UpdaterView, managed: MediaManaged, sta
   return { offered: managed.kind === null && !moving(managed, status) && currentJellyfin(ctx) !== null && (await idsInUse(ctx.db)), reason: null };
 }
 
-function moveView(managed: MediaManaged, status: MediaStatus | null, offer: Pick<MoveView, 'offered' | 'reason'>, scan: MoveScanRecord | null): MoveView {
+function moveView(managed: MediaManaged, status: MediaStatus | null, offer: Pick<MoveView, 'offered' | 'reason'>, scan: MoveScanRecord | null, requests: boolean): MoveView {
   const rec = managed.move;
   return {
     ...offer, scan,
     state: rec ? {
       phase: rec.phase, error: rec.error, jobId: rec.jobId, startedAt: rec.startedAt, ...(rec.errorMeta ? { errorMeta: rec.errorMeta } : {}),
       ...(rec.back ? { back: rec.back } : {}), ...(rec.backError ? { backError: rec.backError } : {}),
+      ...(rec.failedIn ? { failedIn: rec.failedIn } : {}),
       step: status?.move?.step ?? null, abort: status?.move?.abort === true,
     } : null,
-    migratedFrom: managed.migratedFrom, sourceState: status?.source?.state ?? null, requestsWarning: rec?.requestsWarning === true,
+    migratedFrom: managed.migratedFrom, sourceState: status?.source?.state ?? null, requestsWarning: rec?.requestsWarning === true, requests,
   };
 }
 
@@ -163,7 +166,7 @@ async function load(ctx: Ctx, read?: UpdaterView): Promise<Loaded> {
 export async function mediaView(ctx: Ctx, read?: UpdaterView): Promise<MediaView> {
   const { view, managed, status } = await load(ctx, read);
   const reason = await offerReason(ctx, view, managed);
-  const move = moveView(managed, status, await moveOffer(ctx, view, managed, status), await readScan(ctx));
+  const move = moveView(managed, status, await moveOffer(ctx, view, managed, status), await readScan(ctx), ctx.seerr !== null);
   return {
     mode: managed.kind ? 'managed' : 'external',
     offer: { managed: reason === null, reason },
@@ -413,12 +416,16 @@ function ops(ctx: Ctx) {
       // a new managed setup keeps the external server first (spec "Switching"); an empty connection (a switch without restore) leaves
       // the one kept before in place
       if (!managed.kind && ctx.cfg.JELLYFIN_URL) await writeManaged(ctx, { externalUrl: addressOnly(ctx.cfg.JELLYFIN_URL ?? '') || null, externalKey: ctx.cfg.JELLYFIN_ADMIN_API_KEY || null });
+      // a moved server (stage 2): its migrated folders exactly as the updater recorded them (never from the request: the body cannot carry
+      // one), counted as folders; a new folder mounts below /ffmedia, never at a path the copied database may point at
+      const migrated = status?.desired?.migrated === true && status.desired.kind === b.kind;
+      const kept = migrated ? status!.desired!.folders.filter((f) => f.migrated).map((f) => ({ rel: f.rel, target: f.target, migrated: true as const })) : [];
       const spec = {
-        kind: b.kind, folders: libs.chosen.map((l) => ({ rel: l.rel, target: `/media/${l.slug}` })),
-        uid: b.uid, gid: b.gid, gpu: b.gpu, mediaGid: b.mediaGid, egress: b.egress, tz: containerTz(),
+        kind: b.kind, folders: [...kept, ...libs.chosen.map((l) => ({ rel: l.rel, target: `/${migrated ? 'ffmedia' : 'media'}/${l.slug}` }))],
+        uid: b.uid, gid: b.gid, gpu: b.gpu, mediaGid: b.mediaGid, egress: b.egress, tz: containerTz(), ...(migrated ? { migrated: true as const } : {}),
       };
       const body = { op: 'apply', spec, ...(b.kind === 'ferrofin' && password ? { firstRun: { password } } : {}) };
-      const r = await startMediaJob(ctx, body, actor, { kind: b.kind, folders: b.folders.length, gpu: b.gpu, egress: b.egress });
+      const r = await startMediaJob(ctx, body, actor, { kind: b.kind, folders: spec.folders.length, gpu: b.gpu, egress: b.egress });
       if (r.ok) {
         if ('job' in r) await recordApplyFirstRun(ctx, r.job.id, 'firstRun' in body);
         const patch: ManagedPatch = { kind: b.kind, libraries: [...libs.chosen, ...libs.kept] };
@@ -537,7 +544,7 @@ function moveOps(ctx: Ctx) {
         // whatever phase the backend shows) ends the move here, so no phase continues after it
         const ownJob = r.ok && 'job' in r && r.job.id === m.move?.jobId;
         if (r.ok && m.move && ACTIVE_PHASES.includes(m.move.phase) && (phase === 'nfo' || phase === 'verify' || !ownJob)) {
-          await writeManaged(ctx, { move: { ...m.move, phase: 'failed', error: 'move_aborted' } });
+          await writeManaged(ctx, { move: { ...m.move, phase: 'failed', error: 'move_aborted', failedIn: m.move.phase } });
         }
         return () => jobAnswer(reply, r);
       });

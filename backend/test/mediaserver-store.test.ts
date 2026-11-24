@@ -56,6 +56,13 @@ describe('media_managed', () => {
     expect(await readManaged(env.pool)).toMatchObject({ migratedFrom, move, requestsPrev });
     await writeManaged(env.ctx, { move: { ...move, phase: 'failed', error: 'ids_mismatch' } });
     expect((await readManaged(env.pool)).move).toEqual({ ...move, phase: 'failed', error: 'ids_mismatch' });
+    // the phase a failed move failed in: kept for a failed move only, and only a phase a move can fail in
+    await writeManaged(env.ctx, { move: { ...move, phase: 'failed', error: 'ids_mismatch', failedIn: 'verify' } });
+    expect((await readManaged(env.pool)).move).toEqual({ ...move, phase: 'failed', error: 'ids_mismatch', failedIn: 'verify' });
+    await env.pool.query(`update media_managed set move = move || '{"failedIn":"done"}'`);
+    expect((await readManaged(env.pool)).move?.failedIn).toBeUndefined();
+    await env.pool.query(`update media_managed set move = move || '{"failedIn":"nfo","phase":"nfo"}'`);
+    expect((await readManaged(env.pool)).move?.failedIn).toBeUndefined();
     // only what the patch names changes
     expect((await readManaged(env.pool)).requestsPrev).toEqual(requestsPrev);
     await writeManaged(env.ctx, { migratedFrom: null, move: null, requestsPrev: null });

@@ -647,9 +647,12 @@ async function retried(ctx: Ctx, from: MovePhase, tries: number): Promise<boolea
   return r.rowCount === 1;
 }
 
-/** marks the move failed (only while it is still in `from`) with its abort pending; false when the phase changed meanwhile */
+/**
+ * marks the move failed (only while it is still in `from`, recorded as `failedIn`) with its abort pending; false when the phase changed
+ * meanwhile
+ */
 async function markFailed(ctx: Ctx, from: MovePhase, code: string, meta?: IdCheck): Promise<boolean> {
-  const patch = { phase: 'failed', error: code, abortPending: true, ...(meta ? { errorMeta: meta } : {}) };
+  const patch = { phase: 'failed', error: code, abortPending: true, failedIn: from, ...(meta ? { errorMeta: meta } : {}) };
   const r = await ctx.db.query("update media_managed set move = (move - 'tries' - 'rounds' - 'nfoLeft') || $2::jsonb, updated_at = now() where id = 1 and move->>'phase' = $1", [from, JSON.stringify(patch)]);
   return r.rowCount === 1;
 }

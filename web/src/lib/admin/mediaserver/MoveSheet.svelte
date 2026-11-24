@@ -7,7 +7,7 @@
    * source (the one FriendFlix uses chosen, another server's disabled); the chosen one's sized scan, which runs in the background
    * (the card polls the view while `move.scan` runs); a refusal with its container paths (`source_outside_base`: *Basisordner
    * ändern* opens the base folder's form in place); the summary of the spec's sketch (folders, copy with the trickplay switch, the
-   * plugins left behind, the downtime, the request service, the old Jellyfin, the way back) and *Umziehen* (re-authentication through
+   * plugins left behind, the downtime as an upper bound, the request service when one is set up, the old Jellyfin, the way back) and *Umziehen* (re-authentication through
    * the card's `call`); then the step list (model.ts moveSteps) with *Umzug abbrechen* until the switch, and the outcome line.
    * Closing the sheet never stops a move: the card shows it and opens the sheet again (`follow`). The panel has one height for every
    * stage (its middle scrolls): the scan line, the summary and the steps take the same room, the buttons never move.
@@ -47,12 +47,14 @@
 
   /** null until listed */
   let candidates: MoveCandidate[] | null = null;
+  /** a scan still running when the sheet opens (closed and opened again meanwhile): it is followed, no second one is asked for (busy) */
+  const running0 = view.move?.scan?.state === 'running' ? view.move.scan : null;
   /** the picker's choice, and the candidate scanned (or being scanned) */
-  let chosen: string | null = null, source: string | null = null;
-  /** the scan this sheet started (the view's record counts once it is this one or newer) */
-  let pending: MoveScanRecord | null = null;
+  let chosen: string | null = null, source: string | null = running0?.source ?? null;
+  /** the scan this sheet started or follows (the view's record counts once it is this one or newer) */
+  let pending: MoveScanRecord | null = running0;
   let refusal: Refusal | null = null, error = '', busy: '' | 'list' | 'scan' | 'move' | 'abort' = '';
-  let trickplay = false, editBase = false, needList = true;
+  let trickplay = false, editBase = false, needList = running0 === null;
   /** the job of the move started here: its state is followed to the end */
   let ranJob: string | null = null;
 
@@ -66,9 +68,8 @@
   $: stage = progress ? 'progress'
     : !base.set || editBase ? 'base'
       : shown ? 'refused'
-        : candidates === null ? 'searching'
-          : !source ? 'pick'
-            : scanRec?.state === 'done' && scanRec.result ? 'summary' : 'scanning';
+        : source ? (scanRec?.state === 'done' && scanRec.result ? 'summary' : 'scanning')
+          : candidates === null ? 'searching' : 'pick';
   $: if (needList && base.set && !editBase && !progress) void list();
 
   // the container's name once known; it stays in the title through the steps (the scan record goes once the move switched)
@@ -197,7 +198,7 @@
             </dd></div>
             <div><dt>{$t('mediaserver.move.row.skipped')}</dt><dd>{summary.plugins.length ? $t('mediaserver.move.plugins', { list: fmtList(summary.plugins.map(quote)) }) : $t('mediaserver.move.noPlugins')}</dd></div>
             <div><dt>{$t('mediaserver.move.row.downtime')}</dt><dd>{$t('mediaserver.move.downtime', { n: summary.downtimeMin })}</dd></div>
-            <div><dt>{$t('mediaserver.move.row.requests')}</dt><dd>{$t('mediaserver.move.requests')}</dd></div>
+            {#if view.move?.requests}<div><dt>{$t('mediaserver.move.row.requests')}</dt><dd>{$t('mediaserver.move.requests')}</dd></div>{/if}
             <div><dt>{$t('mediaserver.move.row.old')}</dt><dd>{$t('mediaserver.move.old')}</dd></div>
             <div><dt>{$t('mediaserver.move.row.back')}</dt><dd>{$t('mediaserver.move.back')}</dd></div>
           </dl>

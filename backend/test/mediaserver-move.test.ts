@@ -366,7 +366,7 @@ describe('the move: the backend phases after the copy', () => {
       await seedMove('verify');
       expect(await tick()).toBe('failed');
       const m = await readManaged(env.pool);
-      expect(m.move).toMatchObject({ phase: 'failed', error: 'ids_mismatch', errorMeta: { users: { total: 3, missing: 1 }, items: { sampled: 0, missing: 0 } } });
+      expect(m.move).toMatchObject({ phase: 'failed', error: 'ids_mismatch', failedIn: 'verify', errorMeta: { users: { total: 3, missing: 1 }, items: { sampled: 0, missing: 0 } } });
       expect(m.move!.abortPending).toBeUndefined();
       // the updater removes the new container and starts the old Jellyfin; FriendFlix is unchanged
       expect(opBodies('migrate-abort')).toEqual([{ op: 'migrate-abort' }]);
@@ -404,7 +404,7 @@ describe('the move: the backend phases after the copy', () => {
       }
       expect(opBodies('migrate-abort')).toEqual([]);
       expect(await tick()).toBe('failed');
-      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'unreachable', abortPending: true });
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'unreachable', abortPending: true, failedIn: 'verify' });
       expect((await readManaged(env.pool)).move!.tries).toBeUndefined();
       // the abort is sent again until the updater takes it
       expect(await tick()).toBe('failed');
@@ -491,7 +491,7 @@ describe('the move: the backend phases after the copy', () => {
       await seedMove('nfo');
       expect([await tick(), await tick(), await tick()]).toEqual(['waiting', 'waiting', 'waiting']);
       expect(await tick()).toBe('failed');
-      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'unexpected' });
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'unexpected', failedIn: 'nfo' });
       expect(opBodies('migrate-abort')).toHaveLength(1);
       expect(env.ctx.cfg.JELLYFIN_URL).toBe(OLD);
     });
@@ -722,7 +722,7 @@ describe('the move: the backend phases after the copy', () => {
       fake.job = job('mediaserver-migrate', 'failed', COPY_JOB);
       fake.job.error = 'source_mismatch';
       expect(await tick()).toBe('failed');
-      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'source_mismatch' });
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'source_mismatch', failedIn: 'copying' });
       expect(opBodies('migrate-done')).toEqual([]);
       // the copy's job failed before the move was recorded (its check)
       await seedMove('copying');
@@ -791,7 +791,7 @@ describe('the move: the backend phases after the copy', () => {
       await seedMove('switch');
       await env.ctx.settings.save({ JELLYFIN_ADMIN_API_KEY: null }, null);
       expect(await tick()).toBe('failed');
-      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'unexpected' });
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'unexpected', failedIn: 'switch' });
       expect(opBodies('migrate-abort')).toHaveLength(1);
       expect(opBodies('migrate-done')).toEqual([]);
       expect(env.ctx.cfg.JELLYFIN_URL).toBe(OLD);

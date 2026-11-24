@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
+import { done, installLogin, loginState, password } from '../mocks/login.js';
 import { linkMediaJob, mediaStatus, MOVE_SOURCE, movableMedia, movedMedia, runningMedia, type MediaMock } from '../mocks/admin.js';
 import { updaterState } from '../mocks/updater.js';
 
@@ -124,7 +125,7 @@ test.describe('admin: Medienserver card (desktop)', () => {
     await expect(seg.getByRole('radio', { name: 'Jellyfin (offiziell, verwaltet)' })).toBeDisabled();
     await expect(seg.getByRole('radio', { name: /Ferrofin \(eigener\)/ })).toBeDisabled();
     await expect(seg.getByRole('radio', { name: 'Bestehender Jellyfin/Plex (Adresse)' })).toBeEnabled();
-    await expect(card(page).getByTestId('media-reasons')).toContainText('Umzug von deinem Jellyfin: kommt mit Stufe 2');
+    await expect(card(page).getByTestId('media-reasons')).toContainText('ein neuer verwalteter Server ginge nur als Umzug von Jellyfin');
     ms.offer = { managed: false, reason: 'plex' };
     await page.reload();
     await expect(card(page).getByTestId('media-reasons')).toContainText('Wechsel von Plex: kommt mit Stufe 4');
@@ -240,7 +241,7 @@ test.describe('admin: Medienserver card (desktop)', () => {
 
 // Stage 2: the move from the existing Jellyfin to the managed Ferrofin (the sheet: scan, summary, steps) and the way back.
 test.describe('admin: Medienserver, the move from Jellyfin (desktop)', () => {
-  test.use({ allowedConsole: /status of (409|429)/ });
+  test.use({ allowedConsole: /status of (401|409|429)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; });
   const sheet = (page: Page) => page.getByRole('dialog', { name: /zu Ferrofin/ });
 
@@ -266,8 +267,9 @@ test.describe('admin: Medienserver, the move from Jellyfin (desktop)', () => {
     await expect(sum).toContainText('/movies, /tv → gleich in Ferrofin');
     await expect(sum).toContainText('38 GB (ohne Trickplay)');
     await expect(sum).toContainText('Plugins „Open Subtitles“ und „Fanart“');
-    await expect(sum).toContainText(/etwa \d+ Minuten\. Laufende Wiedergaben brechen ab\./);
-    await expect(sum).toContainText('Anfrage-Dienst');
+    // the whole copy at a fixed rate: an upper bound, and it says so
+    await expect(sum).toContainText(/bis zu etwa \d+ Minuten\. Laufende Wiedergaben brechen ab\./);
+    await expect(sum).toContainText('Wunsch-Dienst');
     await expect(sum).toContainText('wird auf Ferrofin umgestellt.');
     await expect(sum).toContainText('Altes Jellyfin');
     await expect(sum).toContainText('wird danach gestoppt, bleibt für den Rückweg erhalten.');
@@ -322,8 +324,11 @@ test.describe('admin: Medienserver, the move from Jellyfin (desktop)', () => {
     expect(ms.calls.filter((x) => x.p.endsWith('/move/scan')).map((x) => x.body)).toEqual([{}]);
     await pick.getByRole('radio', { name: /jellyfin-test/ }).check();
     await pick.getByRole('radio', { name: /^jellyfin\b(?!-)/ }).check();
+    // no request service set up: the summary does not name one
+    ms.move.requests = false;
     await dlg.getByRole('button', { name: 'Prüfen' }).click();
     await expect(dlg.getByTestId('move-summary')).toBeVisible({ timeout: 15_000 });
+    await expect(dlg.getByTestId('move-summary')).not.toContainText('Wunsch-Dienst');
     expect(ms.calls.filter((x) => x.p.endsWith('/move/scan')).map((x) => x.body)).toEqual([{}, { source: MOVE_SOURCE }]);
     // Abbrechen closes the sheet, nothing moved
     await dlg.getByTestId('move-actions').getByRole('button', { name: 'Abbrechen' }).click();
@@ -407,8 +412,88 @@ test.describe('admin: Medienserver, the move from Jellyfin (desktop)', () => {
     ms.move.sourceState = 'missing';
     await page.reload();
     await expect(c.getByTestId('media-moved')).toContainText('Das alte Jellyfin gibt es nicht mehr.');
-    await c.getByTestId('media-moved').getByRole('button', { name: 'Zurück zu Jellyfin' }).click();
+    // the button is the stage 1 switch now, under its own name
+    await expect(c.getByTestId('media-moved').getByRole('button', { name: 'Zurück zu Jellyfin' })).toHaveCount(0);
+    await c.getByTestId('media-moved').getByRole('button', { name: 'Zum bestehenden Server wechseln' }).click();
     await page.getByRole('alertdialog', { name: 'Zu einem bestehenden Server wechseln?' }).getByRole('button', { name: 'Zum bestehenden Server wechseln' }).click();
     await expect.poll(() => ms.calls.filter((x) => x.p.endsWith('/mode')).map((x) => x.body)).toEqual([{ mode: 'external', restore: false }]);
+  });
+
+  test('the way back asks for a fresh sign-in in place and runs once more', async ({ page, api }) => {
+    const ms = api.admin.media;
+    movedMedia(ms);
+    await installLogin(page.context(), loginState({ starts: [{ body: password('admin') }], answers: [() => ({ body: done('') })] }));
+    await page.goto('/admin/settings?tab=media');
+    const c = card(page);
+    // the form's own GPU detection has been sent: the next write is the way back
+    await expect.poll(() => ms.calls.some((x) => x.p.endsWith('/gpu'))).toBe(true);
+    ms.refuse = { status: 401, error: 'reauth_required' };
+    await c.getByTestId('media-moved').getByRole('button', { name: 'Zurück zu Jellyfin' }).click();
+    await page.getByRole('alertdialog', { name: 'Zurück zu Jellyfin?' }).getByRole('button', { name: 'Zurück zu Jellyfin' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    await dlg.getByLabel('Passwort', { exact: true }).fill('hunter2-fixture');
+    await dlg.getByRole('button', { name: 'Anmelden' }).click();
+    await expect(page.getByRole('region', { name: 'Hinweise' })).toContainText('FriendFlix nutzt wieder dein Jellyfin.', { timeout: 20_000 });
+    // refused once, then sent again after the sign-in
+    expect(ms.calls.filter((x) => x.p.endsWith('/back'))).toHaveLength(2);
+    await expect(c.getByRole('button', { name: 'Erneut umziehen' })).toBeVisible();
+  });
+
+  test('after a move: the migrated folders read-only, and a GPU change applies', async ({ page, api }) => {
+    const ms = api.admin.media;
+    movedMedia(ms);
+    api.updater = { ...updaterState(true), downPolls: 0 };
+    linkMediaJob(api.updater, ms);
+    await page.goto('/admin/settings?tab=media');
+    const c = card(page);
+    await expect(choices(page).getByRole('radio', { name: /Ferrofin \(eigener\)/ })).toHaveAttribute('aria-checked', 'true');
+    const mig = c.getByTestId('media-migrated');
+    await expect(mig.locator('li')).toHaveCount(2);
+    await expect(mig.locator('[data-migrated="/movies"]')).toContainText('aus Jellyfin übernommen');
+    await expect(mig.locator('[data-migrated="/tv"]')).toContainText('/tv');
+    // no field, no remove button: they are Jellyfin's own libraries
+    await expect(mig.getByRole('button')).toHaveCount(0);
+    await expect(mig.getByRole('textbox')).toHaveCount(0);
+    await expect(c.getByText('Noch kein Ordner gewählt.')).toHaveCount(0);
+    await c.getByRole('radiogroup', { name: 'Hardware-Beschleunigung' }).getByRole('radio', { name: 'Intel/AMD (VA-API/QSV)' }).click();
+    await c.getByTestId('media-apply').click();
+    await expect(c.getByTestId('media-job')).toHaveAttribute('data-job-state', 'succeeded', { timeout: 20_000 });
+    await expect(c.getByTestId('media-apply-error')).toHaveText('');
+    expect(ms.calls.filter((x) => x.p.endsWith('/apply')).map((x) => x.body)).toEqual([
+      { kind: 'ferrofin', folders: [], uid: 1000, gid: 1000, gpu: 'dri', mediaGid: null, egress: true },
+    ]);
+    // the recorded folders stay, the new GPU is deployed
+    await expect(mig.locator('li')).toHaveCount(2);
+    expect(ms.status.desired).toMatchObject({ gpu: 'dri', migrated: true, folders: [{ target: '/movies', migrated: true }, { target: '/tv', migrated: true }] });
+  });
+
+  test('a way back tried again after one that failed: followed to its end, told once', async ({ page, api }) => {
+    const ms = api.admin.media;
+    movedMedia(ms);
+    ms.move.state = { ...ms.move.state, back: 'failed', backError: 'jellyfin_unreachable' };
+    await page.goto('/admin/settings?tab=media');
+    const moved = card(page).getByTestId('media-moved');
+    await expect(moved.getByRole('alert')).toContainText('Dein Jellyfin antwortet nicht');
+    await moved.getByRole('button', { name: 'Zurück zu Jellyfin' }).click();
+    await page.getByRole('alertdialog', { name: 'Zurück zu Jellyfin?' }).getByRole('button', { name: 'Zurück zu Jellyfin' }).click();
+    // the earlier attempt's failure still in the view does not end this one
+    await expect(page.getByRole('region', { name: 'Hinweise' })).toContainText('FriendFlix nutzt wieder dein Jellyfin.', { timeout: 20_000 });
+    await expect(card(page).getByRole('button', { name: 'Erneut umziehen' })).toBeVisible();
+  });
+
+  test('the sheet opened again while its scan runs follows that scan (no second one)', async ({ page, api }) => {
+    const ms = api.admin.media;
+    movableMedia(ms);
+    ms.scanReads = 4;
+    await page.goto('/admin/settings?tab=media');
+    const c = card(page);
+    await c.getByRole('button', { name: 'Von Jellyfin umziehen' }).click();
+    const dlg = sheet(page);
+    await expect(dlg.getByTestId('move-stage')).toHaveAttribute('data-stage', 'scanning');
+    await dlg.getByTestId('move-actions').getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(dlg).toHaveCount(0);
+    await c.getByRole('button', { name: 'Von Jellyfin umziehen' }).click();
+    await expect(dlg.getByTestId('move-summary')).toBeVisible({ timeout: 20_000 });
+    expect(ms.calls.filter((x) => x.p.endsWith('/move/scan')).map((x) => x.body)).toEqual([{}, { source: MOVE_SOURCE }]);
   });
 });

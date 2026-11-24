@@ -13,7 +13,7 @@ import tr_ from '#lib/i18n/locales/tr/index';
 import type { MediaManaged, MediaStatus, MediaView, MoveCandidate, MoveScan, MoveState, MoveView } from './api';
 import {
   ACTION_ORDER, DEFAULT_MANAGED, MOVE_STEPS, TRIAL_KINDS, actionsFor, autoCandidate, backActive, choiceDisabled, codeLogHint, countdown, currentChoice, folderRowsError, idError,
-  initialRows, defaultName, keptLibraries, kindName, livetvOffer, mediaErrorText, moveAbortable, moveActive, moveFollow, moveResult, moveSteps, moveSummary, saveErrorText,
+  initialRows, defaultName, keptLibraries, kindName, livetvOffer, mediaErrorText, migratedFolders, moveAbortable, moveActive, moveFollow, moveResult, moveSteps, moveSummary, saveErrorText,
   nameTakenRow, passphraseError, pinState, reasonText, scanFresh, setupSteps, sourceLine, statusStarting, versionCmp,
 } from './model';
 
@@ -71,7 +71,8 @@ describe('choices', () => {
   });
 
   it('the reasons read as the spec words them', () => {
-    expect(reasonText('ids_in_use')).toBe('Umzug von deinem Jellyfin: kommt mit Stufe 2');
+    // stage 2: the move is there (the button where it is offered), a fresh server is not
+    expect(reasonText('ids_in_use')).toBe('FriendFlix hängt an den IDs deines bisherigen Servers: ein neuer verwalteter Server ginge nur als Umzug von Jellyfin.');
     expect(reasonText('plex')).toBe('Wechsel von Plex: kommt mit Stufe 4');
     for (const r of ['no_updater', 'url_pinned', 'engine_old', 'proxy_outdated', 'no_project', 'no_network', 'updater_outdated', 'starting', 'image_missing'] as const) expect(reasonText(r), r).not.toMatch(/^mediaserver\./);
     // the updater has not read the media status yet since it started: a neutral line, never "too old"
@@ -153,6 +154,21 @@ describe('folders', () => {
     expect(initialRows(fresh)).toEqual([{ rel: 'Filme', name: 'Filme', type: 'movies' }]);
     expect(keptLibraries(fresh)).toEqual([]);
     expect(initialRows(view())).toEqual([]);
+    // a moved server: its migrated folders are read-only (migratedFolders), never rows; a new one at /ffmedia/<slug> is a row
+    const moved = view({
+      mode: 'managed', managed: managed({ kind: 'ferrofin', libraries: [{ slug: 'neu', name: 'Neu', type: 'movies', rel: 'Neu', created: true }] }),
+      status: status({ desired: { kind: 'ferrofin', folders: [{ rel: '', target: '/media', migrated: true }, { rel: 'Filme', target: '/media/neu', migrated: true }, { rel: 'Neu', target: '/ffmedia/neu' }],
+        uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: true, run: true, migrated: true } }),
+    });
+    expect(migratedFolders(moved)).toEqual([{ rel: '', target: '/media', migrated: true }, { rel: 'Filme', target: '/media/neu', migrated: true }]);
+    expect(initialRows(moved)).toEqual([{ rel: 'Neu', name: 'Neu', type: 'movies' }]);
+    expect(keptLibraries(moved)).toEqual([]);
+    // a migrated target that looks like a slug never stands for a library
+    const onlyMigrated = { ...moved, status: status({ desired: { ...moved.status!.desired!, folders: moved.status!.desired!.folders.slice(0, 2) } }) };
+    expect(initialRows(onlyMigrated)).toEqual([]);
+    expect(keptLibraries(onlyMigrated).map((l) => l.slug)).toEqual(['neu']);
+    expect(migratedFolders(v)).toEqual([]);
+    expect(migratedFolders(view())).toEqual([]);
     // a kept library's name on a chosen folder: that row gets the conflict
     expect(nameTakenRow([row('Neu', 'Kino'), row('Neu2', ' alt ')], keptLibraries(v))).toBe(1);
     expect(nameTakenRow([row('Neu', 'Kino')], keptLibraries(v))).toBe(-1);
@@ -354,11 +370,21 @@ describe('the move from Jellyfin', () => {
     expect(moveSteps(moving({ phase: 'done' })).every((r) => r.state === 'done')).toBe(true);
   });
 
-  it('moveSteps: a failure marks the step it stopped at; one without a step marks none', () => {
-    expect(rows(moving({ phase: 'failed', error: 'no_space', step: 'check' }))).toMatch(/^copy_bulk:failed stop_source:todo/);
-    expect(rows(moving({ phase: 'failed', error: 'adopt_failed', step: 'adopt' }))).toMatch(/health:done adopt:failed nfo:todo/);
-    expect(rows(moving({ phase: 'failed', error: 'ids_mismatch', errorMeta: { users: { total: 4, missing: 1 }, items: { sampled: 200, missing: 9 } } }))).toMatch(/nfo:done verify:failed switch:todo/);
+  it('moveSteps: a failure in the copy marks the step it stopped at; one in a backend phase marks that phase (failedIn)', () => {
+    expect(rows(moving({ phase: 'failed', error: 'no_space', step: 'check', failedIn: 'copying' }))).toMatch(/^copy_bulk:failed stop_source:todo/);
+    expect(rows(moving({ phase: 'failed', error: 'adopt_failed', step: 'adopt', failedIn: 'copying' }))).toMatch(/health:done adopt:failed nfo:todo/);
+    // the updater clears its step once its job succeeded: the backend's phase names the row
+    expect(rows(moving({ phase: 'failed', error: 'unreachable', step: null, failedIn: 'nfo' }))).toMatch(/^(\w+:done ){7}nfo:failed verify:todo switch:todo requests:todo$/);
+    expect(rows(moving({ phase: 'failed', error: 'ids_mismatch', failedIn: 'verify', errorMeta: { users: { total: 4, missing: 1 }, items: { sampled: 200, missing: 9 } } })))
+      .toMatch(/^(\w+:done ){8}verify:failed switch:todo requests:todo$/);
+    expect(rows(moving({ phase: 'failed', error: 'unexpected', failedIn: 'switch' }))).toMatch(/^(\w+:done ){9}switch:failed requests:todo$/);
+    // an abort during the id check: that row, whatever step the job's record still holds
+    expect(rows(moving({ phase: 'failed', error: 'move_aborted', step: 'adopt', failedIn: 'verify' }))).toMatch(/nfo:done verify:failed switch:todo/);
+    // an older record without failedIn: the id check for ids_mismatch, else no row (the result line says why)
+    expect(rows(moving({ phase: 'failed', error: 'ids_mismatch' }))).toMatch(/nfo:done verify:failed switch:todo/);
     expect(moveSteps(moving({ phase: 'failed', error: 'move_aborted' })).every((r) => r.state === 'todo')).toBe(true);
+    // a copy failure whose step is gone marks none either
+    expect(moveSteps(moving({ phase: 'failed', error: 'interrupted', failedIn: 'copying' })).every((r) => r.state === 'todo')).toBe(true);
   });
 
   it('moveActive, moveAbortable, backActive, moveFollow: what the card follows and offers', () => {
@@ -426,7 +452,8 @@ describe('the move from Jellyfin', () => {
     const de_ = JSON.stringify((de as Record<string, unknown>).mediaserver);
     for (const w of ['Von Jellyfin umziehen', 'Erneut umziehen', 'Zurück zu Jellyfin', 'Umziehen', 'gleich in Ferrofin', '(ohne Trickplay)', 'Trickplay mitnehmen',
       'Laufende Wiedergaben brechen ab.', 'wird auf Ferrofin umgestellt.', 'wird danach gestoppt, bleibt für den Rückweg erhalten.', 'jederzeit mit einem Klick. Was auf Ferrofin geschaut wird, bleibt dort.',
-      'Was seit dem Umzug auf Ferrofin geschaut wurde, ist in Jellyfin nicht drin.', 'Altes Jellyfin ist gestoppt und bleibt für den Rückweg erhalten', 'Basisordner ändern', 'Anfrage-Dienst', 'Altes Jellyfin']) {
+      'Was seit dem Umzug auf Ferrofin geschaut wurde, ist in Jellyfin nicht drin.', 'Altes Jellyfin ist gestoppt und bleibt für den Rückweg erhalten.', 'Basisordner ändern', 'Wunsch-Dienst', 'Altes Jellyfin',
+      'bis zu etwa', 'aus Jellyfin übernommen']) {
       expect(de_, w).toContain(w);
     }
     for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
@@ -474,13 +501,18 @@ describe('mediaserver area in every language', () => {
     const flat = JSON.stringify((de as Tree).mediaserver);
     for (const w of ['Ferrofin (eigener)', 'Jellyfin (offiziell, verwaltet)', 'Bestehender Jellyfin/Plex (Adresse)', 'Code anfordern', 'Einrichten', 'Übernehmen', 'Starten', 'Stoppen',
       'Neu starten', 'Aktualisieren', 'Sicherung', 'Wiederherstellen', 'Protokoll', 'Entfernen', 'Neu anlegen', 'Nochmal', 'Erneut versuchen', 'Herunterladen',
-      'Aus Datei wiederherstellen', 'HDR-Test', 'Test', 'Umzug von deinem Jellyfin: kommt mit Stufe 2', 'Wechsel von Plex: kommt mit Stufe 4', 'neuer als dieser FriendFlix-Stand']) {
+      'Aus Datei wiederherstellen', 'HDR-Test', 'Test', 'Wechsel von Plex: kommt mit Stufe 4', 'neuer als dieser FriendFlix-Stand']) {
       expect(flat, w).toContain(w);
     }
     for (const d of [de, en, es, fr, it_, pl, tr_]) {
-      const s = JSON.stringify((d as Tree).mediaserver);
+      const ms = (d as Tree).mediaserver as Record<string, Record<string, string>>;
+      const s = JSON.stringify(ms);
       expect(s).not.toContain('...');
       expect(s).not.toMatch(/netflix|seerr/i);
+      // stage 2 is here: the id reasons no longer promise it
+      expect(`${ms.reason!.ids_in_use} ${ms.error!.ids_in_use}`).not.toMatch(/2/);
     }
+    // the app's own word for the request service (Admin, Systemcheck), never another
+    expect(flat).not.toContain('Anfrage');
   });
 });
