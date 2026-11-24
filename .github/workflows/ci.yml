@@ -96,7 +96,27 @@ jobs:
           plan=$(node scripts/changed-images.mjs plan --event "$GITHUB_EVENT_NAME" --sha "$GITHUB_SHA" --pr-base "$PR_BASE" --summary "$GITHUB_STEP_SUMMARY" ${registry[@]+"${registry[@]}"})
           echo "$plan"
           echo "plan=$plan" >> "$GITHUB_OUTPUT"
+  # A release tag (release.yml: version.json + CHANGELOG.md on top of a main commit) whose main commit already passed CI:
+  # `test` and `e2e` do not run again (scripts/release-tested.mjs, tested). Anything else, an error included, answers false
+  # and everything runs as before. It waits (bounded) for main's CI of that commit when the release follows a merge at once.
+  release-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions: { contents: read, actions: read }
+    outputs:
+      tested: ${{ steps.check.outputs.tested }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { persist-credentials: false, sparse-checkout: scripts/release-tested.mjs, sparse-checkout-cone-mode: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 26 }
+      - name: Release already tested?
+        id: check
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: node scripts/release-tested.mjs
   test:
+    needs: release-check
+    if: ${{ !cancelled() && needs.release-check.outputs.tested != 'true' }}
     runs-on: ubuntu-latest
     strategy:
       # 22 = oldest supported (engines >=22), 26 = runtime of all images
@@ -157,6 +177,8 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
   # browser tests against the built web app with a fully mocked API (no backend, Postgres or Jellyfin needed)
   e2e:
+    needs: release-check
+    if: ${{ !cancelled() && needs.release-check.outputs.tested != 'true' }}
     runs-on: ubuntu-latest
     # the suite took ~26 min before the recordings specs landed and now runs past 30: room for growth until it is sharded
     timeout-minutes: 45
@@ -818,7 +840,7 @@ jobs:
   # scan passed.
   # contents: write only here, for the release upload.
   android-release:
-    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: ${{ !cancelled() && !failure() && (startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')) }}
     needs: [test, e2e, secrets]
     permissions: { contents: write }
     uses: ./.github/workflows/android-release.yml
@@ -831,7 +853,7 @@ jobs:
   # with latest.json when the update key secrets exist (otherwise unsigned with updates off, and a notice), and only after
   # the tests, e2e, the secret scan and the desktop jobs passed. contents: write only here, for the release upload.
   desktop-release:
-    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: ${{ !cancelled() && !failure() && (startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')) }}
     needs: [test, e2e, secrets, desktop-core, desktop-app]
     permissions: { contents: write }
     uses: ./.github/workflows/desktop-release.yml
@@ -842,7 +864,7 @@ jobs:
   # GitHub Release when the four certificate secrets exist (otherwise a notice), and only after the tests, e2e, the secret
   # scan and tizen-check passed. Not in the needs of publish or android-release. contents: write only here, for the upload.
   tizen-release:
-    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: ${{ !cancelled() && !failure() && (startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')) }}
     needs: [test, e2e, secrets, tizen-check]
     permissions: { contents: write }
     uses: ./.github/workflows/tizen-release.yml
@@ -855,21 +877,21 @@ jobs:
   # Release, only after the tests, e2e, the secret scan and webos-check passed. Not in the needs of publish or
   # android-release. contents: write only here, for the upload.
   webos-release:
-    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: ${{ !cancelled() && !failure() && (startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')) }}
     needs: [test, e2e, secrets, webos-check]
     permissions: { contents: write }
     uses: ./.github/workflows/webos-release.yml
   # images are only published after every check above passed (main -> nightly + sha, v* tags -> semver + latest for the highest)
   # signing/attesting (id-token, attestations) happens only here, i.e. only on push events
   publish:
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
+    if: ${{ !cancelled() && !failure() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))) }}
     needs: [test, e2e, dast, secrets, docker, reproducible]
     permissions: { contents: read, packages: write, id-token: write, attestations: write }
     uses: ./.github/workflows/publish.yml
   # the trial media server image: the same re-tag + cosign + attestations, as its own call that only needs its own image job
   # (and the shared checks), so it can fail alone; `publish` above never waits for it
   publish-mediaserver:
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
+    if: ${{ !cancelled() && !failure() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))) }}
     needs: [test, e2e, dast, secrets, mediaserver-image]
     permissions: { contents: read, packages: write, id-token: write, attestations: write }
     uses: ./.github/workflows/publish.yml
