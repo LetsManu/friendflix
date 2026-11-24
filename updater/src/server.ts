@@ -45,8 +45,8 @@ const DOWNLOAD_RE = new RegExp(`^/v1/mediaserver/backups/(${BACKUP_ID_RE.source.
 const UPLOAD_PATH = '/v1/mediaserver/backups/upload';
 const PASSPHRASE_HEADER = 'x-ff-backup-passphrase';
 /** the ops that only read or narrow: allowed while the managed media server is not available */
-const ALWAYS_OPS: ReadonlySet<MediaOp['op']> = new Set(['logs', 'gpu', 'base-clear', 'stop', 'remove']);
-const JOB_OPS: ReadonlySet<MediaOp['op']> = new Set(['apply', 'finish-setup', 'start', 'stop', 'restart', 'update', 'hdr-test', 'backup', 'restore', 'remove']);
+const ALWAYS_OPS: ReadonlySet<MediaOp['op']> = new Set(['logs', 'gpu', 'base-clear', 'stop', 'remove', 'migrate-abort', 'source-start']);
+const JOB_OPS: ReadonlySet<MediaOp['op']> = new Set(['apply', 'finish-setup', 'start', 'stop', 'restart', 'update', 'hdr-test', 'backup', 'restore', 'remove', 'migrate', 'migrate-abort', 'source-start']);
 export type LivetvContainerState = 'running' | 'exited' | null;
 
 /**

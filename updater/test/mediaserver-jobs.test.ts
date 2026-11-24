@@ -18,7 +18,7 @@ describe('apply', () => {
       `pull ${ferroPin().image}`, `createVolume ${N.data('ferrofin')}`, `createVolume ${N.cache('ferrofin')}`,
       `create ${N.container}`, `connect ${PROJECT}_egress`, `start ${N.container}`,
     ]);
-    expect(job.media!.steps).toEqual({ check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'skipped', create: 'ok', start: 'ok', health: 'ok', rollback: 'skipped' });
+    expect(job.media!.steps).toEqual({ check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'skipped', create: 'ok', start: 'ok', health: 'ok', rollback: 'skipped', copy_bulk: 'skipped', stop_source: 'skipped', copy: 'skipped', adopt: 'skipped' });
     expect(w.verified).toEqual([ferroPin().image]);
     const m = w.media();
     const main = w.find(N.container)!;

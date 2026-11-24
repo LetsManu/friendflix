@@ -52,6 +52,7 @@ const DEFAULT_USER = { uid: 1000, gid: 1000 };
 /** what a step that fails without a code of its own reports */
 const STEP_CODE: Record<MediaStep, MediaError> = {
   check: 'helper_failed', pull: 'pull_failed', verify: 'verify_failed', snapshot: 'snapshot_failed', create: 'create_failed', start: 'start_failed', health: 'unhealthy', rollback: 'helper_failed',
+  copy_bulk: 'helper_failed', stop_source: 'helper_failed', copy: 'helper_failed', adopt: 'adopt_failed',
 };
 const NO_TARGET: StartResult = { ok: false, error: 'no_target' };
 

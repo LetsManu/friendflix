@@ -65,6 +65,17 @@ export function isTarget(t: string): boolean {
   return TARGET_RE.test(t);
 }
 
+/** the trees a migrated media target may not be, or lie below (`/data` itself is refused, below it is fine) */
+const MIGRATED_REFUSED = ['cache', 'config', 'tmp', 'proc', 'sys', 'dev', 'etc', 'usr', 'bin', 'sbin', 'lib', 'lib64', 'var', 'run', 'root', 'home', 'ferrofin-data', 'ffmedia'];
+
+/** the mount point of a migrated folder: the path the old server saw, absolute, normalised, 1 to 3 levels, not a system tree */
+export function isMigratedTarget(t: string): boolean {
+  const c = components(t);
+  if (c === null || c.length < 1 || c.length > 3) return false;
+  if (MIGRATED_REFUSED.includes(c[0]!)) return false;
+  return !(c[0] === 'data' && c.length === 1);
+}
+
 /** whether one folder equals or lies below another (the check is on whole components: Filme and Filmeklassiker are not nested) */
 export function nestedFolders(rels: readonly string[]): boolean {
   return rels.some((a, i) => rels.some((b, j) => i !== j && (a === b || a.startsWith(b + '/'))));

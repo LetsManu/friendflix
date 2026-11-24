@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Ops, StartResult } from '../src/job.js';
 import { Updater } from '../src/job.js';
 import type { MediaOp } from '../src/mediaserver/types.js';
+import { parseMediaBody } from '../src/mediaserver/parse.js';
 import { MediaService } from '../src/mediaserver/service.js';
 import { STARTING_VIEW, mediaStatusView, type MediaStatusView } from '../src/mediaserver/status.js';
 import { Supervisor } from '../src/mediaserver/supervise.js';
@@ -173,6 +174,55 @@ describe('POST /v1/mediaserver', () => {
     expect(answer).toMatch(/^HTTP\/1\.1 408 /);
     expect(answer).toContain('{"error":"timeout"}');
     expect(t.calls).toEqual([]);
+  });
+});
+
+describe('stage 2 ops', () => {
+  const CID = 'a'.repeat(64);
+  const SID = 'b'.repeat(32);
+  const MIGRATE = { op: 'migrate', source: CID, trickplay: false, gpu: 'off', uid: 1000, gid: 1000, tz: 'Europe/Berlin', serverId: SID };
+
+  it('parseMediaBody accepts each new op exactly', () => {
+    expect(parseMediaBody({ op: 'migrate-scan', serverId: SID })).toEqual({ op: 'migrate-scan', serverId: SID });
+    expect(parseMediaBody({ op: 'migrate-scan', serverId: SID, source: CID })).toEqual({ op: 'migrate-scan', serverId: SID, source: CID });
+    expect(parseMediaBody({ op: 'migrate-done' })).toEqual({ op: 'migrate-done' });
+    expect(parseMediaBody(MIGRATE)).toEqual(MIGRATE);
+    expect(parseMediaBody({ op: 'migrate-abort' })).toEqual({ op: 'migrate-abort' });
+    expect(parseMediaBody({ op: 'source-start' })).toEqual({ op: 'source-start' });
+  });
+
+  it('parseMediaBody rejects extra keys, short ids, a string flag and a short server id', () => {
+    for (const bad of [
+      { op: 'migrate-scan', serverId: SID, extra: 1 }, { op: 'migrate-scan', serverId: 'b'.repeat(31) }, { op: 'migrate-scan', serverId: SID, source: 'a'.repeat(63) },
+      { op: 'migrate-scan' }, { op: 'migrate-done', x: 1 }, { op: 'migrate-abort', x: 1 }, { op: 'source-start', x: 1 },
+      { ...MIGRATE, extra: 1 }, { ...MIGRATE, source: 'a'.repeat(63) }, { ...MIGRATE, trickplay: 'false' }, { ...MIGRATE, serverId: 'b'.repeat(31) },
+      { ...MIGRATE, serverId: 'B'.repeat(32) }, { ...MIGRATE, gpu: 'x' }, { ...MIGRATE, uid: 0 }, { ...MIGRATE, tz: '../x' },
+    ]) expect(parseMediaBody(bad), JSON.stringify(bad)).toBeNull();
+  });
+
+  it('parseMediaBody keeps the migrated flag on a spec and its folders, and only as true', () => {
+    const spec = { ...SPEC, migrated: true as const, folders: [{ rel: '', target: '/data/filme', migrated: true as const }] };
+    expect(parseMediaBody({ op: 'apply', spec })).toEqual({ op: 'apply', spec });
+    expect(parseMediaBody({ op: 'apply', spec: { ...spec, migrated: false } })).toBeNull();
+    expect(parseMediaBody({ op: 'apply', spec: { ...SPEC, folders: [{ rel: '', target: '/media/x' }] } })).toBeNull();
+  });
+
+  it('migrate, migrate-abort and source-start are jobs; migrate-scan and migrate-done are not, and are gated by availability', async () => {
+    const t = fake();
+    const base = await listen(t.deps);
+    expect((await post(base, JSON.stringify(MIGRATE))).status).toBe(202);
+    expect((await post(base, '{"op":"migrate-abort"}')).status).toBe(202);
+    expect((await post(base, '{"op":"source-start"}')).status).toBe(202);
+    expect(t.calls).toEqual(['start migrate', 'start migrate-abort', 'start source-start']);
+    // synchronous ops: not jobs (answered 400 until their service lands), never reach jobs.start
+    for (const b of [`{"op":"migrate-scan","serverId":"${SID}"}`, '{"op":"migrate-done"}']) {
+      const r = await post(base, b);
+      expect([r.status, await r.json()], b).toEqual([400, { error: 'invalid_body' }]);
+    }
+    expect(t.calls).toHaveLength(3);
+    t.f.view = { ...VIEW, available: false, reason: 'no_logs' };
+    for (const b of [`{"op":"migrate-scan","serverId":"${SID}"}`, '{"op":"migrate-done"}', JSON.stringify(MIGRATE)]) expect((await post(base, b)).status, b).toBe(409);
+    for (const b of ['{"op":"migrate-abort"}', '{"op":"source-start"}']) expect((await post(base, b)).status, b).toBe(202);
   });
 });
 

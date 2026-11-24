@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseMediaBody } from './mediaserver/parse.js';
 import { checkBasePath } from './mediaserver/paths.js';
-import { BACKUP_ID_RE, KINDS, MEDIA_ERRORS, MEDIA_JOB_ACTIONS, MEDIA_STEPS, type BackupMeta, type BackupTag, type Desired, type HdrResult, type Kind, type MediaError, type MediaJobAction, type MediaStep } from './mediaserver/types.js';
+import { BACKUP_ID_RE, KINDS, MEDIA_ERRORS, MEDIA_JOB_ACTIONS, MEDIA_STEPS, type BackupMeta, type BackupTag, type Desired, type Folder, type HdrResult, type Kind, type MediaError, type MediaJobAction, type MediaStep, type MoveState, type RecordedSource } from './mediaserver/types.js';
 import { CHANNELS, SHA_TAG_RE, VERSION_RE, isTag, type Channel } from './policy.js';
 
 export type StepName = 'pull' | 'verify' | 'restart' | 'health' | 'rollback';
@@ -83,6 +83,10 @@ export interface MediaState {
    * template with them instead of running a helper. Absent in a state file from before them.
    */
   renderGids?: number[];
+  /** a move from an existing Jellyfin in progress, or finished and not yet acknowledged; absent when none */
+  move?: MoveState;
+  /** the Jellyfin a move was made from, kept after `done` for the way back; absent when none */
+  source?: RecordedSource;
 }
 
 export const DEFAULT_MEDIA: MediaState = { base: null, pending: null, desired: null, container: null, pinSource: null, backups: [], hdr: null, lastError: null, tampered: false, dataUpstream: {} };
@@ -205,11 +209,44 @@ function sanitizeRenderGids(raw: unknown): number[] | undefined {
   return [...new Set(raw as number[])];
 }
 
+const SERVER_ID = /^[0-9a-f]{32}$/;
+const MOVE_PHASES = ['running', 'ready', 'aborted', 'done'] as const;
+
+function sanitizeSource(raw: unknown): RecordedSource | undefined {
+  if (!isObj(raw) || !isObj(raw.config)) return undefined;
+  const { id, name, image, config, serverId, version } = raw;
+  const at = iso(raw.at);
+  if (typeof id !== 'string' || !HEX64.test(id) || typeof serverId !== 'string' || !SERVER_ID.test(serverId) || !at) return undefined;
+  if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name)) return undefined;
+  if (typeof image !== 'string' || image.length < 1 || image.length > 300 || /[\u0000-\u0020]/.test(image)) return undefined;
+  if (config.type !== 'bind' && config.type !== 'volume') return undefined;
+  if (typeof config.source !== 'string' || config.source.length < 1 || config.source.length > 300 || /[\u0000-\u001f]/.test(config.source)) return undefined;
+  if (!(version === null || (typeof version === 'string' && UPSTREAM_RE.test(version)))) return undefined;
+  return { id, name, image, config: { type: config.type, source: config.source }, serverId, version, at };
+}
+
+function sanitizeMove(raw: unknown): MoveState | undefined {
+  if (!isObj(raw) || typeof raw.abort !== 'boolean' || !Array.isArray(raw.folders) || raw.folders.length > 20) return undefined;
+  const phase = MOVE_PHASES.find((p) => p === raw.phase);
+  const source = sanitizeSource(raw.source);
+  if (!phase || !source) return undefined;
+  const folders: Folder[] = [];
+  for (const f of raw.folders) {
+    // the same checks as a folder of a request body (parseMediaBody)
+    const op = parseMediaBody({ op: 'apply', spec: { kind: 'ferrofin', folders: [f], uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: false, tz: 'UTC' } });
+    if (op?.op !== 'apply' || !op.spec.folders[0]) return undefined;
+    folders.push(op.spec.folders[0]);
+  }
+  return { source, folders, phase, abort: raw.abort };
+}
+
 /** every field of the media section is re-validated on its own; a wrong one falls back to its default, its siblings survive */
 export function sanitizeMedia(raw: unknown): MediaState {
   const o = isObj(raw) ? raw : {};
   const container = sanitizeContainer(o.container);
   const renderGids = sanitizeRenderGids(o.renderGids);
+  const move = sanitizeMove(o.move);
+  const source = sanitizeSource(o.source);
   return {
     base: sanitizeBase(o.base),
     pending: sanitizePending(o.pending),
@@ -222,6 +259,8 @@ export function sanitizeMedia(raw: unknown): MediaState {
     tampered: o.tampered === true,
     dataUpstream: sanitizeDataUpstream(o.dataUpstream, container),
     ...(renderGids ? { renderGids } : {}),
+    ...(move ? { move } : {}),
+    ...(source ? { source } : {}),
   };
 }
 
