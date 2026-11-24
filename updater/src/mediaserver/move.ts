@@ -186,12 +186,13 @@ const moveUser = (mv: MoveState | undefined): User | undefined =>
 /**
  * The recorded source started: rematched (same /config mount source and server id; a recreated one replaces the recorded id, which
  * is logged without it), then started unless it runs. `source_missing`: no container mounts its /config any more (gone for good);
- * `source_mismatch`: containers do, but none is decidably the source (several, another server id, a running sibling).
+ * `source_mismatch`: containers do, but none is decidably the source (several, another server id, a running sibling). A scan or
+ * inspect that fails throws its own code (helper_timeout, helper_failed, …): only the two above count toward the settle's tries.
  */
 export async function startSource(k: MoveKit, rec: RecordedSource, user?: User): Promise<'started' | 'running'> {
   const r = await k.ready();
   const m = k.updater.mediaState();
-  const id = await rematch(sourceDeps(k, r, user ?? moveUser(m.move) ?? userOf(m.desired, DEFAULT_USER), null), rec);
+  const id = await rematch(sourceDeps(k, r, user ?? moveUser(m.move) ?? userOf(m.desired, DEFAULT_USER), null), rec, { strict: true });
   if (id === null) return fail((await onConfig(k.engine, rec.config)) === 0 ? 'source_missing' : 'source_mismatch');
   if (id !== rec.id) {
     k.updater.updateMedia((s) => {
@@ -293,7 +294,7 @@ async function settle(k: MoveKit, o: { code: MediaError; user?: User }): Promise
     } else {
       s.move.phase = 'running';
       s.move.abort = true;
-      s.move.tries = tries;
+      if (tries > 0) s.move.tries = tries;
       s.lastError = o.code;
     }
   });
@@ -343,7 +344,7 @@ export async function migrateJob(k: MoveKit, job: Job, op: MigrateOp): Promise<v
     between(k);
     await k.step(job, 'stop_source', async () => {
       // the scanned container is still the source (and nothing else runs on its /config)
-      const id = await rematch(sourceDeps(k, { facts: c.facts, runner: c.runner }, c.user, null), c.scan.source);
+      const id = await rematch(sourceDeps(k, { facts: c.facts, runner: c.runner }, c.user, null), c.scan.source, { strict: true });
       if (id === null || id !== c.scan.source.id) return fail('source_missing');
       // the record that this source gets stopped is on disk first (a restart must find it), else nothing is stopped
       reach(k, 'stop', true);

@@ -432,6 +432,8 @@ export class MediaJobs {
         m.container = { id: made.id, kind: d.kind, digest: c.pin.digest, upstream, specHash: made.specHash };
         m.dataUpstream[d.kind] = upstream;
         m.desired = { ...d, run };
+        // a Ferrofin ran its deploy on that volume: it is a Ferrofin's data again (a move that fails after this marks it anew)
+        if (d.kind === 'ferrofin') delete m.moveCopy;
         m.lastError = null;
         m.tampered = false;
         m.renderGids = made.gids;

@@ -85,13 +85,14 @@ function candidateOf(i: Obj | null): i is Obj {
 }
 
 /** every candidate with its inspect, running ones first, then by name */
-async function candidates(engine: Engine): Promise<Array<{ c: Candidate; inspect: Obj }>> {
+async function candidates(engine: Engine, strict = false): Promise<Array<{ c: Candidate; inspect: Obj }>> {
   const out: Array<{ c: Candidate; inspect: Obj }> = [];
   for (const l of await engine.allContainers()) {
     if (ours(l.labels) || !CONTAINER_ID_RE.test(l.id)) continue;
     // the list shows an image id when the reference moved on; a reference without "jellyfin" in it cannot match
     if (!l.image.includes('jellyfin') && !IMAGE_ID_RE.test(l.image) && !/^[0-9a-f]{12,64}$/.test(l.image)) continue;
-    const i = await engine.inspectContainer(l.id).catch(() => null);
+    // `strict`: an inspect that fails throws (a candidate that cannot be read is never silently left out)
+    const i = strict ? await engine.inspectContainer(l.id) : await engine.inspectContainer(l.id).catch(() => null);
     if (!candidateOf(i) || i.Id !== l.id) continue;
     const state = isObj(i.State) && typeof i.State.Status === 'string' ? i.State.Status : l.state;
     out.push({ c: { id: l.id, name: str(i.Name).replace(/^\//, '') || (l.names[0] ?? ''), image: configImage(i), state }, inspect: i });
@@ -264,19 +265,25 @@ const sameConfig = (a: SourceConfig | null, b: SourceConfig): boolean => a !== n
  * where an id-only scan of that /config finds the recorded server id. The recorded id when it is among them; otherwise exactly one
  * other (several = not decidable = null). Null as well while any other container on that /config runs, whatever its image: starting
  * the source next to it would put two servers on one database. The caller replaces the recorded id and audits it.
+ * `strict` (starting or stopping the source): null only for what was read and does not decide (no or several candidates, a running
+ * sibling, a scan that read another server id); an inspect or scan that fails throws instead (try again later, never "not the source").
  */
-export async function rematch(deps: Pick<SourceDeps, 'engine' | 'scan'>, recorded: RecordedSource): Promise<string | null> {
-  const found = (await candidates(deps.engine)).filter((x) => sameConfig(configOf(x.inspect), recorded.config)).map((x) => x.c.id);
+export async function rematch(deps: Pick<SourceDeps, 'engine' | 'scan'>, recorded: RecordedSource, o: { strict?: boolean } = {}): Promise<string | null> {
+  const strict = o.strict === true;
+  const found = (await candidates(deps.engine, strict)).filter((x) => sameConfig(configOf(x.inspect), recorded.config)).map((x) => x.c.id);
   const chosen = found.includes(recorded.id) ? recorded.id : found.length === 1 ? found[0]! : null;
   if (chosen === null) return null;
   for (const l of await deps.engine.allContainers()) {
     if (l.id === chosen || l.state !== 'running') continue;
-    const i = await deps.engine.inspectContainer(l.id).catch(() => null);
+    const i = strict ? await deps.engine.inspectContainer(l.id) : await deps.engine.inspectContainer(l.id).catch(() => null);
+    // gone since the list: not running any more
+    if (strict && i === null) continue;
     // a running container that cannot be read may be on the same /config: not decidable
     if (i === null || sameConfig(configOf(i), recorded.config)) return null;
   }
-  // they all mount the one /config: one scan answers for all of them
-  return (await serverIdOf(deps, recorded.config)) === recorded.serverId ? chosen : null;
+  // they all mount the one /config: one scan answers for all of them (strict: a failed scan throws, only another id is null)
+  const id = strict ? parseId(await deps.scan(recorded.config, 'id')).serverId : await serverIdOf(deps, recorded.config);
+  return id === recorded.serverId ? chosen : null;
 }
 
 /**

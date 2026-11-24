@@ -6,7 +6,7 @@ import { MediaService } from '../src/mediaserver/service.js';
 import { Supervisor } from '../src/mediaserver/supervise.js';
 import { mediaStatusView } from '../src/mediaserver/status.js';
 import type { DesiredSpec, Folder, MediaOp, MoveState, RecordedSource } from '../src/mediaserver/types.js';
-import { BASE, N, PROJECT, SOURCE, T0, ferroPin, jellyPin, world, type C, type HelperCall, type InspectMount, type Obj } from './media-world.js';
+import { BASE, N, PROJECT, SOURCE, T0, UPSTREAM_LABEL, ferroPin, jellyPin, world, type C, type HelperCall, type InspectMount, type Obj } from './media-world.js';
 
 /** FriendFlix's Jellyfin (its /System/Info/Public Id) and another server */
 const OURS = '4f1c2a9b8e7d6c5b4a39281706f5e4d3';
@@ -667,6 +667,73 @@ describe('review round 1', () => {
     expect(w.media().move).toMatchObject({ phase: 'aborted' });
     // the next move is not aborted by it
     expect(await w.run(w.op)).toMatchObject({ state: 'succeeded' });
+  });
+
+  it('re-review: a successful Ferrofin deploy ends the copy mark, so a later upgrade snapshots again', async () => {
+    const w = setup();
+    w.data.copyAnswer = (c) => (c.args[0] === 'final' ? { error: 'helper_failed' } : null);
+    expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'helper_failed' });
+    expect(w.media()).toMatchObject({ moveCopy: true, desired: null });
+    // a stage 1 Ferrofin set up on that volume
+    const stage1: DesiredSpec = { kind: 'ferrofin', folders: [{ rel: 'Filme', target: '/media/filme' }], uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: true, tz: 'Europe/Berlin' };
+    expect(await w.run({ op: 'apply', spec: stage1 })).toMatchObject({ state: 'succeeded' });
+    expect(w.media().moveCopy).toBeUndefined();
+    expect(w.media().dataUpstream.ferrofin).toBe('v1.5.1');
+    // an upgrade to a new pin saves the data first
+    const next = ferroPin('e');
+    w.images.set(next.image, { id: `sha256:${'6'.repeat(64)}`, repoDigests: [next.image], labels: { [UPSTREAM_LABEL]: 'v1.5.2' }, env: ['PATH=/usr/bin'], entrypoint: null, cmd: null, volumes: [], user: '' });
+    w.cfg.pins = { source: SOURCE, pins: { ferrofin: next, jellyfin: jellyPin('10.11.3') }, invalid: [] };
+    const job = await w.run({ op: 'update' });
+    expect(job).toMatchObject({ state: 'succeeded' });
+    expect(job.media!.steps.snapshot).toBe('ok');
+    expect(w.media().backups.filter((b) => b.tag === 'auto')).toHaveLength(1);
+    expect(w.media().backups[0]).toMatchObject({ kind: 'ferrofin', upstream: 'v1.5.1' });
+    expect(w.media().moveCopy).toBeUndefined();
+  });
+
+  it('re-review: a scan that fails is never read as "not the source": the move keeps retrying and starts it later', async () => {
+    const w = setup();
+    let scanBroken = false;
+    w.cfg.answer = ((orig) => (c: HelperCall) => (c.verb === 'migrate-scan' && c.args[0] === 'id' && scanBroken ? { error: 'helper_timeout' } : orig(c)))(w.cfg.answer);
+    w.data.copyAnswer = (c) => { if (c.args[0] === 'final') { scanBroken = true; return { error: 'helper_failed' }; } return null; };
+    expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'helper_failed' });
+    expect(w.src.running).toBe(false);
+    expect(w.media()).toMatchObject({ move: { phase: 'running', abort: true }, lastError: 'helper_failed' });
+    for (let i = 0; i < 4; i++) {
+      w.clock.t += 11 * MIN;
+      expect(await w.sup.tick()).toBe('move');
+      await w.updater.idle();
+      expect(w.updater.snapshot().lastJob).toMatchObject({ action: 'mediaserver-migrate', state: 'failed', error: 'helper_timeout' });
+      expect(w.media().move).toMatchObject({ phase: 'running', abort: true });
+      expect(w.media().move).not.toHaveProperty('tries');
+    }
+    expect(w.src.running).toBe(false);
+    scanBroken = false;
+    w.clock.t += 11 * MIN;
+    expect(await w.sup.tick()).toBe('move');
+    await w.updater.idle();
+    expect(w.src.running).toBe(true);
+    expect(w.media()).toMatchObject({ move: { phase: 'aborted' }, lastError: 'helper_failed' });
+  });
+
+  it('re-review: an inspect that fails is not read as "gone" or "not decidable" either', async () => {
+    const w = setup();
+    let broken = false;
+    w.patch('inspectContainer', (inspect) => async (id) => { if (broken && id === w.src.id) throw new EngineError(500, 'engine_error'); return inspect(id); });
+    w.data.copyAnswer = (c) => { if (c.args[0] === 'final') { broken = true; return { error: 'helper_failed' }; } return null; };
+    expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'helper_failed' });
+    for (let i = 0; i < 3; i++) {
+      w.clock.t += 11 * MIN;
+      await w.sup.tick();
+      await w.updater.idle();
+    }
+    expect(w.media().move).toMatchObject({ phase: 'running', abort: true });
+    expect(w.media().move).not.toHaveProperty('tries');
+    broken = false;
+    w.clock.t += 11 * MIN;
+    await w.sup.tick();
+    await w.updater.idle();
+    expect(w.src.running).toBe(true);
   });
 
   it('the source is not stopped when the move record cannot be written', async () => {
