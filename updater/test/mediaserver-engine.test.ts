@@ -111,7 +111,9 @@ describe('Engine client', () => {
     const f = fake('1.47', (c) => {
       if (c.url.startsWith('/v1.47/images/')) return Response.json({ Id: 'sha256:i', RepoDigests: ['r@sha256:d'], Config: { Labels: { k: 'v' }, Env: ['A=1'], Entrypoint: ['/e'], Cmd: null, Volumes: { '/cache': {} }, User: '1000' } });
       if (c.url.startsWith('/v1.47/containers/json')) return Response.json([{ Id: 'i1', Names: ['/n1'], State: 'running', Labels: { l: 'm' } }]);
-      if (c.url.startsWith('/v1.47/networks')) return Response.json([{ Id: 'n1', Name: 'p_media', Containers: { c1: {}, c2: {} } }]);
+      // the list answer carries no attached containers (Docker leaves Containers empty there); only the network's own inspect does
+      if (c.url === '/v1.47/networks/n1') return Response.json({ Id: 'n1', Name: 'p_media', Containers: { c1: {}, c2: {} } });
+      if (c.url.startsWith('/v1.47/networks')) return Response.json([{ Id: 'n1', Name: 'p_media', Containers: {} }]);
       if (c.url === '/v1.47/info') return Response.json({ DockerRootDir: '/var/lib/docker', Runtimes: { runc: {}, nvidia: {} } });
       return undefined;
     });
@@ -136,9 +138,13 @@ describe('readFacts', () => {
         const svc = /service%3D(\w+)/.exec(c.url)?.[1] ?? /service=(\w+)/.exec(decodeURIComponent(c.url))?.[1];
         return Response.json([{ Id: svc === 'backend' ? 'b1' : 'g1', Names: [], State: 'running', Labels: { 'com.docker.compose.project.working_dir': '/srv/friendflix' } }]);
       }
+      // like Docker: the list leaves Containers empty, the network's own inspect fills it
+      const all = [...(w.networks as Array<{ Id: string }>), { Id: 'ne', Name: 'friendflix_egress', Containers: {} }];
+      const one = /^\/v1\.47\/networks\/([^/?]+)$/.exec(c.url);
+      if (one) { const n = all.find((x) => x.Id === one[1]); return n ? Response.json(n) : new Response('', { status: 404 }); }
       if (c.url.startsWith('/v1.47/networks')) {
         const media = decodeURIComponent(c.url).includes('network=media');
-        return Response.json(media ? w.networks : [{ Id: 'ne', Name: 'friendflix_egress', Containers: {} }]);
+        return Response.json((media ? w.networks : all.slice(-1)).map((x) => ({ ...(x as object), Containers: {} })));
       }
       if (c.url === '/v1.47/info') return Response.json({ DockerRootDir: '/var/lib/docker', Runtimes: { runc: {} } });
       return undefined;
