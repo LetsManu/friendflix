@@ -299,9 +299,10 @@ export class MediaJobs {
   }
 
   /** one helper run as the given user: its JSON answer, or a StepError with the helper's own code */
-  private async helper(r: Runner, u: { uid: number; gid: number; groups: number[] }, verb: HelperVerb, args: string[], mounts: HelperMount[], limitMs = HELPER_MS, source?: SourceExpect): Promise<Obj> {
+  /** `source`: the expected /source mount and the engine's Docker data root (facts.dockerRoot) the guard checks a bind source against */
+  private async helper(r: Runner, u: { uid: number; gid: number; groups: number[] }, verb: HelperVerb, args: string[], mounts: HelperMount[], limitMs = HELPER_MS, source?: { expect: SourceExpect; dockerRoot: string | null }): Promise<Obj> {
     const req = helperSpec({ verb, args, uid: u.uid, gid: u.gid, groups: u.groups, mounts }, r);
-    const a = await this.d.helper(this.engine, req, { project: r.project, uid: u.uid, gid: u.gid, image: r.image, verb, ...(source ? { source } : {}) }, limitMs);
+    const a = await this.d.helper(this.engine, req, { project: r.project, uid: u.uid, gid: u.gid, image: r.image, verb, ...(source ? { source: source.expect, dockerRoot: source.dockerRoot } : {}) }, limitMs);
     if ('error' in a) throw new StepError(isMediaError(a.error) ? a.error : 'helper_failed');
     return a;
   }

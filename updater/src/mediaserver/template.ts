@@ -120,13 +120,14 @@ export function specHash(body: Record<string, unknown>): string {
 }
 
 /**
- * One media folder's mount: the base volume read-only below /media/<slug>; on a migrated server also below /ffmedia/<slug> (a folder
- * added after the move), and a migrated folder at the path the old server used, which alone may be the whole base (no Subpath).
+ * One media folder's mount: the base volume read-only below /media/<slug>; on a migrated server a folder added after the move goes
+ * only below /ffmedia/<slug> (never a path the copied database may point at), and a migrated folder sits at the path the old server
+ * used, which alone may be the whole base (no Subpath).
  */
 function mediaMount(x: DesiredSpec['folders'][number], migrated: boolean, baseVolume: string): Record<string, unknown> {
   const ok = x.migrated === true
     ? migrated && isMigratedTarget(x.target) && isRel(x.rel, 0, 3)
-    : isTarget(x.target) && (migrated || !x.target.startsWith('/ffmedia/')) && isRel(x.rel, 1, 3);
+    : isTarget(x.target) && x.target.startsWith(migrated ? '/ffmedia/' : '/media/') && isRel(x.rel, 1, 3);
   if (!ok) throw new TemplateViolation('HostConfig.Mounts');
   return { Type: 'volume', Source: baseVolume, Target: x.target, ReadOnly: true, VolumeOptions: { NoCopy: true, ...(x.rel === '' ? {} : { Subpath: x.rel }) } };
 }

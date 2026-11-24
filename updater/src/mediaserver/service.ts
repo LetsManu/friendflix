@@ -85,7 +85,7 @@ export class MediaService {
   private async helper(r: Ready, verb: HelperVerb, args: string[], mounts: HelperMount[], bind?: string, source?: SourceExpect): Promise<Obj> {
     const u = this.user();
     const req = helperSpec({ verb, args, uid: u.uid, gid: u.gid, groups: u.groups, mounts }, { project: r.project, image: r.image });
-    const answer = await this.d.helper(this.d.engine, req, { project: r.project, uid: u.uid, gid: u.gid, image: r.image, verb, ...(bind !== undefined ? { bind } : {}), ...(source ? { source } : {}) }, SYNC_HELPER_MS);
+    const answer = await this.d.helper(this.d.engine, req, { project: r.project, uid: u.uid, gid: u.gid, image: r.image, verb, ...(bind !== undefined ? { bind } : {}), ...(source ? { source, dockerRoot: r.facts.dockerRoot } : {}) }, SYNC_HELPER_MS);
     if ('error' in answer) throw new StepError(typeof answer.error === 'string' && /^[a-z_]{1,40}$/.test(answer.error) ? answer.error : 'helper_failed');
     return answer;
   }

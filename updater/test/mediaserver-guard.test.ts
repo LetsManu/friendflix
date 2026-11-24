@@ -550,14 +550,26 @@ describe('migrated media server (stage 2)', () => {
     refuses(() => assertManaged(b, E));
     b.Env.push('FERROFIN_DATA_DIR=/ferrofin-data');
     refuses(() => assertManaged(b, E));
-    // with the expectation (and the /data tmpfs) it passes: a migrated server whose folders are all below /media
-    refuses(() => assertManaged(b, { ...E, migrated: { targets: [] } }));
+    // with the expectation (and the /data tmpfs) it passes: a migrated server whose recorded targets are below /media
+    const below = { ...E, migrated: { targets: ['/media/filme', '/media/serien'] } };
+    refuses(() => assertManaged(b, below));
     b.HostConfig.Tmpfs['/data'] = 'size=1m,mode=0755';
-    expect(() => assertManaged(b, { ...E, migrated: { targets: [] } })).not.toThrow();
+    expect(() => assertManaged(b, below)).not.toThrow();
     // the media volumes are never at /ferrofin-data
     const m = okM();
     at(m, '/movies').Target = '/ferrofin-data';
     refuses(() => assertManaged(m, { ...EM, migrated: { targets: ['/ferrofin-data', '/data/tv'] } }));
+  });
+
+  it('on a migrated server a new folder goes to /ffmedia, never to /media', () => {
+    const b = okM();
+    at(b, '/ffmedia/neu').Target = '/media/x';
+    refuses(() => assertManaged(b, EM));
+    // a recorded target below /media is still fine; only a folder not recorded must be at /ffmedia
+    expect(() => assertManaged(b, { ...E, migrated: { targets: ['/movies', '/data/tv', '/media/x'] } })).not.toThrow();
+    const ff = okM();
+    at(ff, '/ffmedia/neu').Target = '/ffmedia/x';
+    expect(() => assertManaged(ff, EM)).not.toThrow();
   });
 
   it('/ffmedia/<slug> only on a migrated server', () => {
@@ -584,6 +596,8 @@ describe('migrated media server (stage 2)', () => {
     i.Config.Env = i.Config.Env.map((x: string) => (x === 'FERROFIN_DATA_DIR=/data' ? 'FERROFIN_DATA_DIR=/ferrofin-data' : x));
     i.HostConfig.Mounts[2].Target = i.Mounts[2].Destination = '/movies';
     delete i.HostConfig.Mounts[2].VolumeOptions.Subpath;
+    // the other folder was added after the move: /ffmedia
+    i.HostConfig.Mounts[3].Target = i.Mounts[3].Destination = '/ffmedia/serien';
     i.HostConfig.Tmpfs['/data'] = 'size=1m,mode=0755';
     expect(() => assertManagedInspect(i, { ...E, image, migrated: { targets: ['/movies'] } })).not.toThrow();
     refuses(() => assertManagedInspect(i, { ...E, image }));
@@ -661,7 +675,7 @@ describe('migrated media server (stage 2)', () => {
 
 describe('source helpers (stage 2)', () => {
   const H = { project: 'friendflix', image: 'sha256:' + 'c'.repeat(64) };
-  const G = { project: 'friendflix', uid: 1000, gid: 1000, image: H.image };
+  const G = { project: 'friendflix', uid: 1000, gid: 1000, image: H.image, dockerRoot: '/var/lib/docker' };
   const bindSrc = { type: 'bind' as const, source: '/opt/jellyfin/config' };
   const volSrc = { type: 'volume' as const, source: 'jellyfin_config' };
   const source = (s: { type: 'bind' | 'volume'; source: string }) => ({ kind: 'source' as const, ...s });
@@ -722,7 +736,7 @@ describe('source helpers (stage 2)', () => {
   it('a source bind never comes from a system tree or the Docker runtime', () => {
     for (const p of [
       '/proc', '/proc/1/root', '/sys', '/sys/fs', '/dev', '/dev/sda', '/etc', '/etc/jellyfin', '/boot', '/boot/x', '/run', '/run/user/1000', '/var/run', '/var/run/x',
-      '/var/lib/docker', '/var/lib/docker/volumes/x/_data', '/srv/docker.sock', '/srv/containerd/x', '/home/a/docker.sock.d',
+      '/var/lib/docker', '/var/lib/docker/volumes/x/_data', '/srv/docker.sock', '/srv/containerd/x', '/home/a/docker.sock.d', '/root', '/root/jellyfin/config',
     ]) {
       const s = { type: 'bind' as const, source: p };
       expect(() => assertHelper(req({ mounts: [source(s)] }), { ...G, verb: 'migrate-scan', source: s }), p).toThrow(TemplateViolation);
@@ -731,6 +745,19 @@ describe('source helpers (stage 2)', () => {
       const s = { type: 'bind' as const, source: p };
       expect(() => assertHelper(req({ mounts: [source(s)] }), { ...G, verb: 'migrate-scan', source: s }), p).not.toThrow();
     }
+  });
+
+  it("a source bind never lies at, below or above the engine's own Docker data root", () => {
+    const scan = (p: string, dockerRoot: string | null | undefined) => {
+      const s = { type: 'bind' as const, source: p };
+      return () => assertHelper(req({ mounts: [source(s)] }), { ...G, verb: 'migrate-scan', source: s, dockerRoot });
+    };
+    for (const p of ['/srv/docker', '/srv/docker/volumes/x/_data', '/srv']) expect(scan(p, '/srv/docker'), p).toThrow(TemplateViolation);
+    for (const p of ['/srv/dockerx/jf', '/srv/jellyfin/config']) expect(scan(p, '/srv/docker'), p).not.toThrow();
+    // the root unknown or not a host path: no bind source at all (a volume source does not depend on it)
+    for (const root of [null, undefined, 'relative', '/', '/srv/../x']) expect(scan('/opt/jellyfin/config', root), String(root)).toThrow(TemplateViolation);
+    const v = { type: 'volume' as const, source: 'jellyfin_config' };
+    expect(() => assertHelper(req({ mounts: [source(v)] }), { ...G, verb: 'migrate-scan', source: v, dockerRoot: null })).not.toThrow();
   });
 
   it('migrate-copy may write /data, migrate-scan may not', () => {

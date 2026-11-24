@@ -71,7 +71,7 @@ const BIND_RE = /^(\/[^/]+)+$/;
  */
 const MIGRATED_DATA_TMPFS = 'size=1m,mode=0755';
 /** host trees a source bind may not be or lie below (`/` is refused by BIND_RE); like checkBasePath, the guard's own copy */
-const SOURCE_REFUSED = [['proc'], ['sys'], ['dev'], ['etc'], ['boot'], ['run'], ['var', 'run'], ['var', 'lib', 'docker']];
+const SOURCE_REFUSED = [['proc'], ['sys'], ['dev'], ['etc'], ['boot'], ['root'], ['run'], ['var', 'run'], ['var', 'lib', 'docker']];
 const VOLUME_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/;
 const COMPONENT_RE = /^[\p{L}\p{N} ._\-+()&']+$/u;
 const TZ_RE = /^[A-Za-z_]+(\/[A-Za-z0-9_+-]+){0,2}$/;
@@ -127,11 +127,16 @@ function isRel(rel: unknown): boolean {
 const checkProject = (project: string): void => need(PROJECT_RE.test(project), 'project');
 /** an absolute, normalised host path other than `/` (no `.` or `..` component, no empty component) */
 const isHostPath = (p: unknown): p is string => typeof p === 'string' && BIND_RE.test(p) && !p.split('/').some((c) => c === '.' || c === '..');
-/** a source bind: a host path outside the system trees and the Docker runtime, never a socket */
-function isSourceBind(p: string): boolean {
-  if (!isHostPath(p) || SOCKET_RE.test(p)) return false;
+const under = (c: readonly string[], prefix: readonly string[]): boolean => prefix.length <= c.length && prefix.every((x, i) => c[i] === x);
+/**
+ * a source bind: a host path outside the system trees, never a socket, and neither at, below nor above the engine's own Docker data
+ * root (which must be known: null or anything but a host path refuses every bind source)
+ */
+function isSourceBind(p: string, dockerRoot: string | null | undefined): boolean {
+  if (!isHostPath(p) || SOCKET_RE.test(p) || !isHostPath(dockerRoot)) return false;
   const c = p.slice(1).split('/');
-  return !SOURCE_REFUSED.some((r) => r.every((x, i) => c[i] === x));
+  const root = dockerRoot.slice(1).split('/');
+  return !SOURCE_REFUSED.some((r) => under(c, r)) && !under(c, root) && !under(root, c);
 }
 
 /**
@@ -208,7 +213,8 @@ function checkMounts(mounts: unknown, e: ManagedExpect): void {
     const t = Target as string;
     media.push(t);
     const listed = e.migrated !== undefined && e.migrated.targets.includes(t) && isMigratedTarget(t);
-    need(MEDIA_TARGET_RE.test(t) || (e.migrated !== undefined && FFMEDIA_TARGET_RE.test(t)) || listed, 'HostConfig.Mounts.Target');
+    // a folder not recorded at the move: /media on stage 1; /ffmedia only on a migrated server (never a path its database may point at)
+    need(listed || (e.migrated !== undefined ? FFMEDIA_TARGET_RE : MEDIA_TARGET_RE).test(t), 'HostConfig.Mounts.Target');
     need(ReadOnly === true, 'HostConfig.Mounts.ReadOnly');
     const vo = obj(VolumeOptions, 'HostConfig.Mounts.VolumeOptions');
     onlyKeys(vo, ['NoCopy', 'Subpath'], 'HostConfig.Mounts.VolumeOptions.');
@@ -342,7 +348,7 @@ export function assertManagedInspect(inspect: unknown, e: ManagedExpect & { gpu?
 
 const HELPER_HOST_KEYS = ['NetworkMode', 'Mounts', 'Tmpfs', 'ReadonlyRootfs', 'CapDrop', 'SecurityOpt', 'Devices', 'GroupAdd', 'AutoRemove'];
 
-function checkHelperMounts(mounts: unknown[], e: { project: string; verb: HelperVerb; bind?: string; source?: SourceExpect }): void {
+function checkHelperMounts(mounts: unknown[], e: { project: string; verb: HelperVerb; bind?: string; source?: SourceExpect; dockerRoot?: string | null }): void {
   const p = `${e.project}_mediaserver-`;
   const targets = new Set<string>();
   for (const raw of mounts) {
@@ -374,7 +380,7 @@ function checkHelperMounts(mounts: unknown[], e: { project: string; verb: Helper
       case '/source': {
         const s = e.source;
         need((e.verb === 'migrate-scan' || e.verb === 'migrate-copy') && s !== undefined && ReadOnly === true && Type === s.type && Source === s.source
-          && (s.type === 'bind' ? isSourceBind(s.source) && unset(VolumeOptions) : s.type === 'volume' && VOLUME_NAME_RE.test(s.source) && eq(VolumeOptions, { NoCopy: true })),
+          && (s.type === 'bind' ? isSourceBind(s.source, e.dockerRoot) && unset(VolumeOptions) : s.type === 'volume' && VOLUME_NAME_RE.test(s.source) && eq(VolumeOptions, { NoCopy: true })),
         'HostConfig.Mounts./source');
         break;
       }
@@ -413,9 +419,10 @@ function checkSeed(h: Obj, b: Obj, e: { project: string; image: string; kind?: K
  * A helper, HDR run or seed body: the updater's image (`e.image`) with a fixed verb, or the media image for `hdr`/`seed`; no network,
  * read-only root, no capabilities, never auto-removed; mounts only from the fixed list (binds: the requested path for `check`,
  * /dev/dri and /sys/class/drm for `gpu`; data read-write only for `restore` and `migrate-copy` (Ferrofin's), never for `migrate-scan`;
- * backups read-write only for `backup`/`restore`; `/source` read-only, exactly `e.source`, only for `migrate-scan`/`migrate-copy`).
+ * backups read-write only for `backup`/`restore`; `/source` read-only, exactly `e.source`, only for `migrate-scan`/`migrate-copy`; a
+ * bind source never from a system tree or at, below or above `e.dockerRoot`, the engine's Docker data root).
  */
-export function assertHelper(body: unknown, e: { project: string; uid: number; gid: number; image: string; verb: HelperVerb | 'hdr' | 'seed'; bind?: string; source?: SourceExpect; kind?: Kind }): void {
+export function assertHelper(body: unknown, e: { project: string; uid: number; gid: number; image: string; verb: HelperVerb | 'hdr' | 'seed'; bind?: string; source?: SourceExpect; dockerRoot?: string | null; kind?: Kind }): void {
   const b = obj(body, 'body');
   checkProject(e.project);
   need(/^sha256:[0-9a-f]{64}$/.test(e.image) || /^[a-z0-9]+([._/-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/.test(e.image), 'Image');
@@ -444,5 +451,5 @@ export function assertHelper(body: unknown, e: { project: string; uid: number; g
   need(unset(b.Entrypoint), 'Entrypoint');
   need(strings(b.Cmd) && b.Cmd.length >= 3 && b.Cmd[0] === 'node' && b.Cmd[1] === 'updater/dist/mediaHelper.js' && b.Cmd[2] === e.verb, 'Cmd');
   need(unset(h.Mounts) || Array.isArray(h.Mounts), 'HostConfig.Mounts');
-  checkHelperMounts(unset(h.Mounts) ? [] : (h.Mounts as unknown[]), { project: e.project, verb: e.verb, bind: e.bind, source: e.source });
+  checkHelperMounts(unset(h.Mounts) ? [] : (h.Mounts as unknown[]), { project: e.project, verb: e.verb, bind: e.bind, source: e.source, dockerRoot: e.dockerRoot });
 }

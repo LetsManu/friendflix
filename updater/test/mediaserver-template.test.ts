@@ -346,7 +346,11 @@ describe('a migrated Ferrofin (stage 2)', () => {
     expect(() => body({ folders: [{ rel: 'Filme', target: '/movies', migrated: true }] })).toThrow(TemplateViolation);
     expect(() => body({ folders: [{ rel: '', target: '/media/filme' }] })).toThrow(TemplateViolation);
     expect(() => body({ folders: [{ rel: 'Filme', target: '/ffmedia/filme' }] })).toThrow(TemplateViolation);
-    // a stage 1 folder keeps 1–3 levels and /media or /ffmedia on a migrated server too
+    // a folder added after the move: /ffmedia/<slug> only, never /media (a path the copied database may still point at)
+    expect(t({ folders: [...DM.folders, { rel: 'X', target: '/media/x' }] })).toThrow(TemplateViolation);
+    expect(t({ folders: [...DM.folders, { rel: 'X', target: '/ffmedia/x' }] })).not.toThrow();
+    expect(() => assertManaged(containerSpec({ ...DM, folders: [...DM.folders, { rel: 'X', target: '/ffmedia/x' }] }, F).body, { ...E, migrated: { targets: ['/movies', '/data/tv'] } })).not.toThrow();
+    // a stage 1 folder keeps 1–3 levels on a migrated server too
     expect(t({ folders: [{ rel: '', target: '/ffmedia/neu' }] })).toThrow(TemplateViolation);
     expect(t({ folders: [{ rel: 'Neu', target: '/neu' }] })).toThrow(TemplateViolation);
     // a migrated target follows the rule
