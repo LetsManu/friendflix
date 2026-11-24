@@ -175,6 +175,49 @@ describe('media.managed', () => {
     expect(l).toEqual({ id: 'media.managed', group: 'media', status: 'ok', href: '/admin/settings?tab=media', docs: 'mediaserver.md', params: { kind: 'jellyfin', upstream: '10.10.7' }, runs: 'server' });
   });
 
+  describe('after a move (stage 2)', () => {
+    const FROM = { name: 'jellyfin', version: '10.10.3', at: ago(2) };
+    const ferrofin = (s: MediaStatus) => {
+      s.desired!.kind = 'ferrofin';
+      s.container!.kind = 'ferrofin';
+      s.container!.image.upstream = '1.2.3';
+    };
+    /** the view of a moved install: managed Ferrofin, where it came from, the request service's state */
+    const moved = (o: { from?: MediaView['managed']['migratedFrom']; requestsWarning?: boolean; edit?: (s: MediaStatus) => void } = {}) => {
+      const s = status();
+      ferrofin(s);
+      o.edit?.(s);
+      const v = viewOf(s, 'ferrofin');
+      const from = o.from === undefined ? FROM : o.from;
+      v.managed.migratedFrom = from;
+      v.move = { ...v.move, migratedFrom: from, sourceState: 'exited', requestsWarning: o.requestsWarning === true };
+      return managedLine(env, v, updater(s));
+    };
+
+    it('an info line: moved from the old Jellyfin, which is stopped and kept for the way back', async () => {
+      expect(await moved()).toEqual({
+        id: 'media.managed', group: 'media', status: 'ok', cause: 'managed_migrated', href: '/admin/settings?tab=media', docs: 'mediaserver.md',
+        params: { kind: 'ferrofin', upstream: '1.2.3', source: 'jellyfin' }, runs: 'server',
+      });
+      // a container name with capitals, digits and a dash shows; one that could read as an address or a path never does
+      expect((await moved({ from: { ...FROM, name: 'Jellyfin-2' } })).params).toEqual({ kind: 'ferrofin', upstream: '1.2.3', source: 'Jellyfin-2' });
+      for (const name of ['192.0.2.10', 'media.example.com', 'jellyfin.old']) {
+        const l = await moved({ from: { ...FROM, name } });
+        expect(l).toMatchObject({ status: 'ok', cause: 'managed_migrated' });
+        expect(l.params).toEqual({ kind: 'ferrofin', upstream: '1.2.3' });
+      }
+      // never moved: the plain ok line
+      expect(await moved({ from: null })).toEqual({ id: 'media.managed', group: 'media', status: 'ok', href: '/admin/settings?tab=media', docs: 'mediaserver.md',
+        params: { kind: 'ferrofin', upstream: '1.2.3' }, runs: 'server' });
+    });
+
+    it('a warning while the request service still points at the old Jellyfin', async () => {
+      expect(await moved({ requestsWarning: true })).toMatchObject({ status: 'warning', cause: 'managed_requests_not_moved', href: '/admin/settings?tab=media', docs: 'mediaserver.md' });
+      // what keeps the server from working comes first
+      expect(await moved({ requestsWarning: true, edit: (s) => { s.container!.state = 'exited'; } })).toMatchObject({ status: 'problem', cause: 'managed_down' });
+    });
+  });
+
   it('the line has no path, code or address in its params', async () => {
     const lines = [
       await lineFor((s) => { s.base.pending = true; s.base.expiresAt = ago(-0.01); }),

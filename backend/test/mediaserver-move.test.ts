@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encrypt } from '../src/crypto.js';
-import { MOVE_LOCK, moveTick, verifyIds } from '../src/mediaserver/move.js';
+import { goBack, MOVE_LOCK, moveTick, repairUsers, verifyIds } from '../src/mediaserver/move.js';
 import { externalKey, readManaged, writeManaged, type MovePhase } from '../src/mediaserver/store.js';
 import { JellyfinClient } from '../src/jellyfin/client.js';
 import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
@@ -13,6 +13,8 @@ const MANAGED = 'http://mediaserver:8096';
 const OLD = 'http://jellyfin.example.com:8096';
 /** token-shaped values from pieces (gitleaks) */
 const KEY = 'k' + 'ey-' + 'copied-' + '1';
+/** the old Jellyfin's key as the way back stored it */
+const OLD_KEY = 'k' + 'ey-' + 'old-' + '2';
 const COPY_JOB = 'aaaaaaaaaaaaaaaa';
 const hex = (n: number) => n.toString(16).padStart(32, '0');
 const START = '2026-11-24T09:00:00.000Z';
@@ -27,10 +29,10 @@ const job = (action: string, state = 'running', id = (++jobN).toString(16).padSt
 const updMove = (phase: string) => ({ phase, step: null, source: { name: 'jellyfin', version: '10.10.3' }, folders: [{ rel: '', target: '/movies', migrated: true }], abort: false });
 const media = () => ({
   available: true, reason: null, base: { set: true, path: '/srv/media', pending: false, expiresAt: null },
-  desired: { kind: 'ferrofin', folders: [{ rel: '', target: '/movies', migrated: true }], uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: true, run: true, migrated: true },
-  container: { state: 'running', health: 'healthy', kind: 'ferrofin', image: { digest: DIGEST, upstream: '1.2.3' }, template: 'current', tampered: false, createdAt: '2026-11-24T09:00:00.000Z' },
+  desired: { kind: 'ferrofin', folders: [{ rel: '', target: '/movies', migrated: true }], uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: true, run: true, migrated: true } as Record<string, any> | null,
+  container: { state: 'running', health: 'healthy', kind: 'ferrofin', image: { digest: DIGEST, upstream: '1.2.3' }, template: 'current', tampered: false, createdAt: '2026-11-24T09:00:00.000Z' } as Record<string, any> | null,
   pin: null, pins: { ferrofin: true, jellyfin: true }, engine: { api: '1.47', logs: true, arch: 'amd64', nvidia: false }, error: null as string | null, backups: [], hdr: null,
-  move: updMove('ready') as Record<string, any> | null, source: { name: 'jellyfin', state: 'exited', version: '10.10.3' },
+  move: updMove('ready') as Record<string, any> | null, source: { name: 'jellyfin', state: 'exited', version: '10.10.3' } as Record<string, any> | null,
 });
 
 const fake = {
@@ -43,18 +45,25 @@ const fake = {
   refuse: {} as Record<string, string>,
   /** the render nodes the gpu op detects */
   dri: [{ node: 'renderD129', gid: 44, vendor: 'intel' }] as Array<Record<string, unknown>>,
+  /** the code the source job fails with (null: it starts the old Jellyfin) */
+  sourceError: null as string | null,
 };
 const resetFake = () => Object.assign(fake, { media: media(), job: job('mediaserver-migrate', 'succeeded', COPY_JOB), busy: false, up: true, bodies: [], refuse: {},
-  dri: [{ node: 'renderD129', gid: 44, vendor: 'intel' }] });
+  dri: [{ node: 'renderD129', gid: 44, vendor: 'intel' }], sourceError: null });
 const opBodies = (op: string) => fake.bodies.filter((b) => b.op === op);
 
 // ---------------------------------------------------------------- the fake Ferrofin (the copied database)
 
 interface Call { method: string; path: string; query: URLSearchParams; body: any; token: string | null }
 interface Lib { Name: string; ItemId: string; Locations: string[]; LibraryOptions: Record<string, unknown> }
-const server = {
+/** a server user by name and password (created through the API, or seeded with a name); `policy` as last written */
+interface Account { name: string; pw: string; policy: Record<string, unknown> }
+const newServer = (key: string) => ({
+  key,
   up: true,
   users: new Set<string>(),
+  /** the users the fake knows by name (created, or seeded for a name clash) */
+  accounts: new Map<string, Account>(),
   items: new Set<string>(),
   libs: [] as Lib[],
   calls: [] as Call[],
@@ -63,35 +72,59 @@ const server = {
   before: null as ((c: Call) => Promise<void>) | null,
   /** a status to answer instead (a server still starting: 503) */
   fail: null as ((c: Call) => number | null) | null,
-};
-const resetServer = () => Object.assign(server, { up: true, users: new Set<string>(), items: new Set<string>(), libs: [], calls: [],
-  encoding: { EncoderAppPath: '/usr/lib/jellyfin-ffmpeg/ffmpeg', HardwareAccelerationType: 'none' }, before: null, fail: null });
-const calls = (method: string, path: string) => server.calls.filter((c) => c.method === method && c.path === path);
+});
+type Srv = ReturnType<typeof newServer>;
+/** the managed Ferrofin (the copied database) and the old Jellyfin the way back returns to */
+const server: Srv = newServer(KEY);
+const old: Srv = newServer(OLD_KEY);
+let createdN = 0;
+const resetServer = () => { Object.assign(server, newServer(KEY)); Object.assign(old, newServer(OLD_KEY)); };
+const calls = (method: string, path: string, srv: Srv = server) => srv.calls.filter((c) => c.method === method && c.path === path);
 const tokenOf = (h: string | null) => /Token="([^"]*)"/.exec(h ?? '')?.[1] ?? null;
 
-function serverAnswer(c: Call): Response {
+function serverAnswer(srv: Srv, c: Call): Response {
   const j = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
   const none = (status = 204) => new Response(null, { status });
-  if (c.token !== KEY) return none(401);
-  const failed = server.fail?.(c);
+  if (c.method === 'POST' && c.path === '/Users/AuthenticateByName') {
+    const hit = [...srv.accounts].find(([id, a]) => srv.users.has(id) && a.name === c.body.Username && a.pw === c.body.Pw);
+    return hit ? j({ AccessToken: 'tok', User: { Id: hit[0], Name: hit[1].name } }) : none(401);
+  }
+  if (c.token !== srv.key) return none(401);
+  const failed = srv.fail?.(c);
   if (failed) return none(failed);
+  const pw = /^\/Users\/([0-9a-f]{32})\/(Password|Policy)$/.exec(c.path);
+  if (pw && c.method === 'POST') {
+    if (!srv.users.has(pw[1]!)) return none(404);
+    const a = srv.accounts.get(pw[1]!) ?? { name: 'x', pw: '', policy: {} };
+    srv.accounts.set(pw[1]!, pw[2] === 'Password' ? { ...a, pw: c.body.NewPw } : { ...a, policy: c.body });
+    return none();
+  }
   if (c.method === 'GET' && c.path.startsWith('/Users/')) {
     const id = c.path.slice('/Users/'.length);
-    return server.users.has(id) ? j({ Id: id, Name: 'x', Policy: {} }) : none(404);
+    return srv.users.has(id) ? j({ Id: id, Name: srv.accounts.get(id)?.name ?? 'x', Policy: srv.accounts.get(id)?.policy ?? {} }) : none(404);
   }
   switch (`${c.method} ${c.path}`) {
-    case 'GET /Library/VirtualFolders': return j(server.libs);
+    case 'GET /System/Info': return j({ Id: 'f'.repeat(32), Version: '10.10.3' });
+    case 'POST /Users/New': {
+      if ([...srv.accounts.values()].some((a) => a.name === c.body.Name)) return none(400);
+      const id = hex(0xe000 + ++createdN);
+      srv.users.add(id);
+      srv.accounts.set(id, { name: c.body.Name, pw: c.body.Password, policy: {} });
+      return j({ Id: id, Name: c.body.Name });
+    }
+    case 'GET /Library/MediaFolders': return j({ Items: [] });
+    case 'GET /Library/VirtualFolders': return j(srv.libs);
     case 'POST /Library/VirtualFolders/LibraryOptions': {
-      const lib = server.libs.find((l) => l.ItemId === c.body.Id);
+      const lib = srv.libs.find((l) => l.ItemId === c.body.Id);
       if (!lib) return none(404);
       lib.LibraryOptions = c.body.LibraryOptions;
       return none();
     }
-    case 'GET /System/Configuration/encoding': return j(server.encoding);
-    case 'POST /System/Configuration/encoding': server.encoding = c.body; return none();
+    case 'GET /System/Configuration/encoding': return j(srv.encoding);
+    case 'POST /System/Configuration/encoding': srv.encoding = c.body; return none();
     case 'GET /Items': {
       const id = c.query.get('ids')!;
-      return j({ Items: server.items.has(id) ? [{ Id: id, Name: 'x', Type: 'Movie' }] : [] });
+      return j({ Items: srv.items.has(id) ? [{ Id: id, Name: 'x', Type: 'Movie' }] : [] });
     }
   }
   return none(404);
@@ -100,13 +133,14 @@ function serverAnswer(c: Call): Response {
 const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const u = new URL(String(input));
   const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-  if (u.origin === MANAGED) {
-    if (!server.up) throw new TypeError('fetch failed');
+  const srv = u.origin === MANAGED ? server : u.origin === OLD ? old : null;
+  if (srv) {
+    if (!srv.up) throw new TypeError('fetch failed');
     const headers = new Headers(init?.headers);
     const c: Call = { method: init?.method ?? 'GET', path: u.pathname, query: u.searchParams, body, token: tokenOf(headers.get('authorization')) };
-    server.calls.push(c);
-    await server.before?.(c);
-    return serverAnswer(c);
+    srv.calls.push(c);
+    await srv.before?.(c);
+    return serverAnswer(srv, c);
   }
   const j = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
   if (!fake.up) throw new TypeError('fetch failed');
@@ -118,6 +152,22 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
   const refused = fake.refuse[body.op];
   if (refused) return j({ error: refused }, 409);
   if (body.op === 'gpu') return j({ dri: fake.dri, nvidia: false });
+  if (body.op === 'source-start') {
+    if (fake.busy) return j({ error: 'busy' }, 409);
+    if (!fake.media.source) return j({ error: 'no_target' }, 409);
+    // the source job: only the recorded source, started when it is stopped (or its refusal)
+    fake.job = job('mediaserver-source', fake.sourceError ? 'failed' : 'succeeded');
+    fake.job.error = fake.sourceError;
+    if (!fake.sourceError) fake.media.source = { ...fake.media.source, state: 'running' };
+    return j({ job: { ...fake.job, state: 'running', error: null } }, 202);
+  }
+  if (body.op === 'stop') {
+    if (fake.busy) return j({ error: 'busy' }, 409);
+    fake.job = job('mediaserver-stop', 'succeeded');
+    if (fake.media.desired) fake.media.desired.run = false;
+    if (fake.media.container) fake.media.container.state = 'exited';
+    return j({ job: { ...fake.job, state: 'running' } }, 202);
+  }
   if (body.op === 'migrate-done') {
     if (fake.media.move?.phase !== 'ready') return j({ error: 'no_target' }, 409);
     fake.media.move = null;
@@ -365,7 +415,7 @@ describe('the move: the backend phases after the copy', () => {
   describe('hardware encoding in the nfo phase (c2)', () => {
     it('the move\'s GPU: the detected render node and vendor, again after a restart', async () => {
       library({ SaveLocalMetadata: false, MetadataSavers: [] });
-      fake.media.desired.gpu = 'dri';
+      fake.media.desired!.gpu = 'dri';
       await seedMove('nfo');
       expect(await tick()).toBe('verify');
       expect(opBodies('gpu')).toEqual([{ op: 'gpu' }]);
@@ -401,13 +451,13 @@ describe('the move: the backend phases after the copy', () => {
 
     it('a GPU detection the updater refuses aborts at once; one it cannot answer is retried', async () => {
       library({ SaveLocalMetadata: false, MetadataSavers: [] });
-      fake.media.desired.gpu = 'dri';
+      fake.media.desired!.gpu = 'dri';
       fake.refuse.gpu = 'no_network';
       await seedMove('nfo');
       expect(await tick()).toBe('failed');
       expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'no_network' });
       resetFake();
-      fake.media.desired.gpu = 'dri';
+      fake.media.desired!.gpu = 'dri';
       fake.refuse.gpu = 'unreachable_answer';
       await seedMove('nfo');
       expect(await tick()).toBe('waiting');
@@ -652,4 +702,257 @@ describe('the move: the backend phases after the copy', () => {
     expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'move_aborted' });
     expect(await env.kv.get(MOVE_LOCK)).toBeNull();
   }, 20_000);
+  it('nfo gives up after 20 ticks of a saver that stays on (abort, unexpected)', async () => {
+    // more libraries than one tick changes, and the server takes each change but keeps reporting the saver on
+    server.libs = Array.from({ length: 8 }, (_, i) => ({ Name: `L${i}`, ItemId: hex(0xf00 + i), Locations: [`/m${i}`], LibraryOptions: { SaveLocalMetadata: true } }));
+    server.fail = (c) => (c.path === '/Library/VirtualFolders/LibraryOptions' ? 204 : null);
+    await seedMove('nfo');
+    for (let i = 1; i < 20; i++) {
+      expect(await tick()).toBe('waiting');
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'nfo', rounds: i });
+    }
+    expect(await tick()).toBe('failed');
+    const m = await readManaged(env.pool);
+    expect(m.move).toMatchObject({ phase: 'failed', error: 'unexpected' });
+    expect(m.move!.rounds).toBeUndefined();
+    expect(opBodies('migrate-abort')).toHaveLength(1);
+    expect(env.ctx.cfg.JELLYFIN_URL).toBe(OLD);
+  });
+
+  describe('the way back and the user repair', () => {
+    const MOVED_AT = '2026-11-24T10:00:00.000Z';
+    /** a profile of `uid` linked to media server user `id`, with its own stored password */
+    const seedProfile = async (uid: string, id: string, name: string, pw: string, kids = false) => {
+      const r = await env.pool.query<{ id: string }>(`insert into profiles(id, user_id, name, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, kids, kids_max_rating)
+        values (gen_random_uuid(), $1, $2, $3, $4, $5, $6, 6) returning id`, [uid, name.slice(0, 20), id, name, encrypt(env.ctx.encKey, pw), kids]);
+      return r.rows[0]!.id;
+    };
+    const profileRow = async (pid: string) => (await env.pool.query<{ jellyfin_user_id: string; jellyfin_username: string }>(
+      'select jellyfin_user_id, jellyfin_username from profiles where id = $1', [pid])).rows[0]!;
+    /** FriendFlix after a move: the managed Ferrofin in use, the old Jellyfin stored as the way back and stopped */
+    const seedMoved = async (move: Record<string, unknown> = {}) => {
+      await env.ctx.settings.save({ JELLYFIN_URL: MANAGED, JELLYFIN_ADMIN_API_KEY: KEY }, null);
+      await writeManaged(env.ctx, {
+        kind: 'ferrofin', setup: 'done', externalUrl: OLD, externalKey: OLD_KEY, migratedFrom: { name: 'jellyfin', version: '10.10.3', at: MOVED_AT },
+        move: { phase: 'done', error: null, jobId: COPY_JOB, startedAt: START, requestsWarning: false, ...move } as never,
+      });
+      fake.media.move = null;
+      fake.job = job('mediaserver-migrate', 'succeeded', COPY_JOB);
+      // the old Jellyfin is stopped: it answers once the source job started it
+      old.before = async () => { if (fake.media.source?.state !== 'running') throw new TypeError('fetch failed'); };
+    };
+    const back = (o: Record<string, number> = {}) => goBack(env.ctx, null, { waitMs: 3_000, stepMs: 5, lockWaitMs: 0, ...o });
+
+    /** the account `uid` and its profiles: on Jellyfin as before the move, plus what Ferrofin got since */
+    const seedAccounts = async () => {
+      const uid = await seedUser({ user: hex(0xa1) });
+      const kept = await seedProfile(uid, hex(0xa2), 'lea-kind', 'pw-a2');
+      // created on Ferrofin since the move: unknown to Jellyfin; a kids profile keeps its cap there
+      const fresh = await seedProfile(uid, hex(0xb2), 'lea-neu', 'pw-b2', true);
+      // a user of that name and password is on Jellyfin already (an earlier repair that stopped before it stored the id)
+      const adopted = await seedProfile(uid, hex(0xc2), 'lea-alt', 'pw-c2');
+      // the name is taken on Jellyfin by someone else (another password): a suffixed name
+      const clashed = await seedProfile(uid, hex(0xd2), 'lea-zwei', 'pw-d2');
+      for (const [id, name, pw] of [[hex(0xa1), 'lea', 'pw-old'], [hex(0xa2), 'lea-kind', 'pw-old'], [hex(0xc9), 'lea-alt', 'pw-c2'], [hex(0xd9), 'lea-zwei', 'other']] as const) {
+        old.users.add(id);
+        old.accounts.set(id, { name, pw, policy: {} });
+      }
+      return { uid, kept, fresh, adopted, clashed };
+    };
+
+    it('way back recreates missing users and resets passwords', async () => {
+      const { kept, fresh, adopted, clashed } = await seedAccounts();
+      await seedMoved();
+      for (const k of [`jft:${fresh}`, `jft:${kept}`]) await env.kv.set(k, 'cached', 600);
+      expect(await back()).toEqual({ ok: true });
+      // the old Jellyfin started, FriendFlix on it with the stored address and key, the managed server stopped
+      expect(opBodies('source-start')).toEqual([{ op: 'source-start' }]);
+      expect(opBodies('stop')).toEqual([{ op: 'stop' }]);
+      expect(env.ctx.cfg.JELLYFIN_URL).toBe(OLD);
+      expect(env.ctx.cfg.JELLYFIN_ADMIN_API_KEY).toBe(OLD_KEY);
+      const m = await readManaged(env.pool);
+      expect(m).toMatchObject({ kind: null, setup: 'none', migratedFrom: null, externalUrl: OLD });
+      expect(m.move).toMatchObject({ phase: 'done', back: 'done' });
+      // every linked password set again from the stored one
+      expect(old.accounts.get(hex(0xa1))!.pw).toBe('pw');
+      expect(old.accounts.get(hex(0xa2))!.pw).toBe('pw-a2');
+      expect((await profileRow(kept)).jellyfin_user_id).toBe(hex(0xa2));
+      // the profile made on Ferrofin has a Jellyfin user now, hidden, with the kids cap and its password; its old token is gone
+      const f = await profileRow(fresh);
+      expect(f.jellyfin_user_id).not.toBe(hex(0xb2));
+      expect(old.accounts.get(f.jellyfin_user_id)).toMatchObject({ name: 'lea-neu', pw: 'pw-b2', policy: { IsHidden: true, MaxParentalRating: 6, IsAdministrator: false } });
+      expect(await env.kv.get(`jft:${fresh}`)).toBeNull();
+      // the same name and password on Jellyfin: that user, its policy written again
+      expect(await profileRow(adopted)).toEqual({ jellyfin_user_id: hex(0xc9), jellyfin_username: 'lea-alt' });
+      expect(old.accounts.get(hex(0xc9))!.policy).toMatchObject({ IsHidden: true, IsAdministrator: false });
+      // the name taken by another user: a new one with a suffix, the other one untouched
+      const c = await profileRow(clashed);
+      expect(c.jellyfin_username).toMatch(/^lea-zwei\d{3}$/);
+      expect(old.accounts.get(c.jellyfin_user_id)).toMatchObject({ name: c.jellyfin_username, pw: 'pw-d2' });
+      expect(old.accounts.get(hex(0xd9))).toEqual({ name: 'lea-zwei', pw: 'other', policy: {} });
+      // never a user deleted, nothing on Ferrofin changed
+      expect([...old.calls, ...server.calls].filter((x) => x.method === 'DELETE')).toEqual([]);
+      expect(server.calls.filter((x) => x.method === 'POST')).toEqual([]);
+      // audited once, without an address or a key
+      const audits = (await env.pool.query<{ action: string; meta: Record<string, unknown> }>("select action, meta from audit_log where action = 'mediaserver.back'")).rows;
+      expect(audits).toEqual([{ action: 'mediaserver.back', meta: { name: 'jellyfin' } }]);
+      expect(JSON.stringify(await env.pool.query('select meta from audit_log'))).not.toMatch(/key-|pw-|example\.com/);
+      // every linked profile resolves on the Jellyfin in use
+      const client = new JellyfinClient(OLD, OLD_KEY, fetchImpl);
+      expect((await verifyIds(env.ctx, client)).users).toEqual({ total: 5, missing: 0 });
+      // nothing left for the tick; a second way back has nothing to go back from
+      expect(await tick()).toBe('idle');
+      expect(await back()).toEqual({ ok: false, error: 'not_moved' });
+    });
+
+    it('repairUsers again finds nothing to create and sets the passwords once more', async () => {
+      await seedAccounts();
+      await seedMoved();
+      expect(await back()).toEqual({ ok: true });
+      const posts = calls('POST', '/Users/New', old).length;
+      expect(await repairUsers(env.ctx)).toEqual({ created: 0, passwords: 5 });
+      expect(calls('POST', '/Users/New', old)).toHaveLength(posts);
+    });
+
+    it('way back refuses when the old Jellyfin does not answer, nothing switched', async () => {
+      const { fresh } = await seedAccounts();
+      const unchanged = async (error: string) => {
+        expect(env.ctx.cfg.JELLYFIN_URL).toBe(MANAGED);
+        expect(env.ctx.cfg.JELLYFIN_ADMIN_API_KEY).toBe(KEY);
+        const m = await readManaged(env.pool);
+        expect(m).toMatchObject({ kind: 'ferrofin', setup: 'done', migratedFrom: { name: 'jellyfin' } });
+        expect(m.move).toMatchObject({ phase: 'done', back: 'failed', backError: error });
+        expect(opBodies('stop')).toEqual([]);
+        expect(calls('POST', '/Users/New', old)).toEqual([]);
+        expect((await profileRow(fresh)).jellyfin_user_id).toBe(hex(0xb2));
+        expect((await env.pool.query("select 1 from audit_log where action = 'mediaserver.back'")).rowCount).toBe(0);
+      };
+      // started, but it never answers
+      await seedMoved();
+      old.before = async () => { throw new TypeError('fetch failed'); };
+      expect(await back({ waitMs: 200 })).toEqual({ ok: false, error: 'jellyfin_unreachable' });
+      await unchanged('jellyfin_unreachable');
+      // it answers, but not to the stored key
+      resetFake();
+      await seedMoved();
+      old.key = 'other';
+      expect(await back()).toEqual({ ok: false, error: 'jellyfin_unreachable' });
+      await unchanged('jellyfin_unreachable');
+      old.key = OLD_KEY;
+      // the old container is gone (the stage 1 way back applies), or the updater cannot tell it
+      resetFake();
+      await seedMoved();
+      fake.media.source = null;
+      expect(await back()).toEqual({ ok: false, error: 'source_missing' });
+      await unchanged('source_missing');
+      resetFake();
+      await seedMoved();
+      fake.sourceError = 'source_mismatch';
+      expect(await back()).toEqual({ ok: false, error: 'source_mismatch' });
+      await unchanged('source_mismatch');
+      // the move's tick holds the lock: busy, nothing written
+      resetFake();
+      await seedMoved();
+      await env.kv.set(MOVE_LOCK, 'other', 60);
+      expect(await back()).toEqual({ ok: false, error: 'busy' });
+      expect(opBodies('source-start')).toEqual([]);
+      expect((await readManaged(env.pool)).move!.back).toBeUndefined();
+      await env.kv.del(MOVE_LOCK);
+      // a move under way
+      await seedMoved({ phase: 'requests' });
+      expect(await back()).toEqual({ ok: false, error: 'busy' });
+      expect(opBodies('source-start')).toEqual([]);
+    });
+
+    it('works from the stored way back when the managed server is gone (the updater dropped the move)', async () => {
+      await seedAccounts();
+      await seedMoved({ errorMeta: { warning: 'updater_aborted' } });
+      fake.media.container = null;
+      fake.media.desired = null;
+      expect(await back()).toEqual({ ok: true });
+      // nothing to stop
+      expect(opBodies('stop')).toEqual([]);
+      expect(env.ctx.cfg.JELLYFIN_URL).toBe(OLD);
+      expect((await readManaged(env.pool)).move).toMatchObject({ back: 'done' });
+    });
+
+    it('a way back found unfinished after a restart: resumed once switched, reported before', async () => {
+      const { fresh } = await seedAccounts();
+      // the switch committed, then the backend stopped: the tick stops the managed server and repairs the users
+      await seedMoved({ back: 'switched' });
+      await env.ctx.settings.save({ JELLYFIN_URL: OLD, JELLYFIN_ADMIN_API_KEY: OLD_KEY }, null);
+      await writeManaged(env.ctx, { kind: null, setup: 'none', migratedFrom: null });
+      fake.media.source = { ...fake.media.source, state: 'running' };
+      fake.refuse.stop = 'busy';
+      expect(await tick()).toBe('waiting');
+      expect((await readManaged(env.pool)).move!.back).toBe('switched');
+      delete fake.refuse.stop;
+      expect(await tick()).toBe('done');
+      expect(opBodies('stop')).toHaveLength(2);
+      expect((await readManaged(env.pool)).move!.back).toBe('done');
+      expect(old.users.has((await profileRow(fresh)).jellyfin_user_id)).toBe(true);
+      expect(await tick()).toBe('idle');
+      // a repair that fails is tried again on the next tick
+      await seedMoved({ back: 'stopped' });
+      await env.ctx.settings.save({ JELLYFIN_URL: OLD, JELLYFIN_ADMIN_API_KEY: OLD_KEY }, null);
+      await writeManaged(env.ctx, { kind: null, setup: 'none', migratedFrom: null });
+      old.before = null;
+      old.up = true;
+      old.fail = (c) => (c.path.endsWith('/Password') ? 503 : null);
+      expect(await tick()).toBe('waiting');
+      expect((await readManaged(env.pool)).move!.back).toBe('stopped');
+      old.fail = null;
+      expect(await tick()).toBe('done');
+      // before the switch (the old Jellyfin may run, FriendFlix is unchanged): reported, never switched by the tick
+      resetFake();
+      await seedMoved({ back: 'starting' });
+      expect(await tick()).toBe('failed');
+      expect((await readManaged(env.pool)).move).toMatchObject({ back: 'failed', backError: 'interrupted' });
+      expect(env.ctx.cfg.JELLYFIN_URL).toBe(MANAGED);
+      expect(opBodies('stop')).toEqual([]);
+      expect(await tick()).toBe('idle');
+      // the admin's next click goes back
+      expect(await back()).toEqual({ ok: true });
+    });
+
+    it('a repeated move repairs before verifying', async () => {
+      const uid = await seedUser({ user: hex(0xa1) });
+      // made on Jellyfin since the way back, unknown to the copy
+      const pid = await seedProfile(uid, hex(0xb2), 'lea-neu', 'pw-b2');
+      server.users = new Set([hex(0xa1)]);
+      await seedMove('verify', { repeat: true });
+      expect(await tick()).toBe('switch');
+      // created on the copy; FriendFlix (still on Jellyfin) keeps its id until the switch
+      expect((await profileRow(pid)).jellyfin_user_id).toBe(hex(0xb2));
+      const rec = (await readManaged(env.pool)).move!;
+      const to = rec.relinks![0]!.to;
+      expect(rec.relinks).toEqual([{ table: 'profiles', row: pid, from: hex(0xb2), to, name: 'lea-neu' }]);
+      expect(server.accounts.get(to)).toMatchObject({ name: 'lea-neu', pw: 'pw-b2', policy: { IsHidden: true } });
+      expect(server.accounts.get(hex(0xa1))!.pw).toBe('pw');
+      expect(old.calls).toEqual([]);
+      // the switch takes the new id over
+      expect(await tick()).toBe('requests');
+      expect((await profileRow(pid)).jellyfin_user_id).toBe(to);
+      expect(env.ctx.cfg.JELLYFIN_URL).toBe(MANAGED);
+    });
+
+    it('a repeated move that fails after its repair leaves FriendFlix\'s ids as they were; a first move never repairs', async () => {
+      const uid = await seedUser({ user: hex(0xa1) });
+      const pid = await seedProfile(uid, hex(0xb2), 'lea-neu', 'pw-b2');
+      server.users = new Set([hex(0xa1)]);
+      await seedItems(uid, 10);
+      await seedMove('verify', { repeat: true });
+      expect(await tick()).toBe('failed');
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'ids_mismatch', errorMeta: { users: { total: 2, missing: 0 }, items: { sampled: 10, missing: 10 } } });
+      expect((await profileRow(pid)).jellyfin_user_id).toBe(hex(0xb2));
+      // the first move: no user created, no password set; the missing user fails the check
+      resetFake();
+      resetServer();
+      server.users = new Set([hex(0xa1)]);
+      await seedMove('verify');
+      expect(await tick()).toBe('failed');
+      expect((await readManaged(env.pool)).move).toMatchObject({ error: 'ids_mismatch', errorMeta: { users: { total: 2, missing: 1 } } });
+      expect(server.calls.filter((c) => c.method === 'POST')).toEqual([]);
+    });
+  });
 });

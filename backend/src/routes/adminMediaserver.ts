@@ -11,7 +11,7 @@ import { addressOnly } from '../media/address.js';
 import { MediaSetupError } from '../media/types.js';
 import { BACKUP_ID, decodePassphrase, mediaDownload, mediaOp, mediaScan, mediaUpload, parseMediaStatus, startMediaJob, type MediaBackup, type MediaStatus } from '../mediaserver/client.js';
 import { recordApplyFirstRun } from '../mediaserver/firstRun.js';
-import { ACTIVE_PHASES, freshScan, goBack, readScan, scanRunning, startScan, SWITCHED_PHASES, withMoveLock, type MoveScanRecord } from '../mediaserver/move.js';
+import { ACTIVE_PHASES, backUnderWay, freshScan, goBack, readScan, scanRunning, startScan, SWITCHED_PHASES, withMoveLock, type MoveScanRecord } from '../mediaserver/move.js';
 import { libraryReferences, referenced } from '../mediaserver/references.js';
 import { deleteLibrary, managedKey, MANAGED_URL, publicInfo, renameLibrary } from '../mediaserver/serverApi.js';
 import { adminPassword, claimAdminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged, type MigratedFrom, type MoveRecord, type SetupStep } from '../mediaserver/store.js';
@@ -35,11 +35,12 @@ export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 
  * being offered, or there is nothing to move: no linked ids, a managed server, Plex's own stage); `state` the move as the backend follows
  * it (with the step and abort flag of the updater's job); `migratedFrom` the Jellyfin a move came from; `sourceState` that container's
  * Docker state (`missing` once it is gone); `requestsWarning` the request service still points at the old Jellyfin; `scan` the
- * background scan of the chosen Jellyfin (mediaserver/move.ts MoveScanRecord). Not offered while a move is under way.
+ * background scan of the chosen Jellyfin (mediaserver/move.ts MoveScanRecord); `state.back` how far the way back got (`backError` its
+ * code when it changed nothing). Not offered while a move or a way back is under way.
  */
 export interface MoveView {
   offered: boolean; reason: OfferReason | null; scan: MoveScanRecord | null;
-  state: (Omit<MoveRecord, 'requestsWarning' | 'abortPending' | 'tries'> & { step: MediaStep | null; abort: boolean }) | null;
+  state: (Omit<MoveRecord, 'requestsWarning' | 'abortPending' | 'tries' | 'rounds' | 'repeat' | 'relinks'> & { step: MediaStep | null; abort: boolean }) | null;
   migratedFrom: MigratedFrom | null; sourceState: string | null; requestsWarning: boolean;
 }
 export interface MediaView {
@@ -126,10 +127,10 @@ function currentJellyfin(ctx: Ctx): string | null {
 
 /**
  * a move under way: the backend follows one (its active phases), or the updater holds an unfinished one (running, or copied and waiting
- * for the backend; an aborted or done move is history)
+ * for the backend; an aborted or done move is history); or a way back that is not finished (it ends managed mode before it is done)
  */
 const moving = (managed: MediaManaged, status: MediaStatus | null): boolean =>
-  (managed.move !== null && ACTIVE_PHASES.includes(managed.move.phase)) || status?.move?.phase === 'running' || status?.move?.phase === 'ready';
+  (managed.move !== null && ACTIVE_PHASES.includes(managed.move.phase)) || backUnderWay(managed.move) || status?.move?.phase === 'running' || status?.move?.phase === 'ready';
 
 /** whether the move is offered (MoveView): the updater's reasons first, then an external Jellyfin with linked ids and no move under way */
 async function moveOffer(ctx: Ctx, view: UpdaterView, managed: MediaManaged, status: MediaStatus | null): Promise<Pick<MoveView, 'offered' | 'reason'>> {
@@ -144,6 +145,7 @@ function moveView(managed: MediaManaged, status: MediaStatus | null, offer: Pick
     ...offer, scan,
     state: rec ? {
       phase: rec.phase, error: rec.error, jobId: rec.jobId, startedAt: rec.startedAt, ...(rec.errorMeta ? { errorMeta: rec.errorMeta } : {}),
+      ...(rec.back ? { back: rec.back } : {}), ...(rec.backError ? { backError: rec.backError } : {}),
       step: status?.move?.step ?? null, abort: status?.move?.abort === true,
     } : null,
     migratedFrom: managed.migratedFrom, sourceState: status?.source?.state ?? null, requestsWarning: rec?.requestsWarning === true,
@@ -165,7 +167,8 @@ export async function mediaView(ctx: Ctx, read?: UpdaterView): Promise<MediaView
     mode: managed.kind ? 'managed' : 'external',
     offer: { managed: reason === null, reason },
     kinds: { ferrofin: status?.pins.ferrofin === true, jellyfin: status?.pins.jellyfin === true },
-    status, managed,
+    // the users a repeated move's repair made on the copy are the backend's to carry to the switch, not the page's
+    status, managed: managed.move?.relinks ? { ...managed, move: { ...managed.move, relinks: undefined } } : managed,
     external: { url: managed.externalUrl, hasKey: managed.hasExternalKey },
     livetvLibraryPath: ctx.cfg.LIVETV_RECORD_LIBRARY_JF_PATH ?? null,
     move,
@@ -508,7 +511,10 @@ function moveOps(ctx: Ctx) {
       const body = { op: 'migrate', source: b.source, trickplay: b.trickplay, gpu, uid: user.uid, gid: user.gid, tz: containerTz(), serverId: gate.serverId };
       const r = await startMediaJob(ctx, body, actor, { trickplay: b.trickplay, gpu }, 'mediaserver.move');
       if (r.ok && 'job' in r) {
-        await writeManaged(ctx, { move: { phase: 'copying', error: null, jobId: r.job.id, startedAt: new Date().toISOString(), requestsWarning: false } });
+        // a move after a way back (or after a failed attempt at one) repairs the users on the copy before its check (mediaserver/move.ts verify)
+        const prev = gate.managed.move;
+        const repeat = prev?.back === 'done' || prev?.repeat === true;
+        await writeManaged(ctx, { move: { phase: 'copying', error: null, jobId: r.job.id, startedAt: new Date().toISOString(), requestsWarning: false, ...(repeat ? { repeat } : {}) } });
       }
       return jobAnswer(reply, r);
     },
@@ -538,15 +544,13 @@ function moveOps(ctx: Ctx) {
     },
   });
 
+  // the way back (mediaserver/move.ts goBack): it checks that a move is recorded and audits `mediaserver.back` with its switch; every
+  // refusal is a code and leaves FriendFlix as it was. It waits for the old Jellyfin (up to 3 minutes) under the move's tick lock.
   const back = op({
     body: S.none, reauth: () => true,
     run: async (_b, reply, actor) => {
-      const m = await readManaged(ctx.db);
-      if (!m.migratedFrom || !m.kind) return reply.code(409).send({ error: 'not_moved' });
       const r = await goBack(ctx, actor);
-      if (!r.ok) return reply.code(409).send({ error: r.error });
-      await audit(ctx, actor, 'mediaserver.back', undefined, { name: m.migratedFrom.name });
-      return { ok: true };
+      return r.ok ? { ok: true } : reply.code(409).send({ error: r.error });
     },
   });
 

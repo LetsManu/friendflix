@@ -42,8 +42,9 @@ function failedMediaJob(j: UpdaterJob | null): string | null {
 /**
  * The managed media server (spec "Systemcheck", first match wins): neutral while an external server is in use, then what keeps it
  * from working (updater, engine, proxy, a tampered or stopped container, its health, the base folder, folders, GPU), then what needs
- * an admin soon (the last media job failed, a pending update older than 7 days, no backup in 30 days). Codes and the kind and
- * version only: never the base path, a folder, a pin or a backup id.
+ * an admin soon (the request service not following a move, the last media job failed, a pending update older than 7 days, no backup
+ * in 30 days); an ok line after a move says where it came from (`managed_migrated`, stage 2 "After the move"). Codes, the kind,
+ * the version and the old container's name only: never the base path, a folder, a pin or a backup id.
  */
 export async function managedLine(env: CheckEnv, view: MediaView | null, updater: UpdaterView): Promise<CheckLine> {
   const id = 'media.managed';
@@ -66,6 +67,8 @@ export async function managedLine(env: CheckEnv, view: MediaView | null, updater
   if (s.error === 'base_missing') return bad(id, 'problem', 'managed_base_missing', o);
   if (s.error === 'folder_missing') return bad(id, 'warning', 'managed_folder_missing', o);
   if (s.error === 'gpu_missing' || s.error === 'nvidia_missing') return bad(id, 'warning', 'managed_gpu_missing', o);
+  // a move could not point the request service at the moved server (or a way back not back at the old one): requests fail until done
+  if (view.move.requestsWarning) return bad(id, 'warning', 'managed_requests_not_moved', o);
   const code = failedMediaJob('status' in updater ? updater.status.job : null);
   if (code) return bad(id, 'warning', 'managed_job_failed', { ...o, params: { code } });
   const pin = differingPin(s);
@@ -73,7 +76,11 @@ export async function managedLine(env: CheckEnv, view: MediaView | null, updater
   if (seen && olderThan(seen, UPDATE_PENDING_MS)) return bad(id, 'warning', 'managed_update_pending', o);
   const newest = s.backups.reduce<string | null>((a, b) => (a === null || Date.parse(b.at) > Date.parse(a) ? b.at : a), null);
   if (newest ? olderThan(newest, BACKUP_OLD_MS) : c !== null && olderThan(c.createdAt, BACKUP_OLD_MS)) return bad(id, 'warning', 'managed_backup_old', o);
-  return line(id, 'ok', { ...o, params: { kind: c?.kind ?? managedKind ?? undefined, upstream: c?.image.upstream } });
+  const params = { kind: c?.kind ?? managedKind ?? undefined, upstream: c?.image.upstream };
+  // moved from an existing Jellyfin (stage 2): an info line, the old Jellyfin is stopped and kept for the way back
+  const from = managedKind ? view.managed.migratedFrom : null;
+  if (from) return line(id, 'ok', { ...o, cause: 'managed_migrated', params: { ...params, source: from.name } });
+  return line(id, 'ok', { ...o, params });
 }
 
 /**

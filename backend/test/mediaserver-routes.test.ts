@@ -633,11 +633,38 @@ describe('admin routes', () => {
       await writeManaged(env.ctx, { kind: 'ferrofin', setup: 'done', migratedFrom: { name: 'jellyfin', version: '10.10.3', at: '2026-11-24T10:00:00.000Z' } });
       fake.media = { ...media(), source: { name: 'jellyfin', state: 'exited', version: '10.10.3' } };
       expect(await moveView()).toMatchObject({ offered: false, migratedFrom: { name: 'jellyfin', version: '10.10.3', at: '2026-11-24T10:00:00.000Z' }, sourceState: 'exited' });
+      // no way back stored
+      expect((await req(admin, 'POST', '/back')).json()).toEqual({ error: 'no_external' });
+      await writeManaged(env.ctx, { externalUrl: 'http://jellyfin:8096', externalKey: 'adminkey' });
+      // the old container is gone: the stage 1 way back (an address) applies
+      fake.answer['source-start'] = { status: 409, json: { error: 'no_target' } };
       const back = await req(admin, 'POST', '/back');
       expect(back.statusCode).toBe(409);
-      expect(back.json()).toEqual({ error: 'not_available' });
+      expect(back.json()).toEqual({ error: 'source_missing' });
       expect(await audits('mediaserver.back')).toEqual([]);
       expect((await readManaged(env.pool)).kind).toBe('ferrofin');
+      expect(opBodies('stop')).toEqual([]);
+      expect(await moveView()).toMatchObject({ state: { back: 'failed', backError: 'source_missing' } });
+    });
+
+    it('a move after a way back repairs the users before its check; none starts while a way back is unfinished', async () => {
+      await linked();
+      await reauth(admin);
+      await scanned();
+      const done = { phase: 'done', error: null, jobId: null, startedAt: '2026-11-24T09:00:00.000Z', requestsWarning: false } as const;
+      await writeManaged(env.ctx, { move: { ...done, back: 'stopped' } });
+      expect(await moveView()).toMatchObject({ offered: false, state: { back: 'stopped' } });
+      expect((await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false })).json()).toEqual({ error: 'busy' });
+      await writeManaged(env.ctx, { move: { ...done, back: 'done' } });
+      expect(await moveView()).toMatchObject({ offered: true });
+      const r = await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false });
+      expect(r.statusCode).toBe(202);
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'copying', repeat: true });
+      // the users it made on the copy never reach the page
+      await writeManaged(env.ctx, { move: { ...done, phase: 'verify', repeat: true, relinks: [{ table: 'profiles', row: '00000000-0000-4000-8000-000000000001', from: 'a'.repeat(32), to: 'b'.repeat(32), name: 'lea-neu' }] } });
+      const page = (await req(admin, 'GET', '')).json();
+      expect(JSON.stringify(page)).not.toContain('b'.repeat(32));
+      expect(page.managed.move).toMatchObject({ phase: 'verify', repeat: true });
     });
   });
 

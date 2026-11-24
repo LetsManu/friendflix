@@ -25,15 +25,29 @@ export interface IdCheck { users: { total: number; missing: number }; items: { s
  */
 export interface MoveWarning { warning: 'updater_aborted' }
 /**
+ * The way back (mediaserver/move.ts goBack) as far as it got: `starting` the old Jellyfin is being started and checked (FriendFlix
+ * unchanged), `switched` FriendFlix uses it again (the managed server is still to be stopped), `stopped` the users are still to be
+ * repaired, `done`; `failed` a way back that changed nothing (its code in `backError`).
+ */
+export type BackStep = 'starting' | 'switched' | 'stopped' | 'done' | 'failed';
+export const BACK_STEPS: readonly BackStep[] = ['starting', 'switched', 'stopped', 'done', 'failed'];
+/**
+ * A user the repair of a repeated move created on the copy (`verify`) for a linked row whose id the copy does not know: FriendFlix
+ * still uses the old server, so the row keeps its id until the switch takes `to` (and `name`) over, and only while it still holds `from`.
+ */
+export interface Relink { table: 'users' | 'profiles'; row: string; from: string; to: string; name: string }
+/**
  * a move as the backend follows it: its phase, the code it failed with, the updater job of its copy, when it started, and whether the
  * request service could not be pointed at the new server (Admin and the Systemcheck show the manual step). `errorMeta`: the numbers of
  * a failed id check (`ids_mismatch`), or the warning of a switched move; `abortPending`: the move failed and the updater has not taken
  * its abort yet (the tick sends it again until it does); `tries`: the phase's failures retried so far (a server still starting; reset
- * when the phase changes). Each is absent when unset.
+ * when the phase changes); `rounds`: the `nfo` ticks that found a saver still on; `repeat`: a move after a way back (its `verify` repairs
+ * the users first), `relinks` what that repair created; `back`/`backError`: the way back after this move. Each is absent when unset.
  */
 export interface MoveRecord {
   phase: MovePhase; error: string | null; jobId: string | null; startedAt: string; requestsWarning: boolean;
-  errorMeta?: IdCheck | MoveWarning; abortPending?: true; tries?: number;
+  errorMeta?: IdCheck | MoveWarning; abortPending?: true; tries?: number; rounds?: number;
+  repeat?: true; relinks?: Relink[]; back?: BackStep; backError?: string;
 }
 /** the request service's Jellyfin connection before the move (the way back restores it); its API key is not part of it */
 export interface RequestsPrev { hostname: string; port: number; useSsl: boolean; urlBase: string }
@@ -54,6 +68,13 @@ const VERSION_RE = /^[0-9A-Za-z.+_-]{1,64}$/;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/;
 const CODE_RE = /^[a-z][a-z0-9_]{0,39}$/;
 const JOB_ID_RE = /^[0-9a-f]{16}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** a media server user id as FriendFlix stores it (32 hex digits, with or without dashes) */
+const SERVER_USER_RE = /^[0-9a-fA-F-]{32,36}$/;
+/** a media server user name as FriendFlix creates it (users.ts, profiles.ts: letters, digits, `.`, `_`, `-`) */
+const SERVER_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
+/** more relinks than linked rows are possible never; a bound for a row written by another build */
+const MAX_RELINKS = 2_000;
 /** a host name or address as the request service stores it: no space, no control character, no path */
 const HOSTNAME_RE = /^[A-Za-z0-9.:[\]_-]{1,253}$/;
 const URL_BASE_RE = /^(\/[A-Za-z0-9._~%-]+){0,10}$/;
@@ -85,15 +106,27 @@ function idCheck(raw: unknown): IdCheck | null {
   const total = count(u?.total), missing = count(u?.missing), sampled = count(i?.sampled), gone = count(i?.missing);
   return total !== null && missing !== null && sampled !== null && gone !== null ? { users: { total, missing }, items: { sampled, missing: gone } } : null;
 }
+function relinks(raw: unknown): Relink[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, MAX_RELINKS).flatMap((x): Relink[] => {
+    const o = objOf(x);
+    const table = o?.table === 'users' || o?.table === 'profiles' ? o.table : null;
+    const row = re(o?.row, UUID_RE), from = re(o?.from, SERVER_USER_RE), to = re(o?.to, SERVER_USER_RE), name = re(o?.name, SERVER_NAME_RE);
+    return table && row && from && to && name ? [{ table, row, from, to, name }] : [];
+  });
+}
 function moveRecord(raw: unknown): MoveRecord | null {
   const o = objOf(raw);
   const phase = MOVE_PHASES.find((p) => p === o?.phase), startedAt = re(o?.startedAt, ISO_RE);
   if (!o || !phase || !startedAt) return null;
   const errorMeta = objOf(o.errorMeta)?.warning === 'updater_aborted' ? { warning: 'updater_aborted' as const } : idCheck(o.errorMeta);
-  const tries = count(o.tries);
+  const tries = count(o.tries), rounds = count(o.rounds), links = relinks(o.relinks);
+  const back = BACK_STEPS.find((b) => b === o.back), backError = re(o.backError, CODE_RE);
   return {
     phase, error: re(o.error, CODE_RE), jobId: re(o.jobId, JOB_ID_RE), startedAt, requestsWarning: o.requestsWarning === true,
     ...(errorMeta ? { errorMeta } : {}), ...(o.abortPending === true ? { abortPending: true as const } : {}), ...(tries ? { tries } : {}),
+    ...(rounds ? { rounds } : {}), ...(o.repeat === true ? { repeat: true as const } : {}), ...(links.length ? { relinks: links } : {}),
+    ...(back ? { back } : {}), ...(back && backError ? { backError } : {}),
   };
 }
 function requestsPrev(raw: unknown): RequestsPrev | null {

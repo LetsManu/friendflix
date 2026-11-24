@@ -14,6 +14,11 @@ const VERSION = /^v?\d{1,4}\.\d{1,4}\.\d{1,4}([-+][0-9A-Za-z]{1,20})?$/;
 const CODES = /^[a-z_]{1,40}(,[a-z_]{1,40})*$/;
 const SETTING_NAMES = /^[A-Z][A-Z0-9_]{1,40}(,[A-Z][A-Z0-9_]{1,40})*$/;
 const PARAM_KEY = /^[a-z][a-zA-Z0-9]{0,30}$/;
+/**
+ * a Docker container name, only as the param `source` (media.managed: the Jellyfin a move came from): a letter, then letters, digits,
+ * `_` and `-`; no dot, colon or slash, so never an address, a host name, a URL or a path (a name with a dot is dropped)
+ */
+const CONTAINER_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const CODE = /^[a-z][a-z0-9_]{0,59}$/;
 const DOCS = /^[a-z-]+\.md(#[a-z0-9-]+)?$/;
 /** an app-internal path ('/admin/status#login'); never another origin (`//host`) */
@@ -21,8 +26,8 @@ const HREF = /^\/(?!\/)[a-z0-9/-]*(\?[a-zA-Z0-9_=&-]*)?(#[a-z0-9-]+)?$/;
 
 /**
  * Keeps only values of the allowed forms: numbers, fixed codes (lower-case words, a comma list of them for e.g. the encoder advice),
- * setting names (one or a comma list) and release versions. A URL, a path, an address, free text or a secret never matches; undefined
- * when nothing is left.
+ * setting names (one or a comma list) and release versions; `source` may also be a container name (CONTAINER_NAME). A URL, a path, an
+ * address, free text or a secret never matches; undefined when nothing is left.
  */
 export function safeParams(p: Record<string, unknown> | undefined): CheckLine['params'] {
   if (!p) return undefined;
@@ -31,6 +36,7 @@ export function safeParams(p: Record<string, unknown> | undefined): CheckLine['p
     if (!PARAM_KEY.test(k)) continue;
     if (typeof v === 'number' && Number.isFinite(v) && NUMBER.test(String(v))) out[k] = v;
     else if (typeof v === 'string' && (NUMBER.test(v) || CODES.test(v) || SETTING_NAMES.test(v) || VERSION.test(v))) out[k] = v;
+    else if (k === 'source' && typeof v === 'string' && CONTAINER_NAME.test(v)) out[k] = v;
   }
   return Object.keys(out).length ? out : undefined;
 }
