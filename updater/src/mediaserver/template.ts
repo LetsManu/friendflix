@@ -45,6 +45,11 @@ const PASSWORD_RE = /^[A-Za-z0-9_-]{43}$/;
 
 /** where a migrated Ferrofin keeps its data (stage 2 "Media paths": its media may sit below /data); the volume keeps its name */
 export const MIGRATED_DATA_TARGET = '/ferrofin-data';
+/**
+ * a migrated Ferrofin covers the image's VOLUME /data with this small root-owned tmpfs: no anonymous writable volume (which would
+ * leak on every recreate), and media targets "below /data" (isMigratedTarget allows them) mount on top of it
+ */
+const MIGRATED_DATA_TMPFS = 'size=1m,mode=0755';
 
 export const ENV_KEYS: Record<Kind, readonly string[]> = {
   ferrofin: ['TZ', 'FERROFIN_CACHE_DIR', 'FERROFIN_DATA_DIR', FERROFIN_ADMIN_NAME, 'FERROFIN_ADMIN_PASSWORD', 'NVIDIA_DRIVER_CAPABILITIES'],
@@ -147,6 +152,9 @@ export function containerSpec(d: DesiredSpec, f: TemplateFacts, o: { password?: 
   if (d.gpu === 'nvidia') env.push(NVIDIA_ENV);
 
   const media = d.folders.map((x) => mediaMount(x, migrated, f.baseVolume));
+  // no target at or below another (a symlink in the read-only parent share could move the inner mount anywhere)
+  const targets = d.folders.map((x) => x.target);
+  if (targets.some((a, i) => targets.some((b, j) => i !== j && (a === b || b.startsWith(`${a}/`))))) throw new TemplateViolation('HostConfig.Mounts');
 
   const render = d.gpu === 'dri' ? [...new Set(f.renderGids)] : [];
   if (render.length > MAX_RENDER_GIDS) throw new TemplateViolation('GroupAdd');
@@ -159,7 +167,7 @@ export function containerSpec(d: DesiredSpec, f: TemplateFacts, o: { password?: 
       { Type: 'volume', Source: n.cache(d.kind), Target: t.cache, ReadOnly: false },
       ...media,
     ],
-    Tmpfs: { '/tmp': 'size=512m,mode=1777' },
+    Tmpfs: { '/tmp': 'size=512m,mode=1777', ...(migrated ? { '/data': MIGRATED_DATA_TMPFS } : {}) },
     ...hardening(),
     ...(d.gpu === 'dri' ? { Devices: [{ ...DRI_DEVICE }] } : {}),
     ...(d.gpu === 'nvidia' ? { DeviceRequests: [{ Driver: 'nvidia', Count: 1, Capabilities: [['gpu']] }] } : {}),

@@ -59,8 +59,19 @@ const FFMEDIA_TARGET_RE = /^\/ffmedia(\/[a-z0-9-]{1,40}){1,3}$/;
 /** where a migrated Ferrofin keeps its data (its media may sit below /data) */
 const MIGRATED_DATA = '/ferrofin-data';
 /** the trees a migrated media target may not be or lie below; /data itself is refused, below it is fine (the guard's own copy) */
-const MIGRATED_REFUSED = ['cache', 'config', 'tmp', 'proc', 'sys', 'dev', 'etc', 'usr', 'bin', 'sbin', 'lib', 'lib64', 'var', 'run', 'root', 'home', 'ferrofin-data', 'ffmedia'];
+const MIGRATED_REFUSED = [
+  'cache', 'config', 'tmp', 'proc', 'sys', 'dev', 'etc', 'usr', 'bin', 'sbin', 'lib', 'lib64', 'lib32', 'libx32', 'var', 'run', 'root', 'home', 'boot', 'opt',
+  // the Ferrofin image's FERROFIN_WEB_DIR (it serves the API only): media there would become its web UI
+  'nonexistent', 'ferrofin-data', 'ffmedia',
+];
 const BIND_RE = /^(\/[^/]+)+$/;
+/**
+ * a migrated Ferrofin's fixed tmpfs over the image's VOLUME /data: no anonymous writable volume there, and media "below /data"
+ * (allowed by isMigratedTarget) mount on top of it; root-owned 0755, so the container user cannot write it
+ */
+const MIGRATED_DATA_TMPFS = 'size=1m,mode=0755';
+/** host trees a source bind may not be or lie below (`/` is refused by BIND_RE); like checkBasePath, the guard's own copy */
+const SOURCE_REFUSED = [['proc'], ['sys'], ['dev'], ['etc'], ['boot'], ['run'], ['var', 'run'], ['var', 'lib', 'docker']];
 const VOLUME_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/;
 const COMPONENT_RE = /^[\p{L}\p{N} ._\-+()&']+$/u;
 const TZ_RE = /^[A-Za-z_]+(\/[A-Za-z0-9_+-]+){0,2}$/;
@@ -116,6 +127,12 @@ function isRel(rel: unknown): boolean {
 const checkProject = (project: string): void => need(PROJECT_RE.test(project), 'project');
 /** an absolute, normalised host path other than `/` (no `.` or `..` component, no empty component) */
 const isHostPath = (p: unknown): p is string => typeof p === 'string' && BIND_RE.test(p) && !p.split('/').some((c) => c === '.' || c === '..');
+/** a source bind: a host path outside the system trees and the Docker runtime, never a socket */
+function isSourceBind(p: string): boolean {
+  if (!isHostPath(p) || SOCKET_RE.test(p)) return false;
+  const c = p.slice(1).split('/');
+  return !SOURCE_REFUSED.some((r) => r.every((x, i) => c[i] === x));
+}
 
 /**
  * The mount point of a migrated media folder (stage 2 "Media paths"): absolute, normalised, 1 to 3 components of the base-path
@@ -167,6 +184,7 @@ function checkMounts(mounts: unknown, e: ManagedExpect): void {
   const state = STATE[e.kind];
   const dataTarget = e.migrated ? MIGRATED_DATA : state.data[1];
   const targets = new Set<string>();
+  const media: string[] = [];
   let data = 0, cache = 0;
   let base: string | null = null;
   for (const raw of mounts as unknown[]) {
@@ -188,6 +206,7 @@ function checkMounts(mounts: unknown, e: ManagedExpect): void {
     need(base === null || base === Source, 'HostConfig.Mounts.Source');
     base = Source as string;
     const t = Target as string;
+    media.push(t);
     const listed = e.migrated !== undefined && e.migrated.targets.includes(t) && isMigratedTarget(t);
     need(MEDIA_TARGET_RE.test(t) || (e.migrated !== undefined && FFMEDIA_TARGET_RE.test(t)) || listed, 'HostConfig.Mounts.Target');
     need(ReadOnly === true, 'HostConfig.Mounts.ReadOnly');
@@ -196,6 +215,8 @@ function checkMounts(mounts: unknown, e: ManagedExpect): void {
     need(vo.NoCopy === true && (isRel(vo.Subpath) || (listed && vo.Subpath === undefined)), 'HostConfig.Mounts.VolumeOptions');
   }
   need(data === 1 && cache === 1, 'HostConfig.Mounts');
+  // no media target at or below another: a symlink in the read-only parent share could move the inner mount anywhere
+  need(!media.some((a, i) => media.some((b, j) => i !== j && (a === b || b.startsWith(`${a}/`)))), 'HostConfig.Mounts.Target');
 }
 
 function checkHostConfig(hc: unknown, e: ManagedExpect): void {
@@ -204,7 +225,7 @@ function checkHostConfig(hc: unknown, e: ManagedExpect): void {
   defaultSystemPaths(h);
   need(h.NetworkMode === `${e.project}_media`, 'HostConfig.NetworkMode');
   for (const [k, v] of HARDENING) need(eq(h[k], v), `HostConfig.${k}`);
-  need(eq(h.Tmpfs, { '/tmp': 'size=512m,mode=1777' }), 'HostConfig.Tmpfs');
+  need(eq(h.Tmpfs, { '/tmp': 'size=512m,mode=1777', ...(e.migrated ? { '/data': MIGRATED_DATA_TMPFS } : {}) }), 'HostConfig.Tmpfs');
   checkMounts(h.Mounts, e);
   need(unset(h.Devices) || eq(h.Devices, [DRI_DEVICE]), 'HostConfig.Devices');
   if (!unset(h.DeviceRequests)) {
@@ -306,7 +327,8 @@ export function assertManagedInspect(inspect: unknown, e: ManagedExpect & { gpu?
     noSocket(m.Name, m.Source, m.Destination);
     const s = spec.find((x) => x.Target === m.Destination);
     if (s) need(m.Name === s.Source && m.RW === (s.ReadOnly !== true), 'Mounts');
-    else need(typeof m.Name === 'string' && DIGEST_RE.test(m.Name) && e.image.volumes.includes(m.Destination as string), 'Mounts');
+    // (a migrated server covers the image's /data with its tmpfs: no anonymous volume there)
+    else need(typeof m.Name === 'string' && DIGEST_RE.test(m.Name) && e.image.volumes.includes(m.Destination as string) && !(e.migrated && m.Destination === '/data'), 'Mounts');
   }
 
   // networks: the media network, and the egress network when metadata download is on; no published port
@@ -352,7 +374,7 @@ function checkHelperMounts(mounts: unknown[], e: { project: string; verb: Helper
       case '/source': {
         const s = e.source;
         need((e.verb === 'migrate-scan' || e.verb === 'migrate-copy') && s !== undefined && ReadOnly === true && Type === s.type && Source === s.source
-          && (s.type === 'bind' ? isHostPath(s.source) && unset(VolumeOptions) : s.type === 'volume' && VOLUME_NAME_RE.test(s.source) && eq(VolumeOptions, { NoCopy: true })),
+          && (s.type === 'bind' ? isSourceBind(s.source) && unset(VolumeOptions) : s.type === 'volume' && VOLUME_NAME_RE.test(s.source) && eq(VolumeOptions, { NoCopy: true })),
         'HostConfig.Mounts./source');
         break;
       }

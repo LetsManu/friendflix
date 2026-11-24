@@ -427,8 +427,11 @@ describe('helper guard', () => {
 });
 
 describe('migrated media server (stage 2)', () => {
-  const REFUSED_TOPS = ['cache', 'config', 'tmp', 'proc', 'sys', 'dev', 'etc', 'usr', 'bin', 'sbin', 'lib', 'lib64', 'var', 'run', 'root', 'home', 'ferrofin-data', 'ffmedia'];
-  const accepted = ['/movies', '/data/tv', '/data/x', '/media', '/media/filme', '/srv/a/b', '/mnt/nas/Filme', '/Filme ä', '/tv/Séries/日本', '/a/b/c', '/datax', '/cachex', '/lib32'];
+  const REFUSED_TOPS = [
+    'cache', 'config', 'tmp', 'proc', 'sys', 'dev', 'etc', 'usr', 'bin', 'sbin', 'lib', 'lib64', 'lib32', 'libx32', 'var', 'run', 'root', 'home', 'boot', 'opt',
+    'nonexistent', 'ferrofin-data', 'ffmedia',
+  ];
+  const accepted = ['/movies', '/data/tv', '/data/x', '/media', '/media/filme', '/srv', '/srv/a/b', '/mnt', '/mnt/nas/Filme', '/Filme ä', '/tv/Séries/日本', '/a/b/c', '/datax', '/cachex', '/optx', '/library'];
   const refused = [
     '/', '', '/data', 'relative', 'movies/x', '/movies/', '//movies', '/movies//x', '/a/b/c/d', '/a/../b', '/..', '/.', '/./movies', '/movies/.',
     '/movies/..', '/.hidden', '/a\nb', '/a\0b', '/' + 'x'.repeat(201), '/a/*', '/a:b',
@@ -547,7 +550,9 @@ describe('migrated media server (stage 2)', () => {
     refuses(() => assertManaged(b, E));
     b.Env.push('FERROFIN_DATA_DIR=/ferrofin-data');
     refuses(() => assertManaged(b, E));
-    // with the expectation it passes (a migrated server whose folders are all below /media)
+    // with the expectation (and the /data tmpfs) it passes: a migrated server whose folders are all below /media
+    refuses(() => assertManaged(b, { ...E, migrated: { targets: [] } }));
+    b.HostConfig.Tmpfs['/data'] = 'size=1m,mode=0755';
     expect(() => assertManaged(b, { ...E, migrated: { targets: [] } })).not.toThrow();
     // the media volumes are never at /ferrofin-data
     const m = okM();
@@ -579,12 +584,78 @@ describe('migrated media server (stage 2)', () => {
     i.Config.Env = i.Config.Env.map((x: string) => (x === 'FERROFIN_DATA_DIR=/data' ? 'FERROFIN_DATA_DIR=/ferrofin-data' : x));
     i.HostConfig.Mounts[2].Target = i.Mounts[2].Destination = '/movies';
     delete i.HostConfig.Mounts[2].VolumeOptions.Subpath;
+    i.HostConfig.Tmpfs['/data'] = 'size=1m,mode=0755';
     expect(() => assertManagedInspect(i, { ...E, image, migrated: { targets: ['/movies'] } })).not.toThrow();
     refuses(() => assertManagedInspect(i, { ...E, image }));
     refuses(() => assertManagedInspect(i, { ...E, image, migrated: { targets: ['/tv'] } }));
     const rw = clone(i);
     rw.Mounts[2].RW = true;
     refuses(() => assertManagedInspect(rw, { ...E, image, migrated: { targets: ['/movies'] } }));
+    // the fixed tmpfs over the image's /data is required on a migrated server, and no anonymous volume may sit at /data
+    const notmp = clone(i);
+    delete notmp.HostConfig.Tmpfs['/data'];
+    refuses(() => assertManagedInspect(notmp, { ...E, image, migrated: { targets: ['/movies'] } }));
+    const anon = clone(i);
+    anon.Mounts.push({ Type: 'volume', Name: 'e'.repeat(64), Source: '/var/lib/docker/volumes/e/_data', Destination: '/data', Driver: 'local', Mode: '', RW: true, Propagation: '' });
+    refuses(() => assertManagedInspect(anon, { ...E, image, migrated: { targets: ['/movies'] } }));
+    const s1 = clone(fixture);
+    s1.HostConfig.Tmpfs['/data'] = 'size=1m,mode=0755';
+    refuses(() => assertManagedInspect(s1, { ...E, image }));
+  });
+
+  it('a migrated body covers the image /data with a fixed tmpfs, a stage 1 body may not', () => {
+    expect(okM().HostConfig.Tmpfs).toEqual({ '/tmp': 'size=512m,mode=1777', '/data': 'size=1m,mode=0755' });
+    const mut: [string, (b: Body) => void][] = [
+      ['no /data tmpfs', (b) => { delete b.HostConfig.Tmpfs['/data']; }],
+      ['a larger /data tmpfs', (b) => { b.HostConfig.Tmpfs['/data'] = 'size=10g,mode=0755'; }],
+      ['a writable /data tmpfs', (b) => { b.HostConfig.Tmpfs['/data'] = 'size=1m,mode=1777'; }],
+      ['an exec /data tmpfs', (b) => { b.HostConfig.Tmpfs['/data'] = 'size=1m,mode=0755,exec'; }],
+      ['a tmpfs at a listed target', (b) => { b.HostConfig.Tmpfs['/movies'] = 'size=1m'; }],
+    ];
+    for (const [name, m] of mut) {
+      const b = okM();
+      m(b);
+      expect(() => assertManaged(b, EM), name).toThrow(TemplateViolation);
+    }
+    const s1 = ok();
+    s1.HostConfig.Tmpfs['/data'] = 'size=1m,mode=0755';
+    refuses(() => assertManaged(s1, E));
+  });
+
+  it('a media target equal to or below another is refused, in both directions', () => {
+    // the whole base at /media (as the bundled Jellyfin did): a folder below it could be moved by a symlink in the share
+    const whole: DesiredSpec = { ...D, migrated: true, folders: [{ rel: '', target: '/media', migrated: true }, { rel: 'Neu', target: '/ffmedia/neu' }] };
+    const b = clone(containerSpec(whole, F).body) as Body;
+    const EW: ManagedExpect = { ...E, migrated: { targets: ['/media'] } };
+    expect(() => assertManaged(b, EW)).not.toThrow();
+    const below = clone(b);
+    M(below).push({ ...at(below, '/ffmedia/neu'), Target: '/media/neu' });
+    refuses(() => assertManaged(below, EW));
+    const above = clone(b);
+    M(above).splice(M(above).indexOf(at(above, '/media')), 1, { ...at(above, '/media'), Target: '/media/a' });
+    M(above).push({ ...at(above, '/ffmedia/neu'), VolumeOptions: { NoCopy: true }, Target: '/media' });
+    refuses(() => assertManaged(above, EW));
+    // two listed targets, one inside the other, in either order
+    for (const targets of [['/movies', '/movies/kids'], ['/movies/kids', '/movies']]) {
+      const x = okM();
+      at(x, '/movies').Target = targets[0];
+      at(x, '/data/tv').Target = targets[1];
+      refuses(() => assertManaged(x, { ...E, migrated: { targets } }));
+    }
+    // /ffmedia folders and stage 1 folders too
+    const ff = okM();
+    M(ff).push({ ...at(ff, '/ffmedia/neu'), Target: '/ffmedia/neu/a', VolumeOptions: { NoCopy: true, Subpath: 'Neu2' } });
+    refuses(() => assertManaged(ff, EM));
+    for (const order of [['/media/filme', '/media/filme/a'], ['/media/filme/a', '/media/filme']]) {
+      const s1 = ok();
+      M(s1).find((m) => m.Target === '/media/filme')!.Target = order[0];
+      M(s1).find((m) => m.Target === '/media/serien')!.Target = order[1];
+      refuses(() => assertManaged(s1, E));
+    }
+    // a common prefix that is not a parent is fine
+    const sib = okM();
+    at(sib, '/movies').Target = '/data/tvx';
+    expect(() => assertManaged(sib, { ...E, migrated: { targets: ['/data/tvx', '/data/tv'] } })).not.toThrow();
   });
 });
 
@@ -645,6 +716,20 @@ describe('source helpers (stage 2)', () => {
       const b = req({ verb: 'migrate-copy', mounts: [source(volSrc)] });
       m(b);
       expect(() => assertHelper(b, { ...G, verb: 'migrate-copy', source: volSrc }), name).toThrow(TemplateViolation);
+    }
+  });
+
+  it('a source bind never comes from a system tree or the Docker runtime', () => {
+    for (const p of [
+      '/proc', '/proc/1/root', '/sys', '/sys/fs', '/dev', '/dev/sda', '/etc', '/etc/jellyfin', '/boot', '/boot/x', '/run', '/run/user/1000', '/var/run', '/var/run/x',
+      '/var/lib/docker', '/var/lib/docker/volumes/x/_data', '/srv/docker.sock', '/srv/containerd/x', '/home/a/docker.sock.d',
+    ]) {
+      const s = { type: 'bind' as const, source: p };
+      expect(() => assertHelper(req({ mounts: [source(s)] }), { ...G, verb: 'migrate-scan', source: s }), p).toThrow(TemplateViolation);
+    }
+    for (const p of ['/opt/jellyfin/config', '/srv/jellyfin', '/var/lib/jellyfin', '/home/a/jellyfin/config', '/mnt/docker-data/jellyfin', '/var/lib/dockerx/jf', '/runner/jf']) {
+      const s = { type: 'bind' as const, source: p };
+      expect(() => assertHelper(req({ mounts: [source(s)] }), { ...G, verb: 'migrate-scan', source: s }), p).not.toThrow();
     }
   });
 

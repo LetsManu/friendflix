@@ -305,6 +305,9 @@ describe('a migrated Ferrofin (stage 2)', () => {
       // the whole base: no Subpath at all
       { Type: 'volume', Source: BASE, Target: '/data/tv', ReadOnly: true, VolumeOptions: { NoCopy: true } },
     ]);
+    // the image's VOLUME /data is covered by a small fixed tmpfs (no anonymous volume; media below /data mount on top of it)
+    expect(b.HostConfig.Tmpfs).toEqual({ '/tmp': 'size=512m,mode=1777', '/data': 'size=1m,mode=0755' });
+    expect(body().HostConfig.Tmpfs).toEqual({ '/tmp': 'size=512m,mode=1777' });
     expect(() => assertManaged(b, { ...E, migrated: { targets: ['/movies', '/data/tv'] } })).not.toThrow();
     expect(() => assertManaged(b, E)).toThrow(TemplateViolation);
     // the data volume keeps its name
@@ -318,8 +321,23 @@ describe('a migrated Ferrofin (stage 2)', () => {
     const b = containerSpec(d, F).body as Body;
     expect(b.HostConfig.Mounts.at(-1)).toEqual({ Type: 'volume', Source: BASE, Target: '/ffmedia/doku', ReadOnly: true, VolumeOptions: { NoCopy: true, Subpath: 'Neu/Doku' } });
     expect(() => assertManaged(b, { ...E, migrated: { targets: ['/movies', '/data/tv'] } })).not.toThrow();
-    // a later folder at /media/<slug> is still fine
-    expect(() => containerSpec({ ...DM, folders: [...DM.folders, { rel: 'Neu', target: '/media/neu' }] }, F)).not.toThrow();
+    // with the whole base at /media (a listed target), a later folder goes to /ffmedia, never below /media
+    const whole: DesiredSpec = { ...DM, folders: [{ rel: '', target: '/media', migrated: true }] };
+    expect(() => containerSpec({ ...whole, folders: [...whole.folders, { rel: 'Neu', target: '/media/neu' }] }, F)).toThrow(TemplateViolation);
+    const ok = containerSpec({ ...whole, folders: [...whole.folders, { rel: 'Neu', target: '/ffmedia/neu' }] }, F).body as Body;
+    expect(ok.HostConfig.Mounts.map((m: Body) => m.Target)).toEqual(['/ferrofin-data', '/cache', '/media', '/ffmedia/neu']);
+    expect(() => assertManaged(ok, { ...E, migrated: { targets: ['/media'] } })).not.toThrow();
+  });
+
+  it('a media target equal to or below another is refused, in both directions', () => {
+    const t = (folders: DesiredSpec['folders']) => () => containerSpec({ ...DM, folders }, F);
+    expect(t([{ rel: 'Filme', target: '/movies', migrated: true }, { rel: 'Kids', target: '/movies/kids', migrated: true }])).toThrow(TemplateViolation);
+    expect(t([{ rel: 'Kids', target: '/movies/kids', migrated: true }, { rel: 'Filme', target: '/movies', migrated: true }])).toThrow(TemplateViolation);
+    expect(t([{ rel: 'A', target: '/ffmedia/a' }, { rel: 'B', target: '/ffmedia/a/b' }])).toThrow(TemplateViolation);
+    expect(() => body({ folders: [{ rel: 'Filme', target: '/media/filme' }, { rel: 'Kids', target: '/media/filme/kids' }] })).toThrow(TemplateViolation);
+    expect(() => body({ folders: [{ rel: 'Kids', target: '/media/filme/kids' }, { rel: 'Filme', target: '/media/filme' }] })).toThrow(TemplateViolation);
+    // siblings with a common prefix are fine
+    expect(t([{ rel: 'A', target: '/data/tv', migrated: true }, { rel: 'B', target: '/data/tvx', migrated: true }])).not.toThrow();
   });
 
   it('refuses what only a migrated server may have', () => {

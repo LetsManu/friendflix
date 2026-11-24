@@ -11,7 +11,7 @@ import { runHdr } from './helpers.js';
 import type { Pin, PinRead } from './pins.js';
 import type { MediaDeps } from './service.js';
 import { containerSpec, helperSpec, names, needsSeed, seedSpec, uidSupported, volumeSpec, type CreateRequest, type HelperMount, type HelperVerb, type TemplateFacts } from './template.js';
-import { BACKUP_ID_RE, KINDS, MEDIA_ERRORS, MEDIA_STEPS, type BackupMeta, type BackupTag, type Desired, type DesiredSpec, type Gpu, type Kind, type MediaError, type MediaJobAction, type MediaOp, type MediaStep } from './types.js';
+import { BACKUP_ID_RE, KINDS, MEDIA_ERRORS, MEDIA_STEPS, type BackupMeta, type BackupTag, type Desired, type DesiredSpec, type Folder, type Gpu, type Kind, type MediaError, type MediaJobAction, type MediaOp, type MediaStep } from './types.js';
 
 /**
  * The media server jobs (spec "Lifecycle"): apply / update / finish as one deploy (check → pull → verify → snapshot → create →
@@ -78,7 +78,7 @@ function nested(rels: string[]): boolean {
 const specOf = (d: Desired): DesiredSpec => ({
   kind: d.kind, folders: d.folders, uid: d.uid, gid: d.gid, gpu: d.gpu, mediaGid: d.mediaGid, egress: d.egress, tz: d.tz, ...(d.migrated ? { migrated: true as const } : {}),
 });
-/** the guard's expectation for a migrated spec: the targets recorded at the move (its migrated folders); nothing for stage 1 */
+/** the inspect guard's expectation from the recorded desired spec: the targets of its migrated folders; nothing for stage 1 */
 const migratedOf = (d: Pick<DesiredSpec, 'migrated' | 'folders'> | null | undefined): Pick<ManagedExpect, 'migrated'> =>
   (d?.migrated ? { migrated: { targets: d.folders.filter((f) => f.migrated).map((f) => f.target) } } : {});
 const userOf = (d: { uid: number; gid: number; mediaGid: number | null } | null) =>
@@ -377,6 +377,8 @@ export class MediaJobs {
     // the pins first: every deploy records where it read them (Controller's call 18), also one that fails below
     const read: PinRead = await this.d.pins().catch((): PinRead => ({ error: 'no_backend' }));
     if (!('error' in read)) this.u.updateMedia((m) => { m.pinSource = read.source; });
+    // a request never brings migrated targets of its own (before any helper runs)
+    this.migratedExpect(d);
 
     const base = before.base ?? fail('no_base');
     const { facts, project, runner } = await this.ready();
@@ -478,10 +480,32 @@ export class MediaJobs {
     }
   }
 
-  /** the create body from the template, checked by the guard (a refusal throws TemplateViolation) */
+  /**
+   * The migrated folders the guard may allow, from recorded state only, never from a request: a running move's folders (taken from
+   * its scan), else the recorded desired spec's migrated folders; null = not migrated. Only the move job introduces migrated targets.
+   */
+  private recordedMigrated(): readonly Folder[] | null {
+    const m = this.u.mediaState();
+    if (m.move?.phase === 'running') return m.move.folders;
+    return m.desired?.migrated ? m.desired.folders.filter((f) => f.migrated) : null;
+  }
+
+  /**
+   * the guard's migrated expectation for a spec about to be built, from recorded state; a spec whose `migrated` flag or migrated
+   * folders (rel and target) differ from the record is refused (TemplateViolation = `template_violation`)
+   */
+  private migratedExpect(d: DesiredSpec): Pick<ManagedExpect, 'migrated'> {
+    const rec = this.recordedMigrated();
+    const key = (fs: readonly Folder[]): string => fs.map((f) => JSON.stringify([f.rel, f.target])).sort().join('\n');
+    if ((d.migrated === true) !== (rec !== null) || key(d.folders.filter((f) => f.migrated)) !== key(rec ?? [])) throw new TemplateViolation('migrated');
+    return rec ? { migrated: { targets: rec.map((f) => f.target) } } : {};
+  }
+
+  /** the create body from the template, checked by the guard (a refusal throws TemplateViolation); migrated targets only as recorded */
   private build(d: DesiredSpec, f: TemplateFacts, password: string | undefined): CreateRequest {
+    const expect = this.migratedExpect(d);
     const req = containerSpec(d, f, password !== undefined ? { password } : {});
-    assertManaged(req.body, { project: f.project, kind: d.kind, uid: d.uid, gid: d.gid, repo: this.d.repo, ...migratedOf(d) });
+    assertManaged(req.body, { project: f.project, kind: d.kind, uid: d.uid, gid: d.gid, repo: this.d.repo, ...expect });
     return req;
   }
 

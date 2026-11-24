@@ -66,7 +66,11 @@ export function isTarget(t: string): boolean {
 }
 
 /** the trees a migrated media target may not be, or lie below (`/data` itself is refused, below it is fine) */
-const MIGRATED_REFUSED = ['cache', 'config', 'tmp', 'proc', 'sys', 'dev', 'etc', 'usr', 'bin', 'sbin', 'lib', 'lib64', 'var', 'run', 'root', 'home', 'ferrofin-data', 'ffmedia'];
+const MIGRATED_REFUSED = [
+  'cache', 'config', 'tmp', 'proc', 'sys', 'dev', 'etc', 'usr', 'bin', 'sbin', 'lib', 'lib64', 'lib32', 'libx32', 'var', 'run', 'root', 'home', 'boot', 'opt',
+  // the Ferrofin image's FERROFIN_WEB_DIR (it serves the API only): media there would become its web UI
+  'nonexistent', 'ferrofin-data', 'ffmedia',
+];
 
 /** the mount point of a migrated folder: the path the old server saw, absolute, normalised, 1 to 3 levels, not a system tree */
 export function isMigratedTarget(t: string): boolean {
