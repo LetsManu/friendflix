@@ -199,6 +199,7 @@ const dict: Translation<typeof de> = {
     title: 'Usunąć serwer multimediów?',
     body: 'Kontener zostanie zatrzymany i usunięty. FriendFlix przełączy się potem na „Istniejący Jellyfin/Plex”: tam musisz ponownie wpisać adres swojego serwera. Dane zostają, chyba że wybierzesz „Usuń dane”.',
     leftover: 'Pozostały kontener zostanie zatrzymany i usunięty.',
+    moveCopy: 'Dane przerwanej przeprowadzki (kopia twojego Jellyfin) zostaną usunięte. Twój Jellyfin zostaje bez zmian.',
     data: 'Usuń dane',
     dataHint: 'Usuwa bazę danych, użytkowników i ustawienia serwera. Kopie zapasowe zostają.',
     typed: 'Wpisz „{name}”, aby potwierdzić',
@@ -214,6 +215,7 @@ const dict: Translation<typeof de> = {
     backTitle: 'Wrócić do {address}?',
     backBody: 'Zarządzany serwer multimediów zostanie zatrzymany, jego dane zostają. FriendFlix znów użyje zapisanego adresu i klucza.',
     switched: 'FriendFlix korzysta teraz z twojego istniejącego serwera.',
+    wayBackOnly: 'Po przeprowadzce wraca się przyciskiem „Wróć do Jellyfin” powyżej: wtedy twój stary Jellyfin znów się uruchamia.',
   },
   /** the move from an existing Jellyfin to the managed Ferrofin and the way back (stage 2: MoveSheet.svelte, the card's moved state) */
   move: {
@@ -302,6 +304,7 @@ const dict: Translation<typeof de> = {
     trickplay: 'Dołącz obrazy podglądu (trickplay)',
     createConfirm: 'Utwórz kopię',
     tag: { manual: 'własna', auto: 'automatyczna', upload: 'przesłana' },
+    premove: 'sprzed przeprowadzki: nie do przywrócenia',
     row: '{date} · {version} · {size}',
     restore: 'Przywróć',
     restoreTitle: 'Przywrócić kopię z {date}?',
@@ -417,6 +420,7 @@ const dict: Translation<typeof de> = {
     move_aborted: 'Przeprowadzka została przerwana. Twój Jellyfin znów działa.',
     jellyfin_unreachable: 'Twój Jellyfin nie odpowiada pod zapisanym adresem z zapisanym kluczem.',
     use_way_back: 'Po przeprowadzce wraca się przyciskiem „Wróć do Jellyfin”.',
+    backup_premove: 'Ta kopia jest sprzed przeprowadzki: jej użytkownicy i tytuły mają inne ID. Przywrócić można tylko kopie od przeprowadzki.',
     scan_required: 'Sprawdzenie jest za stare albo dotyczy innego kontenera. Sprawdź ponownie.',
     not_moved: 'FriendFlix się nie przeprowadził.',
     not_offered: 'Przeprowadzka nie jest teraz możliwa.',

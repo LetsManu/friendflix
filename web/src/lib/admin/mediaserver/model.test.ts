@@ -14,7 +14,7 @@ import type { MediaManaged, MediaStatus, MediaView, MoveCandidate, MoveScan, Mov
 import {
   ACTION_ORDER, DEFAULT_MANAGED, MOVE_STEPS, TRIAL_KINDS, actionsFor, autoCandidate, backActive, choiceDisabled, codeLogHint, countdown, currentChoice, folderRowsError, idError,
   initialRows, defaultName, keptLibraries, kindName, livetvOffer, mediaErrorText, migratedFolders, migratedOverlap, wholeBaseMigrated, moveAbortable, moveActive, moveFollow, moveResult, moveSteps, moveSummary, saveErrorText,
-  nameTakenRow, passphraseError, pinState, reasonText, scanFresh, setupSteps, sourceLine, statusStarting, versionCmp,
+  nameTakenRow, passphraseError, pinState, reasonText, scanFresh, setupSteps, sourceLine, statusStarting, versionCmp, backupPremove, moveCopyRemovable, restorable, wayBackOnly,
 } from './model';
 
 afterEach(async () => { await setLocale('de'); });
@@ -297,6 +297,59 @@ describe('status and actions', () => {
     expect(actionsFor(running({ ...pending, setup: 'done' }))).toEqual(['stop', 'restart', 'update', 'backup', 'remove']);
     // newer than this build: never down, no update
     expect(actionsFor(running({ pin: { image: `x@sha256:${'b'.repeat(64)}`, upstream: '10.10.7', changed: false } }))).not.toContain('update');
+  });
+});
+
+describe('final review: a moved server', () => {
+  const AT = '2026-11-24T10:00:00.000Z';
+  const bk = (at: string, o: Partial<MediaStatus['backups'][number]> = {}): MediaStatus['backups'][number] => ({ id: `ferrofin-x-${at}`, kind: 'ferrofin', upstream: '1.5.0', at, tag: 'manual', size: 1, ...o });
+  const movedView = (sourceState: string | null, backups: MediaStatus['backups'] = []) => view({
+    mode: 'managed', managed: managed({ kind: 'ferrofin', setup: 'done' }),
+    status: status({ container: container({ kind: 'ferrofin' }), backups }),
+    move: { offered: false, reason: null, scan: null, state: null, migratedFrom: { name: 'jellyfin', version: '10.11.0', at: AT }, sourceState, requestsWarning: false, requests: true },
+  });
+
+  it('C1: no Entfernen and no stage 1 switch while the old Jellyfin is there; both once it is gone', () => {
+    for (const s of ['exited', 'running', 'unknown', null]) {
+      expect(wayBackOnly(movedView(s)), String(s)).toBe(true);
+      expect(actionsFor(movedView(s)), String(s)).not.toContain('remove');
+      expect(actionsFor(movedView(s)), String(s)).toEqual(['stop', 'restart', 'backup']);
+    }
+    expect(wayBackOnly(movedView('missing'))).toBe(false);
+    expect(actionsFor(movedView('missing'))).toContain('remove');
+    // never moved (or back on Jellyfin): as before
+    expect(wayBackOnly(running())).toBe(false);
+    expect(actionsFor(running())).toContain('remove');
+  });
+
+  it('I3: only a backup taken at or after the move restores (an upload by its archive date)', () => {
+    const before = bk('2026-11-24T09:00:00.000Z', { tag: 'auto' });
+    const at = bk(AT);
+    const upOld = bk('2026-11-24T12:00:00.000Z', { tag: 'upload', createdAt: '2026-11-20T08:00:00.000Z' });
+    const upNew = bk('2026-11-24T12:00:00.000Z', { tag: 'upload', createdAt: '2026-11-24T11:00:00.000Z' });
+    const upUnknown = bk('2026-11-24T12:00:00.000Z', { tag: 'upload' });
+    const v = movedView('exited', [before, at, upOld, upNew, upUnknown]);
+    expect([before, at, upOld, upNew, upUnknown].map((b) => backupPremove(v, b))).toEqual([true, false, true, false, true]);
+    expect([before, at, upOld, upNew, upUnknown].map((b) => restorable(v, b))).toEqual([false, true, false, true, false]);
+    expect(actionsFor(v)).toContain('restore');
+    expect(actionsFor(movedView('exited', [before, upOld]))).not.toContain('restore');
+    // another kind never; a server that was not moved restores any of its kind
+    expect(restorable(v, { ...at, kind: 'jellyfin' })).toBe(false);
+    const plain = running({ backups: [{ ...before, kind: 'jellyfin' }] });
+    expect(backupPremove(plain, plain.status!.backups[0]!)).toBe(false);
+    expect(restorable(plain, plain.status!.backups[0]!)).toBe(true);
+  });
+
+  it('M4: an aborted move\'s copy can be removed while external and nothing runs', () => {
+    const copy = view({ status: status({ moveCopy: true }) });
+    expect(moveCopyRemovable(copy)).toBe(true);
+    expect(actionsFor(copy)).toEqual(['remove']);
+    expect(moveCopyRemovable(view())).toBe(false);
+    expect(actionsFor(view())).toEqual([]);
+    // a move under way holds it
+    const moving = view({ status: status({ moveCopy: true }), move: { offered: false, reason: null, scan: null, state: { phase: 'copying', error: null, jobId: null, startedAt: AT, step: 'copy', abort: false }, migratedFrom: null, sourceState: null, requestsWarning: false, requests: true } });
+    expect(moveCopyRemovable(moving)).toBe(false);
+    expect(actionsFor(moving)).toEqual([]);
   });
 });
 

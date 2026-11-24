@@ -250,7 +250,7 @@ export default {
     managed_backup_old: 'Unter Einstellungen → Medienserver eine „Sicherung“ anlegen und herunterladen.',
     managed_requests_not_moved: 'In den Einstellungen des Wunsch-Dienstes den Jellyfin-Server eintragen, den FriendFlix nutzt (nach dem Umzug: „mediaserver“, Port 8096).',
     managed_migrated: 'Nichts zu tun. Unter Einstellungen → Medienserver geht es mit „Zurück zu Jellyfin“ jederzeit zurück.',
-    managed_migrated_running: 'Nichts zu tun. Unter Einstellungen → Medienserver geht es mit „Zurück zu Jellyfin“ zurück; sonst kann es gestoppt werden.',
+    managed_migrated_running: 'Nichts zu tun: Es kann ungenutzt weiterlaufen. Mit „Zurück zu Jellyfin“ unter Einstellungen → Medienserver nutzt FriendFlix es wieder.',
     managed_migrated_gone: 'Nichts zu tun. Zurück geht es nur noch über die Adresse eines Medienservers unter Einstellungen → Medienserver.',
     managed_migrated_unknown: 'Nichts zu tun. Die nächste Prüfung liest den Zustand erneut.',
     no_hw_accel: 'Im Medienserver unter Wiedergabe → Transkodierung die Grafikeinheit des Servers wählen (z. B. QSV, VAAPI, NVENC).',

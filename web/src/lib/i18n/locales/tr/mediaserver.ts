@@ -199,6 +199,7 @@ const dict: Translation<typeof de> = {
     title: 'Medya sunucusu kaldırılsın mı?',
     body: 'Kapsayıcı durdurulur ve kaldırılır. FriendFlix ardından “Mevcut Jellyfin/Plex” seçeneğine geçer: sunucunun adresini orada yeniden girmen gerekir. “Verileri sil” seçmediğin sürece veriler kalır.',
     leftover: 'Geride kalan kapsayıcı durdurulur ve kaldırılır.',
+    moveCopy: 'İptal edilen bir taşımanın verileri (Jellyfin’inin kopyası) silinir. Jellyfin’in olduğu gibi kalır.',
     data: 'Verileri sil',
     dataHint: 'Sunucunun veritabanını, kullanıcılarını ve ayarlarını siler. Yedekler kalır.',
     typed: 'Onaylamak için “{name}” yaz',
@@ -214,6 +215,7 @@ const dict: Translation<typeof de> = {
     backTitle: '{address} adresine dönülsün mü?',
     backBody: 'Yönetilen medya sunucusu durdurulur, verileri kalır. FriendFlix kayıtlı adresi ve anahtarı yeniden kullanır.',
     switched: 'FriendFlix artık mevcut sunucunu kullanıyor.',
+    wayBackOnly: 'Taşımadan sonra geri dönüş yukarıdaki “Jellyfin’e dön” ile olur: Eski Jellyfin’in böylece yeniden başlar.',
   },
   /** the move from an existing Jellyfin to the managed Ferrofin and the way back (stage 2: MoveSheet.svelte, the card's moved state) */
   move: {
@@ -302,6 +304,7 @@ const dict: Translation<typeof de> = {
     trickplay: 'Önizleme görüntülerini (trickplay) de yedekle',
     createConfirm: 'Yedek oluştur',
     tag: { manual: 'kendi', auto: 'otomatik', upload: 'yüklendi' },
+    premove: 'taşımadan önce: geri yüklenemez',
     row: '{date} · {version} · {size}',
     restore: 'Geri yükle',
     restoreTitle: '{date} tarihli yedek geri yüklensin mi?',
@@ -417,6 +420,7 @@ const dict: Translation<typeof de> = {
     move_aborted: 'Taşıma iptal edildi. Jellyfin’in yeniden çalışıyor.',
     jellyfin_unreachable: 'Jellyfin’in kayıtlı adres ve anahtarla yanıt vermiyor.',
     use_way_back: 'Taşımadan sonra geri dönüş “Jellyfin’e dön” ile olur.',
+    backup_premove: 'Bu yedek taşımadan önceye ait: kullanıcıları ve başlıkları başka kimliklere sahip. Yalnızca taşımadan sonraki yedekler geri yüklenebilir.',
     scan_required: 'Denetim çok eski ya da başka bir kapsayıcıya ait. Yeniden denetle.',
     not_moved: 'FriendFlix taşınmadı.',
     not_offered: 'Şu an taşıma mümkün değil.',

@@ -249,7 +249,7 @@ const dict: Translation<typeof de> = {
     managed_backup_old: 'Ayarlar → Medya sunucusu altında bir “Yedek” oluştur ve indir.',
     managed_requests_not_moved: 'İstek hizmetinin ayarlarında FriendFlix’in kullandığı Jellyfin sunucusunu gir (taşımadan sonra: “mediaserver”, port 8096).',
     managed_migrated: 'Yapılacak bir şey yok. Ayarlar → Medya sunucusu altındaki “Jellyfin’e dön” ile istediğin zaman geri dönebilirsin.',
-    managed_migrated_running: 'Yapılacak bir şey yok. Ayarlar → Medya sunucusu altındaki “Jellyfin’e dön” ile geri dönebilirsin; yoksa durdurulabilir.',
+    managed_migrated_running: 'Yapılacak bir şey yok: kullanılmadan çalışmaya devam edebilir. Ayarlar → Medya sunucusu altındaki “Jellyfin’e dön” ile FriendFlix onu yeniden kullanır.',
     managed_migrated_gone: 'Yapılacak bir şey yok. Geri dönüş yalnızca Ayarlar → Medya sunucusu altında bir medya sunucusu adresiyle mümkün.',
     managed_migrated_unknown: 'Yapılacak bir şey yok. Sonraki kontrol durumu yeniden okur.',
     no_hw_accel: 'Medya sunucusunda Oynatma → Kod dönüştürme altında sunucunun grafik birimini seç (ör. QSV, VAAPI, NVENC).',

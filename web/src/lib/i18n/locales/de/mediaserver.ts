@@ -201,6 +201,7 @@ export default {
     title: 'Medienserver entfernen?',
     body: 'Der Container wird gestoppt und entfernt. FriendFlix wechselt danach auf „Bestehender Jellyfin/Plex“: die Adresse deines Servers musst du dort wieder eintragen. Die Daten bleiben, außer du wählst „Daten löschen“.',
     leftover: 'Der übrig gebliebene Container wird gestoppt und entfernt.',
+    moveCopy: 'Die Daten eines abgebrochenen Umzugs (die Kopie deines Jellyfin) werden gelöscht. Dein Jellyfin bleibt, wie es ist.',
     data: 'Daten löschen',
     dataHint: 'Löscht Datenbank, Benutzer und Einstellungen des Servers. Sicherungen bleiben.',
     typed: 'Zur Bestätigung „{name}“ eintippen',
@@ -216,6 +217,7 @@ export default {
     backTitle: 'Zurück zu {address}?',
     backBody: 'Der verwaltete Medienserver wird gestoppt, seine Daten bleiben. FriendFlix nutzt wieder die gespeicherte Adresse und den Schlüssel.',
     switched: 'FriendFlix nutzt jetzt deinen bestehenden Server.',
+    wayBackOnly: 'Nach dem Umzug geht es oben mit „Zurück zu Jellyfin“ zurück: Dabei startet dein altes Jellyfin wieder.',
   },
   /** the move from an existing Jellyfin to the managed Ferrofin and the way back (stage 2: MoveSheet.svelte, the card's moved state) */
   move: {
@@ -304,6 +306,7 @@ export default {
     trickplay: 'Vorschaubilder (Trickplay) mitsichern',
     createConfirm: 'Sicherung erstellen',
     tag: { manual: 'eigene', auto: 'automatisch', upload: 'hochgeladen' },
+    premove: 'vor dem Umzug: nicht wiederherstellbar',
     row: '{date} · {version} · {size}',
     restore: 'Wiederherstellen',
     restoreTitle: 'Sicherung vom {date} wiederherstellen?',
@@ -422,6 +425,7 @@ export default {
     move_aborted: 'Der Umzug wurde abgebrochen. Dein Jellyfin läuft wieder.',
     jellyfin_unreachable: 'Dein Jellyfin antwortet nicht mit der gespeicherten Adresse und dem Schlüssel.',
     use_way_back: 'Nach einem Umzug geht es mit „Zurück zu Jellyfin“ zurück.',
+    backup_premove: 'Diese Sicherung ist von vor dem Umzug: Ihre Benutzer und Titel haben andere IDs. Wiederherstellen geht nur mit Sicherungen ab dem Umzug.',
     scan_required: 'Die Prüfung ist zu alt oder gehört zu einem anderen Container. Prüfe noch einmal.',
     not_moved: 'FriendFlix ist nicht umgezogen.',
     not_offered: 'Ein Umzug ist gerade nicht möglich.',

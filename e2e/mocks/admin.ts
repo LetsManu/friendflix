@@ -2494,7 +2494,10 @@ function mediaserverRoute(ms: MediaMock, m: string, p: string, body: any, J: Rep
   if (p === `${P}/action` && m === 'POST') {
     if (body.op === 'retry') { ms.managed.setupError = null; return J({ ok: true }); }
     if (body.op === 'remove') {
+      // a moved server whose old Jellyfin is there leaves only through the way back (backend: use_way_back)
+      if (ms.move.migratedFrom && ms.move.sourceState !== 'missing') return J({ error: 'use_way_back' }, 409);
       ms.status.container = null; ms.status.desired = null;
+      if (body.data) ms.status.moveCopy = false;
       if (ms.mode === 'managed') { ms.mode = 'external'; ms.managed = { ...ms.managed, kind: null, setup: 'none', setupError: null }; }
     }
     return J({ job: job(body.op) }, 202);
@@ -2506,6 +2509,7 @@ function mediaserverRoute(ms: MediaMock, m: string, p: string, body: any, J: Rep
     return J({ ok: true });
   }
   if (p === `${P}/mode` && m === 'POST') {
+    if (ms.move.migratedFrom && ms.move.sourceState !== 'missing') return J({ error: 'use_way_back' }, 409);
     if (body.restore) { /* the saved address comes back */ }
     ms.mode = 'external'; ms.managed = { ...ms.managed, kind: null, setup: 'none', setupError: null };
     return J({ ok: true });

@@ -199,6 +199,7 @@ const dict: Translation<typeof de> = {
     title: 'Remove the media server?',
     body: 'The container is stopped and removed. FriendFlix then switches to “Existing Jellyfin/Plex”: you have to enter your server’s address there again. The data stays unless you choose “Delete data”.',
     leftover: 'The leftover container is stopped and removed.',
+    moveCopy: 'The data of a cancelled move (the copy of your Jellyfin) is deleted. Your Jellyfin stays as it is.',
     data: 'Delete data',
     dataHint: 'Deletes the server’s database, users and settings. Backups stay.',
     typed: 'Type “{name}” to confirm',
@@ -214,6 +215,7 @@ const dict: Translation<typeof de> = {
     backTitle: 'Back to {address}?',
     backBody: 'The managed media server is stopped, its data stays. FriendFlix uses the saved address and key again.',
     switched: 'FriendFlix now uses your existing server.',
+    wayBackOnly: 'After the move, the way back is “Back to Jellyfin” above: it starts your old Jellyfin again.',
   },
   /** the move from an existing Jellyfin to the managed Ferrofin and the way back (stage 2: MoveSheet.svelte, the card's moved state) */
   move: {
@@ -302,6 +304,7 @@ const dict: Translation<typeof de> = {
     trickplay: 'Include preview images (trickplay)',
     createConfirm: 'Create backup',
     tag: { manual: 'own', auto: 'automatic', upload: 'uploaded' },
+    premove: 'before the move: cannot be restored',
     row: '{date} · {version} · {size}',
     restore: 'Restore',
     restoreTitle: 'Restore the backup of {date}?',
@@ -417,6 +420,7 @@ const dict: Translation<typeof de> = {
     move_aborted: 'The move was cancelled. Your Jellyfin runs again.',
     jellyfin_unreachable: 'Your Jellyfin does not answer with the saved address and key.',
     use_way_back: 'After a move, the way back is “Back to Jellyfin”.',
+    backup_premove: 'This backup is from before the move: its users and titles have other IDs. Only backups from the move on can be restored.',
     scan_required: 'The check is too old or belongs to another container. Check again.',
     not_moved: 'FriendFlix has not moved.',
     not_offered: 'A move is not possible right now.',

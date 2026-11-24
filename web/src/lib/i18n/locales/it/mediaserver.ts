@@ -199,6 +199,7 @@ const dict: Translation<typeof de> = {
     title: 'Rimuovere il server multimediale?',
     body: 'Il container viene arrestato e rimosso. FriendFlix passa poi a «Jellyfin/Plex esistente»: lì dovrai inserire di nuovo l’indirizzo del tuo server. I dati restano, a meno che tu non scelga «Elimina dati».',
     leftover: 'Il container rimasto viene arrestato e rimosso.',
+    moveCopy: 'I dati di un trasloco annullato (la copia del tuo Jellyfin) vengono eliminati. Il tuo Jellyfin resta com’è.',
     data: 'Elimina dati',
     dataHint: 'Elimina database, utenti e impostazioni del server. I backup restano.',
     typed: 'Digita «{name}» per confermare',
@@ -214,6 +215,7 @@ const dict: Translation<typeof de> = {
     backTitle: 'Tornare a {address}?',
     backBody: 'Il server multimediale gestito viene arrestato, i suoi dati restano. FriendFlix usa di nuovo l’indirizzo e la chiave salvati.',
     switched: 'FriendFlix ora usa il tuo server esistente.',
+    wayBackOnly: 'Dopo il trasloco si torna indietro con «Torna a Jellyfin» qui sopra: così il tuo vecchio Jellyfin riparte.',
   },
   /** the move from an existing Jellyfin to the managed Ferrofin and the way back (stage 2: MoveSheet.svelte, the card's moved state) */
   move: {
@@ -302,6 +304,7 @@ const dict: Translation<typeof de> = {
     trickplay: 'Includi le immagini di anteprima (trickplay)',
     createConfirm: 'Crea backup',
     tag: { manual: 'manuale', auto: 'automatico', upload: 'caricato' },
+    premove: 'precedente al trasloco: non ripristinabile',
     row: '{date} · {version} · {size}',
     restore: 'Ripristina',
     restoreTitle: 'Ripristinare il backup del {date}?',
@@ -417,6 +420,7 @@ const dict: Translation<typeof de> = {
     move_aborted: 'Il trasloco è stato annullato. Il tuo Jellyfin funziona di nuovo.',
     jellyfin_unreachable: 'Il tuo Jellyfin non risponde con l’indirizzo e la chiave salvati.',
     use_way_back: 'Dopo un trasloco si torna indietro con «Torna a Jellyfin».',
+    backup_premove: 'Questo backup è precedente al trasloco: i suoi utenti e titoli hanno altri ID. Si possono ripristinare solo i backup dal trasloco in poi.',
     scan_required: 'Il controllo è troppo vecchio o riguarda un altro container. Controlla di nuovo.',
     not_moved: 'FriendFlix non ha traslocato.',
     not_offered: 'Ora un trasloco non è possibile.',

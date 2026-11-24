@@ -249,7 +249,7 @@ const dict: Translation<typeof de> = {
     managed_backup_old: 'Create a “Backup” under Settings → Media server and download it.',
     managed_requests_not_moved: 'In the request service’s settings, enter the Jellyfin server FriendFlix uses (after the move: “mediaserver”, port 8096).',
     managed_migrated: 'Nothing to do. “Back to Jellyfin” under Settings → Media server goes back at any time.',
-    managed_migrated_running: 'Nothing to do. “Back to Jellyfin” under Settings → Media server goes back; otherwise it can be stopped.',
+    managed_migrated_running: 'Nothing to do: it can keep running unused. “Back to Jellyfin” under Settings → Media server makes FriendFlix use it again.',
     managed_migrated_gone: 'Nothing to do. Going back is only possible with a media server’s address under Settings → Media server.',
     managed_migrated_unknown: 'Nothing to do. The next check reads the state again.',
     no_hw_accel: 'In the media server under Playback → Transcoding, choose the server’s graphics unit (e.g. QSV, VAAPI, NVENC).',

@@ -343,7 +343,13 @@ describe('media.managed (the managed media server)', () => {
     await setLocale('de');
     const cause = (source: string) => lineText(ln({ id: 'media.managed', status: 'ok', cause: 'managed_migrated', params: { source } })).cause;
     expect(cause('jellyfin-alt')).toBe('Umgezogen von „jellyfin-alt“; das alte Jellyfin ist gestoppt und bleibt für den Rückweg erhalten.');
-    expect(cause('192.0.2.10')).toContain('„Jellyfin“');
+    // any Docker container name, a dot in it too (M8); never a path or an address with a port
+    expect(cause('jellyfin.old')).toContain('„jellyfin.old“');
+    for (const bad of ['/srv/jellyfin', 'http://jellyfin:8096', '.hidden']) expect(cause(bad), bad).toContain('„Jellyfin“');
+    // the hint for an old Jellyfin running unused never sends the admin to a shell
+    const fix = lineText(ln({ id: 'media.managed', status: 'ok', cause: 'managed_migrated_running', fix: 'managed_migrated_running', params: { source: 'jellyfin' } })).fix;
+    expect(fix).toContain('ungenutzt weiterlaufen');
+    expect(fix).not.toMatch(/docker|stopp/i);
   });
 
   it('a failed job says its code as a sentence; anything else in params is not shown', () => {

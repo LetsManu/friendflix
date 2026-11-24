@@ -484,6 +484,41 @@ test.describe('admin: Medienserver, the move from Jellyfin (desktop)', () => {
     await expect(card(page).getByRole('button', { name: 'Erneut umziehen' })).toBeVisible();
   });
 
+  test('a poll sent before the way back started, answered after it, never ends that way back (its earlier failure)', async ({ page, api }) => {
+    test.setTimeout(45_000);
+    const ms = api.admin.media;
+    movedMedia(ms);
+    ms.move.state = { ...ms.move.state, back: 'failed', backError: 'jellyfin_unreachable' };
+    await page.goto('/admin/settings?tab=media');
+    const moved = card(page).getByTestId('media-moved');
+    await expect(moved.getByRole('alert')).toContainText('Dein Jellyfin antwortet nicht');
+    // the view as it is now (the earlier attempt failed): what a slow poll would still bring
+    const stale = await page.evaluate(() => fetch('/api/admin/mediaserver').then((r) => r.text()));
+    let released!: () => void;
+    const backDone = new Promise<void>((r) => { released = r; });
+    let held = false, staleSent = false;
+    // POST /back answers only after the card's next poll went out; that poll is answered after the 202, with the old view
+    await page.route('**/api/admin/mediaserver/back', async (route) => {
+      held = true;
+      await new Promise((r) => setTimeout(r, 2_600));
+      await route.fallback();
+      setTimeout(released, 50);
+    });
+    await page.route('**/api/admin/mediaserver', async (route) => {
+      if (route.request().method() !== 'GET' || !held || staleSent) return route.fallback();
+      staleSent = true;
+      await backDone;
+      await new Promise((r) => setTimeout(r, 300));
+      await route.fulfill({ status: 200, contentType: 'application/json', body: stale });
+    });
+    await moved.getByRole('button', { name: 'Zurück zu Jellyfin' }).click();
+    await page.getByRole('alertdialog', { name: 'Zurück zu Jellyfin?' }).getByRole('button', { name: 'Zurück zu Jellyfin' }).click();
+    await expect.poll(() => staleSent, { timeout: 10_000 }).toBe(true);
+    // followed to its end and told once, never ended by the stale answer
+    await expect(page.getByRole('region', { name: 'Hinweise' })).toContainText('FriendFlix nutzt wieder dein Jellyfin.', { timeout: 20_000 });
+    await expect(card(page).getByRole('button', { name: 'Erneut umziehen' })).toBeVisible();
+  });
+
   test('the sheet opened again while its scan runs follows that scan (no second one)', async ({ page, api }) => {
     const ms = api.admin.media;
     movableMedia(ms);
@@ -532,5 +567,59 @@ test.describe('admin: Medienserver, the move from Jellyfin (desktop)', () => {
     await expect(c.getByTestId('media-browser-note')).toHaveText('Der ganze Basisordner ist schon übernommen – neue Ordner darin sind in Ferrofin schon sichtbar.');
     await expect(c.getByTestId('media-browser').locator('[data-entry="Musik"]')).toBeVisible();
     await expect(c.getByTestId('media-browser').getByRole('button', { name: 'Wählen' })).toHaveCount(0);
+  });
+  test('a moved server: no Entfernen and no stage 1 switch while the old Jellyfin is there; a backup from before the move does not restore', async ({ page, api }) => {
+    const ms = api.admin.media;
+    movedMedia(ms);
+    ms.status.backups = [
+      { id: 'ferrofin-20261124-0900-1.4.0', kind: 'ferrofin', upstream: '1.4.0', at: '2026-11-24T09:00:00.000Z', tag: 'auto', size: 1_048_576 },
+      { id: 'ferrofin-20261124-1200-1.5.0', kind: 'ferrofin', upstream: '1.5.0', at: '2026-11-24T12:00:00.000Z', tag: 'manual', size: 1_048_576 },
+    ];
+    await page.goto('/admin/settings?tab=media');
+    const c = card(page);
+    const actions = c.getByTestId('media-actions');
+    await expect(actions.getByRole('button', { name: 'Stoppen' })).toBeVisible();
+    await expect(actions.getByRole('button', { name: 'Entfernen' })).toHaveCount(0);
+    // the backup from before the move says why it does not restore; the one after it does
+    const old = c.locator('[data-backup="ferrofin-20261124-0900-1.4.0"]');
+    await expect(old).toContainText('vor dem Umzug: nicht wiederherstellbar');
+    await expect(old.getByRole('button', { name: 'Wiederherstellen' })).toHaveCount(0);
+    await expect(old.getByRole('button', { name: 'Herunterladen' })).toBeVisible();
+    await expect(c.locator('[data-backup="ferrofin-20261124-1200-1.5.0"]').getByRole('button', { name: 'Wiederherstellen' })).toBeVisible();
+    // the external choice points to the way back instead of a switch
+    await choices(page).getByRole('radio', { name: 'Bestehender Jellyfin/Plex (Adresse)' }).click();
+    await expect(c.getByTestId('media-way-back-only')).toHaveText('Nach dem Umzug geht es oben mit „Zurück zu Jellyfin“ zurück: Dabei startet dein altes Jellyfin wieder.');
+    await expect(c.getByRole('button', { name: 'Zum bestehenden Server wechseln' })).toHaveCount(0);
+    await expect(c.getByTestId('media-moved').getByRole('button', { name: 'Zurück zu Jellyfin' })).toBeVisible();
+    // the old container gone: Entfernen and the switch are back
+    ms.move.sourceState = 'missing';
+    await page.reload();
+    await expect(c.getByTestId('media-actions').getByRole('button', { name: 'Entfernen' })).toBeVisible();
+    await choices(page).getByRole('radio', { name: 'Bestehender Jellyfin/Plex (Adresse)' }).click();
+    await expect(c.getByTestId('media-way-back-only')).toHaveCount(0);
+    await expect(c.locator('.ext').getByRole('button', { name: 'Zum bestehenden Server wechseln' })).toBeVisible();
+    expect(ms.calls.filter((x) => x.p.endsWith('/action') || x.p.endsWith('/mode'))).toEqual([]);
+  });
+
+  test('an aborted move\'s copy is removed with Entfernen, its data switch on', async ({ page, api }) => {
+    const ms = api.admin.media;
+    movableMedia(ms);
+    ms.status.moveCopy = true;
+    ms.move = { ...ms.move, state: { phase: 'failed', error: 'move_aborted', jobId: '0123456789abcd07', startedAt: '2026-11-24T09:50:00.000Z', step: null, abort: false, failedIn: 'copying' } };
+    await page.goto('/admin/settings?tab=media');
+    const c = card(page);
+    await c.getByTestId('media-remove-external').click();
+    const dlg = page.getByRole('alertdialog', { name: 'Medienserver entfernen?' });
+    await expect(dlg).toContainText('Die Daten eines abgebrochenen Umzugs (die Kopie deines Jellyfin) werden gelöscht.');
+    const data = dlg.getByRole('switch', { name: 'Daten löschen' });
+    await expect(data).toHaveAttribute('aria-checked', 'true');
+    await expect(data).toBeDisabled();
+    const remove = dlg.getByRole('button', { name: 'Entfernen' });
+    await expect(remove).toBeDisabled();
+    await dlg.getByLabel('Zur Bestätigung „Ferrofin“ eintippen').fill('Ferrofin');
+    await remove.click();
+    await expect(dlg).toHaveCount(0);
+    expect(ms.calls.filter((x) => x.p.endsWith('/action')).map((x) => x.body)).toEqual([{ op: 'remove', data: true }]);
+    await expect(c.getByTestId('media-remove-external')).toHaveCount(0);
   });
 });

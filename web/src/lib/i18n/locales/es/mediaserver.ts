@@ -199,6 +199,7 @@ const dict: Translation<typeof de> = {
     title: '¿Quitar el servidor multimedia?',
     body: 'El contenedor se detiene y se quita. Después FriendFlix cambia a «Jellyfin/Plex existente»: allí tendrás que volver a introducir la dirección de tu servidor. Los datos se quedan, salvo que elijas «Borrar datos».',
     leftover: 'El contenedor sobrante se detiene y se quita.',
+    moveCopy: 'Se borran los datos de un traslado cancelado (la copia de tu Jellyfin). Tu Jellyfin se queda como está.',
     data: 'Borrar datos',
     dataHint: 'Borra la base de datos, los usuarios y los ajustes del servidor. Las copias de seguridad se quedan.',
     typed: 'Escribe «{name}» para confirmar',
@@ -214,6 +215,7 @@ const dict: Translation<typeof de> = {
     backTitle: '¿Volver a {address}?',
     backBody: 'El servidor multimedia gestionado se detiene, sus datos se quedan. FriendFlix vuelve a usar la dirección y la clave guardadas.',
     switched: 'FriendFlix usa ahora tu servidor existente.',
+    wayBackOnly: 'Después del traslado, se vuelve con «Volver a Jellyfin» arriba: así tu Jellyfin antiguo arranca de nuevo.',
   },
   /** the move from an existing Jellyfin to the managed Ferrofin and the way back (stage 2: MoveSheet.svelte, the card's moved state) */
   move: {
@@ -302,6 +304,7 @@ const dict: Translation<typeof de> = {
     trickplay: 'Incluir imágenes de vista previa (trickplay)',
     createConfirm: 'Crear copia',
     tag: { manual: 'propia', auto: 'automática', upload: 'subida' },
+    premove: 'anterior al traslado: no se puede restaurar',
     row: '{date} · {version} · {size}',
     restore: 'Restaurar',
     restoreTitle: '¿Restaurar la copia del {date}?',
@@ -417,6 +420,7 @@ const dict: Translation<typeof de> = {
     move_aborted: 'El traslado se canceló. Tu Jellyfin funciona de nuevo.',
     jellyfin_unreachable: 'Tu Jellyfin no responde con la dirección y la clave guardadas.',
     use_way_back: 'Después de un traslado, se vuelve con «Volver a Jellyfin».',
+    backup_premove: 'Esta copia es anterior al traslado: sus usuarios y títulos tienen otros ID. Solo se pueden restaurar copias desde el traslado.',
     scan_required: 'La comprobación es demasiado antigua o pertenece a otro contenedor. Comprueba de nuevo.',
     not_moved: 'FriendFlix no se ha trasladado.',
     not_offered: 'Ahora no es posible un traslado.',

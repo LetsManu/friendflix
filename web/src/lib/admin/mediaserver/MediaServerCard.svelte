@@ -17,8 +17,10 @@
    * The move from Jellyfin (stage 2): *Von Jellyfin umziehen* (MediaChoice) opens MoveSheet; the card polls while its scan, the move
    * or a way back runs (model.ts moveFollow) and shows a running move with *Fortschritt ansehen*. A moved server shows "Umgezogen von
    * „<name>“ am …", how the old Jellyfin is (stopped and kept, running, gone) and *Zurück zu Jellyfin* (its warning first; re-auth; it
-   * runs in the background and the card follows it); a gone old Jellyfin turns it into the stage 1 switch (an address). The request
-   * service warning names the manual step while it does not point at the server FriendFlix uses.
+   * runs in the background and the card follows it); a gone old Jellyfin turns it into the stage 1 switch (an address). While the old
+   * Jellyfin is there, a moved server offers neither *Entfernen* nor the stage 1 switch (model.ts wayBackOnly): the way back is the one
+   * way out. The request service warning names the manual step while it does not point at the server FriendFlix uses. An aborted
+   * move's copy (external, no container) is removed with *Entfernen*, its data switch on.
    */
   import { onDestroy, onMount } from 'svelte';
   import { apiCode } from '#lib/api';
@@ -38,7 +40,7 @@
   import { adminMediaApi, type FolderInput, type Gpu, type Kind, type MediaApi, type MediaView } from './api';
   import {
     actionsFor, backActive, choiceDisabled, currentChoice, folderRowsError, idError, initialRows, keptLibraries, kindName, livetvOffer, mediaErrorText, migratedFolders,
-    migratedOverlap, wholeBaseMigrated, moveActive, moveFollow, nameTakenRow, setupActive, sourceLine, statusStarting, type ActionOp, type Choice,
+    migratedOverlap, wholeBaseMigrated, moveActive, moveCopyRemovable, moveFollow, nameTakenRow, setupActive, sourceLine, statusStarting, wayBackOnly, type ActionOp, type Choice,
   } from './model';
   import BackupDialogs from './BackupDialogs.svelte';
   import BaseFolder from './BaseFolder.svelte';
@@ -70,16 +72,22 @@
 
   // ------------------------------------------------------------------ loading and following
   let seenMode: MediaView['mode'] | null = null;
+  /** every load gets a number: an answer older than the one shown is dropped (polls overlap), and backOwn needs a load sent after the 202 */
+  let loadSeq = 0, shownSeq = 0, backAfter = 0;
   async function load(): Promise<boolean> {
+    const seq = ++loadSeq;
     try {
       const [v, j] = await Promise.all([api.view(), api.lastJob().catch(() => job)]);
+      if (seq < shownSeq) return true;
+      shownSeq = seq;
       view = v; job = j; loadFailed = false;
       // the choice follows the server when its mode changes (first load, a switch, a remove), never on a poll; not before the
       // updater read the media status (the form starts from what is deployed)
       if (seenMode !== v.mode && !statusStarting(v)) { seenMode = v.mode; pick(currentChoice(v)); }
       mode = v.mode;
-      // the first view read after the backend took the way back is that attempt's (wayBack)
-      if (backPosted) { backPosted = false; backOwn = true; }
+      // the first view read after the backend took the way back is that attempt's (wayBack): one sent after its 202, never a poll
+      // that was already under way (it may show the earlier attempt's `failed`)
+      if (backPosted && seq > backAfter) { backPosted = false; backOwn = true; }
       return true;
     } catch {
       if (!view) { loadFailed = true; mode = 'external'; }
@@ -207,12 +215,15 @@
   let removeOpen = false, removeData = false, removeTyped = '', removeError = '', removing = false, removeTrigger: HTMLElement | null = null, removeShell: ModalShell;
   /** after *Neu anlegen*: the kind to set up again once the remove ran */
   let again: Kind | null = null;
+  /** only an aborted move's copy is left (no container): *Entfernen* deletes Ferrofin's data, the switch stays on */
+  let removeCopy = false;
   function openRemove(data: boolean, recreate = false) {
     removeTrigger = (document.activeElement as HTMLElement | null) ?? null;
-    removeData = data; removeTyped = ''; removeError = ''; removeOpen = true;
+    removeCopy = Boolean(view && moveCopyRemovable(view));
+    removeData = data || removeCopy; removeTyped = ''; removeError = ''; removeOpen = true;
     again = recreate ? view?.managed.kind ?? null : null;
   }
-  $: removeKind = view?.status?.container?.kind ?? view?.managed.kind ?? 'jellyfin';
+  $: removeKind = view?.status?.container?.kind ?? view?.managed.kind ?? (removeCopy ? 'ferrofin' : 'jellyfin');
   $: removeReady = !removeData || typedOk(kindName(removeKind), removeTyped);
   async function remove() {
     if (!removeReady || removing) return;
@@ -282,7 +293,8 @@
     backError = ''; goingBack = true; backOwn = false;
     try {
       await call(() => api.back());
-      // backOwn only from a view that was read (load() true): a failed read leaves it to the next poll
+      // backOwn only from a view that was read (load() true) and asked for after this answer: a failed read leaves it to the next poll
+      backAfter = loadSeq;
       backPosted = true;
       await load();
       schedule();
@@ -350,7 +362,10 @@
 
     {#if choice === 'external'}
       <div class="ext">
-        {#if view.mode === 'managed'}
+        {#if view.mode === 'managed' && wayBackOnly(view)}
+          <!-- a moved server whose old Jellyfin is there: no switch would start it again; *Zurück zu Jellyfin* (above) is the way (use_way_back) -->
+          <p class="muted" data-testid="media-way-back-only">{$t('mediaserver.external.wayBackOnly')}</p>
+        {:else if view.mode === 'managed'}
           <p>{$t('mediaserver.external.idWarning')}</p>
           <div class="acts">
             <Button variant="secondary" pending={switching} disabled={running} on:click={() => toExternal(false)}>{$t('mediaserver.external.switch')}</Button>
@@ -359,7 +374,7 @@
           </div>
         {:else}
           <p class="muted">{$t('mediaserver.external.current')}</p>
-          {#if actions.includes('remove')}<div class="acts"><Button variant="danger" disabled={running} on:click={() => openRemove(false)}>{$t('mediaserver.action.remove')}</Button></div>{/if}
+          {#if actions.includes('remove')}<div class="acts"><Button variant="danger" disabled={running} data-testid="media-remove-external" on:click={() => openRemove(false)}>{$t('mediaserver.action.remove')}</Button></div>{/if}
         {/if}
       </div>
     {:else}
@@ -439,9 +454,9 @@
     <form novalidate on:submit|preventDefault={remove}>
       <h2 id="ms-rm-t" class="dlg-title">{$t('mediaserver.remove.title')}</h2>
       <div class="dlg-main">
-        <p id="ms-rm-d" class="dlg-body">{view?.mode === 'managed' ? $t('mediaserver.remove.body') : $t('mediaserver.remove.leftover')}</p>
+        <p id="ms-rm-d" class="dlg-body">{view?.mode === 'managed' ? $t('mediaserver.remove.body') : removeCopy ? $t('mediaserver.remove.moveCopy') : $t('mediaserver.remove.leftover')}</p>
         <div class="rm-data">
-          <Toggle label={$t('mediaserver.remove.data')} hint={$t('mediaserver.remove.dataHint')} bind:checked={removeData} disabled={removing} />
+          <Toggle label={$t('mediaserver.remove.data')} hint={$t('mediaserver.remove.dataHint')} bind:checked={removeData} disabled={removing || removeCopy} />
           <!-- the typed confirmation's place is kept while the switch is off: the dialog never changes height -->
           <div class="typed" class:off={!removeData} aria-hidden={removeData ? undefined : 'true'}>
             <Field label={$t('mediaserver.remove.typed', { name: kindName(removeKind) })} bind:value={removeTyped} autocomplete="off" disabled={!removeData || removing} />

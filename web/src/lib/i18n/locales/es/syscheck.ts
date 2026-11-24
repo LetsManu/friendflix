@@ -249,7 +249,7 @@ const dict: Translation<typeof de> = {
     managed_backup_old: 'Crea una «Copia de seguridad» en Ajustes → Servidor multimedia y descárgala.',
     managed_requests_not_moved: 'En los ajustes del servicio de peticiones, indica el servidor Jellyfin que usa FriendFlix (tras el traslado: «mediaserver», puerto 8096).',
     managed_migrated: 'Nada que hacer. «Volver a Jellyfin» en Ajustes → Servidor multimedia vuelve en cualquier momento.',
-    managed_migrated_running: 'Nada que hacer. «Volver a Jellyfin» en Ajustes → Servidor multimedia vuelve; si no, se puede detener.',
+    managed_migrated_running: 'Nada que hacer: puede seguir en marcha sin usarse. Con «Volver a Jellyfin» en Ajustes → Servidor multimedia, FriendFlix vuelve a usarlo.',
     managed_migrated_gone: 'Nada que hacer. Solo se puede volver con la dirección de un servidor multimedia en Ajustes → Servidor multimedia.',
     managed_migrated_unknown: 'Nada que hacer. La próxima comprobación vuelve a leer el estado.',
     no_hw_accel: 'En el servidor multimedia, en Reproducción → Transcodificación, elige la unidad gráfica del servidor (p. ej. QSV, VAAPI, NVENC).',

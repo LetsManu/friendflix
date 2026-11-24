@@ -199,6 +199,7 @@ const dict: Translation<typeof de> = {
     title: 'Supprimer le serveur multimédia ?',
     body: 'Le conteneur est arrêté et supprimé. FriendFlix passe ensuite à « Jellyfin/Plex existant » : vous devrez y saisir à nouveau l’adresse de votre serveur. Les données restent, sauf si vous choisissez « Supprimer les données ».',
     leftover: 'Le conteneur restant est arrêté et supprimé.',
+    moveCopy: 'Les données d’un déménagement annulé (la copie de votre Jellyfin) sont supprimées. Votre Jellyfin reste tel quel.',
     data: 'Supprimer les données',
     dataHint: 'Supprime la base de données, les utilisateurs et les réglages du serveur. Les sauvegardes restent.',
     typed: 'Tapez « {name} » pour confirmer',
@@ -214,6 +215,7 @@ const dict: Translation<typeof de> = {
     backTitle: 'Revenir à {address} ?',
     backBody: 'Le serveur multimédia géré est arrêté, ses données restent. FriendFlix utilise à nouveau l’adresse et la clé enregistrées.',
     switched: 'FriendFlix utilise maintenant votre serveur existant.',
+    wayBackOnly: 'Après le déménagement, le retour passe par « Revenir à Jellyfin » ci-dessus : votre ancien Jellyfin redémarre alors.',
   },
   /** the move from an existing Jellyfin to the managed Ferrofin and the way back (stage 2: MoveSheet.svelte, the card's moved state) */
   move: {
@@ -302,6 +304,7 @@ const dict: Translation<typeof de> = {
     trickplay: 'Inclure les images d’aperçu (trickplay)',
     createConfirm: 'Créer la sauvegarde',
     tag: { manual: 'manuelle', auto: 'automatique', upload: 'importée' },
+    premove: 'antérieure au déménagement : non restaurable',
     row: '{date} · {version} · {size}',
     restore: 'Restaurer',
     restoreTitle: 'Restaurer la sauvegarde du {date} ?',
@@ -417,6 +420,7 @@ const dict: Translation<typeof de> = {
     move_aborted: 'Le déménagement a été annulé. Votre Jellyfin tourne à nouveau.',
     jellyfin_unreachable: 'Votre Jellyfin ne répond pas avec l’adresse et la clé enregistrées.',
     use_way_back: 'Après un déménagement, le retour passe par « Revenir à Jellyfin ».',
+    backup_premove: 'Cette sauvegarde date d’avant le déménagement : ses utilisateurs et titres ont d’autres ID. Seules les sauvegardes faites depuis le déménagement peuvent être restaurées.',
     scan_required: 'La vérification est trop ancienne ou concerne un autre conteneur. Vérifiez à nouveau.',
     not_moved: 'FriendFlix n’a pas déménagé.',
     not_offered: 'Un déménagement n’est pas possible pour l’instant.',

@@ -21,7 +21,8 @@ export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 
 /** `ffmedia`: a folder added after a move, mounted at `/ffmedia/<slug>` (else `/media/<slug>`) */
 export interface LibraryEntry { slug: string; name: string; type: LibraryType; rel: string; created: boolean; ffmedia?: true }
 export interface LibraryReferences { lists: number; resume: number; recordings: number }
-export interface MediaBackup { id: string; kind: Kind; upstream: string; at: string; tag: 'manual' | 'auto' | 'upload'; size: number }
+/** `createdAt`, uploads only: when the archive was made (`at` is when it was uploaded) */
+export interface MediaBackup { id: string; kind: Kind; upstream: string; at: string; tag: 'manual' | 'auto' | 'upload'; size: number; createdAt?: string }
 /** a folder of the media server; `migrated`: one a move took over (its target is the path the old Jellyfin used, `rel` '' the whole base) */
 export interface MediaFolder { rel: string; target: string; migrated?: true }
 /** the steps of the updater's move job (backend updater.ts MEDIA_STEPS: the media job's own plus the move's) */
@@ -42,8 +43,10 @@ export interface MediaStatus {
   hdr: { kind: Kind; at: string; opencl: 'pass' | 'fail'; qsv: 'pass' | 'fail' } | null;
   /** the updater's move (stage 2): its phase, the step of its job; absent from an older backend */
   move?: { phase: 'running' | 'ready' | 'aborted' | 'done'; step: MoveJobStep | null; source: { name: string; version: string | null }; folders: MediaFolder[]; abort: boolean } | null;
-  /** the Jellyfin a move came from as Docker shows it now (`missing`: its container is gone) */
+  /** the Jellyfin a move came from as Docker shows it now (`missing`: no container mounts its config any more) */
   source?: { name: string; state: string; version: string | null } | null;
+  /** the Ferrofin data volume holds the copy of a move that did not finish (*Entfernen* with the data removes it) */
+  moveCopy?: boolean;
 }
 
 // ------------------------------------------------------------------ the move from Jellyfin (stage 2)

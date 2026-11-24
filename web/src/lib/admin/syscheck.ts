@@ -72,7 +72,7 @@ const DOCS_BASE = 'https://github.com/LetsManu/friendflix/blob/main/docs/';
 /** i18n key of a line's label ('core.disk.downloads' → syscheck.line.core_disk_downloads) */
 export const lineKey = (id: string): string => `syscheck.line.${id.replace(/\./g, '_')}`;
 
-const CONTAINER_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const num = (v: unknown): number => (typeof v === 'number' ? v : typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : 0);
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 /** a flow kind as sent in params ('setup_totp') → its name on the sign-in card */
@@ -92,7 +92,7 @@ function textParams(l: CheckLine): TParams {
     // the mail line's last failure: the code's sentence with its SMTP status (an unknown code reads as the generic one); the managed
     // media server's last failed job: its code's sentence (mediaserver/model.ts; an unknown code still names itself, never server text)
     reason: l.id === 'core.mail' ? mailCodeText(str(p.code), num(p.smtp) || null) : l.id === 'media.managed' ? mediaErrorText(str(p.code)) : '',
-    // the container a move came from (backend syscheck/line.ts: a name without dot, colon or slash); without one, the product's name
+    // the container a move came from (backend syscheck/line.ts: Docker's name characters, no colon, slash or space); without one, the product's name
     source: CONTAINER_NAME.test(str(p.source)) ? str(p.source) : 'Jellyfin',
   };
 }

@@ -8,7 +8,7 @@
  * Svelte components only render what these say.
  */
 import { hasKey, tr, trDynamic } from '#lib/i18n';
-import type { FolderInput, Kind, LibraryEntry, MediaFolder, MediaManaged, MediaView, MoveCandidate, MoveJobStep, MovePhase, MoveScan, MoveScanRecord, MoveState, OfferReason, SetupStep } from './api';
+import type { FolderInput, Kind, LibraryEntry, MediaBackup, MediaFolder, MediaManaged, MediaView, MoveCandidate, MoveJobStep, MovePhase, MoveScan, MoveScanRecord, MoveState, OfferReason, SetupStep } from './api';
 
 export type Choice = Kind | 'external';
 export const CHOICES: readonly Choice[] = ['ferrofin', 'jellyfin', 'external'];
@@ -185,13 +185,35 @@ export function pinState(v: MediaView): 'same' | 'update' | 'newer' | 'unknown' 
   return 'same';
 }
 
+/**
+ * a moved server whose old Jellyfin is still there (or not known to be gone): it leaves only through *Zurück zu Jellyfin*, which starts
+ * that Jellyfin and repairs its users; *Entfernen* and the stage 1 switch are not offered (the backend refuses both: use_way_back)
+ */
+export const wayBackOnly = (v: MediaView): boolean => Boolean(v.move?.migratedFrom) && v.move?.sourceState !== 'missing';
+/**
+ * a backup a moved server cannot restore: taken before the move (another database, other ids; an upload by when its archive was
+ * made, and one that does not say is not known to be later). The backend refuses it as backup_premove.
+ */
+export function backupPremove(v: MediaView, b: MediaBackup): boolean {
+  const from = v.move?.migratedFrom ?? null;
+  if (!from) return false;
+  const taken = b.tag === 'upload' ? b.createdAt : b.at;
+  return taken === undefined || !(Date.parse(taken) >= Date.parse(from.at));
+}
+/** *Wiederherstellen* fits this backup: the server's own kind, and not from before its move */
+export const restorable = (v: MediaView, b: MediaBackup): boolean => b.kind === v.managed.kind && !backupPremove(v, b);
+/** the data volume holds an aborted move's copy and nothing else uses it: *Entfernen* with the data removes it (external, no container) */
+export const moveCopyRemovable = (v: MediaView): boolean =>
+  v.mode === 'external' && !v.status?.container && v.status?.moveCopy === true && !v.move?.migratedFrom && !moveActive(v);
+
 export type ActionOp = 'start' | 'stop' | 'restart' | 'update' | 'backup' | 'restore' | 'remove';
 export const ACTION_ORDER: readonly ActionOp[] = ['start', 'stop', 'restart', 'update', 'backup', 'restore', 'remove'];
 /**
  * The actions that fit (in a fixed order, so the row never reorders): none without an updater that reaches its engine; a running
  * managed server stops and restarts, any other starts (a leftover container while external is only removed); *Aktualisieren* only when the image or template is behind and the managed setup is done
  * (the first run's own apply reads update_pending until finish-setup ran); backups of a managed server, a restore when one of its kind
- * exists; *Entfernen* for a managed server or a leftover container. *Nochmal* lives with the setup progress, *HDR-Test* with the GPU.
+ * exists (on a moved server one from its move on); *Entfernen* for a managed server, a leftover container or an aborted move's copy,
+ * never for a moved server whose old Jellyfin is there (wayBackOnly). *Nochmal* lives with the setup progress, *HDR-Test* with the GPU.
  */
 export function actionsFor(v: MediaView): ActionOp[] {
   const s = v.status;
@@ -205,8 +227,8 @@ export function actionsFor(v: MediaView): ActionOp[] {
     if (v.managed.setup === 'done' && pinState(v) === 'update') out.add('update');
     out.add('backup');
   }
-  if (managed && s.backups.some((b) => b.kind === v.managed.kind)) out.add('restore');
-  if (managed || c) out.add('remove');
+  if (managed && s.backups.some((b) => restorable(v, b))) out.add('restore');
+  if ((managed || c || moveCopyRemovable(v)) && !wayBackOnly(v)) out.add('remove');
   return ACTION_ORDER.filter((a) => out.has(a));
 }
 
