@@ -267,6 +267,10 @@ const tr: Translation<typeof de> = {
         start: 'Başlat',
         health: 'Sağlık kontrolü',
         rollback: 'Geri al',
+        copy_bulk: 'Verileri kopyala',
+        stop_source: 'Jellyfin’i durdur',
+        copy: 'Veritabanını kopyala',
+        adopt: 'Verileri devral',
       },
       mediaAction: {
         apply: 'Kur',
@@ -280,6 +284,8 @@ const tr: Translation<typeof de> = {
         restore: 'Geri yükle',
         remove: 'Kaldır',
         recover: 'Otomatik olarak yeniden oluşturuldu',
+        migrate: 'Jellyfin’den taşıma',
+        source: 'Eski Jellyfin’i başlat',
       },
       state: {
         pending: 'bekliyor',

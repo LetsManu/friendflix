@@ -10,10 +10,11 @@ import fr from '#lib/i18n/locales/fr/index';
 import it_ from '#lib/i18n/locales/it/index';
 import pl from '#lib/i18n/locales/pl/index';
 import tr_ from '#lib/i18n/locales/tr/index';
-import type { MediaManaged, MediaStatus, MediaView } from './api';
+import type { MediaManaged, MediaStatus, MediaView, MoveCandidate, MoveScan, MoveState, MoveView } from './api';
 import {
-  ACTION_ORDER, DEFAULT_MANAGED, TRIAL_KINDS, actionsFor, choiceDisabled, codeLogHint, countdown, currentChoice, folderRowsError, idError, initialRows,
-  defaultName, keptLibraries, kindName, livetvOffer, mediaErrorText, saveErrorText, nameTakenRow, passphraseError, pinState, reasonText, setupSteps, statusStarting, versionCmp,
+  ACTION_ORDER, DEFAULT_MANAGED, MOVE_STEPS, TRIAL_KINDS, actionsFor, autoCandidate, backActive, choiceDisabled, codeLogHint, countdown, currentChoice, folderRowsError, idError,
+  initialRows, defaultName, keptLibraries, kindName, livetvOffer, mediaErrorText, moveAbortable, moveActive, moveFollow, moveResult, moveSteps, moveSummary, saveErrorText,
+  nameTakenRow, passphraseError, pinState, reasonText, scanFresh, setupSteps, sourceLine, statusStarting, versionCmp,
 } from './model';
 
 afterEach(async () => { await setLocale('de'); });
@@ -270,12 +271,17 @@ describe('error texts', () => {
   // backend updater.ts startedJob (a job that did not start) and the updater's own refusals the backend passes on
   const updaterTs = backend('updater.ts');
   const JOB_CODES = [...updaterTs.match(/export function startedJob[\s\S]*?\n}/)![0].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
+  // the move's way back (backend mediaserver/move.ts BackError) and its scan's refusal
+  const MOVE_CODES = quoted(backend('mediaserver/move.ts').match(/export type BackError = ([^;]+);/)![1]!);
   const UPDATER_CODES = ['busy', 'no_container', 'container_exists', 'path_invalid', 'path_refused', 'rate_limited', 'not_available', 'invalid_body', 'too_large', 'not_found', 'timeout'];
 
   it('the backend lists are read (the mirror cannot go stale silently)', () => {
     expect(MEDIA_ERRORS.length).toBeGreaterThan(30);
     expect(MEDIA_ERRORS).toContain('verify_failed');
     expect(SETUP_CODES).toEqual(expect.arrayContaining(['wizard_taken', 'library_name_taken', 'unreachable']));
+    expect(MEDIA_ERRORS).toEqual(expect.arrayContaining(['source_missing', 'source_mismatch', 'source_layout', 'source_outside_base', 'source_version', 'no_space', 'adopt_failed', 'ids_mismatch', 'move_aborted', 'source_nested']));
+    expect(MOVE_CODES).toEqual(expect.arrayContaining(['jellyfin_unreachable', 'not_moved', 'no_external', 'busy', 'updater_error']));
+    expect(ROUTE_CODES).toEqual(expect.arrayContaining(['use_way_back', 'scan_required', 'not_abortable', 'jellyfin_unreachable', 'busy']));
     expect(ROUTE_CODES).toEqual(expect.arrayContaining([
       'ids_in_use', 'library_referenced', 'library_name_taken', 'invalid_body', 'reauth_required', 'unreachable', 'invalid_passphrase', 'length_required',
       'unsupported_media_type', 'updater_error', 'not_managed', 'no_external', 'wrong', 'expired', 'locked', 'no_pending',
@@ -283,7 +289,7 @@ describe('error texts', () => {
   });
 
   it('every code the card can receive has a readable text in all 7 locales; an unknown one still shows its code', async () => {
-    const all = [...new Set([...MEDIA_ERRORS, ...SETUP_CODES, ...ROUTE_CODES, ...JOB_CODES, ...UPDATER_CODES, 'not_supported', 'busy', 'no_target', 'backup_invalid', 'network'])];
+    const all = [...new Set([...MEDIA_ERRORS, ...SETUP_CODES, ...ROUTE_CODES, ...JOB_CODES, ...UPDATER_CODES, ...MOVE_CODES, 'not_supported', 'busy', 'no_target', 'backup_invalid', 'network'])];
     for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
       await setLocale(l);
       const generic = mediaErrorText('zz_not_a_code');
@@ -299,6 +305,143 @@ describe('error texts', () => {
     expect(mediaErrorText('<b>x</b>')).not.toContain('<b>');
     expect(mediaErrorText(null)).not.toContain('null');
     expect(mediaErrorText('verify_failed')).not.toContain('verify_failed');
+  });
+});
+
+describe('the move from Jellyfin', () => {
+  const ID = 'a'.repeat(64);
+  const scan = (o: Partial<MoveScan> = {}): MoveScan => ({
+    source: { id: ID, name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.0', version: '10.11.0' },
+    folders: [{ rel: 'Filme', target: '/movies', migrated: true }, { rel: 'Serien', target: '/tv', migrated: true }], layout: 'official',
+    bytes: 38e9, trickplayBytes: 12e9, plugins: ['Open Subtitles', 'Fanart'], nfo: true, ...o,
+  });
+  const state = (o: Partial<MoveState> = {}): MoveState => ({ phase: 'copying', error: null, jobId: 'j', startedAt: '2026-11-24T10:00:00.000Z', step: null, abort: false, ...o });
+  const move = (o: Partial<MoveView> = {}): MoveView => ({ offered: false, reason: null, scan: null, state: null, migratedFrom: null, sourceState: null, requestsWarning: false, ...o });
+  const moving = (st: Partial<MoveState>, o: Partial<MediaView> = {}) => view({ move: move({ state: state(st) }), ...o });
+  const rows = (v: MediaView) => moveSteps(v).map((r) => `${r.step}:${r.state}`).join(' ');
+
+  it('moveSummary: the folders as Ferrofin sees them, the copy with or without trickplay, the plugins left behind', () => {
+    expect(moveSummary(scan(), false)).toEqual({ folders: ['/movies', '/tv'], bytes: 38e9, downtimeMin: 13, plugins: ['Open Subtitles', 'Fanart'] });
+    expect(moveSummary(scan(), true)).toMatchObject({ bytes: 50e9, downtimeMin: 17 });
+    // the whole base as one folder
+    expect(moveSummary(scan({ folders: [{ rel: '', target: '/media', migrated: true }], plugins: [] }), false)).toMatchObject({ folders: ['/media'], plugins: [] });
+  });
+
+  it('moveSummary: the downtime is at least one minute (50 MB/s), whole minutes up', () => {
+    expect(moveSummary(scan({ bytes: 0, trickplayBytes: 0 }), true).downtimeMin).toBe(1);
+    expect(moveSummary(scan({ bytes: 1e6 }), false).downtimeMin).toBe(1);
+    expect(moveSummary(scan({ bytes: 3e9 }), false).downtimeMin).toBe(1);
+    expect(moveSummary(scan({ bytes: 3e9 + 1 }), false).downtimeMin).toBe(2);
+  });
+
+  it('moveSteps: the updater\'s steps, then the backend\'s phases, in a fixed order', () => {
+    expect([...MOVE_STEPS]).toEqual(['copy_bulk', 'stop_source', 'copy', 'create', 'start', 'health', 'adopt', 'nfo', 'verify', 'switch', 'requests']);
+    expect(moveSteps(view()).every((r) => r.state === 'todo')).toBe(true);
+    expect(moveSteps(view()).map((r) => r.step)).toEqual([...MOVE_STEPS]);
+    // the check, pull and image verify before the copy: the copy is the step under way
+    for (const step of ['check', 'pull', 'verify', 'snapshot'] as const) expect(rows(moving({ step })), step).toMatch(/^copy_bulk:running stop_source:todo/);
+    expect(rows(moving({ step: 'stop_source' }))).toMatch(/^copy_bulk:done stop_source:running copy:todo/);
+    expect(rows(moving({ step: 'adopt' }))).toMatch(/health:done adopt:running nfo:todo/);
+    // a rollback belongs to the deploy (create, start, health)
+    expect(rows(moving({ step: 'rollback' }))).toMatch(/start:done health:running adopt:todo/);
+    // copied, the backend has not taken it yet: its first phase is next
+    expect(rows(moving({ step: null }, { status: status({ move: { phase: 'ready', step: null, source: { name: 'jellyfin', version: '10.11.0' }, folders: [], abort: false } }) }))).toMatch(/adopt:done nfo:running verify:todo/);
+    expect(rows(moving({ step: null }))).toMatch(/^copy_bulk:running/);
+    expect(rows(moving({ phase: 'nfo' }))).toMatch(/adopt:done nfo:running verify:todo/);
+    expect(rows(moving({ phase: 'verify' }))).toMatch(/nfo:done verify:running switch:todo/);
+    expect(rows(moving({ phase: 'switch' }))).toMatch(/verify:done switch:running requests:todo$/);
+    expect(rows(moving({ phase: 'requests' }))).toMatch(/switch:done requests:running$/);
+    expect(moveSteps(moving({ phase: 'done' })).every((r) => r.state === 'done')).toBe(true);
+  });
+
+  it('moveSteps: a failure marks the step it stopped at; one without a step marks none', () => {
+    expect(rows(moving({ phase: 'failed', error: 'no_space', step: 'check' }))).toMatch(/^copy_bulk:failed stop_source:todo/);
+    expect(rows(moving({ phase: 'failed', error: 'adopt_failed', step: 'adopt' }))).toMatch(/health:done adopt:failed nfo:todo/);
+    expect(rows(moving({ phase: 'failed', error: 'ids_mismatch', errorMeta: { users: { total: 4, missing: 1 }, items: { sampled: 200, missing: 9 } } }))).toMatch(/nfo:done verify:failed switch:todo/);
+    expect(moveSteps(moving({ phase: 'failed', error: 'move_aborted' })).every((r) => r.state === 'todo')).toBe(true);
+  });
+
+  it('moveActive, moveAbortable, backActive, moveFollow: what the card follows and offers', () => {
+    expect(moveActive(view())).toBe(false);
+    for (const phase of ['copying', 'nfo', 'verify', 'switch', 'requests'] as const) expect(moveActive(moving({ phase })), phase).toBe(true);
+    for (const phase of ['done', 'failed'] as const) expect(moveActive(moving({ phase })), phase).toBe(false);
+    for (const phase of ['copying', 'nfo', 'verify'] as const) expect(moveAbortable(moving({ phase })), phase).toBe(true);
+    for (const phase of ['switch', 'requests', 'done', 'failed'] as const) expect(moveAbortable(moving({ phase })), phase).toBe(false);
+    // an abort asked for already
+    expect(moveAbortable(moving({ phase: 'copying', abort: true }))).toBe(false);
+    for (const back of ['starting', 'switched', 'stopped'] as const) expect(backActive(moving({ phase: 'done', back })), back).toBe(true);
+    for (const back of ['done', 'failed'] as const) expect(backActive(moving({ phase: 'done', back })), back).toBe(false);
+    expect(moveFollow(view())).toBe(false);
+    expect(moveFollow(moving({ phase: 'nfo' }))).toBe(true);
+    expect(moveFollow(moving({ phase: 'done', back: 'switched' }))).toBe(true);
+    expect(moveFollow(view({ move: move({ scan: { source: ID, state: 'running', at: '2026-11-24T10:00:00.000Z' } }) }))).toBe(true);
+    expect(moveFollow(view({ move: move({ scan: { source: ID, state: 'done', result: scan(), at: '2026-11-24T10:00:00.000Z' } }) }))).toBe(false);
+    // an older backend without the move
+    expect(moveFollow({ ...view(), move: undefined })).toBe(false);
+    expect(moveSteps({ ...view(), move: undefined }).every((r) => r.state === 'todo')).toBe(true);
+  });
+
+  it('autoCandidate: the one candidate that can be the source; scanFresh: a done scan of it, at most 9 minutes old', () => {
+    const c = (o: Partial<MoveCandidate>): MoveCandidate => ({ id: ID, name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.0', state: 'running', matches: true, ...o });
+    expect(autoCandidate([c({})])?.id).toBe(ID);
+    expect(autoCandidate([c({ matches: null })])?.id).toBe(ID);
+    expect(autoCandidate([c({ matches: false })])).toBeNull();
+    expect(autoCandidate([])).toBeNull();
+    expect(autoCandidate([c({}), c({ id: 'b'.repeat(64), name: 'jellyfin-alt', matches: null })])).toBeNull();
+    // the others are not the server FriendFlix uses
+    expect(autoCandidate([c({}), c({ id: 'b'.repeat(64), matches: false })])?.id).toBe(ID);
+    const at = '2026-11-24T10:00:00.000Z', t0 = Date.parse(at);
+    const rec = { source: ID, state: 'done' as const, result: scan(), at };
+    expect(scanFresh(rec, ID, t0 + 60_000)).toBe(true);
+    expect(scanFresh(rec, ID, t0 + 9 * 60_000 + 1)).toBe(false);
+    expect(scanFresh(rec, 'b'.repeat(64), t0)).toBe(false);
+    expect(scanFresh({ ...rec, state: 'running', result: undefined }, ID, t0)).toBe(false);
+    expect(scanFresh(null, ID, t0)).toBe(false);
+  });
+
+  it('moveResult: done, done with the updater\'s warning, failed with its reason and the id check\'s numbers', () => {
+    expect(moveResult(null)).toBeNull();
+    expect(moveResult(state({ phase: 'nfo' }))).toBeNull();
+    expect(moveResult(state({ phase: 'done' }))).toEqual({ ok: true, text: tr('mediaserver.move.done') });
+    expect(moveResult(state({ phase: 'done', errorMeta: { warning: 'updater_aborted' } }))?.text).toContain(tr('mediaserver.move.updaterAborted'));
+    const failed = moveResult(state({ phase: 'failed', error: 'no_space' }))!;
+    expect(failed.ok).toBe(false);
+    expect(failed.text).toContain(mediaErrorText('no_space'));
+    const ids = moveResult(state({ phase: 'failed', error: 'ids_mismatch', errorMeta: { users: { total: 4, missing: 1 }, items: { sampled: 200, missing: 9 } } }))!.text;
+    expect(ids).toContain(mediaErrorText('ids_mismatch'));
+    expect(ids).toMatch(/4\b[\s\S]*1\b[\s\S]*200[\s\S]*9\b/);
+  });
+
+  it('sourceLine: the old Jellyfin stopped, running or gone', () => {
+    expect(sourceLine(view())).toBeNull();
+    expect(sourceLine(view({ move: move({ sourceState: 'exited' }) }))).toBe('stopped');
+    expect(sourceLine(view({ move: move({ sourceState: 'created' }) }))).toBe('stopped');
+    expect(sourceLine(view({ move: move({ sourceState: 'running' }) }))).toBe('running');
+    expect(sourceLine(view({ move: move({ sourceState: 'restarting' }) }))).toBe('running');
+    expect(sourceLine(view({ move: move({ sourceState: 'missing' }) }))).toBe('missing');
+    expect(sourceLine(view({ move: move({ sourceState: 'dead' }) }))).toBeNull();
+  });
+
+  it('the move texts in all 7 locales: no placeholder left, the spec\'s German lines verbatim', async () => {
+    const de_ = JSON.stringify((de as Record<string, unknown>).mediaserver);
+    for (const w of ['Von Jellyfin umziehen', 'Erneut umziehen', 'Zurück zu Jellyfin', 'Umziehen', 'gleich in Ferrofin', '(ohne Trickplay)', 'Trickplay mitnehmen',
+      'Laufende Wiedergaben brechen ab.', 'wird auf Ferrofin umgestellt.', 'wird danach gestoppt, bleibt für den Rückweg erhalten.', 'jederzeit mit einem Klick. Was auf Ferrofin geschaut wird, bleibt dort.',
+      'Was seit dem Umzug auf Ferrofin geschaut wurde, ist in Jellyfin nicht drin.', 'Altes Jellyfin ist gestoppt und bleibt für den Rückweg erhalten', 'Basisordner ändern', 'Anfrage-Dienst', 'Altes Jellyfin']) {
+      expect(de_, w).toContain(w);
+    }
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
+      await setLocale(l);
+      const texts = [
+        tr('mediaserver.move.titleFrom', { name: 'jellyfin' }), tr('mediaserver.move.folders', { list: '/movies, /tv' }), tr('mediaserver.move.copy', { size: '38 GB' }),
+        tr('mediaserver.move.trickplay', { size: '12 GB' }), tr('mediaserver.move.downtime', { n: 4 }), tr('mediaserver.move.downtime', { n: 1 }),
+        tr('mediaserver.move.moved', { name: 'jellyfin', date: '24.11.2026' }), tr('mediaserver.move.idsMismatch', { users: 4, usersMissing: 1, items: 200, itemsMissing: 9 }),
+        tr('mediaserver.move.failed', { reason: 'x' }), tr('mediaserver.move.backFailed', { reason: 'x' }), tr('mediaserver.move.scanning', { name: 'jellyfin' }),
+        tr('mediaserver.move.plugins', { list: '„Fanart“' }), ...MOVE_STEPS.map((s) => tr(`mediaserver.move.step.${s}`)),
+      ];
+      for (const t of texts) expect(t, `${l}: ${t}`).not.toMatch(/\{\w+\}|\.\.\.|^mediaserver\./);
+      expect(tr('mediaserver.move.requestsWarning'), l).toContain('mediaserver');
+      expect(tr('mediaserver.move.requestsWarning'), l).toContain('8096');
+    }
   });
 });
 

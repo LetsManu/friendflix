@@ -3,7 +3,7 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
-import { linkMediaJob, mediaStatus } from '../mocks/admin.js';
+import { linkMediaJob, mediaStatus, movableMedia, movedMedia } from '../mocks/admin.js';
 import { updaterState } from '../mocks/updater.js';
 
 // Admin → Einstellungen → Medienserver on a phone (Task 17): the set-up flow fits 390 px, the choices and the actions are 44 px
@@ -72,5 +72,44 @@ test.describe('admin: Medienserver card (phone)', () => {
     await fits(c.getByTestId('media-backups').getByRole('button', { name: 'Sicherung' }), 'Sicherung');
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
     expect(ms.calls.find((x) => x.p.endsWith('/apply'))?.body).toMatchObject({ kind: 'jellyfin', folders: [{ rel: 'Serien', type: 'tvshows' }, { rel: 'Filme', type: 'movies' }] });
+  });
+
+  test('the move sheet fits the phone: summary, steps and the way back, nothing sideways, 44 px targets', async ({ page, api }) => {
+    test.setTimeout(60_000);
+    const ms = api.admin.media;
+    movableMedia(ms);
+    await page.goto('/admin/settings?tab=media');
+    const c = card(page);
+    await fits(c.getByRole('button', { name: 'Von Jellyfin umziehen' }), 'Von Jellyfin umziehen');
+    await c.getByRole('button', { name: 'Von Jellyfin umziehen' }).click();
+    const dlg = page.getByRole('dialog', { name: /zu Ferrofin/ });
+    const sum = dlg.getByTestId('move-summary');
+    await expect(sum).toBeVisible({ timeout: 15_000 });
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+    await fits(sum.getByRole('switch'), 'Trickplay');
+    const acts = dlg.getByTestId('move-actions');
+    for (const name of ['Abbrechen', 'Umziehen']) await fits(acts.getByRole('button', { name }), name);
+    const at = await box(acts);
+    await acts.getByRole('button', { name: 'Umziehen' }).click();
+    await fits(acts.getByRole('button', { name: 'Umzug abbrechen' }), 'Umzug abbrechen');
+    expect(await box(acts)).toEqual(at);
+    await expect(dlg.getByTestId('move-steps')).toHaveAttribute('data-phase', 'done', { timeout: 40_000 });
+    expect(await box(acts)).toEqual(at);
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+    await acts.getByRole('button', { name: 'Schließen' }).click();
+    await expect(c.getByTestId('media-moved')).toContainText('Umgezogen von „jellyfin“');
+    await fits(c.getByTestId('media-moved').getByRole('button', { name: 'Zurück zu Jellyfin' }), 'Zurück zu Jellyfin');
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+  });
+
+  test('the moved state with the request service warning fits the phone', async ({ page, api }) => {
+    const ms = api.admin.media;
+    movedMedia(ms);
+    ms.move.requestsWarning = true;
+    await page.goto('/admin/settings?tab=media');
+    const c = card(page);
+    await expect(c.getByTestId('media-requests-warning')).toContainText('8096');
+    await fits(c.getByTestId('media-moved').getByRole('button', { name: 'Zurück zu Jellyfin' }), 'Zurück zu Jellyfin');
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 });

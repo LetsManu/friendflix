@@ -12,10 +12,13 @@ export type StepName = 'pull' | 'verify' | 'restart' | 'health' | 'rollback';
 export type StepState = 'pending' | 'running' | 'ok' | 'failed' | 'skipped';
 export type UpdaterAction = 'update' | 'rollback' | 'self-update';
 /** the managed media server's jobs (backend updater.ts MEDIA_JOB_ACTIONS) */
-export const MEDIA_JOB_ACTIONS = ['mediaserver-apply', 'mediaserver-finish', 'mediaserver-start', 'mediaserver-stop', 'mediaserver-restart', 'mediaserver-update', 'mediaserver-hdr-test', 'mediaserver-backup', 'mediaserver-restore', 'mediaserver-remove', 'mediaserver-recover'] as const;
+export const MEDIA_JOB_ACTIONS = ['mediaserver-apply', 'mediaserver-finish', 'mediaserver-start', 'mediaserver-stop', 'mediaserver-restart', 'mediaserver-update', 'mediaserver-hdr-test', 'mediaserver-backup', 'mediaserver-restore', 'mediaserver-remove', 'mediaserver-recover', 'mediaserver-migrate', 'mediaserver-source'] as const;
 export type MediaJobAction = (typeof MEDIA_JOB_ACTIONS)[number];
-/** the steps of a media job, also the media server phase of an update (backend updater.ts MEDIA_STEPS) */
-export const MEDIA_STEPS = ['check', 'pull', 'verify', 'snapshot', 'create', 'start', 'health', 'rollback'] as const;
+/** the steps of a media job, also the media server phase of an update (backend updater.ts MEDIA_STEPS); the last four only the move runs */
+export const MEDIA_STEPS = ['check', 'pull', 'verify', 'snapshot', 'create', 'start', 'health', 'rollback', 'copy_bulk', 'stop_source', 'copy', 'adopt'] as const;
+/** the steps only the move from Jellyfin runs, and the order its job runs them in (updater/src/mediaserver/move.ts migrateJob) */
+const MOVE_ONLY: readonly MediaStepName[] = ['copy_bulk', 'stop_source', 'copy', 'adopt'];
+const MOVE_ORDER: readonly MediaStepName[] = ['check', 'pull', 'verify', 'snapshot', 'copy_bulk', 'stop_source', 'copy', 'create', 'start', 'health', 'adopt', 'rollback'];
 export type MediaStepName = (typeof MEDIA_STEPS)[number];
 /** the updater's last job can be one of Live TV's or the media server's too (backend updater.ts UpdaterJobAction) */
 export type UpdaterJobAction = UpdaterAction | 'livetv-enable' | 'livetv-disable' | 'livetv-remove' | MediaJobAction;
@@ -150,9 +153,10 @@ export function visibleSteps(j: UpdaterJob): StepName[] {
 export const MEDIA_TAB = '/admin/settings?tab=media';
 export const isMediaJob = (action: string): action is MediaJobAction => (MEDIA_JOB_ACTIONS as readonly string[]).includes(action);
 
-/** a media job's steps (check … health), plus the rollback once it started */
-export function visibleMediaSteps(m: NonNullable<UpdaterJob['media']>): MediaStepName[] {
-  return MEDIA_STEPS.filter((s) => s !== 'rollback' || (m.steps.rollback !== 'skipped' && m.steps.rollback !== 'pending'));
+/** a media job's steps (check … health; the move's copy steps only for the move, in its order), plus the rollback once it started */
+export function visibleMediaSteps(m: NonNullable<UpdaterJob['media']>, action?: string): MediaStepName[] {
+  const list = action === 'mediaserver-migrate' ? MOVE_ORDER : MEDIA_STEPS.filter((s) => !MOVE_ONLY.includes(s));
+  return list.filter((s) => s !== 'rollback' || (m.steps.rollback !== 'skipped' && m.steps.rollback !== 'pending'));
 }
 
 /**

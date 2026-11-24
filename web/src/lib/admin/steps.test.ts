@@ -108,7 +108,10 @@ describe('media server steps', () => {
   const SKIP = { pull: 'skipped', verify: 'skipped', restart: 'skipped', health: 'skipped', rollback: 'skipped' } as const;
   type Media = NonNullable<UpdaterJob['media']>;
   const media = (over: Partial<Media['steps']> = {}, step: Media['step'] = null): Media => ({
-    step, steps: { check: 'pending', pull: 'pending', verify: 'pending', snapshot: 'pending', create: 'pending', start: 'pending', health: 'pending', rollback: 'pending', ...over },
+    step, steps: {
+      check: 'pending', pull: 'pending', verify: 'pending', snapshot: 'pending', create: 'pending', start: 'pending', health: 'pending', rollback: 'pending',
+      copy_bulk: 'pending', stop_source: 'pending', copy: 'pending', adopt: 'pending', ...over,
+    },
   });
 
   it('a mediaserver-apply job lists its media steps (check … health) with their states, none of the update\'s', () => {

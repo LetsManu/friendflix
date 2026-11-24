@@ -14,13 +14,18 @@
    * as on its first load, with the neutral line in its kept place, and shows no form and no actions.
    * New things only ever appear below what was clicked; every line that comes and goes (codes, countdowns, errors, results) has
    * its room from the start.
+   * The move from Jellyfin (stage 2): *Von Jellyfin umziehen* (MediaChoice) opens MoveSheet; the card polls while its scan, the move
+   * or a way back runs (model.ts moveFollow) and shows a running move with *Fortschritt ansehen*. A moved server shows "Umgezogen von
+   * „<name>“ am …", how the old Jellyfin is (stopped and kept, running, gone) and *Zurück zu Jellyfin* (its warning first; re-auth; it
+   * runs in the background and the card follows it); a gone old Jellyfin turns it into the stage 1 switch (an address). The request
+   * service warning names the manual step while it does not point at the server FriendFlix uses.
    */
   import { onDestroy, onMount } from 'svelte';
   import { apiCode } from '#lib/api';
   import { isReauthError, reauthenticate } from '#lib/account/reauth';
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
   import Icon from '#lib/Icon.svelte';
-  import { t, tr } from '#lib/i18n';
+  import { fmtDate, t, tr } from '#lib/i18n';
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
   import ModalShell from '#lib/ui/ModalShell.svelte';
@@ -32,8 +37,8 @@
   import { MEDIA_TAB, type UpdaterJob } from '../updater';
   import { adminMediaApi, type FolderInput, type Gpu, type Kind, type MediaApi, type MediaView } from './api';
   import {
-    actionsFor, choiceDisabled, currentChoice, folderRowsError, idError, initialRows, keptLibraries, kindName, livetvOffer, mediaErrorText, nameTakenRow, setupActive,
-    statusStarting, type ActionOp, type Choice,
+    actionsFor, backActive, choiceDisabled, currentChoice, folderRowsError, idError, initialRows, keptLibraries, kindName, livetvOffer, mediaErrorText, moveActive, moveFollow,
+    nameTakenRow, setupActive, sourceLine, statusStarting, type ActionOp, type Choice,
   } from './model';
   import BackupDialogs from './BackupDialogs.svelte';
   import BaseFolder from './BaseFolder.svelte';
@@ -42,6 +47,7 @@
   import LogDialog from './LogDialog.svelte';
   import MediaChoice from './MediaChoice.svelte';
   import MediaStatus from './MediaStatus.svelte';
+  import MoveSheet from './MoveSheet.svelte';
   import SetupProgress from './SetupProgress.svelte';
 
   export let api: MediaApi = adminMediaApi;
@@ -79,7 +85,7 @@
     }
   }
   $: starting = Boolean(view && statusStarting(view));
-  $: following = Boolean(job?.state === 'running' || starting || (view && view.mode === 'managed' && setupActive(view.managed)));
+  $: following = Boolean(job?.state === 'running' || starting || (view && view.mode === 'managed' && setupActive(view.managed)) || (view && api.scope === 'admin' && moveFollow(view)));
   let timer: ReturnType<typeof setTimeout> | undefined, gone = false;
   function schedule() {
     clearTimeout(timer);
@@ -93,6 +99,7 @@
     if (j) job = j;
     void load().then(schedule);
   }
+  const refresh = () => void load().then(schedule);
 
   // ------------------------------------------------------------------ the form of a managed kind
   let rows: FolderInput[] = [], uid = '1000', gid = '1000', groupInput = '', mediaGid: number | null = null, gpu: Gpu = 'off', egress = true, preselectGpu = true;
@@ -232,6 +239,39 @@
     } finally { switching = false; }
   }
 
+  // ------------------------------------------------------------------ the move from Jellyfin and the way back (stage 2)
+  let moveOpen = false, moveWatch = false, moveTrigger: HTMLElement | null = null;
+  function openMove(watch: boolean) {
+    moveTrigger = (document.activeElement as HTMLElement | null) ?? null;
+    moveWatch = watch; moveOpen = true;
+  }
+  $: mv = api.scope === 'admin' ? view?.move ?? null : null;
+  $: moved = Boolean(view && mv?.migratedFrom && view.mode === 'managed');
+  $: source = view ? sourceLine(view) : null;
+  /** the way back asked for here: its end is told once (a toast when done, the reason when it failed) */
+  let goingBack = false, backError = '';
+  $: if (goingBack && mv?.state?.back === 'done') { goingBack = false; toast.success(tr('mediaserver.move.backDone')); }
+  $: if (goingBack && mv?.state?.back === 'failed') goingBack = false;
+  $: backLine = backError
+    || (mv?.state?.back === 'failed' ? tr('mediaserver.move.backFailed', { reason: mediaErrorText(mv.state.backError) }) : '')
+    || (view && backActive(view) ? tr('mediaserver.move.backRunning') : '');
+  $: backBad = Boolean(backError || mv?.state?.back === 'failed');
+  async function wayBack() {
+    if (!view) return;
+    // the old container is gone: the stage 1 switch (FriendFlix stops Ferrofin, the address is entered below)
+    if (source === 'missing') { await toExternal(false); return; }
+    const ok = await confirm({ title: tr('mediaserver.move.wayBackTitle'), body: tr('mediaserver.move.wayBackBody'), danger: true, confirmLabel: tr('mediaserver.move.wayBack') });
+    if (!ok) return;
+    backError = ''; goingBack = true;
+    try {
+      await call(() => api.back());
+      refresh();
+    } catch (e) {
+      goingBack = false;
+      backError = tr('mediaserver.move.backFailed', { reason: mediaErrorText(apiCode(e)) });
+    }
+  }
+
   async function saveLivetv(target: string) {
     try {
       await call(() => saveSettings({ LIVETV_RECORD_LIBRARY_JF_PATH: target }));
@@ -258,7 +298,33 @@
     <div class="sk" aria-hidden="true"><Skeleton h="3rem" /><Skeleton h="2.4rem" /></div>
     <p class="wait" role="status" data-testid="media-starting">{#if starting}{$t('mediaserver.reason.starting')}{:else}<span class="sr-only">{$t('ui.table.loading')}</span>{/if}</p>
   {:else}
-    <MediaChoice {view} {choice} on:pick={(e) => pick(e.detail)} />
+    <MediaChoice {view} {choice} canMove={api.scope === 'admin'} moveDisabled={running} on:pick={(e) => pick(e.detail)} on:move={() => openMove(false)} />
+
+    {#if mv}
+      {#if moveActive(view)}
+        <div class="mvline" data-testid="media-moving">
+          <p><Icon name="activity" size={18} />{$t('mediaserver.move.running')}</p>
+          <Button variant="secondary" size="sm" on:click={() => openMove(true)}>{$t('mediaserver.move.show')}</Button>
+        </div>
+      {:else if mv.state?.phase === 'failed' && view.mode === 'external' && !mv.state.back}
+        <p class="muted small mvfail">{$t('mediaserver.move.lastFailed', { reason: mediaErrorText(mv.state.error) })}</p>
+      {/if}
+      {#if moved && mv.migratedFrom}
+        <section class="moved" data-testid="media-moved" aria-labelledby="ms-moved-t">
+          <h3 id="ms-moved-t">{$t('mediaserver.move.moved', { name: mv.migratedFrom.name, date: fmtDate(mv.migratedFrom.at) })}</h3>
+          {#if source}<p class="muted small">{$t(source === 'stopped' ? 'mediaserver.move.oldStopped' : source === 'running' ? 'mediaserver.move.oldRunning' : 'mediaserver.move.oldMissing')}</p>{/if}
+          <div class="acts">
+            <Button variant="secondary" icon="arrow-left" pending={goingBack || backActive(view) || switching} disabled={running || backActive(view)} on:click={wayBack}>{$t('mediaserver.move.wayBack')}</Button>
+          </div>
+          <p class="msg" class:err={backBad} role={backBad ? 'alert' : 'status'}>{backLine}</p>
+        </section>
+      {:else if backActive(view)}
+        <p class="msg" role="status" data-testid="media-back">{backLine}</p>
+      {/if}
+      {#if mv.requestsWarning}
+        <p class="warn" data-testid="media-requests-warning"><Icon name="alert" size={18} />{$t(view.mode === 'managed' ? 'mediaserver.move.requestsWarning' : 'mediaserver.move.requestsWarningBack')}</p>
+      {/if}
+    {/if}
 
     {#if choice === 'external'}
       <div class="ext">
@@ -266,7 +332,8 @@
           <p>{$t('mediaserver.external.idWarning')}</p>
           <div class="acts">
             <Button variant="secondary" pending={switching} disabled={running} on:click={() => toExternal(false)}>{$t('mediaserver.external.switch')}</Button>
-            {#if view.external.url}<Button pending={switching} disabled={running} on:click={() => toExternal(true)}>{$t('mediaserver.external.back', { address: view.external.url })}</Button>{/if}
+            <!-- after a move the way back is *Zurück zu Jellyfin* (above): the stage 1 restore would skip its user repair (use_way_back) -->
+            {#if view.external.url && !view.move?.migratedFrom}<Button pending={switching} disabled={running} on:click={() => toExternal(true)}>{$t('mediaserver.external.back', { address: view.external.url })}</Button>{/if}
           </div>
         {:else}
           <p class="muted">{$t('mediaserver.external.current')}</p>
@@ -339,6 +406,10 @@
   {/if}
 </AdminCard>
 
+{#if moveOpen && view}
+  <MoveSheet {api} {call} {view} follow={moveWatch} trigger={moveTrigger} on:close={() => { moveOpen = false; refresh(); }} on:changed={refresh} on:started={(e) => started(e.detail)} />
+{/if}
+
 {#if logOpen}<LogDialog {api} {call} trigger={logTrigger} on:close={() => (logOpen = false)} />{/if}
 
 {#if removeOpen}
@@ -389,6 +460,16 @@
   .msg { margin: 0; min-height: 2.6em; font-size: .9rem; color: var(--mut); }
   .msg.err { color: var(--err-mark); }
   .apply ~ :global(.sp), .apply ~ :global(section) { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  .mvline { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem .8rem; margin: 0 0 .8rem; padding: .5rem .8rem;
+    border-radius: var(--fr-r-card); background: rgba(var(--acc-rgb), .1); }
+  .mvline p { display: flex; align-items: center; gap: .45rem; margin: 0; }
+  .mvfail { margin: 0 0 .8rem; }
+  .moved { display: grid; gap: .4rem; margin: 0 0 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--line); }
+  .moved h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+  .moved p { margin: 0; }
+  .warn { display: flex; align-items: flex-start; gap: .45rem; margin: 0 0 1rem; padding: .6rem .8rem; border-radius: var(--fr-r-card); border: 1px solid var(--line);
+    background: rgba(255, 255, 255, .04); font-size: .9rem; overflow-wrap: anywhere; }
+  .warn :global(svg) { flex: none; margin-top: .1rem; color: var(--warn); }
   .rm-data { display: grid; gap: .5rem; margin-top: 12px; }
   .typed { transition: opacity .2s ease; }
   .typed.off { opacity: .35; }

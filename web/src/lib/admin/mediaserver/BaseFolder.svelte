@@ -31,7 +31,9 @@
   export let userSection = true;
   const dispatch = createEventDispatcher<{ changed: void; job: UpdaterJob; unreadable: boolean }>();
 
-  let editing = false, path = base.path ?? '', code = '', error = '', note = '', doing: '' | 'request' | 'confirm' | 'clear' = '';
+  /** opens with the path field (the move sheet's *Basisordner ändern*: the change is what was asked for) */
+  export let startEditing = false;
+  let editing = startEditing, path = base.path ?? '', code = '', error = '', note = '', doing: '' | 'request' | 'confirm' | 'clear' = '';
   $: busy = doing !== '';
   /** the expiry of a code requested here (the status brings it back after a reload) */
   let expiresAt: string | null = base.pending ? base.expiresAt : null;

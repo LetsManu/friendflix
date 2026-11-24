@@ -266,6 +266,10 @@ export default {
         start: 'Starten',
         health: 'Gesundheitsprüfung',
         rollback: 'Zurückrollen',
+        copy_bulk: 'Daten kopieren',
+        stop_source: 'Jellyfin stoppen',
+        copy: 'Datenbank kopieren',
+        adopt: 'Daten übernehmen',
       },
       mediaAction: {
         apply: 'Einrichten',
@@ -279,6 +283,8 @@ export default {
         restore: 'Wiederherstellen',
         remove: 'Entfernen',
         recover: 'Automatisch neu angelegt',
+        migrate: 'Umzug von Jellyfin',
+        source: 'Altes Jellyfin starten',
       },
       state: {
         pending: 'wartet',
