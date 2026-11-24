@@ -24,14 +24,16 @@ const status = (): MediaStatus => ({
   pin: { image: `docker.io/jellyfin/jellyfin@${DIGEST}`, upstream: '10.10.7', changed: false },
   pins: { ferrofin: false, jellyfin: true }, engine: { api: '1.47', logs: true, arch: 'amd64', nvidia: false }, error: null,
   backups: [{ id: 'jellyfin-20261110-0300-10.10.7', kind: 'jellyfin', upstream: '10.10.7', at: ago(3), tag: 'auto', size: 1024 }], hdr: null,
+  move: null, source: null,
 });
 const managed = (kind: MediaManaged['kind'] = 'jellyfin'): MediaManaged => ({
   kind, setup: kind ? 'done' : 'none', setupError: null, adminUser: kind ? 'friendflix-admin' : null, hasPassword: Boolean(kind), libraries: [],
-  externalUrl: null, hasExternalKey: false, updatedAt: null,
+  externalUrl: null, hasExternalKey: false, updatedAt: null, migratedFrom: null, move: null, requestsPrev: null,
 });
 const viewOf = (s: MediaStatus | null, kind: MediaManaged['kind'] = 'jellyfin'): MediaView => ({
   mode: kind ? 'managed' : 'external', offer: { managed: true, reason: null }, kinds: { ferrofin: false, jellyfin: true }, status: s, managed: managed(kind),
   external: { url: null, hasKey: false }, livetvLibraryPath: null,
+  move: { offered: false, reason: null, state: null, migratedFrom: null, sourceState: null, requestsWarning: false },
 });
 const coreJob = (o: Partial<UpdaterJob>): UpdaterJob => ({
   id: '00000000000000a1', action: 'update', state: 'succeeded', step: null, steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'ok', rollback: 'skipped' },

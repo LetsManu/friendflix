@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
-import { PENDING, signUpdater, startedJob, streamBinding, updaterCall, updaterKey, type StartResult } from '../updater.js';
+import { MEDIA_STEPS, PENDING, signUpdater, startedJob, streamBinding, updaterCall, updaterKey, type MediaStep, type StartResult } from '../updater.js';
 
 /**
  * The backend's side of the updater's managed media server API (updater/src/mediaserver/: signed POST /v1/mediaserver, the two backup
@@ -22,14 +22,20 @@ const TAGS = ['manual', 'auto', 'upload'] as const;
 const RESULT = ['pass', 'fail'] as const;
 type Kind = (typeof KINDS)[number];
 
-export interface MediaFolder { rel: string; target: string }
+/** a folder of the media server; `migrated`: one a move took over (its target is the path the old Jellyfin used, `rel` '' the whole base) */
+export interface MediaFolder { rel: string; target: string; migrated?: true }
+const MOVE_PHASES = ['running', 'ready', 'aborted', 'done'] as const;
+/** the updater's move (updater/src/mediaserver/status.ts MediaStatusView.move): its phase, the step of its job, the source, the folders */
+export interface MediaMove { phase: (typeof MOVE_PHASES)[number]; step: MediaStep | null; source: { name: string; version: string | null }; folders: MediaFolder[]; abort: boolean }
+/** the Jellyfin a move came from as Docker shows it now (`missing`: its recorded container is gone) */
+export interface MediaSource { name: string; state: string; version: string | null }
 export interface MediaBackup { id: string; kind: Kind; upstream: string; at: string; tag: (typeof TAGS)[number]; size: number }
 /** the `mediaserver` part of the updater's status (updater/src/mediaserver/status.ts MediaStatusView) */
 export interface MediaStatus {
   available: boolean;
   reason: (typeof REASONS)[number] | null;
   base: { set: boolean; path: string | null; pending: boolean; expiresAt: string | null };
-  desired: { kind: Kind; folders: MediaFolder[]; uid: number; gid: number; gpu: (typeof GPUS)[number]; mediaGid: number | null; egress: boolean; run: boolean } | null;
+  desired: { kind: Kind; folders: MediaFolder[]; uid: number; gid: number; gpu: (typeof GPUS)[number]; mediaGid: number | null; egress: boolean; run: boolean; migrated?: true } | null;
   container: { state: string; health: (typeof HEALTH)[number]; kind: Kind; image: { digest: string; upstream: string }; template: 'current' | 'update_pending'; tampered: boolean; createdAt: string } | null;
   pin: { image: string | null; upstream: string | null; changed: boolean } | null;
   pins: { ferrofin: boolean; jellyfin: boolean };
@@ -37,6 +43,8 @@ export interface MediaStatus {
   error: MediaError | null;
   backups: MediaBackup[];
   hdr: { kind: Kind; at: string; opencl: (typeof RESULT)[number]; qsv: (typeof RESULT)[number] } | null;
+  move: MediaMove | null;
+  source: MediaSource | null;
 }
 
 type Obj = Record<string, unknown>;
@@ -52,24 +60,63 @@ const VERSION = /^[0-9A-Za-z.+_-]{1,64}$/;
 /** an absolute host path: components of letters, digits, space and . _ - + ( ) & ' (updater/src/mediaserver/paths.ts), never a newline */
 const HOST_PATH = /^\/[\p{L}\p{N} ._\-+()&'/]{0,199}$/u;
 const REL = /^[\p{L}\p{N} ._\-+()&']{1,200}(\/[\p{L}\p{N} ._\-+()&']{1,200}){0,2}$/u;
-const TARGET = /^\/media(\/[a-z0-9-]{1,40}){1,3}$/;
+/** /media/<slug>, or /ffmedia/<slug> for a folder added after a move (updater/src/mediaserver/paths.ts isTarget) */
+const TARGET = /^\/(media|ffmedia)(\/[a-z0-9-]{1,40}){1,3}$/;
+/** one component of a migrated target (as a base path's, updater/src/mediaserver/paths.ts) */
+const TARGET_COMPONENT = /^[\p{L}\p{N} ._\-+()&']{1,200}$/u;
+/** the trees a migrated target may not be or lie below (updater/src/mediaserver/paths.ts MIGRATED_REFUSED; `/data` itself too) */
+const MIGRATED_REFUSED = ['cache', 'config', 'tmp', 'proc', 'sys', 'dev', 'etc', 'usr', 'bin', 'sbin', 'lib', 'lib64', 'lib32', 'libx32', 'var', 'run', 'root', 'home', 'boot', 'opt',
+  'nonexistent', 'ferrofin-data', 'ffmedia'];
 const IMAGE = /^[a-z0-9][a-z0-9./_:-]{0,200}(@sha256:[0-9a-f]{64})?$/;
+/** an image reference as a candidate shows it (a tag may carry capitals) */
+const SOURCE_IMAGE = /^[a-z0-9][A-Za-z0-9./_:@-]{0,300}$/;
+/** a Docker container name (without the leading slash) and id */
+const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+const CONTAINER_ID = /^[0-9a-f]{64}$/;
+/** a container path an updater refusal names (never a host path): absolute, no control character */
+const CONTAINER_PATH = /^\/[^\p{Cc}]{0,199}$/u;
+/** a plugin name as the scan lists it */
+const PLUGIN = /^[^\p{Cc}]{1,100}$/u;
 export const BACKUP_ID = /^(ferrofin|jellyfin)-[0-9]{8}-[0-9]{4}-[0-9A-Za-z.+_-]{1,40}$/;
 const MAX_FOLDERS = 20;
 const MAX_BACKUPS = 10;
 
+/** a migrated target: absolute, normalised, 1–3 components, not a system tree, not `/data` itself (below it is fine) */
+export function isMigratedTarget(t: string): boolean {
+  if (t.length > 200 || !t.startsWith('/')) return false;
+  const c = t.slice(1).split('/');
+  if (c.length > 3 || !c.every((x) => TARGET_COMPONENT.test(x) && !x.startsWith('.'))) return false;
+  return !MIGRATED_REFUSED.includes(c[0]!) && !(c[0] === 'data' && c.length === 1);
+}
+
 function folder(v: unknown): MediaFolder | null {
   const o = objOf(v);
-  const rel = re(o.rel, REL), target = re(o.target, TARGET);
-  return rel && !rel.split('/').some((c) => c.startsWith('.')) && target ? { rel, target } : null;
+  const migrated = o.migrated === true;
+  const rel = migrated && o.rel === '' ? '' : re(o.rel, REL);
+  const target = typeof o.target === 'string' && (TARGET.test(o.target) || (migrated && isMigratedTarget(o.target))) ? o.target : null;
+  if (rel === null || rel.split('/').some((c) => c.startsWith('.')) || !target) return null;
+  return migrated ? { rel, target, migrated: true } : { rel, target };
 }
+const folders = (v: unknown): MediaFolder[] => (Array.isArray(v) ? v.slice(0, MAX_FOLDERS).flatMap((f) => folder(f) ?? []) : []);
 
 function desired(v: unknown): MediaStatus['desired'] {
   if (!isObj(v)) return null;
   const kind = pick(v.kind, KINDS), gpu = pick(v.gpu, GPUS);
   if (!kind || !gpu || !id(v.uid) || !id(v.gid) || !(v.mediaGid === null || id(v.mediaGid))) return null;
-  const folders = Array.isArray(v.folders) ? v.folders.slice(0, MAX_FOLDERS).flatMap((f) => folder(f) ?? []) : [];
-  return { kind, folders, uid: v.uid, gid: v.gid, gpu, mediaGid: v.mediaGid, egress: v.egress === true, run: v.run === true };
+  return { kind, folders: folders(v.folders), uid: v.uid, gid: v.gid, gpu, mediaGid: v.mediaGid, egress: v.egress === true, run: v.run === true, ...(v.migrated === true ? { migrated: true as const } : {}) };
+}
+
+function move(v: unknown): MediaMove | null {
+  if (!isObj(v)) return null;
+  const phase = pick(v.phase, MOVE_PHASES), src = objOf(v.source), name = re(src.name, CONTAINER_NAME);
+  if (!phase || !name) return null;
+  return { phase, step: pick(v.step, MEDIA_STEPS), source: { name, version: re(src.version, VERSION) }, folders: folders(v.folders), abort: v.abort === true };
+}
+
+function source(v: unknown): MediaSource | null {
+  if (!isObj(v)) return null;
+  const name = re(v.name, CONTAINER_NAME);
+  return name ? { name, state: re(v.state, /^[a-z]{1,20}$/) ?? 'unknown', version: re(v.version, VERSION) } : null;
 }
 
 function container(v: unknown): MediaStatus['container'] {
@@ -108,6 +155,7 @@ export function parseMediaStatus(raw: unknown): MediaStatus | null {
     error: pick(raw.error, MEDIA_ERRORS),
     backups: Array.isArray(raw.backups) ? raw.backups.slice(0, MAX_BACKUPS).flatMap((b) => backup(b) ?? []) : [],
     hdr: hdrKind && hdrAt && opencl && qsv ? { kind: hdrKind, at: hdrAt, opencl, qsv } : null,
+    move: move(raw.move), source: source(raw.source),
   };
 }
 
@@ -116,22 +164,78 @@ export function mediaOp(ctx: Ctx, body: Record<string, unknown>): Promise<{ stat
   return updaterCall(ctx, 'POST', '/v1/mediaserver', JSON.stringify(body), 30_000);
 }
 
-/** the job action an op starts (updater/src/mediaserver/jobs.ts) */
-const jobAction = (op: string) => `mediaserver-${op === 'finish-setup' ? 'finish' : op}` as const;
+/** the job action an op starts (updater/src/mediaserver/jobs.ts): a move's abort is (or answers) the move's job, the source start its own */
+const JOB_OF: Record<string, string> = { 'finish-setup': 'finish', 'migrate-abort': 'migrate', 'source-start': 'source' };
+const jobAction = (op: string) => `mediaserver-${JOB_OF[op] ?? op}` as const;
 
 /**
- * Starts a media job and audits it: `updater:pending:<id>` records {actor, action: 'mediaserver', op}, the start is audited as
- * `mediaserver.action` {op} (`apply` as `mediaserver.apply`) with `auditMeta` (never a code, a password or a path below the base);
+ * Starts a media job and audits it: `updater:pending:<id>` records {actor, action: 'mediaserver', op} (never replaced: an abort answers
+ * the running move's job, whose result stays the move's), the start is audited as `auditAction` with `auditMeta` as given, by default
+ * `mediaserver.action` {op} (`apply` as `mediaserver.apply`); `auditMeta` never carries a code, a password or a path below the base.
  * reconcileAudit writes `mediaserver.result` when the job ends.
  */
-export async function startMediaJob(ctx: Ctx, body: Record<string, unknown>, actor: string | null, auditMeta: Record<string, unknown>): Promise<StartResult> {
+export async function startMediaJob(ctx: Ctx, body: Record<string, unknown>, actor: string | null, auditMeta: Record<string, unknown>, auditAction?: string): Promise<StartResult> {
   const op = typeof body.op === 'string' ? body.op : '';
   const r = await mediaOp(ctx, body);
   const started = startedJob(r, jobAction(op) as Parameters<typeof startedJob>[1]);
   if (!started.ok) return started;
-  await ctx.kv.set(`${PENDING}${started.job.id}`, JSON.stringify({ actor, action: 'mediaserver', op }), 7 * 86_400).catch(() => undefined);
-  await audit(ctx, actor, op === 'apply' ? 'mediaserver.apply' : 'mediaserver.action', undefined, op === 'apply' ? auditMeta : { ...auditMeta, op });
+  await ctx.kv.setnx(`${PENDING}${started.job.id}`, JSON.stringify({ actor, action: 'mediaserver', op }), 7 * 86_400).catch(() => undefined);
+  const action = auditAction ?? (op === 'apply' ? 'mediaserver.apply' : 'mediaserver.action');
+  await audit(ctx, actor, action, undefined, auditAction || op === 'apply' ? auditMeta : { ...auditMeta, op });
   return started;
+}
+
+/** a Jellyfin container on the updater's engine; `matches`: its server id is the one FriendFlix uses (null: not scanned) */
+export interface MoveCandidate { id: string; name: string; image: string; state: string; matches: boolean | null }
+/** the chosen candidate scanned: its media folders as Ferrofin will see them, the copy's size, the plugins left behind, the NFO saver */
+export interface MoveScan {
+  source: { id: string; name: string; image: string; version: string | null }; folders: MediaFolder[]; layout: 'official' | 'linuxserver';
+  bytes: number; trickplayBytes: number; plugins: string[]; nfo: boolean;
+}
+/** a refused scan: its code, and the container paths (never host paths) the admin is shown for source_outside_base / source_nested */
+export interface MoveScanRefusal { ok: false; status: number; error: string; outside: string[]; refused: string[]; nested: string[] }
+export type MoveScanResult = { ok: true; candidates: MoveCandidate[]; scan: MoveScan | null } | MoveScanRefusal;
+
+/** the candidate list scans each candidate's server id (a short helper each); the sized scan reads the whole /config (updater: up to 120 s) */
+const LIST_MS = 45_000;
+const SCAN_MS = 150_000;
+const MAX_CANDIDATES = 20;
+const size = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+const paths = (v: unknown): string[] => (Array.isArray(v) ? v.filter((p): p is string => typeof p === 'string' && CONTAINER_PATH.test(p)).slice(0, MAX_FOLDERS) : []);
+
+function candidate(v: unknown): MoveCandidate | null {
+  const o = objOf(v);
+  const cid = re(o.id, CONTAINER_ID), name = re(o.name, CONTAINER_NAME), image = re(o.image, SOURCE_IMAGE);
+  if (!cid || !name || !image) return null;
+  return { id: cid, name, image, state: re(o.state, /^[a-z]{1,20}$/) ?? 'unknown', matches: typeof o.matches === 'boolean' ? o.matches : null };
+}
+
+function scan(v: unknown): MoveScan | null {
+  if (!isObj(v)) return null;
+  const src = objOf(v.source);
+  const sid = re(src.id, CONTAINER_ID), name = re(src.name, CONTAINER_NAME), image = re(src.image, SOURCE_IMAGE);
+  const layout = pick(v.layout, ['official', 'linuxserver'] as const);
+  if (!sid || !name || !image || !layout || !size(v.bytes) || !size(v.trickplayBytes) || typeof v.nfo !== 'boolean') return null;
+  const plugins = Array.isArray(v.plugins) ? v.plugins.filter((p): p is string => typeof p === 'string' && PLUGIN.test(p)).slice(0, 50) : [];
+  return { source: { id: sid, name, image, version: re(src.version, VERSION) }, folders: folders(v.folders), layout, bytes: v.bytes, trickplayBytes: v.trickplayBytes, plugins, nfo: v.nfo };
+}
+
+/**
+ * `migrate-scan` (stage 2 "Finding the source"): without `source` the Jellyfin containers on the updater's engine, each matched against
+ * `serverId` (the id of the server FriendFlix uses now); with `source` that candidate scanned too. Only checked fields come back; a
+ * refusal keeps its code (400/409; anything else is updater_error) and the container paths it names.
+ */
+export async function mediaScan(ctx: Ctx, source: string | undefined, serverId: string): Promise<MoveScanResult> {
+  const r = await updaterCall(ctx, 'POST', '/v1/mediaserver', JSON.stringify({ op: 'migrate-scan', serverId, ...(source !== undefined ? { source } : {}) }), source === undefined ? LIST_MS : SCAN_MS);
+  const j = objOf(r?.json);
+  if (r?.status === 200 && Array.isArray(j.candidates)) {
+    return { ok: true, candidates: j.candidates.slice(0, MAX_CANDIDATES).flatMap((c) => candidate(c) ?? []), scan: scan(j.scan) };
+  }
+  const code = re(j.error, /^[a-z_]{1,40}$/);
+  const refusal = !r ? { status: 409, error: 'not_available' }
+    : (r.status === 400 || r.status === 409) && code ? { status: r.status, error: code }
+      : r.status === 429 ? { status: 429, error: 'rate_limited' } : r.status === 404 ? { status: 409, error: 'updater_outdated' } : { status: 502, error: 'updater_error' };
+  return { ok: false, ...refusal, outside: paths(j.outside), refused: paths(j.refused), nested: paths(j.nested) };
 }
 
 const PASSPHRASE_HEADER = 'x-ff-backup-passphrase';

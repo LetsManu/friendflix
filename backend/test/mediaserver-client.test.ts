@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, createHmac } from 'node:crypto';
 import { Readable } from 'node:stream';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { decodePassphrase, encodePassphrase, mediaDownload, mediaOp, mediaUpload, parseMediaStatus, startMediaJob } from '../src/mediaserver/client.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { decodePassphrase, encodePassphrase, mediaDownload, mediaOp, mediaScan, mediaUpload, parseMediaStatus, startMediaJob } from '../src/mediaserver/client.js';
 import { parseStatus, streamBinding, updaterView } from '../src/updater.js';
 import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
 
@@ -21,7 +21,10 @@ const fullStatus = () => ({
   error: null,
   backups: [{ id: 'ferrofin-20261117-1000-1.2.3', kind: 'ferrofin', upstream: '1.2.3', at: '2026-11-17T10:00:00.000Z', tag: 'manual', size: 1234 }],
   hdr: { kind: 'ferrofin', at: '2026-11-17T10:05:00.000Z', opencl: 'pass', qsv: 'fail' },
+  move: null, source: null,
 });
+const CONTAINER = 'c'.repeat(64);
+const SERVER_ID = 'f'.repeat(32);
 const baseStatus = (extra: Record<string, unknown>) => ({ updater: { version: '3.3.0', sha: null }, channel: 'stable', version: null, targetTag: 'latest', current: 'latest', previous: null, busy: false, job: null, log: [], services: [], ...extra });
 const mediaJob = (state: string, error: string | null = null) => ({ id: JOB_ID, action: 'mediaserver-apply', state, step: state === 'running' ? 'pull' : null, from: null, to: 'latest',
   steps: { pull: 'skipped', verify: 'skipped', restart: 'skipped', health: 'skipped', rollback: 'skipped' },
@@ -80,6 +83,7 @@ describe('parseMediaStatus', () => {
     const starting = {
       available: false, reason: 'starting', base: { set: false, path: null, pending: false, expiresAt: null }, desired: null, container: null, pin: null,
       pins: { ferrofin: false, jellyfin: false }, engine: { api: null, logs: false, arch: null, nvidia: false }, error: null, backups: [], hdr: null,
+      move: null, source: null,
     };
     expect(parseMediaStatus(starting)).toEqual(starting);
     expect(parseMediaStatus({ ...starting, reason: 'whatever' })!.reason).toBeNull();
@@ -108,6 +112,33 @@ describe('parseMediaStatus', () => {
     expect(d.container!.image.digest).toBe('');
     expect(d.desired!.folders).toHaveLength(2);
     expect(parseMediaStatus({ ...fullStatus(), desired: { ...fullStatus().desired, folders: Array.from({ length: 30 }, (_, i) => ({ rel: `f${i}`, target: `/media/f${i}` })) } })!.desired!.folders).toHaveLength(20);
+  });
+
+  it('a move, its source and migrated folders parse field by field', () => {
+    const folders = [{ rel: 'Filme', target: '/movies', migrated: true }, { rel: '', target: '/media', migrated: true }, { rel: 'Serien/HD', target: '/data/tv', migrated: true }];
+    const move = { phase: 'running', step: 'copy_bulk', source: { name: 'jellyfin', version: '10.10.3' }, folders, abort: false };
+    const source = { name: 'jellyfin', state: 'exited', version: '10.10.3' };
+    const desired = { ...fullStatus().desired, migrated: true, folders: [...folders, { rel: 'Neu', target: '/ffmedia/neu' }] };
+    const p = parseMediaStatus({ ...fullStatus(), desired, move, source })!;
+    expect(p.move).toEqual(move);
+    expect(p.source).toEqual(source);
+    expect(p.desired).toEqual(desired);
+    // a migrated target the updater refuses, an empty rel without the migrated flag, a system tree: dropped
+    const bad = [{ rel: 'x', target: '/etc/x', migrated: true }, { rel: '', target: '/media/x' }, { rel: 'y', target: '/data', migrated: true },
+      { rel: 'z', target: '/movies' }, { rel: '..', target: '/a', migrated: true }, { rel: 'w', target: '/a/b/c/d', migrated: true }, { rel: 'v', target: '/proc', migrated: true }];
+    expect(parseMediaStatus({ ...fullStatus(), move: { ...move, folders: [...folders, ...bad] } })!.move!.folders).toEqual(folders);
+    expect(parseMediaStatus({ ...fullStatus(), move: { ...move, phase: 'whatever' } })!.move).toBeNull();
+    expect(parseMediaStatus({ ...fullStatus(), move: { ...move, source: { name: '/etc/passwd', version: null } } })!.move).toBeNull();
+    expect(parseMediaStatus({ ...fullStatus(), move: { ...move, step: 'bogus', abort: 'yes' } })!.move).toEqual({ ...move, step: null, abort: false });
+    expect(parseMediaStatus({ ...fullStatus(), source: { name: 'jellyfin', state: 'Exited!', version: 7 } })!.source).toEqual({ name: 'jellyfin', state: 'unknown', version: null });
+    expect(parseMediaStatus({ ...fullStatus(), source: { name: '' } })!.source).toBeNull();
+  });
+
+  it('move jobs parse with their steps', () => {
+    const steps = { check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'skipped', copy_bulk: 'ok', stop_source: 'ok', copy: 'running', create: 'pending', start: 'pending', health: 'pending', adopt: 'pending', rollback: 'pending' };
+    const j = parseStatus(baseStatus({ job: { ...mediaJob('running'), action: 'mediaserver-migrate', media: { step: 'copy', steps } } }))!.job!;
+    expect(j).toMatchObject({ action: 'mediaserver-migrate', media: { step: 'copy', steps } });
+    expect(parseStatus(baseStatus({ job: { ...mediaJob('running'), action: 'mediaserver-source' } }))!.job!.action).toBe('mediaserver-source');
   });
 
   it('old updater without mediaserver is null', () => {
@@ -179,7 +210,68 @@ describe('signed calls', () => {
   });
 });
 
+describe('mediaScan', () => {
+  const candidate = (over: Record<string, unknown> = {}) => ({ id: CONTAINER, name: 'jellyfin', image: 'lscr.io/linuxserver/jellyfin:10.10.3', state: 'running', matches: true, ...over });
+  const scan = () => ({ source: { id: CONTAINER, name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', version: '10.10.3' },
+    folders: [{ rel: '', target: '/media', migrated: true }], layout: 'official', bytes: 38_000, trickplayBytes: 12_000, plugins: ['Open Subtitles', 'Fanart'], nfo: true });
+  const timeouts = () => vi.spyOn(AbortSignal, 'timeout');
+
+  it('the candidate list: serverId sent, the answer checked field by field, a longer deadline', async () => {
+    const spy = timeouts();
+    fake.answer = { status: 200, json: { candidates: [candidate(), candidate({ id: 'x', name: 'bad' }), candidate({ id: 'd'.repeat(64), name: 'jf/../x', matches: null }), candidate({ id: 'e'.repeat(64), name: 'jf-2', matches: null, state: 'exited', extra: 1 })] } };
+    const r = await mediaScan(env.ctx, undefined, SERVER_ID);
+    expect(JSON.parse(fake.calls[0]!.body)).toEqual({ op: 'migrate-scan', serverId: SERVER_ID });
+    expect(fake.calls[0]!.sigOk).toBe(true);
+    expect(spy).toHaveBeenCalledWith(45_000);
+    expect(r).toEqual({ ok: true, candidates: [candidate(), { id: 'e'.repeat(64), name: 'jf-2', image: 'lscr.io/linuxserver/jellyfin:10.10.3', state: 'exited', matches: null }], scan: null });
+    spy.mockRestore();
+  });
+
+  it('the sized scan of one source', async () => {
+    const spy = timeouts();
+    fake.answer = { status: 200, json: { candidates: [candidate()], scan: scan() } };
+    const r = await mediaScan(env.ctx, CONTAINER, SERVER_ID);
+    expect(JSON.parse(fake.calls[0]!.body)).toEqual({ op: 'migrate-scan', serverId: SERVER_ID, source: CONTAINER });
+    expect(spy).toHaveBeenCalledWith(150_000);
+    expect(r).toEqual({ ok: true, candidates: [candidate()], scan: scan() });
+    // a scan that does not fit is no scan
+    fake.answer = { status: 200, json: { candidates: [candidate()], scan: { ...scan(), layout: 'other' } } };
+    expect(await mediaScan(env.ctx, CONTAINER, SERVER_ID)).toMatchObject({ ok: true, scan: null });
+    fake.answer = { status: 200, json: { candidates: [candidate()], scan: { ...scan(), plugins: ['ok', 'a\nb', 7], bytes: -1 } } };
+    expect(await mediaScan(env.ctx, CONTAINER, SERVER_ID)).toMatchObject({ ok: true, scan: null });
+    fake.answer = { status: 200, json: { candidates: [candidate()], scan: { ...scan(), plugins: ['ok', 'a\nb', 7] } } };
+    expect(((await mediaScan(env.ctx, CONTAINER, SERVER_ID)) as { scan: { plugins: string[] } }).scan.plugins).toEqual(['ok']);
+    spy.mockRestore();
+  });
+
+  it('refusals carry their code and the container paths the web shows, nothing else', async () => {
+    fake.answer = { status: 409, json: { error: 'source_outside_base', outside: ['/movies', 'relative', '/a\nb'], refused: ['/config2'], host: '/srv/secret' } };
+    expect(await mediaScan(env.ctx, CONTAINER, SERVER_ID)).toEqual({ ok: false, status: 409, error: 'source_outside_base', outside: ['/movies'], refused: ['/config2'], nested: [] });
+    fake.answer = { status: 409, json: { error: 'source_nested', nested: ['/media/tv'] } };
+    expect(await mediaScan(env.ctx, CONTAINER, SERVER_ID)).toEqual({ ok: false, status: 409, error: 'source_nested', outside: [], refused: [], nested: ['/media/tv'] });
+    fake.answer = { status: 409, json: { error: 'Error: /var/run/docker.sock' } };
+    expect(await mediaScan(env.ctx, CONTAINER, SERVER_ID)).toEqual({ ok: false, status: 502, error: 'updater_error', outside: [], refused: [], nested: [] });
+    fake.answer = { status: 400, json: { error: 'invalid_body' } };
+    expect(await mediaScan(env.ctx, CONTAINER, SERVER_ID)).toMatchObject({ ok: false, status: 400, error: 'invalid_body' });
+    fake.reset = true;
+    expect(await mediaScan(env.ctx, CONTAINER, SERVER_ID)).toMatchObject({ ok: false, status: 409, error: 'not_available' });
+  });
+});
+
 describe('media jobs', () => {
+  it('move ops start the move and source jobs, audited under their own action; a pending entry is never replaced', async () => {
+    fake.answer = { status: 202, json: { job: { ...mediaJob('running'), action: 'mediaserver-migrate' } } };
+    expect(await startMediaJob(env.ctx, { op: 'migrate', source: CONTAINER }, adminId, { trickplay: false, gpu: 'off' }, 'mediaserver.move')).toMatchObject({ ok: true });
+    expect(await audits('mediaserver.move')).toEqual([{ actor: adminId, meta: { trickplay: false, gpu: 'off' } }]);
+    // an abort while the move's job runs answers that very job: its result stays the move's
+    expect(await startMediaJob(env.ctx, { op: 'migrate-abort' }, null, {}, 'mediaserver.move_abort')).toMatchObject({ ok: true, job: { action: 'mediaserver-migrate' } });
+    expect(JSON.parse((await env.ctx.kv.get(`updater:pending:${JOB_ID}`))!)).toEqual({ actor: adminId, action: 'mediaserver', op: 'migrate' });
+    expect(await audits('mediaserver.move_abort')).toEqual([{ actor: null, meta: {} }]);
+    fake.answer = { status: 202, json: { job: { ...mediaJob('running'), action: 'mediaserver-source' } } };
+    expect((await startMediaJob(env.ctx, { op: 'source-start' }, adminId, {}, 'mediaserver.back')).ok).toBe(true);
+    expect(await audits('mediaserver.action')).toEqual([]);
+  });
+
   it('a started job is recorded and audited', async () => {
     const r = await startMediaJob(env.ctx, { op: 'apply', spec: {} }, adminId, { kind: 'ferrofin', folders: 2, gpu: 'dri', egress: false });
     expect(r).toMatchObject({ ok: true, job: { id: JOB_ID, action: 'mediaserver-apply' } });

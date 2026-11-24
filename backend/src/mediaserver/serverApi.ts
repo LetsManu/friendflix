@@ -17,6 +17,7 @@ export const MANAGED_URL = 'http://mediaserver:8096';
 const TIMEOUT_MS = 5_000;
 const DEVICE_ID = 'friendflix-managed';
 const ITEM_ID = /^[0-9a-f]{32}$/;
+const SERVER_ID = /^[0-9a-f]{32}$/;
 const RENDER_NODE = /^renderD[0-9]{1,4}$/;
 const PAGE = 2_000;
 const MAX_ITEMS = 200_000;
@@ -53,12 +54,17 @@ async function call(f: typeof fetch, base: string, method: 'GET' | 'POST' | 'DEL
 const json = (r: Response, max: number): Promise<unknown> => smallJson(r, max).catch(() => { throw new MediaSetupError('unreachable', 'bad_response'); });
 const done = async (r: Response): Promise<void> => cancel(r);
 
-/** `/System/Info/Public`: whether the startup wizard is complete; null while the server does not answer (or not as expected) */
-export async function publicInfo(f: typeof fetch, base: string): Promise<{ wizardDone: boolean } | null> {
+/**
+ * `/System/Info/Public`: whether the startup wizard is complete and the server id (32 hex, null when it is none; stage 2 matches the
+ * Jellyfin to move by it, it never reaches an answer or a log); null while the server does not answer (or not as expected)
+ */
+export async function publicInfo(f: typeof fetch, base: string): Promise<{ wizardDone: boolean; id: string | null } | null> {
   try {
     const r = await call(f, base, 'GET', '/System/Info/Public');
     const o = obj(await json(r, 64 * 1024));
-    return o ? { wizardDone: o.StartupWizardCompleted === true } : null;
+    // the id as the updater's scan reads it from the server's files: lower case, without dashes
+    const id = typeof o?.Id === 'string' ? o.Id.toLowerCase().replace(/-/g, '') : '';
+    return o ? { wizardDone: o.StartupWizardCompleted === true, id: SERVER_ID.test(id) ? id : null } : null;
   } catch {
     return null;
   }

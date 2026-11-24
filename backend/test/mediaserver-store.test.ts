@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { MIGRATIONS, migrate } from '../src/db.js';
 import { adminPassword, claimAdminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged } from '../src/mediaserver/store.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
@@ -29,7 +30,45 @@ describe('media_managed', () => {
   });
 
   it('defaults without a row', async () => {
-    expect(await readManaged(env.pool)).toEqual({ kind: null, setup: 'none', setupError: null, adminUser: null, hasPassword: false, libraries: [], externalUrl: null, hasExternalKey: false, updatedAt: null });
+    expect(await readManaged(env.pool)).toEqual({ kind: null, setup: 'none', setupError: null, adminUser: null, hasPassword: false, libraries: [], externalUrl: null, hasExternalKey: false, updatedAt: null,
+      migratedFrom: null, move: null, requestsPrev: null });
+  });
+
+  it('migration 62 on a database at 61 keeps the row and adds the stage 2 columns', async () => {
+    expect(MIGRATIONS[61]).toMatch(/migrated_from/);
+    await env.pool.query("insert into media_managed(id, kind, setup, external_url) values (1, 'ferrofin', 'done', 'http://jf.example.com:8096')");
+    await env.pool.query('alter table media_managed drop column migrated_from, drop column move, drop column requests_prev');
+    await env.pool.query('delete from schema_migrations where version >= 62');
+    await migrate(env.pool);
+    expect(await readManaged(env.pool)).toMatchObject({ kind: 'ferrofin', setup: 'done', externalUrl: 'http://jf.example.com:8096', migratedFrom: null, move: null, requestsPrev: null });
+    // rerunnable
+    await env.pool.query('delete from schema_migrations where version >= 62');
+    await migrate(env.pool);
+    await expect(env.pool.query(`update media_managed set move = '{"phase":"bogus"}'`)).rejects.toThrow(/check/);
+    await env.pool.query(`update media_managed set move = '{"phase":"nfo"}'`);
+  });
+
+  it('stage 2 fields round-trip; null clears; a stored value of the wrong shape reads as null', async () => {
+    const migratedFrom = { name: 'jellyfin', version: '10.10.3', at: '2026-11-24T10:00:00.000Z' };
+    const move = { phase: 'copying' as const, error: null, jobId: '0123456789abcdef', startedAt: '2026-11-24T09:00:00.000Z', requestsWarning: false };
+    const requestsPrev = { hostname: 'jellyfin', port: 8096, useSsl: false, urlBase: '' };
+    await writeManaged(env.ctx, { migratedFrom, move, requestsPrev });
+    expect(await readManaged(env.pool)).toMatchObject({ migratedFrom, move, requestsPrev });
+    await writeManaged(env.ctx, { move: { ...move, phase: 'failed', error: 'ids_mismatch' } });
+    expect((await readManaged(env.pool)).move).toEqual({ ...move, phase: 'failed', error: 'ids_mismatch' });
+    // only what the patch names changes
+    expect((await readManaged(env.pool)).requestsPrev).toEqual(requestsPrev);
+    await writeManaged(env.ctx, { migratedFrom: null, move: null, requestsPrev: null });
+    expect(await readManaged(env.pool)).toMatchObject({ migratedFrom: null, move: null, requestsPrev: null });
+    // field by field: a row written by another build never reaches a caller with a bad shape
+    await env.pool.query(`update media_managed set migrated_from = '{"name":"a/b","version":null,"at":"2026-11-24T10:00:00.000Z"}',
+      move = '{"phase":"verify","error":"Bad Code","jobId":"x","startedAt":"2026-11-24T09:00:00.000Z"}', requests_prev = '{"hostname":"jellyfin","port":0,"useSsl":false,"urlBase":""}'`);
+    const m = await readManaged(env.pool);
+    expect(m.migratedFrom).toBeNull();
+    expect(m.move).toEqual({ phase: 'verify', error: null, jobId: null, startedAt: '2026-11-24T09:00:00.000Z', requestsWarning: false });
+    expect(m.requestsPrev).toBeNull();
+    await env.pool.query(`update media_managed set migrated_from = '{"name":"jellyfin","at":"2026-11-24T10:00:00.000Z"}', move = '{"phase":"done","startedAt":"x"}', requests_prev = '"x"'`);
+    expect(await readManaged(env.pool)).toMatchObject({ migratedFrom: { name: 'jellyfin', version: null, at: '2026-11-24T10:00:00.000Z' }, move: null, requestsPrev: null });
   });
 
   it('round-trip with encrypted secrets', async () => {
