@@ -150,4 +150,30 @@ export class SeerrClient {
   deleteUser(id: number) {
     return this.json(`/user/${id}`, { method: 'DELETE' });
   }
+  // ---- its Jellyfin connection (the media server move points it at the managed server and back; the image pinned in compose.prod.yaml) ----
+  /**
+   * Its Jellyfin connection (GET /settings/jellyfin answers every Jellyfin setting, its key included; only the connection is kept here,
+   * the field `ip` as `hostname`). An answer without a host and port is an error (no value in its message).
+   */
+  async jellyfinSettings(): Promise<JellyfinConnection> {
+    const s = await this.json<Record<string, unknown> | null>('/settings/jellyfin');
+    const { ip, port, useSsl, urlBase } = s ?? {};
+    if (typeof ip !== 'string' || typeof port !== 'number') throw new SeerrError(0, 'request service: unexpected Jellyfin settings');
+    return { hostname: ip, port, useSsl: useSsl === true, urlBase: typeof urlBase === 'string' ? urlBase : '' };
+  }
+  /**
+   * Points its Jellyfin connection at `s`: POST /settings/jellyfin merges the body over its stored settings (the key, libraries, server
+   * id and public address stay) and saves only once the server it names answers with the stored key (else an error, nothing changed).
+   */
+  async setJellyfinSettings(s: JellyfinConnection): Promise<void> {
+    await this.json('/settings/jellyfin', { method: 'POST', body: JSON.stringify({ ip: s.hostname, port: s.port, useSsl: s.useSsl, urlBase: s.urlBase }) });
+  }
+  /** Reads the library list from the server it names (POST /settings/jellyfin/library/sync), then starts its library scan (POST /settings/jellyfin/sync). */
+  async syncJellyfinLibraries(): Promise<void> {
+    await this.json('/settings/jellyfin/library/sync', { method: 'POST' });
+    await this.json('/settings/jellyfin/sync', { method: 'POST', body: JSON.stringify({ start: true }) });
+  }
 }
+
+/** the request service's Jellyfin connection (its settings' `ip` as `hostname`); its API key is never part of it */
+export interface JellyfinConnection { hostname: string; port: number; useSsl: boolean; urlBase: string }

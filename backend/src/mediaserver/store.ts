@@ -39,17 +39,19 @@ export interface Relink { table: 'users' | 'profiles'; row: string; from: string
 /**
  * a move as the backend follows it: its phase, the code it failed with, the updater job of its copy, when it started, and whether the
  * request service could not be pointed at the new server (Admin and the Systemcheck show the manual step). `errorMeta`: the numbers of
- * a failed id check (`ids_mismatch`), or the warning of a switched move; `abortPending`: the move failed and the updater has not taken
+ * a failed id check (`ids_mismatch`), or the warning of a switched move (`requestsWarning` covers both directions: after a way back it
+ * means the request service could not be pointed back); `abortPending`: the move failed and the updater has not taken
  * its abort yet (the tick sends it again until it does); `tries`: the phase's failures retried so far (a server still starting; reset
  * when the phase changes); `rounds`: the `nfo` ticks whose count of libraries with a saver still on did not drop, `nfoLeft` that count at
  * the last tick; `repeat`: a move after a way back (its `verify` repairs the users first), `relinks` what that repair created,
- * `policyPending` the users a repair made whose policy is not written yet; `back`/`backError`: the way back after this move. Each is
+ * `policyPending` the users a repair made whose policy is not written yet; `back`/`backError`: the way back after this move,
+ * `requestsBack` that way back has pointed the request service back, or tried (never again: a retried stop does not repeat it). Each is
  * absent when unset.
  */
 export interface MoveRecord {
   phase: MovePhase; error: string | null; jobId: string | null; startedAt: string; requestsWarning: boolean;
   errorMeta?: IdCheck | MoveWarning; abortPending?: true; tries?: number; rounds?: number; nfoLeft?: number;
-  repeat?: true; relinks?: Relink[]; policyPending?: string[]; back?: BackStep; backError?: string;
+  repeat?: true; relinks?: Relink[]; policyPending?: string[]; back?: BackStep; backError?: string; requestsBack?: true;
 }
 /** the request service's Jellyfin connection before the move (the way back restores it); its API key is not part of it */
 export interface RequestsPrev { hostname: string; port: number; useSsl: boolean; urlBase: string }
@@ -130,10 +132,11 @@ function moveRecord(raw: unknown): MoveRecord | null {
     ...(errorMeta ? { errorMeta } : {}), ...(o.abortPending === true ? { abortPending: true as const } : {}), ...(tries ? { tries } : {}),
     ...(rounds ? { rounds } : {}), ...(nfoLeft !== null ? { nfoLeft } : {}), ...(o.repeat === true ? { repeat: true as const } : {}),
     ...(links.length ? { relinks: links } : {}), ...(policy.length ? { policyPending: policy } : {}),
-    ...(back ? { back } : {}), ...(back && backError ? { backError } : {}),
+    ...(back ? { back } : {}), ...(back && backError ? { backError } : {}), ...(back && o.requestsBack === true ? { requestsBack: true as const } : {}),
   };
 }
-function requestsPrev(raw: unknown): RequestsPrev | null {
+/** a request service connection as it can be stored and restored (an empty host, a path in it, a port out of range: null) */
+export function requestsPrev(raw: unknown): RequestsPrev | null {
   const o = objOf(raw);
   const hostname = re(o?.hostname, HOSTNAME_RE), urlBase = typeof o?.urlBase === 'string' ? re(o.urlBase, URL_BASE_RE) : null;
   const port = o?.port;

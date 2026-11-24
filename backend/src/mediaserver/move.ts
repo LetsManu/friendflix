@@ -10,13 +10,15 @@ import { addressOnly } from '../media/address.js';
 import { MediaSetupError } from '../media/types.js';
 import { kidsPolicy } from '../profiles.js';
 import { effectiveRole } from '../roles.js';
+import type { JellyfinConnection, SeerrClient } from '../seerr/client.js';
 import { writeRows } from '../settings/repo.js';
 import { updaterView, type TickLog, type UpdaterStatus } from '../updater.js';
 import { applyRole } from '../users.js';
 import { encodingHw, MEDIA_ERRORS, mediaOp, mediaScan, startMediaJob, type MediaError, type MoveScan } from './client.js';
 import { MANAGED_URL, NFO_PER_CALL, nfoSaversOff, setEncoding, TIMEOUT_MS as SERVER_CALL_MS } from './serverApi.js';
 import {
-  externalKey, readManaged, writeManaged, type BackStep, type IdCheck, type MediaManaged, type MoveRecord, type MovePhase, type MoveWarning, type Relink,
+  externalKey, readManaged, requestsPrev, writeManaged, type BackStep, type IdCheck, type MediaManaged, type MoveRecord, type MovePhase, type MoveWarning,
+  type Relink,
 } from './store.js';
 
 /**
@@ -116,6 +118,12 @@ const NFO_MAX_ROUNDS = 20;
 const REPAIR_DEADLINE_MS = 60_000;
 const REPAIR_ROW_CALLS = 10;
 const REPAIR_WORST_S = REPAIR_DEADLINE_MS / 1000 + REPAIR_ROW_CALLS * 15;
+/**
+ * the request service's part of a move, and of a way back: at most its connection read, the new one saved (it first checks the server
+ * answers), the library list synced and the scan started, each within the client's 15 s deadline (seerr/client.ts json)
+ */
+const REQUESTS_CALL_S = 15;
+const REQUESTS_WORST_S = 4 * REQUESTS_CALL_S;
 /** the way back waits this long for the old Jellyfin: its source job, then its answer with the stored key */
 const BACK_WAIT_MS = 180_000;
 const BACK_STEP_MS = 2_000;
@@ -129,7 +137,8 @@ const CODE = /^[a-z][a-z0-9_]{0,39}$/;
  * deadlines of the calls it makes: the updater's status read (updater.ts updaterCall, 5 s), the slowest phase, then an abort sent after
  * a failure (mediaOp, 30 s), plus a margin for the database (its own statement timeout bounds each query; a tick runs a handful).
  * Phases: `nfo` reads the libraries, changes at most NFO_PER_CALL, then (once none is left) asks the updater for the GPU and reads and
- * writes the encoding settings; `verify` is bounded by VERIFY_DEADLINE_MS; `switch` is one transaction and migrate-done (mediaOp).
+ * writes the encoding settings; `verify` is bounded by VERIFY_DEADLINE_MS; `switch` is one transaction and migrate-done (mediaOp);
+ * `requests` is the request service's calls (REQUESTS_WORST_S).
  */
 export const MOVE_LOCK = 'media:move:tick';
 const STATUS_READ_S = 5;
@@ -140,9 +149,12 @@ const NFO_WORST_S = SERVER_CALL_S * (1 + NFO_PER_CALL) + UPDATER_OP_S + 2 * SERV
 /** a repeated move's `verify` repairs the users on the copy first */
 const VERIFY_WORST_S = REPAIR_WORST_S + VERIFY_DEADLINE_MS / 1000;
 const SWITCH_WORST_S = UPDATER_OP_S + STATUS_READ_S;
-/** a way back the tick finishes: the managed server's stop (a status read, the op, the wait for its job), then the repair */
-const FINISH_BACK_WORST_S = STATUS_READ_S + UPDATER_OP_S + STOP_WAIT_MS / 1000 + STATUS_READ_S + REPAIR_WORST_S;
-const LOCK_TTL_S = STATUS_READ_S + Math.max(NFO_WORST_S, VERIFY_WORST_S, SWITCH_WORST_S, FINISH_BACK_WORST_S) + UPDATER_OP_S + DB_MARGIN_S;
+/**
+ * a way back the tick finishes: the request service pointed back, the managed server's stop (a status read, the op, the wait for its
+ * job), then the repair
+ */
+const FINISH_BACK_WORST_S = REQUESTS_WORST_S + STATUS_READ_S + UPDATER_OP_S + STOP_WAIT_MS / 1000 + STATUS_READ_S + REPAIR_WORST_S;
+const LOCK_TTL_S = STATUS_READ_S + Math.max(NFO_WORST_S, VERIFY_WORST_S, SWITCH_WORST_S, REQUESTS_WORST_S, FINISH_BACK_WORST_S) + UPDATER_OP_S + DB_MARGIN_S;
 /**
  * the way back holds MOVE_LOCK from its first read to its answer: the source job's start (an updater op), the wait for the old
  * Jellyfin (its last check may start just before the end), the switch, then finishing (the stop and the repair)
@@ -577,22 +589,56 @@ async function switchPhase({ ctx, m, rec, status }: Phase): Promise<Next | { nex
   return 'waiting';
 }
 
-/** `requests` (spec "The move" 10): the request service follows with plan Task 9; until then nothing to do */
-async function requests(): Promise<Next> {
-  return 'done';
+/** the managed server as the request service's Jellyfin connection names it (MANAGED_URL; the request service sits on the media network) */
+const REQUESTS_TARGET: JellyfinConnection = (() => {
+  const u = new URL(MANAGED_URL);
+  return { hostname: u.hostname, port: Number(u.port), useSsl: u.protocol === 'https:', urlBase: '' };
+})();
+const onManaged = (c: JellyfinConnection): boolean => c.hostname.toLowerCase() === REQUESTS_TARGET.hostname && c.port === REQUESTS_TARGET.port
+  && c.useSsl === REQUESTS_TARGET.useSsl && c.urlBase.replace(/\/+$/, '') === REQUESTS_TARGET.urlBase;
+/** the request service's connection as it can be saved for the way back; null when it cannot be read or is none (requestsPrev) */
+const connectionOf = (seerr: SeerrClient): Promise<JellyfinConnection | null> => seerr.jellyfinSettings().then(requestsPrev, () => null);
+/** points the request service at `to` (same key: it checks the server answers before it saves), then syncs; false on any refusal */
+const repoint = (seerr: SeerrClient, to: JellyfinConnection): Promise<boolean> =>
+  seerr.setJellyfinSettings(to).then(() => seerr.syncJellyfinLibraries()).then(() => true, () => false);
+
+/**
+ * `requests` (spec "The move" 10): with a request service set up in FriendFlix, its Jellyfin connection is pointed at the managed server
+ * (the same API key, which the copy kept) through its own settings API with FriendFlix's request-service key, and its library list synced
+ * and scan started. The connection before is saved for the way back (`media_managed.requests_prev`: host, port, TLS, path; never a key),
+ * unless it names the managed server already (this phase run again after a restart: the one saved before stays). The switch stands
+ * whatever the request service answers: a refusal, an API that differs or a connection that could not be restored later is
+ * `requestsWarning` (Admin shows the manual step, the Systemcheck warns) and the move is `done`. Audited `mediaserver.requests_repointed`
+ * `{ok}` with the phase change (advance). No request service: nothing to do, nothing audited.
+ */
+async function requests({ ctx }: Phase): Promise<PhaseResult> {
+  const seerr = ctx.seerr;
+  if (!seerr) return 'done';
+  const prev = await connectionOf(seerr);
+  if (!prev) return { next: 'done', requests: { ok: false } };
+  if (!onManaged(prev)) await writeManaged(ctx, { requestsPrev: prev });
+  return { next: 'done', requests: { ok: await repoint(seerr, REQUESTS_TARGET) } };
 }
 
-type PhaseResult = Next | { next: MovePhase; meta: MoveWarning };
+/** a phase's result: the next phase, with a switched move's warning, or (`requests`) whether the request service followed */
+type PhaseResult = Next | { next: MovePhase; meta?: MoveWarning; requests?: { ok: boolean } };
 const PHASES: Partial<Record<MovePhase, (p: Phase) => Promise<PhaseResult>>> = { copying, nfo, verify, switch: switchPhase, requests };
 /** the phases in which any failure aborts the move (FriendFlix is unchanged; the updater's copy waits as `ready`) */
 const ABORTABLE: readonly MovePhase[] = ['nfo', 'verify'];
 
-/** the phase changes only while it is still the one this tick ran (an abort meanwhile wins); its retries start over */
-async function advance(ctx: Ctx, from: MovePhase, to: MovePhase, meta?: MoveWarning): Promise<boolean> {
-  const patch = { phase: to, error: null, ...(meta ? { errorMeta: meta } : {}) };
-  const r = await ctx.db.query(`update media_managed set move = (move - 'tries' - 'rounds' - 'nfoLeft') || $2::jsonb, updated_at = now()
-    where id = 1 and move->>'phase' = $1`, [from, JSON.stringify(patch)]);
-  return r.rowCount === 1;
+/**
+ * the phase changes only while it is still the one this tick ran (an abort meanwhile wins); its retries start over. `requests`: the
+ * request service's outcome, recorded as `requestsWarning` and audited in the same transaction (once per phase change)
+ */
+async function advance(ctx: Ctx, from: MovePhase, to: MovePhase, meta?: MoveWarning, requests?: { ok: boolean }): Promise<boolean> {
+  const patch = { phase: to, error: null, ...(meta ? { errorMeta: meta } : {}), ...(requests ? { requestsWarning: !requests.ok } : {}) };
+  return inTransaction(ctx.db, async (c) => {
+    const r = await c.query(`update media_managed set move = (move - 'tries' - 'rounds' - 'nfoLeft') || $2::jsonb, updated_at = now()
+      where id = 1 and move->>'phase' = $1`, [from, JSON.stringify(patch)]);
+    if (r.rowCount !== 1) return false;
+    if (requests) await auditInTx({ db: c }, null, 'mediaserver.requests_repointed', undefined, { ok: requests.ok });
+    return true;
+  });
 }
 
 /** one more retry of the phase (only while it is still in `from`) */
@@ -693,8 +739,9 @@ export async function moveTick(ctx: Ctx, log?: TickLog): Promise<MovePhase | 'id
       return (await readManaged(ctx.db)).move?.phase ?? 'idle';
     }
     if (result === 'waiting') return 'waiting';
-    const { next, meta } = typeof result === 'string' ? { next: result, meta: undefined } : result;
-    if (await advance(ctx, rec.phase, next, meta)) return next;
+    const { next, meta, requests: req } = typeof result === 'string' ? { next: result, meta: undefined, requests: undefined } : result;
+    if (req?.ok === false) log?.warn({ phase: rec.phase }, 'media move: the request service could not be pointed at the moved server; Admin shows the manual step');
+    if (await advance(ctx, rec.phase, next, meta, req)) return next;
     return (await readManaged(ctx.db)).move?.phase ?? 'idle';
   } finally {
     await ctx.kv.delIfEquals(MOVE_LOCK, token).catch(() => undefined);
@@ -764,14 +811,40 @@ async function answersWithKey(ctx: Ctx, url: string, key: string): Promise<'ok' 
 }
 
 /**
- * What is left of a way back after its switch: the managed Ferrofin stopped (not removed), recorded only once the updater shows it
- * stopped (nothing to stop when its container is gone or already stopped) or its stop job succeeded, else the next tick tries again;
- * then the users repaired on the old Jellyfin (repairBack: the stored way back). Each step is recorded once done; true when all is. The
- * request service is pointed back with plan Task 9. A repair failure throws (the tick tries again).
+ * The way back's request service (spec "After the move": "points the request service back"), once per way back (MoveRecord.requestsBack,
+ * written with the outcome): while its connection names the managed server, the one saved by the move (`requests_prev`) is restored and
+ * synced like the move's; one that names something else (never pointed over, or changed by hand) is left alone. A refusal, a connection
+ * that cannot be read, or nothing saved to restore is `requestsWarning` (the saved connection is kept for the manual step); the way back
+ * goes on either way. Audited `mediaserver.requests_repointed` `{ok, back: true}` when it restored or failed. No request service: nothing
+ * done, the saved connection kept.
+ */
+async function pointRequestsBack(ctx: Ctx, m: MediaManaged, actor: string | null): Promise<void> {
+  const seerr = ctx.seerr;
+  let outcome: 'none' | 'ok' | 'failed' = 'none';
+  if (seerr) {
+    const cur = await connectionOf(seerr);
+    if (!cur) outcome = 'failed';
+    else if (onManaged(cur)) outcome = m.requestsPrev && (await repoint(seerr, m.requestsPrev)) ? 'ok' : 'failed';
+  }
+  const clearPrev = seerr !== null && outcome !== 'failed';
+  await inTransaction(ctx.db, async (c) => {
+    const r = await c.query(`update media_managed set move = move || $1::jsonb${clearPrev ? ', requests_prev = null' : ''}, updated_at = now()
+      where id = 1 and move->>'back' = 'switched'`, [JSON.stringify({ requestsBack: true, requestsWarning: outcome === 'failed' })]);
+    if (r.rowCount === 1 && outcome !== 'none') await auditInTx({ db: c }, actor, 'mediaserver.requests_repointed', undefined, { ok: outcome === 'ok', back: true });
+  });
+}
+
+/**
+ * What is left of a way back after its switch: the request service pointed back (pointRequestsBack, once), the managed Ferrofin stopped
+ * (not removed), recorded only once the updater shows it stopped (nothing to stop when its container is gone or already stopped) or its
+ * stop job succeeded, else the next tick tries again; then the users repaired on the old Jellyfin (repairBack: the stored way back).
+ * Each step is recorded once done; true when all is. A repair failure throws (the tick tries again).
  */
 async function finishBack(ctx: Ctx, actor: string | null, stepMs = BACK_STEP_MS): Promise<boolean> {
-  let back = (await readManaged(ctx.db)).move?.back;
+  const m = await readManaged(ctx.db);
+  let back = m.move?.back;
   if (back === 'switched') {
+    if (!m.move?.requestsBack) await pointRequestsBack(ctx, m, actor);
     const view = await updaterView(ctx);
     if (!('status' in view)) return false;
     const ms = view.status.mediaserver;
@@ -820,7 +893,8 @@ async function resumeBack(ctx: Ctx, rec: MoveRecord, log?: TickLog): Promise<'do
  * the updater starts the recorded old container (`source-start`; `source_missing` when it is gone: the stage 1 way back applies,
  * `source_mismatch` when the updater cannot tell it), it must answer the stored key within BACK_WAIT_MS (`jellyfin_unreachable`;
  * `updater_error` when the updater's status could not be read), then one transaction restores the stored address and key, ends
- * managed mode and the moved state, and audits `mediaserver.back`; then the managed server is stopped and the users repaired
+ * managed mode and the moved state, and audits `mediaserver.back`; then the request service is pointed back (a refusal is a warning),
+ * the managed server is stopped and the users repaired
  * (finishBack; the tick finishes what a failure leaves). `ok` once FriendFlix uses the old Jellyfin again. Every refusal before the
  * switch leaves FriendFlix unchanged (`back: failed` with its code). Works from the stored values alone: the managed container may be
  * gone (the updater dropped the move). A restart: moveTick's resumeBack. Codes only: never the address, the key or a password in an
@@ -876,6 +950,7 @@ async function backPlan(ctx: Ctx): Promise<BackPlan> {
   if (ctx.settings.sources().JELLYFIN_URL === 'env' || ctx.settings.sources().JELLYFIN_ADMIN_API_KEY === 'env') return { error: 'url_pinned' };
   const started: MoveRecord = { ...(rec ?? { phase: 'done', error: null, jobId: null, startedAt: m.migratedFrom.at, requestsWarning: false }), back: 'starting' };
   delete started.backError;
+  delete started.requestsBack;
   await writeManaged(ctx, { move: started });
   return { url, key, name: m.migratedFrom.name };
 }

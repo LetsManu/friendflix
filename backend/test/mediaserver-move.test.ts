@@ -6,7 +6,7 @@ import { goBack, MOVE_LOCK, moveTick, repairUsers, verifyIds } from '../src/medi
 import { externalKey, readManaged, writeManaged, type MovePhase } from '../src/mediaserver/store.js';
 import { JellyfinClient } from '../src/jellyfin/client.js';
 import { sessionKey } from '../src/session.js';
-import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
+import { ADMIN, cfg, makeEnv, type Handler, type TestEnv } from './helpers.js';
 
 const SECRET = cfg.INTERNAL_SECRET;
 const DIGEST = `sha256:${'a'.repeat(64)}`;
@@ -193,6 +193,42 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
   return j({ error: 'invalid_body' }, 400);
 }) as typeof fetch;
 
+// ---------------------------------------------------------------- the fake request service (its settings API as in the pinned image)
+
+/** the request service's Jellyfin settings (GET /settings/jellyfin answers all of them, its key included) */
+const REQ_KEY = 'k' + 'ey-' + 'req-' + '3';
+const reqSettings = () => ({
+  name: 'Jellyfin', ip: 'jellyfin.example.com', port: 8920, useSsl: true, urlBase: '/jf', externalHostname: 'https://watch.example.com',
+  jellyfinForgotPasswordUrl: '', libraries: [{ id: 'f'.repeat(32), name: 'Filme', enabled: true, type: 'movie' }], serverId: 'e'.repeat(32), apiKey: KEY,
+} as Record<string, any>);
+const req = {
+  settings: reqSettings(),
+  /** paths the request service answers with this status instead */
+  fail: {} as Record<string, number>,
+  calls: [] as Array<{ method: string; path: string; body: any; key: string | undefined }>,
+};
+const resetReq = () => Object.assign(req, { settings: reqSettings(), fail: {}, calls: [] });
+const reqCalls = (method: string, path: string) => req.calls.filter((c) => c.method === method && c.path === path);
+const reqRoute = (method: string, path: string, answer: (body: any) => { status?: number; json?: unknown }): Record<string, Handler> => ({
+  [`${method} /api/v1${path}`]: (_u, init, body) => {
+    req.calls.push({ method, path, body, key: (init.headers as Record<string, string> | undefined)?.['X-Api-Key'] });
+    const failed = req.fail[`${method} ${path}`];
+    return failed ? { status: failed, json: { message: 'no' } } : answer(body);
+  },
+});
+const reqRoutes: Record<string, Handler> = {
+  ...reqRoute('GET', '/settings/jellyfin', () => ({ json: req.settings })),
+  // the request service merges the body over its settings and checks the server they name answers (with its stored key)
+  ...reqRoute('POST', '/settings/jellyfin', (body) => {
+    req.settings = { ...req.settings, ...body };
+    return { json: req.settings };
+  }),
+  ...reqRoute('POST', '/settings/jellyfin/library/sync', () => ({ json: req.settings.libraries })),
+  ...reqRoute('POST', '/settings/jellyfin/sync', () => ({ json: { running: true, progress: 0, total: 0 } })),
+};
+/** the request service's connection as FriendFlix points it at the managed server */
+const REQ_MANAGED = { ip: 'mediaserver', port: 8096, useSsl: false, urlBase: '' };
+
 const ctxPatch = (c: TestEnv['ctx']) => { c.fetchImpl = fetchImpl; c.cfg = { ...c.cfg, UPDATER_URL: 'http://updater:7070', INTERNAL_SECRET: SECRET }; };
 
 describe('the move: the backend phases after the copy', () => {
@@ -241,14 +277,15 @@ describe('the move: the backend phases after the copy', () => {
   beforeAll(async () => {
     // an updater found absent is remembered for 30 s: every test starts later than that
     vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
-    env = await makeEnv({}, { ctxPatch });
+    env = await makeEnv({}, { ctxPatch, seerr: reqRoutes });
   });
   afterAll(async () => { vi.restoreAllMocks(); await env.close(); });
   beforeEach(async () => {
     offset += 60_000;
     resetFake();
     resetServer();
-    await env.ctx.settings.save({ JELLYFIN_URL: OLD, JELLYFIN_ADMIN_API_KEY: KEY }, null);
+    resetReq();
+    await env.ctx.settings.save({ JELLYFIN_URL: OLD, JELLYFIN_ADMIN_API_KEY: KEY, REQUESTS_URL: 'http://requests:5055', REQUESTS_API_KEY: REQ_KEY }, null);
     await env.pool.query("delete from audit_log; delete from media_managed; delete from users where authentik_sub like 'sub-move-%'; update users set jellyfin_user_id = ''; update profiles set jellyfin_user_id = null");
     for (const prefix of ['updater:pending:', 'media:move:', 'media:managed:']) for (const k of await env.kv.keys(prefix)) await env.kv.del(k);
   });
@@ -286,8 +323,11 @@ describe('the move: the backend phases after the copy', () => {
     expect(calls('GET', '/Items').map((c) => c.query.get('ids')).sort()).toEqual([1, 2, 3, 4, 5].map(hex));
     // the switch is audited without an address or a key
     const audits = (await env.pool.query<{ action: string; meta: Record<string, unknown> }>("select action, meta from audit_log where action like 'mediaserver.%' order by id")).rows;
-    expect(audits).toEqual([{ action: 'mediaserver.moved', meta: { name: 'jellyfin' } }]);
+    expect(audits).toEqual([{ action: 'mediaserver.moved', meta: { name: 'jellyfin' } }, { action: 'mediaserver.requests_repointed', meta: { ok: true } }]);
     expect(JSON.stringify(audits)).not.toContain(KEY);
+    // the request service follows
+    expect(req.settings).toMatchObject(REQ_MANAGED);
+    expect(m.requestsPrev).toEqual({ hostname: 'jellyfin.example.com', port: 8920, useSsl: true, urlBase: '/jf' });
     // nothing left to do
     expect(await tick()).toBe('idle');
   });
@@ -581,6 +621,94 @@ describe('the move: the backend phases after the copy', () => {
     expect(JSON.stringify(m)).not.toContain(KEY);
   });
 
+  describe('the request service (spec "The move" 10)', () => {
+    const prevRow = async () => (await env.pool.query<{ p: unknown }>('select requests_prev as p from media_managed where id = 1')).rows[0]?.p;
+
+    it('requests repointed and synced, previous saved', async () => {
+      await seedMove('switch');
+      expect(await tick()).toBe('requests');
+      expect(await tick()).toBe('done');
+      // its Jellyfin connection names the managed server; its key, libraries, server id and public address stay as they were
+      expect(req.settings).toEqual({ ...reqSettings(), ...REQ_MANAGED });
+      // only the connection is sent: never a key in the body, FriendFlix's request-service key in the header
+      expect(reqCalls('POST', '/settings/jellyfin').map((c) => c.body)).toEqual([REQ_MANAGED]);
+      expect(req.calls.every((c) => c.key === REQ_KEY)).toBe(true);
+      // the library list synced, then the scan started
+      expect(req.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+        'GET /settings/jellyfin', 'POST /settings/jellyfin', 'POST /settings/jellyfin/library/sync', 'POST /settings/jellyfin/sync']);
+      expect(reqCalls('POST', '/settings/jellyfin/sync')[0]!.body).toEqual({ start: true });
+      // the previous connection saved for the way back, without a key
+      const m = await readManaged(env.pool);
+      expect(m.requestsPrev).toEqual({ hostname: 'jellyfin.example.com', port: 8920, useSsl: true, urlBase: '/jf' });
+      expect(JSON.stringify(await prevRow())).not.toMatch(/key-/);
+      expect(m.move).toMatchObject({ phase: 'done', requestsWarning: false });
+      expect((await env.pool.query("select meta from audit_log where action = 'mediaserver.requests_repointed'")).rows).toEqual([{ meta: { ok: true } }]);
+      expect(opBodies('migrate-done')).toEqual([{ op: 'migrate-done' }]);
+      // run again (a restart before the phase was recorded): the saved connection is the old one, never the managed server
+      await seedMove('requests');
+      expect(await tick()).toBe('done');
+      expect((await readManaged(env.pool)).requestsPrev).toEqual({ hostname: 'jellyfin.example.com', port: 8920, useSsl: true, urlBase: '/jf' });
+      expect(req.settings).toMatchObject(REQ_MANAGED);
+      expect(opBodies('migrate-done')).toHaveLength(1);
+    });
+
+    it('request service refuses: move done with a warning', async () => {
+      const warned = async () => {
+        const m = await readManaged(env.pool);
+        expect(m.move).toMatchObject({ phase: 'done', error: null, requestsWarning: true });
+        expect(m).toMatchObject({ kind: 'ferrofin', migratedFrom: { name: 'jellyfin' } });
+        expect(env.ctx.cfg.JELLYFIN_URL).toBe(MANAGED);
+        expect(opBodies('migrate-abort')).toEqual([]);
+        const a = (await env.pool.query("select meta from audit_log where action = 'mediaserver.requests_repointed'")).rows;
+        expect(a).toEqual([{ meta: { ok: false } }]);
+        await env.pool.query('delete from audit_log');
+      };
+      // it refuses the new connection (it could not reach the server it names)
+      await seedMove('switch');
+      req.fail['POST /settings/jellyfin'] = 500;
+      expect(await run('done')).toEqual(['requests', 'done']);
+      await warned();
+      expect(req.settings).toEqual(reqSettings());
+      expect(opBodies('migrate-done')).toEqual([{ op: 'migrate-done' }]);
+      // its API differs (no such settings): nothing sent, nothing saved
+      resetReq();
+      await writeManaged(env.ctx, { requestsPrev: null });
+      await seedMove('requests');
+      req.fail['GET /settings/jellyfin'] = 404;
+      expect(await tick()).toBe('done');
+      await warned();
+      expect(reqCalls('POST', '/settings/jellyfin')).toEqual([]);
+      expect((await readManaged(env.pool)).requestsPrev).toBeNull();
+      // its connection is not one it could be pointed back to (no Jellyfin set up there): left alone
+      resetReq();
+      req.settings = { ...reqSettings(), ip: '' };
+      await seedMove('requests');
+      expect(await tick()).toBe('done');
+      await warned();
+      expect(reqCalls('POST', '/settings/jellyfin')).toEqual([]);
+      // pointed over, but the sync is refused: still a warning (its libraries may be stale)
+      resetReq();
+      await seedMove('requests');
+      req.fail['POST /settings/jellyfin/library/sync'] = 404;
+      expect(await tick()).toBe('done');
+      await warned();
+      expect(req.settings).toMatchObject(REQ_MANAGED);
+      expect((await readManaged(env.pool)).requestsPrev).toEqual({ hostname: 'jellyfin.example.com', port: 8920, useSsl: true, urlBase: '/jf' });
+    });
+
+    it('no request service: skipped', async () => {
+      await env.ctx.settings.save({ REQUESTS_URL: null }, null);
+      expect(env.ctx.seerr).toBeNull();
+      await seedMove('switch');
+      expect(await run('done')).toEqual(['requests', 'done']);
+      const m = await readManaged(env.pool);
+      expect(m.move).toMatchObject({ phase: 'done', requestsWarning: false });
+      expect(m.requestsPrev).toBeNull();
+      expect(req.calls).toEqual([]);
+      expect((await env.pool.query("select 1 from audit_log where action = 'mediaserver.requests_repointed'")).rowCount).toBe(0);
+    });
+  });
+
   describe('a phase found running after a backend restart resumes or aborts', () => {
     it('copying: the copy ended while the backend was down', async () => {
       // ready: on to the backend's phases
@@ -825,6 +953,59 @@ describe('the move: the backend phases after the copy', () => {
       // nothing left for the tick; a second way back has nothing to go back from
       expect(await tick()).toBe('idle');
       expect(await back()).toEqual({ ok: false, error: 'not_moved' });
+    });
+
+    it('way back restores the previous connection', async () => {
+      const PREV = { hostname: 'jellyfin.example.com', port: 8920, useSsl: true, urlBase: '/jf' };
+      const audits = async () => (await env.pool.query("select meta from audit_log where action = 'mediaserver.requests_repointed' order by id")).rows.map((r) => r.meta);
+      await seedAccounts();
+      // moved: the request service points at the managed server
+      const moved = async () => {
+        await seedMoved();
+        await writeManaged(env.ctx, { requestsPrev: PREV });
+        req.settings = { ...reqSettings(), ...REQ_MANAGED };
+        req.calls = [];
+        await env.pool.query('delete from audit_log');
+      };
+      await moved();
+      expect(await back()).toEqual({ ok: true });
+      expect(req.settings).toEqual(reqSettings());
+      expect(reqCalls('POST', '/settings/jellyfin').map((c) => c.body)).toEqual([{ ip: 'jellyfin.example.com', port: 8920, useSsl: true, urlBase: '/jf' }]);
+      expect(reqCalls('POST', '/settings/jellyfin/library/sync')).toHaveLength(1);
+      expect(reqCalls('POST', '/settings/jellyfin/sync')).toHaveLength(1);
+      let m = await readManaged(env.pool);
+      expect(m.move).toMatchObject({ back: 'done', requestsWarning: false });
+      expect(m.requestsPrev).toBeNull();
+      expect(await audits()).toEqual([{ ok: true, back: true }]);
+      expect(env.ctx.cfg.JELLYFIN_URL).toBe(OLD);
+
+      // the request service refuses: the way back still finishes, with the warning; the saved connection is kept (the manual step)
+      // (the old Jellyfin keeps the users the first way back left there)
+      resetFake();
+      await moved();
+      req.fail['POST /settings/jellyfin'] = 500;
+      // the managed server's stop is refused at first: the tick finishes the way back, the request service is tried once
+      fake.refuse.stop = 'busy';
+      expect(await back()).toEqual({ ok: true });
+      expect((await readManaged(env.pool)).move).toMatchObject({ back: 'switched', requestsWarning: true });
+      delete fake.refuse.stop;
+      expect(await tick()).toBe('done');
+      m = await readManaged(env.pool);
+      expect(m.move).toMatchObject({ back: 'done', requestsWarning: true });
+      expect(m.requestsPrev).toEqual(PREV);
+      expect(reqCalls('POST', '/settings/jellyfin')).toHaveLength(1);
+      expect(await audits()).toEqual([{ ok: false, back: true }]);
+
+      // the request service no longer names the managed server (changed by hand, or never pointed over): left as it is
+      resetFake();
+      await moved();
+      req.settings = reqSettings();
+      req.settings.ip = 'other.example.com';
+      expect(await back()).toEqual({ ok: true });
+      expect(req.settings.ip).toBe('other.example.com');
+      expect(reqCalls('POST', '/settings/jellyfin')).toEqual([]);
+      expect((await readManaged(env.pool)).move).toMatchObject({ back: 'done', requestsWarning: false });
+      expect(await audits()).toEqual([]);
     });
 
     it('repairUsers again finds nothing to create and sets the passwords once more', async () => {

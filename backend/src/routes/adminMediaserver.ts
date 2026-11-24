@@ -34,13 +34,14 @@ export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 
  * on, the connection is not pinned in .env and the updater can run the media server; `reason` why it cannot (null: nothing keeps it from
  * being offered, or there is nothing to move: no linked ids, a managed server, Plex's own stage); `state` the move as the backend follows
  * it (with the step and abort flag of the updater's job); `migratedFrom` the Jellyfin a move came from; `sourceState` that container's
- * Docker state (`missing` once it is gone); `requestsWarning` the request service still points at the old Jellyfin; `scan` the
+ * Docker state (`missing` once it is gone); `requestsWarning` the request service does not point at the server FriendFlix uses (a move
+ * or a way back could not point it over: the manual step); `scan` the
  * background scan of the chosen Jellyfin (mediaserver/move.ts MoveScanRecord); `state.back` how far the way back got (`backError` its
  * code when it changed nothing). Not offered while a move or a way back is under way.
  */
 export interface MoveView {
   offered: boolean; reason: OfferReason | null; scan: MoveScanRecord | null;
-  state: (Omit<MoveRecord, 'requestsWarning' | 'abortPending' | 'tries' | 'rounds' | 'repeat' | 'relinks'> & { step: MediaStep | null; abort: boolean }) | null;
+  state: (Omit<MoveRecord, 'requestsWarning' | 'abortPending' | 'tries' | 'rounds' | 'repeat' | 'relinks' | 'requestsBack'> & { step: MediaStep | null; abort: boolean }) | null;
   migratedFrom: MigratedFrom | null; sourceState: string | null; requestsWarning: boolean;
 }
 export interface MediaView {
