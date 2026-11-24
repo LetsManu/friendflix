@@ -464,7 +464,7 @@ describe('media jobs in the Updater', () => {
     expect(first.ok && first.job).toMatchObject({
       action: 'mediaserver-apply', state: 'running', to: 'sha-abcdef1', from: null, error: null,
       steps: { pull: 'skipped', verify: 'skipped', restart: 'skipped', health: 'skipped', rollback: 'skipped' },
-      media: { step: null, steps: { check: 'pending', pull: 'pending', verify: 'pending', snapshot: 'pending', create: 'pending', start: 'pending', health: 'pending', rollback: 'pending' } },
+      media: { step: null, steps: { check: 'pending', pull: 'pending', verify: 'pending', snapshot: 'pending', create: 'pending', start: 'pending', health: 'pending', rollback: 'pending', copy_bulk: 'pending', stop_source: 'pending', copy: 'pending', adopt: 'pending' } },
     });
     expect(u.busy).toBe(true);
     expect(u.startMediaJob('mediaserver-stop', async () => undefined)).toEqual({ ok: false, error: 'busy' });

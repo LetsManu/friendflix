@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, randomBytes } from 'node:crypto';
 import { TemplateViolation } from './guard.js';
-import { isRel, isTarget } from './paths.js';
+import { isMigratedTarget, isRel, isTarget } from './paths.js';
 import type { DesiredSpec, Kind } from './types.js';
 
 /**
@@ -43,8 +43,16 @@ export const ADMIN_USER = 'friendflix-admin';
 const NVIDIA_ENV = 'NVIDIA_DRIVER_CAPABILITIES=compute,video,utility';
 const PASSWORD_RE = /^[A-Za-z0-9_-]{43}$/;
 
+/** where a migrated Ferrofin keeps its data (stage 2 "Media paths": its media may sit below /data); the volume keeps its name */
+export const MIGRATED_DATA_TARGET = '/ferrofin-data';
+/**
+ * a migrated Ferrofin covers the image's VOLUME /data with this small root-owned tmpfs: no anonymous writable volume (which would
+ * leak on every recreate), and media targets "below /data" (isMigratedTarget allows them) mount on top of it
+ */
+const MIGRATED_DATA_TMPFS = 'size=1m,mode=0755';
+
 export const ENV_KEYS: Record<Kind, readonly string[]> = {
-  ferrofin: ['TZ', 'FERROFIN_CACHE_DIR', FERROFIN_ADMIN_NAME, 'FERROFIN_ADMIN_PASSWORD', 'NVIDIA_DRIVER_CAPABILITIES'],
+  ferrofin: ['TZ', 'FERROFIN_CACHE_DIR', 'FERROFIN_DATA_DIR', FERROFIN_ADMIN_NAME, 'FERROFIN_ADMIN_PASSWORD', 'NVIDIA_DRIVER_CAPABILITIES'],
   jellyfin: ['TZ', 'XDG_CACHE_HOME', 'NVIDIA_DRIVER_CAPABILITIES'],
 };
 
@@ -111,13 +119,32 @@ export function specHash(body: Record<string, unknown>): string {
   return sha256(canonical(rest));
 }
 
-/** the managed media server's create body (spec "The container template"); `password` only on Ferrofin's first-run create */
+/**
+ * One media folder's mount: the base volume read-only below /media/<slug>; on a migrated server a folder added after the move goes
+ * only below /ffmedia/<slug> (never a path the copied database may point at), and a migrated folder sits at the path the old server
+ * used, which alone may be the whole base (no Subpath).
+ */
+function mediaMount(x: DesiredSpec['folders'][number], migrated: boolean, baseVolume: string): Record<string, unknown> {
+  const ok = x.migrated === true
+    ? migrated && isMigratedTarget(x.target) && isRel(x.rel, 0, 3)
+    : isTarget(x.target) && x.target.startsWith(migrated ? '/ffmedia/' : '/media/') && isRel(x.rel, 1, 3);
+  if (!ok) throw new TemplateViolation('HostConfig.Mounts');
+  return { Type: 'volume', Source: baseVolume, Target: x.target, ReadOnly: true, VolumeOptions: { NoCopy: true, ...(x.rel === '' ? {} : { Subpath: x.rel }) } };
+}
+
+/**
+ * the managed media server's create body (spec "The container template"); `password` only on Ferrofin's first-run create. A migrated
+ * spec (stage 2, Ferrofin only) keeps its data at /ferrofin-data with FERROFIN_DATA_DIR pointing there.
+ */
 export function containerSpec(d: DesiredSpec, f: TemplateFacts, o: { password?: string } = {}): CreateRequest {
   const n = names(f.project);
-  const t = STATE_TARGETS[d.kind];
+  const migrated = d.migrated === true;
+  if (migrated && d.kind !== 'ferrofin') throw new TemplateViolation('HostConfig.Mounts');
+  const t = migrated ? { ...STATE_TARGETS.ferrofin, data: MIGRATED_DATA_TARGET } : STATE_TARGETS[d.kind];
 
   const env = [`TZ=${d.tz}`];
   if (d.kind === 'ferrofin') env.push('FERROFIN_CACHE_DIR=/cache'); // its default is /data/cache: keep the cache out of the data volume
+  if (migrated) env.push(`FERROFIN_DATA_DIR=${MIGRATED_DATA_TARGET}`);
   if (o.password !== undefined) {
     if (d.kind !== 'ferrofin' || !PASSWORD_RE.test(o.password)) throw new TemplateViolation('Env');
     env.push(`${FERROFIN_ADMIN_NAME}=${ADMIN_USER}`, `FERROFIN_ADMIN_PASSWORD=${o.password}`);
@@ -125,10 +152,10 @@ export function containerSpec(d: DesiredSpec, f: TemplateFacts, o: { password?: 
   if (d.kind === 'jellyfin') env.push('XDG_CACHE_HOME=/cache/xdg');
   if (d.gpu === 'nvidia') env.push(NVIDIA_ENV);
 
-  const media = d.folders.map((x) => {
-    if (!isTarget(x.target) || !isRel(x.rel, 1, 3)) throw new TemplateViolation('HostConfig.Mounts');
-    return { Type: 'volume', Source: f.baseVolume, Target: x.target, ReadOnly: true, VolumeOptions: { NoCopy: true, Subpath: x.rel } };
-  });
+  const media = d.folders.map((x) => mediaMount(x, migrated, f.baseVolume));
+  // no target at or below another (a symlink in the read-only parent share could move the inner mount anywhere)
+  const targets = d.folders.map((x) => x.target);
+  if (targets.some((a, i) => targets.some((b, j) => i !== j && (a === b || b.startsWith(`${a}/`))))) throw new TemplateViolation('HostConfig.Mounts');
 
   const render = d.gpu === 'dri' ? [...new Set(f.renderGids)] : [];
   if (render.length > MAX_RENDER_GIDS) throw new TemplateViolation('GroupAdd');
@@ -141,7 +168,7 @@ export function containerSpec(d: DesiredSpec, f: TemplateFacts, o: { password?: 
       { Type: 'volume', Source: n.cache(d.kind), Target: t.cache, ReadOnly: false },
       ...media,
     ],
-    Tmpfs: { '/tmp': 'size=512m,mode=1777' },
+    Tmpfs: { '/tmp': 'size=512m,mode=1777', ...(migrated ? { '/data': MIGRATED_DATA_TMPFS } : {}) },
     ...hardening(),
     ...(d.gpu === 'dri' ? { Devices: [{ ...DRI_DEVICE }] } : {}),
     ...(d.gpu === 'nvidia' ? { DeviceRequests: [{ Driver: 'nvidia', Count: 1, Capabilities: [['gpu']] }] } : {}),
@@ -204,10 +231,11 @@ export function volumeSpec(project: string, which: 'base' | 'data' | 'cache', o:
   return { Name: which === 'data' ? n.data(o.kind) : n.cache(o.kind), Driver: 'local', DriverOpts: {}, Labels: labels(which) };
 }
 
-export type HelperVerb = 'check' | 'browse' | 'gpu' | 'backup' | 'restore';
+export type HelperVerb = 'check' | 'browse' | 'gpu' | 'backup' | 'restore' | 'migrate-scan' | 'migrate-copy';
+/** `source`: the old Jellyfin's /config mount as Docker records it, always read-only at /source (stage 2) */
 export type HelperMount =
   | { kind: 'base'; volume: string } | { kind: 'request'; path: string } | { kind: 'dri' } | { kind: 'drm' }
-  | { kind: 'data'; volume: string; rw: boolean } | { kind: 'backup'; rw: boolean };
+  | { kind: 'data'; volume: string; rw: boolean } | { kind: 'backup'; rw: boolean } | { kind: 'source'; type: 'bind' | 'volume'; source: string };
 export interface HelperRequest { verb: HelperVerb; args: string[]; uid: number; gid: number; groups: number[]; mounts: HelperMount[] }
 
 function helperMount(m: HelperMount, project: string): Record<string, unknown> {
@@ -218,6 +246,10 @@ function helperMount(m: HelperMount, project: string): Record<string, unknown> {
     case 'drm': return { Type: 'bind', Source: '/sys/class/drm', Target: '/sys-drm', ReadOnly: true };
     case 'data': return { Type: 'volume', Source: m.volume, Target: '/data', ReadOnly: !m.rw, VolumeOptions: { NoCopy: true } };
     case 'backup': return { Type: 'volume', Source: names(project).backup, Target: '/backups', ReadOnly: !m.rw };
+    // never copied up into: an empty source volume stays untouched
+    case 'source': return m.type === 'bind'
+      ? { Type: 'bind', Source: m.source, Target: '/source', ReadOnly: true }
+      : { Type: 'volume', Source: m.source, Target: '/source', ReadOnly: true, VolumeOptions: { NoCopy: true } };
   }
 }
 

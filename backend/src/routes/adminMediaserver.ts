@@ -9,15 +9,16 @@ import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { addressOnly } from '../media/address.js';
 import { MediaSetupError } from '../media/types.js';
-import { BACKUP_ID, decodePassphrase, mediaDownload, mediaOp, mediaUpload, parseMediaStatus, startMediaJob, type MediaBackup, type MediaStatus } from '../mediaserver/client.js';
+import { BACKUP_ID, decodePassphrase, mediaDownload, mediaOp, mediaScan, mediaUpload, parseMediaStatus, startMediaJob, type MediaBackup, type MediaStatus } from '../mediaserver/client.js';
 import { recordApplyFirstRun } from '../mediaserver/firstRun.js';
+import { ACTIVE_PHASES, backUnderWay, freshScan, readScan, scanRunning, startBack, startScan, SWITCHED_PHASES, withMoveLock, type MoveScanRecord } from '../mediaserver/move.js';
 import { libraryReferences, referenced } from '../mediaserver/references.js';
-import { deleteLibrary, managedKey, MANAGED_URL, renameLibrary } from '../mediaserver/serverApi.js';
-import { adminPassword, claimAdminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged, type SetupStep } from '../mediaserver/store.js';
+import { deleteLibrary, managedKey, MANAGED_URL, publicInfo, renameLibrary } from '../mediaserver/serverApi.js';
+import { adminPassword, claimAdminPassword, externalKey, idsInUse, libraryPath, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged, type MigratedFrom, type MoveRecord, type SetupStep } from '../mediaserver/store.js';
 import { recentlyAuthenticated } from '../reauth.js';
 import { requireAdmin } from '../session.js';
 import { requireSetupSession } from '../setup/code.js';
-import { PENDING, startedJob, updaterView, type StartResult, type UpdaterView } from '../updater.js';
+import { PENDING, startedJob, updaterView, type MediaStep, type StartResult, type UpdaterView } from '../updater.js';
 
 /**
  * Admin -> Einstellungen -> Medienserver and the wizard's media step (spec "Backend routes"): the managed media server through the
@@ -28,6 +29,23 @@ import { PENDING, startedJob, updaterView, type StartResult, type UpdaterView } 
  */
 
 export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 'engine_old' | 'proxy_outdated' | 'no_project' | 'no_network' | 'updater_outdated' | 'starting';
+/**
+ * The move from the external Jellyfin (stage 2): `offered` exactly while FriendFlix uses an external Jellyfin whose ids its data depends
+ * on, the connection is not pinned in .env and the updater can run the media server; `reason` why it cannot (null: nothing keeps it from
+ * being offered, or there is nothing to move: no linked ids, a managed server, Plex's own stage); `state` the move as the backend follows
+ * it (with the step and abort flag of the updater's job); `migratedFrom` the Jellyfin a move came from; `sourceState` that container's
+ * Docker state (`missing` once it is gone); `requestsWarning` the request service does not point at the server FriendFlix uses (a move
+ * or a way back could not point it over: the manual step); `scan` the
+ * background scan of the chosen Jellyfin (mediaserver/move.ts MoveScanRecord); `state.back` how far the way back got (`backError` its
+ * code when it changed nothing); `state.failedIn` the phase a failed move failed in. Not offered while a move or a way back is under way.
+ */
+export interface MoveView {
+  offered: boolean; reason: OfferReason | null; scan: MoveScanRecord | null;
+  state: (Omit<MoveRecord, 'requestsWarning' | 'abortPending' | 'tries' | 'rounds' | 'repeat' | 'relinks' | 'requestsBack'> & { step: MediaStep | null; abort: boolean }) | null;
+  migratedFrom: MigratedFrom | null; sourceState: string | null; requestsWarning: boolean;
+  /** a request service is set up in FriendFlix (the move points it at the new server; the sheet names it only then) */
+  requests: boolean;
+}
 export interface MediaView {
   /** managed = media_managed.kind is set */
   mode: 'managed' | 'external';
@@ -40,6 +58,7 @@ export interface MediaView {
   external: { url: string | null; hasKey: boolean };
   /** LIVETV_RECORD_LIBRARY_JF_PATH (spec "Subfolders", last point) */
   livetvLibraryPath: string | null;
+  move: MoveView;
 }
 
 const KINDS = ['ferrofin', 'jellyfin'] as const;
@@ -57,6 +76,9 @@ const CONTROL = /\p{Cc}/u;
 /** a directory name as browse lists it: no separator, no control character */
 const NAME = /^[^/\p{Cc}]+$/u;
 const RENDER_NODE = /^renderD[0-9]{1,4}$/;
+const CONTAINER_ID = /^[0-9a-f]{64}$/;
+/** the user a move runs as when the updater records none (the one its scan helpers ran as: updater/src/mediaserver/service.ts user()) */
+const MOVE_USER = { uid: 1000, gid: 1000 };
 const MAX_LINES = 500;
 const MAX_ENTRIES = 300;
 const PASSPHRASE_HEADER = 'x-ff-backup-passphrase';
@@ -79,8 +101,8 @@ const pinned = (ctx: Ctx): boolean => {
 
 const STATUS_REASON: Record<NonNullable<MediaStatus['reason']>, OfferReason> = { engine_old: 'engine_old', no_logs: 'proxy_outdated', no_project: 'no_project', no_network: 'no_network', starting: 'starting' };
 
-/** why managed mode cannot be offered (spec "Who may do what", "Fresh server only where nothing depends on ids"); null = it can */
-async function offerReason(ctx: Ctx, view: UpdaterView, managed: MediaManaged, kind?: Kind): Promise<OfferReason | null> {
+/** what keeps FriendFlix from running a managed media server at all (Plex, a pinned connection, the updater); null = nothing */
+function updaterReason(ctx: Ctx, view: UpdaterView): OfferReason | null {
   if (ctx.cfg.MEDIA_SERVER === 'plex') return 'plex';
   if (pinned(ctx)) return 'url_pinned';
   if (!('status' in view)) return 'no_updater';
@@ -89,8 +111,49 @@ async function offerReason(ctx: Ctx, view: UpdaterView, managed: MediaManaged, k
   if (!ms) return 'updater_outdated';
   // available false without a reason: the updater cannot reach its engine right now
   if (!ms.available) return ms.reason ? STATUS_REASON[ms.reason] : 'no_updater';
+  return null;
+}
+
+/** why managed mode cannot be offered (spec "Who may do what", "Fresh server only where nothing depends on ids"); null = it can */
+async function offerReason(ctx: Ctx, view: UpdaterView, managed: MediaManaged, kind?: Kind): Promise<OfferReason | null> {
+  const reason = updaterReason(ctx, view);
+  if (reason) return reason;
   if ((managed.kind === null || (kind !== undefined && kind !== managed.kind)) && (await idsInUse(ctx.db))) return 'ids_in_use';
   return null;
+}
+
+/** the external Jellyfin FriendFlix uses now (address only, no trailing slash); null when there is none or it is the managed server */
+function currentJellyfin(ctx: Ctx): string | null {
+  const url = addressOnly(ctx.cfg.JELLYFIN_URL ?? '').replace(/\/+$/, '');
+  return url && url !== MANAGED_URL ? url : null;
+}
+
+/**
+ * a move under way: the backend follows one (its active phases), or the updater holds an unfinished one (running, or copied and waiting
+ * for the backend; an aborted or done move is history); or a way back that is not finished (it ends managed mode before it is done)
+ */
+const moving = (managed: MediaManaged, status: MediaStatus | null): boolean =>
+  (managed.move !== null && ACTIVE_PHASES.includes(managed.move.phase)) || backUnderWay(managed.move) || status?.move?.phase === 'running' || status?.move?.phase === 'ready';
+
+/** whether the move is offered (MoveView): the updater's reasons first, then an external Jellyfin with linked ids and no move under way */
+async function moveOffer(ctx: Ctx, view: UpdaterView, managed: MediaManaged, status: MediaStatus | null): Promise<Pick<MoveView, 'offered' | 'reason'>> {
+  const reason = updaterReason(ctx, view);
+  if (reason) return { offered: false, reason };
+  return { offered: managed.kind === null && !moving(managed, status) && currentJellyfin(ctx) !== null && (await idsInUse(ctx.db)), reason: null };
+}
+
+function moveView(managed: MediaManaged, status: MediaStatus | null, offer: Pick<MoveView, 'offered' | 'reason'>, scan: MoveScanRecord | null, requests: boolean): MoveView {
+  const rec = managed.move;
+  return {
+    ...offer, scan,
+    state: rec ? {
+      phase: rec.phase, error: rec.error, jobId: rec.jobId, startedAt: rec.startedAt, ...(rec.errorMeta ? { errorMeta: rec.errorMeta } : {}),
+      ...(rec.back ? { back: rec.back } : {}), ...(rec.backError ? { backError: rec.backError } : {}),
+      ...(rec.failedIn ? { failedIn: rec.failedIn } : {}),
+      step: status?.move?.step ?? null, abort: status?.move?.abort === true,
+    } : null,
+    migratedFrom: managed.migratedFrom, sourceState: status?.source?.state ?? null, requestsWarning: rec?.requestsWarning === true, requests,
+  };
 }
 
 interface Loaded { view: UpdaterView; managed: MediaManaged; status: MediaStatus | null }
@@ -103,13 +166,16 @@ async function load(ctx: Ctx, read?: UpdaterView): Promise<Loaded> {
 export async function mediaView(ctx: Ctx, read?: UpdaterView): Promise<MediaView> {
   const { view, managed, status } = await load(ctx, read);
   const reason = await offerReason(ctx, view, managed);
+  const move = moveView(managed, status, await moveOffer(ctx, view, managed, status), await readScan(ctx), ctx.seerr !== null);
   return {
     mode: managed.kind ? 'managed' : 'external',
     offer: { managed: reason === null, reason },
     kinds: { ferrofin: status?.pins.ferrofin === true, jellyfin: status?.pins.jellyfin === true },
-    status, managed,
+    // the users a repeated move's repair made on the copy are the backend's to carry to the switch, not the page's
+    status, managed: managed.move?.relinks ? { ...managed, move: { ...managed.move, relinks: undefined } } : managed,
     external: { url: managed.externalUrl, hasKey: managed.hasExternalKey },
     livetvLibraryPath: ctx.cfg.LIVETV_RECORD_LIBRARY_JF_PATH ?? null,
+    move,
   };
 }
 
@@ -133,6 +199,18 @@ const jobAnswer = (reply: FastifyReply, r: StartResult) =>
 const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : {});
 /** the folders a base change kept or dropped: relative, no hidden or `..` component */
 const rels = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && REL.test(x) && !x.split('/').some((c) => c.startsWith('.'))).slice(0, 20) : []);
+
+/** the updater's GPU detection, checked field by field */
+function gpuInfo(json: unknown): { dri: Array<{ node: string; gid: number; vendor: 'intel' | 'amd' | 'other' }>; nvidia: boolean } {
+  const j = obj(json);
+  const dri = (Array.isArray(j.dri) ? j.dri : []).slice(0, 16).flatMap((d) => {
+    const o = obj(d);
+    const vendor: 'intel' | 'amd' | 'other' = o.vendor === 'intel' || o.vendor === 'amd' ? o.vendor : 'other';
+    const gid = typeof o.gid === 'number' && Number.isInteger(o.gid) && o.gid >= 0 && o.gid <= 65535 ? o.gid : null;
+    return typeof o.node === 'string' && RENDER_NODE.test(o.node) && gid !== null ? [{ node: o.node, gid, vendor }] : [];
+  });
+  return { dri, nvidia: j.nvidia === true };
+}
 
 const id = z.number().int().min(1).max(65535);
 const libraryName = z.string().min(1).max(60).refine((s) => s.trim() !== '' && !CONTROL.test(s));
@@ -160,6 +238,8 @@ const S = {
   ]),
   setupAction: z.discriminatedUnion('op', [simple('retry'), hdrTest]),
   none: z.object({}).strict(),
+  moveScan: z.object({ source: z.string().regex(CONTAINER_ID).optional() }).strict(),
+  move: z.object({ source: z.string().regex(CONTAINER_ID), trickplay: z.boolean() }).strict(),
 };
 type Action = z.infer<typeof S.adminAction>;
 type ApplyBody = z.infer<typeof S.apply>;
@@ -174,6 +254,24 @@ async function toExternal(ctx: Ctx, restore: boolean, actor: string | null): Pro
   await ctx.settings.save(values, actor);
   await writeManaged(ctx, { kind: null, setup: 'none', setupError: null });
   await audit(ctx, actor, 'mediaserver.mode', undefined, { from: 'managed', to: 'external' });
+}
+
+/**
+ * A moved server whose old Jellyfin is still there, or not known to be gone (stage 2 "After the move"): it leaves only through the way
+ * back (/back starts that Jellyfin, repairs its users and points FriendFlix at it). Removing it or switching to an address would leave
+ * the old Jellyfin stopped with no way back in Admin: refused with `use_way_back`. Once its container is gone the stage 1 switch (an
+ * address) and a remove are open; after a way back `migratedFrom` is null, so the stopped Ferrofin can be removed.
+ */
+const wayBackOnly = (managed: MediaManaged, status: MediaStatus | null): boolean => managed.migratedFrom !== null && status?.source?.state !== 'missing';
+
+/**
+ * a backup a moved server cannot restore: taken before its move (its database has other user and item ids than the moved one; an
+ * upload counts by when its archive was made, and one that does not say is not known to be later): `backup_premove`
+ */
+export function beforeMove(managed: Pick<MediaManaged, 'migratedFrom'>, b: MediaBackup): boolean {
+  if (!managed.migratedFrom) return false;
+  const taken = b.tag === 'upload' ? b.createdAt : b.at;
+  return taken === undefined || !(Date.parse(taken) >= Date.parse(managed.migratedFrom.at));
 }
 
 interface Libraries { chosen: LibraryEntry[]; kept: LibraryEntry[]; changed: Array<{ from: LibraryEntry; to: LibraryEntry }> }
@@ -298,14 +396,7 @@ function ops(ctx: Ctx) {
     run: async (_b, reply) => {
       const r = await mediaOp(ctx, { op: 'gpu' });
       if (r?.status !== 200) return refuse(reply, r);
-      const j = obj(r.json);
-      const dri = (Array.isArray(j.dri) ? j.dri : []).slice(0, 16).flatMap((d) => {
-        const o = obj(d);
-        const vendor = o.vendor === 'intel' || o.vendor === 'amd' ? o.vendor : 'other';
-        const gid = typeof o.gid === 'number' && Number.isInteger(o.gid) && o.gid >= 0 && o.gid <= 65535 ? o.gid : null;
-        return typeof o.node === 'string' && RENDER_NODE.test(o.node) && gid !== null ? [{ node: o.node, gid, vendor }] : [];
-      });
-      return { dri, nvidia: j.nvidia === true };
+      return gpuInfo(r.json);
     },
   });
 
@@ -343,18 +434,24 @@ function ops(ctx: Ctx) {
       // a new managed setup keeps the external server first (spec "Switching"); an empty connection (a switch without restore) leaves
       // the one kept before in place
       if (!managed.kind && ctx.cfg.JELLYFIN_URL) await writeManaged(ctx, { externalUrl: addressOnly(ctx.cfg.JELLYFIN_URL ?? '') || null, externalKey: ctx.cfg.JELLYFIN_ADMIN_API_KEY || null });
+      // a moved server (stage 2): its migrated folders exactly as the updater recorded them (never from the request: the body cannot carry
+      // one), counted as folders; a new folder mounts below /ffmedia, never at a path the copied database may point at
+      const migrated = status?.desired?.migrated === true && status.desired.kind === b.kind;
+      const kept = migrated ? status!.desired!.folders.filter((f) => f.migrated).map((f) => ({ rel: f.rel, target: f.target, migrated: true as const })) : [];
+      // each library remembers where its folder mounts, so the libraries step creates it there (store.ts libraryPath)
+      const chosen = libs.chosen.map(({ ffmedia: _, ...l }): LibraryEntry => (migrated ? { ...l, ffmedia: true } : l));
       const spec = {
-        kind: b.kind, folders: libs.chosen.map((l) => ({ rel: l.rel, target: `/media/${l.slug}` })),
-        uid: b.uid, gid: b.gid, gpu: b.gpu, mediaGid: b.mediaGid, egress: b.egress, tz: containerTz(),
+        kind: b.kind, folders: [...kept, ...chosen.map((l) => ({ rel: l.rel, target: libraryPath(l) }))],
+        uid: b.uid, gid: b.gid, gpu: b.gpu, mediaGid: b.mediaGid, egress: b.egress, tz: containerTz(), ...(migrated ? { migrated: true as const } : {}),
       };
       const body = { op: 'apply', spec, ...(b.kind === 'ferrofin' && password ? { firstRun: { password } } : {}) };
-      const r = await startMediaJob(ctx, body, actor, { kind: b.kind, folders: b.folders.length, gpu: b.gpu, egress: b.egress });
+      const r = await startMediaJob(ctx, body, actor, { kind: b.kind, folders: spec.folders.length, gpu: b.gpu, egress: b.egress });
       if (r.ok) {
         if ('job' in r) await recordApplyFirstRun(ctx, r.job.id, 'firstRun' in body);
-        const patch: ManagedPatch = { kind: b.kind, libraries: [...libs.chosen, ...libs.kept] };
+        const patch: ManagedPatch = { kind: b.kind, libraries: [...chosen, ...libs.kept] };
         // after the first run: a new (or retyped) library goes back to the libraries step, a changed GPU to the encoding settings; the
         // tick waits for this apply first
-        const again: SetupStep | null = firstRun ? null : libs.chosen.some((l) => !l.created) ? 'libraries' : status?.desired?.gpu !== b.gpu ? 'hwaccel' : null;
+        const again: SetupStep | null = firstRun ? null : chosen.some((l) => !l.created) ? 'libraries' : status?.desired?.gpu !== b.gpu ? 'hwaccel' : null;
         if (firstRun) await writeManaged(ctx, { ...patch, setup: 'applying', setupError: null, adminUser: ADMIN_USER });
         else await writeManaged(ctx, again ? { ...patch, setup: again, setupError: null } : patch);
       } else {
@@ -372,16 +469,137 @@ function ops(ctx: Ctx) {
         await audit(ctx, actor, 'mediaserver.action', undefined, { op: 'retry' });
         return { ok: true };
       }
-      const managed = a.op === 'remove' ? await readManaged(ctx.db) : null;
+      const loaded = a.op === 'remove' || a.op === 'restore' ? await load(ctx) : null;
+      const managed = loaded?.managed ?? null;
+      if (a.op === 'remove' && wayBackOnly(loaded!.managed, loaded!.status)) return reply.code(409).send({ error: 'use_way_back' });
+      if (a.op === 'restore' && loaded!.managed.migratedFrom) {
+        // a moved server: only a backup from its move on (the date comes from the updater's list; without one nothing is restored)
+        if (!loaded!.status) return reply.code(409).send({ error: 'not_available' });
+        const b = loaded!.status.backups.find((x) => x.id === a.id);
+        if (b && beforeMove(loaded!.managed, b)) return reply.code(409).send({ error: 'backup_premove' });
+      }
       const r = await startMediaJob(ctx, a, actor, {});
       // a removed managed server is no longer the media server: FriendFlix switches to external, both connection settings emptied (a
       // leftover container removed while external leaves the external connection alone)
-      if (r.ok && managed?.kind) await toExternal(ctx, false, actor);
+      if (r.ok && a.op === 'remove' && managed?.kind) await toExternal(ctx, false, actor);
       return jobAnswer(reply, r);
     },
   });
 
   return { base, confirm, clear, browse, gpu, apply, adminAction: action(S.adminAction), setupAction: action(S.setupAction) };
+}
+
+/**
+ * The move's preconditions (stage 2 "Finding the source"): offered (MoveView), and the server id of the Jellyfin FriendFlix uses now
+ * (`/System/Info/Public`), which the updater matches each candidate against; it never reaches an answer, an audit row or a log.
+ */
+async function moveGate(ctx: Ctx): Promise<{ error: string } | { status: MediaStatus | null; managed: MediaManaged; serverId: string }> {
+  const { view, managed, status } = await load(ctx);
+  // one move at a time: a move under way is `busy`, not "not offered"
+  if (moving(managed, status) && !updaterReason(ctx, view)) return { error: 'busy' };
+  const offer = await moveOffer(ctx, view, managed, status);
+  if (!offer.offered) return { error: offer.reason ?? 'not_offered' };
+  const info = await publicInfo(ctx.fetchImpl, currentJellyfin(ctx)!);
+  return info?.id ? { status, managed, serverId: info.id } : { error: 'jellyfin_unreachable' };
+}
+
+/** the GPU the move's server gets: what the detection finds (as the wizard proposes it: NVIDIA, else a render node, else none) */
+async function detectedGpu(ctx: Ctx): Promise<(typeof GPUS)[number]> {
+  const r = await mediaOp(ctx, { op: 'gpu' });
+  if (r?.status !== 200) return 'off';
+  const g = gpuInfo(r.json);
+  return g.nvidia ? 'nvidia' : g.dri.length ? 'dri' : 'off';
+}
+
+/**
+ * The move's routes (stage 2 "Backend"): the scan, the move (the updater's copy job; the backend's phases follow in mediaserver/move.ts),
+ * its abort and the way back. Codes only; the server id the backend adds is never part of an answer.
+ */
+function moveOps(ctx: Ctx) {
+  // the candidate list answers at once (each candidate's id scan: at most 45 s); the sized scan of one candidate runs in the background
+  // (mediaserver/move.ts startScan; the view shows it as move.scan); one scan at a time
+  const scan = op({
+    body: S.moveScan,
+    run: async (b, reply) => {
+      const gate = await moveGate(ctx);
+      if ('error' in gate) return reply.code(409).send({ error: gate.error });
+      if (await scanRunning(ctx)) return reply.code(409).send({ error: 'busy' });
+      if (b.source !== undefined) {
+        const started = await startScan(ctx, b.source, gate.serverId);
+        return started ? reply.code(202).send({ scan: started }) : reply.code(409).send({ error: 'busy' });
+      }
+      const r = await mediaScan(ctx, undefined, gate.serverId);
+      if (!r.ok) return reply.code(r.status).send({ error: r.error, outside: r.outside, refused: r.refused, nested: r.nested });
+      return { candidates: r.candidates };
+    },
+  });
+
+  // the user is the one the scan ran as, the GPU the detection's proposal, the time zone the server's; one move at a time
+  const move = op({
+    body: S.move, reauth: () => true,
+    run: async (b, reply, actor) => {
+      const gate = await moveGate(ctx);
+      if ('error' in gate) return reply.code(409).send({ error: gate.error });
+      // the admin confirmed what a scan of this very container showed, a short while ago
+      if (!(await freshScan(ctx, b.source))) return reply.code(409).send({ error: 'scan_required' });
+      const gpu = await detectedGpu(ctx);
+      const user = gate.status?.desired ? { uid: gate.status.desired.uid, gid: gate.status.desired.gid } : MOVE_USER;
+      const body = { op: 'migrate', source: b.source, trickplay: b.trickplay, gpu, uid: user.uid, gid: user.gid, tz: containerTz(), serverId: gate.serverId };
+      // the move is recorded before its job is asked for (jobId null; the tick follows the updater's move without one), so a record
+      // that cannot be written starts nothing, and a backend that stops between the start and the id still follows the copy. A move
+      // after a way back (or after a failed attempt at one) repairs the users on the copy before its check (mediaserver/move.ts verify)
+      const prev = gate.managed.move;
+      const repeat = prev?.back === 'done' || prev?.repeat === true;
+      const startedAt = new Date().toISOString();
+      await writeManaged(ctx, { move: { phase: 'copying', error: null, jobId: null, startedAt, requestsWarning: false, ...(repeat ? { repeat } : {}) } });
+      const r = await startMediaJob(ctx, body, actor, { trickplay: b.trickplay, gpu }, 'mediaserver.move');
+      // only this record (its start time), while it still waits for its copy: a tick may have moved it on meanwhile
+      const patch = r.ok ? { jobId: 'job' in r ? r.job.id : null } : { phase: 'failed', error: r.error, failedIn: 'copying' };
+      await ctx.db.query("update media_managed set move = move || $1::jsonb, updated_at = now() where id = 1 and move->>'startedAt' = $2 and move->>'phase' = 'copying'",
+        [JSON.stringify(patch), startedAt]);
+      return jobAnswer(reply, r);
+    },
+  });
+
+  // the updater aborts the copy (its job checks between steps) or, once copied, runs the abort as its own job: the new container
+  // removed, the old Jellyfin started. From the switch on FriendFlix uses the new server: the way back is /back. Under the move's tick
+  // lock (mediaserver/move.ts MOVE_LOCK): no phase step runs between reading the phase and marking the move failed, so an abort never
+  // meets a switch; a tick that keeps it longer than a few seconds answers busy.
+  const abort = op({
+    body: S.none,
+    run: async (_b, reply, actor) => {
+      const answer = await withMoveLock(ctx, async () => {
+        const m = await readManaged(ctx.db);
+        const phase = m.move?.phase ?? null;
+        if (phase && SWITCHED_PHASES.includes(phase)) return () => reply.code(409).send({ error: 'not_abortable' });
+        const r = await startMediaJob(ctx, { op: 'migrate-abort' }, actor, { phase }, 'mediaserver.move_abort');
+        // an abort the copy's own job carries out is read from that job's end; one the updater runs as a new job (the copy was done,
+        // whatever phase the backend shows) ends the move here, so no phase continues after it
+        const ownJob = r.ok && 'job' in r && r.job.id === m.move?.jobId;
+        if (r.ok && m.move && ACTIVE_PHASES.includes(m.move.phase) && (phase === 'nfo' || phase === 'verify' || !ownJob)) {
+          await writeManaged(ctx, { move: { ...m.move, phase: 'failed', error: 'move_aborted', failedIn: m.move.phase } });
+        }
+        return () => jobAnswer(reply, r);
+      });
+      return answer ? answer() : reply.code(409).send({ error: 'busy' });
+    },
+  });
+
+  // the way back (mediaserver/move.ts startBack): the checks that need no wait answer at once (409 with the code); otherwise 202 and
+  // it runs in the background under the move's tick lock (it may wait up to 3 minutes for the old Jellyfin: longer than a reverse proxy
+  // waits for an answer). The page follows move.state.back / backError to `done` or `failed` with its code; the switch is audited
+  // `mediaserver.back` by the way back itself. A refusal leaves FriendFlix as it was.
+  const back = op({
+    body: S.none, reauth: () => true,
+    run: async (_b, reply, actor, req) => {
+      const r = await startBack(ctx, actor, { log: req.log });
+      if (!r.ok) return reply.code(409).send({ error: r.error });
+      void r.done.catch(() => undefined);
+      return reply.code(202).send({});
+    },
+  });
+
+  return { scan, move, abort, back };
 }
 
 /** a limit for the whole portal (the updater is one), counted after the guard and the body check so nobody else can use it up */
@@ -391,6 +609,7 @@ const LIMITS = {
   apply: limit(3, '2 minutes', 'apply'), action: limit(3, '2 minutes', 'action'), clear: limit(3, '2 minutes', 'base-clear'), logs: limit(20, '1 minute', 'logs'),
   libraries: limit(20, '1 minute', 'libraries'), libraryDelete: limit(3, '2 minutes', 'library-delete'), mode: limit(3, '2 minutes', 'mode'),
   download: limit(3, '2 minutes', 'backup-download'), upload: limit(3, '10 minutes', 'backup-upload'),
+  moveScan: limit(6, '2 minutes', 'move-scan'), move: limit(3, '2 minutes', 'move'), moveAbort: limit(3, '2 minutes', 'move-abort'), back: limit(3, '2 minutes', 'back'),
 };
 
 type Hook = (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
@@ -482,6 +701,8 @@ function backupStreamRoutes(app: FastifyInstance, ctx: Ctx, guard: Hook, P: stri
       }
       const actor = req.user!.id;
       await audit(ctx, actor, 'mediaserver.backup_upload', undefined, { size });
+      // a moved server never restores a backup from before its move (kept: it can be downloaded again)
+      if (beforeMove(await readManaged(ctx.db), backup)) return reply.code(409).send({ error: 'backup_premove', backup });
       const started = await startMediaJob(ctx, { op: 'restore', id: backup.id }, actor, {});
       // the upload is kept as a backup either way: a refused restore (busy, no_target) can be started from the list later
       if (!started.ok) return reply.code(started.status).send({ error: started.error, backup });
@@ -506,6 +727,11 @@ export function adminMediaserverRoutes(app: FastifyInstance, ctx: Ctx) {
   post('/gpu', o.gpu, LIMITS.gpu);
   post('/apply', o.apply, LIMITS.apply);
   post('/action', o.adminAction, LIMITS.action);
+  const mv = moveOps(ctx);
+  post('/move/scan', mv.scan, LIMITS.moveScan);
+  post('/move', mv.move, LIMITS.move);
+  post('/move/abort', mv.abort, LIMITS.moveAbort);
+  post('/back', mv.back, LIMITS.back);
 
   post('/logs', op({
     body: S.logs,
@@ -570,6 +796,11 @@ export function adminMediaserverRoutes(app: FastifyInstance, ctx: Ctx) {
     run: async (b, reply, who) => {
       const { managed, status } = await load(ctx);
       if (!managed.kind) return reply.code(409).send({ error: 'not_managed' });
+      // a moved install goes back through /back, which repairs the users (profiles made on Ferrofin get a Jellyfin user); this switch
+      // would skip that
+      const moved = managed.migratedFrom !== null || (managed.move !== null && ACTIVE_PHASES.includes(managed.move.phase)) || backUnderWay(managed.move);
+      // while its old Jellyfin is there, a moved server switches only through the way back (no switch would start that Jellyfin)
+      if (wayBackOnly(managed, status) || (b.restore && moved)) return reply.code(409).send({ error: 'use_way_back' });
       if (b.restore && !managed.externalUrl) return reply.code(409).send({ error: 'no_external' });
       // the managed container is stopped, not removed (spec "Switching")
       if (status?.container) {

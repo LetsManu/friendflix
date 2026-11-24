@@ -2259,7 +2259,31 @@ export interface MediaMock {
   refuse: { status: number; error: string } | null;
   calls: Array<{ m: string; p: string; body: any }>;
   updater: UpdaterMock | null;
+  /** the move (stage 2: MediaView.move); its scan, the move's job and the way back advance per GET of the view */
+  move: any;
+  /** the Jellyfin containers POST …/move/scan lists; `listFail` refuses the list instead (code and container paths) */
+  candidates: Array<{ id: string; name: string; image: string; state: string; matches: boolean | null }>;
+  listFail: { error: string; outside?: string[] } | null;
+  /** the sized scan's result per source; `scanFail` refuses it; `scanReads` GETs it runs */
+  scanResult: any;
+  scanFail: { error: string; outside?: string[] } | null;
+  scanReads: number;
+  /** the request service could not be pointed over (the move) / back (the way back) */
+  moveRequestsWarning: boolean;
+  backRequestsWarning: boolean;
+  /** POST …/back refuses with this code */
+  backFail: string | null;
 }
+/** the source of the mocked move (a fictional container id) */
+export const MOVE_SOURCE = 'a'.repeat(64);
+export const moveView = (o: Record<string, unknown> = {}): any => ({
+  offered: false, reason: null, scan: null, state: null, migratedFrom: null, sourceState: null, requestsWarning: false, requests: true, ...o,
+});
+export const moveScan = (o: Record<string, unknown> = {}): any => ({
+  source: { id: MOVE_SOURCE, name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.0', version: '10.11.0' },
+  folders: [{ rel: 'Filme', target: '/movies', migrated: true }, { rel: 'Serien', target: '/tv', migrated: true }], layout: 'official',
+  bytes: 38 * 1024 ** 3, trickplayBytes: 12 * 1024 ** 3, plugins: ['Open Subtitles', 'Fanart'], nfo: true, ...o,
+});
 const MEDIA_STEP_KEYS = ['check', 'pull', 'verify', 'snapshot', 'create', 'start', 'health', 'rollback'] as const;
 export const mediaStatus = (o: Record<string, unknown> = {}): any => ({
   available: true, reason: null, base: { set: false, path: null, pending: false, expiresAt: null }, desired: null, container: null, pin: null,
@@ -2281,7 +2305,80 @@ export function mediaMock(): MediaMock {
     job: null,
     logs: ['[10:00:01] [INF] Startup complete', '[10:00:02] [INF] GET /Items?api_key=… 200', '[10:00:03] [WRN] Slow request /System/Info'],
     libraries: [], refuse: null, calls: [], updater: null,
+    move: moveView(), candidates: [], listFail: null, scanResult: moveScan(), scanFail: null, scanReads: 1, moveRequestsWarning: false, backRequestsWarning: false, backFail: null,
   };
+}
+/** FriendFlix on an external Jellyfin whose ids it depends on, the base confirmed: the move is offered, one candidate */
+export function movableMedia(ms: MediaMock): void {
+  ms.mode = 'external';
+  ms.offer = { managed: false, reason: 'ids_in_use' };
+  ms.kinds = { ferrofin: true, jellyfin: true };
+  ms.status = mediaStatus({ base: { set: true, path: '/srv/media', pending: false, expiresAt: null } });
+  ms.external = { url: null, hasKey: false };
+  ms.move = moveView({ offered: true });
+  ms.candidates = [{ id: MOVE_SOURCE, name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.0', state: 'running', matches: true }];
+}
+/** after a move from the container "jellyfin": managed Ferrofin, the old Jellyfin stopped and kept */
+export function movedMedia(ms: MediaMock): void {
+  const digest = `sha256:${'b'.repeat(64)}`;
+  ms.mode = 'managed';
+  ms.offer = { managed: true, reason: null };
+  ms.kinds = { ferrofin: true, jellyfin: true };
+  ms.managed = mediaManaged({ kind: 'ferrofin', setup: 'done', adminUser: 'friendflix-admin', hasPassword: true, externalUrl: 'http://192.0.2.10:8096', hasExternalKey: true,
+    migratedFrom: { name: 'jellyfin', version: '10.11.0', at: '2026-11-24T10:00:00.000Z' } });
+  ms.external = { url: 'http://192.0.2.10:8096', hasKey: true };
+  ms.status = mediaStatus({
+    base: { set: true, path: '/srv/media', pending: false, expiresAt: null },
+    desired: { kind: 'ferrofin', folders: [{ rel: 'Filme', target: '/movies', migrated: true }, { rel: 'Serien', target: '/tv', migrated: true }], uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: true, run: true, migrated: true },
+    container: { state: 'running', health: 'healthy', kind: 'ferrofin', image: { digest, upstream: '1.5.0' }, template: 'current', tampered: false, createdAt: '2026-11-24T10:00:00.000Z' },
+    pin: { image: `ghcr.io/example/ferrofin:1.5.0@${digest}`, upstream: '1.5.0', changed: false },
+    source: { name: 'jellyfin', state: 'exited', version: '10.11.0' },
+  });
+  ms.move = moveView({
+    state: { phase: 'done', error: null, jobId: '0123456789abcd07', startedAt: '2026-11-24T09:50:00.000Z', step: null, abort: false },
+    migratedFrom: { name: 'jellyfin', version: '10.11.0', at: '2026-11-24T10:00:00.000Z' }, sourceState: 'exited', requestsWarning: false,
+  });
+}
+/** the move's job and phases as the view shows them, in order (several per GET: the specs stay short) */
+const MOVE_SEQ: Array<[string, string | null]> = [
+  ['copying', 'check'], ['copying', 'pull'], ['copying', 'verify'], ['copying', 'copy_bulk'], ['copying', 'stop_source'], ['copying', 'copy'], ['copying', 'create'],
+  ['copying', 'start'], ['copying', 'health'], ['copying', 'adopt'], ['nfo', null], ['verify', null], ['switch', null], ['requests', null], ['done', null],
+];
+function advanceMove(ms: MediaMock): void {
+  const mv = ms.move;
+  const scan = mv.scan;
+  if (scan?.state === 'running' && --ms.scanReads <= 0) {
+    mv.scan = ms.scanFail ? { ...scan, state: 'failed', error: ms.scanFail.error, outside: ms.scanFail.outside ?? [], refused: [], nested: [] }
+      : { ...scan, state: 'done', result: { ...ms.scanResult, source: { ...ms.scanResult.source, id: scan.source } } };
+  }
+  const st = mv.state;
+  if (st && st.abort && st.phase !== 'done' && st.phase !== 'failed') { mv.state = { ...st, phase: 'failed', error: 'move_aborted', abort: false, failedIn: st.phase }; mv.offered = true; return; }
+  if (st && !['done', 'failed'].includes(st.phase)) {
+    let i = MOVE_SEQ.findIndex(([p, s]) => p === st.phase && s === st.step);
+    for (let k = 0; k < 3 && i < MOVE_SEQ.length - 1; k++) i++;
+    const [phase, step] = MOVE_SEQ[i]!;
+    mv.state = { ...st, phase, step };
+    if (phase === 'switch' || phase === 'requests' || phase === 'done') {
+      const name = mv.scan?.result?.source.name ?? 'jellyfin';
+      const keepMove = mv.state;
+      movedMedia(ms);
+      ms.move = { ...ms.move, state: keepMove, requestsWarning: phase === 'done' && ms.moveRequestsWarning, migratedFrom: { ...ms.move.migratedFrom, name } };
+    }
+    return;
+  }
+  const back = st?.back;
+  if (back === 'starting') {
+    ms.mode = 'external'; ms.offer = { managed: false, reason: 'ids_in_use' };
+    ms.managed = { ...ms.managed, kind: null, setup: 'none', migratedFrom: null };
+    ms.status.desired = { ...ms.status.desired, run: false };
+    ms.move = { ...mv, state: { ...st, back: 'switched' }, migratedFrom: null };
+  } else if (back === 'switched') {
+    ms.status.container = { ...ms.status.container, state: 'exited' };
+    ms.status.source = { ...ms.status.source, state: 'running' };
+    ms.move = { ...mv, state: { ...st, back: 'stopped' }, sourceState: 'running' };
+  } else if (back === 'stopped') {
+    ms.move = { ...mv, state: { ...st, back: 'done' }, offered: true, requestsWarning: ms.backRequestsWarning };
+  }
 }
 /** a managed Jellyfin running on /srv/media with two folders (the remove, download and log specs start here) */
 export function runningMedia(ms: MediaMock): void {
@@ -2333,12 +2430,36 @@ function mediaserverRoute(ms: MediaMock, m: string, p: string, body: any, J: Rep
   const job = (op: string) => { ms.job = mediaJob(op); return ms.job; };
   if (p === P && m === 'GET') {
     // three job steps per read (a job is followed every 2 s: the specs stay short)
+    advanceMove(ms);
     if (ms.job?.state === 'running') for (let i = 0; i < 3; i++) advanceMediaJob(ms);
     else if (ms.mode === 'managed' && ms.managed.setup !== 'done' && ms.managed.setup !== 'none' && !ms.managed.setupError && ms.setupSeq.length) {
       ms.managed.setup = ms.setupSeq.shift();
       if (ms.managed.setup === 'done') ms.managed.libraries = ms.managed.libraries.map((l: any) => ({ ...l, created: true }));
     }
-    return J({ mode: ms.mode, offer: ms.offer, kinds: ms.kinds, status: ms.status, managed: ms.managed, external: ms.external, livetvLibraryPath: ms.livetvLibraryPath });
+    return J({ mode: ms.mode, offer: ms.offer, kinds: ms.kinds, status: ms.status, managed: ms.managed, external: ms.external, livetvLibraryPath: ms.livetvLibraryPath, move: ms.move });
+  }
+  if (p === `${P}/move/scan` && m === 'POST') {
+    if (body.source === undefined) {
+      if (ms.listFail) return J({ error: ms.listFail.error, outside: ms.listFail.outside ?? [], refused: [], nested: [] }, 409);
+      return J({ candidates: ms.candidates });
+    }
+    ms.move.scan = { source: body.source, state: 'running', at: new Date().toISOString() };
+    return J({ scan: ms.move.scan }, 202);
+  }
+  if (p === `${P}/move` && m === 'POST') {
+    if (ms.move.scan?.state !== 'done' || ms.move.scan.source !== body.source) return J({ error: 'scan_required' }, 409);
+    const j = job('migrate');
+    ms.move = { ...ms.move, offered: false, state: { phase: 'copying', error: null, jobId: j.id, startedAt: new Date().toISOString(), step: 'check', abort: false } };
+    return J({ job: j }, 202);
+  }
+  if (p === `${P}/move/abort` && m === 'POST') {
+    ms.move.state = { ...ms.move.state, abort: true };
+    return J({ job: ms.job }, 202);
+  }
+  if (p === `${P}/back` && m === 'POST') {
+    if (ms.backFail) return J({ error: ms.backFail }, 409);
+    ms.move = { ...ms.move, state: { ...ms.move.state, back: 'starting' } };
+    return J({}, 202);
   }
   if (p === `${P}/base` && m === 'POST') {
     ms.status.base = { ...ms.status.base, pending: true, expiresAt: new Date(Date.now() + 30 * 60_000).toISOString() };
@@ -2361,7 +2482,11 @@ function mediaserverRoute(ms: MediaMock, m: string, p: string, body: any, J: Rep
     const libs = body.folders.map((f: any) => ({ slug: f.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name: f.name, type: f.type, rel: f.rel, created: false }));
     ms.mode = 'managed';
     ms.managed = { ...ms.managed, kind: body.kind, libraries: libs, ...(first ? { setup: 'applying', setupError: null, adminUser: 'friendflix-admin', hasPassword: true } : {}) };
-    ms.status.desired = { kind: body.kind, folders: libs.map((l: any) => ({ rel: l.rel, target: `/media/${l.slug}` })), uid: body.uid, gid: body.gid, gpu: body.gpu, mediaGid: body.mediaGid, egress: body.egress, run: true };
+    // a moved server keeps its migrated folders as recorded (the backend merges them); a new folder mounts below /ffmedia
+    const mig = ms.status.desired?.migrated === true && ms.status.desired.kind === body.kind;
+    const kept = mig ? ms.status.desired.folders.filter((f: any) => f.migrated) : [];
+    ms.status.desired = { kind: body.kind, folders: [...kept, ...libs.map((l: any) => ({ rel: l.rel, target: `/${mig ? 'ffmedia' : 'media'}/${l.slug}` }))], uid: body.uid, gid: body.gid, gpu: body.gpu,
+      mediaGid: body.mediaGid, egress: body.egress, run: true, ...(mig ? { migrated: true } : {}) };
     ms.status.container = { state: 'running', health: 'starting', kind: body.kind, image: { digest: `sha256:${'a'.repeat(64)}`, upstream: '10.11.0' }, template: 'current', tampered: false, createdAt: new Date().toISOString() };
     ms.status.pin = { image: `docker.io/jellyfin/jellyfin:10.11.0@sha256:${'a'.repeat(64)}`, upstream: '10.11.0', changed: false };
     return J({ job: job('apply') }, 202);
@@ -2369,7 +2494,10 @@ function mediaserverRoute(ms: MediaMock, m: string, p: string, body: any, J: Rep
   if (p === `${P}/action` && m === 'POST') {
     if (body.op === 'retry') { ms.managed.setupError = null; return J({ ok: true }); }
     if (body.op === 'remove') {
+      // a moved server whose old Jellyfin is there leaves only through the way back (backend: use_way_back)
+      if (ms.move.migratedFrom && ms.move.sourceState !== 'missing') return J({ error: 'use_way_back' }, 409);
       ms.status.container = null; ms.status.desired = null;
+      if (body.data) ms.status.moveCopy = false;
       if (ms.mode === 'managed') { ms.mode = 'external'; ms.managed = { ...ms.managed, kind: null, setup: 'none', setupError: null }; }
     }
     return J({ job: job(body.op) }, 202);
@@ -2381,6 +2509,7 @@ function mediaserverRoute(ms: MediaMock, m: string, p: string, body: any, J: Rep
     return J({ ok: true });
   }
   if (p === `${P}/mode` && m === 'POST') {
+    if (ms.move.migratedFrom && ms.move.sourceState !== 'missing') return J({ error: 'use_way_back' }, 409);
     if (body.restore) { /* the saved address comes back */ }
     ms.mode = 'external'; ms.managed = { ...ms.managed, kind: null, setup: 'none', setupError: null };
     return J({ ok: true });

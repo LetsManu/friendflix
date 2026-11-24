@@ -9,7 +9,7 @@ import { containerTz } from '../routes/adminMediaserver.js';
 import { saveWithProbes } from '../routes/adminSettings.js';
 import { runProbe } from '../settings/probes.js';
 import { updaterView, type TickLog, type UpdaterStatus } from '../updater.js';
-import { MEDIA_ERRORS, mediaOp, startMediaJob } from './client.js';
+import { encodingHw, startMediaJob } from './client.js';
 import { ensureLibrary, managedKey, MANAGED_URL, publicInfo, refreshLibraries, setEncoding, signsIn, startupWizard } from './serverApi.js';
 import { adminPassword, readManaged, type MediaManaged, type SetupStep } from './store.js';
 
@@ -37,7 +37,6 @@ export async function recordApplyFirstRun(ctx: Pick<Ctx, 'kv'>, jobId: string, f
 }
 const ACTIVE: ReadonlySet<SetupStep> = new Set(['applying', 'first_run', 'api_key', 'libraries', 'hwaccel', 'finishing']);
 const CODE = /^[a-z][a-z0-9_]{0,39}$/;
-const RENDER_NODE = /^renderD[0-9]{1,4}$/;
 const SETTING_KEYS = ['JELLYFIN_URL', 'JELLYFIN_ADMIN_API_KEY'] as const;
 
 const TZ_COUNTRY: Record<string, string> = {
@@ -161,24 +160,9 @@ async function hwaccel({ ctx, status }: Step): Promise<Next> {
   if (!key) return 'api_key';
   const gpu = status?.mediaserver?.desired?.gpu;
   if (!gpu) return 'waiting';
-  let vendor: 'intel' | 'amd' | 'other' | null = null;
-  let node: string | null = null;
-  if (gpu === 'dri') {
-    const r = await mediaOp(ctx, { op: 'gpu' });
-    if (r?.status !== 200) {
-      const e = (r?.json as { error?: unknown } | null)?.error;
-      throw new StepFailed(typeof e === 'string' && (MEDIA_ERRORS as readonly string[]).includes(e) ? e : 'unreachable');
-    }
-    const dri = (r.json as { dri?: unknown } | null)?.dri;
-    const nodes = (Array.isArray(dri) ? dri : []).flatMap((d): Array<{ node: string; vendor: 'intel' | 'amd' | 'other' }> => {
-      const o = (d ?? {}) as Record<string, unknown>;
-      return typeof o.node === 'string' && RENDER_NODE.test(o.node) ? [{ node: o.node, vendor: o.vendor === 'intel' || o.vendor === 'amd' ? o.vendor : 'other' }] : [];
-    });
-    const pick = nodes.find((n) => n.vendor !== 'other') ?? nodes[0];
-    vendor = pick?.vendor ?? null;
-    node = pick?.node ?? null;
-  }
-  await setEncoding(ctx.fetchImpl, MANAGED_URL, key, { gpu, vendor, node });
+  const r = await encodingHw(ctx, gpu);
+  if (!r.ok) throw new StepFailed(r.code);
+  await setEncoding(ctx.fetchImpl, MANAGED_URL, key, r.hw);
   return 'finishing';
 }
 

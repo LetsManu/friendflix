@@ -14,13 +14,20 @@
    * as on its first load, with the neutral line in its kept place, and shows no form and no actions.
    * New things only ever appear below what was clicked; every line that comes and goes (codes, countdowns, errors, results) has
    * its room from the start.
+   * The move from Jellyfin (stage 2): *Von Jellyfin umziehen* (MediaChoice) opens MoveSheet; the card polls while its scan, the move
+   * or a way back runs (model.ts moveFollow) and shows a running move with *Fortschritt ansehen*. A moved server shows "Umgezogen von
+   * „<name>“ am …", how the old Jellyfin is (stopped and kept, running, gone) and *Zurück zu Jellyfin* (its warning first; re-auth; it
+   * runs in the background and the card follows it); a gone old Jellyfin turns it into the stage 1 switch (an address). While the old
+   * Jellyfin is there, a moved server offers neither *Entfernen* nor the stage 1 switch (model.ts wayBackOnly): the way back is the one
+   * way out. The request service warning names the manual step while it does not point at the server FriendFlix uses. An aborted
+   * move's copy (external, no container) is removed with *Entfernen*, its data switch on.
    */
   import { onDestroy, onMount } from 'svelte';
   import { apiCode } from '#lib/api';
   import { isReauthError, reauthenticate } from '#lib/account/reauth';
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
   import Icon from '#lib/Icon.svelte';
-  import { t, tr } from '#lib/i18n';
+  import { fmtDate, t, tr } from '#lib/i18n';
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
   import ModalShell from '#lib/ui/ModalShell.svelte';
@@ -32,8 +39,8 @@
   import { MEDIA_TAB, type UpdaterJob } from '../updater';
   import { adminMediaApi, type FolderInput, type Gpu, type Kind, type MediaApi, type MediaView } from './api';
   import {
-    actionsFor, choiceDisabled, currentChoice, folderRowsError, idError, initialRows, keptLibraries, kindName, livetvOffer, mediaErrorText, nameTakenRow, setupActive,
-    statusStarting, type ActionOp, type Choice,
+    actionsFor, backActive, choiceDisabled, currentChoice, folderRowsError, idError, initialRows, keptLibraries, kindName, livetvOffer, mediaErrorText, migratedFolders,
+    migratedOverlap, wholeBaseMigrated, moveActive, moveCopyRemovable, moveFollow, nameTakenRow, setupActive, sourceLine, statusStarting, wayBackOnly, type ActionOp, type Choice,
   } from './model';
   import BackupDialogs from './BackupDialogs.svelte';
   import BaseFolder from './BaseFolder.svelte';
@@ -42,6 +49,7 @@
   import LogDialog from './LogDialog.svelte';
   import MediaChoice from './MediaChoice.svelte';
   import MediaStatus from './MediaStatus.svelte';
+  import MoveSheet from './MoveSheet.svelte';
   import SetupProgress from './SetupProgress.svelte';
 
   export let api: MediaApi = adminMediaApi;
@@ -64,14 +72,22 @@
 
   // ------------------------------------------------------------------ loading and following
   let seenMode: MediaView['mode'] | null = null;
+  /** every load gets a number: an answer older than the one shown is dropped (polls overlap), and backOwn needs a load sent after the 202 */
+  let loadSeq = 0, shownSeq = 0, backAfter = 0;
   async function load(): Promise<boolean> {
+    const seq = ++loadSeq;
     try {
       const [v, j] = await Promise.all([api.view(), api.lastJob().catch(() => job)]);
+      if (seq < shownSeq) return true;
+      shownSeq = seq;
       view = v; job = j; loadFailed = false;
       // the choice follows the server when its mode changes (first load, a switch, a remove), never on a poll; not before the
       // updater read the media status (the form starts from what is deployed)
       if (seenMode !== v.mode && !statusStarting(v)) { seenMode = v.mode; pick(currentChoice(v)); }
       mode = v.mode;
+      // the first view read after the backend took the way back is that attempt's (wayBack): one sent after its 202, never a poll
+      // that was already under way (it may show the earlier attempt's `failed`)
+      if (backPosted && seq > backAfter) { backPosted = false; backOwn = true; }
       return true;
     } catch {
       if (!view) { loadFailed = true; mode = 'external'; }
@@ -79,7 +95,8 @@
     }
   }
   $: starting = Boolean(view && statusStarting(view));
-  $: following = Boolean(job?.state === 'running' || starting || (view && view.mode === 'managed' && setupActive(view.managed)));
+  $: following = Boolean(job?.state === 'running' || starting || (view && view.mode === 'managed' && setupActive(view.managed)) || (view && api.scope === 'admin' && moveFollow(view))
+    || goingBack);
   let timer: ReturnType<typeof setTimeout> | undefined, gone = false;
   function schedule() {
     clearTimeout(timer);
@@ -93,6 +110,7 @@
     if (j) job = j;
     void load().then(schedule);
   }
+  const refresh = () => void load().then(schedule);
 
   // ------------------------------------------------------------------ the form of a managed kind
   let rows: FolderInput[] = [], uid = '1000', gid = '1000', groupInput = '', mediaGid: number | null = null, gpu: Gpu = 'off', egress = true, preselectGpu = true;
@@ -115,6 +133,13 @@
   $: locked = !available || Boolean(view && managedKind && !isCurrent && choiceDisabled(view, managedKind));
   $: base = view?.status?.base ?? { set: false, path: null, pending: false, expiresAt: null };
   $: kept = view && isCurrent ? keptLibraries(view) : [];
+  /** a moved server's folders (read-only; the backend sends them as recorded): they count as chosen */
+  $: migrated = view && isCurrent ? migratedFolders(view) : [];
+  /** a chosen folder that is, lies in or holds a migrated one (the updater would refuse it as folder_nested): its row says so at once */
+  $: overlap = Object.fromEntries(rows.flatMap((r) => {
+    const o = migratedOverlap(r.rel, migrated);
+    return o ? [[r.rel, $t(o === 'same' ? 'mediaserver.folders.migratedSame' : wholeBaseMigrated(migrated) ? 'mediaserver.folders.wholeBase' : 'mediaserver.folders.migratedOverlap')]] : [];
+  })) as Record<string, string>;
   $: offer = view && isCurrent && api.scope === 'admin' ? livetvOffer(view, rows) : null;
   $: firstRun = !isCurrent || view?.managed.setup !== 'done';
   $: actions = view ? actionsFor(view) : [];
@@ -129,7 +154,9 @@
     if (!view || !managedKind) return;
     rowErrors = {}; applyError = '';
     if (!base.set) { applyError = tr('mediaserver.apply.needBase'); return; }
-    const bad = folderRowsError(rows);
+    const taken = rows.find((r) => overlap[r.rel]);
+    if (taken) { applyError = overlap[taken.rel]!; return; }
+    const bad = folderRowsError(rows, migrated.length);
     if (bad) { applyError = tr(`mediaserver.folders.error.${bad}`); return; }
     if (uidErr || gidErr) { applyError = tr('mediaserver.user.idError'); return; }
     applying = true;
@@ -188,12 +215,15 @@
   let removeOpen = false, removeData = false, removeTyped = '', removeError = '', removing = false, removeTrigger: HTMLElement | null = null, removeShell: ModalShell;
   /** after *Neu anlegen*: the kind to set up again once the remove ran */
   let again: Kind | null = null;
+  /** only an aborted move's copy is left (no container): *Entfernen* deletes Ferrofin's data, the switch stays on */
+  let removeCopy = false;
   function openRemove(data: boolean, recreate = false) {
     removeTrigger = (document.activeElement as HTMLElement | null) ?? null;
-    removeData = data; removeTyped = ''; removeError = ''; removeOpen = true;
+    removeCopy = Boolean(view && moveCopyRemovable(view));
+    removeData = data || removeCopy; removeTyped = ''; removeError = ''; removeOpen = true;
     again = recreate ? view?.managed.kind ?? null : null;
   }
-  $: removeKind = view?.status?.container?.kind ?? view?.managed.kind ?? 'jellyfin';
+  $: removeKind = view?.status?.container?.kind ?? view?.managed.kind ?? (removeCopy ? 'ferrofin' : 'jellyfin');
   $: removeReady = !removeData || typedOk(kindName(removeKind), removeTyped);
   async function remove() {
     if (!removeReady || removing) return;
@@ -232,6 +262,48 @@
     } finally { switching = false; }
   }
 
+  // ------------------------------------------------------------------ the move from Jellyfin and the way back (stage 2)
+  let moveOpen = false, moveWatch = false, moveTrigger: HTMLElement | null = null;
+  function openMove(watch: boolean) {
+    moveTrigger = (document.activeElement as HTMLElement | null) ?? null;
+    moveWatch = watch; moveOpen = true;
+  }
+  $: mv = api.scope === 'admin' ? view?.move ?? null : null;
+  $: moved = Boolean(view && mv?.migratedFrom && view.mode === 'managed');
+  $: source = view ? sourceLine(view) : null;
+  /**
+   * the way back asked for here: its end is told once (a toast when done, the reason when it failed). `backOwn` turns true only once
+   * the view was read after the backend took it (it records `starting` before it answers), so an earlier attempt's `failed` still in
+   * the view never ends this one
+   */
+  let goingBack = false, backOwn = false, backPosted = false, backError = '';
+  $: if (goingBack && backOwn && mv?.state?.back === 'done') { goingBack = false; toast.success(tr('mediaserver.move.backDone')); }
+  $: if (goingBack && backOwn && mv?.state?.back === 'failed') goingBack = false;
+  $: backLine = backError
+    || (goingBack && !backOwn ? tr('mediaserver.move.backRunning') : '')
+    || (mv?.state?.back === 'failed' ? tr('mediaserver.move.backFailed', { reason: mediaErrorText(mv.state.backError) }) : '')
+    || (view && backActive(view) ? tr('mediaserver.move.backRunning') : '');
+  $: backBad = Boolean(backError || (!(goingBack && !backOwn) && mv?.state?.back === 'failed'));
+  async function wayBack() {
+    if (!view) return;
+    // the old container is gone: the stage 1 switch (FriendFlix stops Ferrofin, the address is entered below)
+    if (source === 'missing') { await toExternal(false); return; }
+    const ok = await confirm({ title: tr('mediaserver.move.wayBackTitle'), body: tr('mediaserver.move.wayBackBody'), danger: true, confirmLabel: tr('mediaserver.move.wayBack') });
+    if (!ok) return;
+    backError = ''; goingBack = true; backOwn = false;
+    try {
+      await call(() => api.back());
+      // backOwn only from a view that was read (load() true) and asked for after this answer: a failed read leaves it to the next poll
+      backAfter = loadSeq;
+      backPosted = true;
+      await load();
+      schedule();
+    } catch (e) {
+      goingBack = false;
+      backError = tr('mediaserver.move.backFailed', { reason: mediaErrorText(apiCode(e)) });
+    }
+  }
+
   async function saveLivetv(target: string) {
     try {
       await call(() => saveSettings({ LIVETV_RECORD_LIBRARY_JF_PATH: target }));
@@ -258,19 +330,51 @@
     <div class="sk" aria-hidden="true"><Skeleton h="3rem" /><Skeleton h="2.4rem" /></div>
     <p class="wait" role="status" data-testid="media-starting">{#if starting}{$t('mediaserver.reason.starting')}{:else}<span class="sr-only">{$t('ui.table.loading')}</span>{/if}</p>
   {:else}
-    <MediaChoice {view} {choice} on:pick={(e) => pick(e.detail)} />
+    <MediaChoice {view} {choice} canMove={api.scope === 'admin'} moveDisabled={running} on:pick={(e) => pick(e.detail)} on:move={() => openMove(false)} />
+
+    {#if mv}
+      {#if moveActive(view)}
+        <div class="mvline" data-testid="media-moving">
+          <p><Icon name="activity" size={18} />{$t('mediaserver.move.running')}</p>
+          <Button variant="secondary" size="sm" on:click={() => openMove(true)}>{$t('mediaserver.move.show')}</Button>
+        </div>
+      {:else if mv.state?.phase === 'failed' && view.mode === 'external' && !mv.state.back}
+        <p class="muted small mvfail">{$t('mediaserver.move.lastFailed', { reason: mediaErrorText(mv.state.error) })}</p>
+      {/if}
+      {#if moved && mv.migratedFrom}
+        <section class="moved" data-testid="media-moved" aria-labelledby="ms-moved-t">
+          <h3 id="ms-moved-t">{$t('mediaserver.move.moved', { name: mv.migratedFrom.name, date: fmtDate(mv.migratedFrom.at) })}</h3>
+          {#if source}<p class="muted small">{$t(source === 'stopped' ? 'mediaserver.move.oldStopped' : source === 'running' ? 'mediaserver.move.oldRunning' : 'mediaserver.move.oldMissing')}</p>{/if}
+          <div class="acts">
+            <!-- the old container gone: the stage 1 switch (an address), under its own name -->
+            <Button variant="secondary" icon="arrow-left" pending={goingBack || backActive(view) || switching} disabled={running || backActive(view) || moveActive(view)}
+              on:click={wayBack}>{source === 'missing' ? $t('mediaserver.external.switch') : $t('mediaserver.move.wayBack')}</Button>
+          </div>
+          <p class="msg" class:err={backBad} role={backBad ? 'alert' : 'status'}>{backLine}</p>
+        </section>
+      {:else if backActive(view)}
+        <p class="msg" role="status" data-testid="media-back">{backLine}</p>
+      {/if}
+      {#if mv.requestsWarning}
+        <p class="warn" data-testid="media-requests-warning"><Icon name="alert" size={18} />{$t(view.mode === 'managed' ? 'mediaserver.move.requestsWarning' : 'mediaserver.move.requestsWarningBack')}</p>
+      {/if}
+    {/if}
 
     {#if choice === 'external'}
       <div class="ext">
-        {#if view.mode === 'managed'}
+        {#if view.mode === 'managed' && wayBackOnly(view)}
+          <!-- a moved server whose old Jellyfin is there: no switch would start it again; *Zurück zu Jellyfin* (above) is the way (use_way_back) -->
+          <p class="muted" data-testid="media-way-back-only">{$t('mediaserver.external.wayBackOnly')}</p>
+        {:else if view.mode === 'managed'}
           <p>{$t('mediaserver.external.idWarning')}</p>
           <div class="acts">
             <Button variant="secondary" pending={switching} disabled={running} on:click={() => toExternal(false)}>{$t('mediaserver.external.switch')}</Button>
-            {#if view.external.url}<Button pending={switching} disabled={running} on:click={() => toExternal(true)}>{$t('mediaserver.external.back', { address: view.external.url })}</Button>{/if}
+            <!-- after a move the way back is *Zurück zu Jellyfin* (above): the stage 1 restore would skip its user repair (use_way_back) -->
+            {#if view.external.url && !view.move?.migratedFrom}<Button pending={switching} disabled={running} on:click={() => toExternal(true)}>{$t('mediaserver.external.back', { address: view.external.url })}</Button>{/if}
           </div>
         {:else}
           <p class="muted">{$t('mediaserver.external.current')}</p>
-          {#if actions.includes('remove')}<div class="acts"><Button variant="danger" disabled={running} on:click={() => openRemove(false)}>{$t('mediaserver.action.remove')}</Button></div>{/if}
+          {#if actions.includes('remove')}<div class="acts"><Button variant="danger" disabled={running} data-testid="media-remove-external" on:click={() => openRemove(false)}>{$t('mediaserver.action.remove')}</Button></div>{/if}
         {/if}
       </div>
     {:else}
@@ -279,7 +383,7 @@
         {#key managedKind}
           <BaseFolder {api} {call} {base} inUse={Boolean(view.status?.container)} disabled={locked || running} on:changed={() => load()} on:job={(e) => started(e.detail)} on:unreadable={(e) => (baseUnreadable = e.detail)} />
           {#if base.set}
-            <FolderPicker {api} {call} bind:rows libraries={isCurrent ? view.managed.libraries : []} {kept} {rowErrors} livetv={offer} disabled={locked || running}
+            <FolderPicker {api} {call} bind:rows libraries={isCurrent ? view.managed.libraries : []} {kept} {migrated} rowErrors={{ ...overlap, ...rowErrors }} livetv={offer} disabled={locked || running}
               on:changed={() => { edited(); }} on:deleted={() => load()} on:livetv={(e) => saveLivetv(e.detail)} />
 
             <section class="sec" aria-labelledby="ms-user-t">
@@ -339,6 +443,10 @@
   {/if}
 </AdminCard>
 
+{#if moveOpen && view}
+  <MoveSheet {api} {call} {view} follow={moveWatch} trigger={moveTrigger} on:close={() => { moveOpen = false; refresh(); }} on:changed={refresh} on:started={(e) => started(e.detail)} />
+{/if}
+
 {#if logOpen}<LogDialog {api} {call} trigger={logTrigger} on:close={() => (logOpen = false)} />{/if}
 
 {#if removeOpen}
@@ -346,9 +454,9 @@
     <form novalidate on:submit|preventDefault={remove}>
       <h2 id="ms-rm-t" class="dlg-title">{$t('mediaserver.remove.title')}</h2>
       <div class="dlg-main">
-        <p id="ms-rm-d" class="dlg-body">{view?.mode === 'managed' ? $t('mediaserver.remove.body') : $t('mediaserver.remove.leftover')}</p>
+        <p id="ms-rm-d" class="dlg-body">{view?.mode === 'managed' ? $t('mediaserver.remove.body') : removeCopy ? $t('mediaserver.remove.moveCopy') : $t('mediaserver.remove.leftover')}</p>
         <div class="rm-data">
-          <Toggle label={$t('mediaserver.remove.data')} hint={$t('mediaserver.remove.dataHint')} bind:checked={removeData} disabled={removing} />
+          <Toggle label={$t('mediaserver.remove.data')} hint={$t('mediaserver.remove.dataHint')} bind:checked={removeData} disabled={removing || removeCopy} />
           <!-- the typed confirmation's place is kept while the switch is off: the dialog never changes height -->
           <div class="typed" class:off={!removeData} aria-hidden={removeData ? undefined : 'true'}>
             <Field label={$t('mediaserver.remove.typed', { name: kindName(removeKind) })} bind:value={removeTyped} autocomplete="off" disabled={!removeData || removing} />
@@ -389,6 +497,16 @@
   .msg { margin: 0; min-height: 2.6em; font-size: .9rem; color: var(--mut); }
   .msg.err { color: var(--err-mark); }
   .apply ~ :global(.sp), .apply ~ :global(section) { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  .mvline { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem .8rem; margin: 0 0 .8rem; padding: .5rem .8rem;
+    border-radius: var(--fr-r-card); background: rgba(var(--acc-rgb), .1); }
+  .mvline p { display: flex; align-items: center; gap: .45rem; margin: 0; }
+  .mvfail { margin: 0 0 .8rem; }
+  .moved { display: grid; gap: .4rem; margin: 0 0 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--line); }
+  .moved h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+  .moved p { margin: 0; }
+  .warn { display: flex; align-items: flex-start; gap: .45rem; margin: 0 0 1rem; padding: .6rem .8rem; border-radius: var(--fr-r-card); border: 1px solid var(--line);
+    background: rgba(255, 255, 255, .04); font-size: .9rem; overflow-wrap: anywhere; }
+  .warn :global(svg) { flex: none; margin-top: .1rem; color: var(--warn); }
   .rm-data { display: grid; gap: .5rem; margin-top: 12px; }
   .typed { transition: opacity .2s ease; }
   .typed.off { opacity: .35; }

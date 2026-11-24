@@ -6,6 +6,8 @@
    * (trickplay only when chosen), *Wiederherstellen* (same kind only), *Herunterladen* (the passphrase typed twice, at least 12
    * characters, never stored: the file comes encrypted with age) and *Aus Datei wiederherstellen* (a downloaded file with its
    * passphrase). The dialogs keep their error line from the start; a request that needs a fresh sign-in asks for it (the card's `call`).
+   * On a moved server a backup from before the move is listed (it can be downloaded) but says why it cannot be restored (model.ts
+   * backupPremove; the backend refuses it as backup_premove).
    */
   import { createEventDispatcher } from 'svelte';
   import { apiCode } from '#lib/api';
@@ -21,7 +23,7 @@
   import { uid } from '#lib/ui/ids';
   import type { UpdaterJob } from '../updater';
   import { pickSaveTarget, type MediaApi, type MediaBackup, type MediaView, type SaveTarget } from './api';
-  import { mediaErrorText, passphraseError, saveErrorText, type ActionOp } from './model';
+  import { backupPremove, mediaErrorText, passphraseError, restorable, saveErrorText, type ActionOp } from './model';
 
   export let api: MediaApi;
   export let call: <T>(fn: () => Promise<T>) => Promise<T>;
@@ -104,9 +106,10 @@
     <ul>
       {#each backups as b (b.id)}
         <li data-backup={b.id}>
-          <div class="what"><span>{label(b)}</span><span class="tag">{$t(`mediaserver.backup.tag.${b.tag}`)}</span></div>
+          <div class="what"><span>{label(b)}</span><span class="tag">{$t(`mediaserver.backup.tag.${b.tag}`)}</span>
+            {#if b.kind === kind && backupPremove(view, b)}<span class="tag" data-premove>{$t('mediaserver.backup.premove')}</span>{/if}</div>
           <div class="btns">
-            {#if actions.includes('restore') && b.kind === kind}<Button variant="ghost" size="sm" disabled={busy} on:click={() => restore(b)}>{$t('mediaserver.backup.restore')}</Button>{/if}
+            {#if actions.includes('restore') && restorable(view, b)}<Button variant="ghost" size="sm" disabled={busy} on:click={() => restore(b)}>{$t('mediaserver.backup.restore')}</Button>{/if}
             {#if admin}<Button variant="ghost" size="sm" icon="download" on:click={(e) => show('download', e, b)}>{$t('mediaserver.backup.download')}</Button>{/if}
           </div>
         </li>

@@ -6,12 +6,14 @@ import type { StartResult, Updater } from '../job.js';
 import type { Job, MediaState } from '../state.js';
 import { EngineError, type Engine } from './engine.js';
 import type { EngineFacts } from './facts.js';
+import { TemplateViolation, type SourceExpect } from './guard.js';
 import type { runHelper } from './helpers.js';
 import { baseCodeLogLine, hashBaseCode, newBaseCode, normalizeBaseCode } from './code.js';
 import { redactLine } from './logs.js';
 import { checkBasePath, isRel } from './paths.js';
+import { SourceError, findCandidates, listCandidates, scanSource, type Candidate, type ScanResult, type SourceDeps } from './source.js';
 import { helperSpec, volumeSpec, names, type HelperMount, type HelperVerb } from './template.js';
-import type { DesiredSpec } from './types.js';
+import { MEDIA_ERRORS, type DesiredSpec, type MediaError } from './types.js';
 
 export interface MediaDeps {
   engine: Engine;
@@ -26,6 +28,8 @@ export interface MediaDeps {
 
 /** the limit of a helper that only reads (spec "Times": sync operations 25 s) */
 export const SYNC_HELPER_MS = 25_000;
+/** the sized scan of the chosen Jellyfin: it walks the whole metadata and trickplay tree (large on a NAS) */
+export const SCAN_HELPER_MS = 120_000;
 const CODE_TTL_MS = 30 * 60_000;
 const MAX_FAILURES = 5;
 const REQUESTS_PER_WINDOW = 3;
@@ -40,10 +44,15 @@ export type RequestResult =
 export type ConfirmResult =
   | { result: 'ok'; path: string; kept: string[]; dropped: string[]; job: Job | null }
   | { result: 'wrong' | 'expired' | 'locked' | 'no_pending' }
-  | { error: 'busy' | 'not_available' };
+  | { error: 'busy' | 'not_available' | 'template_violation' };
 export interface BrowseEntry { name: string; symlink: boolean; unreadable: boolean }
 export type BrowseResult = { entries: BrowseEntry[]; truncated: boolean } | { error: 'no_base' | 'base_missing' | 'invalid_body' };
 export interface GpuResult { dri: Array<{ node: string; gid: number; vendor: 'intel' | 'amd' | 'other' }>; nvidia: boolean }
+/** a scan as the move sheet sees it: no host path (the recorded /config source stays here) and no server id */
+export interface ScanView { source: { id: string; name: string; image: string; version: string | null }; folders: ScanResult['folders']; layout: ScanResult['layout']; bytes: number; trickplayBytes: number; plugins: string[]; nfo: boolean }
+export type MoveScanResult =
+  | { candidates: Array<Candidate & { matches: boolean | null }>; scan?: ScanView }
+  | { error: MediaError | 'not_available'; outside?: string[]; refused?: string[]; nested?: string[] };
 
 const STATUS: Record<'path_invalid' | 'path_refused' | 'base_missing' | 'not_available', 400 | 409> = { path_invalid: 400, path_refused: 400, base_missing: 409, not_available: 409 };
 const fail = (error: keyof typeof STATUS): RequestResult => ({ ok: false, status: STATUS[error], error });
@@ -81,10 +90,10 @@ export class MediaService {
    * One helper run: its JSON answer, or a StepError carrying the helper's own error code (a helper that exited 2 still answers
    * with a JSON object: `{"error":"<code>"}`) or the code runHelper gave.
    */
-  private async helper(r: Ready, verb: HelperVerb, args: string[], mounts: HelperMount[], bind?: string): Promise<Obj> {
+  private async helper(r: Ready, verb: HelperVerb, args: string[], mounts: HelperMount[], bind?: string, source?: SourceExpect, limitMs = SYNC_HELPER_MS): Promise<Obj> {
     const u = this.user();
     const req = helperSpec({ verb, args, uid: u.uid, gid: u.gid, groups: u.groups, mounts }, { project: r.project, image: r.image });
-    const answer = await this.d.helper(this.d.engine, req, { project: r.project, uid: u.uid, gid: u.gid, image: r.image, verb, ...(bind !== undefined ? { bind } : {}) }, SYNC_HELPER_MS);
+    const answer = await this.d.helper(this.d.engine, req, { project: r.project, uid: u.uid, gid: u.gid, image: r.image, verb, ...(bind !== undefined ? { bind } : {}), ...(source ? { source, dockerRoot: r.facts.dockerRoot } : {}) }, limitMs);
     if ('error' in answer) throw new StepError(typeof answer.error === 'string' && /^[a-z_]{1,40}$/.test(answer.error) ? answer.error : 'helper_failed');
     return answer;
   }
@@ -139,7 +148,11 @@ export class MediaService {
    */
   async confirm(code: string): Promise<ConfirmResult> {
     if (this.d.updater.busy) return { error: 'busy' };
-    const pending = this.d.updater.mediaState().pending;
+    // a migrated server's folders are paths below this base (the whole base among them): no base change while one exists or a move
+    // is not settled (the request and its code stay)
+    const media = this.d.updater.mediaState();
+    if (media.desired?.migrated || media.move?.phase === 'running' || media.move?.phase === 'ready') return { error: 'template_violation' };
+    const pending = media.pending;
     if (!pending) return { result: 'no_pending' };
     if (this.d.now() >= Date.parse(pending.expiresAt)) {
       this.d.updater.updateMedia((m) => { m.pending = null; });
@@ -297,6 +310,45 @@ export class MediaService {
       }
     }
     return { dri, nvidia };
+  }
+
+  /**
+   * what source.ts needs: the engine, the confirmed base and the `migrate-scan` helper on a /config, mounted read-only at /source
+   * (the guard checks that mount against exactly this source and the engine's Docker root); null when no helper can run
+   */
+  async sourceDeps(): Promise<SourceDeps | null> {
+    const r = await this.ready();
+    if (!r) return null;
+    const base = this.d.updater.mediaState().base;
+    return {
+      engine: this.d.engine, base: base ? { path: base.path } : null, now: () => this.d.now(),
+      scan: (config, mode) => this.helper(r, 'migrate-scan', mode === 'id' ? ['id'] : [], [{ kind: 'source', type: config.type, source: config.source }], undefined, config,
+        mode === 'id' ? SYNC_HELPER_MS : SCAN_HELPER_MS),
+    };
+  }
+
+  /**
+   * migrate-scan: the Jellyfin containers on this engine, each with whether it is FriendFlix's server (`serverId`, which the
+   * backend read from it); with `source`, that candidate scanned as the source. Codes only: a refused media mount is named by its
+   * container path.
+   */
+  async moveScan(serverId: string, source?: string): Promise<MoveScanResult> {
+    const deps = await this.sourceDeps();
+    if (!deps) return { error: 'not_available' };
+    try {
+      if (source === undefined) return { candidates: await listCandidates(deps, serverId) };
+      const s = await scanSource(deps, source, serverId);
+      // the others are not scanned again: only the chosen one is known to match
+      const candidates = (await findCandidates(deps.engine)).map((c) => ({ ...c, matches: c.id === source ? true : null }));
+      const { id, name, image, version } = s.source;
+      return { candidates, scan: { source: { id, name, image, version }, folders: s.folders, layout: s.layout, bytes: s.bytes, trickplayBytes: s.trickplayBytes, plugins: s.plugins, nfo: s.nfo } };
+    } catch (e) {
+      if (e instanceof SourceError && e.code === 'source_outside_base') return { error: e.code, outside: e.outside, refused: e.refused };
+      if (e instanceof SourceError && e.code === 'source_nested') return { error: e.code, nested: e.nested };
+      if (e instanceof TemplateViolation) return { error: 'template_violation' };
+      const code = e instanceof StepError || e instanceof EngineError ? e.code : '';
+      return { error: (MEDIA_ERRORS as readonly string[]).includes(code) ? code as MediaError : 'helper_failed' };
+    }
   }
 
   /** the redacted tail of the managed container's log; only a container that carries this project's labels */

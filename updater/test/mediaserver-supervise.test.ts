@@ -264,7 +264,7 @@ describe('supervision', () => {
     // after a failed rollback: never retried (its data may be half restored)
     const h = setup();
     h.containers.delete(h.existing(SPEC, ferroPin(), 'v1.5.1').id);
-    const media = { step: 'rollback' as const, steps: { check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'ok', create: 'ok', start: 'ok', health: 'failed', rollback: 'failed' } as const };
+    const media = { step: 'rollback' as const, steps: { check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'ok', create: 'ok', start: 'ok', health: 'failed', rollback: 'failed', copy_bulk: 'pending' as const, stop_source: 'pending' as const, copy: 'pending' as const, adopt: 'pending' as const } as const };
     h.updater.startMediaJob('mediaserver-update', async (job) => { job.media = structuredClone(media); h.updater.finishJob(job, 'failed', 'unhealthy'); });
     await h.updater.idle();
     h.updater.updateMedia((m) => { m.lastError = 'unhealthy'; });
@@ -453,7 +453,7 @@ describe('recovery after an interrupted recreate', () => {
 
   it('after a failed rollback the old container gets its name back but is not started', async () => {
     const { w, c } = aside();
-    const media = { step: 'rollback' as const, steps: { check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'ok', create: 'ok', start: 'ok', health: 'failed', rollback: 'failed' } as const };
+    const media = { step: 'rollback' as const, steps: { check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'ok', create: 'ok', start: 'ok', health: 'failed', rollback: 'failed', copy_bulk: 'pending' as const, stop_source: 'pending' as const, copy: 'pending' as const, adopt: 'pending' as const } as const };
     w.updater.startMediaJob('mediaserver-update', async (job) => { job.media = structuredClone(media); w.updater.finishJob(job, 'failed', 'unhealthy'); });
     await w.updater.idle();
     w.updater.updateMedia((m) => { m.lastError = 'unhealthy'; });

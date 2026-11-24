@@ -24,14 +24,16 @@ const status = (): MediaStatus => ({
   pin: { image: `docker.io/jellyfin/jellyfin@${DIGEST}`, upstream: '10.10.7', changed: false },
   pins: { ferrofin: false, jellyfin: true }, engine: { api: '1.47', logs: true, arch: 'amd64', nvidia: false }, error: null,
   backups: [{ id: 'jellyfin-20261110-0300-10.10.7', kind: 'jellyfin', upstream: '10.10.7', at: ago(3), tag: 'auto', size: 1024 }], hdr: null,
+  move: null, source: null, moveCopy: false,
 });
 const managed = (kind: MediaManaged['kind'] = 'jellyfin'): MediaManaged => ({
   kind, setup: kind ? 'done' : 'none', setupError: null, adminUser: kind ? 'friendflix-admin' : null, hasPassword: Boolean(kind), libraries: [],
-  externalUrl: null, hasExternalKey: false, updatedAt: null,
+  externalUrl: null, hasExternalKey: false, updatedAt: null, migratedFrom: null, move: null, requestsPrev: null,
 });
 const viewOf = (s: MediaStatus | null, kind: MediaManaged['kind'] = 'jellyfin'): MediaView => ({
   mode: kind ? 'managed' : 'external', offer: { managed: true, reason: null }, kinds: { ferrofin: false, jellyfin: true }, status: s, managed: managed(kind),
   external: { url: null, hasKey: false }, livetvLibraryPath: null,
+  move: { offered: false, reason: null, scan: null, state: null, migratedFrom: null, sourceState: null, requestsWarning: false, requests: false },
 });
 const coreJob = (o: Partial<UpdaterJob>): UpdaterJob => ({
   id: '00000000000000a1', action: 'update', state: 'succeeded', step: null, steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'ok', rollback: 'skipped' },
@@ -171,6 +173,67 @@ describe('media.managed', () => {
   it('else ok with kind and upstream', async () => {
     const l = await lineFor();
     expect(l).toEqual({ id: 'media.managed', group: 'media', status: 'ok', href: '/admin/settings?tab=media', docs: 'mediaserver.md', params: { kind: 'jellyfin', upstream: '10.10.7' }, runs: 'server' });
+  });
+
+  describe('after a move (stage 2)', () => {
+    const FROM = { name: 'jellyfin', version: '10.10.3', at: ago(2) };
+    const ferrofin = (s: MediaStatus) => {
+      s.desired!.kind = 'ferrofin';
+      s.container!.kind = 'ferrofin';
+      s.container!.image.upstream = '1.2.3';
+    };
+    /** the view of a moved install: managed Ferrofin, where it came from, the request service's state */
+    const moved = (o: { from?: MediaView['managed']['migratedFrom']; requestsWarning?: boolean; edit?: (s: MediaStatus) => void; sourceState?: string | null } = {}) => {
+      const s = status();
+      ferrofin(s);
+      o.edit?.(s);
+      const v = viewOf(s, 'ferrofin');
+      const from = o.from === undefined ? FROM : o.from;
+      v.managed.migratedFrom = from;
+      v.move = { ...v.move, migratedFrom: from, sourceState: o.sourceState === undefined ? 'exited' : o.sourceState, requestsWarning: o.requestsWarning === true };
+      return managedLine(env, v, updater(s));
+    };
+
+    it('an info line: moved from the old Jellyfin, which is stopped and kept for the way back', async () => {
+      expect(await moved()).toEqual({
+        id: 'media.managed', group: 'media', status: 'ok', cause: 'managed_migrated', href: '/admin/settings?tab=media', docs: 'mediaserver.md',
+        params: { kind: 'ferrofin', upstream: '1.2.3', source: 'jellyfin' }, runs: 'server',
+      });
+      // any Docker container name shows, a dot in it too (M8: `[a-zA-Z0-9][a-zA-Z0-9_.-]*`, as Docker allows it)
+      for (const name of ['Jellyfin-2', 'jellyfin.old', 'jf_1.media', '2jellyfin']) {
+        expect((await moved({ from: { ...FROM, name } })).params, name).toEqual({ kind: 'ferrofin', upstream: '1.2.3', source: name });
+      }
+      // never a path, a URL or anything else Docker would not take as a name
+      for (const name of ['/jellyfin', 'http://jellyfin', '.jellyfin', 'jelly fin', 'a'.repeat(129)]) {
+        const l = await moved({ from: { ...FROM, name } });
+        expect(l, name).toMatchObject({ status: 'ok', cause: 'managed_migrated' });
+        expect(l.params, name).toEqual({ kind: 'ferrofin', upstream: '1.2.3' });
+      }
+      // "stopped" only when Docker shows it stopped: running unused (a refused way back started it), gone, or not known
+      for (const [state, cause] of [['created', 'managed_migrated'], ['dead', 'managed_migrated'], ['running', 'managed_migrated_running'], ['restarting', 'managed_migrated_running'],
+        ['missing', 'managed_migrated_gone'], [null, 'managed_migrated_unknown'], ['unknown', 'managed_migrated_unknown']] as const) {
+        expect(await moved({ sourceState: state }), String(state)).toMatchObject({ status: 'ok', cause, params: { source: 'jellyfin' } });
+      }
+      // never moved: the plain ok line
+      expect(await moved({ from: null })).toEqual({ id: 'media.managed', group: 'media', status: 'ok', href: '/admin/settings?tab=media', docs: 'mediaserver.md',
+        params: { kind: 'ferrofin', upstream: '1.2.3' }, runs: 'server' });
+    });
+
+    it('a warning while the request service still points at the old Jellyfin', async () => {
+      expect(await moved({ requestsWarning: true })).toMatchObject({ status: 'warning', cause: 'managed_requests_not_moved', href: '/admin/settings?tab=media', docs: 'mediaserver.md' });
+      // M5: after a way back (external again, the managed container stopped or gone) it still warns: requests fail until it is fixed
+      for (const c of [true, false]) {
+        const s = status();
+        if (!c) { s.container = null; s.desired = null; }
+        const v = viewOf(s, null);
+        v.move = { ...v.move, requestsWarning: true };
+        expect(await managedLine(env, v, updater(s)), String(c)).toMatchObject({ status: 'warning', cause: 'managed_requests_not_moved' });
+        // without a status of the updater as well
+        expect(await managedLine(env, v, { present: false }), String(c)).toMatchObject({ status: 'warning', cause: 'managed_requests_not_moved' });
+      }
+      // what keeps the server from working comes first
+      expect(await moved({ requestsWarning: true, edit: (s) => { s.container!.state = 'exited'; } })).toMatchObject({ status: 'problem', cause: 'managed_down' });
+    });
   });
 
   it('the line has no path, code or address in its params', async () => {

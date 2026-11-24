@@ -1406,6 +1406,16 @@ export const MIGRATIONS: string[] = [
   create index if not exists notifications_created on notifications(created_at);
   create index if not exists notification_state_note on notification_state(notification_id);
   `,
+  // 62: managed media server stage 2 (docs/superpowers/specs/2026-11-24-mediaserver-stage2-migration-design.md "Backend"): the Jellyfin a
+  // move came from ({name, version, at}), the move's backend phase ({phase, error, jobId, startedAt, requestsWarning}) and the request
+  // service's Jellyfin connection before the move ({hostname, port, useSsl, urlBase}; no secret). Read field by field (mediaserver/
+  // store.ts). Rerunnable.
+  `
+  alter table media_managed add column if not exists migrated_from jsonb;
+  alter table media_managed add column if not exists move jsonb
+    check (move is null or move->>'phase' in ('copying','nfo','verify','switch','requests','done','failed'));
+  alter table media_managed add column if not exists requests_prev jsonb;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

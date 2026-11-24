@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { assertHelper, TemplateViolation } from '../src/mediaserver/guard.js';
+import { assertHelper, assertManaged, TemplateViolation } from '../src/mediaserver/guard.js';
 import {
   canonical, containerSpec, FERROFIN_ADMIN_NAME, FFMPEG_DIR, HDR_INNER, HDR_TEST1_ARGS, hdrSpec, helperSpec, names, needsSeed, SEED_DIR, seedSpec,
   specHash, uidSupported, volumeSpec, type TemplateFacts,
@@ -283,5 +283,98 @@ describe('HDR test', () => {
     expect(() => assertHelper(t2, g)).not.toThrow();
     expect(() => hdrSpec(1, { ...o, node: '../sda' })).toThrow(TemplateViolation);
     expect(() => hdrSpec(1, { ...o, renderGids: [1, 2, 3, 4, 5] })).toThrow(TemplateViolation);
+  });
+});
+
+describe('a migrated Ferrofin (stage 2)', () => {
+  const DM: DesiredSpec = {
+    ...D, migrated: true,
+    folders: [{ rel: 'Filme', target: '/movies', migrated: true }, { rel: '', target: '/data/tv', migrated: true }],
+  };
+  const E = { project: 'friendflix', kind: 'ferrofin' as const, uid: 1000, gid: 1000, repo: 'LetsManu/friendflix' };
+
+  it('a migrated desired spec builds /ferrofin-data, FERROFIN_DATA_DIR and the original targets, and passes the guard', () => {
+    const b = containerSpec(DM, F, { password: pw }).body as Body;
+    expect(b.Env).toEqual([
+      'TZ=Europe/Berlin', 'FERROFIN_CACHE_DIR=/cache', 'FERROFIN_DATA_DIR=/ferrofin-data', 'FERROFIN_ADMIN_USER=friendflix-admin', 'FERROFIN_ADMIN_PASSWORD=' + pw,
+    ]);
+    expect(b.HostConfig.Mounts).toEqual([
+      { Type: 'volume', Source: 'friendflix_mediaserver-ferrofin-data', Target: '/ferrofin-data', ReadOnly: false },
+      { Type: 'volume', Source: 'friendflix_mediaserver-ferrofin-cache', Target: '/cache', ReadOnly: false },
+      { Type: 'volume', Source: BASE, Target: '/movies', ReadOnly: true, VolumeOptions: { NoCopy: true, Subpath: 'Filme' } },
+      // the whole base: no Subpath at all
+      { Type: 'volume', Source: BASE, Target: '/data/tv', ReadOnly: true, VolumeOptions: { NoCopy: true } },
+    ]);
+    // the image's VOLUME /data is covered by a small fixed tmpfs (no anonymous volume; media below /data mount on top of it)
+    expect(b.HostConfig.Tmpfs).toEqual({ '/tmp': 'size=512m,mode=1777', '/data': 'size=1m,mode=0755' });
+    expect(body().HostConfig.Tmpfs).toEqual({ '/tmp': 'size=512m,mode=1777' });
+    expect(() => assertManaged(b, { ...E, migrated: { targets: ['/movies', '/data/tv'] } })).not.toThrow();
+    expect(() => assertManaged(b, E)).toThrow(TemplateViolation);
+    // the data volume keeps its name
+    expect(names('friendflix').data('ferrofin')).toBe('friendflix_mediaserver-ferrofin-data');
+    // the spec hash differs from the same folders on a stage 1 server
+    expect(labels(b)['friendflix.spec']).not.toBe(labels(body({}, {}, { password: pw }))['friendflix.spec']);
+  });
+
+  it('a later folder goes to /ffmedia/<slug>', () => {
+    const d: DesiredSpec = { ...DM, folders: [...DM.folders, { rel: 'Neu/Doku', target: '/ffmedia/doku' }] };
+    const b = containerSpec(d, F).body as Body;
+    expect(b.HostConfig.Mounts.at(-1)).toEqual({ Type: 'volume', Source: BASE, Target: '/ffmedia/doku', ReadOnly: true, VolumeOptions: { NoCopy: true, Subpath: 'Neu/Doku' } });
+    expect(() => assertManaged(b, { ...E, migrated: { targets: ['/movies', '/data/tv'] } })).not.toThrow();
+    // with the whole base at /media (a listed target), a later folder goes to /ffmedia, never below /media
+    const whole: DesiredSpec = { ...DM, folders: [{ rel: '', target: '/media', migrated: true }] };
+    expect(() => containerSpec({ ...whole, folders: [...whole.folders, { rel: 'Neu', target: '/media/neu' }] }, F)).toThrow(TemplateViolation);
+    const ok = containerSpec({ ...whole, folders: [...whole.folders, { rel: 'Neu', target: '/ffmedia/neu' }] }, F).body as Body;
+    expect(ok.HostConfig.Mounts.map((m: Body) => m.Target)).toEqual(['/ferrofin-data', '/cache', '/media', '/ffmedia/neu']);
+    expect(() => assertManaged(ok, { ...E, migrated: { targets: ['/media'] } })).not.toThrow();
+  });
+
+  it('a media target equal to or below another is refused, in both directions', () => {
+    const t = (folders: DesiredSpec['folders']) => () => containerSpec({ ...DM, folders }, F);
+    expect(t([{ rel: 'Filme', target: '/movies', migrated: true }, { rel: 'Kids', target: '/movies/kids', migrated: true }])).toThrow(TemplateViolation);
+    expect(t([{ rel: 'Kids', target: '/movies/kids', migrated: true }, { rel: 'Filme', target: '/movies', migrated: true }])).toThrow(TemplateViolation);
+    expect(t([{ rel: 'A', target: '/ffmedia/a' }, { rel: 'B', target: '/ffmedia/a/b' }])).toThrow(TemplateViolation);
+    expect(() => body({ folders: [{ rel: 'Filme', target: '/media/filme' }, { rel: 'Kids', target: '/media/filme/kids' }] })).toThrow(TemplateViolation);
+    expect(() => body({ folders: [{ rel: 'Kids', target: '/media/filme/kids' }, { rel: 'Filme', target: '/media/filme' }] })).toThrow(TemplateViolation);
+    // siblings with a common prefix are fine
+    expect(t([{ rel: 'A', target: '/data/tv', migrated: true }, { rel: 'B', target: '/data/tvx', migrated: true }])).not.toThrow();
+  });
+
+  it('refuses what only a migrated server may have', () => {
+    const t = (d: Partial<DesiredSpec>) => () => containerSpec({ ...DM, ...d }, F);
+    // migrated folders, an empty rel and /ffmedia only with a migrated spec
+    expect(() => body({ folders: [{ rel: 'Filme', target: '/movies', migrated: true }] })).toThrow(TemplateViolation);
+    expect(() => body({ folders: [{ rel: '', target: '/media/filme' }] })).toThrow(TemplateViolation);
+    expect(() => body({ folders: [{ rel: 'Filme', target: '/ffmedia/filme' }] })).toThrow(TemplateViolation);
+    // a folder added after the move: /ffmedia/<slug> only, never /media (a path the copied database may still point at)
+    expect(t({ folders: [...DM.folders, { rel: 'X', target: '/media/x' }] })).toThrow(TemplateViolation);
+    expect(t({ folders: [...DM.folders, { rel: 'X', target: '/ffmedia/x' }] })).not.toThrow();
+    expect(() => assertManaged(containerSpec({ ...DM, folders: [...DM.folders, { rel: 'X', target: '/ffmedia/x' }] }, F).body, { ...E, migrated: { targets: ['/movies', '/data/tv'] } })).not.toThrow();
+    // a stage 1 folder keeps 1–3 levels on a migrated server too
+    expect(t({ folders: [{ rel: '', target: '/ffmedia/neu' }] })).toThrow(TemplateViolation);
+    expect(t({ folders: [{ rel: 'Neu', target: '/neu' }] })).toThrow(TemplateViolation);
+    // a migrated target follows the rule
+    for (const target of ['/data', '/etc/x', '/proc', '/ferrofin-data', '/ffmedia/x', '/a/b/c/d', '/a/../b', 'relative', '/']) {
+      expect(t({ folders: [{ rel: 'Filme', target, migrated: true }] }), target).toThrow(TemplateViolation);
+    }
+    expect(t({ folders: [{ rel: '../etc', target: '/movies', migrated: true }] })).toThrow(TemplateViolation);
+    // Jellyfin is never a migrated managed server
+    expect(t({ kind: 'jellyfin' })).toThrow(TemplateViolation);
+  });
+
+  it('source helpers: read-only /source, /data read-write only when asked', () => {
+    const H = { project: 'friendflix', image: 'sha256:' + 'c'.repeat(64) };
+    const scan = helperSpec({ verb: 'migrate-scan', args: [], uid: 1000, gid: 1000, groups: [], mounts: [{ kind: 'source', type: 'bind', source: '/opt/jellyfin/config' }] }, H);
+    expect((scan.body as Body).Cmd).toEqual(['node', 'updater/dist/mediaHelper.js', 'migrate-scan']);
+    expect((scan.body as Body).HostConfig.Mounts).toEqual([{ Type: 'bind', Source: '/opt/jellyfin/config', Target: '/source', ReadOnly: true }]);
+    const copy = helperSpec({
+      verb: 'migrate-copy', args: [], uid: 1000, gid: 1000, groups: [],
+      mounts: [{ kind: 'source', type: 'volume', source: 'jellyfin_config' }, { kind: 'data', volume: 'friendflix_mediaserver-ferrofin-data', rw: true }],
+    }, H);
+    expect((copy.body as Body).HostConfig.Mounts).toEqual([
+      { Type: 'volume', Source: 'jellyfin_config', Target: '/source', ReadOnly: true, VolumeOptions: { NoCopy: true } },
+      { Type: 'volume', Source: 'friendflix_mediaserver-ferrofin-data', Target: '/data', ReadOnly: false, VolumeOptions: { NoCopy: true } },
+    ]);
+    expect(() => assertHelper(copy.body, { project: 'friendflix', uid: 1000, gid: 1000, image: H.image, verb: 'migrate-copy', source: { type: 'volume', source: 'jellyfin_config' } })).not.toThrow();
   });
 });

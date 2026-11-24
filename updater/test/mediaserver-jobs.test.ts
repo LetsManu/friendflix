@@ -18,7 +18,7 @@ describe('apply', () => {
       `pull ${ferroPin().image}`, `createVolume ${N.data('ferrofin')}`, `createVolume ${N.cache('ferrofin')}`,
       `create ${N.container}`, `connect ${PROJECT}_egress`, `start ${N.container}`,
     ]);
-    expect(job.media!.steps).toEqual({ check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'skipped', create: 'ok', start: 'ok', health: 'ok', rollback: 'skipped' });
+    expect(job.media!.steps).toEqual({ check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'skipped', create: 'ok', start: 'ok', health: 'ok', rollback: 'skipped', copy_bulk: 'skipped', stop_source: 'skipped', copy: 'skipped', adopt: 'skipped' });
     expect(w.verified).toEqual([ferroPin().image]);
     const m = w.media();
     const main = w.find(N.container)!;
@@ -513,6 +513,88 @@ describe('start, stop, restart, update', () => {
     expect(job.media!.steps).toMatchObject({ create: 'ok', start: 'skipped', health: 'skipped' });
     expect(w.find(N.container)!.running).toBe(false);
     expect(w.media().desired!.run).toBe(false);
+  });
+});
+
+describe('a migrated server (stage 2)', () => {
+  const MSPEC: DesiredSpec = {
+    ...SPEC, migrated: true,
+    folders: [{ rel: 'Filme', target: '/movies', migrated: true }, { rel: 'Serien', target: '/data/tv', migrated: true }, { rel: 'Neu', target: '/ffmedia/neu' }],
+  };
+
+  it('the recorded migrated spec reaches the guard on inspect and on create', async () => {
+    const w = world();
+    w.existing(MSPEC, ferroPin(), 'v1.5.1');
+    expect(await w.run({ op: 'restart' })).toMatchObject({ state: 'succeeded' });
+    const job = await w.run({ op: 'finish-setup' });
+    expect(job).toMatchObject({ action: 'mediaserver-finish', state: 'succeeded' });
+    const body = w.created.at(-1)!.body as { Env: string[]; HostConfig: { Mounts: { Target: string }[] } };
+    expect(body.Env).toContain('FERROFIN_DATA_DIR=/ferrofin-data');
+    expect(body.HostConfig.Mounts.map((m) => m.Target)).toEqual(['/ferrofin-data', '/cache', '/movies', '/data/tv', '/ffmedia/neu']);
+    expect(w.media().desired).toMatchObject({ migrated: true });
+  });
+
+  it('apply with a migrated folder not recorded is template_violation', async () => {
+    const w = world();
+    w.existing(SPEC, ferroPin(), 'v1.5.1');
+    const before = w.created.length;
+    for (const spec of [MSPEC, { ...MSPEC, folders: [{ rel: 'Etc', target: '/srv/etc', migrated: true as const }] }]) {
+      expect(await w.run({ op: 'apply', spec })).toMatchObject({ state: 'failed', error: 'template_violation' });
+    }
+    expect(w.created.length).toBe(before);
+    expect(w.media().desired).not.toHaveProperty('migrated');
+    // nor through a base change
+    expect(w.jobs.rebase(MSPEC)).toMatchObject({ ok: true });
+    await w.updater.idle();
+    expect(w.updater.snapshot().lastJob).toMatchObject({ state: 'failed', error: 'template_violation' });
+  });
+
+  it('an apply that drops or changes a recorded migrated folder is template_violation', async () => {
+    const changed: [string, DesiredSpec][] = [
+      ['drops the migrated flag', { ...SPEC, folders: MSPEC.folders.map(({ rel, target }) => ({ rel, target })) }],
+      ['drops a migrated folder', { ...MSPEC, folders: MSPEC.folders.filter((f) => f.target !== '/movies') }],
+      ['changes a target', { ...MSPEC, folders: MSPEC.folders.map((f) => (f.target === '/movies' ? { ...f, target: '/filme' } : f)) }],
+      ['changes a rel', { ...MSPEC, folders: MSPEC.folders.map((f) => (f.target === '/movies' ? { ...f, rel: 'Andere' } : f)) }],
+      ['adds a migrated folder', { ...MSPEC, folders: [...MSPEC.folders, { rel: 'Doku', target: '/doku', migrated: true }] }],
+    ];
+    for (const [name, spec] of changed) {
+      const w = world();
+      w.existing(MSPEC, ferroPin(), 'v1.5.1');
+      expect(await w.run({ op: 'apply', spec }), name).toMatchObject({ state: 'failed', error: 'template_violation' });
+      expect(w.media().desired, name).toMatchObject({ migrated: true, folders: MSPEC.folders });
+    }
+    // the same migrated folders in another order with a new /ffmedia folder: fine
+    const w = world();
+    w.existing(MSPEC, ferroPin(), 'v1.5.1');
+    const spec = { ...MSPEC, folders: [...MSPEC.folders].reverse().concat([{ rel: 'Doku', target: '/ffmedia/doku' }]) };
+    expect(await w.run({ op: 'apply', spec })).toMatchObject({ state: 'succeeded' });
+  });
+
+  it('while a move runs, the recorded move folders are the migrated targets', async () => {
+    const w = world();
+    w.existing(SPEC, ferroPin(), 'v1.5.1');
+    const migrated = MSPEC.folders.filter((f) => f.migrated);
+    const source = { id: 'c'.repeat(64), name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.3', config: { type: 'bind' as const, source: '/opt/jellyfin/config' }, serverId: 'd'.repeat(32), version: '10.11.3', at: new Date(T0).toISOString() };
+    w.updater.updateMedia((m) => { m.move = { source, folders: migrated, phase: 'running', abort: false }; });
+    // only the move's own deploy runs while it is unsettled: an apply is busy
+    expect(w.jobs.start({ op: 'apply', spec: { ...MSPEC, folders: migrated } })).toEqual({ ok: false, error: 'busy' });
+    // the deploy as the move job runs it
+    const started = w.updater.startMediaJob('mediaserver-migrate', async (job) => {
+      await w.jobs.deploy(job, { ...MSPEC, folders: migrated }, { reason: 'apply' });
+      w.updater.finishJob(job, 'succeeded', null);
+    });
+    expect(started.ok).toBe(true);
+    await w.updater.idle();
+    expect(w.updater.snapshot().lastJob).toMatchObject({ state: 'succeeded' });
+    const body = w.created.at(-1)!.body as { HostConfig: { Mounts: { Target: string }[] } };
+    expect(body.HostConfig.Mounts.map((m) => m.Target)).toEqual(['/ferrofin-data', '/cache', '/movies', '/data/tv']);
+  });
+
+  it('a migrated container under a stage 1 record is tampered', async () => {
+    const w = world();
+    w.existing(MSPEC, ferroPin(), 'v1.5.1');
+    w.updater.updateMedia((m) => { m.desired = { ...SPEC, run: true }; });
+    expect(await w.run({ op: 'restart' })).toMatchObject({ state: 'failed', error: 'managed_tampered' });
   });
 });
 

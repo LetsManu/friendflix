@@ -85,6 +85,35 @@ describe('media server API', () => {
     await expect(s.view()).rejects.toBeInstanceOf(ApiError);
   });
 
+  it('the move: scan (list, then one candidate), the move with trickplay, its abort and the way back; the wizard has none of them', async () => {
+    const id = 'a'.repeat(64);
+    answer = () => new Response(JSON.stringify({ candidates: [{ id, name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.0', state: 'running', matches: true }] }), { status: 200 });
+    expect((await adminMediaApi.moveScan()).candidates?.[0]?.name).toBe('jellyfin');
+    answer = () => new Response(JSON.stringify({ scan: { source: id, state: 'running', at: '2026-11-24T10:00:00.000Z' } }), { status: 202 });
+    expect((await adminMediaApi.moveScan(id)).scan?.state).toBe('running');
+    answer = () => new Response('{"job":{"id":"j"}}', { status: 202 });
+    await adminMediaApi.move({ source: id, trickplay: true });
+    await adminMediaApi.moveAbort();
+    answer = () => new Response('{}', { status: 202 });
+    await adminMediaApi.back();
+    expect(calls.map((c) => `${c.init.method} ${c.url}`)).toEqual([
+      'POST /api/admin/mediaserver/move/scan', 'POST /api/admin/mediaserver/move/scan', 'POST /api/admin/mediaserver/move', 'POST /api/admin/mediaserver/move/abort',
+      'POST /api/admin/mediaserver/back',
+    ]);
+    expect(calls.map(body)).toEqual([{}, { source: id }, { source: id, trickplay: true }, {}, {}]);
+    for (const c of calls) expect(headers(c)['x-csrf-token']).toBe('app-tok');
+    // a refusal keeps its code and the container paths it names
+    answer = () => new Response(JSON.stringify({ error: 'source_outside_base', outside: ['/data/movies'], refused: [], nested: [] }), { status: 409 });
+    await expect(adminMediaApi.moveScan()).rejects.toMatchObject({ status: 409, body: { error: 'source_outside_base', outside: ['/data/movies'] } });
+
+    calls = [];
+    const s = setupMediaApi();
+    for (const p of [s.moveScan(), s.moveScan(id), s.move({ source: id, trickplay: false }), s.moveAbort(), s.back()]) {
+      await expect(p).rejects.toMatchObject({ body: { error: 'not_supported' } });
+    }
+    expect(calls).toEqual([]);
+  });
+
   it('download prefers showSaveFilePicker and falls back to a Blob link', async () => {
     const written: Uint8Array[] = [];
     const picker = vi.fn(async () => ({ createWritable: async () => new WritableStream<Uint8Array>({ write: (c) => { written.push(c); } }) }));

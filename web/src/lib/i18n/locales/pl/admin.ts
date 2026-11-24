@@ -287,6 +287,10 @@ const pl: Translation<typeof de> = {
         start: 'Uruchamianie',
         health: 'Kontrola stanu',
         rollback: 'Wycofanie',
+        copy_bulk: 'Kopiowanie danych',
+        stop_source: 'Zatrzymanie Jellyfin',
+        copy: 'Kopiowanie bazy danych',
+        adopt: 'Przejęcie danych',
       },
       mediaAction: {
         apply: 'Konfiguracja',
@@ -300,6 +304,8 @@ const pl: Translation<typeof de> = {
         restore: 'Przywracanie',
         remove: 'Usunięcie',
         recover: 'Odtworzono automatycznie',
+        migrate: 'Przeprowadzka z Jellyfin',
+        source: 'Uruchomienie starego Jellyfin',
       },
       state: {
         pending: 'czeka',

@@ -631,7 +631,7 @@ describe('update job', () => {
 
   it('an update interrupted in its media phase keeps FriendFlix updated', () => {
     const steps = { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'ok' as const, rollback: 'skipped' as const };
-    const media = { step: 'create' as const, steps: { check: 'ok' as const, pull: 'ok' as const, verify: 'ok' as const, snapshot: 'skipped' as const, create: 'running' as const, start: 'pending' as const, health: 'pending' as const, rollback: 'pending' as const } };
+    const media = { step: 'create' as const, steps: { check: 'ok' as const, pull: 'ok' as const, verify: 'ok' as const, snapshot: 'skipped' as const, create: 'running' as const, start: 'pending' as const, health: 'pending' as const, rollback: 'pending' as const, copy_bulk: 'pending' as const, stop_source: 'pending' as const, copy: 'pending' as const, adopt: 'pending' as const } };
     const job: Job = { id: '0123456789abcdef', action: 'update', state: 'running', step: 'health', from: null, to: 'latest', startedAt: new Date().toISOString(), finishedAt: null, error: null, steps, services: null, media };
     const s = memoryStore({ ...DEFAULT_STATE, lastJob: job });
     new Updater(world().ops, s);

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Ops, StartResult } from '../src/job.js';
 import { Updater } from '../src/job.js';
 import type { MediaOp } from '../src/mediaserver/types.js';
+import { parseMediaBody } from '../src/mediaserver/parse.js';
 import { MediaService } from '../src/mediaserver/service.js';
 import { STARTING_VIEW, mediaStatusView, type MediaStatusView } from '../src/mediaserver/status.js';
 import { Supervisor } from '../src/mediaserver/supervise.js';
@@ -22,6 +23,7 @@ const b64 = (s: string): string => Buffer.from(s, 'utf8').toString('base64url');
 const VIEW: MediaStatusView = {
   available: true, reason: null, base: { set: false, path: null, pending: false, expiresAt: null }, desired: null, container: null, pin: null,
   pins: { ferrofin: true, jellyfin: true }, engine: { api: '1.47', logs: true, arch: 'amd64', nvidia: false }, error: null, backups: [], hdr: null,
+  move: null, source: null, moveCopy: false,
 };
 
 const servers: Server[] = [];
@@ -45,6 +47,7 @@ function fake() {
     updater, verifier, calls,
     view: { ...VIEW } as MediaStatusView,
     start: ((op: MediaOp): StartResult => { calls.push(`start ${op.op}`); return { ok: true, job }; }) as (op: MediaOp) => StartResult,
+    done: false,
     downloaded: [] as Array<{ id: string; passphrase: string }>,
     uploaded: [] as string[],
   };
@@ -58,8 +61,12 @@ function fake() {
         browse: async () => { calls.push('browse'); return { entries: [{ name: 'Filme', symlink: false, unreadable: false }], truncated: false }; },
         gpu: async () => { calls.push('gpu'); return { dri: [], nvidia: false }; },
         logs: async () => { calls.push('logs'); return { lines: ['a'] }; },
+        moveScan: async (serverId, source) => {
+          calls.push(`moveScan ${serverId} ${source ?? '-'}`);
+          return source ? { error: 'source_outside_base', outside: ['/music'], refused: [] } : { candidates: [{ id: 'c'.repeat(64), name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', state: 'running', matches: true }] };
+        },
       },
-      jobs: { start: (op) => f.start(op as MediaOp) },
+      jobs: { start: (op) => f.start(op as MediaOp), migrateDone: () => { calls.push('migrateDone'); return f.done; } },
       status: async () => f.view,
       download: async (id, passphrase, res) => {
         f.downloaded.push({ id, passphrase });
@@ -173,6 +180,60 @@ describe('POST /v1/mediaserver', () => {
     expect(answer).toMatch(/^HTTP\/1\.1 408 /);
     expect(answer).toContain('{"error":"timeout"}');
     expect(t.calls).toEqual([]);
+  });
+});
+
+describe('stage 2 ops', () => {
+  const CID = 'a'.repeat(64);
+  const SID = 'b'.repeat(32);
+  const MIGRATE = { op: 'migrate', source: CID, trickplay: false, gpu: 'off', uid: 1000, gid: 1000, tz: 'Europe/Berlin', serverId: SID };
+
+  it('parseMediaBody accepts each new op exactly', () => {
+    expect(parseMediaBody({ op: 'migrate-scan', serverId: SID })).toEqual({ op: 'migrate-scan', serverId: SID });
+    expect(parseMediaBody({ op: 'migrate-scan', serverId: SID, source: CID })).toEqual({ op: 'migrate-scan', serverId: SID, source: CID });
+    expect(parseMediaBody({ op: 'migrate-done' })).toEqual({ op: 'migrate-done' });
+    expect(parseMediaBody(MIGRATE)).toEqual(MIGRATE);
+    expect(parseMediaBody({ op: 'migrate-abort' })).toEqual({ op: 'migrate-abort' });
+    expect(parseMediaBody({ op: 'source-start' })).toEqual({ op: 'source-start' });
+  });
+
+  it('parseMediaBody rejects extra keys, short ids, a string flag and a short server id', () => {
+    for (const bad of [
+      { op: 'migrate-scan', serverId: SID, extra: 1 }, { op: 'migrate-scan', serverId: 'b'.repeat(31) }, { op: 'migrate-scan', serverId: SID, source: 'a'.repeat(63) },
+      { op: 'migrate-scan' }, { op: 'migrate-done', x: 1 }, { op: 'migrate-abort', x: 1 }, { op: 'source-start', x: 1 },
+      { ...MIGRATE, extra: 1 }, { ...MIGRATE, source: 'a'.repeat(63) }, { ...MIGRATE, trickplay: 'false' }, { ...MIGRATE, serverId: 'b'.repeat(31) },
+      { ...MIGRATE, serverId: 'B'.repeat(32) }, { ...MIGRATE, gpu: 'x' }, { ...MIGRATE, uid: 0 }, { ...MIGRATE, tz: '../x' },
+    ]) expect(parseMediaBody(bad), JSON.stringify(bad)).toBeNull();
+  });
+
+  it('parseMediaBody keeps the migrated flag on a spec and its folders, and only as true', () => {
+    const spec = { ...SPEC, migrated: true as const, folders: [{ rel: '', target: '/data/filme', migrated: true as const }] };
+    expect(parseMediaBody({ op: 'apply', spec })).toEqual({ op: 'apply', spec });
+    expect(parseMediaBody({ op: 'apply', spec: { ...spec, migrated: false } })).toBeNull();
+    expect(parseMediaBody({ op: 'apply', spec: { ...SPEC, folders: [{ rel: '', target: '/media/x' }] } })).toBeNull();
+  });
+
+  it('migrate, migrate-abort and source-start are jobs; migrate-scan and migrate-done are not, and are gated by availability', async () => {
+    const t = fake();
+    const base = await listen(t.deps);
+    expect((await post(base, JSON.stringify(MIGRATE))).status).toBe(202);
+    expect((await post(base, '{"op":"migrate-abort"}')).status).toBe(202);
+    expect((await post(base, '{"op":"source-start"}')).status).toBe(202);
+    expect(t.calls).toEqual(['start migrate', 'start migrate-abort', 'start source-start']);
+    // synchronous ops: not jobs, never reach jobs.start; migrate-done ends a move in `ready` (409 without one)
+    const list = await post(base, `{"op":"migrate-scan","serverId":"${SID}"}`);
+    expect([list.status, await list.json()]).toEqual([200, { candidates: [{ id: 'c'.repeat(64), name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', state: 'running', matches: true }] }]);
+    const one = await post(base, `{"op":"migrate-scan","serverId":"${SID}","source":"${CID}"}`);
+    expect([one.status, await one.json()]).toEqual([409, { error: 'source_outside_base', outside: ['/music'], refused: [] }]);
+    const none = await post(base, '{"op":"migrate-done"}');
+    expect([none.status, await none.json()]).toEqual([409, { error: 'no_target' }]);
+    t.f.done = true;
+    const done = await post(base, '{"op":"migrate-done"}');
+    expect([done.status, await done.json()]).toEqual([200, { ok: true }]);
+    expect(t.calls).toEqual(['start migrate', 'start migrate-abort', 'start source-start', `moveScan ${SID} -`, `moveScan ${SID} ${CID}`, 'migrateDone', 'migrateDone']);
+    t.f.view = { ...VIEW, available: false, reason: 'no_logs' };
+    for (const b of [`{"op":"migrate-scan","serverId":"${SID}"}`, '{"op":"migrate-done"}', JSON.stringify(MIGRATE)]) expect((await post(base, b)).status, b).toBe(409);
+    for (const b of ['{"op":"migrate-abort"}', '{"op":"source-start"}']) expect((await post(base, b)).status, b).toBe(202);
   });
 });
 

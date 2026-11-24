@@ -75,9 +75,9 @@ describe('notify stores group_key', () => {
         (null, 'digest', 'Alt D', '{"title":{"join":[{"key":"tv.paired.title"},"x"],"sep":"\\n"}}', 'old-4'),
         (null, 'digest', 'Alt E', '{"title":{"join":[{"key":"tv.paired.title"},{"join":["a","b"]},"x"]}}', 'old-5')`,
     );
-    // the notifications center migration is the last entry
-    expect(MIGRATIONS[MIGRATIONS.length - 1]).toContain('notification_state');
-    await env.pool.query(MIGRATIONS[MIGRATIONS.length - 1]!);
+    // the notifications center migration is 61
+    expect(MIGRATIONS[60]).toContain('notification_state');
+    await env.pool.query(MIGRATIONS[60]!);
     const rows = (await env.pool.query<{ dedupe: string; group_key: string; id: string }>("select id, dedupe, group_key from notifications where dedupe like 'old-%' order by dedupe")).rows;
     expect(rows[0]!.group_key).toBe('episode|Alt A');
     expect(rows[1]!.group_key).toBe('tv_paired|tv.paired.title');

@@ -122,6 +122,12 @@ export class Engine {
     return this.array(res).map((c) => ({ id: str(c.Id), names: strs(c.Names).map((n) => n.replace(/^\//, '')), state: str(c.State), labels: labelMap(c.Labels) }));
   }
 
+  /** every container on the engine, running or stopped, with the image it was created from (the list's `Image`: a reference or an image id) */
+  async allContainers(): Promise<Array<{ id: string; names: string[]; state: string; image: string; labels: Record<string, string> }>> {
+    const res = await this.call({ method: 'GET', path: '/containers/json', query: { all: '1' } }, Engine.generic);
+    return this.array(res).map((c) => ({ id: str(c.Id), names: strs(c.Names).map((n) => n.replace(/^\//, '')), state: str(c.State), image: str(c.Image), labels: labelMap(c.Labels) }));
+  }
+
   private array(res: Res): Obj[] {
     try {
       const v: unknown = JSON.parse(new TextDecoder().decode(res.bytes));

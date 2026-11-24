@@ -281,7 +281,7 @@ describe('media server jobs and the update whose media server phase failed', () 
 
   it('every media action has a label in every locale; the media steps and actions mirror the backend', async () => {
     const backend = readFileSync(new URL('../../../../backend/src/updater.ts', import.meta.url), 'utf8');
-    const list = (name: string) => [...(backend.match(new RegExp(`export const ${name} = \\[([^\\]]+)\\]`))?.[1] ?? '').matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
+    const list = (name: string) => [...(backend.match(new RegExp(`export const ${name} = \\[([^\\]]+)\\]`))?.[1] ?? '').matchAll(/'([a-z_-]+)'/g)].map((m) => m[1]);
     expect([...MEDIA_JOB_ACTIONS]).toEqual(list('MEDIA_JOB_ACTIONS'));
     expect([...MEDIA_STEPS]).toEqual(list('MEDIA_STEPS'));
     expect(mediaActionLabel('mediaserver-apply')).toBe('Einrichten');
@@ -300,6 +300,10 @@ describe('media server jobs and the update whose media server phase failed', () 
     const steps = Object.fromEntries(MEDIA_STEPS.map((s) => [s, 'pending'])) as NonNullable<UpdaterJob['media']>['steps'];
     expect(visibleMediaSteps({ step: null, steps })).toEqual(['check', 'pull', 'verify', 'snapshot', 'create', 'start', 'health']);
     expect(visibleMediaSteps({ step: 'rollback', steps: { ...steps, health: 'failed', rollback: 'running' } })).toContain('rollback');
+    // the move's job lists its copy steps where it runs them; no other job lists them
+    expect(visibleMediaSteps({ step: null, steps }, 'mediaserver-migrate')).toEqual(['check', 'pull', 'verify', 'snapshot', 'copy_bulk', 'stop_source', 'copy', 'create', 'start', 'health', 'adopt']);
+    expect(visibleMediaSteps({ step: null, steps }, 'mediaserver-apply')).toEqual(['check', 'pull', 'verify', 'snapshot', 'create', 'start', 'health']);
+    expect(mediaActionLabel('mediaserver-migrate')).toBe('Umzug von Jellyfin');
     expect(MEDIA_TAB).toBe('/admin/settings?tab=media');
   });
 });

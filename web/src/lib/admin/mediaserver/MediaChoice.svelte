@@ -7,18 +7,26 @@
    * (on Plex the labels come from serverText.plex). One radiogroup with a roving tabindex; the arrow keys move to the next choice that
    * can be taken. A choice that cannot be taken is disabled (unless the server is on it) and the line below says why (model.ts
    * choiceDisabled / reasonText), with the trial note and its docs link. The parent owns the choice: `pick` asks for it.
+   * Where the move from Jellyfin is offered (`canMove`, the Admin card; stage 2), the reason "kommt mit Stufe 2" becomes the button
+   * *Von Jellyfin umziehen* (*Erneut umziehen* after a way back), which asks for the sheet (`move`); while a move or a way back runs,
+   * that line stays empty (the card shows the move).
    */
   import { createEventDispatcher } from 'svelte';
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
+  import Button from '#lib/ui/Button.svelte';
   import type { MediaView } from './api';
-  import { CHOICES, DOCS_HREF, TRIAL_KINDS, choiceDisabled, currentChoice, reasonText, type Choice } from './model';
+  import { CHOICES, DOCS_HREF, TRIAL_KINDS, backActive, choiceDisabled, currentChoice, moveActive, reasonText, type Choice } from './model';
 
   export let view: MediaView;
   export let choice: Choice;
   /** the id of the reasons line (the disabled choices point at it) */
   export let reasonsId = 'ms-reasons';
-  const dispatch = createEventDispatcher<{ pick: Choice }>();
+  /** the move from Jellyfin can be offered here (the Admin card; the wizard has no route for it) */
+  export let canMove = false;
+  /** the move cannot start right now (another job runs) */
+  export let moveDisabled = false;
+  const dispatch = createEventDispatcher<{ pick: Choice; move: void }>();
 
   /** a disabled choice, unless it is the one the server is on */
   const off = (v: MediaView, c: Choice) => c !== currentChoice(v) && Boolean(choiceDisabled(v, c));
@@ -32,6 +40,9 @@
       if (!off(view, CHOICES[j]!)) { dispatch('pick', CHOICES[j]!); btns[j]?.focus(); return; }
     }
   }
+  $: offered = canMove && view.move?.offered === true;
+  // a move or a way back under way: the card shows it, the reason line has nothing to add
+  $: moving = canMove && (moveActive(view) || backActive(view));
   $: reasons = [...new Set((['ferrofin', 'jellyfin'] as const).map((k) => choiceDisabled(view, k)).filter((r): r is NonNullable<typeof r> => r !== null))];
 </script>
 
@@ -46,7 +57,11 @@
   {/each}
 </div>
 <div id={reasonsId} class="reasons" data-testid="media-reasons">
-  {#each reasons as r (r)}<p><Icon name="info" size={16} />{reasonText(r)}</p>{/each}
+  {#each reasons as r (r)}
+    {#if r === 'ids_in_use' && offered}
+      <p class="mv"><Button variant="secondary" icon="hard-drive" disabled={moveDisabled} data-testid="media-move" on:click={() => dispatch('move')}>{view.move?.state?.back === 'done' ? $t('mediaserver.move.again') : $t('mediaserver.move.offer')}</Button></p>
+    {:else if !(r === 'ids_in_use' && moving)}<p><Icon name="info" size={16} />{reasonText(r)}</p>{/if}
+  {/each}
   {#if TRIAL_KINDS.length}<p class="muted">{$t('mediaserver.choice.trialNote')} <a href={DOCS_HREF} target="_blank" rel="noopener noreferrer">{$t('mediaserver.choice.trialDocs')}</a></p>{/if}
 </div>
 
@@ -66,6 +81,7 @@
   .reasons p { display: flex; align-items: flex-start; gap: .4rem; margin: 0; }
   .reasons :global(svg) { flex: none; margin-top: .15rem; color: var(--info-mark); }
   .reasons a { text-decoration: underline; }
+  .reasons .mv { margin: .1rem 0 .2rem; }
   @media (max-width: 720px) {
     .seg { grid-template-columns: minmax(0, 1fr); }
     .seg button { justify-content: flex-start; text-align: left; }

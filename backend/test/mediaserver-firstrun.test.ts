@@ -478,6 +478,37 @@ describe('managed media server first run', () => {
     const posts = calls('POST', '/Library/VirtualFolders');
     expect(posts.map((c) => [c.query.get('name'), c.query.getAll('paths')])).toEqual([['Musik', ['/media/musik']]]);
     expect(calls('POST', '/Startup/User')).toEqual([]);
+    // a stage 1 server: the library sits where the folder mounts, /media/<slug>
+    expect(opBodies('apply')[0]!.spec.folders).toContainEqual({ rel: 'Musik', target: '/media/musik' });
+    expect((await readManaged(env.pool)).libraries.find((l) => l.slug === 'musik')).toEqual({ slug: 'musik', name: 'Musik', type: 'music', rel: 'Musik', created: true });
+  });
+
+  it('a folder added after a move mounts at /ffmedia/<slug>, and its library is created there', async () => {
+    resetFake('ferrofin');
+    // the moved server: Jellyfin's folders as recorded, no library of FriendFlix's own yet
+    fake.media.desired = { kind: 'ferrofin', folders: [{ rel: '', target: '/media', migrated: true }], uid: 1000, gid: 1000, gpu: 'dri', mediaGid: null, egress: true, run: true, migrated: true } as never;
+    server.wizardDone = true;
+    server.user = { name: 'friendflix-admin', password: PASSWORD };
+    await seed('ferrofin', 'done', []);
+    await connected();
+    // Jellyfin's own library on the migrated /media mount: a new library must never land there
+    server.folders = [{ Name: 'Filme', ItemId: hex('a'), CollectionType: 'movies', Locations: ['/media/movies'] }];
+    await reauth();
+    const r = await req('POST', '/apply', { kind: 'ferrofin', folders: [{ rel: 'Musik', name: 'Musik', type: 'music' }], uid: 1000, gid: 1000, gpu: 'dri', mediaGid: null, egress: true });
+    expect(r.statusCode).toBe(202);
+    expect(opBodies('apply')[0]!.spec).toMatchObject({ migrated: true, folders: [{ rel: '', target: '/media', migrated: true }, { rel: 'Musik', target: '/ffmedia/musik' }] });
+    expect((await readManaged(env.pool)).libraries).toEqual([{ slug: 'musik', name: 'Musik', type: 'music', rel: 'Musik', created: false, ffmedia: true }]);
+    expect(await tick()).toBe('waiting'); // the apply mounts it first
+    fake.job!.state = 'succeeded';
+    fake.busy = false;
+    expect(await tick()).toBe('libraries');
+    const posts = calls('POST', '/Library/VirtualFolders');
+    expect(posts.map((c) => [c.query.get('name'), c.query.getAll('paths')])).toEqual([['Musik', ['/ffmedia/musik']]]);
+    expect((await readManaged(env.pool)).libraries).toEqual([{ slug: 'musik', name: 'Musik', type: 'music', rel: 'Musik', created: true, ffmedia: true }]);
+    // a restart finds it on its mount: no second library
+    await env.pool.query("update media_managed set libraries = jsonb_set(libraries, '{0,created}', 'false')");
+    expect(await tick()).toBe('libraries');
+    expect(calls('POST', '/Library/VirtualFolders')).toHaveLength(1);
   });
 
   it('another or an undetected VA-API vendor decodes only H.264 and HEVC in hardware', async () => {

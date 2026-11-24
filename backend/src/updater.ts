@@ -21,7 +21,7 @@ export type UpdaterAction = 'update' | 'rollback' | 'self-update' | 'livetv';
 export type UpdateJobAction = Exclude<UpdaterAction, 'livetv'>;
 export const UPDATER_ACTIONS: readonly UpdateJobAction[] = ['update', 'rollback', 'self-update'];
 /** the action of a job as the updater reports it */
-export const MEDIA_JOB_ACTIONS = ['mediaserver-apply', 'mediaserver-finish', 'mediaserver-start', 'mediaserver-stop', 'mediaserver-restart', 'mediaserver-update', 'mediaserver-hdr-test', 'mediaserver-backup', 'mediaserver-restore', 'mediaserver-remove', 'mediaserver-recover'] as const;
+export const MEDIA_JOB_ACTIONS = ['mediaserver-apply', 'mediaserver-finish', 'mediaserver-start', 'mediaserver-stop', 'mediaserver-restart', 'mediaserver-update', 'mediaserver-hdr-test', 'mediaserver-backup', 'mediaserver-restore', 'mediaserver-remove', 'mediaserver-recover', 'mediaserver-migrate', 'mediaserver-source'] as const;
 export type MediaJobAction = (typeof MEDIA_JOB_ACTIONS)[number];
 export type UpdaterJobAction = UpdateJobAction | 'livetv-enable' | 'livetv-disable' | 'livetv-remove' | MediaJobAction;
 const JOB_ACTIONS: readonly UpdaterJobAction[] = [...UPDATER_ACTIONS, 'livetv-enable', 'livetv-disable', 'livetv-remove', ...MEDIA_JOB_ACTIONS];
@@ -32,7 +32,7 @@ export type LivetvError = (typeof LIVETV_ERRORS)[number];
 const STEP_NAMES = ['pull', 'verify', 'restart', 'health', 'rollback'] as const;
 const STEP_STATES = ['pending', 'running', 'ok', 'failed', 'skipped'] as const;
 /** the steps of a media job (updater/src/mediaserver/types.ts MEDIA_STEPS), also the media phase of an update job */
-export const MEDIA_STEPS = ['check', 'pull', 'verify', 'snapshot', 'create', 'start', 'health', 'rollback'] as const;
+export const MEDIA_STEPS = ['check', 'pull', 'verify', 'snapshot', 'create', 'start', 'health', 'rollback', 'copy_bulk', 'stop_source', 'copy', 'adopt'] as const;
 export type MediaStep = (typeof MEDIA_STEPS)[number];
 export type StepState = (typeof STEP_STATES)[number];
 /** succeeded_mediaserver_failed: an update that succeeded, whose media server phase failed (and was rolled back on its own) */

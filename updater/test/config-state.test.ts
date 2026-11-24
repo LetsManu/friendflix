@@ -143,6 +143,33 @@ describe('updater state file', () => {
     expect(sanitize({ media: { ...media, renderGids: [] } }).media.renderGids).toEqual([]);
     expect('renderGids' in sanitize({ media }).media).toBe(false);
     for (const bad of [[0], [993, 'x'], [70000], [1, 2, 3, 4, 5], 'x', [1.5]]) expect('renderGids' in sanitize({ media: { ...media, renderGids: bad } }).media).toBe(false);
+    // stage 2: a move and the recorded source are optional, each kept or dropped on its own
+    const source = { id: 'f'.repeat(64), name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.7', config: { type: 'bind', source: '/srv/jf/config' }, serverId: 'a'.repeat(32), version: '10.10.7', at: '2026-11-24T10:00:00.000Z' };
+    const move = { source, folders: [{ rel: '', target: '/data/filme', migrated: true }], phase: 'running', abort: false };
+    expect(sanitize({ media: { ...media, move, source } }).media).toEqual({ ...media, move, source });
+    expect(sanitize({ media: { ...media, move: { ...move, source: { ...source, version: null } }, source: { ...source, version: null } } }).media.source).toEqual({ ...source, version: null });
+    for (const k of ['move', 'source'] as const) expect(k in sanitize({ media }).media).toBe(false);
+    const badSource = { ...source, id: 'f'.repeat(63) };
+    const dropped = sanitize({ media: { ...media, move: { ...move, source: badSource }, source: badSource } }).media;
+    expect('move' in dropped || 'source' in dropped).toBe(false);
+    expect(sanitize({ media: { ...media, move, source: { ...source, serverId: 'a'.repeat(31) } } }).media).toEqual({ ...media, move });
+    expect('move' in sanitize({ media: { ...media, move: { ...move, phase: 'x' }, source } }).media).toBe(false);
+    expect('move' in sanitize({ media: { ...media, move: { ...move, abort: 'no' }, source } }).media).toBe(false);
+    expect('move' in sanitize({ media: { ...media, move: { ...move, folders: [{ rel: '../x', target: '/data/x' }] }, source } }).media).toBe(false);
+    for (const phase of ['running', 'ready', 'aborted', 'done']) expect(sanitize({ media: { ...media, move: { ...move, phase } } }).media.move?.phase).toBe(phase);
+    // round 1 of task 5: the move's user, stage, the state before it, its code and tries; each dropped on its own, an older file loads
+    const desired = { kind: 'ferrofin', folders: [{ rel: '', target: '/data/filme', migrated: true }], uid: 1500, gid: 1500, gpu: 'off', mediaGid: null, egress: true, tz: 'UTC', migrated: true, run: false };
+    const full = { ...move, uid: 1500, gid: 1500, reached: 'stop', before: { desired, container: media.container }, code: 'adopt_failed', tries: 2 };
+    expect(sanitize({ media: { ...media, move: full } }).media.move).toEqual(full);
+    expect(sanitize({ media: { ...media, move: { ...full, before: { desired: null, container: null } } } }).media.move?.before).toEqual({ desired: null, container: null });
+    expect(sanitize({ media: { ...media, move } }).media.move).toEqual(move);
+    const partly = sanitize({ media: { ...media, move: { ...full, uid: 0, reached: 'x', before: { desired: { ...desired, uid: 0 }, container: null }, code: 'nope', tries: 99 } } }).media.move!;
+    expect(partly).toEqual(move);
+    expect(sanitize({ media: { ...media, move: { ...full, gid: 'x' } } }).media.move).not.toHaveProperty('uid');
+    expect(sanitize({ media: { ...media, move: { ...full, before: { desired, container: { id: 'x' } } } } }).media.move).not.toHaveProperty('before');
+    // a move's copy in the data volume: kept when true, nothing otherwise
+    expect(sanitize({ media: { ...media, moveCopy: true } }).media.moveCopy).toBe(true);
+    for (const v of [false, 'yes', 1]) expect('moveCopy' in sanitize({ media: { ...media, moveCopy: v } }).media).toBe(false);
     const steps = { check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'ok', create: 'ok', start: 'ok', health: 'failed', rollback: 'skipped' };
     const job = sanitize({ lastJob: { id: '0123456789abcdef', action: 'mediaserver-apply', state: 'succeeded_mediaserver_failed', to: 'latest', media: { step: 'health', steps } } }).lastJob!;
     expect(job).toMatchObject({ action: 'mediaserver-apply', state: 'succeeded_mediaserver_failed', media: { step: 'health', steps } });

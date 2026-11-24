@@ -42,8 +42,9 @@ function failedMediaJob(j: UpdaterJob | null): string | null {
 /**
  * The managed media server (spec "Systemcheck", first match wins): neutral while an external server is in use, then what keeps it
  * from working (updater, engine, proxy, a tampered or stopped container, its health, the base folder, folders, GPU), then what needs
- * an admin soon (the last media job failed, a pending update older than 7 days, no backup in 30 days). Codes and the kind and
- * version only: never the base path, a folder, a pin or a backup id.
+ * an admin soon (the request service not following a move, the last media job failed, a pending update older than 7 days, no backup
+ * in 30 days); an ok line after a move says where it came from (`managed_migrated`, stage 2 "After the move"). Codes, the kind,
+ * the version and the old container's name only: never the base path, a folder, a pin or a backup id.
  */
 export async function managedLine(env: CheckEnv, view: MediaView | null, updater: UpdaterView): Promise<CheckLine> {
   const id = 'media.managed';
@@ -52,6 +53,8 @@ export async function managedLine(env: CheckEnv, view: MediaView | null, updater
   const managedKind = view.managed.kind;
   const s = 'status' in updater ? updater.status.mediaserver : null;
   const c = s?.container ?? null;
+  // a way back could not point the request service back at the old Jellyfin: requests fail until done, whatever the managed server does
+  if (view.mode === 'external' && view.move.requestsWarning) return bad(id, 'warning', 'managed_requests_not_moved', o);
   if (view.mode === 'external' && !c) return bad(id, 'not_set_up', 'managed_off', o);
   if (!s) return managedKind ? bad(id, 'warning', 'managed_no_updater', o) : bad(id, 'not_set_up', 'managed_off', o);
   // the updater has not read the media status yet since it started (a pin verify can take minutes): pending, never a warning
@@ -66,6 +69,8 @@ export async function managedLine(env: CheckEnv, view: MediaView | null, updater
   if (s.error === 'base_missing') return bad(id, 'problem', 'managed_base_missing', o);
   if (s.error === 'folder_missing') return bad(id, 'warning', 'managed_folder_missing', o);
   if (s.error === 'gpu_missing' || s.error === 'nvidia_missing') return bad(id, 'warning', 'managed_gpu_missing', o);
+  // a move could not point the request service at the moved server (or a way back not back at the old one): requests fail until done
+  if (view.move.requestsWarning) return bad(id, 'warning', 'managed_requests_not_moved', o);
   const code = failedMediaJob('status' in updater ? updater.status.job : null);
   if (code) return bad(id, 'warning', 'managed_job_failed', { ...o, params: { code } });
   const pin = differingPin(s);
@@ -73,7 +78,22 @@ export async function managedLine(env: CheckEnv, view: MediaView | null, updater
   if (seen && olderThan(seen, UPDATE_PENDING_MS)) return bad(id, 'warning', 'managed_update_pending', o);
   const newest = s.backups.reduce<string | null>((a, b) => (a === null || Date.parse(b.at) > Date.parse(a) ? b.at : a), null);
   if (newest ? olderThan(newest, BACKUP_OLD_MS) : c !== null && olderThan(c.createdAt, BACKUP_OLD_MS)) return bad(id, 'warning', 'managed_backup_old', o);
-  return line(id, 'ok', { ...o, params: { kind: c?.kind ?? managedKind ?? undefined, upstream: c?.image.upstream } });
+  const params = { kind: c?.kind ?? managedKind ?? undefined, upstream: c?.image.upstream };
+  // moved from an existing Jellyfin (stage 2): an info line saying where from, and what the old container is doing as Docker shows it
+  const from = managedKind ? view.managed.migratedFrom : null;
+  if (from) return line(id, 'ok', { ...o, cause: migratedCause(view.move.sourceState), params: { ...params, source: from.name } });
+  return line(id, 'ok', { ...o, params });
+}
+
+/**
+ * the info line after a move by the old container's Docker state: stopped and kept for the way back (`managed_migrated`, only when
+ * Docker shows it stopped), running unused (a way back that was refused after it started it), gone (`missing`: the way back needs an
+ * address), or not known (no state read)
+ */
+function migratedCause(state: string | null): string {
+  if (state === 'exited' || state === 'created' || state === 'dead') return 'managed_migrated';
+  if (state === 'running' || state === 'restarting' || state === 'paused') return 'managed_migrated_running';
+  return state === 'missing' ? 'managed_migrated_gone' : 'managed_migrated_unknown';
 }
 
 /**

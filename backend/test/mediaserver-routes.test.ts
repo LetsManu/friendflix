@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { sessionKey } from '../src/session.js';
 import { issueSetupCode } from '../src/setup/code.js';
 import { decrypt, encrypt } from '../src/crypto.js';
-import { readManaged } from '../src/mediaserver/store.js';
+import { readManaged, writeManaged } from '../src/mediaserver/store.js';
 import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const SECRET = cfg.INTERNAL_SECRET;
@@ -13,6 +13,8 @@ const DIGEST = `sha256:${'a'.repeat(64)}`;
 const FRIEND = { sub: 'sub-ben', email: 'ben@friend.example.com', name: 'Ben Muster', groups: [] as string[] };
 const EXTERNAL = 'http://192.0.2.10:8096';
 const EXTERNAL_KEY = 'k' + 'ey-' + 'external';
+const CONTAINER = 'c'.repeat(64);
+const SERVER_ID = '0123456789abcdef0123456789abcdef';
 
 const media = () => ({
   available: true, reason: null as string | null,
@@ -22,6 +24,7 @@ const media = () => ({
   pin: null, pins: { ferrofin: true, jellyfin: true },
   engine: { api: '1.47', logs: true, arch: 'amd64', nvidia: false }, error: null,
   backups: [{ id: 'ferrofin-20261117-1000-1.2.3', kind: 'ferrofin', upstream: '1.2.3', at: '2026-11-17T10:00:00.000Z', tag: 'manual', size: 1234 }], hdr: null,
+  move: null as Record<string, unknown> | null, source: null as Record<string, unknown> | null,
 });
 let jobN = 0;
 const job = (action: string) => ({ id: (++jobN).toString(16).padStart(16, '0'), action, state: 'running', step: null, from: null, to: 'latest',
@@ -33,6 +36,13 @@ const fake = {
   /** a fixed answer per op instead of the default */
   answer: {} as Record<string, { status: number; json: unknown }>,
   bodies: [] as Array<Record<string, any>>,
+  /** what the current Jellyfin answers at /System/Info/Public (null: it does not answer) */
+  info: { Id: SERVER_ID, StartupWizardCompleted: true } as Record<string, unknown> | null,
+  infoCalls: [] as string[],
+  /** while set, the sized scan answers only once it resolves */
+  scanHold: null as Promise<void> | null,
+  /** runs when an op arrives, before it is answered (what the backend recorded by then) */
+  onOp: null as ((body: Record<string, any>) => Promise<void>) | null,
 };
 const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const u = new URL(String(input));
@@ -41,9 +51,16 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
     return j({ updater: { version: '3.3.0', sha: null }, channel: 'stable', version: null, targetTag: 'latest', current: 'latest', previous: null, busy: false, job: null, log: [], services: [],
       ...(fake.media ? { mediaserver: fake.media } : {}) });
   }
+  if (u.pathname === '/System/Info/Public') {
+    fake.infoCalls.push(u.origin);
+    if (!fake.info) throw new TypeError('fetch failed');
+    return j(fake.info);
+  }
   if (u.pathname !== '/v1/mediaserver') return j({ error: 'not_found' }, 404);
   const body = JSON.parse(String(init?.body)) as Record<string, any>;
   fake.bodies.push(body);
+  await fake.onOp?.(body);
+  if (body.op === 'migrate-scan' && body.source && fake.scanHold) await fake.scanHold;
   const fixed = fake.answer[body.op];
   if (fixed) return j(fixed.json, fixed.status);
   switch (body.op) {
@@ -53,13 +70,18 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
     case 'browse': return j({ entries: [{ name: 'Filme', symlink: false, unreadable: false }, { name: 'a/b', symlink: false, unreadable: false }], truncated: false });
     case 'gpu': return j({ dri: [{ node: 'renderD128', gid: 44, vendor: 'intel' }, { node: '../x', gid: 1, vendor: 'intel' }], nvidia: false });
     case 'logs': return j({ lines: ['x'.repeat(600), 7, 'ok'] });
+    case 'migrate-scan': return j({ candidates: [{ id: CONTAINER, name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', state: 'running', matches: true }],
+      ...(body.source ? { scan: { source: { id: CONTAINER, name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', version: '10.10.3' }, folders: [{ rel: 'Filme', target: '/movies', migrated: true }],
+        layout: 'official', bytes: 1000, trickplayBytes: 500, plugins: ['Fanart'], nfo: false } } : {}) });
+    case 'migrate-abort': return j({ job: job('mediaserver-migrate') }, 202);
+    case 'source-start': return j({ job: job('mediaserver-source') }, 202);
     default: return j({ job: job(`mediaserver-${body.op}`) }, 202);
   }
 }) as typeof fetch;
 
 const ctxPatch = (c: TestEnv['ctx']) => { c.fetchImpl = fetchImpl; c.cfg = { ...c.cfg, UPDATER_URL: 'http://updater:7070', INTERNAL_SECRET: SECRET }; };
 const opBodies = (op: string) => fake.bodies.filter((b) => b.op === op);
-const resetFake = () => { Object.assign(fake, { media: media(), answer: {}, bodies: [] }); };
+const resetFake = () => { Object.assign(fake, { media: media(), answer: {}, bodies: [], info: { Id: SERVER_ID, StartupWizardCompleted: true }, infoCalls: [], scanHold: null, onOp: null }); };
 const FOLDERS = [{ rel: 'Filme', name: 'Filme', type: 'movies' }, { rel: 'Serien/Neu', name: 'Serien', type: 'tvshows' }];
 const applyBody = (extra: Record<string, unknown> = {}) => ({ kind: 'ferrofin', folders: FOLDERS, uid: 1000, gid: 1000, gpu: 'dri', mediaGid: null, egress: true, ...extra });
 
@@ -94,6 +116,7 @@ describe('admin routes', () => {
     admin = await env.login(ADMIN);
     resetFake();
     await env.pool.query('delete from audit_log; delete from media_managed');
+    await env.kv.del('media:move:scan');
     for (const k of await env.kv.keys('updater:pending:')) await env.kv.del(k);
   });
 
@@ -101,6 +124,7 @@ describe('admin routes', () => {
     ['GET', ''], ['POST', '/base', { path: '/srv/media' }], ['POST', '/base/confirm', { code: CODE }], ['DELETE', '/base'], ['POST', '/browse', { rel: '' }],
     ['POST', '/gpu'], ['POST', '/apply', applyBody()], ['POST', '/action', { op: 'stop' }], ['POST', '/logs', { tail: 100 }], ['GET', '/backups'],
     ['GET', '/libraries'], ['DELETE', '/libraries/filme'], ['POST', '/mode', { mode: 'external', restore: false }],
+    ['POST', '/move/scan', {}], ['POST', '/move', { source: CONTAINER, trickplay: false }], ['POST', '/move/abort'], ['POST', '/back'],
   ];
 
   it('admin only', async () => {
@@ -117,7 +141,8 @@ describe('admin routes', () => {
     await noIds();
     await reauth(admin, Date.now() - 11 * 60_000);
     const needs: Array<['POST' | 'DELETE', string, unknown?]> = [['POST', '/base', { path: '/srv/media' }], ['POST', '/apply', applyBody()], ['POST', '/action', { op: 'restore', id: 'ferrofin-20261117-1000-1.2.3' }],
-      ['POST', '/action', { op: 'remove', data: true }], ['POST', '/mode', { mode: 'external', restore: false }], ['DELETE', '/libraries/filme']];
+      ['POST', '/action', { op: 'remove', data: true }], ['POST', '/mode', { mode: 'external', restore: false }], ['DELETE', '/libraries/filme'],
+      ['POST', '/move', { source: CONTAINER, trickplay: false }], ['POST', '/back']];
     for (const [method, path, body] of needs) {
       const r = await req(admin, method, path, body);
       expect(r.statusCode, `${method} ${path}`).toBe(401);
@@ -133,7 +158,7 @@ describe('admin routes', () => {
     offset += 3 * 60_000;
     await reauth(admin);
     for (const [method, path, body] of needs) expect((await req(admin, method, path, body)).statusCode, `${method} ${path}`).not.toBe(401);
-    // the remove with data switched to external: the mode switch has nothing left to stop
+    // the remove with data switched to external: the mode switch has nothing left to stop; no ids: no move, nothing moved: no way back
     expect(fake.bodies.map((b) => b.op)).toEqual(['stop', 'base-confirm', 'browse', 'remove', 'base-request', 'apply', 'restore', 'remove']);
   });
 
@@ -152,6 +177,13 @@ describe('admin routes', () => {
     expect((await req(admin, 'POST', '/base', { path: '/srv/media', x: 1 })).statusCode).toBe(400);
     expect((await req(admin, 'POST', '/logs', { tail: 10 })).statusCode).toBe(400);
     expect((await req(admin, 'POST', '/mode', { mode: 'managed', restore: false })).statusCode).toBe(400);
+    for (const body of [{ source: 'abc' }, { source: CONTAINER, x: 1 }, { serverId: SERVER_ID }]) expect((await req(admin, 'POST', '/move/scan', body)).statusCode, JSON.stringify(body)).toBe(400);
+    for (const body of [{ source: CONTAINER }, { trickplay: true }, { source: CONTAINER, trickplay: 'yes' }, { source: CONTAINER, trickplay: true, uid: 0 },
+      { source: CONTAINER, trickplay: true, serverId: SERVER_ID }, { source: CONTAINER.toUpperCase(), trickplay: true }]) {
+      expect((await req(admin, 'POST', '/move', body)).statusCode, JSON.stringify(body)).toBe(400);
+    }
+    expect((await req(admin, 'POST', '/move/abort', { op: 'migrate-abort' })).statusCode).toBe(400);
+    expect((await req(admin, 'POST', '/back', { force: true })).statusCode).toBe(400);
     expect(fake.bodies).toEqual([]);
   });
 
@@ -354,6 +386,368 @@ describe('admin routes', () => {
     expect((await req(admin, 'GET', '')).json().external).toEqual({ url: EXTERNAL, hasKey: true });
   });
 
+  describe('the move from an external Jellyfin', () => {
+    const linked = () => env.pool.query("update users set jellyfin_user_id = 'j1'");
+    const moveView = async () => (await req(admin, 'GET', '')).json().move;
+    /** a done scan of the source, as the sheet gets one before the move */
+    const scanned = async (source = CONTAINER) => {
+      expect((await req(admin, 'POST', '/move/scan', { source })).statusCode).toBe(202);
+      await vi.waitFor(async () => expect((await moveView()).scan?.state).toBe('done'));
+    };
+
+    it('move offered only for an external Jellyfin with linked ids', async () => {
+      await linked();
+      fake.media = { ...media(), source: { name: 'jellyfin', state: 'exited', version: '10.10.3' } };
+      expect(await moveView()).toEqual({ offered: true, reason: null, scan: null, state: null, migratedFrom: null, sourceState: 'exited', requestsWarning: false, requests: true });
+      // the sheet names the request service only when one is set up
+      await env.ctx.settings.save({ REQUESTS_URL: null, REQUESTS_API_KEY: null }, null);
+      expect(await moveView()).toMatchObject({ requests: false });
+      await env.ctx.settings.save({ REQUESTS_URL: 'http://requests:5055', REQUESTS_API_KEY: 'seerrkey' }, null);
+      expect(await moveView()).toMatchObject({ requests: true });
+      // the fresh managed server is refused for the same install
+      expect((await req(admin, 'GET', '')).json().offer).toEqual({ managed: false, reason: 'ids_in_use' });
+      // nothing depends on the ids: nothing to move (a fresh server is offered instead)
+      await noIds();
+      expect(await moveView()).toMatchObject({ offered: false, reason: null });
+      await linked();
+      // the media server is managed already
+      await writeManaged(env.ctx, { kind: 'ferrofin', setup: 'done' });
+      expect(await moveView()).toMatchObject({ offered: false, reason: null });
+      await env.pool.query('delete from media_managed');
+      // no connection to a Jellyfin
+      await env.ctx.settings.save({ JELLYFIN_URL: null, JELLYFIN_ADMIN_API_KEY: null }, null);
+      expect(await moveView()).toMatchObject({ offered: false, reason: null });
+      await env.ctx.settings.save({ JELLYFIN_URL: 'http://jellyfin:8096', JELLYFIN_ADMIN_API_KEY: 'adminkey' }, null);
+      // a move under way: the backend follows one, or the updater holds an unfinished one (an aborted one is history)
+      await writeManaged(env.ctx, { move: { phase: 'nfo', error: null, jobId: null, startedAt: '2026-11-24T09:00:00.000Z', requestsWarning: false } });
+      expect(await moveView()).toMatchObject({ offered: false, reason: null, state: { phase: 'nfo' } });
+      await writeManaged(env.ctx, { move: { phase: 'failed', error: 'no_space', jobId: null, startedAt: '2026-11-24T09:00:00.000Z', requestsWarning: false } });
+      expect(await moveView()).toMatchObject({ offered: true });
+      const upd = { step: null, source: { name: 'jellyfin', version: '10.10.3' }, folders: [], abort: false };
+      for (const phase of ['running', 'ready']) {
+        fake.media = { ...media(), move: { ...upd, phase } };
+        expect(await moveView(), phase).toMatchObject({ offered: false });
+      }
+      fake.media = { ...media(), move: { ...upd, phase: 'aborted' } };
+      expect(await moveView()).toMatchObject({ offered: true });
+      await env.pool.query('delete from media_managed');
+      // the updater cannot run the media server
+      fake.media = { ...media(), available: false, reason: 'engine_old' };
+      expect(await moveView()).toMatchObject({ offered: false, reason: 'engine_old' });
+      fake.media = null;
+      expect(await moveView()).toMatchObject({ offered: false, reason: 'updater_outdated' });
+      env.ctx.cfg = { ...baseCfg, UPDATER_URL: undefined };
+      expect(await moveView()).toMatchObject({ offered: false, reason: 'no_updater' });
+    });
+
+    it('not for Plex', async () => {
+      await linked();
+      env.ctx.cfg = { ...baseCfg, MEDIA_SERVER: 'plex' };
+      expect(await moveView()).toMatchObject({ offered: false, reason: 'plex' });
+      await reauth(admin);
+      expect((await req(admin, 'POST', '/move/scan', {})).json()).toEqual({ error: 'plex' });
+      expect((await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false })).json()).toEqual({ error: 'plex' });
+      expect(fake.bodies).toEqual([]);
+    });
+
+    it('not when url_pinned', async () => {
+      await linked();
+      env.ctx.cfg = { ...baseCfg, JELLYFIN_URL: 'http://192.0.2.20:8096' };
+      expect(await moveView()).toMatchObject({ offered: false, reason: 'url_pinned' });
+      await reauth(admin);
+      const r = await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false });
+      expect(r.statusCode).toBe(409);
+      expect(r.json()).toEqual({ error: 'url_pinned' });
+      expect(fake.bodies).toEqual([]);
+      expect(fake.infoCalls).toEqual([]);
+    });
+
+    it('the scan: the list answers at once, the chosen one runs in the background; the server id never shows', async () => {
+      await linked();
+      const list = await req(admin, 'POST', '/move/scan', {});
+      expect(list.statusCode).toBe(200);
+      expect(list.json()).toEqual({ candidates: [{ id: CONTAINER, name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', state: 'running', matches: true }] });
+      expect(fake.infoCalls).toEqual(['http://jellyfin:8096']);
+      let release!: () => void;
+      fake.scanHold = new Promise((r) => { release = r; });
+      const one = await req(admin, 'POST', '/move/scan', { source: CONTAINER });
+      expect(one.statusCode).toBe(202);
+      expect(one.json().scan).toMatchObject({ source: CONTAINER, state: 'running' });
+      expect((await moveView()).scan).toMatchObject({ source: CONTAINER, state: 'running' });
+      // one scan at a time
+      for (const body of [{ source: CONTAINER }, {}]) {
+        const busy = await req(admin, 'POST', '/move/scan', body);
+        expect(busy.statusCode).toBe(409);
+        expect(busy.json()).toEqual({ error: 'busy' });
+      }
+      release();
+      await vi.waitFor(async () => expect((await moveView()).scan?.state).toBe('done'));
+      const v = await moveView();
+      expect(v.scan).toMatchObject({ source: CONTAINER, state: 'done', result: { source: { id: CONTAINER, name: 'jellyfin' }, folders: [{ rel: 'Filme', target: '/movies', migrated: true }], bytes: 1000, plugins: ['Fanart'] } });
+      expect(opBodies('migrate-scan')).toEqual([{ op: 'migrate-scan', serverId: SERVER_ID }, { op: 'migrate-scan', serverId: SERVER_ID, source: CONTAINER }]);
+      expect(JSON.stringify([list.json(), one.json(), v])).not.toContain(SERVER_ID);
+      // six scans in two minutes: four so far
+      expect((await req(admin, 'POST', '/move/scan', {})).statusCode).toBe(200);
+      expect((await req(admin, 'POST', '/move/scan', {})).statusCode).toBe(200);
+      expect((await req(admin, 'POST', '/move/scan', {})).statusCode).toBe(429);
+    });
+
+    it('a failed scan shows its code and the container paths in the view', async () => {
+      await linked();
+      const failed = async () => {
+        expect((await req(admin, 'POST', '/move/scan', { source: CONTAINER })).statusCode).toBe(202);
+        await vi.waitFor(async () => expect((await moveView()).scan?.state).toBe('failed'));
+        return (await moveView()).scan;
+      };
+      fake.answer['migrate-scan'] = { status: 409, json: { error: 'source_outside_base', outside: ['/movies'], refused: ['/srv'] } };
+      expect(await failed()).toMatchObject({ source: CONTAINER, state: 'failed', error: 'source_outside_base', outside: ['/movies'], refused: ['/srv'], nested: [] });
+      fake.answer['migrate-scan'] = { status: 409, json: { error: 'source_nested', nested: ['/media/tv'] } };
+      expect(await failed()).toMatchObject({ state: 'failed', error: 'source_nested', outside: [], nested: ['/media/tv'] });
+      // an answer without a scan of that container is no scan
+      fake.answer['migrate-scan'] = { status: 200, json: { candidates: [] } };
+      expect(await failed()).toMatchObject({ state: 'failed', error: 'updater_error' });
+      expect((await failed()).result).toBeUndefined();
+    });
+
+    it('the move needs a fresh done scan of the same container', async () => {
+      await linked();
+      await reauth(admin);
+      const move = async () => (await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false })).json();
+      expect(await move()).toEqual({ error: 'scan_required' });
+      // a scan of another container, a failed one, a stale one
+      const at = (ms: number) => new Date(Date.now() - ms).toISOString();
+      const result = { source: { id: CONTAINER, name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', version: '10.10.3' }, folders: [], layout: 'official', bytes: 1, trickplayBytes: 0, plugins: [], nfo: false };
+      await env.kv.set('media:move:scan', JSON.stringify({ source: 'd'.repeat(64), state: 'done', result: { ...result, source: { ...result.source, id: 'd'.repeat(64) } }, at: at(0) }), 600);
+      expect(await move()).toEqual({ error: 'scan_required' });
+      await env.kv.set('media:move:scan', JSON.stringify({ source: CONTAINER, state: 'failed', error: 'no_space', at: at(0) }), 600);
+      expect(await move()).toEqual({ error: 'scan_required' });
+      offset += 3 * 60_000;
+      await reauth(admin);
+      await env.kv.set('media:move:scan', JSON.stringify({ source: CONTAINER, state: 'done', result, at: at(11 * 60_000) }), 600);
+      expect(await move()).toEqual({ error: 'scan_required' });
+      expect(opBodies('migrate')).toEqual([]);
+      await env.kv.set('media:move:scan', JSON.stringify({ source: CONTAINER, state: 'done', result, at: at(60_000) }), 600);
+      expect((await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false })).statusCode).toBe(202);
+    });
+
+    it('a Jellyfin that does not tell its server id cannot be scanned or moved', async () => {
+      await linked();
+      await reauth(admin);
+      fake.info = null;
+      expect((await req(admin, 'POST', '/move/scan', {})).json()).toEqual({ error: 'jellyfin_unreachable' });
+      fake.info = { Id: 'not-an-id' };
+      const r = await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false });
+      expect(r.statusCode).toBe(409);
+      expect(r.json()).toEqual({ error: 'jellyfin_unreachable' });
+      expect(fake.bodies.filter((b) => b.op !== 'gpu')).toEqual([]);
+    });
+
+    it('the move: the backend adds user, GPU, time zone and server id; the move is recorded and audited', async () => {
+      await linked();
+      await reauth(admin);
+      fake.media = { ...media(), container: null, desired: { kind: 'ferrofin', folders: [], uid: 1500, gid: 1500, gpu: 'off', mediaGid: null, egress: true, run: false } };
+      await scanned();
+      const r = await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: true });
+      expect(r.statusCode).toBe(202);
+      const jobId = r.json().job.id as string;
+      expect(r.json().job.action).toBe('mediaserver-migrate');
+      const [sent] = opBodies('migrate');
+      expect(Object.keys(sent!)).toEqual(['op', 'source', 'trickplay', 'gpu', 'uid', 'gid', 'tz', 'serverId']);
+      // the GPU as the detection proposes it (dri found), the user the scan ran as
+      expect(sent).toMatchObject({ op: 'migrate', source: CONTAINER, trickplay: true, gpu: 'dri', uid: 1500, gid: 1500, serverId: SERVER_ID });
+      expect(sent!.tz).toMatch(/^[A-Za-z_]+(\/[A-Za-z0-9_+-]+){0,2}$/);
+      const m = await readManaged(env.pool);
+      expect(m.move).toMatchObject({ phase: 'copying', error: null, jobId, requestsWarning: false });
+      expect(m.move!.startedAt).toMatch(/^\d{4}-/);
+      expect(m.kind).toBeNull();
+      const adminId = (await env.pool.query<{ id: string }>("select id from users where authentik_sub='sub-admin'")).rows[0]!.id;
+      expect(await audits('mediaserver.move')).toEqual([{ actor: adminId, meta: { trickplay: true, gpu: 'dri' } }]);
+      expect(JSON.parse((await env.kv.get(`updater:pending:${jobId}`))!)).toMatchObject({ action: 'mediaserver', op: 'migrate' });
+      fake.media = { ...media(), move: { phase: 'running', step: 'copy_bulk', source: { name: 'jellyfin', version: '10.10.3' }, folders: [], abort: false } };
+      // not offered while it runs
+      expect(await moveView()).toMatchObject({ offered: false, state: { phase: 'copying', error: null, jobId, step: 'copy_bulk', abort: false } });
+      // one move at a time: refused while one is under way, before anything is sent
+      offset += 3 * 60_000;
+      await reauth(admin);
+      const again = await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: true });
+      expect(again.statusCode).toBe(409);
+      expect(again.json()).toEqual({ error: 'busy' });
+      expect(opBodies('migrate')).toHaveLength(1);
+    });
+
+    it('defaults without a recorded user or a GPU; 409 busy from the updater marks the move failed', async () => {
+      await linked();
+      await reauth(admin);
+      fake.media = { ...media(), container: null, desired: null };
+      fake.answer.gpu = { status: 200, json: { dri: [], nvidia: false } };
+      fake.answer.migrate = { status: 409, json: { error: 'busy' } };
+      await scanned();
+      const r = await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false });
+      expect(r.statusCode).toBe(409);
+      expect(r.json()).toEqual({ error: 'busy' });
+      expect(opBodies('migrate')[0]).toMatchObject({ gpu: 'off', uid: 1000, gid: 1000 });
+      // the move was recorded before the job was asked for (M6): a refused start marks it failed, nothing to abort
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'busy', jobId: null, failedIn: 'copying' });
+      expect((await readManaged(env.pool)).move!.abortPending).toBeUndefined();
+      expect(await audits('mediaserver.move')).toEqual([]);
+      // a failed move may be tried again
+      await writeManaged(env.ctx, { move: { phase: 'failed', error: 'no_space', jobId: null, startedAt: '2026-11-24T09:00:00.000Z', requestsWarning: false } });
+      delete fake.answer.migrate;
+      fake.answer.gpu = { status: 200, json: { dri: [], nvidia: true } };
+      expect((await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false })).statusCode).toBe(202);
+      expect(opBodies('migrate')[1]).toMatchObject({ gpu: 'nvidia' });
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'copying', error: null });
+    });
+
+    it('abort: sent to the updater and audited; an abort run as its own job ends the move; after the switch it is refused', async () => {
+      const COPY_JOB = 'aaaaaaaaaaaaaaaa';
+      const move = (phase: string) => writeManaged(env.ctx, { move: { phase: phase as 'copying', error: null, jobId: COPY_JOB, startedAt: '2026-11-24T09:00:00.000Z', requestsWarning: false } });
+      const answer = (id: string) => { fake.answer['migrate-abort'] = { status: 202, json: { job: { ...job('mediaserver-migrate'), id } } }; };
+      // the copy's job is still running: it carries the abort out, its end is read by the move's phases
+      await move('copying');
+      answer(COPY_JOB);
+      const r = await req(admin, 'POST', '/move/abort');
+      expect(r.statusCode).toBe(202);
+      expect(r.json().job).toMatchObject({ id: COPY_JOB, action: 'mediaserver-migrate' });
+      expect(opBodies('migrate-abort')).toEqual([{ op: 'migrate-abort' }]);
+      expect((await readManaged(env.pool)).move!.phase).toBe('copying');
+      // the copy finished (the backend has not moved on yet): the updater runs the abort as a new job, the move has failed
+      answer('bbbbbbbbbbbbbbbb');
+      expect((await req(admin, 'POST', '/move/abort')).statusCode).toBe(202);
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'move_aborted', failedIn: 'copying' });
+      // during the backend's phases the move has failed too, in the phase it was aborted in (the view names it)
+      await move('verify');
+      answer('cccccccccccccccc');
+      expect((await req(admin, 'POST', '/move/abort')).statusCode).toBe(202);
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'failed', error: 'move_aborted', failedIn: 'verify' });
+      expect((await req(admin, 'GET', '')).json().move.state).toMatchObject({ phase: 'failed', error: 'move_aborted', failedIn: 'verify' });
+      const adminId = (await env.pool.query<{ id: string }>("select id from users where authentik_sub='sub-admin'")).rows[0]!.id;
+      expect(await audits('mediaserver.move_abort')).toEqual([{ actor: adminId, meta: { phase: 'copying' } }, { actor: adminId, meta: { phase: 'copying' } }, { actor: adminId, meta: { phase: 'verify' } }]);
+      // FriendFlix uses the new server from the switch on: no abort there (the way back is /back)
+      offset += 3 * 60_000;
+      await move('switch');
+      const late = await req(admin, 'POST', '/move/abort');
+      expect(late.statusCode).toBe(409);
+      expect(late.json()).toEqual({ error: 'not_abortable' });
+      expect(opBodies('migrate-abort')).toHaveLength(3);
+      // an updater with nothing to abort answers its code
+      await env.pool.query('delete from media_managed');
+      fake.answer['migrate-abort'] = { status: 409, json: { error: 'no_target' } };
+      expect((await req(admin, 'POST', '/move/abort')).json()).toEqual({ error: 'no_target' });
+    });
+
+    it('an apply after a move carries the recorded migrated folders; a client can never send one (c2)', async () => {
+      await reauth(admin);
+      await linked();
+      const at = '2026-11-24T10:00:00.000Z';
+      await writeManaged(env.ctx, { kind: 'ferrofin', setup: 'done', migratedFrom: { name: 'jellyfin', version: '10.10.3', at } });
+      const recorded = [{ rel: '', target: '/media', migrated: true }, { rel: 'Serien', target: '/data/tv', migrated: true }];
+      fake.media = { ...media(), desired: { kind: 'ferrofin', folders: recorded, uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: true, run: true, migrated: true } };
+      // only migrated folders and a new GPU: valid, the folders exactly as recorded
+      const r = await req(admin, 'POST', '/apply', applyBody({ folders: [], gpu: 'dri' }));
+      expect(r.statusCode).toBe(202);
+      const sent = opBodies('apply')[0]!.spec;
+      expect(sent).toMatchObject({ kind: 'ferrofin', gpu: 'dri', migrated: true });
+      expect(sent.folders).toEqual(recorded);
+      // the first run is not sent again; the GPU goes back to the encoding step
+      expect(opBodies('apply')[0]!.firstRun).toBeUndefined();
+      expect(await readManaged(env.pool)).toMatchObject({ setup: 'hwaccel' });
+      // a new folder mounts below /ffmedia next to them
+      offset += 3 * 60_000;
+      await reauth(admin);
+      await writeManaged(env.ctx, { setup: 'done' });
+      expect((await req(admin, 'POST', '/apply', applyBody({ folders: [{ rel: 'Neu', name: 'Neu', type: 'movies' }] }))).statusCode).toBe(202);
+      expect(opBodies('apply')[1]!.spec.folders).toEqual([...recorded, { rel: 'Neu', target: '/ffmedia/neu' }]);
+      // the library remembers that mount (the libraries step creates it there)
+      expect((await readManaged(env.pool)).libraries).toEqual([{ slug: 'neu', name: 'Neu', type: 'movies', rel: 'Neu', created: false, ffmedia: true }]);
+      // a client cannot inject a migrated folder: the body refuses the flag and an empty rel, nothing is sent
+      offset += 3 * 60_000;
+      await reauth(admin);
+      for (const folders of [[{ rel: 'Filme', name: 'Filme', type: 'movies', migrated: true }], [{ rel: '', name: 'Alles', type: 'mixed' }]]) {
+        const bad = await req(admin, 'POST', '/apply', applyBody({ folders }));
+        expect(bad.statusCode).toBe(400);
+      }
+      for (const extra of [{ migrated: true }, { target: '/movies' }]) expect((await req(admin, 'POST', '/apply', applyBody({ folders: [], ...extra }))).statusCode).toBe(400);
+      expect(opBodies('apply')).toHaveLength(2);
+      // without a recorded migrated spec nothing is merged (a stage 1 server)
+      fake.media = { ...media(), desired: { kind: 'ferrofin', folders: [{ rel: 'Filme', target: '/media/filme' }], uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: true, run: true } };
+      expect((await req(admin, 'POST', '/apply', applyBody({ folders: [{ rel: 'Filme', name: 'Filme', type: 'movies' }] }))).statusCode).toBe(202);
+      const plain = opBodies('apply')[2]!.spec;
+      expect(plain.migrated).toBeUndefined();
+      expect(plain.folders).toEqual([{ rel: 'Filme', target: '/media/filme' }]);
+    });
+
+    it('the way back: only after a move, never audited when it changed nothing', async () => {
+      await reauth(admin);
+      const r = await req(admin, 'POST', '/back');
+      expect(r.statusCode).toBe(409);
+      expect(r.json()).toEqual({ error: 'not_moved' });
+      await writeManaged(env.ctx, { kind: 'ferrofin', setup: 'done', migratedFrom: { name: 'jellyfin', version: '10.10.3', at: '2026-11-24T10:00:00.000Z' } });
+      fake.media = { ...media(), source: { name: 'jellyfin', state: 'exited', version: '10.10.3' } };
+      expect(await moveView()).toMatchObject({ offered: false, migratedFrom: { name: 'jellyfin', version: '10.10.3', at: '2026-11-24T10:00:00.000Z' }, sourceState: 'exited' });
+      // no way back stored
+      expect((await req(admin, 'POST', '/back')).json()).toEqual({ error: 'no_external' });
+      await writeManaged(env.ctx, { externalUrl: 'http://jellyfin:8096', externalKey: 'adminkey' });
+      // the old container is gone: the stage 1 way back (an address) applies
+      fake.answer['source-start'] = { status: 409, json: { error: 'no_target' } };
+      const back = await req(admin, 'POST', '/back');
+      // it runs in the background: the page follows it in the view
+      expect(back.statusCode).toBe(202);
+      let state = (await moveView()).state;
+      for (let i = 0; i < 200 && state?.back === 'starting'; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        state = (await moveView()).state;
+      }
+      expect(state).toMatchObject({ back: 'failed', backError: 'source_missing' });
+      expect(await audits('mediaserver.back')).toEqual([]);
+      expect((await readManaged(env.pool)).kind).toBe('ferrofin');
+      expect(opBodies('stop')).toEqual([]);
+    });
+
+    it('stage 1\'s switch back to the external server is refused while a move is recorded: the way back repairs the users (c2)', async () => {
+      await reauth(admin);
+      const at = '2026-11-24T10:00:00.000Z';
+      const done = { phase: 'done', error: null, jobId: null, startedAt: at, requestsWarning: false } as const;
+      await writeManaged(env.ctx, { kind: 'ferrofin', setup: 'done', externalUrl: 'http://jellyfin:8096', externalKey: 'adminkey', migratedFrom: { name: 'jellyfin', version: '10.10.3', at } });
+      const mode = (restore: boolean) => req(admin, 'POST', '/mode', { mode: 'external', restore });
+      const r = await mode(true);
+      expect(r.statusCode).toBe(409);
+      expect(r.json()).toEqual({ error: 'use_way_back' });
+      // a way back not finished, or a move under way, the same
+      await writeManaged(env.ctx, { migratedFrom: null, move: { ...done, back: 'starting' } });
+      expect((await mode(true)).json()).toEqual({ error: 'use_way_back' });
+      await writeManaged(env.ctx, { move: { ...done, phase: 'requests' } });
+      expect((await mode(true)).json()).toEqual({ error: 'use_way_back' });
+      expect(opBodies('stop')).toEqual([]);
+      expect((await readManaged(env.pool)).kind).toBe('ferrofin');
+      // a way back done: stage 1's switch is open again
+      offset += 3 * 60_000;
+      await reauth(admin);
+      await writeManaged(env.ctx, { move: { ...done, back: 'done' } });
+      expect((await mode(true)).json()).toEqual({ ok: true });
+    });
+
+    it('a move after a way back repairs the users before its check; none starts while a way back is unfinished', async () => {
+      await linked();
+      await reauth(admin);
+      await scanned();
+      const done = { phase: 'done', error: null, jobId: null, startedAt: '2026-11-24T09:00:00.000Z', requestsWarning: false } as const;
+      await writeManaged(env.ctx, { move: { ...done, back: 'stopped' } });
+      expect(await moveView()).toMatchObject({ offered: false, state: { back: 'stopped' } });
+      expect((await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false })).json()).toEqual({ error: 'busy' });
+      await writeManaged(env.ctx, { move: { ...done, back: 'done' } });
+      expect(await moveView()).toMatchObject({ offered: true });
+      const r = await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false });
+      expect(r.statusCode).toBe(202);
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'copying', repeat: true });
+      // the users it made on the copy never reach the page
+      await writeManaged(env.ctx, { move: { ...done, phase: 'verify', repeat: true, relinks: [{ table: 'profiles', row: '00000000-0000-4000-8000-000000000001', from: 'a'.repeat(32), to: 'b'.repeat(32), name: 'lea-neu' }] } });
+      const page = (await req(admin, 'GET', '')).json();
+      expect(JSON.stringify(page)).not.toContain('b'.repeat(32));
+      expect(page.managed.move).toMatchObject({ phase: 'verify', repeat: true });
+    });
+  });
+
   it('a base change with a container records its job', async () => {
     fake.answer['base-confirm'] = { status: 200, json: { result: 'ok', path: '/srv/media2', kept: ['Filme', '../etc'], dropped: ['Serien'], job: job('mediaserver-apply') } };
     const r = await req(admin, 'POST', '/base/confirm', { code: CODE });
@@ -374,6 +768,11 @@ describe('admin routes', () => {
     expect(r.json()).toEqual({ error: 'updater_error' });
     fake.answer['base-confirm'] = { status: 409, json: { error: 'not_available' } };
     expect((await req(admin, 'POST', '/base/confirm', { code: CODE })).json()).toEqual({ error: 'not_available' });
+    // a base change refused while a migrated server exists (its media sit at the old base)
+    fake.answer['base-confirm'] = { status: 409, json: { error: 'template_violation' } };
+    const tv = await req(admin, 'POST', '/base/confirm', { code: CODE });
+    expect(tv.statusCode).toBe(409);
+    expect(tv.json()).toEqual({ error: 'template_violation' });
     fake.answer.stop = { status: 409, json: { error: 'busy' } };
     expect((await req(admin, 'POST', '/action', { op: 'stop' })).json()).toEqual({ error: 'busy' });
     // browse, gpu and logs: only checked fields
@@ -416,6 +815,97 @@ describe('admin routes', () => {
     const password = opBodies('apply')[0]!.firstRun.password as string;
     const all = JSON.stringify((await env.pool.query('select * from audit_log')).rows);
     for (const secret of [CODE, 'AAAA-BBBB-CCCC', password]) expect(all).not.toContain(secret);
+  });
+  describe('final review', () => {
+    const AT = '2026-11-24T10:00:00.000Z';
+    const movedServer = (move: Record<string, unknown> | null = null) => writeManaged(env.ctx, {
+      kind: 'ferrofin', setup: 'done', externalUrl: 'http://jellyfin:8096', externalKey: 'adminkey', migratedFrom: { name: 'jellyfin', version: '10.10.3', at: AT },
+      ...(move ? { move: move as never } : {}),
+    });
+    const sourceIs = (state: string | null) => { fake.media = { ...media(), source: state === null ? null : { name: 'jellyfin', state, version: '10.10.3' } }; };
+    const linked = () => env.pool.query("update users set jellyfin_user_id = 'j1'");
+    const scanned = async () => {
+      expect((await req(admin, 'POST', '/move/scan', { source: CONTAINER })).statusCode).toBe(202);
+      await vi.waitFor(async () => expect((await req(admin, 'GET', '')).json().move.scan?.state).toBe('done'));
+    };
+
+    it('C1: a moved server whose old Jellyfin is still there is neither removed nor switched: the way back', async () => {
+      await reauth(admin);
+      await movedServer();
+      for (const state of ['exited', 'running', 'unknown', null]) {
+        sourceIs(state);
+        offset += 3 * 60_000;
+        admin = await env.login(ADMIN);
+        await reauth(admin);
+        for (const body of [{ op: 'remove', data: false }, { op: 'remove', data: true }]) {
+          const r = await req(admin, 'POST', '/action', body);
+          expect(r.statusCode, String(state)).toBe(409);
+          expect(r.json(), String(state)).toEqual({ error: 'use_way_back' });
+        }
+        for (const restore of [false, true]) expect((await req(admin, 'POST', '/mode', { mode: 'external', restore })).json(), String(state)).toEqual({ error: 'use_way_back' });
+      }
+      expect(opBodies('remove')).toEqual([]);
+      expect(opBodies('stop')).toEqual([]);
+      expect((await readManaged(env.pool)).kind).toBe('ferrofin');
+      // other actions stay open
+      expect((await req(admin, 'POST', '/action', { op: 'restart' })).statusCode).toBe(202);
+      // the old container is gone: the stage 1 switch (an address) and a remove are open again
+      offset += 3 * 60_000;
+      admin = await env.login(ADMIN);
+      await reauth(admin);
+      sourceIs('missing');
+      expect((await req(admin, 'POST', '/mode', { mode: 'external', restore: true })).json()).toEqual({ error: 'use_way_back' });
+      expect((await req(admin, 'POST', '/mode', { mode: 'external', restore: false })).json()).toEqual({ ok: true });
+      await movedServer();
+      expect((await req(admin, 'POST', '/action', { op: 'remove', data: false })).statusCode).toBe(202);
+      // after a way back (migratedFrom null) the stopped Ferrofin may be removed, its old Jellyfin running or not
+      offset += 3 * 60_000;
+      admin = await env.login(ADMIN);
+      await reauth(admin);
+      sourceIs('running');
+      await writeManaged(env.ctx, { kind: null, migratedFrom: null, move: { phase: 'done', error: null, jobId: null, startedAt: AT, requestsWarning: false, back: 'done' } });
+      expect((await req(admin, 'POST', '/action', { op: 'remove', data: true })).statusCode).toBe(202);
+      expect(opBodies('remove')).toEqual([{ op: 'remove', data: false }, { op: 'remove', data: true }]);
+    });
+
+    it('I3: a moved server restores a backup taken at or after its move only; an upload by its archive date', async () => {
+      await reauth(admin);
+      await movedServer();
+      const b = (id: string, at: string, extra: Record<string, unknown> = {}) => ({ id, kind: 'ferrofin', upstream: '1.2.3', at, tag: 'manual', size: 1, ...extra });
+      fake.media = { ...media(), source: { name: 'jellyfin', state: 'exited', version: '10.10.3' }, backups: [
+        b('ferrofin-20261124-0900-1.2.3', '2026-11-24T09:00:00.000Z', { tag: 'auto' }),
+        b('ferrofin-20261124-1000-1.2.3', AT),
+        b('ferrofin-20261124-1200-1.2.3', '2026-11-24T12:00:00.000Z', { tag: 'upload', createdAt: '2026-11-20T08:00:00.000Z' }),
+      ] };
+      // the client reads the archive date of an upload
+      expect((await req(admin, 'GET', '/backups')).json().backups[2]).toMatchObject({ tag: 'upload', createdAt: '2026-11-20T08:00:00.000Z' });
+      for (const id of ['ferrofin-20261124-0900-1.2.3', 'ferrofin-20261124-1200-1.2.3']) {
+        const r = await req(admin, 'POST', '/action', { op: 'restore', id });
+        expect(r.statusCode, id).toBe(409);
+        expect(r.json(), id).toEqual({ error: 'backup_premove' });
+      }
+      expect(opBodies('restore')).toEqual([]);
+      // taken at the move: allowed
+      expect((await req(admin, 'POST', '/action', { op: 'restore', id: 'ferrofin-20261124-1000-1.2.3' })).statusCode).toBe(202);
+      // a stage 1 server (no move) restores any backup of its kind
+      offset += 3 * 60_000;
+      await reauth(admin);
+      await writeManaged(env.ctx, { migratedFrom: null });
+      expect((await req(admin, 'POST', '/action', { op: 'restore', id: 'ferrofin-20261124-0900-1.2.3' })).statusCode).toBe(202);
+      expect(opBodies('restore').map((x) => x.id)).toEqual(['ferrofin-20261124-1000-1.2.3', 'ferrofin-20261124-0900-1.2.3']);
+    });
+
+    it('M6: the move is recorded before its job starts, the job id follows; the tick never loses it', async () => {
+      await linked();
+      await reauth(admin);
+      await scanned();
+      const seen: Array<Record<string, unknown> | null> = [];
+      fake.onOp = async (body) => { if (body.op === 'migrate') seen.push((await readManaged(env.pool)).move as Record<string, unknown> | null); };
+      const r = await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false });
+      expect(r.statusCode).toBe(202);
+      expect(seen).toEqual([expect.objectContaining({ phase: 'copying', jobId: null })]);
+      expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'copying', jobId: r.json().job.id });
+    });
   });
 });
 

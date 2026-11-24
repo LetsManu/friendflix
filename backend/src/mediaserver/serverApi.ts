@@ -4,7 +4,7 @@ import type { Config } from '../config.js';
 import { mediaBrowserHeader } from '../media/mediaBrowser.js';
 import { MediaSetupError } from '../media/types.js';
 import { smallJson } from '../settings/probeKit.js';
-import type { LibraryEntry } from './store.js';
+import { libraryPath, type LibraryEntry } from './store.js';
 
 /**
  * The managed media server's own API as the first run and the library routes use it (spec "First run", "Folder changes after the first
@@ -14,9 +14,11 @@ import type { LibraryEntry } from './store.js';
 
 /** the managed server on the internal `media` network (hostname `mediaserver`, never published) */
 export const MANAGED_URL = 'http://mediaserver:8096';
-const TIMEOUT_MS = 5_000;
+/** each request's deadline (a move's tick lock is sized from it: mediaserver/move.ts) */
+export const TIMEOUT_MS = 5_000;
 const DEVICE_ID = 'friendflix-managed';
 const ITEM_ID = /^[0-9a-f]{32}$/;
+const SERVER_ID = /^[0-9a-f]{32}$/;
 const RENDER_NODE = /^renderD[0-9]{1,4}$/;
 const PAGE = 2_000;
 const MAX_ITEMS = 200_000;
@@ -46,19 +48,25 @@ async function call(f: typeof fetch, base: string, method: 'GET' | 'POST' | 'DEL
   cancel(r);
   if (r.status >= 300 && r.status < 400) throw new MediaSetupError('unreachable', 'redirect');
   if (r.status === 401 || r.status === 403) throw new MediaSetupError('unauthorized');
-  throw new MediaSetupError('unexpected');
+  // the status as detail (a server still starting answers 5xx; a move's phases retry those)
+  throw new MediaSetupError('unexpected', `http_${r.status}`);
 }
 
 /** a JSON body within the deadline; a stalled or oversized body is unreachable */
 const json = (r: Response, max: number): Promise<unknown> => smallJson(r, max).catch(() => { throw new MediaSetupError('unreachable', 'bad_response'); });
 const done = async (r: Response): Promise<void> => cancel(r);
 
-/** `/System/Info/Public`: whether the startup wizard is complete; null while the server does not answer (or not as expected) */
-export async function publicInfo(f: typeof fetch, base: string): Promise<{ wizardDone: boolean } | null> {
+/**
+ * `/System/Info/Public`: whether the startup wizard is complete and the server id (32 hex, null when it is none; stage 2 matches the
+ * Jellyfin to move by it, it never reaches an answer or a log); null while the server does not answer (or not as expected)
+ */
+export async function publicInfo(f: typeof fetch, base: string): Promise<{ wizardDone: boolean; id: string | null } | null> {
   try {
     const r = await call(f, base, 'GET', '/System/Info/Public');
     const o = obj(await json(r, 64 * 1024));
-    return o ? { wizardDone: o.StartupWizardCompleted === true } : null;
+    // the id as the updater's scan reads it from the server's files: lower case, without dashes
+    const id = typeof o?.Id === 'string' ? o.Id.toLowerCase().replace(/-/g, '') : '';
+    return o ? { wizardDone: o.StartupWizardCompleted === true, id: SERVER_ID.test(id) ? id : null } : null;
   } catch {
     return null;
   }
@@ -116,12 +124,12 @@ async function virtualFolders(f: typeof fetch, base: string, key: string): Promi
 const q = (v: Record<string, string>) => new URLSearchParams(v).toString();
 
 /**
- * The library of an entry (spec "First run" 5): `/media/<slug>`, real-time monitoring on, no local metadata and no savers (the media is
+ * The library of an entry (spec "First run" 5): its mount (`/media/<slug>`, after a move `/ffmedia/<slug>`: store.ts libraryPath), real-time monitoring on, no local metadata and no savers (the media is
  * read-only), the instance's metadata language. A no-op when a library of that name exists on that folder (a restart after the post, a
  * surviving server); `library_name_taken` when a library of that name exists on another folder (its folder would get no library).
  */
 export async function ensureLibrary(f: typeof fetch, base: string, key: string, lib: LibraryEntry, o: { language: string; country: string }): Promise<void> {
-  const path = `/media/${lib.slug}`;
+  const path = libraryPath(lib);
   const same = (await virtualFolders(f, base, key)).find((v) => v.name === lib.name);
   if (same?.locations.includes(path)) return;
   if (same) throw new MediaSetupError('library_name_taken');
@@ -196,4 +204,31 @@ export async function setEncoding(f: typeof fetch, base: string, key: string, hw
 /** a scan of every library */
 export async function refreshLibraries(f: typeof fetch, base: string, key: string): Promise<void> {
   await call(f, base, 'POST', '/Library/Refresh', { key }).then(done);
+}
+
+/** the libraries one call of nfoSaversOff changes at most (bounds a tick: mediaserver/move.ts sizes its lock from it) */
+export const NFO_PER_CALL = 6;
+
+/**
+ * A move's `nfo` phase (stage 2 "The move" 7; the recipe in mediaserver/try.sh): the migrated media are mounted read-only, so every
+ * library whose options save local metadata or name metadata savers (or name none: the server's defaults, the NFO saver among them)
+ * gets `SaveLocalMetadata: false` and `MetadataSavers: []`, its other options kept. Libraries already off are left alone, so a second
+ * run posts nothing. At most `max` libraries per call; returns how many are still on afterwards (0: done; the caller calls again).
+ */
+export async function nfoSaversOff(f: typeof fetch, base: string, key: string, max = NFO_PER_CALL): Promise<number> {
+  const list = await json(await call(f, base, 'GET', '/Library/VirtualFolders', { key }), 1024 * 1024);
+  if (!Array.isArray(list)) throw new MediaSetupError('unexpected');
+  let left = 0;
+  for (const x of list) {
+    const o = obj(x);
+    const options = obj(o?.LibraryOptions) ?? {};
+    const savers = options.MetadataSavers;
+    if (options.SaveLocalMetadata === false && Array.isArray(savers) && savers.length === 0) continue;
+    // a library without an id cannot be changed: its saver would stay on (fail closed)
+    if (typeof o?.ItemId !== 'string' || !ITEM_ID.test(o.ItemId)) throw new MediaSetupError('unexpected');
+    if (max <= 0) { left++; continue; }
+    await call(f, base, 'POST', '/Library/VirtualFolders/LibraryOptions', { key, body: { Id: o.ItemId, LibraryOptions: { ...options, SaveLocalMetadata: false, MetadataSavers: [] } } }).then(done);
+    max--;
+  }
+  return left;
 }

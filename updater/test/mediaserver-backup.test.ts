@@ -15,6 +15,7 @@ import { restoreBackup, writeBackup } from '../src/mediaHelper.js';
 import { BACKUP_EXCLUDE, entryCheck, metaEntry, type ArchiveMeta } from '../src/mediaserver/archive.js';
 import { backupId, decodePassphrase, download, older, prune, removeStaleParts, retain, upload } from '../src/mediaserver/backup.js';
 import { MediaJobs } from '../src/mediaserver/jobs.js';
+import { sanitizeMedia } from '../src/state.js';
 import type { BackupMeta, BackupTag } from '../src/mediaserver/types.js';
 import { JSPEC, N, SPEC, T0, ferroPin, jellyPin, world } from './media-world.js';
 
@@ -324,12 +325,15 @@ describe('upload', () => {
     w.clock.t = Date.UTC(2026, 10, 17, 15, 30, 0);
     const r = await upload({ dir: w.dir, updater: w.updater, now: () => w.clock.t }, req(body), POLISH);
     const id = 'jellyfin-20261117-1530-10.11.3';
-    expect(r).toEqual({ ok: true, backup: { id, kind: 'jellyfin', upstream: '10.11.3', at: '2026-11-17T15:30:00.000Z', tag: 'upload', size: plain.length } });
+    // `createdAt`: when the archive was made (its own metadata), so a moved server can tell a backup from before its move (I3)
+    expect(r).toEqual({ ok: true, backup: { id, kind: 'jellyfin', upstream: '10.11.3', at: '2026-11-17T15:30:00.000Z', tag: 'upload', size: plain.length, createdAt: '2026-11-01T10:00:00.000Z' } });
     expect(readdirSync(w.dir)).toEqual([`${id}.tar.gz`]);
     expect(readFileSync(join(w.dir, `${id}.tar.gz`)).equals(plain)).toBe(true);
     // readable by the helper, which runs as the media server's user
     expect(statSync(join(w.dir, `${id}.tar.gz`)).mode & 0o777).toBe(0o644);
-    expect(w.media().backups).toEqual([{ id, kind: 'jellyfin', upstream: '10.11.3', at: '2026-11-17T15:30:00.000Z', tag: 'upload', size: plain.length }]);
+    expect(w.media().backups).toEqual([{ id, kind: 'jellyfin', upstream: '10.11.3', at: '2026-11-17T15:30:00.000Z', tag: 'upload', size: plain.length, createdAt: '2026-11-01T10:00:00.000Z' }]);
+    // and it survives the state file's sanitising
+    expect(sanitizeMedia(JSON.parse(JSON.stringify(w.media()))).backups[0]!.createdAt).toBe('2026-11-01T10:00:00.000Z');
     expect(w.logs()).not.toContain(POLISH);
   }, SLOW);
 

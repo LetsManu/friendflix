@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodePassphrase } from '../src/mediaserver/client.js';
 import { streamBinding } from '../src/updater.js';
+import { writeManaged } from '../src/mediaserver/store.js';
 import { sessionKey } from '../src/session.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 
@@ -242,6 +243,32 @@ describe('media server backup streams', () => {
     expect(await audits('mediaserver.backup_upload')).toEqual([{ size: 3145728 }]);
     expect(await audits('mediaserver.action')).toEqual([{ op: 'restore' }]);
     await noSecret();
+  });
+
+  it('final review I3: a moved server keeps an upload from before its move but never restores it', async () => {
+    await env.pool.query('delete from media_managed');
+    await writeManaged(env.ctx, { kind: 'ferrofin', setup: 'done', migratedFrom: { name: 'jellyfin', version: '10.10.3', at: '2026-11-17T12:00:00.000Z' } });
+    try {
+      // uploaded after the move, made before it (its archive's own date), or not saying when it was made
+      for (const backup of [{ ...UPLOADED, createdAt: '2026-11-17T09:00:00.000Z' }, UPLOADED]) {
+        fake.upload = { status: 200, json: { backup } };
+        const r = await upload(randomBytes(1000));
+        expect(r.statusCode).toBe(409);
+        expect(r.json()).toEqual({ error: 'backup_premove', backup });
+      }
+      expect(fake.ops).toEqual([]);
+      // made after the move: restored
+      offset += 11 * 60_000;
+      admin = await env.login(ADMIN);
+      await reauth(admin);
+      const later = { ...UPLOADED, createdAt: '2026-11-17T12:30:00.000Z' };
+      fake.upload = { status: 200, json: { backup: later } };
+      const ok = await upload(randomBytes(1000));
+      expect(ok.statusCode).toBe(202);
+      expect(fake.ops).toEqual([{ op: 'restore', id: UPLOADED.id }]);
+    } finally {
+      await env.pool.query('delete from media_managed');
+    }
   });
 
   it('a restore the updater refuses keeps its code', async () => {

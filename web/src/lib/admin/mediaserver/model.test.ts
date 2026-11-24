@@ -10,10 +10,11 @@ import fr from '#lib/i18n/locales/fr/index';
 import it_ from '#lib/i18n/locales/it/index';
 import pl from '#lib/i18n/locales/pl/index';
 import tr_ from '#lib/i18n/locales/tr/index';
-import type { MediaManaged, MediaStatus, MediaView } from './api';
+import type { MediaManaged, MediaStatus, MediaView, MoveCandidate, MoveScan, MoveState, MoveView } from './api';
 import {
-  ACTION_ORDER, DEFAULT_MANAGED, TRIAL_KINDS, actionsFor, choiceDisabled, codeLogHint, countdown, currentChoice, folderRowsError, idError, initialRows,
-  defaultName, keptLibraries, kindName, livetvOffer, mediaErrorText, saveErrorText, nameTakenRow, passphraseError, pinState, reasonText, setupSteps, statusStarting, versionCmp,
+  ACTION_ORDER, DEFAULT_MANAGED, MOVE_STEPS, TRIAL_KINDS, actionsFor, autoCandidate, backActive, choiceDisabled, codeLogHint, countdown, currentChoice, folderRowsError, idError,
+  initialRows, defaultName, keptLibraries, kindName, livetvOffer, mediaErrorText, migratedFolders, migratedOverlap, wholeBaseMigrated, moveAbortable, moveActive, moveFollow, moveResult, moveSteps, moveSummary, saveErrorText,
+  nameTakenRow, passphraseError, pinState, reasonText, scanFresh, setupSteps, sourceLine, statusStarting, versionCmp, backupPremove, moveCopyRemovable, restorable, wayBackOnly,
 } from './model';
 
 afterEach(async () => { await setLocale('de'); });
@@ -67,10 +68,23 @@ describe('choices', () => {
     // the offer reason comes first; an offer without a reason still disables
     expect(choiceDisabled(view({ offer: { managed: false, reason: 'plex' }, kinds: { ferrofin: false, jellyfin: false } }), 'ferrofin')).toBe('plex');
     expect(choiceDisabled(view({ offer: { managed: false, reason: null } }), 'jellyfin')).toBe('no_updater');
+    // a moved server stays Ferrofin: another kind is off with its reason (the updater refuses it); the address stays open
+    const movedDesired = { kind: 'ferrofin' as const, folders: [{ rel: 'Filme', target: '/movies', migrated: true as const }], uid: 1000, gid: 1000, gpu: 'off' as const, mediaGid: null, egress: true, run: true, migrated: true as const };
+    const movedView = view({ mode: 'managed', managed: managed({ kind: 'ferrofin', setup: 'done' }), status: status({ desired: movedDesired }) });
+    expect(choiceDisabled(movedView, 'jellyfin')).toBe('moved');
+    expect(choiceDisabled(movedView, 'ferrofin')).toBeNull();
+    expect(choiceDisabled(movedView, 'external')).toBeNull();
+    expect(reasonText('moved')).toBe('Nach dem Umzug bleibt der Server Ferrofin.');
+    // recorded by the backend only (the updater's status not read yet)
+    const movedFrom = { offered: false, reason: null, scan: null, state: null, migratedFrom: { name: 'jellyfin', version: '10.11.0', at: '2026-11-24T10:00:00.000Z' }, sourceState: null, requestsWarning: false };
+    expect(choiceDisabled(view({ mode: 'managed', managed: managed({ kind: 'ferrofin' }), move: movedFrom }), 'jellyfin')).toBe('moved');
+    // a stage 1 managed server may change its kind
+    expect(choiceDisabled(view({ mode: 'managed', managed: managed({ kind: 'ferrofin' }) }), 'jellyfin')).toBeNull();
   });
 
   it('the reasons read as the spec words them', () => {
-    expect(reasonText('ids_in_use')).toBe('Umzug von deinem Jellyfin: kommt mit Stufe 2');
+    // stage 2: the move is there (the button where it is offered), a fresh server is not
+    expect(reasonText('ids_in_use')).toBe('FriendFlix hängt an den IDs deines bisherigen Servers: ein neuer verwalteter Server ginge nur als Umzug von Jellyfin.');
     expect(reasonText('plex')).toBe('Wechsel von Plex: kommt mit Stufe 4');
     for (const r of ['no_updater', 'url_pinned', 'engine_old', 'proxy_outdated', 'no_project', 'no_network', 'updater_outdated', 'starting', 'image_missing'] as const) expect(reasonText(r), r).not.toMatch(/^mediaserver\./);
     // the updater has not read the media status yet since it started: a neutral line, never "too old"
@@ -121,6 +135,26 @@ describe('backups', () => {
 
 describe('folders', () => {
   const row = (rel: string, name = rel, type = 'movies' as const) => ({ rel, name, type });
+  it('folderRowsError: the migrated folders count (none, the limit of 20 in total)', () => {
+    expect(folderRowsError([], 1)).toBeNull();
+    expect(folderRowsError(Array.from({ length: 18 }, (_, i) => row(`F${i}`)), 2)).toBeNull();
+    expect(folderRowsError(Array.from({ length: 19 }, (_, i) => row(`F${i}`)), 2)).toBe('too_many');
+  });
+
+  it('migratedOverlap / wholeBaseMigrated: a folder that is, lies in or holds a migrated one; the whole base holds every folder', () => {
+    const mig = [{ rel: 'Filme', target: '/movies', migrated: true as const }, { rel: 'Serien/Neu', target: '/tv', migrated: true as const }];
+    expect(migratedOverlap('Filme', mig)).toBe('same');
+    expect(migratedOverlap('Filme/Klassiker', mig)).toBe('overlap');
+    expect(migratedOverlap('Serien', mig)).toBe('overlap');
+    expect(migratedOverlap('Musik', mig)).toBeNull();
+    expect(migratedOverlap('Filmeabend', mig)).toBeNull();
+    expect(migratedOverlap('Musik', [])).toBeNull();
+    expect(wholeBaseMigrated(mig)).toBe(false);
+    const whole = [{ rel: '', target: '/media', migrated: true as const }];
+    expect(wholeBaseMigrated(whole)).toBe(true);
+    expect(migratedOverlap('Musik', whole)).toBe('overlap');
+  });
+
   it('folderRowsError: none, too many, a bad name, a name twice, one inside another', () => {
     expect(folderRowsError([])).toBe('none');
     expect(folderRowsError(Array.from({ length: 21 }, (_, i) => row(`F${i}`)))).toBe('too_many');
@@ -152,6 +186,21 @@ describe('folders', () => {
     expect(initialRows(fresh)).toEqual([{ rel: 'Filme', name: 'Filme', type: 'movies' }]);
     expect(keptLibraries(fresh)).toEqual([]);
     expect(initialRows(view())).toEqual([]);
+    // a moved server: its migrated folders are read-only (migratedFolders), never rows; a new one at /ffmedia/<slug> is a row
+    const moved = view({
+      mode: 'managed', managed: managed({ kind: 'ferrofin', libraries: [{ slug: 'neu', name: 'Neu', type: 'movies', rel: 'Neu', created: true }] }),
+      status: status({ desired: { kind: 'ferrofin', folders: [{ rel: '', target: '/media', migrated: true }, { rel: 'Filme', target: '/media/neu', migrated: true }, { rel: 'Neu', target: '/ffmedia/neu' }],
+        uid: 1000, gid: 1000, gpu: 'off', mediaGid: null, egress: true, run: true, migrated: true } }),
+    });
+    expect(migratedFolders(moved)).toEqual([{ rel: '', target: '/media', migrated: true }, { rel: 'Filme', target: '/media/neu', migrated: true }]);
+    expect(initialRows(moved)).toEqual([{ rel: 'Neu', name: 'Neu', type: 'movies' }]);
+    expect(keptLibraries(moved)).toEqual([]);
+    // a migrated target that looks like a slug never stands for a library
+    const onlyMigrated = { ...moved, status: status({ desired: { ...moved.status!.desired!, folders: moved.status!.desired!.folders.slice(0, 2) } }) };
+    expect(initialRows(onlyMigrated)).toEqual([]);
+    expect(keptLibraries(onlyMigrated).map((l) => l.slug)).toEqual(['neu']);
+    expect(migratedFolders(v)).toEqual([]);
+    expect(migratedFolders(view())).toEqual([]);
     // a kept library's name on a chosen folder: that row gets the conflict
     expect(nameTakenRow([row('Neu', 'Kino'), row('Neu2', ' alt ')], keptLibraries(v))).toBe(1);
     expect(nameTakenRow([row('Neu', 'Kino')], keptLibraries(v))).toBe(-1);
@@ -166,6 +215,12 @@ describe('folders', () => {
     expect(livetvOffer(v, [{ rel: 'Filme' }])).toBeNull();
     expect(livetvOffer({ ...v, managed: managed({ kind: 'jellyfin' }) }, [{ rel: 'TV/Aufnahmen' }])).toBeNull();
     expect(livetvOffer({ ...v, livetvLibraryPath: null }, [{ rel: 'TV/Aufnahmen' }])).toBeNull();
+    // after a move a new folder mounts at /ffmedia/<slug>: the library entry says so, or the migrated spec does
+    const moved = view({ mode: 'managed', managed: managed({ kind: 'ferrofin', libraries: [{ ...libs[0]!, ffmedia: true }] }), livetvLibraryPath: '/data/aufnahmen/' });
+    expect(livetvOffer(moved, [{ rel: 'TV/Aufnahmen' }])).toEqual({ rel: 'TV/Aufnahmen', target: '/ffmedia/aufnahmen' });
+    const spec = { kind: 'ferrofin' as const, folders: [{ rel: 'Filme', target: '/movies', migrated: true as const }], uid: 1000, gid: 1000, gpu: 'off' as const, mediaGid: null, egress: true, run: true, migrated: true as const };
+    expect(livetvOffer({ ...v, status: status({ desired: spec }) }, [{ rel: 'TV/Aufnahmen' }])).toEqual({ rel: 'TV/Aufnahmen', target: '/ffmedia/aufnahmen' });
+    expect(livetvOffer({ ...moved, livetvLibraryPath: '/ffmedia/aufnahmen' }, [{ rel: 'TV/Aufnahmen' }])).toBeNull();
   });
 
   it('defaultName: a picked folder\'s name cut at 60 without splitting a character', () => {
@@ -245,6 +300,59 @@ describe('status and actions', () => {
   });
 });
 
+describe('final review: a moved server', () => {
+  const AT = '2026-11-24T10:00:00.000Z';
+  const bk = (at: string, o: Partial<MediaStatus['backups'][number]> = {}): MediaStatus['backups'][number] => ({ id: `ferrofin-x-${at}`, kind: 'ferrofin', upstream: '1.5.0', at, tag: 'manual', size: 1, ...o });
+  const movedView = (sourceState: string | null, backups: MediaStatus['backups'] = []) => view({
+    mode: 'managed', managed: managed({ kind: 'ferrofin', setup: 'done' }),
+    status: status({ container: container({ kind: 'ferrofin' }), backups }),
+    move: { offered: false, reason: null, scan: null, state: null, migratedFrom: { name: 'jellyfin', version: '10.11.0', at: AT }, sourceState, requestsWarning: false, requests: true },
+  });
+
+  it('C1: no Entfernen and no stage 1 switch while the old Jellyfin is there; both once it is gone', () => {
+    for (const s of ['exited', 'running', 'unknown', null]) {
+      expect(wayBackOnly(movedView(s)), String(s)).toBe(true);
+      expect(actionsFor(movedView(s)), String(s)).not.toContain('remove');
+      expect(actionsFor(movedView(s)), String(s)).toEqual(['stop', 'restart', 'backup']);
+    }
+    expect(wayBackOnly(movedView('missing'))).toBe(false);
+    expect(actionsFor(movedView('missing'))).toContain('remove');
+    // never moved (or back on Jellyfin): as before
+    expect(wayBackOnly(running())).toBe(false);
+    expect(actionsFor(running())).toContain('remove');
+  });
+
+  it('I3: only a backup taken at or after the move restores (an upload by its archive date)', () => {
+    const before = bk('2026-11-24T09:00:00.000Z', { tag: 'auto' });
+    const at = bk(AT);
+    const upOld = bk('2026-11-24T12:00:00.000Z', { tag: 'upload', createdAt: '2026-11-20T08:00:00.000Z' });
+    const upNew = bk('2026-11-24T12:00:00.000Z', { tag: 'upload', createdAt: '2026-11-24T11:00:00.000Z' });
+    const upUnknown = bk('2026-11-24T12:00:00.000Z', { tag: 'upload' });
+    const v = movedView('exited', [before, at, upOld, upNew, upUnknown]);
+    expect([before, at, upOld, upNew, upUnknown].map((b) => backupPremove(v, b))).toEqual([true, false, true, false, true]);
+    expect([before, at, upOld, upNew, upUnknown].map((b) => restorable(v, b))).toEqual([false, true, false, true, false]);
+    expect(actionsFor(v)).toContain('restore');
+    expect(actionsFor(movedView('exited', [before, upOld]))).not.toContain('restore');
+    // another kind never; a server that was not moved restores any of its kind
+    expect(restorable(v, { ...at, kind: 'jellyfin' })).toBe(false);
+    const plain = running({ backups: [{ ...before, kind: 'jellyfin' }] });
+    expect(backupPremove(plain, plain.status!.backups[0]!)).toBe(false);
+    expect(restorable(plain, plain.status!.backups[0]!)).toBe(true);
+  });
+
+  it('M4: an aborted move\'s copy can be removed while external and nothing runs', () => {
+    const copy = view({ status: status({ moveCopy: true }) });
+    expect(moveCopyRemovable(copy)).toBe(true);
+    expect(actionsFor(copy)).toEqual(['remove']);
+    expect(moveCopyRemovable(view())).toBe(false);
+    expect(actionsFor(view())).toEqual([]);
+    // a move under way holds it
+    const moving = view({ status: status({ moveCopy: true }), move: { offered: false, reason: null, scan: null, state: { phase: 'copying', error: null, jobId: null, startedAt: AT, step: 'copy', abort: false }, migratedFrom: null, sourceState: null, requestsWarning: false, requests: true } });
+    expect(moveCopyRemovable(moving)).toBe(false);
+    expect(actionsFor(moving)).toEqual([]);
+  });
+});
+
 describe('save errors', () => {
   it('a refused or cancelled save reads as a sentence; anything else is left to the code', () => {
     expect(saveErrorText(new DOMException('x', 'SecurityError'))).toBe('Der Browser hat das Speichern nicht erlaubt. Versuch es noch einmal.');
@@ -270,12 +378,17 @@ describe('error texts', () => {
   // backend updater.ts startedJob (a job that did not start) and the updater's own refusals the backend passes on
   const updaterTs = backend('updater.ts');
   const JOB_CODES = [...updaterTs.match(/export function startedJob[\s\S]*?\n}/)![0].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
+  // the move's way back (backend mediaserver/move.ts BackError) and its scan's refusal
+  const MOVE_CODES = quoted(backend('mediaserver/move.ts').match(/export type BackError = ([^;]+);/)![1]!);
   const UPDATER_CODES = ['busy', 'no_container', 'container_exists', 'path_invalid', 'path_refused', 'rate_limited', 'not_available', 'invalid_body', 'too_large', 'not_found', 'timeout'];
 
   it('the backend lists are read (the mirror cannot go stale silently)', () => {
     expect(MEDIA_ERRORS.length).toBeGreaterThan(30);
     expect(MEDIA_ERRORS).toContain('verify_failed');
     expect(SETUP_CODES).toEqual(expect.arrayContaining(['wizard_taken', 'library_name_taken', 'unreachable']));
+    expect(MEDIA_ERRORS).toEqual(expect.arrayContaining(['source_missing', 'source_mismatch', 'source_layout', 'source_outside_base', 'source_version', 'no_space', 'adopt_failed', 'ids_mismatch', 'move_aborted', 'source_nested']));
+    expect(MOVE_CODES).toEqual(expect.arrayContaining(['jellyfin_unreachable', 'not_moved', 'no_external', 'busy', 'updater_error']));
+    expect(ROUTE_CODES).toEqual(expect.arrayContaining(['use_way_back', 'scan_required', 'not_abortable', 'jellyfin_unreachable', 'busy']));
     expect(ROUTE_CODES).toEqual(expect.arrayContaining([
       'ids_in_use', 'library_referenced', 'library_name_taken', 'invalid_body', 'reauth_required', 'unreachable', 'invalid_passphrase', 'length_required',
       'unsupported_media_type', 'updater_error', 'not_managed', 'no_external', 'wrong', 'expired', 'locked', 'no_pending',
@@ -283,7 +396,7 @@ describe('error texts', () => {
   });
 
   it('every code the card can receive has a readable text in all 7 locales; an unknown one still shows its code', async () => {
-    const all = [...new Set([...MEDIA_ERRORS, ...SETUP_CODES, ...ROUTE_CODES, ...JOB_CODES, ...UPDATER_CODES, 'not_supported', 'busy', 'no_target', 'backup_invalid', 'network'])];
+    const all = [...new Set([...MEDIA_ERRORS, ...SETUP_CODES, ...ROUTE_CODES, ...JOB_CODES, ...UPDATER_CODES, ...MOVE_CODES, 'not_supported', 'busy', 'no_target', 'backup_invalid', 'network'])];
     for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
       await setLocale(l);
       const generic = mediaErrorText('zz_not_a_code');
@@ -299,6 +412,154 @@ describe('error texts', () => {
     expect(mediaErrorText('<b>x</b>')).not.toContain('<b>');
     expect(mediaErrorText(null)).not.toContain('null');
     expect(mediaErrorText('verify_failed')).not.toContain('verify_failed');
+  });
+});
+
+describe('the move from Jellyfin', () => {
+  const ID = 'a'.repeat(64);
+  const scan = (o: Partial<MoveScan> = {}): MoveScan => ({
+    source: { id: ID, name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.0', version: '10.11.0' },
+    folders: [{ rel: 'Filme', target: '/movies', migrated: true }, { rel: 'Serien', target: '/tv', migrated: true }], layout: 'official',
+    bytes: 38e9, trickplayBytes: 12e9, plugins: ['Open Subtitles', 'Fanart'], nfo: true, ...o,
+  });
+  const state = (o: Partial<MoveState> = {}): MoveState => ({ phase: 'copying', error: null, jobId: 'j', startedAt: '2026-11-24T10:00:00.000Z', step: null, abort: false, ...o });
+  const move = (o: Partial<MoveView> = {}): MoveView => ({ offered: false, reason: null, scan: null, state: null, migratedFrom: null, sourceState: null, requestsWarning: false, ...o });
+  const moving = (st: Partial<MoveState>, o: Partial<MediaView> = {}) => view({ move: move({ state: state(st) }), ...o });
+  const rows = (v: MediaView) => moveSteps(v).map((r) => `${r.step}:${r.state}`).join(' ');
+
+  it('moveSummary: the folders as Ferrofin sees them, the copy with or without trickplay, the plugins left behind', () => {
+    expect(moveSummary(scan(), false)).toEqual({ folders: ['/movies', '/tv'], bytes: 38e9, downtimeMin: 13, plugins: ['Open Subtitles', 'Fanart'] });
+    expect(moveSummary(scan(), true)).toMatchObject({ bytes: 50e9, downtimeMin: 17 });
+    // the whole base as one folder
+    expect(moveSummary(scan({ folders: [{ rel: '', target: '/media', migrated: true }], plugins: [] }), false)).toMatchObject({ folders: ['/media'], plugins: [] });
+  });
+
+  it('moveSummary: the downtime is at least one minute (50 MB/s), whole minutes up', () => {
+    expect(moveSummary(scan({ bytes: 0, trickplayBytes: 0 }), true).downtimeMin).toBe(1);
+    expect(moveSummary(scan({ bytes: 1e6 }), false).downtimeMin).toBe(1);
+    expect(moveSummary(scan({ bytes: 3e9 }), false).downtimeMin).toBe(1);
+    expect(moveSummary(scan({ bytes: 3e9 + 1 }), false).downtimeMin).toBe(2);
+  });
+
+  it('moveSteps: the updater\'s steps, then the backend\'s phases, in a fixed order', () => {
+    expect([...MOVE_STEPS]).toEqual(['copy_bulk', 'stop_source', 'copy', 'create', 'start', 'health', 'adopt', 'nfo', 'verify', 'switch', 'requests']);
+    expect(moveSteps(view()).every((r) => r.state === 'todo')).toBe(true);
+    expect(moveSteps(view()).map((r) => r.step)).toEqual([...MOVE_STEPS]);
+    // the check, pull and image verify before the copy: the copy is the step under way
+    for (const step of ['check', 'pull', 'verify', 'snapshot'] as const) expect(rows(moving({ step })), step).toMatch(/^copy_bulk:running stop_source:todo/);
+    expect(rows(moving({ step: 'stop_source' }))).toMatch(/^copy_bulk:done stop_source:running copy:todo/);
+    expect(rows(moving({ step: 'adopt' }))).toMatch(/health:done adopt:running nfo:todo/);
+    // a rollback belongs to the deploy (create, start, health)
+    expect(rows(moving({ step: 'rollback' }))).toMatch(/start:done health:running adopt:todo/);
+    // copied, the backend has not taken it yet: its first phase is next
+    expect(rows(moving({ step: null }, { status: status({ move: { phase: 'ready', step: null, source: { name: 'jellyfin', version: '10.11.0' }, folders: [], abort: false } }) }))).toMatch(/adopt:done nfo:running verify:todo/);
+    expect(rows(moving({ step: null }))).toMatch(/^copy_bulk:running/);
+    expect(rows(moving({ phase: 'nfo' }))).toMatch(/adopt:done nfo:running verify:todo/);
+    expect(rows(moving({ phase: 'verify' }))).toMatch(/nfo:done verify:running switch:todo/);
+    expect(rows(moving({ phase: 'switch' }))).toMatch(/verify:done switch:running requests:todo$/);
+    expect(rows(moving({ phase: 'requests' }))).toMatch(/switch:done requests:running$/);
+    expect(moveSteps(moving({ phase: 'done' })).every((r) => r.state === 'done')).toBe(true);
+  });
+
+  it('moveSteps: a failure in the copy marks the step it stopped at; one in a backend phase marks that phase (failedIn)', () => {
+    expect(rows(moving({ phase: 'failed', error: 'no_space', step: 'check', failedIn: 'copying' }))).toMatch(/^copy_bulk:failed stop_source:todo/);
+    expect(rows(moving({ phase: 'failed', error: 'adopt_failed', step: 'adopt', failedIn: 'copying' }))).toMatch(/health:done adopt:failed nfo:todo/);
+    // the updater clears its step once its job succeeded: the backend's phase names the row
+    expect(rows(moving({ phase: 'failed', error: 'unreachable', step: null, failedIn: 'nfo' }))).toMatch(/^(\w+:done ){7}nfo:failed verify:todo switch:todo requests:todo$/);
+    expect(rows(moving({ phase: 'failed', error: 'ids_mismatch', failedIn: 'verify', errorMeta: { users: { total: 4, missing: 1 }, items: { sampled: 200, missing: 9 } } })))
+      .toMatch(/^(\w+:done ){8}verify:failed switch:todo requests:todo$/);
+    expect(rows(moving({ phase: 'failed', error: 'unexpected', failedIn: 'switch' }))).toMatch(/^(\w+:done ){9}switch:failed requests:todo$/);
+    // an abort during the id check: that row, whatever step the job's record still holds
+    expect(rows(moving({ phase: 'failed', error: 'move_aborted', step: 'adopt', failedIn: 'verify' }))).toMatch(/nfo:done verify:failed switch:todo/);
+    // an older record without failedIn: the id check for ids_mismatch, else no row (the result line says why)
+    expect(rows(moving({ phase: 'failed', error: 'ids_mismatch' }))).toMatch(/nfo:done verify:failed switch:todo/);
+    expect(moveSteps(moving({ phase: 'failed', error: 'move_aborted' })).every((r) => r.state === 'todo')).toBe(true);
+    // a copy failure whose step is gone marks none either
+    expect(moveSteps(moving({ phase: 'failed', error: 'interrupted', failedIn: 'copying' })).every((r) => r.state === 'todo')).toBe(true);
+  });
+
+  it('moveActive, moveAbortable, backActive, moveFollow: what the card follows and offers', () => {
+    expect(moveActive(view())).toBe(false);
+    for (const phase of ['copying', 'nfo', 'verify', 'switch', 'requests'] as const) expect(moveActive(moving({ phase })), phase).toBe(true);
+    for (const phase of ['done', 'failed'] as const) expect(moveActive(moving({ phase })), phase).toBe(false);
+    for (const phase of ['copying', 'nfo', 'verify'] as const) expect(moveAbortable(moving({ phase })), phase).toBe(true);
+    for (const phase of ['switch', 'requests', 'done', 'failed'] as const) expect(moveAbortable(moving({ phase })), phase).toBe(false);
+    // an abort asked for already
+    expect(moveAbortable(moving({ phase: 'copying', abort: true }))).toBe(false);
+    for (const back of ['starting', 'switched', 'stopped'] as const) expect(backActive(moving({ phase: 'done', back })), back).toBe(true);
+    for (const back of ['done', 'failed'] as const) expect(backActive(moving({ phase: 'done', back })), back).toBe(false);
+    expect(moveFollow(view())).toBe(false);
+    expect(moveFollow(moving({ phase: 'nfo' }))).toBe(true);
+    expect(moveFollow(moving({ phase: 'done', back: 'switched' }))).toBe(true);
+    expect(moveFollow(view({ move: move({ scan: { source: ID, state: 'running', at: '2026-11-24T10:00:00.000Z' } }) }))).toBe(true);
+    expect(moveFollow(view({ move: move({ scan: { source: ID, state: 'done', result: scan(), at: '2026-11-24T10:00:00.000Z' } }) }))).toBe(false);
+    // an older backend without the move
+    expect(moveFollow({ ...view(), move: undefined })).toBe(false);
+    expect(moveSteps({ ...view(), move: undefined }).every((r) => r.state === 'todo')).toBe(true);
+  });
+
+  it('autoCandidate: the one candidate that can be the source; scanFresh: a done scan of it, at most 9 minutes old', () => {
+    const c = (o: Partial<MoveCandidate>): MoveCandidate => ({ id: ID, name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.0', state: 'running', matches: true, ...o });
+    expect(autoCandidate([c({})])?.id).toBe(ID);
+    expect(autoCandidate([c({ matches: null })])?.id).toBe(ID);
+    expect(autoCandidate([c({ matches: false })])).toBeNull();
+    expect(autoCandidate([])).toBeNull();
+    expect(autoCandidate([c({}), c({ id: 'b'.repeat(64), name: 'jellyfin-alt', matches: null })])).toBeNull();
+    // the others are not the server FriendFlix uses
+    expect(autoCandidate([c({}), c({ id: 'b'.repeat(64), matches: false })])?.id).toBe(ID);
+    const at = '2026-11-24T10:00:00.000Z', t0 = Date.parse(at);
+    const rec = { source: ID, state: 'done' as const, result: scan(), at };
+    expect(scanFresh(rec, ID, t0 + 60_000)).toBe(true);
+    expect(scanFresh(rec, ID, t0 + 9 * 60_000 + 1)).toBe(false);
+    expect(scanFresh(rec, 'b'.repeat(64), t0)).toBe(false);
+    expect(scanFresh({ ...rec, state: 'running', result: undefined }, ID, t0)).toBe(false);
+    expect(scanFresh(null, ID, t0)).toBe(false);
+  });
+
+  it('moveResult: done, done with the updater\'s warning, failed with its reason and the id check\'s numbers', () => {
+    expect(moveResult(null)).toBeNull();
+    expect(moveResult(state({ phase: 'nfo' }))).toBeNull();
+    expect(moveResult(state({ phase: 'done' }))).toEqual({ ok: true, text: tr('mediaserver.move.done') });
+    expect(moveResult(state({ phase: 'done', errorMeta: { warning: 'updater_aborted' } }))?.text).toContain(tr('mediaserver.move.updaterAborted'));
+    const failed = moveResult(state({ phase: 'failed', error: 'no_space' }))!;
+    expect(failed.ok).toBe(false);
+    expect(failed.text).toContain(mediaErrorText('no_space'));
+    const ids = moveResult(state({ phase: 'failed', error: 'ids_mismatch', errorMeta: { users: { total: 4, missing: 1 }, items: { sampled: 200, missing: 9 } } }))!.text;
+    expect(ids).toContain(mediaErrorText('ids_mismatch'));
+    expect(ids).toMatch(/4\b[\s\S]*1\b[\s\S]*200[\s\S]*9\b/);
+  });
+
+  it('sourceLine: the old Jellyfin stopped, running or gone', () => {
+    expect(sourceLine(view())).toBeNull();
+    expect(sourceLine(view({ move: move({ sourceState: 'exited' }) }))).toBe('stopped');
+    expect(sourceLine(view({ move: move({ sourceState: 'created' }) }))).toBe('stopped');
+    expect(sourceLine(view({ move: move({ sourceState: 'running' }) }))).toBe('running');
+    expect(sourceLine(view({ move: move({ sourceState: 'restarting' }) }))).toBe('running');
+    expect(sourceLine(view({ move: move({ sourceState: 'missing' }) }))).toBe('missing');
+    expect(sourceLine(view({ move: move({ sourceState: 'dead' }) }))).toBeNull();
+  });
+
+  it('the move texts in all 7 locales: no placeholder left, the spec\'s German lines verbatim', async () => {
+    const de_ = JSON.stringify((de as Record<string, unknown>).mediaserver);
+    for (const w of ['Von Jellyfin umziehen', 'Erneut umziehen', 'Zurück zu Jellyfin', 'Umziehen', 'gleich in Ferrofin', '(ohne Trickplay)', 'Trickplay mitnehmen',
+      'Laufende Wiedergaben brechen ab.', 'wird auf Ferrofin umgestellt.', 'wird danach gestoppt, bleibt für den Rückweg erhalten.', 'jederzeit mit einem Klick. Was auf Ferrofin geschaut wird, bleibt dort.',
+      'Was seit dem Umzug auf Ferrofin geschaut wurde, ist in Jellyfin nicht drin.', 'Altes Jellyfin ist gestoppt und bleibt für den Rückweg erhalten.', 'Basisordner ändern', 'Wunsch-Dienst', 'Altes Jellyfin',
+      'bis zu etwa', 'aus Jellyfin übernommen']) {
+      expect(de_, w).toContain(w);
+    }
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
+      await setLocale(l);
+      const texts = [
+        tr('mediaserver.move.titleFrom', { name: 'jellyfin' }), tr('mediaserver.move.folders', { list: '/movies, /tv' }), tr('mediaserver.move.copy', { size: '38 GB' }),
+        tr('mediaserver.move.trickplay', { size: '12 GB' }), tr('mediaserver.move.downtime', { n: 4 }), tr('mediaserver.move.downtime', { n: 1 }),
+        tr('mediaserver.move.moved', { name: 'jellyfin', date: '24.11.2026' }), tr('mediaserver.move.idsMismatch', { users: 4, usersMissing: 1, items: 200, itemsMissing: 9 }),
+        tr('mediaserver.move.failed', { reason: 'x' }), tr('mediaserver.move.backFailed', { reason: 'x' }), tr('mediaserver.move.scanning', { name: 'jellyfin' }),
+        tr('mediaserver.move.plugins', { list: '„Fanart“' }), ...MOVE_STEPS.map((s) => tr(`mediaserver.move.step.${s}`)),
+      ];
+      for (const t of texts) expect(t, `${l}: ${t}`).not.toMatch(/\{\w+\}|\.\.\.|^mediaserver\./);
+      expect(tr('mediaserver.move.requestsWarning'), l).toContain('mediaserver');
+      expect(tr('mediaserver.move.requestsWarning'), l).toContain('8096');
+    }
   });
 });
 
@@ -331,13 +592,18 @@ describe('mediaserver area in every language', () => {
     const flat = JSON.stringify((de as Tree).mediaserver);
     for (const w of ['Ferrofin (eigener)', 'Jellyfin (offiziell, verwaltet)', 'Bestehender Jellyfin/Plex (Adresse)', 'Code anfordern', 'Einrichten', 'Übernehmen', 'Starten', 'Stoppen',
       'Neu starten', 'Aktualisieren', 'Sicherung', 'Wiederherstellen', 'Protokoll', 'Entfernen', 'Neu anlegen', 'Nochmal', 'Erneut versuchen', 'Herunterladen',
-      'Aus Datei wiederherstellen', 'HDR-Test', 'Test', 'Umzug von deinem Jellyfin: kommt mit Stufe 2', 'Wechsel von Plex: kommt mit Stufe 4', 'neuer als dieser FriendFlix-Stand']) {
+      'Aus Datei wiederherstellen', 'HDR-Test', 'Test', 'Wechsel von Plex: kommt mit Stufe 4', 'neuer als dieser FriendFlix-Stand']) {
       expect(flat, w).toContain(w);
     }
     for (const d of [de, en, es, fr, it_, pl, tr_]) {
-      const s = JSON.stringify((d as Tree).mediaserver);
+      const ms = (d as Tree).mediaserver as Record<string, Record<string, string>>;
+      const s = JSON.stringify(ms);
       expect(s).not.toContain('...');
       expect(s).not.toMatch(/netflix|seerr/i);
+      // stage 2 is here: the id reasons no longer promise it
+      expect(`${ms.reason!.ids_in_use} ${ms.error!.ids_in_use}`).not.toMatch(/2/);
     }
+    // the app's own word for the request service (Admin, Systemcheck), never another
+    expect(flat).not.toContain('Anfrage');
   });
 });

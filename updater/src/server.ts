@@ -45,8 +45,8 @@ const DOWNLOAD_RE = new RegExp(`^/v1/mediaserver/backups/(${BACKUP_ID_RE.source.
 const UPLOAD_PATH = '/v1/mediaserver/backups/upload';
 const PASSPHRASE_HEADER = 'x-ff-backup-passphrase';
 /** the ops that only read or narrow: allowed while the managed media server is not available */
-const ALWAYS_OPS: ReadonlySet<MediaOp['op']> = new Set(['logs', 'gpu', 'base-clear', 'stop', 'remove']);
-const JOB_OPS: ReadonlySet<MediaOp['op']> = new Set(['apply', 'finish-setup', 'start', 'stop', 'restart', 'update', 'hdr-test', 'backup', 'restore', 'remove']);
+const ALWAYS_OPS: ReadonlySet<MediaOp['op']> = new Set(['logs', 'gpu', 'base-clear', 'stop', 'remove', 'migrate-abort', 'source-start']);
+const JOB_OPS: ReadonlySet<MediaOp['op']> = new Set(['apply', 'finish-setup', 'start', 'stop', 'restart', 'update', 'hdr-test', 'backup', 'restore', 'remove', 'migrate', 'migrate-abort', 'source-start']);
 export type LivetvContainerState = 'running' | 'exited' | null;
 
 /**
@@ -85,8 +85,8 @@ export interface AppDeps {
 }
 
 export interface MediaApi {
-  service: Pick<MediaService, 'request' | 'confirm' | 'clear' | 'browse' | 'gpu' | 'logs'>;
-  jobs: Pick<MediaJobs, 'start'>;
+  service: Pick<MediaService, 'request' | 'confirm' | 'clear' | 'browse' | 'gpu' | 'logs' | 'moveScan'>;
+  jobs: Pick<MediaJobs, 'start' | 'migrateDone'>;
   status(): Promise<MediaStatusView>;
   download(id: string, passphrase: string, res: ServerResponse): Promise<void>;
   upload(req: IncomingMessage, passphrase: string): ReturnType<typeof upload>;
@@ -253,6 +253,12 @@ async function mediaOp(m: MediaApi, op: MediaOp): Promise<{ status: number; body
       const r = await m.service.logs(op.tail);
       return 'error' in r ? { status: 409, body: { error: r.error } } : { status: 200, body: { lines: r.lines } };
     }
+    case 'migrate-scan': {
+      const r = await m.service.moveScan(op.serverId, op.source);
+      return { status: 'error' in r ? 409 : 200, body: r };
+    }
+    case 'migrate-done':
+      return m.jobs.migrateDone() ? { status: 200, body: { ok: true } } : { status: 409, body: { error: 'no_target' } };
     default:
       return { status: 400, body: { error: 'invalid_body' } };
   }

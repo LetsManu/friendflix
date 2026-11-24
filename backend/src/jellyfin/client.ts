@@ -17,6 +17,8 @@ export interface AuthResult {
 export class JellyfinError extends MediaError {}
 /** a 3xx that would move the request elsewhere (304 Not Modified is an answer, not a redirect) */
 const isRedirect = (status: number) => status >= 300 && status < 400 && status !== 304;
+/** a media server user id: 32 hex digits, or a GUID with dashes */
+const USER_ID = /^([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
 
 /** Maps a role template to the Jellyfin UserPolicy fields we manage. */
 export function policyFromTemplate(t: RoleTemplate, folderIds: string[] | null): Record<string, unknown> {
@@ -160,6 +162,19 @@ export class JellyfinClient {
     await this.adminJson(`/Users/${userId}/Policy`, { method: 'POST', body: JSON.stringify({ ...user.Policy, ...patch }) });
   }
 
+  /**
+   * Whether the server knows the user `id` (`GET /Users/{id}`, admin key): false on 404 and for an id that is not one (32 hex digits, with
+   * or without dashes: never sent); any other answer throws. `signal` replaces the default deadline.
+   */
+  async userExists(id: string, signal?: AbortSignal): Promise<boolean> {
+    if (!USER_ID.test(id)) return false;
+    const res = await this.adminFetch(`/Users/${id}`, signal ? { signal } : {});
+    await res.body?.cancel().catch(() => undefined);
+    if (res.status === 404) return false;
+    if (!res.ok) throw new JellyfinError(res.status, `Jellyfin user lookup -> ${res.status}`);
+    return true;
+  }
+
   async mediaFolders(): Promise<Array<{ Id: string; Name: string }>> {
     const r = await this.adminJson<{ Items: Array<{ Id: string; Name: string }> }>('/Library/MediaFolders');
     return r.Items;
@@ -182,12 +197,15 @@ export class JellyfinClient {
     return this.itemList(res, 'search');
   }
 
-  /** One item by id in any library (admin key, no user), for the admin's title check; null when the server does not know it. */
-  async itemById(id: string): Promise<Record<string, any> | null> {
+  /**
+   * One item by id in any library (admin key, no user), for the admin's title check and a move's id check; null when the server does not
+   * know it. `signal` replaces the default deadline.
+   */
+  async itemById(id: string, signal?: AbortSignal): Promise<Record<string, any> | null> {
     const p = new URLSearchParams({
       ids: id, Recursive: 'true', Fields: 'OfficialRating,ProductionYear,Path', EnableImages: 'false', EnableUserData: 'false', EnableTotalRecordCount: 'false', Limit: '1',
     });
-    const res = await this.adminFetch(`/Items?${p}`);
+    const res = await this.adminFetch(`/Items?${p}`, signal ? { signal } : {});
     if (!res.ok) {
       await res.body?.cancel().catch(() => undefined);
       throw new JellyfinError(res.status, `Jellyfin admin item lookup -> ${res.status}`);

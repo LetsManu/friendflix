@@ -6,12 +6,13 @@ import type { Job, MediaState } from '../state.js';
 import { BACKUP_DIR, backupInUse, backupJob, freeBackupId, older, record, restoreJob, writingBackup, type BackupKit } from './backup.js';
 import { EngineError } from './engine.js';
 import type { EngineFacts } from './facts.js';
-import { TemplateViolation, assertHelper, assertManaged, assertManagedInspect } from './guard.js';
+import { TemplateViolation, assertHelper, assertManaged, assertManagedInspect, type ManagedExpect, type SourceExpect } from './guard.js';
 import { runHdr } from './helpers.js';
 import type { Pin, PinRead } from './pins.js';
+import { abortJob, migrateJob, sourceJob, type MoveKit } from './move.js';
 import type { MediaDeps } from './service.js';
 import { containerSpec, helperSpec, names, needsSeed, seedSpec, uidSupported, volumeSpec, type CreateRequest, type HelperMount, type HelperVerb, type TemplateFacts } from './template.js';
-import { BACKUP_ID_RE, KINDS, MEDIA_ERRORS, MEDIA_STEPS, type BackupMeta, type BackupTag, type Desired, type DesiredSpec, type Gpu, type Kind, type MediaError, type MediaJobAction, type MediaOp, type MediaStep } from './types.js';
+import { BACKUP_ID_RE, KINDS, MEDIA_ERRORS, MEDIA_STEPS, type BackupMeta, type BackupTag, type Desired, type DesiredSpec, type Folder, type Gpu, type Kind, type MediaError, type MediaJobAction, type MediaOp, type MediaStep } from './types.js';
 
 /**
  * The media server jobs (spec "Lifecycle"): apply / update / finish as one deploy (check → pull → verify → snapshot → create →
@@ -29,7 +30,7 @@ export interface JobDeps extends MediaDeps {
   backupDir?: string;
 }
 
-export type MediaJobOp = Extract<MediaOp, { op: 'apply' | 'finish-setup' | 'start' | 'stop' | 'restart' | 'update' | 'hdr-test' | 'backup' | 'restore' | 'remove' }>;
+export type MediaJobOp = Extract<MediaOp, { op: 'apply' | 'finish-setup' | 'start' | 'stop' | 'restart' | 'update' | 'hdr-test' | 'backup' | 'restore' | 'remove' | 'migrate' | 'migrate-abort' | 'source-start' }>;
 type Reason = 'apply' | 'update' | 'recover' | 'finish';
 
 /** helper limits (spec "Times"): 2 min, backup and restore 2 h */
@@ -52,8 +53,10 @@ const DEFAULT_USER = { uid: 1000, gid: 1000 };
 /** what a step that fails without a code of its own reports */
 const STEP_CODE: Record<MediaStep, MediaError> = {
   check: 'helper_failed', pull: 'pull_failed', verify: 'verify_failed', snapshot: 'snapshot_failed', create: 'create_failed', start: 'start_failed', health: 'unhealthy', rollback: 'helper_failed',
+  copy_bulk: 'helper_failed', stop_source: 'helper_failed', copy: 'helper_failed', adopt: 'adopt_failed',
 };
 const NO_TARGET: StartResult = { ok: false, error: 'no_target' };
+const BUSY: StartResult = { ok: false, error: 'busy' };
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -69,17 +72,27 @@ function codeOf(e: unknown, fallback: MediaError): MediaError {
   return isMediaError(c) ? c : fallback;
 }
 
-/** a folder that is another chosen one or lies inside one */
+/** a folder that is another chosen one or lies inside one; the whole base (a migrated rel '') holds every other one */
 function nested(rels: string[]): boolean {
-  return rels.some((a, i) => rels.some((b, j) => i !== j && (a === b || b.startsWith(`${a}/`))));
+  return rels.some((a, i) => rels.some((b, j) => i !== j && (a === b || a === '' || b.startsWith(`${a}/`))));
 }
 
-const specOf = (d: Desired): DesiredSpec => ({ kind: d.kind, folders: d.folders, uid: d.uid, gid: d.gid, gpu: d.gpu, mediaGid: d.mediaGid, egress: d.egress, tz: d.tz });
+const specOf = (d: Desired): DesiredSpec => ({
+  kind: d.kind, folders: d.folders, uid: d.uid, gid: d.gid, gpu: d.gpu, mediaGid: d.mediaGid, egress: d.egress, tz: d.tz, ...(d.migrated ? { migrated: true as const } : {}),
+});
+/** the inspect guard's expectation from the recorded desired spec: the targets of its migrated folders; nothing for stage 1 */
+const migratedOf = (d: Pick<DesiredSpec, 'migrated' | 'folders'> | null | undefined): Pick<ManagedExpect, 'migrated'> =>
+  (d?.migrated ? { migrated: { targets: d.folders.filter((f) => f.migrated).map((f) => f.target) } } : {});
 const userOf = (d: { uid: number; gid: number; mediaGid: number | null } | null) =>
   ({ uid: d?.uid ?? DEFAULT_USER.uid, gid: d?.gid ?? DEFAULT_USER.gid, groups: d?.mediaGid ? [d.mediaGid] : [] });
-/** the upstream a kind's data volume is at: recorded per kind, else (a state from before the record) the container's own */
+/**
+ * the upstream a kind's data volume is at: recorded per kind, else (a state from before the record) the container's own; never the
+ * container's for a Ferrofin volume holding a move's copy (that copy has no version)
+ */
 const dataUpstreamOf = (m: MediaState, kind: Kind): string | undefined =>
-  m.dataUpstream[kind] ?? (m.container?.kind === kind ? m.container.upstream : undefined);
+  m.dataUpstream[kind] ?? (m.container?.kind === kind && !(kind === 'ferrofin' && m.moveCopy) ? m.container.upstream : undefined);
+/** a move that exists and is not finished (`running`, `ready`): every other media job waits for it */
+const unsettled = (m: MediaState): boolean => m.move !== undefined && m.move.phase !== 'done' && m.move.phase !== 'aborted';
 const labelsOf = (i: Obj): Record<string, unknown> => (isObj(i.Config) && isObj(i.Config.Labels) ? i.Config.Labels : {});
 
 /** the render nodes a `gpu` helper reported (a gid 0 is kept: the template refuses it) */
@@ -90,7 +103,7 @@ function renderNodes(a: Obj): Array<{ node: string; gid: number; vendor: string 
     .map((n) => ({ node: n.node, gid: n.gid, vendor: typeof n.vendor === 'string' ? n.vendor : 'other' }));
 }
 
-interface Runner { project: string; image: string }
+export interface Runner { project: string; image: string }
 /** a managed container found under the real name */
 export interface Existing { id: string; kind: Kind | null; running: boolean }
 interface Ctx { project: string; facts: EngineFacts; runner: Runner; base: NonNullable<MediaState['base']>; pin: Pin; old: Existing | null; dataExists: boolean }
@@ -101,6 +114,8 @@ interface Changes { stopped: boolean; renamed: boolean; newId: string | null; st
 
 export class MediaJobs {
   private readonly healthMs: number;
+  /** an abort asked for while the running move job had not recorded its move yet (also set once it has) */
+  private abortAsked = false;
   private readonly intervalMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
 
@@ -114,9 +129,20 @@ export class MediaJobs {
   private get engine() { return this.d.engine; }
 
   start(op: MediaJobOp): StartResult {
-    if (this.u.busy) return { ok: false, error: 'busy' };
+    // an abort reaches a move while its job runs (the job checks the flag between steps)
+    if (op.op === 'migrate-abort') return this.abort();
+    if (this.u.busy) return BUSY;
     const desired = this.u.mediaState().desired;
+    const move = this.u.mediaState().move;
+    // an unsettled move (or one the backend has not finished) first: only its abort, the source start and remove (which aborts it)
+    if (unsettled(this.u.mediaState()) && op.op !== 'source-start' && op.op !== 'remove') return BUSY;
     switch (op.op) {
+      case 'migrate':
+        this.abortAsked = false;
+        return this.job('mediaserver-migrate', (job) => migrateJob(this.moveKit(), job, op));
+      case 'source-start':
+        if (!this.u.mediaState().source && !move) return NO_TARGET;
+        return this.job('mediaserver-source', (job) => sourceJob(this.moveKit(), job));
       case 'apply':
         return this.job('mediaserver-apply', (job) => this.deploy(job, op.spec, { reason: 'apply', ...(op.firstRun ? { password: op.firstRun.password } : {}) }));
       case 'finish-setup':
@@ -141,8 +167,59 @@ export class MediaJobs {
         if (backupInUse(op.id)) return { ok: false, error: 'busy' };
         return this.job('mediaserver-restore', (job) => restoreJob(this.kit(), job, op.id));
       case 'remove':
-        return this.job('mediaserver-remove', (job) => this.remove(job, op.data));
+        // an unsettled move is aborted first (its source started); a remove that cannot settle it removes nothing
+        return this.job('mediaserver-remove', async (job) => {
+          if (unsettled(this.u.mediaState())) await abortJob(this.moveKit());
+          await this.remove(job, op.data);
+        });
     }
+  }
+
+  /**
+   * migrate-abort: while the move's job runs, the flag it checks between steps (the answer is that job); a move in `ready` (the
+   * backend's phases failed) or one left `running` (a restart) is aborted by its own `mediaserver-migrate` job
+   */
+  private abort(): StartResult {
+    const move = this.u.mediaState().move;
+    if (this.u.busy) {
+      const j = this.u.snapshot().lastJob;
+      // the move's job, also while it still checks (no move recorded yet: the in-memory flag carries it)
+      if (j?.action !== 'mediaserver-migrate' || j.state !== 'running' || (move !== undefined && move.phase !== 'running' && move.phase !== 'aborted')) return BUSY;
+      this.abortAsked = true;
+      this.u.updateMedia((m) => { if (m.move?.phase === 'running') m.move.abort = true; });
+      this.u.log.add('media move abort requested');
+      return { ok: true, job: j };
+    }
+    if (move?.phase !== 'running' && move?.phase !== 'ready') return NO_TARGET;
+    return this.job('mediaserver-migrate', () => abortJob(this.moveKit()));
+  }
+
+  /** migrate-done (the backend switched): the move ends, the source stays recorded for the way back; false when no move is ready */
+  migrateDone(): boolean {
+    if (this.u.mediaState().move?.phase !== 'ready') return false;
+    this.u.updateMedia((m) => {
+      if (m.move) m.source = m.move.source;
+      delete m.move;
+    });
+    this.u.log.add('media move done');
+    return true;
+  }
+
+  /** what the move (move.ts) uses of these jobs */
+  private moveKit(): MoveKit {
+    return {
+      updater: this.u, engine: this.engine, now: () => this.d.now(),
+      step: (job, name, fn) => this.step(job, name, fn),
+      ready: () => this.ready(),
+      helper: (r, u, verb, args, mounts, limitMs, source) => this.helper(r, u, verb, args, mounts, limitMs, source),
+      pins: () => this.d.pins(),
+      verifyImage: (pin) => this.verifyImage(pin),
+      renderGids: (r, d) => this.renderGids(r, d),
+      deploy: (job, d, o) => this.deploy(job, d, o),
+      snapshot: (of) => this.snapshot(null, 'auto', false, of),
+      labelled: (i, project) => this.labelled(i, project),
+      aborted: () => this.abortAsked,
+    };
   }
 
   /**
@@ -150,13 +227,13 @@ export class MediaJobs {
    * server is recreated stopped, like an update)
    */
   rebase(spec: DesiredSpec): StartResult {
-    if (this.u.busy) return { ok: false, error: 'busy' };
+    if (this.u.busy || unsettled(this.u.mediaState())) return { ok: false, error: 'busy' };
     return this.job('mediaserver-apply', (job) => this.deploy(job, spec, { reason: 'update' }));
   }
 
   /** the supervisor's recreate of a container that should run but is missing (`mediaserver-recover`) */
   recover(): StartResult {
-    if (this.u.busy) return { ok: false, error: 'busy' };
+    if (this.u.busy || unsettled(this.u.mediaState())) return { ok: false, error: 'busy' };
     if (!this.u.mediaState().desired) return NO_TARGET;
     return this.job('mediaserver-recover', (job) => this.deploy(job, specOf(this.desired()), { reason: 'recover' }));
   }
@@ -169,7 +246,8 @@ export class MediaJobs {
    */
   async phase(job: Job): Promise<'ok' | MediaError | null> {
     const m = this.u.mediaState();
-    if (!m.desired || !m.container || !m.desired.run) return null;
+    // nothing moves under an unsettled move (its abort restores the state from before it)
+    if (!m.desired || !m.container || !m.desired.run || unsettled(m)) return null;
     const read: PinRead = await this.d.pins().catch((): PinRead => ({ error: 'no_backend' }));
     // a pin read that failed goes into the deploy, whose check reports it with its code (nothing is changed)
     if (!('error' in read)) {
@@ -293,9 +371,10 @@ export class MediaJobs {
   }
 
   /** one helper run as the given user: its JSON answer, or a StepError with the helper's own code */
-  private async helper(r: Runner, u: { uid: number; gid: number; groups: number[] }, verb: HelperVerb, args: string[], mounts: HelperMount[], limitMs = HELPER_MS): Promise<Obj> {
+  /** `source`: the expected /source mount and the engine's Docker data root (facts.dockerRoot) the guard checks a bind source against */
+  private async helper(r: Runner, u: { uid: number; gid: number; groups: number[] }, verb: HelperVerb, args: string[], mounts: HelperMount[], limitMs = HELPER_MS, source?: { expect: SourceExpect; dockerRoot: string | null }): Promise<Obj> {
     const req = helperSpec({ verb, args, uid: u.uid, gid: u.gid, groups: u.groups, mounts }, r);
-    const a = await this.d.helper(this.engine, req, { project: r.project, uid: u.uid, gid: u.gid, image: r.image, verb }, limitMs);
+    const a = await this.d.helper(this.engine, req, { project: r.project, uid: u.uid, gid: u.gid, image: r.image, verb, ...(source ? { source: source.expect, dockerRoot: source.dockerRoot } : {}) }, limitMs);
     if ('error' in a) throw new StepError(isMediaError(a.error) ? a.error : 'helper_failed');
     return a;
   }
@@ -314,7 +393,7 @@ export class MediaJobs {
    * undoing what it changed (the rollback step brings the old container back). `run` is the owner's choice: true for `apply`, the
    * recorded one otherwise; a server that should not run is created but not started.
    */
-  async deploy(job: Job, d: DesiredSpec, o: { password?: string; reason: Reason }): Promise<void> {
+  async deploy(job: Job, d: DesiredSpec, o: { password?: string; reason: Reason; verified?: { digest: string; upstream: string } }): Promise<void> {
     const before = this.u.mediaState();
     const run = o.reason === 'apply' ? true : before.desired?.run ?? true;
     const t: Changes = { stopped: false, renamed: false, newId: null, started: false, snapshot: null };
@@ -322,17 +401,17 @@ export class MediaJobs {
     try {
       const c = await this.step(job, 'check', () => this.check(d, o.password, before));
       ctx = c;
-      await this.step(job, 'pull', () => this.engine.pull(c.pin.image));
+      // the move pulled and verified this very pin earlier in its job: not again while its source is stopped
+      const pre = o.verified?.digest === c.pin.digest ? o.verified : undefined;
+      if (!pre) await this.step(job, 'pull', () => this.engine.pull(c.pin.image));
       // the never-down rule and the snapshot follow the data volume, which outlives its container (remove without data, a kind switch)
       const known = dataUpstreamOf(before, d.kind);
-      const upstream = await this.step(job, 'verify', async () => {
-        const up = await this.verifyImage(c.pin);
-        if (c.dataExists && known !== undefined && older(up, known)) fail('downgrade_refused');
-        return up;
-      });
+      const downgrade = (up: string): string => (c.dataExists && known !== undefined && older(up, known) ? fail('downgrade_refused') : up);
+      const upstream = pre ? downgrade(pre.upstream) : await this.step(job, 'verify', async () => downgrade(await this.verifyImage(c.pin)));
 
-      // an existing data volume of another or an unknown version is saved before the new image touches it
-      if (c.dataExists && known !== upstream) {
+      // an existing data volume of another or an unknown version is saved before the new image touches it; never a move's copy
+      // (no version: an `unknown` snapshot of it would rotate out the real one of the Ferrofin it replaced)
+      if (c.dataExists && known !== upstream && !(d.kind === 'ferrofin' && before.moveCopy)) {
         await this.step(job, 'snapshot', async () => {
           if (c.old) { await this.engine.stop(c.old.id); t.stopped = true; }
           const of: DataOf = { kind: d.kind, upstream: known ?? UNKNOWN_UPSTREAM, user: userOf(d) };
@@ -353,6 +432,8 @@ export class MediaJobs {
         m.container = { id: made.id, kind: d.kind, digest: c.pin.digest, upstream, specHash: made.specHash };
         m.dataUpstream[d.kind] = upstream;
         m.desired = { ...d, run };
+        // a Ferrofin ran its deploy on that volume: it is a Ferrofin's data again (a move that fails after this marks it anew)
+        if (d.kind === 'ferrofin') delete m.moveCopy;
         m.lastError = null;
         m.tampered = false;
         m.renderGids = made.gids;
@@ -371,6 +452,8 @@ export class MediaJobs {
     // the pins first: every deploy records where it read them (Controller's call 18), also one that fails below
     const read: PinRead = await this.d.pins().catch((): PinRead => ({ error: 'no_backend' }));
     if (!('error' in read)) this.u.updateMedia((m) => { m.pinSource = read.source; });
+    // a request never brings migrated targets of its own (before any helper runs)
+    this.migratedExpect(d);
 
     const base = before.base ?? fail('no_base');
     const { facts, project, runner } = await this.ready();
@@ -454,25 +537,58 @@ export class MediaJobs {
     return { id: String(i.Id), kind: KINDS.find((k) => k === l['friendflix.kind']) ?? null, running: isObj(i.State) && i.State.Running === true };
   }
 
-  /** the inspect guard with the user the container runs as and the image's own facts; any refusal is `managed_tampered` */
+  /**
+   * the inspect guard with the user the container runs as and the image's own facts; any refusal is `managed_tampered`. A migrated
+   * recorded spec brings its recorded targets (the container under the real name was built from the recorded spec).
+   */
   async guardInspect(i: Obj, project: string, gpu: Gpu | undefined): Promise<void> {
     const user = /^([0-9]{1,5}):([0-9]{1,5})$/.exec(isObj(i.Config) && typeof i.Config.User === 'string' ? i.Config.User : '') ?? fail('managed_tampered');
     const img = typeof i.Image === 'string' ? await this.engine.inspectImage(i.Image).catch(() => null) : null;
-    try {
-      assertManagedInspect(i, {
-        project, kind: KINDS.find((k) => k === labelsOf(i)['friendflix.kind']) ?? fail('managed_tampered'), uid: Number(user[1]), gid: Number(user[2]),
-        repo: this.d.repo, ...(gpu ? { gpu } : {}), image: { env: img?.env ?? [], entrypoint: img?.entrypoint ?? null, cmd: img?.cmd ?? null, volumes: img?.volumes ?? [] },
-      });
-    } catch (e) {
-      if (e instanceof TemplateViolation) fail('managed_tampered');
-      throw e;
+    const kind = KINDS.find((k) => k === labelsOf(i)['friendflix.kind']) ?? fail('managed_tampered');
+    // the recorded spec built the container under the real name, a running move's folders the one its deploy creates: either passes
+    const m = this.u.mediaState();
+    const expects: Array<Pick<ManagedExpect, 'migrated'>> = [migratedOf(m.desired)];
+    if (m.move?.phase === 'running') expects.push({ migrated: { targets: m.move.folders.map((f) => f.target) } });
+    for (const ex of expects) {
+      try {
+        assertManagedInspect(i, {
+          project, kind, uid: Number(user[1]), gid: Number(user[2]),
+          repo: this.d.repo, ...(gpu ? { gpu } : {}), ...ex, image: { env: img?.env ?? [], entrypoint: img?.entrypoint ?? null, cmd: img?.cmd ?? null, volumes: img?.volumes ?? [] },
+        });
+        return;
+      } catch (e) {
+        if (!(e instanceof TemplateViolation)) throw e;
+      }
     }
+    fail('managed_tampered');
   }
 
-  /** the create body from the template, checked by the guard (a refusal throws TemplateViolation) */
+  /**
+   * The migrated folders the guard may allow, from recorded state only, never from a request: a running move's folders (taken from
+   * its scan), else the recorded desired spec's migrated folders; null = not migrated. Only the move job introduces migrated targets.
+   */
+  private recordedMigrated(): readonly Folder[] | null {
+    const m = this.u.mediaState();
+    if (m.move?.phase === 'running') return m.move.folders;
+    return m.desired?.migrated ? m.desired.folders.filter((f) => f.migrated) : null;
+  }
+
+  /**
+   * the guard's migrated expectation for a spec about to be built, from recorded state; a spec whose `migrated` flag or migrated
+   * folders (rel and target) differ from the record is refused (TemplateViolation = `template_violation`)
+   */
+  private migratedExpect(d: DesiredSpec): Pick<ManagedExpect, 'migrated'> {
+    const rec = this.recordedMigrated();
+    const key = (fs: readonly Folder[]): string => fs.map((f) => JSON.stringify([f.rel, f.target])).sort().join('\n');
+    if ((d.migrated === true) !== (rec !== null) || key(d.folders.filter((f) => f.migrated)) !== key(rec ?? [])) throw new TemplateViolation('migrated');
+    return rec ? { migrated: { targets: rec.map((f) => f.target) } } : {};
+  }
+
+  /** the create body from the template, checked by the guard (a refusal throws TemplateViolation); migrated targets only as recorded */
   private build(d: DesiredSpec, f: TemplateFacts, password: string | undefined): CreateRequest {
+    const expect = this.migratedExpect(d);
     const req = containerSpec(d, f, password !== undefined ? { password } : {});
-    assertManaged(req.body, { project: f.project, kind: d.kind, uid: d.uid, gid: d.gid, repo: this.d.repo });
+    assertManaged(req.body, { project: f.project, kind: d.kind, uid: d.uid, gid: d.gid, repo: this.d.repo, ...expect });
     return req;
   }
 
@@ -711,7 +827,7 @@ export class MediaJobs {
             const ours = v?.labels['friendflix.managed'] === label && v.labels['friendflix.project'] === found.project;
             if (ours) await this.engine.removeVolume(name);
             // a data volume that is gone takes its recorded version with it
-            if (label === 'mediaserver-data' && (v === null || ours)) this.u.updateMedia((s) => { delete s.dataUpstream[k]; });
+            if (label === 'mediaserver-data' && (v === null || ours)) this.u.updateMedia((s) => { delete s.dataUpstream[k]; if (k === 'ferrofin') delete s.moveCopy; });
           }
         }
       }
