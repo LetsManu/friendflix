@@ -29,8 +29,21 @@ export type MediaError = (typeof MEDIA_ERRORS)[number];
 
 /** the Jellyfin container a move was made from, as recorded: matched later by `/config` mount source and server id, never by id alone */
 export interface RecordedSource { id: string; name: string; image: string; config: { type: 'bind' | 'volume'; source: string }; serverId: string; version: string | null; at: string }
-/** a move in progress (or kept until acknowledged): `abort` asks the running job to stop and restart the source */
-export interface MoveState { source: RecordedSource; folders: Folder[]; phase: 'running' | 'ready' | 'aborted' | 'done'; abort: boolean }
+/** the managed container as the state records it */
+export interface MediaContainer { id: string; kind: Kind; digest: string; upstream: string; specHash: string }
+/** how far a move got, in order: recorded, copy writes begun, the source stop begun, the deploy begun, the deploy succeeded */
+export const MOVE_STAGES = ['recorded', 'copy', 'stop', 'deploy', 'deployed'] as const;
+export type MoveStage = (typeof MOVE_STAGES)[number];
+/**
+ * A move in progress (or kept until acknowledged): `abort` asks the running job to stop and restart the source. The optional fields
+ * are absent in a state from before them (a settle then guesses, as it did): `uid`/`gid` the user the move runs as (its rematch
+ * scans too); `reached` how far it got; `before` the desired spec and container an abort restores; `code` the code it failed with
+ * (kept as lastError by a later settle); `tries` the undecidable source starts so far (at 3 the move ends with source_mismatch).
+ */
+export interface MoveState {
+  source: RecordedSource; folders: Folder[]; phase: 'running' | 'ready' | 'aborted' | 'done'; abort: boolean;
+  uid?: number; gid?: number; reached?: MoveStage; before?: { desired: Desired | null; container: MediaContainer | null }; code?: MediaError; tries?: number;
+}
 
 export type BackupTag = 'manual' | 'auto' | 'upload';
 export interface BackupMeta { id: string; kind: Kind; upstream: string; at: string; tag: BackupTag; size: number }

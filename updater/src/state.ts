@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseMediaBody } from './mediaserver/parse.js';
 import { checkBasePath } from './mediaserver/paths.js';
-import { BACKUP_ID_RE, KINDS, MEDIA_ERRORS, MEDIA_JOB_ACTIONS, MEDIA_STEPS, type BackupMeta, type BackupTag, type Desired, type Folder, type HdrResult, type Kind, type MediaError, type MediaJobAction, type MediaStep, type MoveState, type RecordedSource } from './mediaserver/types.js';
+import { BACKUP_ID_RE, KINDS, MEDIA_ERRORS, MEDIA_JOB_ACTIONS, MEDIA_STEPS, type BackupMeta, type BackupTag, type Desired, type Folder, type HdrResult, type Kind, type MediaError, type MediaJobAction, type MediaStep, type MoveState, type RecordedSource, MOVE_STAGES } from './mediaserver/types.js';
 import { CHANNELS, SHA_TAG_RE, VERSION_RE, isTag, type Channel } from './policy.js';
 
 export type StepName = 'pull' | 'verify' | 'restart' | 'health' | 'rollback';
@@ -87,6 +87,11 @@ export interface MediaState {
   move?: MoveState;
   /** the Jellyfin a move was made from, kept after `done` for the way back; absent when none */
   source?: RecordedSource;
+  /**
+   * the Ferrofin data volume holds a move's copy (copy writes begun, not adopted by a finished move): no version is known for it, so
+   * neither the move nor a deploy snapshots it (a half copy would rotate out the real snapshot of an earlier Ferrofin)
+   */
+  moveCopy?: true;
 }
 
 export const DEFAULT_MEDIA: MediaState = { base: null, pending: null, desired: null, container: null, pinSource: null, backups: [], hdr: null, lastError: null, tampered: false, dataUpstream: {} };
@@ -237,7 +242,21 @@ function sanitizeMove(raw: unknown): MoveState | undefined {
     if (op?.op !== 'apply' || !op.spec.folders[0]) return undefined;
     folders.push(op.spec.folders[0]);
   }
-  return { source, folders, phase, abort: raw.abort };
+  const out: MoveState = { source, folders, phase, abort: raw.abort };
+  // the fields added later: each kept when valid, dropped on its own otherwise (a state from before them loads without)
+  const id = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 65535;
+  if (id(raw.uid) && id(raw.gid)) { out.uid = raw.uid; out.gid = raw.gid; }
+  const reached = MOVE_STAGES.find((s) => s === raw.reached);
+  if (reached) out.reached = reached;
+  if (isObj(raw.before)) {
+    const desired = raw.before.desired === null ? null : sanitizeDesired(raw.before.desired);
+    const container = raw.before.container === null ? null : sanitizeContainer(raw.before.container);
+    if ((desired !== null || raw.before.desired === null) && (container !== null || raw.before.container === null)) out.before = { desired, container };
+  }
+  const code = MEDIA_ERRORS.find((c) => c === raw.code);
+  if (code) out.code = code;
+  if (typeof raw.tries === 'number' && Number.isInteger(raw.tries) && raw.tries >= 0 && raw.tries <= 10) out.tries = raw.tries;
+  return out;
 }
 
 /** every field of the media section is re-validated on its own; a wrong one falls back to its default, its siblings survive */
@@ -261,6 +280,7 @@ export function sanitizeMedia(raw: unknown): MediaState {
     ...(renderGids ? { renderGids } : {}),
     ...(move ? { move } : {}),
     ...(source ? { source } : {}),
+    ...(o.moveCopy === true ? { moveCopy: true as const } : {}),
   };
 }
 

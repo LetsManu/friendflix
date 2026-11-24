@@ -5,7 +5,7 @@ import { EngineError, type Engine } from '../src/mediaserver/engine.js';
 import { MediaService } from '../src/mediaserver/service.js';
 import { Supervisor } from '../src/mediaserver/supervise.js';
 import { mediaStatusView } from '../src/mediaserver/status.js';
-import type { DesiredSpec, Folder, MediaOp, RecordedSource } from '../src/mediaserver/types.js';
+import type { DesiredSpec, Folder, MediaOp, MoveState, RecordedSource } from '../src/mediaserver/types.js';
 import { BASE, N, PROJECT, SOURCE, T0, ferroPin, jellyPin, world, type C, type HelperCall, type InspectMount, type Obj } from './media-world.js';
 
 /** FriendFlix's Jellyfin (its /System/Info/Public Id) and another server */
@@ -76,8 +76,10 @@ describe('the move', () => {
     const job = await w.run(w.op);
     expect(job).toMatchObject({ action: 'mediaserver-migrate', state: 'succeeded', error: null });
     expect(job.media!.steps).toEqual({ check: 'ok', pull: 'ok', verify: 'ok', snapshot: 'skipped', create: 'ok', start: 'ok', health: 'ok', rollback: 'skipped', copy_bulk: 'ok', stop_source: 'ok', copy: 'ok', adopt: 'ok' });
-    // the deploy's own check, pull and verify run again right before the create (the image is checked once more after the copy)
-    expect(w.stepLog()).toEqual(['media check', 'media pull', 'media verify', 'media copy_bulk', 'media stop_source', 'media copy', 'media check', 'media pull', 'media verify', 'media create', 'media start', 'media health', 'media adopt']);
+    // the deploy checks again, but neither pulls nor verifies the pin this job verified (no cosign run while the source is stopped)
+    expect(w.stepLog()).toEqual(['media check', 'media pull', 'media verify', 'media copy_bulk', 'media stop_source', 'media copy', 'media check', 'media create', 'media start', 'media health', 'media adopt']);
+    expect(w.verified).toEqual([ferroPin().image]);
+    expect(w.calls.filter((c) => c.startsWith('pull '))).toEqual([`pull ${ferroPin().image}`]);
 
     const order = w.calls.filter((c) => c === 'helper migrate-copy' || c === 'stop jellyfin' || c === `create ${N.container}` || c.startsWith('start '));
     expect(order).toEqual(['helper migrate-copy', 'stop jellyfin', 'helper migrate-copy', `create ${N.container}`, `start ${N.container}`]);
@@ -99,7 +101,9 @@ describe('the move', () => {
     // the source stays stopped; the move is ready for the backend's phases; recorded state is the migrated spec
     expect(w.src.running).toBe(false);
     const m = w.media();
-    expect(m.move).toEqual({ source: recorded(w), folders: FOLDERS, phase: 'ready', abort: false });
+    expect(m.move).toEqual({ source: recorded(w), folders: FOLDERS, phase: 'ready', abort: false, uid: 1000, gid: 1000, reached: 'deployed', before: { desired: null, container: null } });
+    // the copy is Ferrofin's now (adopted): no longer marked as a move's copy
+    expect(m.moveCopy).toBeUndefined();
     expect(m.source).toEqual(recorded(w));
     expect(m.desired).toEqual({ ...MSPEC, run: true });
     expect(m.dataUpstream.ferrofin).toBe('v1.5.1');
@@ -190,7 +194,14 @@ describe('the move', () => {
       })],
       ['copy', 'no_space', (w) => { w.data.copyAnswer = (c) => (c.args[0] === 'final' ? { error: 'no_space' } : null); }],
       ['check', 'gpu_missing', (w) => { w.cfg.answer = ((orig) => (c: HelperCall) => (c.verb === 'gpu' && w.calls.includes('stop jellyfin') ? { nodes: [] } : orig(c)))(w.cfg.answer); }],
-      ['verify', 'verify_failed', (w) => { w.cfg.verify = true; w.deps.verify = async () => !w.calls.includes('stop jellyfin'); }],
+      // the backend's pins changed while the source was stopped: the deploy pulls and verifies the new pin, which fails
+      ['verify', 'verify_failed', (w) => {
+        w.deps.verify = async () => !w.calls.includes('stop jellyfin');
+        w.cfg.answer = ((orig) => (c: HelperCall) => {
+          if (c.verb === 'migrate-copy' && c.args[0] === 'final') w.cfg.pins = { source: SOURCE, pins: { ferrofin: ferroPin('e'), jellyfin: jellyPin('10.11.3') }, invalid: [] };
+          return orig(c);
+        })(w.cfg.answer);
+      }],
       ['create', 'create_failed', (w) => w.patch('create', (create) => async (req) => { if (req.name === N.container) throw new EngineError(500, 'create_failed'); return create(req); })],
       ['start', 'start_failed', (w) => { w.cfg.failStart = (c: C) => c.name === N.container; }],
       ['health', 'unhealthy', (w) => { w.cfg.healthOf = () => 'unhealthy'; }],
@@ -232,8 +243,9 @@ describe('the move', () => {
       w.patch('start', (start) => async (id) => { if (id === w.src.id && broken) throw new EngineError(500, 'engine_error'); return start(id); });
       expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'helper_failed' });
       expect(w.src.running).toBe(false);
-      expect(w.media().move).toMatchObject({ phase: 'running', abort: true });
-      expect(w.media().lastError).toBe('start_failed');
+      expect(w.media().move).toMatchObject({ phase: 'running', abort: true, code: 'helper_failed' });
+      // the move's own code stays: the state says the source does not run (phase running, abort set)
+      expect(w.media().lastError).toBe('helper_failed');
       // the supervisor never recreates anything while a move is unsettled; it retries the abort
       broken = false;
       w.clock.t += 11 * MIN;
@@ -242,7 +254,7 @@ describe('the move', () => {
       expect(w.updater.snapshot().lastJob).toMatchObject({ action: 'mediaserver-migrate', state: 'succeeded' });
       expect(w.src.running).toBe(true);
       expect(w.media().move).toMatchObject({ phase: 'aborted' });
-      expect(w.media().lastError).toBe('move_aborted');
+      expect(w.media().lastError).toBe('helper_failed');
     });
   });
 
@@ -273,7 +285,10 @@ describe('the move', () => {
       expect(w.calls.slice(w.calls.indexOf(`stop ${N.container}`))).toEqual(expect.arrayContaining([`remove ${N.container}`, 'start jellyfin']));
       expect(w.containers.has(created.id)).toBe(false);
       expectAborted(w, 'move_aborted');
-      expect(w.media().desired).toMatchObject({ migrated: true, run: false });
+      // the state from before the move is back: no managed server (FriendFlix never adopted one), the base can change again
+      expect(w.media().desired).toBeNull();
+      expect(w.media().moveCopy).toBe(true);
+      expect(w.media().dataUpstream.ferrofin).toBeUndefined();
       // nothing more to abort
       expect(w.jobs.start({ op: 'migrate-abort' })).toEqual({ ok: false, error: 'no_target' });
     });
@@ -346,15 +361,19 @@ describe('the source op (the way back)', () => {
     for (const c of [copy, other, fake]) expect(c.running).toBe(false);
     expect(w.calls.filter((c) => c.startsWith('start '))).toEqual(['start jellyfin']);
 
-    // the recorded one gone: source_missing, the others stay untouched
+    // the recorded one gone, another container still on its /config (not a Jellyfin): source_mismatch, the others stay untouched
     w.containers.delete(w.src.id);
-    expect(await w.run({ op: 'source-start' })).toMatchObject({ state: 'failed', error: 'source_missing' });
+    expect(await w.run({ op: 'source-start' })).toMatchObject({ state: 'failed', error: 'source_mismatch' });
     for (const c of [copy, other, fake]) expect(c.running).toBe(false);
     // a container on the recorded /config whose server id changed is not the source either
     const swapped = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.3', mounts: [bind(CONF, '/config')], running: false });
     w.cfg.servers.set(CONF, OTHER);
-    expect(await w.run({ op: 'source-start' })).toMatchObject({ state: 'failed', error: 'source_missing' });
+    expect(await w.run({ op: 'source-start' })).toMatchObject({ state: 'failed', error: 'source_mismatch' });
     expect(swapped.running).toBe(false);
+    // nothing mounts that /config any more: gone for good
+    w.containers.delete(swapped.id);
+    w.containers.delete(fake.id);
+    expect(await w.run({ op: 'source-start' })).toMatchObject({ state: 'failed', error: 'source_missing' });
   });
 
   it('source-start rematches a recreated source and records its new id', async () => {
@@ -429,6 +448,7 @@ describe('carried over from the earlier tasks', () => {
   it('the whole base (rel "") is the parent of every other folder', async () => {
     const w = setup({ mounts: [bind(CONF, '/config'), bind(BASE, '/media')] });
     expect(await w.run(w.op)).toMatchObject({ state: 'succeeded' });
+    expect(w.jobs.migrateDone()).toBe(true);
     expect(w.media().desired!.folders).toEqual([{ rel: '', target: '/media', migrated: true }]);
     // the folder check got the whole base too
     expect(w.helperCalls.filter((c) => c.verb === 'check' && c.args[0] === 'folders').map((c) => c.args[1])).toContain('[""]');
@@ -469,5 +489,193 @@ describe('carried over from the earlier tasks', () => {
     const fv = await mediaStatusView({ updater: f.updater, engine: f.deps.engine, jobs: f.jobs, facts: f.deps.facts, pins: f.deps.pins, templateState: async () => null, now: () => f.clock.t, ttlMs: 0 })();
     expect(fv.move).toMatchObject({ phase: 'aborted', step: 'adopt' });
     expect(fv.source).toMatchObject({ state: 'running' });
+  });
+});
+
+describe('review round 1', () => {
+  /** a move the updater left unfinished, as the job records it (stage reached, its user, the state before it) */
+  const unfinished = (w: W, reached: NonNullable<MoveState['reached']>, x: Partial<MoveState> = {}): void => {
+    w.updater.updateMedia((m) => {
+      m.move = { source: recorded(w), folders: FOLDERS, phase: 'running', abort: false, uid: 1000, gid: 1000, reached, before: { desired: null, container: null }, ...x };
+    });
+  };
+  const settleAtStart = async (w: W): Promise<void> => { await w.sup.startup(); await w.updater.idle(); };
+
+  describe('a settle after a restart does what the job would have done', () => {
+    it('copy begun, source never stopped by the move: not started, the volume is marked as a copy', async () => {
+      const w = setup();
+      w.updater.updateMedia((m) => { m.dataUpstream.ferrofin = 'v1.5.1'; });
+      unfinished(w, 'copy');
+      // the owner stopped it: the move never did, so it does not start it
+      w.src.running = false;
+      await settleAtStart(w);
+      expect(w.src.running).toBe(false);
+      expect(w.calls.includes('start jellyfin')).toBe(false);
+      expect(w.media()).toMatchObject({ move: { phase: 'aborted' }, lastError: 'move_aborted', moveCopy: true, desired: null });
+      expect(w.media().dataUpstream.ferrofin).toBeUndefined();
+    });
+
+    it('deploy begun: the container it made goes, the one from before stays, the source starts as the move user', async () => {
+      const w = setup();
+      const { migrated: _m, ...plain } = MSPEC;
+      const before = w.existing({ ...plain, folders: [{ rel: 'Filme', target: '/media/filme' }] }, ferroPin(), 'v1.5.1', { run: false });
+      const rec = w.media();
+      // the deploy renamed the old one aside and created the new one, then the updater stopped
+      before.name = N.old;
+      const made = w.existing(MSPEC, ferroPin(), 'v1.5.1');
+      w.updater.updateMedia((m) => { m.container = rec.container; m.desired = rec.desired; });
+      unfinished(w, 'deploy', { uid: 1500, gid: 1500, before: { desired: rec.desired, container: rec.container } });
+      w.src.running = false;
+      await settleAtStart(w);
+      expect(w.containers.has(made.id)).toBe(false);
+      expect(w.find(N.container)?.id).toBe(before.id);
+      expect(w.src.running).toBe(true);
+      expect(w.media()).toMatchObject({ move: { phase: 'aborted' }, desired: rec.desired, container: rec.container });
+      expect(w.helperCalls.filter((c) => c.verb === 'migrate-scan').map((c) => c.user)).toEqual(['1500:1500']);
+    });
+  });
+
+  it('a repeated move that fails after copy_bulk twice keeps the first snapshot of the earlier Ferrofin', async () => {
+    const w = setup();
+    await w.run(w.op);
+    w.jobs.migrateDone();
+    await w.run({ op: 'source-start' });
+    await w.run({ op: 'stop' });
+    const earlier = w.media();
+    w.data.adopted = false;
+    w.data.copyAnswer = (c) => (c.args[0] === 'final' ? { error: 'helper_failed' } : null);
+    expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'helper_failed' });
+    const first = w.media().backups.filter((b) => b.tag === 'auto');
+    expect(first).toHaveLength(1);
+    // the earlier state is back (the earlier Ferrofin, not set to run on the copy), the volume marked as a copy
+    expect(w.media()).toMatchObject({ desired: earlier.desired, container: earlier.container, moveCopy: true });
+    expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'helper_failed' });
+    w.data.copyAnswer = () => null;
+    expect(await w.run(w.op)).toMatchObject({ state: 'succeeded' });
+    expect(w.helperCalls.filter((c) => c.verb === 'backup')).toHaveLength(1);
+    expect(w.media().backups.filter((b) => b.tag === 'auto')).toEqual(first);
+    expect(w.media().moveCopy).toBeUndefined();
+  });
+
+  describe('an abort restores the state from before the move', () => {
+    it('a first move aborted after its deploy: no managed server, the base can change', async () => {
+      const w = setup();
+      w.cfg.healthOf = () => 'healthy';
+      expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'adopt_failed' });
+      expect(w.media()).toMatchObject({ desired: null, container: null, move: { phase: 'aborted' } });
+      const service = new MediaService(w.deps, w.jobs);
+      w.updater.updateMedia((m) => { m.pending = { path: '/srv/other', codeHash: 'a'.repeat(64), expiresAt: new Date(w.clock.t + 10 * MIN).toISOString(), failures: 0 }; });
+      expect(await service.confirm('AAAA-BBBB-CCCC')).toEqual({ result: 'wrong' });
+    });
+
+    it('a repeated move aborted before its deploy: the earlier Ferrofin record is back as it was', async () => {
+      const w = setup();
+      await w.run(w.op);
+      w.jobs.migrateDone();
+      await w.run({ op: 'source-start' });
+      await w.run({ op: 'stop' });
+      const earlier = w.media();
+      w.data.copyAnswer = (c) => { if (c.args[0] === 'final') w.jobs.start({ op: 'migrate-abort' }); return null; };
+      expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'move_aborted' });
+      expect(w.media().desired).toEqual(earlier.desired);
+      expect(w.media().container).toEqual(earlier.container);
+      expect(w.containers.has(earlier.container!.id)).toBe(true);
+      expect(w.src.running).toBe(true);
+    });
+  });
+
+  describe('a source that cannot be started', () => {
+    it('gone for good (nothing mounts its /config): the move ends with source_missing', async () => {
+      const w = setup();
+      w.patch('stop', (stop) => async (id, t) => { await stop(id, t); if (id === w.src.id) w.containers.delete(id); });
+      w.data.copyAnswer = (c) => (c.args[0] === 'final' ? { error: 'helper_failed' } : null);
+      expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'helper_failed' });
+      expect(w.media()).toMatchObject({ move: { phase: 'aborted' }, lastError: 'source_missing' });
+      // nothing is locked: another move may start
+      expect(w.jobs.start({ op: 'hdr-test', kind: 'ferrofin' })).toMatchObject({ ok: true });
+      await w.updater.idle();
+    });
+
+    it('not decidable (two containers on its /config): retried, after 3 tries source_mismatch', async () => {
+      const w = setup();
+      const twins: C[] = [];
+      w.patch('stop', (stop) => async (id, t) => {
+        await stop(id, t);
+        if (id === w.src.id) {
+          w.containers.delete(id);
+          for (const name of ['jellyfin-a', 'jellyfin-b']) twins.push(w.foreign({ name, image: 'jellyfin/jellyfin:10.11.3', mounts: MOUNTS, running: false }));
+        }
+      });
+      w.data.copyAnswer = (c) => (c.args[0] === 'final' ? { error: 'helper_failed' } : null);
+      expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'helper_failed' });
+      expect(w.media()).toMatchObject({ move: { phase: 'running', abort: true, tries: 1 }, lastError: 'helper_failed' });
+      for (const tries of [2, 3]) {
+        w.clock.t += 11 * MIN;
+        expect(await w.sup.tick()).toBe('move');
+        await w.updater.idle();
+        if (tries < 3) expect(w.media().move).toMatchObject({ phase: 'running', tries });
+      }
+      expect(w.media()).toMatchObject({ move: { phase: 'aborted' }, lastError: 'source_mismatch' });
+      expect(twins.every((c) => !c.running)).toBe(true);
+    });
+
+    it('remove settles an unsettled move first, and removes nothing when it cannot', async () => {
+      const w = setup();
+      unfinished(w, 'stop');
+      w.src.running = false;
+      let broken = true;
+      w.patch('start', (start) => async (id) => { if (id === w.src.id && broken) throw new EngineError(500, 'engine_error'); return start(id); });
+      const made = w.existing(MSPEC, ferroPin(), 'v1.5.1', { run: false });
+      w.updater.updateMedia((m) => { m.move!.before = { desired: m.desired, container: m.container }; });
+      expect(await w.run({ op: 'remove', data: false })).toMatchObject({ action: 'mediaserver-remove', state: 'failed', error: 'start_failed' });
+      expect(w.containers.has(made.id)).toBe(true);
+      broken = false;
+      expect(await w.run({ op: 'remove', data: false })).toMatchObject({ state: 'succeeded' });
+      expect(w.src.running).toBe(true);
+      expect(w.containers.has(made.id)).toBe(false);
+      expect(w.media()).toMatchObject({ move: { phase: 'aborted' }, desired: null, container: null });
+    });
+  });
+
+  it('while a move is unsettled every other media job is busy', async () => {
+    const w = setup();
+    w.existing(MSPEC, ferroPin(), 'v1.5.1');
+    for (const phase of ['running', 'ready'] as const) {
+      unfinished(w, 'deployed', { phase });
+      for (const op of [
+        { op: 'apply', spec: MSPEC }, { op: 'finish-setup' }, { op: 'start' }, { op: 'stop' }, { op: 'restart' }, { op: 'update' },
+        { op: 'hdr-test', kind: 'ferrofin' }, { op: 'backup', trickplay: false }, { op: 'restore', id: 'ferrofin-20261117-1402-v1.5.1' }, w.op,
+      ] as Parameters<typeof w.jobs.start>[0][]) expect(w.jobs.start(op), `${phase} ${op.op}`).toEqual({ ok: false, error: 'busy' });
+      expect(w.jobs.recover(), phase).toEqual({ ok: false, error: 'busy' });
+      expect(w.jobs.rebase(MSPEC), phase).toEqual({ ok: false, error: 'busy' });
+    }
+    expect(w.jobs.start({ op: 'source-start' })).toMatchObject({ ok: true });
+    await w.updater.idle();
+  });
+
+  it('an abort that arrives while the job still checks stops it before anything is pulled', async () => {
+    const w = setup();
+    const answers: unknown[] = [];
+    w.cfg.answer = ((orig) => (c: HelperCall) => {
+      if (c.verb === 'migrate-scan' && c.args.length === 0 && answers.length === 0) answers.push(w.jobs.start({ op: 'migrate-abort' }));
+      return orig(c);
+    })(w.cfg.answer);
+    expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'move_aborted' });
+    expect(answers).toEqual([{ ok: true, job: expect.objectContaining({ action: 'mediaserver-migrate' }) }]);
+    expect(w.calls.some((c) => c.startsWith('pull '))).toBe(false);
+    expect(w.src.running).toBe(true);
+    expect(w.media().move).toMatchObject({ phase: 'aborted' });
+    // the next move is not aborted by it
+    expect(await w.run(w.op)).toMatchObject({ state: 'succeeded' });
+  });
+
+  it('the source is not stopped when the move record cannot be written', async () => {
+    const w = setup();
+    const save = w.store.save.bind(w.store);
+    w.store.save = (s) => { if (s.media.move?.reached === 'stop') throw new Error('disk full'); save(s); };
+    expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'helper_failed' });
+    expect(w.updater.snapshot().lastJob!.media!.steps.stop_source).toBe('failed');
+    expect(w.calls.includes('stop jellyfin')).toBe(false);
+    expect(w.src.running).toBe(true);
   });
 });

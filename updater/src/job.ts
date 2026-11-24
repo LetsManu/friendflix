@@ -223,6 +223,15 @@ export class Updater {
   }
 
   /**
+   * as updateMedia, but a state file that cannot be written throws (the change stays in memory): for a record that must be on disk
+   * before what it guards happens (a move is recorded before its source is stopped)
+   */
+  updateMediaDurably(fn: (m: MediaState) => void): void {
+    fn(this.state.media);
+    this.store.save(this.state);
+  }
+
+  /**
    * a media job (no core step runs: pull, verify, restart, health and rollback are skipped, every media step starts pending).
    * `to` is what the stack last ran (else the channel's tag). Same lock as every other job; `run` does the work on the live job
    * and ends it with finishJob. A `run` that throws instead ends the job `failed` with a fixed code.

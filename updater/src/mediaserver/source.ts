@@ -279,6 +279,19 @@ export async function rematch(deps: Pick<SourceDeps, 'engine' | 'scan'>, recorde
   return (await serverIdOf(deps, recorded.config)) === recorded.serverId ? chosen : null;
 }
 
+/**
+ * how many containers on this engine (any image, running or not) mount this /config: 0 means the recorded source is gone for good
+ * (nothing could become it again); an inspect that fails throws (not decidable now, never read as gone)
+ */
+export async function onConfig(engine: Engine, config: SourceConfig): Promise<number> {
+  let n = 0;
+  for (const l of await engine.allContainers()) {
+    const i = await engine.inspectContainer(l.id);
+    if (i && sameConfig(configOf(i), config)) n++;
+  }
+  return n;
+}
+
 /** the candidate list for the move sheet: each with `matches` from a scan of its server id (the first MAX_SCANNED; null beyond) */
 export async function listCandidates(deps: Pick<SourceDeps, 'engine' | 'scan'>, expectServerId: string): Promise<Array<Candidate & { matches: boolean | null }>> {
   const all = await candidates(deps.engine);

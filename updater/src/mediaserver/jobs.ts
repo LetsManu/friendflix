@@ -85,9 +85,14 @@ const migratedOf = (d: Pick<DesiredSpec, 'migrated' | 'folders'> | null | undefi
   (d?.migrated ? { migrated: { targets: d.folders.filter((f) => f.migrated).map((f) => f.target) } } : {});
 const userOf = (d: { uid: number; gid: number; mediaGid: number | null } | null) =>
   ({ uid: d?.uid ?? DEFAULT_USER.uid, gid: d?.gid ?? DEFAULT_USER.gid, groups: d?.mediaGid ? [d.mediaGid] : [] });
-/** the upstream a kind's data volume is at: recorded per kind, else (a state from before the record) the container's own */
+/**
+ * the upstream a kind's data volume is at: recorded per kind, else (a state from before the record) the container's own; never the
+ * container's for a Ferrofin volume holding a move's copy (that copy has no version)
+ */
 const dataUpstreamOf = (m: MediaState, kind: Kind): string | undefined =>
-  m.dataUpstream[kind] ?? (m.container?.kind === kind ? m.container.upstream : undefined);
+  m.dataUpstream[kind] ?? (m.container?.kind === kind && !(kind === 'ferrofin' && m.moveCopy) ? m.container.upstream : undefined);
+/** a move that exists and is not finished (`running`, `ready`): every other media job waits for it */
+const unsettled = (m: MediaState): boolean => m.move !== undefined && m.move.phase !== 'done' && m.move.phase !== 'aborted';
 const labelsOf = (i: Obj): Record<string, unknown> => (isObj(i.Config) && isObj(i.Config.Labels) ? i.Config.Labels : {});
 
 /** the render nodes a `gpu` helper reported (a gid 0 is kept: the template refuses it) */
@@ -109,6 +114,8 @@ interface Changes { stopped: boolean; renamed: boolean; newId: string | null; st
 
 export class MediaJobs {
   private readonly healthMs: number;
+  /** an abort asked for while the running move job had not recorded its move yet (also set once it has) */
+  private abortAsked = false;
   private readonly intervalMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
 
@@ -127,10 +134,11 @@ export class MediaJobs {
     if (this.u.busy) return BUSY;
     const desired = this.u.mediaState().desired;
     const move = this.u.mediaState().move;
+    // an unsettled move (or one the backend has not finished) first: only its abort, the source start and remove (which aborts it)
+    if (unsettled(this.u.mediaState()) && op.op !== 'source-start' && op.op !== 'remove') return BUSY;
     switch (op.op) {
       case 'migrate':
-        // one move at a time: an unsettled one (running) or one the backend has not finished (ready) first
-        if (move?.phase === 'running' || move?.phase === 'ready') return BUSY;
+        this.abortAsked = false;
         return this.job('mediaserver-migrate', (job) => migrateJob(this.moveKit(), job, op));
       case 'source-start':
         if (!this.u.mediaState().source && !move) return NO_TARGET;
@@ -159,7 +167,11 @@ export class MediaJobs {
         if (backupInUse(op.id)) return { ok: false, error: 'busy' };
         return this.job('mediaserver-restore', (job) => restoreJob(this.kit(), job, op.id));
       case 'remove':
-        return this.job('mediaserver-remove', (job) => this.remove(job, op.data));
+        // an unsettled move is aborted first (its source started); a remove that cannot settle it removes nothing
+        return this.job('mediaserver-remove', async (job) => {
+          if (unsettled(this.u.mediaState())) await abortJob(this.moveKit());
+          await this.remove(job, op.data);
+        });
     }
   }
 
@@ -171,8 +183,10 @@ export class MediaJobs {
     const move = this.u.mediaState().move;
     if (this.u.busy) {
       const j = this.u.snapshot().lastJob;
-      if (move?.phase !== 'running' || j?.action !== 'mediaserver-migrate' || j.state !== 'running') return BUSY;
-      this.u.updateMedia((m) => { if (m.move) m.move.abort = true; });
+      // the move's job, also while it still checks (no move recorded yet: the in-memory flag carries it)
+      if (j?.action !== 'mediaserver-migrate' || j.state !== 'running' || (move !== undefined && move.phase !== 'running' && move.phase !== 'aborted')) return BUSY;
+      this.abortAsked = true;
+      this.u.updateMedia((m) => { if (m.move?.phase === 'running') m.move.abort = true; });
       this.u.log.add('media move abort requested');
       return { ok: true, job: j };
     }
@@ -204,6 +218,7 @@ export class MediaJobs {
       deploy: (job, d, o) => this.deploy(job, d, o),
       snapshot: (of) => this.snapshot(null, 'auto', false, of),
       labelled: (i, project) => this.labelled(i, project),
+      aborted: () => this.abortAsked,
     };
   }
 
@@ -212,13 +227,13 @@ export class MediaJobs {
    * server is recreated stopped, like an update)
    */
   rebase(spec: DesiredSpec): StartResult {
-    if (this.u.busy) return { ok: false, error: 'busy' };
+    if (this.u.busy || unsettled(this.u.mediaState())) return { ok: false, error: 'busy' };
     return this.job('mediaserver-apply', (job) => this.deploy(job, spec, { reason: 'update' }));
   }
 
   /** the supervisor's recreate of a container that should run but is missing (`mediaserver-recover`) */
   recover(): StartResult {
-    if (this.u.busy) return { ok: false, error: 'busy' };
+    if (this.u.busy || unsettled(this.u.mediaState())) return { ok: false, error: 'busy' };
     if (!this.u.mediaState().desired) return NO_TARGET;
     return this.job('mediaserver-recover', (job) => this.deploy(job, specOf(this.desired()), { reason: 'recover' }));
   }
@@ -231,7 +246,8 @@ export class MediaJobs {
    */
   async phase(job: Job): Promise<'ok' | MediaError | null> {
     const m = this.u.mediaState();
-    if (!m.desired || !m.container || !m.desired.run) return null;
+    // nothing moves under an unsettled move (its abort restores the state from before it)
+    if (!m.desired || !m.container || !m.desired.run || unsettled(m)) return null;
     const read: PinRead = await this.d.pins().catch((): PinRead => ({ error: 'no_backend' }));
     // a pin read that failed goes into the deploy, whose check reports it with its code (nothing is changed)
     if (!('error' in read)) {
@@ -377,7 +393,7 @@ export class MediaJobs {
    * undoing what it changed (the rollback step brings the old container back). `run` is the owner's choice: true for `apply`, the
    * recorded one otherwise; a server that should not run is created but not started.
    */
-  async deploy(job: Job, d: DesiredSpec, o: { password?: string; reason: Reason }): Promise<void> {
+  async deploy(job: Job, d: DesiredSpec, o: { password?: string; reason: Reason; verified?: { digest: string; upstream: string } }): Promise<void> {
     const before = this.u.mediaState();
     const run = o.reason === 'apply' ? true : before.desired?.run ?? true;
     const t: Changes = { stopped: false, renamed: false, newId: null, started: false, snapshot: null };
@@ -385,17 +401,17 @@ export class MediaJobs {
     try {
       const c = await this.step(job, 'check', () => this.check(d, o.password, before));
       ctx = c;
-      await this.step(job, 'pull', () => this.engine.pull(c.pin.image));
+      // the move pulled and verified this very pin earlier in its job: not again while its source is stopped
+      const pre = o.verified?.digest === c.pin.digest ? o.verified : undefined;
+      if (!pre) await this.step(job, 'pull', () => this.engine.pull(c.pin.image));
       // the never-down rule and the snapshot follow the data volume, which outlives its container (remove without data, a kind switch)
       const known = dataUpstreamOf(before, d.kind);
-      const upstream = await this.step(job, 'verify', async () => {
-        const up = await this.verifyImage(c.pin);
-        if (c.dataExists && known !== undefined && older(up, known)) fail('downgrade_refused');
-        return up;
-      });
+      const downgrade = (up: string): string => (c.dataExists && known !== undefined && older(up, known) ? fail('downgrade_refused') : up);
+      const upstream = pre ? downgrade(pre.upstream) : await this.step(job, 'verify', async () => downgrade(await this.verifyImage(c.pin)));
 
-      // an existing data volume of another or an unknown version is saved before the new image touches it
-      if (c.dataExists && known !== upstream) {
+      // an existing data volume of another or an unknown version is saved before the new image touches it; never a move's copy
+      // (no version: an `unknown` snapshot of it would rotate out the real one of the Ferrofin it replaced)
+      if (c.dataExists && known !== upstream && !(d.kind === 'ferrofin' && before.moveCopy)) {
         await this.step(job, 'snapshot', async () => {
           if (c.old) { await this.engine.stop(c.old.id); t.stopped = true; }
           const of: DataOf = { kind: d.kind, upstream: known ?? UNKNOWN_UPSTREAM, user: userOf(d) };
@@ -809,7 +825,7 @@ export class MediaJobs {
             const ours = v?.labels['friendflix.managed'] === label && v.labels['friendflix.project'] === found.project;
             if (ours) await this.engine.removeVolume(name);
             // a data volume that is gone takes its recorded version with it
-            if (label === 'mediaserver-data' && (v === null || ours)) this.u.updateMedia((s) => { delete s.dataUpstream[k]; });
+            if (label === 'mediaserver-data' && (v === null || ours)) this.u.updateMedia((s) => { delete s.dataUpstream[k]; if (k === 'ferrofin') delete s.moveCopy; });
           }
         }
       }

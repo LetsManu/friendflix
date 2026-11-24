@@ -576,7 +576,16 @@ describe('a migrated server (stage 2)', () => {
     const migrated = MSPEC.folders.filter((f) => f.migrated);
     const source = { id: 'c'.repeat(64), name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.3', config: { type: 'bind' as const, source: '/opt/jellyfin/config' }, serverId: 'd'.repeat(32), version: '10.11.3', at: new Date(T0).toISOString() };
     w.updater.updateMedia((m) => { m.move = { source, folders: migrated, phase: 'running', abort: false }; });
-    expect(await w.run({ op: 'apply', spec: { ...MSPEC, folders: migrated } })).toMatchObject({ state: 'succeeded' });
+    // only the move's own deploy runs while it is unsettled: an apply is busy
+    expect(w.jobs.start({ op: 'apply', spec: { ...MSPEC, folders: migrated } })).toEqual({ ok: false, error: 'busy' });
+    // the deploy as the move job runs it
+    const started = w.updater.startMediaJob('mediaserver-migrate', async (job) => {
+      await w.jobs.deploy(job, { ...MSPEC, folders: migrated }, { reason: 'apply' });
+      w.updater.finishJob(job, 'succeeded', null);
+    });
+    expect(started.ok).toBe(true);
+    await w.updater.idle();
+    expect(w.updater.snapshot().lastJob).toMatchObject({ state: 'succeeded' });
     const body = w.created.at(-1)!.body as { HostConfig: { Mounts: { Target: string }[] } };
     expect(body.HostConfig.Mounts.map((m) => m.Target)).toEqual(['/ferrofin-data', '/cache', '/movies', '/data/tv']);
   });
