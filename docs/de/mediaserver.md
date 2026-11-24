@@ -128,7 +128,9 @@ Assistent weitergeht.
   nichts geprüft: Ein Share, das verschwindet, während der Server weiterläuft, fällt erst auf, wenn der Server das nächste Mal
   stoppt oder neu angelegt wird.
 - **Entfernen** behält die Daten-, Cache- und Sicherungs-Volumes; *Daten löschen* (mit Eingabe des Namens der Art) entfernt Daten und
-  Cache beider Arten (auch die, die ein Wechsel zurückließ), nie die Sicherungen. Danach geht FriendFlix zum gespeicherten externen Server zurück, wenn es einen gibt.
+  Cache beider Arten (auch die, die ein Wechsel zurückließ), nie die Sicherungen. Danach nutzt FriendFlix wieder einen bestehenden
+  Server: Trag seine Adresse unten ein. Ein umgezogener Server wird nicht entfernt, solange sein alter Jellyfin-Container da ist
+  (`use_way_back`): Sein Weg hinaus ist *Zurück zu Jellyfin* ([Umzug von Jellyfin](#umzug-von-jellyfin)).
 - **Systemcheck:** Die Zeile *Verwalteter Medienserver* (`media.managed`) meldet einen fehlenden oder ungesunden Container, einen
   Basisordner oder Ordner, den eine dieser Prüfungen nicht gefunden hat (zum Beispiel ein nicht eingehängtes NAS-Share), eine
   fehlende GPU, einen fehlgeschlagenen Auftrag (`managed_job_failed`), ein Image, das länger als 7 Tage vom festgelegten Stand
@@ -171,7 +173,10 @@ cosign geprüft; das von Jellyfin ist `docker.io/jellyfin/jellyfin:<Tag>@sha256:
 - *Sicherung* stoppt den Server kurz, und ein Helfer schreibt `<Art>-<JJJJMMTT-HHMM>-<Upstream>.tar.gz` des Daten-Volumes (ohne Logs
   und Transkodierungen, Trickplay auf Wunsch) in das Volume `<Projekt>_mediaserver-backup`, dann startet er ihn wieder. Behalten
   werden die letzten 3 manuellen (und hochgeladenen) und die letzten 2 automatischen Sicherungen.
-- *Wiederherstellen* geht innerhalb derselben Art und lehnt eine Sicherung aus einer neueren Upstream-Version ab.
+- *Wiederherstellen* geht innerhalb derselben Art und lehnt eine Sicherung aus einer neueren Upstream-Version ab. Auf einem
+  umgezogenen Server nimmt es nur Sicherungen ab dem Umzug (eine hochgeladene zählt nach dem Tag, an dem ihr Archiv entstand): Eine
+  ältere sagt *vor dem Umzug: nicht wiederherstellbar* und wird abgelehnt (`backup_premove`), denn ihre Benutzer und Titel haben
+  andere IDs.
 - **Der verschlüsselte Download ist die Kopie, die den Host verlässt.** *Herunterladen* fragt nach einer Passphrase (mindestens 12
   Zeichen, zweimal eingegeben, nie gespeichert) und einer frischen Anmeldung. Der Updater streamt das Archiv verschlüsselt im
   offenen [age](https://age-encryption.org)-Format (scrypt-Passphrase) als `<id>.tar.gz.age`; das unverschlüsselte Archiv verlässt den
@@ -225,14 +230,16 @@ der Kopie gestoppt und aufbewahrt.
 
 - **Jellyfin auf diesem Docker-Host**, das offizielle Image (`jellyfin/jellyfin`) oder das von linuxserver (`linuxserver/jellyfin`),
   als Container des FriendFlix-Stacks oder eines eigenen Stacks. Ein Jellyfin auf einem anderen Rechner oder NAS wird so nicht
-  umgezogen. Es muss der Server sein, den FriendFlix gerade nutzt: Der Updater vergleicht die Server-ID der Adresse in FriendFlix mit
-  der ID in `/config` jedes Containers (nicht den Containernamen), eine Reverse-Proxy-Adresse geht also auch. Passen mehrere Container (Kopien
-  eines Servers), wählst du einen nach Namen.
-- **Jellyfin 10.10 oder 10.11** (sonst `source_version`: Ferrofin kann keine Version außerhalb dessen übernehmen, was es unterstützt).
-- **Alle Medien im Basisordner.** Jeder Medien-Mount des Jellyfin-Containers muss unter dem Medien-Basisordner liegen, den du mit dem
-  Code bestätigst ([Einrichten](#einrichten), Schritt 1). Ein Mount außerhalb ist `source_outside_base`: Das Blatt listet die
+  umgezogen. Es muss der Server sein, den FriendFlix gerade nutzt: Der Updater vergleicht die Server-ID der Adresse in FriendFlix
+  mit der ID in `/config` jedes Containers (nicht den Containernamen), eine Reverse-Proxy-Adresse geht also auch. Passen mehrere
+  Container (Kopien eines Servers), wählst du einen nach Namen.
+- **Jellyfin 10.10 oder 10.11** (sonst `source_version`: Ferrofin kann keine Version außerhalb dessen übernehmen, was es
+  unterstützt).
+- **Alle Medien im Basisordner.** Jeder Medien-Mount des Jellyfin-Containers muss unter dem Medien-Basisordner liegen, den du mit
+  dem Code bestätigst ([Einrichten](#einrichten), Schritt 1). Ein Mount außerhalb ist `source_outside_base`: Das Blatt listet die
   Container-Pfade (nie Host-Pfade), und *Basisordner ändern* wiederholt den Code-Schritt mit einem Ordner, der alle enthält. Der
-  mitgelieferte Dienst `jellyfin` bindet das ganze `MEDIA_PATH` ein: Dieser Basisordner passt, Ferrofin sieht dann den ganzen Basisordner.
+  mitgelieferte Dienst `jellyfin` bindet das ganze `MEDIA_PATH` ein: Dieser Basisordner passt, Ferrofin sieht dann den ganzen
+  Basisordner.
 - **Freier Platz** im Docker-Datenverzeichnis von mindestens der Größe der Kopie plus einem Fünftel (`no_space`).
 - **Keine festgelegte Adresse und kein Plex**, wie bei den anderen verwalteten Auswahlmöglichkeiten (`url_pinned`).
 - **Admin und eine frische Anmeldung** für *Umziehen* und *Zurück zu Jellyfin*.
@@ -247,9 +254,10 @@ Ausfallzeit ist eine Obergrenze (*bis zu etwa N Minuten*).
 Jellyfins Einstellungsdateien, mit dem Container-Benutzer als Besitzer; Trickplay nur, wenn du es angehakt hast. Die **Kopie**, nie
 dein Jellyfin, bekommt einige angepasste Einstellungen, damit sie zum verwalteten Container passen: `BaseUrl` leer, HTTP auf 8096
 und HTTPS aus, die Docker-Netze als lokal gezählt, Ferrofins ffmpeg-Pfad, der Transcode-Ordner unter `/cache`, die
-Hardwarebeschleunigung aus der GPU-Erkennung, und eigene Pfade für Metadaten und Cache zurück auf die Standardwerte. Das Auftragsprotokoll
-nennt jede angepasste Einstellung beim Namen, nie mit dem Wert. Der **NFO-Speicher wird** auf der Kopie **abgeschaltet** (die Medien
-sind schreibgeschützt). **Plugins werden nicht übernommen**: Ferrofin führt sie nicht aus; das Blatt listet ihre Namen.
+Hardwarebeschleunigung aus der GPU-Erkennung, und eigene Pfade für Metadaten und Cache zurück auf die Standardwerte. Das
+Auftragsprotokoll nennt jede angepasste Einstellung beim Namen, nie mit dem Wert. Der **NFO-Speicher wird** auf der Kopie
+**abgeschaltet** (die Medien sind schreibgeschützt). **Plugins werden nicht übernommen**: Ferrofin führt sie nicht aus; das Blatt
+listet ihre Namen.
 
 **Wie es abläuft.** Eine Bestätigung, dann ein Auftrag mit Schrittliste (der Schritt, in dem ein gescheiterter Umzug stehen blieb,
 ist markiert):
@@ -257,46 +265,55 @@ ist markiert):
 1. *Prüfen:* Die Prüfung ist aktuell, der Platz ist da, das Ferrofin-Image ist festgelegt und verifiziert.
 2. *Daten kopieren (Jellyfin läuft weiter):* alles außer den Datenbankdateien, lesend auf deinem Jellyfin. Das ist auf einem NAS der
    lange Teil und stört niemanden.
-3. *Jellyfin stoppen, Datenbank und die Änderungen seit Schritt 2 kopieren.* **Von hier bis zur Umstellung kann niemand
-   abspielen** (laufende Wiedergaben brechen ab); was dazwischen geschaut wird, geht nicht verloren, denn Jellyfin ist gestoppt und Ferrofin noch nicht in Gebrauch. Ein früheres
-   Ferrofin-Daten-Volume (bei einem wiederholten Umzug) wird vorher als Sicherung gesichert.
+3. *Jellyfin stoppen, Datenbank und die Änderungen seit Schritt 2 kopieren.* Laufende Wiedergaben brechen ab. Bis zur Umstellung
+   geht nichts verloren: **Niemand kann abspielen, und dazwischen wird nichts geschrieben.** Ein früheres Ferrofin-Daten-Volume
+   (bei einem wiederholten Umzug) wird vorher als Sicherung gesichert.
 4. *Ferrofin anlegen und starten* mit den kopierten Daten und deinen Medienordnern schreibgeschützt unter ihren alten Pfaden,
    *warten, bis es bereit ist*, und bis es die Daten übernommen hat (sonst `adopt_failed`).
 5. *Benutzer und Titel prüfen:* Mit dem kopierten API-Schlüssel muss jeder verknüpfte Benutzer auf Ferrofin auflösen, ebenso
-   mindestens 98 % von bis zu 200 Titeln, auf die FriendFlix verweist (sonst `ids_mismatch`; ein paar gelöschte Titel dürfen fehlen).
+   mindestens 98 % von bis zu 200 Titeln, auf die FriendFlix verweist (sonst `ids_mismatch`; ein paar gelöschte Titel dürfen
+   fehlen).
 6. *FriendFlix umstellen:* Der Medienserver wird das verwaltete Ferrofin; deine alte Adresse und der Schlüssel bleiben für den
    Rückweg erhalten.
 7. *Wunsch-Dienst umstellen*, wenn du einen eingerichtet hast (unten).
 
-Jeder Fehler und jeder Abbruch (*Umzug abbrechen*) vor der Umstellung entfernt den neuen Container, **startet dein Jellyfin wieder** und ändert in
-FriendFlix nichts; die kopierten Daten bleiben für einen neuen Versuch. Nach der Umstellung ist Abbrechen nicht mehr möglich: nimm den
-Rückweg.
+Jeder Fehler und jeder Abbruch (*Umzug abbrechen*) vor der Umstellung entfernt den neuen Container, **startet dein Jellyfin wieder**
+und ändert in FriendFlix nichts; die kopierten Daten bleiben für einen neuen Versuch. Willst du sie stattdessen löschen, entfernt
+*Entfernen* (mit *Daten löschen*) auf der Karte sie, solange FriendFlix dein Jellyfin nutzt. Nach der Umstellung ist Abbrechen nicht
+mehr möglich: nimm den Rückweg.
 
 **Der Wunsch-Dienst.** Seine Jellyfin-Verbindung wird über seine eigenen Einstellungen auf Ferrofin gerichtet (Server `mediaserver`,
 Port 8096, derselbe API-Schlüssel) und sein Bibliotheksabgleich gestartet; die bisherigen Werte werden für den Rückweg gesichert.
-Klappt das nicht, **ist der Umzug trotzdem fertig**, und *Admin* zeigt eine Warnung: Öffne die Einstellungen des Wunsch-Dienstes selbst, trage bei
-Jellyfin als Server `mediaserver` und als Port 8096 ein und gleiche dort die Bibliotheken neu ab. Bis dahin gehen Wünsche nicht, und der
-Systemcheck sagt es.
+Klappt das nicht, **ist der Umzug trotzdem fertig**, und *Admin* zeigt eine Warnung: Öffne die Einstellungen des Wunsch-Dienstes
+selbst, trage bei Jellyfin als Server `mediaserver` und als Port 8096 ein und gleiche dort die Bibliotheken neu ab. Bis dahin gehen
+Wünsche nicht, und der Systemcheck sagt es.
 
 **Nach dem Umzug.** Die Karte sagt *Umgezogen von „<Name>“ am …*, und das alte Jellyfin ist **gestoppt und bleibt erhalten**
 (FriendFlix entfernt es nie).
 
-- Die aus Jellyfin übernommenen Ordner erscheinen **schreibgeschützt** (*aus Jellyfin übernommen*) unter ihren alten Container-Pfaden; ihre
-  Bibliotheken sind Jellyfins eigene, wie kopiert. Du kannst sie weder entfernen noch umbenennen noch ihre Art ändern.
-- **Neue Ordner** werden unter `/ffmedia/<slug>` eingebunden. Ein neuer Ordner, der sich mit einem übernommenen überschneidet, wird abgelehnt;
-  wurde der ganze Basisordner übernommen, ist das Hinzufügen abgeschaltet (alles darin sieht Ferrofin schon).
-- Die Art bleibt Ferrofin: Nach einem Umzug gibt es keinen Wechsel zu einem verwalteten Jellyfin. Die Systemcheck-Zeile
-  *Verwalteter Medienserver* sagt *umgezogen von „<Name>“* als Info-Zeile und warnt, solange der Wunsch-Dienst noch auf das alte Jellyfin zeigt.
+- Die aus Jellyfin übernommenen Ordner erscheinen **schreibgeschützt** (*aus Jellyfin übernommen*) unter ihren alten
+  Container-Pfaden; ihre Bibliotheken sind Jellyfins eigene, wie kopiert. Du kannst sie weder entfernen noch umbenennen noch ihre
+  Art ändern.
+- **Neue Ordner** werden unter `/ffmedia/<slug>` eingebunden. Ein neuer Ordner, der sich mit einem übernommenen überschneidet, wird
+  abgelehnt; wurde der ganze Basisordner übernommen, ist das Hinzufügen abgeschaltet (alles darin sieht Ferrofin schon).
+- Die Art bleibt Ferrofin: Nach einem Umzug gibt es keinen Wechsel zu einem verwalteten Jellyfin. Die Systemcheck-Zeile *Verwalteter
+  Medienserver* sagt *umgezogen von „<Name>“* als Info-Zeile und warnt, solange der Wunsch-Dienst noch auf das alte Jellyfin zeigt.
+- Solange der alte Jellyfin-Container da ist, bietet die Karte weder *Entfernen* noch den Wechsel auf eine Adresse an: Beides würde
+  ihn gestoppt lassen, ohne Weg zurück in Admin (`use_way_back`). Der Weg hinaus ist *Zurück zu Jellyfin*.
+- Ein Jellyfin, das mit einem neuen Container neu angelegt wurde (ein Redeploy durch Watchtower oder Portainer auf demselben
+  `/config`), ist weiter das alte Jellyfin: Karte und Systemcheck zeigen seinen Zustand, und der Rückweg startet es.
+- *Wiederherstellen* nimmt nur Sicherungen ab dem Umzug ([Sicherungen](#sicherungen), `backup_premove`).
 
 **Der Rückweg.** *Zurück zu Jellyfin* (frische Anmeldung) warnt zuerst, dass **das, was seit dem Umzug auf Ferrofin geschaut wurde,
-in Jellyfin nicht drin ist**: Ferrofin hat die Datenbank nur in eine Richtung übernommen (bis Ferrofin 1.6.0). Dann startet es den alten
-Container, prüft, dass er mit der gespeicherten Adresse und dem Schlüssel antwortet (sonst `jellyfin_unreachable`, und FriendFlix bleibt auf Ferrofin), stellt Adresse und
-Schlüssel wieder her, richtet den Wunsch-Dienst zurück und stoppt Ferrofin (bleibt erhalten, wird nicht entfernt). Er läuft im Hintergrund,
-und Admin folgt dem Fortschritt. Profile, die nach dem Umzug entstanden sind, bekommen einen Jellyfin-Benutzer, und das Passwort jedes
-verknüpften Profils wird aus FriendFlix' eigenem neu gesetzt. Nach einem Rückweg zieht *Erneut umziehen* noch einmal um (die früheren
-Ferrofin-Daten werden vorher gesichert). Ist der alte Jellyfin-Container weg, wird die Schaltfläche zum Wechsel auf die Adresse eines
-Servers, den du selbst betreibst (wie in Stufe 1). Solange ein Umzug vermerkt ist, wird die Wiederherstellung des gespeicherten Servers über den Modus-Wechsel
-mit `use_way_back` abgelehnt.
+in Jellyfin nicht drin ist**: Ferrofin hat die Datenbank nur in eine Richtung übernommen (bis Ferrofin 1.6.0). Dann startet es den
+alten Container, prüft, dass er mit der gespeicherten Adresse und dem Schlüssel antwortet (sonst `jellyfin_unreachable`, und
+FriendFlix bleibt auf Ferrofin), stellt Adresse und Schlüssel wieder her, richtet den Wunsch-Dienst zurück und stoppt Ferrofin
+(bleibt erhalten, wird nicht entfernt). Der Rückweg läuft im Hintergrund, und Admin folgt dem Fortschritt. Profile, die nach dem
+Umzug entstanden sind, bekommen einen Jellyfin-Benutzer, und das Passwort jedes verknüpften Profils wird aus FriendFlix' eigenem neu
+gesetzt. Nach einem Rückweg zieht *Erneut umziehen* noch einmal um (die früheren Ferrofin-Daten werden vorher gesichert). Nutzt kein
+Container mehr das `/config` des alten Jellyfin (er wurde entfernt), wird die Schaltfläche zum Wechsel auf die Adresse eines
+Servers, den du selbst betreibst (wie in Stufe 1), und *Entfernen* wird wieder angeboten. Bis dahin werden jeder Wechsel auf eine
+Adresse und *Entfernen* mit `use_way_back` abgelehnt.
 
 **Fehlersuche.** Das Blatt und die Karte zeigen den Grund in Worten; der Code ist der Name dahinter.
 
@@ -313,6 +330,8 @@ mit `use_way_back` abgelehnt.
 | `ids_mismatch` | Weniger als 98 % der geprüften Titel (oder ein verknüpfter Benutzer) lösen auf Ferrofin auf. Dein Jellyfin läuft wieder; stelle sicher, dass seine Bibliotheken gescannt sind, und versuche es erneut. |
 | `move_aborted` | Du hast abgebrochen, oder der Auftrag ist gestoppt. Dein Jellyfin läuft wieder. |
 | `jellyfin_unreachable` | Rückweg: Das alte Jellyfin antwortet nicht mit der gespeicherten Adresse und dem Schlüssel. FriendFlix bleibt auf Ferrofin. |
+| `use_way_back` | Ein umgezogener Server, dessen alter Jellyfin-Container da ist, geht nur mit *Zurück zu Jellyfin* zurück. |
+| `backup_premove` | Die Sicherung ist von vor dem Umzug: Ihre Benutzer und Titel haben andere IDs. Stell eine ab dem Umzug wieder her. |
 
 Zeigt ein Umzug die Warnung, dass *der Updater den Umzug als abgebrochen meldet*, prüfe, ob Ferrofin läuft, und geh sonst zurück.
 Das Audit-Protokoll hält `mediaserver.moved`, `mediaserver.requests_repointed` (mit dem Ergebnis) und `mediaserver.back` fest.
