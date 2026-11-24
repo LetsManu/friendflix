@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [4.0.2] – Donut – 2026-11-24
+
 ### Fixed
 - **Security: libxml2 in the backend image updated** (CVE-2026-86144, pulled in by ffmpeg): the image now takes at least 2.13.9-r3.
 - **The managed media server could not be chosen at all (*Das Netzwerk „media“ fehlt*).** The updater asked Docker for the `media` network's list entry, which never names the attached containers, so it always concluded that backend and gateway were not on it and greyed out *Ferrofin* and *Jellyfin (verwaltet)* on every install. It now reads the network itself; nothing in your compose files needs to change.
