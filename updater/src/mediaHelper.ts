@@ -271,10 +271,15 @@ function usage(dir: string): number {
   return n;
 }
 
+/** what the file system behind `dir` has free for an unprivileged writer (the move's space check: the Docker data root) */
+export async function freeBytes(dir: string): Promise<number> {
+  const s = await statfs(dir);
+  return s.bavail * s.bsize;
+}
+
 /** what the data folder can hold once emptied: free space plus what is in it now */
 async function room(dir: string): Promise<number> {
-  const s = await statfs(dir);
-  return s.bavail * s.bsize + usage(dir);
+  return (await freeBytes(dir)) + usage(dir);
 }
 
 /**
@@ -749,10 +754,11 @@ async function answer(args: string[]): Promise<unknown> {
   if (verb === 'check' && a === 'folders' && args.length === 3) {
     let rels: unknown;
     try { rels = JSON.parse(b!); } catch { throw new HelperError('invalid_body'); }
-    if (!Array.isArray(rels) || rels.length > MAX_FOLDERS || !rels.every((r) => typeof r === 'string' && isRel(r, 1, 3))) throw new HelperError('invalid_body');
+    // '' is the whole base: only a migrated folder can be it (the template refuses it for any other), every component lstat'ed
+    if (!Array.isArray(rels) || rels.length > MAX_FOLDERS || !rels.every((r) => typeof r === 'string' && isRel(r, 0, 3))) throw new HelperError('invalid_body');
     return { folders: checkFolders('/base', rels as string[]) };
   }
-  if (verb === 'check' && a === 'data' && args.length === 2) return { owner: checkData('/data'), adopted: checkAdopted('/data') };
+  if (verb === 'check' && a === 'data' && args.length === 2) return { owner: checkData('/data'), adopted: checkAdopted('/data'), free: await freeBytes('/data') };
   if (verb === 'browse' && args.length === 2) return browseDir('/base', a!);
   if (verb === 'gpu' && args.length === 1) return { nodes: detectGpu('/dev/dri', '/sys-drm') };
   if (verb === 'backup' && args.length === 5 && (b === '0' || b === '1')) {

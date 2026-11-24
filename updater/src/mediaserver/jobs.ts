@@ -9,6 +9,7 @@ import type { EngineFacts } from './facts.js';
 import { TemplateViolation, assertHelper, assertManaged, assertManagedInspect, type ManagedExpect, type SourceExpect } from './guard.js';
 import { runHdr } from './helpers.js';
 import type { Pin, PinRead } from './pins.js';
+import { abortJob, migrateJob, sourceJob, type MoveKit } from './move.js';
 import type { MediaDeps } from './service.js';
 import { containerSpec, helperSpec, names, needsSeed, seedSpec, uidSupported, volumeSpec, type CreateRequest, type HelperMount, type HelperVerb, type TemplateFacts } from './template.js';
 import { BACKUP_ID_RE, KINDS, MEDIA_ERRORS, MEDIA_STEPS, type BackupMeta, type BackupTag, type Desired, type DesiredSpec, type Folder, type Gpu, type Kind, type MediaError, type MediaJobAction, type MediaOp, type MediaStep } from './types.js';
@@ -29,7 +30,7 @@ export interface JobDeps extends MediaDeps {
   backupDir?: string;
 }
 
-export type MediaJobOp = Extract<MediaOp, { op: 'apply' | 'finish-setup' | 'start' | 'stop' | 'restart' | 'update' | 'hdr-test' | 'backup' | 'restore' | 'remove' }>;
+export type MediaJobOp = Extract<MediaOp, { op: 'apply' | 'finish-setup' | 'start' | 'stop' | 'restart' | 'update' | 'hdr-test' | 'backup' | 'restore' | 'remove' | 'migrate' | 'migrate-abort' | 'source-start' }>;
 type Reason = 'apply' | 'update' | 'recover' | 'finish';
 
 /** helper limits (spec "Times"): 2 min, backup and restore 2 h */
@@ -55,6 +56,7 @@ const STEP_CODE: Record<MediaStep, MediaError> = {
   copy_bulk: 'helper_failed', stop_source: 'helper_failed', copy: 'helper_failed', adopt: 'adopt_failed',
 };
 const NO_TARGET: StartResult = { ok: false, error: 'no_target' };
+const BUSY: StartResult = { ok: false, error: 'busy' };
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -70,9 +72,9 @@ function codeOf(e: unknown, fallback: MediaError): MediaError {
   return isMediaError(c) ? c : fallback;
 }
 
-/** a folder that is another chosen one or lies inside one */
+/** a folder that is another chosen one or lies inside one; the whole base (a migrated rel '') holds every other one */
 function nested(rels: string[]): boolean {
-  return rels.some((a, i) => rels.some((b, j) => i !== j && (a === b || b.startsWith(`${a}/`))));
+  return rels.some((a, i) => rels.some((b, j) => i !== j && (a === b || a === '' || b.startsWith(`${a}/`))));
 }
 
 const specOf = (d: Desired): DesiredSpec => ({
@@ -96,7 +98,7 @@ function renderNodes(a: Obj): Array<{ node: string; gid: number; vendor: string 
     .map((n) => ({ node: n.node, gid: n.gid, vendor: typeof n.vendor === 'string' ? n.vendor : 'other' }));
 }
 
-interface Runner { project: string; image: string }
+export interface Runner { project: string; image: string }
 /** a managed container found under the real name */
 export interface Existing { id: string; kind: Kind | null; running: boolean }
 interface Ctx { project: string; facts: EngineFacts; runner: Runner; base: NonNullable<MediaState['base']>; pin: Pin; old: Existing | null; dataExists: boolean }
@@ -120,9 +122,19 @@ export class MediaJobs {
   private get engine() { return this.d.engine; }
 
   start(op: MediaJobOp): StartResult {
-    if (this.u.busy) return { ok: false, error: 'busy' };
+    // an abort reaches a move while its job runs (the job checks the flag between steps)
+    if (op.op === 'migrate-abort') return this.abort();
+    if (this.u.busy) return BUSY;
     const desired = this.u.mediaState().desired;
+    const move = this.u.mediaState().move;
     switch (op.op) {
+      case 'migrate':
+        // one move at a time: an unsettled one (running) or one the backend has not finished (ready) first
+        if (move?.phase === 'running' || move?.phase === 'ready') return BUSY;
+        return this.job('mediaserver-migrate', (job) => migrateJob(this.moveKit(), job, op));
+      case 'source-start':
+        if (!this.u.mediaState().source && !move) return NO_TARGET;
+        return this.job('mediaserver-source', (job) => sourceJob(this.moveKit(), job));
       case 'apply':
         return this.job('mediaserver-apply', (job) => this.deploy(job, op.spec, { reason: 'apply', ...(op.firstRun ? { password: op.firstRun.password } : {}) }));
       case 'finish-setup':
@@ -149,6 +161,50 @@ export class MediaJobs {
       case 'remove':
         return this.job('mediaserver-remove', (job) => this.remove(job, op.data));
     }
+  }
+
+  /**
+   * migrate-abort: while the move's job runs, the flag it checks between steps (the answer is that job); a move in `ready` (the
+   * backend's phases failed) or one left `running` (a restart) is aborted by its own `mediaserver-migrate` job
+   */
+  private abort(): StartResult {
+    const move = this.u.mediaState().move;
+    if (this.u.busy) {
+      const j = this.u.snapshot().lastJob;
+      if (move?.phase !== 'running' || j?.action !== 'mediaserver-migrate' || j.state !== 'running') return BUSY;
+      this.u.updateMedia((m) => { if (m.move) m.move.abort = true; });
+      this.u.log.add('media move abort requested');
+      return { ok: true, job: j };
+    }
+    if (move?.phase !== 'running' && move?.phase !== 'ready') return NO_TARGET;
+    return this.job('mediaserver-migrate', () => abortJob(this.moveKit()));
+  }
+
+  /** migrate-done (the backend switched): the move ends, the source stays recorded for the way back; false when no move is ready */
+  migrateDone(): boolean {
+    if (this.u.mediaState().move?.phase !== 'ready') return false;
+    this.u.updateMedia((m) => {
+      if (m.move) m.source = m.move.source;
+      delete m.move;
+    });
+    this.u.log.add('media move done');
+    return true;
+  }
+
+  /** what the move (move.ts) uses of these jobs */
+  private moveKit(): MoveKit {
+    return {
+      updater: this.u, engine: this.engine, now: () => this.d.now(),
+      step: (job, name, fn) => this.step(job, name, fn),
+      ready: () => this.ready(),
+      helper: (r, u, verb, args, mounts, limitMs, source) => this.helper(r, u, verb, args, mounts, limitMs, source),
+      pins: () => this.d.pins(),
+      verifyImage: (pin) => this.verifyImage(pin),
+      renderGids: (r, d) => this.renderGids(r, d),
+      deploy: (job, d, o) => this.deploy(job, d, o),
+      snapshot: (of) => this.snapshot(null, 'auto', false, of),
+      labelled: (i, project) => this.labelled(i, project),
+    };
   }
 
   /**
@@ -470,15 +526,23 @@ export class MediaJobs {
   async guardInspect(i: Obj, project: string, gpu: Gpu | undefined): Promise<void> {
     const user = /^([0-9]{1,5}):([0-9]{1,5})$/.exec(isObj(i.Config) && typeof i.Config.User === 'string' ? i.Config.User : '') ?? fail('managed_tampered');
     const img = typeof i.Image === 'string' ? await this.engine.inspectImage(i.Image).catch(() => null) : null;
-    try {
-      assertManagedInspect(i, {
-        project, kind: KINDS.find((k) => k === labelsOf(i)['friendflix.kind']) ?? fail('managed_tampered'), uid: Number(user[1]), gid: Number(user[2]),
-        repo: this.d.repo, ...(gpu ? { gpu } : {}), ...migratedOf(this.u.mediaState().desired), image: { env: img?.env ?? [], entrypoint: img?.entrypoint ?? null, cmd: img?.cmd ?? null, volumes: img?.volumes ?? [] },
-      });
-    } catch (e) {
-      if (e instanceof TemplateViolation) fail('managed_tampered');
-      throw e;
+    const kind = KINDS.find((k) => k === labelsOf(i)['friendflix.kind']) ?? fail('managed_tampered');
+    // the recorded spec built the container under the real name, a running move's folders the one its deploy creates: either passes
+    const m = this.u.mediaState();
+    const expects: Array<Pick<ManagedExpect, 'migrated'>> = [migratedOf(m.desired)];
+    if (m.move?.phase === 'running') expects.push({ migrated: { targets: m.move.folders.map((f) => f.target) } });
+    for (const ex of expects) {
+      try {
+        assertManagedInspect(i, {
+          project, kind, uid: Number(user[1]), gid: Number(user[2]),
+          repo: this.d.repo, ...(gpu ? { gpu } : {}), ...ex, image: { env: img?.env ?? [], entrypoint: img?.entrypoint ?? null, cmd: img?.cmd ?? null, volumes: img?.volumes ?? [] },
+        });
+        return;
+      } catch (e) {
+        if (!(e instanceof TemplateViolation)) throw e;
+      }
     }
+    fail('managed_tampered');
   }
 
   /**

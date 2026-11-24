@@ -22,7 +22,7 @@ import { KINDS, type Folder, type Gpu, type Kind, type MediaError } from './type
  * removes a volume and never starts or checks a container after a failed rollback (its data may be half restored).
  */
 
-export type TickResult = 'busy' | 'idle' | 'recover' | 'aside' | 'tampered';
+export type TickResult = 'busy' | 'idle' | 'recover' | 'aside' | 'tampered' | 'move';
 
 /** a server that should run but is missing is recreated again this long after a failed recover (spec "Times": 10 min) */
 const RETRY_MS = 10 * 60_000;
@@ -68,6 +68,8 @@ type Owned = 'missing' | 'foreign' | 'tampered' | 'ok' | 'busy' | 'unknown';
 export class Supervisor {
   /** when the last recover started (the first retry of a failed one is due one interval after the start) */
   private lastRecover: number;
+  /** when the last abort of an unsettled move started (in memory: the first one after a start runs at once) */
+  private lastMove = -Infinity;
   /** the stop the last stop check ran for (container id and State.FinishedAt) and when; in memory only */
   private checkedStop: { key: string; at: number } | null = null;
 
@@ -88,7 +90,7 @@ export class Supervisor {
     try { return await fn(); } finally { this.running = false; }
   }
 
-  /** once at start: leftover helpers go, an interrupted recreate is settled, a labelled container is adopted */
+  /** once at start: leftover helpers go, an interrupted move and then an interrupted recreate are settled, a labelled container is adopted */
   startup(): Promise<void> {
     return this.alone(undefined, () => this.boot());
   }
@@ -104,6 +106,10 @@ export class Supervisor {
     if (!facts || !project) return;
     await cleanupHelpers(this.engine, project).catch(() => 0);
     if (this.u.busy) return;
+    // a move the restart interrupted is settled first (its source started, its new container removed): nothing may adopt or
+    // recreate that container before
+    await this.settleMove();
+    if (this.u.busy || this.u.mediaState().move?.phase === 'running') return;
     if ((await this.recoverAside(project)) !== 'none') return;
     await this.own(project, facts);
   }
@@ -113,6 +119,11 @@ export class Supervisor {
     const facts = await this.d.facts().catch(() => null);
     const project = facts?.project;
     if (!facts || !project) return 'idle';
+    // an unsettled move (its source could not be started): retried every 10 min, nothing else is done meanwhile
+    if (this.u.mediaState().move?.phase === 'running') {
+      if (this.d.now() - this.lastMove < RETRY_MS) return 'idle';
+      return (await this.settleMove()) ? 'move' : 'busy';
+    }
     const aside = await this.recoverAside(project);
     if (aside !== 'none') return aside;
     const { owned, i } = await this.own(project, facts);
@@ -131,6 +142,20 @@ export class Supervisor {
       return 'recover';
     }
     return 'idle';
+  }
+
+  /**
+   * a move left `running` (the updater restarted mid-job, or its source start failed): its abort job runs to its end (source
+   * started, new container removed). true when one ran; it stays `running` when the source still cannot be started.
+   */
+  private async settleMove(): Promise<boolean> {
+    if (this.u.mediaState().move?.phase !== 'running' || this.u.busy) return false;
+    const started = this.jobs.start({ op: 'migrate-abort' });
+    if (!started.ok) return false;
+    this.lastMove = this.d.now();
+    this.u.log.add('media move found unfinished: aborted');
+    await this.u.idle();
+    return true;
   }
 
   /** for the status view: compared with the render gids the last deploy recorded, never through a helper */

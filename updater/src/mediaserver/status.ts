@@ -6,7 +6,7 @@ import type { EngineFacts } from './facts.js';
 import type { MediaJobs } from './jobs.js';
 import type { PinRead } from './pins.js';
 import { names } from './template.js';
-import { KINDS, type BackupMeta, type Desired, type Gpu, type HdrResult, type Kind, type MediaError } from './types.js';
+import { KINDS, type BackupMeta, type Desired, type Folder, type Gpu, type HdrResult, type Kind, type MediaError, type MediaStep, type MoveState } from './types.js';
 
 /**
  * The `mediaserver` part of `GET /v1/status` (spec "Updater API", Controller's call 3). What Docker says (engine facts, the pins,
@@ -33,6 +33,10 @@ export interface MediaStatusView {
   error: MediaError | null;
   backups: BackupMeta[];
   hdr: HdrResult | null;
+  /** a move from an existing Jellyfin (stage 2): its phase, the step of its job (null when its job is not the last one) */
+  move: { phase: MoveState['phase']; step: MediaStep | null; source: { name: string; version: string | null }; folders: Folder[]; abort: boolean } | null;
+  /** the Jellyfin a move was made from (the way back): its Docker state, `missing` when its recorded container is gone */
+  source: { name: string; state: string; version: string | null } | null;
 }
 
 /** what /v1/status answers before the first view of this updater exists (a pin verify can take minutes): never null, which reads as an updater from before the media server */
@@ -40,6 +44,7 @@ export const STARTING_VIEW: MediaStatusView = {
   available: false, reason: 'starting',
   base: { set: false, path: null, pending: false, expiresAt: null }, desired: null, container: null, pin: null,
   pins: { ferrofin: false, jellyfin: false }, engine: { api: null, logs: false, arch: null, nvidia: false }, error: null, backups: [], hdr: null,
+  move: null, source: null,
 };
 
 export interface MediaStatusDeps {
@@ -66,7 +71,7 @@ const UNKNOWN_UPSTREAM = 'unknown';
 
 /** the container under the real name as Docker shows it (one inspect, the guard only for one the state does not record) */
 interface Seen { id: string; kind: Kind | null; state: string; health: ContainerHealth; createdAt: string; digest: string; clean: boolean | null }
-interface Live { facts: EngineFacts | null; read: PinRead | null; seen: Seen | null; template: 'current' | 'update_pending' | null }
+interface Live { facts: EngineFacts | null; read: PinRead | null; seen: Seen | null; template: 'current' | 'update_pending' | null; source: { id: string; state: string } | null }
 
 /** the GPU choice a container was built with (as supervise.ts reads it), for the guard of a container the state does not record */
 function gpuOf(i: Obj): Gpu {
@@ -142,14 +147,29 @@ export function mediaStatusView(d: MediaStatusDeps): () => Promise<MediaStatusVi
     ]);
     const m = d.updater.mediaState();
     const t = s && m.container?.id === s.id ? await templateState(key) : null;
-    const v: Live = { facts, read: r, seen: s, template: t };
+    // the recorded source by its recorded id (one inspect, no helper: a recreated one shows as missing until the way back rematches it)
+    const rec = m.source ?? m.move?.source;
+    let source: Live['source'] = null;
+    if (rec) {
+      const i = await d.engine.inspectContainer(rec.id).then((x) => x, () => undefined);
+      const st = objOf(i?.State).Status;
+      source = { id: rec.id, state: i === undefined ? 'unknown' : i === null ? 'missing' : typeof st === 'string' ? st : 'unknown' };
+    }
+    const v: Live = { facts, read: r, seen: s, template: t, source };
     live = { at: now(), key, v };
     return v;
   }
 
+  /** the step the move's job is at (or stopped at), when that job is the last one */
+  const lastMoveStep = (): MediaStep | null => {
+    const j = d.updater.snapshot().lastJob;
+    return j?.action === 'mediaserver-migrate' ? j.media?.step ?? null : null;
+  };
+
   return async () => {
     const v = await read(jobKey());
     const m = d.updater.mediaState();
+    const rec = m.source ?? m.move?.source;
     const f = v.facts;
     const pins = v.read && !('error' in v.read) ? v.read : null;
 
@@ -187,6 +207,10 @@ export function mediaStatusView(d: MediaStatusDeps): () => Promise<MediaStatusVi
       error: m.lastError,
       backups: m.backups,
       hdr: m.hdr,
+      move: m.move ? {
+        phase: m.move.phase, step: lastMoveStep(), source: { name: m.move.source.name, version: m.move.source.version }, folders: m.move.folders, abort: m.move.abort,
+      } : null,
+      source: rec ? { name: rec.name, state: v.source?.id === rec.id ? v.source.state : 'unknown', version: rec.version } : null,
     };
   };
 }

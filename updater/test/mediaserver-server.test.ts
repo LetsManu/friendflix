@@ -23,6 +23,7 @@ const b64 = (s: string): string => Buffer.from(s, 'utf8').toString('base64url');
 const VIEW: MediaStatusView = {
   available: true, reason: null, base: { set: false, path: null, pending: false, expiresAt: null }, desired: null, container: null, pin: null,
   pins: { ferrofin: true, jellyfin: true }, engine: { api: '1.47', logs: true, arch: 'amd64', nvidia: false }, error: null, backups: [], hdr: null,
+  move: null, source: null,
 };
 
 const servers: Server[] = [];
@@ -46,6 +47,7 @@ function fake() {
     updater, verifier, calls,
     view: { ...VIEW } as MediaStatusView,
     start: ((op: MediaOp): StartResult => { calls.push(`start ${op.op}`); return { ok: true, job }; }) as (op: MediaOp) => StartResult,
+    done: false,
     downloaded: [] as Array<{ id: string; passphrase: string }>,
     uploaded: [] as string[],
   };
@@ -64,7 +66,7 @@ function fake() {
           return source ? { error: 'source_outside_base', outside: ['/music'], refused: [] } : { candidates: [{ id: 'c'.repeat(64), name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', state: 'running', matches: true }] };
         },
       },
-      jobs: { start: (op) => f.start(op as MediaOp) },
+      jobs: { start: (op) => f.start(op as MediaOp), migrateDone: () => { calls.push('migrateDone'); return f.done; } },
       status: async () => f.view,
       download: async (id, passphrase, res) => {
         f.downloaded.push({ id, passphrase });
@@ -218,14 +220,17 @@ describe('stage 2 ops', () => {
     expect((await post(base, '{"op":"migrate-abort"}')).status).toBe(202);
     expect((await post(base, '{"op":"source-start"}')).status).toBe(202);
     expect(t.calls).toEqual(['start migrate', 'start migrate-abort', 'start source-start']);
-    // synchronous ops: not jobs, never reach jobs.start; migrate-done answers 400 until its service lands
+    // synchronous ops: not jobs, never reach jobs.start; migrate-done ends a move in `ready` (409 without one)
     const list = await post(base, `{"op":"migrate-scan","serverId":"${SID}"}`);
     expect([list.status, await list.json()]).toEqual([200, { candidates: [{ id: 'c'.repeat(64), name: 'jellyfin', image: 'jellyfin/jellyfin:10.10.3', state: 'running', matches: true }] }]);
     const one = await post(base, `{"op":"migrate-scan","serverId":"${SID}","source":"${CID}"}`);
     expect([one.status, await one.json()]).toEqual([409, { error: 'source_outside_base', outside: ['/music'], refused: [] }]);
+    const none = await post(base, '{"op":"migrate-done"}');
+    expect([none.status, await none.json()]).toEqual([409, { error: 'no_target' }]);
+    t.f.done = true;
     const done = await post(base, '{"op":"migrate-done"}');
-    expect([done.status, await done.json()]).toEqual([400, { error: 'invalid_body' }]);
-    expect(t.calls).toEqual(['start migrate', 'start migrate-abort', 'start source-start', `moveScan ${SID} -`, `moveScan ${SID} ${CID}`]);
+    expect([done.status, await done.json()]).toEqual([200, { ok: true }]);
+    expect(t.calls).toEqual(['start migrate', 'start migrate-abort', 'start source-start', `moveScan ${SID} -`, `moveScan ${SID} ${CID}`, 'migrateDone', 'migrateDone']);
     t.f.view = { ...VIEW, available: false, reason: 'no_logs' };
     for (const b of [`{"op":"migrate-scan","serverId":"${SID}"}`, '{"op":"migrate-done"}', JSON.stringify(MIGRATE)]) expect((await post(base, b)).status, b).toBe(409);
     for (const b of ['{"op":"migrate-abort"}', '{"op":"source-start"}']) expect((await post(base, b)).status, b).toBe(202);

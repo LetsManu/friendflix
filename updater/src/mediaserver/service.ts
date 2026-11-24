@@ -44,7 +44,7 @@ export type RequestResult =
 export type ConfirmResult =
   | { result: 'ok'; path: string; kept: string[]; dropped: string[]; job: Job | null }
   | { result: 'wrong' | 'expired' | 'locked' | 'no_pending' }
-  | { error: 'busy' | 'not_available' };
+  | { error: 'busy' | 'not_available' | 'template_violation' };
 export interface BrowseEntry { name: string; symlink: boolean; unreadable: boolean }
 export type BrowseResult = { entries: BrowseEntry[]; truncated: boolean } | { error: 'no_base' | 'base_missing' | 'invalid_body' };
 export interface GpuResult { dri: Array<{ node: string; gid: number; vendor: 'intel' | 'amd' | 'other' }>; nvidia: boolean }
@@ -148,7 +148,11 @@ export class MediaService {
    */
   async confirm(code: string): Promise<ConfirmResult> {
     if (this.d.updater.busy) return { error: 'busy' };
-    const pending = this.d.updater.mediaState().pending;
+    // a migrated server's folders are paths below this base (the whole base among them): no base change while one exists or a move
+    // is not settled (the request and its code stay)
+    const media = this.d.updater.mediaState();
+    if (media.desired?.migrated || media.move?.phase === 'running' || media.move?.phase === 'ready') return { error: 'template_violation' };
+    const pending = media.pending;
     if (!pending) return { result: 'no_pending' };
     if (this.d.now() >= Date.parse(pending.expiresAt)) {
       this.d.updater.updateMedia((m) => { m.pending = null; });

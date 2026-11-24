@@ -11,7 +11,7 @@ import { EngineError, type Engine } from '../src/mediaserver/engine.js';
 import { TemplateViolation } from '../src/mediaserver/guard.js';
 import { cleanupHelpers, runHdr, runHelper } from '../src/mediaserver/helpers.js';
 import { hdrSpec, helperSpec } from '../src/mediaserver/template.js';
-import { browseDir, checkBase, checkData, checkFolders, detectGpu, isMain, main } from '../src/mediaHelper.js';
+import { browseDir, checkBase, checkData, checkFolders, detectGpu, freeBytes, isMain, main } from '../src/mediaHelper.js';
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'ff-helper-')); });
@@ -74,6 +74,22 @@ describe('mediaHelper functions', () => {
     writeFileSync(join(root, 'f'), 'x');
     expect(checkBase(join(root, 'f'))).toEqual({ exists: true, dir: false, listable: false, looksSystem: false });
     expect(checkBase(join(root, 'nope'))).toEqual({ exists: false, dir: false, listable: false, looksSystem: false });
+  });
+
+  it('checkFolders takes the whole base (a migrated rel "") and still refuses a symlinked migrated folder', async () => {
+    mkdirSync(join(root, 'Filme'));
+    symlinkSync(join(root, 'Filme'), join(root, 'Kino'));
+    expect(checkFolders(root, ['', 'Kino']).map((x) => [x.rel, x.code])).toEqual([['', 'ok'], ['Kino', 'folder_symlink']]);
+    const w = process.stdout.write;
+    const out: string[] = [];
+    process.stdout.write = ((s: string) => { out.push(s); return true; }) as typeof process.stdout.write;
+    try { await main(['check', 'folders', '[""]']); } finally { process.stdout.write = w; }
+    expect(out[0]).not.toContain('invalid_body');
+  });
+
+  it('freeBytes is what the file system behind a folder has free', async () => {
+    const free = await freeBytes(root);
+    expect(Number.isSafeInteger(free) && free > 0).toBe(true);
   });
 
   it('checkData names the owner of the newest entry', () => {
