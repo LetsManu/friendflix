@@ -14,15 +14,17 @@ const P = '2'.repeat(40);
 const base = { event: 'push', ref: 'refs/tags/v4.0.3', sha: TAG, repo: REPO };
 
 /** a fake GitHub API: the commit, the compare and a list of run answers handed out in order (the last one repeats) */
-function gh({ parents = [{ sha: P }], files = [{ filename: 'version.json', status: 'modified' }, { filename: 'CHANGELOG.md', status: 'modified' }], ahead = 1, behind = 0, runs = [[{ head_sha: P, status: 'completed', conclusion: 'success' }]], fail = '' } = {}) {
+function gh({ parents = [{ sha: P }], files = [{ filename: 'version.json', status: 'modified' }, { filename: 'CHANGELOG.md', status: 'modified' }], ahead = 1, behind = 0, runs = [[{ head_sha: P, status: 'completed', conclusion: 'success' }]], own = [[]], fail = '' } = {}) {
   const calls = [];
   let i = 0;
+  let j = 0;
   const api = async (path) => {
     calls.push(path);
     if (fail && path.includes(fail)) throw new Error('HTTP 500');
     if (path === `/repos/${REPO}/commits/${TAG}`) return { parents };
     if (path === `/repos/${REPO}/compare/${P}...${TAG}`) return { ahead_by: ahead, behind_by: behind, files };
     if (path.startsWith(`/repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${P}&event=push&branch=main`)) return { workflow_runs: runs[Math.min(i++, runs.length - 1)] };
+    if (path.startsWith(`/repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${TAG}&event=push&branch=main`)) return { workflow_runs: own[Math.min(j++, own.length - 1)] };
     throw new Error(`unexpected ${path}`);
   };
   return { api, calls };
@@ -58,6 +60,16 @@ test('main CI for the parent: red, missing or unreadable tests everything', asyn
   assert.equal((await releaseTested({ ...base, ...gh({ runs: [[{ head_sha: '4'.repeat(40), status: 'completed', conclusion: 'success' }]] }) })).tested, false, 'a run for another commit');
   assert.equal((await releaseTested({ ...base, ...gh({ fail: '/compare/' }) })).tested, false);
   assert.equal((await releaseTested({ ...base, ...gh({ fail: '/runs?' }) })).tested, false);
+});
+
+test("the release commit's own main run counts when the parent's run was cancelled by the newer push", async () => {
+  const cancelled = [[{ head_sha: P, status: 'completed', conclusion: 'cancelled' }]];
+  const running = [{ head_sha: TAG, status: 'in_progress', conclusion: null }];
+  const green = [{ head_sha: TAG, status: 'completed', conclusion: 'success' }];
+  const c = fastClock();
+  assert.equal((await releaseTested({ ...base, ...gh({ runs: cancelled, own: [running, green] }), ...c })).tested, true);
+  assert.equal((await releaseTested({ ...base, ...gh({ runs: cancelled, own: [[{ ...green[0], conclusion: 'failure' }]] }) })).tested, false, 'its own run red');
+  assert.equal((await releaseTested({ ...base, ...gh({ runs: cancelled }) })).tested, false, 'no other run');
 });
 
 test('a main run still in progress is waited for: green counts, the wait is bounded', async () => {

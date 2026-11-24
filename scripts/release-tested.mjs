@@ -6,8 +6,9 @@
  * is the same, only the version text differs. Answers `tested=true` only when ALL of these hold, else `tested=false`:
  *   - the run is for a `v*` tag (push, or release.yml's workflow_dispatch);
  *   - the tag commit has exactly one parent P and differs from P only in version.json and/or CHANGELOG.md;
- *   - a CI run (ci.yml, push, branch main) for P concluded `success`. A run for P still queued or in progress is waited for
- *     (release.yml pushes the tag right after the merge, while main's CI for P still runs), at most `waitMs`.
+ *   - a CI run (ci.yml, push, branch main) concluded `success` for P or for the release commit itself (release.yml pushes the
+ *     release commit to main as well, and a newer push on main cancels a still-pending run for P). A run for either that is
+ *     still queued or in progress is waited for, at most `waitMs`.
  * Any error, a missing run or a failed one answers false: the tag run then tests everything, as before. Fail closed.
  *
  *   node scripts/release-tested.mjs   (env: GITHUB_EVENT_NAME, GITHUB_REF, GITHUB_SHA, GITHUB_REPOSITORY, GH_TOKEN,
@@ -48,13 +49,18 @@ export async function releaseTested(o) {
     const sleep = o.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     const now = o.now ?? Date.now;
     const until = now() + (o.waitMs ?? 50 * 60_000);
+    const short = `${parent.slice(0, 7)}/${o.sha.slice(0, 7)}`;
     for (;;) {
-      const r = await o.api(`/repos/${o.repo}/actions/workflows/ci.yml/runs?head_sha=${parent}&event=push&branch=main&per_page=20`);
-      const runs = Array.isArray(r?.workflow_runs) ? r.workflow_runs.filter((x) => x?.head_sha === parent) : [];
-      if (runs.some((x) => x.status === 'completed' && x.conclusion === 'success')) return { tested: true, reason: `CI auf main für ${parent.slice(0, 7)} war grün` };
+      const runs = [];
+      for (const sha of [parent, o.sha]) {
+        const r = await o.api(`/repos/${o.repo}/actions/workflows/ci.yml/runs?head_sha=${sha}&event=push&branch=main&per_page=20`);
+        if (Array.isArray(r?.workflow_runs)) runs.push(...r.workflow_runs.filter((x) => x?.head_sha === sha));
+      }
+      const green = runs.find((x) => x.status === 'completed' && x.conclusion === 'success');
+      if (green) return { tested: true, reason: `CI auf main für ${green.head_sha.slice(0, 7)} war grün` };
       const open = runs.some((x) => x.status !== 'completed');
-      if (!open) return no(runs.length ? `CI auf main für ${parent.slice(0, 7)} war nicht grün` : `kein CI-Lauf auf main für ${parent.slice(0, 7)}`);
-      if (now() >= until) return no(`CI auf main für ${parent.slice(0, 7)} nach der Wartezeit noch nicht fertig`);
+      if (!open) return no(runs.length ? `CI auf main für ${short} war nicht grün` : `kein CI-Lauf auf main für ${short}`);
+      if (now() >= until) return no(`CI auf main für ${short} nach der Wartezeit noch nicht fertig`);
       await sleep(o.pollMs ?? 30_000);
     }
   } catch {

@@ -96,7 +96,8 @@ jobs:
           plan=$(node scripts/changed-images.mjs plan --event "$GITHUB_EVENT_NAME" --sha "$GITHUB_SHA" --pr-base "$PR_BASE" --summary "$GITHUB_STEP_SUMMARY" ${registry[@]+"${registry[@]}"})
           echo "$plan"
           echo "plan=$plan" >> "$GITHUB_OUTPUT"
-  # A release tag (release.yml: version.json + CHANGELOG.md on top of a main commit) whose main commit already passed CI:
+  # A release tag (release.yml: version.json + CHANGELOG.md on top of a main commit) whose main commit, or the release commit
+  # itself on main, already passed CI:
   # `test` and `e2e` do not run again (scripts/release-tested.mjs, tested). Anything else, an error included, answers false
   # and everything runs as before. It waits (bounded) for main's CI of that commit when the release follows a merge at once.
   release-check:
