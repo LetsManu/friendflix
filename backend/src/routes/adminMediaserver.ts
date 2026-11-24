@@ -11,7 +11,7 @@ import { addressOnly } from '../media/address.js';
 import { MediaSetupError } from '../media/types.js';
 import { BACKUP_ID, decodePassphrase, mediaDownload, mediaOp, mediaScan, mediaUpload, parseMediaStatus, startMediaJob, type MediaBackup, type MediaStatus } from '../mediaserver/client.js';
 import { recordApplyFirstRun } from '../mediaserver/firstRun.js';
-import { ACTIVE_PHASES, freshScan, goBack, readScan, scanRunning, startScan, SWITCHED_PHASES, type MoveScanRecord } from '../mediaserver/move.js';
+import { ACTIVE_PHASES, freshScan, goBack, readScan, scanRunning, startScan, SWITCHED_PHASES, withMoveLock, type MoveScanRecord } from '../mediaserver/move.js';
 import { libraryReferences, referenced } from '../mediaserver/references.js';
 import { deleteLibrary, managedKey, MANAGED_URL, publicInfo, renameLibrary } from '../mediaserver/serverApi.js';
 import { adminPassword, claimAdminPassword, externalKey, idsInUse, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged, type MigratedFrom, type MoveRecord, type SetupStep } from '../mediaserver/store.js';
@@ -39,7 +39,7 @@ export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 
  */
 export interface MoveView {
   offered: boolean; reason: OfferReason | null; scan: MoveScanRecord | null;
-  state: (Omit<MoveRecord, 'requestsWarning'> & { step: MediaStep | null; abort: boolean }) | null;
+  state: (Omit<MoveRecord, 'requestsWarning' | 'abortPending'> & { step: MediaStep | null; abort: boolean }) | null;
   migratedFrom: MigratedFrom | null; sourceState: string | null; requestsWarning: boolean;
 }
 export interface MediaView {
@@ -142,7 +142,10 @@ function moveView(managed: MediaManaged, status: MediaStatus | null, offer: Pick
   const rec = managed.move;
   return {
     ...offer, scan,
-    state: rec ? { phase: rec.phase, error: rec.error, jobId: rec.jobId, startedAt: rec.startedAt, step: status?.move?.step ?? null, abort: status?.move?.abort === true } : null,
+    state: rec ? {
+      phase: rec.phase, error: rec.error, jobId: rec.jobId, startedAt: rec.startedAt, ...(rec.errorMeta ? { errorMeta: rec.errorMeta } : {}),
+      step: status?.move?.step ?? null, abort: status?.move?.abort === true,
+    } : null,
     migratedFrom: managed.migratedFrom, sourceState: status?.source?.state ?? null, requestsWarning: rec?.requestsWarning === true,
   };
 }
@@ -512,21 +515,26 @@ function moveOps(ctx: Ctx) {
   });
 
   // the updater aborts the copy (its job checks between steps) or, once copied, runs the abort as its own job: the new container
-  // removed, the old Jellyfin started. From the switch on FriendFlix uses the new server: the way back is /back.
+  // removed, the old Jellyfin started. From the switch on FriendFlix uses the new server: the way back is /back. Under the move's tick
+  // lock (mediaserver/move.ts MOVE_LOCK): no phase step runs between reading the phase and marking the move failed, so an abort never
+  // meets a switch; a tick that keeps it longer than a few seconds answers busy.
   const abort = op({
     body: S.none,
     run: async (_b, reply, actor) => {
-      const m = await readManaged(ctx.db);
-      const phase = m.move?.phase ?? null;
-      if (phase && SWITCHED_PHASES.includes(phase)) return reply.code(409).send({ error: 'not_abortable' });
-      const r = await startMediaJob(ctx, { op: 'migrate-abort' }, actor, { phase }, 'mediaserver.move_abort');
-      // an abort the copy's own job carries out is read from that job's end; one the updater runs as a new job (the copy was done,
-      // whatever phase the backend shows) ends the move here, so no phase continues after it
-      const ownJob = r.ok && 'job' in r && r.job.id === m.move?.jobId;
-      if (r.ok && m.move && ACTIVE_PHASES.includes(m.move.phase) && (phase === 'nfo' || phase === 'verify' || !ownJob)) {
-        await writeManaged(ctx, { move: { ...m.move, phase: 'failed', error: 'move_aborted' } });
-      }
-      return jobAnswer(reply, r);
+      const answer = await withMoveLock(ctx, async () => {
+        const m = await readManaged(ctx.db);
+        const phase = m.move?.phase ?? null;
+        if (phase && SWITCHED_PHASES.includes(phase)) return () => reply.code(409).send({ error: 'not_abortable' });
+        const r = await startMediaJob(ctx, { op: 'migrate-abort' }, actor, { phase }, 'mediaserver.move_abort');
+        // an abort the copy's own job carries out is read from that job's end; one the updater runs as a new job (the copy was done,
+        // whatever phase the backend shows) ends the move here, so no phase continues after it
+        const ownJob = r.ok && 'job' in r && r.job.id === m.move?.jobId;
+        if (r.ok && m.move && ACTIVE_PHASES.includes(m.move.phase) && (phase === 'nfo' || phase === 'verify' || !ownJob)) {
+          await writeManaged(ctx, { move: { ...m.move, phase: 'failed', error: 'move_aborted' } });
+        }
+        return () => jobAnswer(reply, r);
+      });
+      return answer ? answer() : reply.code(409).send({ error: 'busy' });
     },
   });
 

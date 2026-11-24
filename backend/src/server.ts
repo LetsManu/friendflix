@@ -58,6 +58,7 @@ import { announceSetupCode } from './setup/code.js';
 import { isOperational, isSetupComplete, onOperational } from './setup/state.js';
 import { autoUpdateTick, syncChannel } from './updater.js';
 import { mediaManagedTick } from './mediaserver/firstRun.js';
+import { moveTick } from './mediaserver/move.js';
 import { mediaPinTick } from './mediaserver/pinTick.js';
 import { joinedStopsSettled } from './cast.js';
 
@@ -183,12 +184,15 @@ timers.push(setInterval(() => {
 }, 60_000)); // final account deletion after the grace period
 if (cfg.BACKGROUND_JOBS === 'true') {
   // the managed media server's first run (mediaserver/firstRun.ts): not gated by op(), the setup wizard's media step runs before the
-  // portal is operational; one step per tick across instances (KV media:managed:tick), idle unless a setup is unfinished
+  // portal is operational; one step per tick across instances (KV media:managed:tick), idle unless a setup is unfinished. Then the
+  // move's phases after the updater's copy (mediaserver/move.ts moveTick, KV media:move:tick), idle unless a move is under way.
   let mediaManagedBusy = false;
   timers.push(setInterval(() => {
     if (mediaManagedBusy) return;
     mediaManagedBusy = true;
-    void mediaManagedTick(ctx, app.log).catch(jobFailed(ctx, app.log, 'media-managed', 'managed media server setup tick failed')).finally(() => { mediaManagedBusy = false; });
+    void mediaManagedTick(ctx, app.log).catch(jobFailed(ctx, app.log, 'media-managed', 'managed media server setup tick failed'))
+      .then(() => moveTick(ctx, app.log).catch(jobFailed(ctx, app.log, 'media-move', 'media server move tick failed')))
+      .finally(() => { mediaManagedBusy = false; });
   }, 10_000));
   // Live TV recordings (Phase 3): reservations, due starts and stops, the reconcile with livetv's recorders (one runner: KV ltv:rectick).
   // Also while livetv is not installed: due recordings then fail `livetv_off` and their owners are told.

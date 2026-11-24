@@ -203,3 +203,26 @@ export async function setEncoding(f: typeof fetch, base: string, key: string, hw
 export async function refreshLibraries(f: typeof fetch, base: string, key: string): Promise<void> {
   await call(f, base, 'POST', '/Library/Refresh', { key }).then(done);
 }
+
+/**
+ * A move's `nfo` phase (stage 2 "The move" 7; the recipe in mediaserver/try.sh): the migrated media are mounted read-only, so every
+ * library whose options save local metadata or name metadata savers (or name none: the server's defaults, the NFO saver among them)
+ * gets `SaveLocalMetadata: false` and `MetadataSavers: []`, its other options kept. Libraries already off are left alone, so a second
+ * run posts nothing. Returns how many libraries were changed.
+ */
+export async function nfoSaversOff(f: typeof fetch, base: string, key: string): Promise<number> {
+  const list = await json(await call(f, base, 'GET', '/Library/VirtualFolders', { key }), 1024 * 1024);
+  if (!Array.isArray(list)) throw new MediaSetupError('unexpected');
+  let changed = 0;
+  for (const x of list) {
+    const o = obj(x);
+    const options = obj(o?.LibraryOptions) ?? {};
+    const savers = options.MetadataSavers;
+    if (options.SaveLocalMetadata === false && Array.isArray(savers) && savers.length === 0) continue;
+    // a library without an id cannot be changed: its saver would stay on (fail closed)
+    if (typeof o?.ItemId !== 'string' || !ITEM_ID.test(o.ItemId)) throw new MediaSetupError('unexpected');
+    await call(f, base, 'POST', '/Library/VirtualFolders/LibraryOptions', { key, body: { Id: o.ItemId, LibraryOptions: { ...options, SaveLocalMetadata: false, MetadataSavers: [] } } }).then(done);
+    changed++;
+  }
+  return changed;
+}

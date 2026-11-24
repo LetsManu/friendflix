@@ -17,11 +17,17 @@ export interface LibraryEntry { slug: string; name: string; type: LibraryType; r
 export type MovePhase = 'copying' | 'nfo' | 'verify' | 'switch' | 'requests' | 'done' | 'failed';
 /** the Jellyfin a move came from (container name and Jellyfin version, never a container or server id) and when it moved */
 export interface MigratedFrom { name: string; version: string | null; at: string }
+/** the id check of a move (`verify`): linked users checked and missing on the new server, item ids sampled and missing */
+export interface IdCheck { users: { total: number; missing: number }; items: { sampled: number; missing: number } }
 /**
  * a move as the backend follows it: its phase, the code it failed with, the updater job of its copy, when it started, and whether the
- * request service could not be pointed at the new server (Admin and the Systemcheck show the manual step)
+ * request service could not be pointed at the new server (Admin and the Systemcheck show the manual step). `errorMeta`: the numbers of
+ * a failed id check (`ids_mismatch`); `abortPending`: the move failed and the updater has not taken its abort yet (the tick sends it
+ * again until it does). Both are absent when unset.
  */
-export interface MoveRecord { phase: MovePhase; error: string | null; jobId: string | null; startedAt: string; requestsWarning: boolean }
+export interface MoveRecord {
+  phase: MovePhase; error: string | null; jobId: string | null; startedAt: string; requestsWarning: boolean; errorMeta?: IdCheck; abortPending?: true;
+}
 /** the request service's Jellyfin connection before the move (the way back restores it); its API key is not part of it */
 export interface RequestsPrev { hostname: string; port: number; useSsl: boolean; urlBase: string }
 export interface MediaManaged {
@@ -66,10 +72,21 @@ function migratedFrom(raw: unknown): MigratedFrom | null {
   const name = re(o?.name, CONTAINER_NAME_RE), at = re(o?.at, ISO_RE);
   return o && name && at ? { name, version: re(o.version, VERSION_RE), at } : null;
 }
+const count = (v: unknown): number | null => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null);
+function idCheck(raw: unknown): IdCheck | null {
+  const u = objOf(objOf(raw)?.users), i = objOf(objOf(raw)?.items);
+  const total = count(u?.total), missing = count(u?.missing), sampled = count(i?.sampled), gone = count(i?.missing);
+  return total !== null && missing !== null && sampled !== null && gone !== null ? { users: { total, missing }, items: { sampled, missing: gone } } : null;
+}
 function moveRecord(raw: unknown): MoveRecord | null {
   const o = objOf(raw);
   const phase = MOVE_PHASES.find((p) => p === o?.phase), startedAt = re(o?.startedAt, ISO_RE);
-  return o && phase && startedAt ? { phase, error: re(o.error, CODE_RE), jobId: re(o.jobId, JOB_ID_RE), startedAt, requestsWarning: o.requestsWarning === true } : null;
+  if (!o || !phase || !startedAt) return null;
+  const errorMeta = idCheck(o.errorMeta);
+  return {
+    phase, error: re(o.error, CODE_RE), jobId: re(o.jobId, JOB_ID_RE), startedAt, requestsWarning: o.requestsWarning === true,
+    ...(errorMeta ? { errorMeta } : {}), ...(o.abortPending === true ? { abortPending: true as const } : {}),
+  };
 }
 function requestsPrev(raw: unknown): RequestsPrev | null {
   const o = objOf(raw);
