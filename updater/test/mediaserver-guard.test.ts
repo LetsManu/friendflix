@@ -3,7 +3,8 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { assertHelper, assertManaged, assertManagedInspect, TemplateViolation, type ManagedExpect } from '../src/mediaserver/guard.js';
+import { assertHelper, assertManaged, assertManagedInspect, isMigratedTarget, TemplateViolation, type ManagedExpect } from '../src/mediaserver/guard.js';
+import { isMigratedTarget as pathsMigratedTarget, isTarget } from '../src/mediaserver/paths.js';
 import { containerSpec, hdrSpec, helperSpec, seedSpec, type HelperRequest, type TemplateFacts } from '../src/mediaserver/template.js';
 import type { DesiredSpec } from '../src/mediaserver/types.js';
 
@@ -422,5 +423,248 @@ describe('helper guard', () => {
     refuses(() => assertHelper(fseed, { ...g, uid: 1001, image: JIMG, kind: 'ferrofin' }));
     refuses(() => assertHelper(seed(), { ...g, kind: undefined }));
     refuses(() => assertHelper(seed(), { ...g, image: 'docker.io/jellyfin/jellyfin:latest' }));
+  });
+});
+
+describe('migrated media server (stage 2)', () => {
+  const REFUSED_TOPS = ['cache', 'config', 'tmp', 'proc', 'sys', 'dev', 'etc', 'usr', 'bin', 'sbin', 'lib', 'lib64', 'var', 'run', 'root', 'home', 'ferrofin-data', 'ffmedia'];
+  const accepted = ['/movies', '/data/tv', '/data/x', '/media', '/media/filme', '/srv/a/b', '/mnt/nas/Filme', '/Filme ä', '/tv/Séries/日本', '/a/b/c', '/datax', '/cachex', '/lib32'];
+  const refused = [
+    '/', '', '/data', 'relative', 'movies/x', '/movies/', '//movies', '/movies//x', '/a/b/c/d', '/a/../b', '/..', '/.', '/./movies', '/movies/.',
+    '/movies/..', '/.hidden', '/a\nb', '/a\0b', '/' + 'x'.repeat(201), '/a/*', '/a:b',
+    ...REFUSED_TOPS.flatMap((t) => [`/${t}`, `/${t}/x`, `/${t}/x/y`]),
+  ];
+  it('migrated target rules: the guard copy and the paths copy agree', () => {
+    for (const t of accepted) {
+      expect(isMigratedTarget(t), t).toBe(true);
+      expect(pathsMigratedTarget(t), t).toBe(true);
+    }
+    for (const t of refused) {
+      expect(isMigratedTarget(t), JSON.stringify(t)).toBe(false);
+      expect(pathsMigratedTarget(t), JSON.stringify(t)).toBe(false);
+    }
+  });
+
+  it('new folders after a move: /ffmedia/<slug> like /media/<slug>', () => {
+    for (const t of ['/ffmedia/neu', '/ffmedia/a/b/c', '/media/filme']) expect(isTarget(t), t).toBe(true);
+    for (const t of ['/ffmedia', '/ffmedia/', '/ffmedia/Neu', '/ffmedia/a/b/c/d', '/ffmedia/../etc', '/ffmediax/a']) expect(isTarget(t), t).toBe(false);
+  });
+
+  // a migrated Ferrofin: two folders at the paths the old Jellyfin used (one the whole base), one new folder after the move
+  const DM: DesiredSpec = {
+    ...D, migrated: true,
+    folders: [{ rel: 'Filme', target: '/movies', migrated: true }, { rel: '', target: '/data/tv', migrated: true }, { rel: 'Neu', target: '/ffmedia/neu' }],
+  };
+  const EM: ManagedExpect = { ...E, migrated: { targets: ['/movies', '/data/tv'] } };
+  const okM = (): Body => clone(containerSpec(DM, F).body) as Body;
+  const M = (b: Body): Body[] => b.HostConfig.Mounts;
+  const at = (b: Body, t: string): Body => M(b).find((m) => m.Target === t)!;
+
+  it('the migrated template passes with the recorded targets only', () => {
+    expect(() => assertManaged(okM(), EM)).not.toThrow();
+    expect(() => assertManaged(containerSpec(DM, F, { password: 'A'.repeat(43) }).body, EM)).not.toThrow();
+    // the same body without the migrated expectation: refused (stage 1 unchanged)
+    refuses(() => assertManaged(okM(), E));
+    // a listed target the rule refuses is still refused
+    const etc = okM();
+    at(etc, '/movies').Target = '/etc';
+    refuses(() => assertManaged(etc, { ...E, migrated: { targets: ['/etc', '/data/tv'] } }));
+  });
+
+  it('a non-listed target outside /media is refused even when migrated', () => {
+    for (const t of ['/srv/a', '/data/x', '/media', '/data', '/ferrofin-data/x', '/ffmedia', '/proc/x']) {
+      const b = okM();
+      at(b, '/movies').Target = t;
+      refuses(() => assertManaged(b, EM));
+    }
+    // a listed target with the wrong case or a trailing slash is not the listed one
+    for (const t of ['/Movies', '/movies/']) {
+      const b = okM();
+      at(b, '/movies').Target = t;
+      refuses(() => assertManaged(b, EM));
+    }
+  });
+
+  it('migrated media mounts stay read-only subpaths of the one base volume', () => {
+    const mut: [string, (b: Body) => void][] = [
+      ['read-write', (b) => { at(b, '/movies').ReadOnly = false; }],
+      ['ReadOnly missing', (b) => { delete at(b, '/data/tv').ReadOnly; }],
+      ['a bind', (b) => { Object.assign(at(b, '/movies'), { Type: 'bind', Source: '/srv/media/Filme' }); delete at(b, '/movies').VolumeOptions; }],
+      ['a bind of the whole base', (b) => { Object.assign(at(b, '/data/tv'), { Type: 'bind', Source: '/srv/media' }); delete at(b, '/data/tv').VolumeOptions; }],
+      ['another volume', (b) => { at(b, '/movies').Source = 'jellyfin_media'; }],
+      ['a second base volume', (b) => { at(b, '/data/tv').Source = 'friendflix_mediaserver-base-00000000'; }],
+      ['no NoCopy', (b) => { at(b, '/data/tv').VolumeOptions = {}; }],
+      ['a subpath leaving the base', (b) => { at(b, '/movies').VolumeOptions.Subpath = '../x'; }],
+      ['an empty string subpath', (b) => { at(b, '/data/tv').VolumeOptions.Subpath = ''; }],
+      ['driver options', (b) => { at(b, '/data/tv').VolumeOptions.DriverConfig = { Name: 'local', Options: { device: '/' } }; }],
+      ['a mount at a listed target twice', (b) => { M(b).push({ ...at(b, '/movies') }); }],
+      ['the data volume at /data', (b) => { at(b, '/ferrofin-data').Target = '/data'; }],
+      ['the data volume at a listed target', (b) => { at(b, '/ferrofin-data').Target = '/movies'; M(b).splice(M(b).indexOf(at(b, '/movies')), 1); }],
+      ['a writable data volume elsewhere', (b) => { M(b).push({ ...at(b, '/ferrofin-data'), Target: '/data' }); }],
+      ['no data volume', (b) => { M(b).splice(M(b).indexOf(at(b, '/ferrofin-data')), 1); }],
+      ['FERROFIN_DATA_DIR elsewhere', (b) => { b.Env = b.Env.map((x: string) => (x.startsWith('FERROFIN_DATA_DIR=') ? 'FERROFIN_DATA_DIR=/data' : x)); }],
+      ['FERROFIN_DATA_DIR missing', (b) => { b.Env = b.Env.filter((x: string) => !x.startsWith('FERROFIN_DATA_DIR=')); }],
+      ['FERROFIN_DATA_DIR twice', (b) => { b.Env.push('FERROFIN_DATA_DIR=/ferrofin-data'); }],
+    ];
+    for (const [name, m] of mut) {
+      const b = okM();
+      m(b);
+      expect(() => assertManaged(b, EM), name).toThrow(TemplateViolation);
+    }
+  });
+
+  it('empty rel only for a migrated folder', () => {
+    // a stage 1 folder without a subpath (the whole base) stays refused, also on a migrated server
+    const b = okM();
+    delete at(b, '/ffmedia/neu').VolumeOptions.Subpath;
+    refuses(() => assertManaged(b, EM));
+    const s1 = ok();
+    delete M(s1).find((m) => m.Target === '/media/filme')!.VolumeOptions.Subpath;
+    refuses(() => assertManaged(s1, E));
+    // a listed folder with a subpath is fine as well
+    const sub = okM();
+    at(sub, '/data/tv').VolumeOptions.Subpath = 'Serien';
+    expect(() => assertManaged(sub, EM)).not.toThrow();
+  });
+
+  it('FERROFIN_DATA_DIR only for a migrated ferrofin', () => {
+    const b = ok();
+    b.Env.push('FERROFIN_DATA_DIR=/ferrofin-data');
+    refuses(() => assertManaged(b, E));
+    // a migrated expectation for Jellyfin is refused outright
+    const j = containerSpec({ ...D, kind: 'jellyfin', gpu: 'nvidia', mediaGid: null }, { ...F, image: JIMG }).body;
+    refuses(() => assertManaged(j, { ...E, kind: 'jellyfin', migrated: { targets: [] } }));
+    const jm = clone(j) as Body;
+    jm.Env.push('FERROFIN_DATA_DIR=/ferrofin-data');
+    refuses(() => assertManaged(jm, { ...E, kind: 'jellyfin', migrated: { targets: [] } }));
+    // an expectation whose targets break the rule is refused even if the body does not use them
+    refuses(() => assertManaged(okM(), { ...E, migrated: { targets: ['/movies', '/data/tv', '/proc'] } }));
+  });
+
+  it('/ferrofin-data only when migrated', () => {
+    const b = ok();
+    M(b)[0]!.Target = '/ferrofin-data';
+    refuses(() => assertManaged(b, E));
+    b.Env.push('FERROFIN_DATA_DIR=/ferrofin-data');
+    refuses(() => assertManaged(b, E));
+    // with the expectation it passes (a migrated server whose folders are all below /media)
+    expect(() => assertManaged(b, { ...E, migrated: { targets: [] } })).not.toThrow();
+    // the media volumes are never at /ferrofin-data
+    const m = okM();
+    at(m, '/movies').Target = '/ferrofin-data';
+    refuses(() => assertManaged(m, { ...EM, migrated: { targets: ['/ferrofin-data', '/data/tv'] } }));
+  });
+
+  it('/ffmedia/<slug> only on a migrated server', () => {
+    const b = ok();
+    M(b).find((m) => m.Target === '/media/filme')!.Target = '/ffmedia/filme';
+    refuses(() => assertManaged(b, E));
+    const m = okM();
+    for (const t of ['/ffmedia/Neu', '/ffmedia', '/ffmedia/a/b/c/d']) {
+      const x = clone(m);
+      at(x, '/ffmedia/neu').Target = t;
+      refuses(() => assertManaged(x, EM));
+    }
+  });
+
+  it('inspect: the same rules', () => {
+    const fixture = JSON.parse(readFileSync(new URL('./fixtures/mediaserver-inspect.json', import.meta.url), 'utf8')) as Body;
+    const image = {
+      env: (fixture.Config.Env as string[]).filter((e) => !e.startsWith('TZ=') && !e.startsWith('FERROFIN_CACHE_DIR=')),
+      entrypoint: ['ferrofin-server'], cmd: null, volumes: ['/data'],
+    };
+    const i = clone(fixture);
+    // the engine's view of the migrated create: data at /ferrofin-data, the image's FERROFIN_DATA_DIR overridden, the whole base at /movies
+    i.HostConfig.Mounts[0].Target = i.Mounts[0].Destination = '/ferrofin-data';
+    i.Config.Env = i.Config.Env.map((x: string) => (x === 'FERROFIN_DATA_DIR=/data' ? 'FERROFIN_DATA_DIR=/ferrofin-data' : x));
+    i.HostConfig.Mounts[2].Target = i.Mounts[2].Destination = '/movies';
+    delete i.HostConfig.Mounts[2].VolumeOptions.Subpath;
+    expect(() => assertManagedInspect(i, { ...E, image, migrated: { targets: ['/movies'] } })).not.toThrow();
+    refuses(() => assertManagedInspect(i, { ...E, image }));
+    refuses(() => assertManagedInspect(i, { ...E, image, migrated: { targets: ['/tv'] } }));
+    const rw = clone(i);
+    rw.Mounts[2].RW = true;
+    refuses(() => assertManagedInspect(rw, { ...E, image, migrated: { targets: ['/movies'] } }));
+  });
+});
+
+describe('source helpers (stage 2)', () => {
+  const H = { project: 'friendflix', image: 'sha256:' + 'c'.repeat(64) };
+  const G = { project: 'friendflix', uid: 1000, gid: 1000, image: H.image };
+  const bindSrc = { type: 'bind' as const, source: '/opt/jellyfin/config' };
+  const volSrc = { type: 'volume' as const, source: 'jellyfin_config' };
+  const source = (s: { type: 'bind' | 'volume'; source: string }) => ({ kind: 'source' as const, ...s });
+  const data = (rw: boolean, volume = 'friendflix_mediaserver-ferrofin-data') => ({ kind: 'data' as const, volume, rw });
+  const req = (r: Partial<HelperRequest>): Body => clone(helperSpec({ verb: 'migrate-scan', args: [], uid: 1000, gid: 1000, groups: [], mounts: [source(bindSrc)], ...r }, H).body) as Body;
+
+  it('source mount: read-only, only for migrate verbs, only the expected source', () => {
+    expect(() => assertHelper(req({}), { ...G, verb: 'migrate-scan', source: bindSrc })).not.toThrow();
+    expect(() => assertHelper(req({ mounts: [source(volSrc)] }), { ...G, verb: 'migrate-scan', source: volSrc })).not.toThrow();
+    expect(() => assertHelper(req({ verb: 'migrate-copy', mounts: [source(volSrc), data(true)] }), { ...G, verb: 'migrate-copy', source: volSrc })).not.toThrow();
+    // no source mount at all is fine (the verbs decide what they need)
+    expect(() => assertHelper(req({ mounts: [] }), { ...G, verb: 'migrate-scan' })).not.toThrow();
+
+    const cases: [string, Body, Parameters<typeof assertHelper>[1]][] = [
+      ['a source mount for browse', req({ verb: 'browse', mounts: [source(bindSrc)] }), { ...G, verb: 'browse', source: bindSrc }],
+      ['a source mount for check', req({ verb: 'check', mounts: [source(bindSrc)] }), { ...G, verb: 'check', source: bindSrc }],
+      ['a source mount for backup', req({ verb: 'backup', mounts: [source(volSrc)] }), { ...G, verb: 'backup', source: volSrc }],
+      ['a source mount for restore', req({ verb: 'restore', mounts: [source(volSrc)] }), { ...G, verb: 'restore', source: volSrc }],
+      ['a source mount without an expected source', req({}), { ...G, verb: 'migrate-scan' }],
+      ['another bind path', req({ mounts: [source({ type: 'bind', source: '/opt/jellyfin' })] }), { ...G, verb: 'migrate-scan', source: bindSrc }],
+      ['another volume', req({ mounts: [source({ type: 'volume', source: 'other_config' })] }), { ...G, verb: 'migrate-scan', source: volSrc }],
+      ['a bind where a volume is expected', req({ mounts: [source({ type: 'bind', source: 'jellyfin_config' })] }), { ...G, verb: 'migrate-scan', source: volSrc }],
+      ['a volume where a bind is expected', req({ mounts: [source({ type: 'volume', source: '/opt/jellyfin/config' })] }), { ...G, verb: 'migrate-scan', source: bindSrc }],
+      ['a bind of /', req({ mounts: [source({ type: 'bind', source: '/' })] }), { ...G, verb: 'migrate-scan', source: { type: 'bind', source: '/' } }],
+      ['a bind with ..', req({ mounts: [source({ type: 'bind', source: '/opt/../etc' })] }), { ...G, verb: 'migrate-scan', source: { type: 'bind', source: '/opt/../etc' } }],
+      ['a relative bind', req({ mounts: [source({ type: 'bind', source: 'config' })] }), { ...G, verb: 'migrate-scan', source: { type: 'bind', source: 'config' } }],
+      ['a bind of the docker socket', req({ mounts: [source({ type: 'bind', source: '/var/run/docker.sock' })] }), { ...G, verb: 'migrate-scan', source: { type: 'bind', source: '/var/run/docker.sock' } }],
+      ['a volume with a bad name', req({ mounts: [source({ type: 'volume', source: '/x' })] }), { ...G, verb: 'migrate-scan', source: { type: 'volume', source: '/x' } }],
+      ['the source twice', req({ mounts: [source(bindSrc), source(bindSrc)] }), { ...G, verb: 'migrate-scan', source: bindSrc }],
+    ];
+    for (const [name, b, e] of cases) expect(() => assertHelper(b, e), name).toThrow(TemplateViolation);
+
+    const mut: [string, (b: Body) => void][] = [
+      ['read-write', (b) => { b.HostConfig.Mounts[0].ReadOnly = false; }],
+      ['ReadOnly missing', (b) => { delete b.HostConfig.Mounts[0].ReadOnly; }],
+      ['bind options', (b) => { b.HostConfig.Mounts[0].BindOptions = { Propagation: 'rshared' }; }],
+      ['volume options on a bind', (b) => { b.HostConfig.Mounts[0].VolumeOptions = { NoCopy: true }; }],
+      ['another target', (b) => { b.HostConfig.Mounts[0].Target = '/config'; }],
+    ];
+    for (const [name, m] of mut) {
+      const b = req({});
+      m(b);
+      expect(() => assertHelper(b, { ...G, verb: 'migrate-scan', source: bindSrc }), name).toThrow(TemplateViolation);
+    }
+    const vmut: [string, (b: Body) => void][] = [
+      ['read-write', (b) => { b.HostConfig.Mounts[0].ReadOnly = false; }],
+      ['copy-up into the source volume (no NoCopy)', (b) => { delete b.HostConfig.Mounts[0].VolumeOptions; }],
+      ['a subpath', (b) => { b.HostConfig.Mounts[0].VolumeOptions.Subpath = 'x'; }],
+      ['driver options', (b) => { b.HostConfig.Mounts[0].VolumeOptions.DriverConfig = { Name: 'local', Options: { device: '/' } }; }],
+    ];
+    for (const [name, m] of vmut) {
+      const b = req({ verb: 'migrate-copy', mounts: [source(volSrc)] });
+      m(b);
+      expect(() => assertHelper(b, { ...G, verb: 'migrate-copy', source: volSrc }), name).toThrow(TemplateViolation);
+    }
+  });
+
+  it('migrate-copy may write /data, migrate-scan may not', () => {
+    const copy = { ...G, verb: 'migrate-copy' as const, source: bindSrc };
+    const scan = { ...G, verb: 'migrate-scan' as const, source: bindSrc };
+    expect(() => assertHelper(req({ verb: 'migrate-copy', mounts: [source(bindSrc), data(true)] }), copy)).not.toThrow();
+    expect(() => assertHelper(req({ verb: 'migrate-copy', mounts: [source(bindSrc), data(false)] }), copy)).not.toThrow();
+    // only the Ferrofin data volume of this project
+    refuses(() => assertHelper(req({ verb: 'migrate-copy', mounts: [source(bindSrc), data(true, 'friendflix_mediaserver-jellyfin-config')] }), copy));
+    refuses(() => assertHelper(req({ verb: 'migrate-copy', mounts: [source(bindSrc), data(true, 'other_mediaserver-ferrofin-data')] }), copy));
+    refuses(() => assertHelper(req({ verb: 'migrate-copy', mounts: [source(bindSrc), data(true, 'jellyfin_config')] }), copy));
+    // scan: never /data, read-only or not
+    refuses(() => assertHelper(req({ mounts: [source(bindSrc), data(false)] }), scan));
+    refuses(() => assertHelper(req({ mounts: [source(bindSrc), data(true)] }), scan));
+    // the other verbs keep stage 1's rule: /data read-write only for restore
+    refuses(() => assertHelper(req({ verb: 'backup', mounts: [data(true)] }), { ...G, verb: 'backup' }));
+    // a copy never writes the backups or binds anything else
+    refuses(() => assertHelper(req({ verb: 'migrate-copy', mounts: [source(bindSrc), { kind: 'backup', rw: true }] }), copy));
+    refuses(() => assertHelper(req({ verb: 'migrate-copy', mounts: [source(bindSrc), { kind: 'request', path: '/srv/media' }] }), { ...copy, bind: '/srv/media' }));
+    refuses(() => assertHelper(req({ verb: 'migrate-copy', mounts: [source(bindSrc), { kind: 'dri' }] }), copy));
   });
 });

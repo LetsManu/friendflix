@@ -6,7 +6,7 @@ import type { Job, MediaState } from '../state.js';
 import { BACKUP_DIR, backupInUse, backupJob, freeBackupId, older, record, restoreJob, writingBackup, type BackupKit } from './backup.js';
 import { EngineError } from './engine.js';
 import type { EngineFacts } from './facts.js';
-import { TemplateViolation, assertHelper, assertManaged, assertManagedInspect } from './guard.js';
+import { TemplateViolation, assertHelper, assertManaged, assertManagedInspect, type ManagedExpect, type SourceExpect } from './guard.js';
 import { runHdr } from './helpers.js';
 import type { Pin, PinRead } from './pins.js';
 import type { MediaDeps } from './service.js';
@@ -75,7 +75,12 @@ function nested(rels: string[]): boolean {
   return rels.some((a, i) => rels.some((b, j) => i !== j && (a === b || b.startsWith(`${a}/`))));
 }
 
-const specOf = (d: Desired): DesiredSpec => ({ kind: d.kind, folders: d.folders, uid: d.uid, gid: d.gid, gpu: d.gpu, mediaGid: d.mediaGid, egress: d.egress, tz: d.tz });
+const specOf = (d: Desired): DesiredSpec => ({
+  kind: d.kind, folders: d.folders, uid: d.uid, gid: d.gid, gpu: d.gpu, mediaGid: d.mediaGid, egress: d.egress, tz: d.tz, ...(d.migrated ? { migrated: true as const } : {}),
+});
+/** the guard's expectation for a migrated spec: the targets recorded at the move (its migrated folders); nothing for stage 1 */
+const migratedOf = (d: Pick<DesiredSpec, 'migrated' | 'folders'> | null | undefined): Pick<ManagedExpect, 'migrated'> =>
+  (d?.migrated ? { migrated: { targets: d.folders.filter((f) => f.migrated).map((f) => f.target) } } : {});
 const userOf = (d: { uid: number; gid: number; mediaGid: number | null } | null) =>
   ({ uid: d?.uid ?? DEFAULT_USER.uid, gid: d?.gid ?? DEFAULT_USER.gid, groups: d?.mediaGid ? [d.mediaGid] : [] });
 /** the upstream a kind's data volume is at: recorded per kind, else (a state from before the record) the container's own */
@@ -294,9 +299,9 @@ export class MediaJobs {
   }
 
   /** one helper run as the given user: its JSON answer, or a StepError with the helper's own code */
-  private async helper(r: Runner, u: { uid: number; gid: number; groups: number[] }, verb: HelperVerb, args: string[], mounts: HelperMount[], limitMs = HELPER_MS): Promise<Obj> {
+  private async helper(r: Runner, u: { uid: number; gid: number; groups: number[] }, verb: HelperVerb, args: string[], mounts: HelperMount[], limitMs = HELPER_MS, source?: SourceExpect): Promise<Obj> {
     const req = helperSpec({ verb, args, uid: u.uid, gid: u.gid, groups: u.groups, mounts }, r);
-    const a = await this.d.helper(this.engine, req, { project: r.project, uid: u.uid, gid: u.gid, image: r.image, verb }, limitMs);
+    const a = await this.d.helper(this.engine, req, { project: r.project, uid: u.uid, gid: u.gid, image: r.image, verb, ...(source ? { source } : {}) }, limitMs);
     if ('error' in a) throw new StepError(isMediaError(a.error) ? a.error : 'helper_failed');
     return a;
   }
@@ -455,14 +460,17 @@ export class MediaJobs {
     return { id: String(i.Id), kind: KINDS.find((k) => k === l['friendflix.kind']) ?? null, running: isObj(i.State) && i.State.Running === true };
   }
 
-  /** the inspect guard with the user the container runs as and the image's own facts; any refusal is `managed_tampered` */
+  /**
+   * the inspect guard with the user the container runs as and the image's own facts; any refusal is `managed_tampered`. A migrated
+   * recorded spec brings its recorded targets (the container under the real name was built from the recorded spec).
+   */
   async guardInspect(i: Obj, project: string, gpu: Gpu | undefined): Promise<void> {
     const user = /^([0-9]{1,5}):([0-9]{1,5})$/.exec(isObj(i.Config) && typeof i.Config.User === 'string' ? i.Config.User : '') ?? fail('managed_tampered');
     const img = typeof i.Image === 'string' ? await this.engine.inspectImage(i.Image).catch(() => null) : null;
     try {
       assertManagedInspect(i, {
         project, kind: KINDS.find((k) => k === labelsOf(i)['friendflix.kind']) ?? fail('managed_tampered'), uid: Number(user[1]), gid: Number(user[2]),
-        repo: this.d.repo, ...(gpu ? { gpu } : {}), image: { env: img?.env ?? [], entrypoint: img?.entrypoint ?? null, cmd: img?.cmd ?? null, volumes: img?.volumes ?? [] },
+        repo: this.d.repo, ...(gpu ? { gpu } : {}), ...migratedOf(this.u.mediaState().desired), image: { env: img?.env ?? [], entrypoint: img?.entrypoint ?? null, cmd: img?.cmd ?? null, volumes: img?.volumes ?? [] },
       });
     } catch (e) {
       if (e instanceof TemplateViolation) fail('managed_tampered');
@@ -473,7 +481,7 @@ export class MediaJobs {
   /** the create body from the template, checked by the guard (a refusal throws TemplateViolation) */
   private build(d: DesiredSpec, f: TemplateFacts, password: string | undefined): CreateRequest {
     const req = containerSpec(d, f, password !== undefined ? { password } : {});
-    assertManaged(req.body, { project: f.project, kind: d.kind, uid: d.uid, gid: d.gid, repo: this.d.repo });
+    assertManaged(req.body, { project: f.project, kind: d.kind, uid: d.uid, gid: d.gid, repo: this.d.repo, ...migratedOf(d) });
     return req;
   }
 

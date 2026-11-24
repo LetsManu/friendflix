@@ -516,6 +516,32 @@ describe('start, stop, restart, update', () => {
   });
 });
 
+describe('a migrated server (stage 2)', () => {
+  const MSPEC: DesiredSpec = {
+    ...SPEC, migrated: true,
+    folders: [{ rel: 'Filme', target: '/movies', migrated: true }, { rel: 'Serien', target: '/data/tv', migrated: true }, { rel: 'Neu', target: '/ffmedia/neu' }],
+  };
+
+  it('the recorded migrated spec reaches the guard on inspect and on create', async () => {
+    const w = world();
+    w.existing(MSPEC, ferroPin(), 'v1.5.1');
+    expect(await w.run({ op: 'restart' })).toMatchObject({ state: 'succeeded' });
+    const job = await w.run({ op: 'finish-setup' });
+    expect(job).toMatchObject({ action: 'mediaserver-finish', state: 'succeeded' });
+    const body = w.created.at(-1)!.body as { Env: string[]; HostConfig: { Mounts: { Target: string }[] } };
+    expect(body.Env).toContain('FERROFIN_DATA_DIR=/ferrofin-data');
+    expect(body.HostConfig.Mounts.map((m) => m.Target)).toEqual(['/ferrofin-data', '/cache', '/movies', '/data/tv', '/ffmedia/neu']);
+    expect(w.media().desired).toMatchObject({ migrated: true });
+  });
+
+  it('a migrated container under a stage 1 record is tampered', async () => {
+    const w = world();
+    w.existing(MSPEC, ferroPin(), 'v1.5.1');
+    w.updater.updateMedia((m) => { m.desired = { ...SPEC, run: true }; });
+    expect(await w.run({ op: 'restart' })).toMatchObject({ state: 'failed', error: 'managed_tampered' });
+  });
+});
+
 describe('remove', () => {
   it('remove clears a tampered container', async () => {
     const w = world();

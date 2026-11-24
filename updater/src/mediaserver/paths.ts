@@ -4,7 +4,7 @@
 /** one path component: letters (any script), digits, space and `._-+()&'`, never starting with a dot */
 const COMPONENT_RE = /^[\p{L}\p{N} ._\-+()&']+$/u;
 const MAX_PATH = 200;
-const TARGET_RE = /^\/media(\/[a-z0-9-]{1,40}){1,3}$/;
+const TARGET_RE = /^\/(media|ffmedia)(\/[a-z0-9-]{1,40}){1,3}$/;
 /** the system trees: the path and everything below it is refused (`/lib*` is handled by prefix, see refusedTree) */
 const REFUSED_TREES = ['bin', 'boot', 'dev', 'etc', 'proc', 'root', 'run', 'sbin', 'sys', 'usr'];
 const REFUSED_DEEP = [['var', 'run'], ['var', 'lib', 'docker']];
@@ -60,7 +60,7 @@ export function isRel(rel: string, min: number, max: number): boolean {
   return p.length >= min && p.length <= max && p.every(okComponent);
 }
 
-/** the mount point inside the media server: /media/<slug> up to three levels */
+/** the mount point inside the media server: /media/<slug> up to three levels; /ffmedia/<slug> for a folder added after a move (the template allows it only on a migrated server) */
 export function isTarget(t: string): boolean {
   return TARGET_RE.test(t);
 }
