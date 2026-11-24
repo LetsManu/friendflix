@@ -293,7 +293,12 @@ export async function upload(d: { dir: string; updater: Updater; now(): number; 
       return refuse(409, 'busy');
     }
     await rename(part, fileOf(d.dir, id));
-    const meta: BackupMeta = { id, kind: head.meta.kind, upstream: head.meta.upstream, at: at.toISOString(), tag: 'upload', size: (await stat(fileOf(d.dir, id))).size };
+    // when the archive was made (its metadata, checked to be a date): a moved server tells a backup from before its move by it
+    const made = new Date(head.meta.createdAt);
+    const meta: BackupMeta = {
+      id, kind: head.meta.kind, upstream: head.meta.upstream, at: at.toISOString(), tag: 'upload', size: (await stat(fileOf(d.dir, id))).size,
+      ...(Number.isNaN(made.getTime()) ? {} : { createdAt: made.toISOString() }),
+    };
     await record(d, meta);
     d.updater.log.add('media backup uploaded');
     return { ok: true, backup: meta };

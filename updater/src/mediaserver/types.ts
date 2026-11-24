@@ -46,6 +46,10 @@ export interface MoveState {
 }
 
 export type BackupTag = 'manual' | 'auto' | 'upload';
-export interface BackupMeta { id: string; kind: Kind; upstream: string; at: string; tag: BackupTag; size: number }
+/**
+ * a backup; `at` when it was made here (an upload: when it was uploaded). `createdAt`, uploads only: when the archive was made, as its
+ * own metadata says (a moved server refuses a backup from before its move: the backend compares this, else `at`)
+ */
+export interface BackupMeta { id: string; kind: Kind; upstream: string; at: string; tag: BackupTag; size: number; createdAt?: string }
 export interface HdrResult { kind: Kind; at: string; opencl: 'pass' | 'fail'; qsv: 'pass' | 'fail' }
 export const BACKUP_ID_RE = /^(ferrofin|jellyfin)-[0-9]{8}-[0-9]{4}-[0-9A-Za-z.+_-]{1,40}$/;

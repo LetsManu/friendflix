@@ -182,7 +182,8 @@ function sanitizeBackups(raw: unknown): BackupMeta[] {
     const tag = BACKUP_TAGS.find((t) => t === b.tag);
     if (typeof b.id !== 'string' || !BACKUP_ID_RE.test(b.id) || !kind || !at || !tag) continue;
     if (typeof b.upstream !== 'string' || !UPSTREAM_RE.test(b.upstream) || typeof b.size !== 'number' || !Number.isSafeInteger(b.size) || b.size < 0) continue;
-    out.push({ id: b.id, kind, upstream: b.upstream, at, tag, size: b.size });
+    const createdAt = tag === 'upload' ? iso(b.createdAt) : null;
+    out.push({ id: b.id, kind, upstream: b.upstream, at, tag, size: b.size, ...(createdAt ? { createdAt } : {}) });
   }
   return out;
 }
