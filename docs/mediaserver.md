@@ -217,7 +217,11 @@ it is only read, stopped for the last part of the copy and kept.
   server FriendFlix uses now: the updater compares the server id of the address in FriendFlix with the id in each container's
   `/config` (not the container name), so a reverse-proxy address works too. Several matching containers (copies of one server): you
   pick one by name.
-- **Jellyfin 10.10 or 10.11** (`source_version` otherwise: Ferrofin cannot take over a version outside what it supports).
+- **Jellyfin 10.11.8 or newer** (`source_version` for anything older). The pinned Ferrofin adopts Jellyfin 10.11.8–10.11.11 and
+  12.0–12.4 ([its list](https://github.com/mangoleaf/ferrofin#migrating-from-jellyfin)). A newer Jellyfin is tried too: Ferrofin
+  checks the database itself and refuses one it does not know, so the move stops at `adopt_failed` (or `unhealthy`) before the
+  switch, the copy is dropped and your Jellyfin starts again, its own data untouched. Ferrofin also stops on two user names that are
+  the same apart from letter case: rename one in Jellyfin first.
 - **All media inside the base folder.** Every media mount of the Jellyfin container must lie below the media base folder you
   confirm with the code ([Set it up](#set-it-up), step 1). A mount outside it is `source_outside_base`: the sheet lists the
   container paths (never host paths) and *Basisordner ändern* repeats the code step with a folder that holds all of them. The
@@ -296,7 +300,7 @@ and *Entfernen* is offered again. Until then every switch to an address and *Ent
 | `source_mismatch` | The container is not the Jellyfin FriendFlix uses, or it changed since the check. *Nochmal prüfen*. |
 | `source_layout` | The folders match neither the official nor the linuxserver image. It cannot be moved like this. |
 | `source_outside_base` | A media mount lies outside the base folder; the sheet names the container paths. *Basisordner ändern* to a folder above all of them. |
-| `source_version` | Not Jellyfin 10.10 or 10.11. Update or downgrade your Jellyfin first. |
+| `source_version` | Older than Jellyfin 10.11.8. Update your Jellyfin first. |
 | `source_nested` | Jellyfin sees one folder at two paths or one folder inside another. Its paths cannot be taken over; give it separate mounts. |
 | `no_space` | Free space on the Docker data root is less than the copy plus a fifth. Free some or leave out trickplay. |
 | `adopt_failed` | Ferrofin did not take over the copy. Your Jellyfin runs again; look at *Protokoll*. |

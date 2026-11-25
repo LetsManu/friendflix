@@ -413,7 +413,7 @@ const dict: Translation<typeof de> = {
     source_layout: 'Bu Jellyfin’in klasörleri bilinen hiçbir imaja (resmî ya da linuxserver) uymuyor. Böyle taşınamaz.',
     source_outside_base: 'Jellyfin’inin bazı medya klasörleri ana klasörün altında değil. Hepsini içeren bir ana klasör seç.',
     source_nested: 'Jellyfin’in bir klasörü iki yolda ya da bir klasörü başka bir klasörün içinde görüyor. Yolları böyle devralınamaz.',
-    source_version: 'Ferrofin bu Jellyfin sürümünü devralamaz: Jellyfin 10.10 ya da 10.11 gerekir.',
+    source_version: 'Ferrofin bu Jellyfin sürümünü devralamaz: Jellyfin 10.11.8 ya da daha yenisi gerekir.',
     no_space: 'Sunucuda kopya için yeterli yer yok (beşte bir yedek payıyla).',
     adopt_failed: 'Ferrofin kopyalanan verileri devralmadı. Jellyfin’in yeniden çalışıyor.',
     ids_mismatch: 'Ferrofin’de FriendFlix’in bildiği çok fazla kullanıcı ya da başlık eksik. Jellyfin’in yeniden çalışıyor.',
