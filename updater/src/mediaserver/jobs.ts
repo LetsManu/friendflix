@@ -375,7 +375,16 @@ export class MediaJobs {
   private async helper(r: Runner, u: { uid: number; gid: number; groups: number[] }, verb: HelperVerb, args: string[], mounts: HelperMount[], limitMs = HELPER_MS, source?: { expect: SourceExpect; dockerRoot: string | null }): Promise<Obj> {
     const req = helperSpec({ verb, args, uid: u.uid, gid: u.gid, groups: u.groups, mounts }, r);
     const a = await this.d.helper(this.engine, req, { project: r.project, uid: u.uid, gid: u.gid, image: r.image, verb, ...(source ? { source: source.expect, dockerRoot: source.dockerRoot } : {}) }, limitMs);
-    if ('error' in a) throw new StepError(isMediaError(a.error) ? a.error : 'helper_failed');
+    if ('error' in a) {
+      // a failed copy's reason (mediaHelper copyFailDetail: errno, call, path inside /source or /data), printable and short: the
+      // job log (Admin → Update) and the updater's stdout (`docker logs`), never in an answer or an error code
+      if (typeof a.detail === 'string') {
+        const line = `media helper ${verb} failed: ${a.detail.replace(/[^\x20-\x7e\u00a0-\uffff]/g, '?').slice(0, 200)}`;
+        this.u.log.add(line);
+        this.d.print(`FriendFlix ${line}`);
+      }
+      throw new StepError(isMediaError(a.error) ? a.error : 'helper_failed');
+    }
     return a;
   }
 

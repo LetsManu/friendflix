@@ -236,6 +236,16 @@ describe('the move', () => {
       });
     }
 
+    it("a failed copy's detail goes to the updater log, bounded", async () => {
+      const w = setup();
+      w.data.copyAnswer = (c) => (c.args[0] === 'bulk' ? { error: 'helper_failed', detail: 'EACCES open source:data/x.db\nfake line' } : null);
+      expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'helper_failed' });
+      const log = w.updater.log.tail(200);
+      expect(log.some((l) => l.endsWith('media helper migrate-copy failed: EACCES open source:data/x.db?fake line'))).toBe(true);
+      expect(w.printed).toContain('FriendFlix media helper migrate-copy failed: EACCES open source:data/x.db?fake line');
+      expectAborted(w, 'helper_failed');
+    });
+
     it('a source start that throws once is retried', async () => {
       const w = setup();
       w.data.copyAnswer = (c) => (c.args[0] === 'final' ? { error: 'helper_failed' } : null);
