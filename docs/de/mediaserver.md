@@ -233,9 +233,12 @@ der Kopie gestoppt und aufbewahrt.
   umgezogen. Es muss der Server sein, den FriendFlix gerade nutzt: Der Updater vergleicht die Server-ID der Adresse in FriendFlix
   mit der ID in `/config` jedes Containers (nicht den Containernamen), eine Reverse-Proxy-Adresse geht also auch. Passen mehrere
   Container (Kopien eines Servers), wählst du einen nach Namen.
-- **Jellyfin 10.10 oder neuer** (`source_version` bei allem Älteren). Eine Version, die neuer ist als die, der das gepinnte Ferrofin
-  folgt, wird versucht: Kann Ferrofin ihre Datenbank nicht öffnen, endet der Umzug vor dem Umschalten mit `adopt_failed` (oder
-  `unhealthy`), die Kopie wird verworfen und dein Jellyfin startet wieder, seine eigenen Daten unberührt.
+- **Jellyfin 10.11.8 oder neuer** (`source_version` bei allem Älteren). Das gepinnte Ferrofin übernimmt Jellyfin 10.11.8–10.11.11 und
+  12.0–12.4 ([seine Liste](https://github.com/mangoleaf/ferrofin#migrating-from-jellyfin)). Ein neueres Jellyfin wird auch versucht:
+  Ferrofin prüft die Datenbank selbst und lehnt eine ab, die es nicht kennt, dann endet der Umzug vor dem Umschalten mit
+  `adopt_failed` (oder `unhealthy`), die Kopie wird verworfen und dein Jellyfin startet wieder, seine eigenen Daten unberührt.
+  Ferrofin stoppt auch bei zwei Benutzernamen, die sich nur in Groß- und Kleinschreibung unterscheiden: Benenne einen davon vorher in
+  Jellyfin um.
 - **Alle Medien im Basisordner.** Jeder Medien-Mount des Jellyfin-Containers muss unter dem Medien-Basisordner liegen, den du mit
   dem Code bestätigst ([Einrichten](#einrichten), Schritt 1). Ein Mount außerhalb ist `source_outside_base`: Das Blatt listet die
   Container-Pfade (nie Host-Pfade), und *Basisordner ändern* wiederholt den Code-Schritt mit einem Ordner, der alle enthält. Der
@@ -324,7 +327,7 @@ Adresse und *Entfernen* mit `use_way_back` abgelehnt.
 | `source_mismatch` | Der Container ist nicht das Jellyfin, das FriendFlix nutzt, oder er hat sich seit der Prüfung geändert. *Nochmal prüfen*. |
 | `source_layout` | Die Ordner passen weder zum offiziellen noch zum linuxserver-Image. So geht kein Umzug. |
 | `source_outside_base` | Ein Medien-Mount liegt außerhalb des Basisordners; das Blatt nennt die Container-Pfade. *Basisordner ändern* auf einen Ordner über allen. |
-| `source_version` | Älter als Jellyfin 10.10. Aktualisiere dein Jellyfin zuerst. |
+| `source_version` | Älter als Jellyfin 10.11.8. Aktualisiere dein Jellyfin zuerst. |
 | `source_nested` | Jellyfin sieht einen Ordner unter zwei Pfaden oder einen Ordner in einem anderen. Seine Pfade lassen sich nicht übernehmen; gib ihm getrennte Mounts. |
 | `no_space` | Der freie Platz im Docker-Datenverzeichnis ist kleiner als die Kopie plus ein Fünftel. Schaffe Platz oder lass Trickplay weg. |
 | `adopt_failed` | Ferrofin hat die Kopie nicht übernommen. Dein Jellyfin läuft wieder; sieh ins *Protokoll*. |

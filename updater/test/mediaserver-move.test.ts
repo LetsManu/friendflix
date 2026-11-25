@@ -27,7 +27,7 @@ type MigrateOp = Extract<MediaOp, { op: 'migrate' }>;
  */
 function setup(o: { image?: string; mounts?: InspectMount[] } = {}) {
   const w = world();
-  const src = w.foreign({ name: 'jellyfin', image: o.image ?? 'jellyfin/jellyfin:10.11.3', mounts: o.mounts ?? MOUNTS });
+  const src = w.foreign({ name: 'jellyfin', image: o.image ?? 'jellyfin/jellyfin:10.11.9', mounts: o.mounts ?? MOUNTS });
   w.cfg.servers.set(CONF, OURS);
   const data = { owner: null as number | null, adopted: false, free: 50_000_000_000, copyAnswer: (_c: HelperCall): Obj | null => null };
   const orig = w.cfg.answer;
@@ -56,7 +56,7 @@ function setup(o: { image?: string; mounts?: InspectMount[] } = {}) {
 type W = ReturnType<typeof setup>;
 
 const recorded = (w: W): RecordedSource => ({
-  id: w.src.id, name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.3', config: { type: 'bind', source: CONF }, serverId: OURS, version: '10.11.3', at: new Date(T0).toISOString(),
+  id: w.src.id, name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.9', config: { type: 'bind', source: CONF }, serverId: OURS, version: '10.11.9', at: new Date(T0).toISOString(),
 });
 
 /** a move that failed or was aborted: the old Jellyfin runs, the new container is gone, the copied data stays for a retry */
@@ -145,9 +145,9 @@ describe('the move', () => {
     expect(w.helperCalls.filter((c) => c.verb === 'migrate-copy').map((c) => c.args[1])).toEqual(['1', '1']);
   });
 
-  it('adoptable: Jellyfin 10.10 and every newer version, an unknown version unchecked', () => {
-    for (const v of ['10.10.0', '10.11.3', '10.11.3ubu2404-ls45', 'v10.10.7', '10.12.0', '12.4.0', '12.4']) expect(adoptable(v), v).toBe(true);
-    for (const v of ['10.9.11', '10.8.13', '9.0.0', 'v10.9.0']) expect(adoptable(v), v).toBe(false);
+  it('adoptable: Jellyfin 10.11.8 and every newer version (the pinned Ferrofin decides above its list), an unknown version unchecked', () => {
+    for (const v of ['10.11.8', '10.11.11', '10.11.8ubu2404-ls45', 'v10.11.9', '10.11', '10.12.0', '12.0.0', '12.4.0', '12.4', '13.0.1']) expect(adoptable(v), v).toBe(true);
+    for (const v of ['10.11.7', '10.11.3', '10.11.0ubu2404-ls1', '10.10.7', '10.9.11', '9.0.0', 'v10.10.0']) expect(adoptable(v), v).toBe(false);
     expect(adoptable(null)).toBe(true);
     expect(adoptable('latest')).toBe(true);
   });
@@ -159,6 +159,7 @@ describe('the move', () => {
       ['source_mismatch', (w) => ({ ...w.op, serverId: OTHER })],
       ['source_missing', (w) => ({ ...w.op, source: 'e'.repeat(64) })],
       ['source_version', (w) => { (w.src.raw!.Config as Obj).Image = 'jellyfin/jellyfin:10.9.11'; w.src.body.Image = 'jellyfin/jellyfin:10.9.11'; }],
+      ['source_version', (w) => { (w.src.raw!.Config as Obj).Image = 'jellyfin/jellyfin:10.11.7'; w.src.body.Image = 'jellyfin/jellyfin:10.11.7'; }],
       ['uid_mismatch', (w) => { w.volumes.set(N.data('ferrofin'), { labels: { 'friendflix.managed': 'mediaserver-data', 'friendflix.project': PROJECT }, options: {} }); w.data.owner = 1200; }],
       ['verify_failed', (w) => { w.cfg.verify = false; }],
       ['pull_failed', (w) => { w.cfg.pull = async () => { throw new EngineError(500, 'pull_failed'); }; }],
@@ -177,7 +178,7 @@ describe('the move', () => {
     }
 
     it('a linuxserver version label and an unknown version pass the version check', async () => {
-      for (const image of ['lscr.io/linuxserver/jellyfin:10.10.3ubu2404-ls45', 'jellyfin/jellyfin:latest']) {
+      for (const image of ['lscr.io/linuxserver/jellyfin:10.11.8ubu2404-ls45', 'jellyfin/jellyfin:latest']) {
         const w = setup({ image });
         expect(await w.run(w.op), image).toMatchObject({ state: 'succeeded' });
       }
@@ -359,8 +360,8 @@ describe('the source op (the way back)', () => {
     w.updater.updateMedia((m) => { m.source = recorded(w); });
     w.src.running = false;
     // a copy of the server on another /config, another server, and a look-alike image on the same /config that is not Jellyfin
-    const copy = w.foreign({ name: 'jellyfin-copy', image: 'jellyfin/jellyfin:10.11.3', mounts: [bind('/srv/copy/config', '/config')], running: false });
-    const other = w.foreign({ name: 'jellyfin-2', image: 'jellyfin/jellyfin:10.11.3', mounts: [bind('/srv/other/config', '/config')], running: false });
+    const copy = w.foreign({ name: 'jellyfin-copy', image: 'jellyfin/jellyfin:10.11.9', mounts: [bind('/srv/copy/config', '/config')], running: false });
+    const other = w.foreign({ name: 'jellyfin-2', image: 'jellyfin/jellyfin:10.11.9', mounts: [bind('/srv/other/config', '/config')], running: false });
     const fake = w.foreign({ name: 'not-jellyfin', image: 'example/jellyfin-proxy:1', mounts: [bind(CONF, '/config')], running: false });
     w.cfg.servers.set('/srv/copy/config', OURS).set('/srv/other/config', OTHER);
     const job = await w.run({ op: 'source-start' });
@@ -374,7 +375,7 @@ describe('the source op (the way back)', () => {
     expect(await w.run({ op: 'source-start' })).toMatchObject({ state: 'failed', error: 'source_mismatch' });
     for (const c of [copy, other, fake]) expect(c.running).toBe(false);
     // a container on the recorded /config whose server id changed is not the source either
-    const swapped = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.3', mounts: [bind(CONF, '/config')], running: false });
+    const swapped = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.9', mounts: [bind(CONF, '/config')], running: false });
     w.cfg.servers.set(CONF, OTHER);
     expect(await w.run({ op: 'source-start' })).toMatchObject({ state: 'failed', error: 'source_mismatch' });
     expect(swapped.running).toBe(false);
@@ -388,7 +389,7 @@ describe('the source op (the way back)', () => {
     const w = setup();
     w.updater.updateMedia((m) => { m.source = recorded(w); });
     w.containers.delete(w.src.id);
-    const again = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.4', mounts: MOUNTS, running: false });
+    const again = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.10', mounts: MOUNTS, running: false });
     expect(await w.run({ op: 'source-start' })).toMatchObject({ state: 'succeeded' });
     expect(again.running).toBe(true);
     expect(w.media().source).toMatchObject({ id: again.id, config: { type: 'bind', source: CONF }, serverId: OURS });
@@ -482,13 +483,13 @@ describe('carried over from the earlier tasks', () => {
     await w.run(w.op);
     const v = await view();
     // a job that succeeded is at no step any more
-    expect(v.move).toEqual({ phase: 'ready', step: null, source: { name: 'jellyfin', version: '10.11.3' }, folders: FOLDERS, abort: false });
-    expect(v.source).toEqual({ name: 'jellyfin', state: 'exited', version: '10.11.3' });
+    expect(v.move).toEqual({ phase: 'ready', step: null, source: { name: 'jellyfin', version: '10.11.9' }, folders: FOLDERS, abort: false });
+    expect(v.source).toEqual({ name: 'jellyfin', state: 'exited', version: '10.11.9' });
     expect(v.container).toMatchObject({ tampered: false });
     const text = JSON.stringify(v);
     for (const secret of [CONF, OURS, w.src.id]) expect(text).not.toContain(secret);
     w.containers.delete(w.src.id);
-    expect((await view()).source).toEqual({ name: 'jellyfin', state: 'missing', version: '10.11.3' });
+    expect((await view()).source).toEqual({ name: 'jellyfin', state: 'missing', version: '10.11.9' });
     // a failed move shows the step it stopped at
     await w.run({ op: 'migrate-abort' }).catch(() => undefined);
     const f = setup();
@@ -535,7 +536,7 @@ describe('review round 1', () => {
       unfinished(w, 'deploy', { uid: 1500, gid: 1500, before: { desired: rec.desired, container: rec.container } });
       // the source was recreated meanwhile (a new id): only a rematch with the scan finds it, as the move user
       w.containers.delete(w.src.id);
-      const again = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.3', mounts: MOUNTS, running: false });
+      const again = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.9', mounts: MOUNTS, running: false });
       await settleAtStart(w);
       expect(w.containers.has(made.id)).toBe(false);
       expect(w.find(N.container)?.id).toBe(before.id);
@@ -613,7 +614,7 @@ describe('review round 1', () => {
         await stop(id, t);
         if (id === w.src.id) {
           w.containers.delete(id);
-          for (const name of ['jellyfin-a', 'jellyfin-b']) twins.push(w.foreign({ name, image: 'jellyfin/jellyfin:10.11.3', mounts: MOUNTS, running: false }));
+          for (const name of ['jellyfin-a', 'jellyfin-b']) twins.push(w.foreign({ name, image: 'jellyfin/jellyfin:10.11.9', mounts: MOUNTS, running: false }));
         }
       });
       w.data.copyAnswer = (c) => (c.args[0] === 'final' ? { error: 'helper_failed' } : null);
@@ -711,7 +712,7 @@ describe('review round 1', () => {
       if (c.args[0] !== 'final') return null;
       scanBroken = true;
       w.containers.delete(w.src.id);
-      again = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.3', mounts: MOUNTS, running: false });
+      again = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.9', mounts: MOUNTS, running: false });
       return { error: 'helper_failed' };
     };
     expect(await w.run(w.op)).toMatchObject({ state: 'failed', error: 'helper_failed' });
@@ -776,11 +777,11 @@ describe('final review', () => {
     w.containers.delete(w.src.id);
     const helpers = w.helperCalls.length;
     // a redeploy: the new container on the recorded /config, stopped, and an unrelated running one elsewhere
-    const again = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.4', mounts: MOUNTS, running: false });
+    const again = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.10', mounts: MOUNTS, running: false });
     w.foreign({ name: 'other', image: 'example/app:1', mounts: [bind('/srv/other/config', '/config')] });
-    expect((await statusOf(w)).source).toEqual({ name: 'jellyfin', state: 'exited', version: '10.11.3' });
+    expect((await statusOf(w)).source).toEqual({ name: 'jellyfin', state: 'exited', version: '10.11.9' });
     // a running one on that /config is preferred over a stopped one
-    w.foreign({ name: 'jellyfin-b', image: 'jellyfin/jellyfin:10.11.4', mounts: MOUNTS });
+    w.foreign({ name: 'jellyfin-b', image: 'jellyfin/jellyfin:10.11.10', mounts: MOUNTS });
     expect((await statusOf(w)).source).toMatchObject({ state: 'running' });
     // nothing on that /config any more: missing
     for (const c of [...w.containers.values()]) if (c.raw && (c.raw.Mounts as InspectMount[]).some((m) => m.Source === CONF)) w.containers.delete(c.id);
@@ -801,7 +802,7 @@ describe('final review', () => {
     expect(w.media().source).toBeUndefined();
     // the owner moved Jellyfin to another /config folder (same server): the next move takes it
     w.containers.delete(w.src.id);
-    const moved = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.3', mounts: [bind('/srv/jf2/config', '/config'), ...MOUNTS.slice(1)] });
+    const moved = w.foreign({ name: 'jellyfin', image: 'jellyfin/jellyfin:10.11.9', mounts: [bind('/srv/jf2/config', '/config'), ...MOUNTS.slice(1)] });
     w.cfg.servers.set('/srv/jf2/config', OURS);
     w.data.adopted = false;
     expect(await w.run({ ...w.op, source: moved.id })).toMatchObject({ state: 'succeeded' });

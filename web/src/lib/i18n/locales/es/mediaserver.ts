@@ -413,7 +413,7 @@ const dict: Translation<typeof de> = {
     source_layout: 'Las carpetas de este Jellyfin no corresponden a ninguna imagen conocida (oficial o linuxserver). Así no se puede trasladar.',
     source_outside_base: 'Hay carpetas multimedia de tu Jellyfin fuera de la carpeta base. Elige una carpeta base que las contenga todas.',
     source_nested: 'Tu Jellyfin ve una carpeta en dos rutas o una carpeta dentro de otra. Así no se pueden conservar sus rutas.',
-    source_version: 'Ferrofin no puede adoptar esta versión de Jellyfin: necesita Jellyfin 10.10 o posterior.',
+    source_version: 'Ferrofin no puede adoptar esta versión de Jellyfin: necesita Jellyfin 10.11.8 o posterior.',
     no_space: 'No hay espacio suficiente en el servidor para la copia (con una quinta parte de reserva).',
     adopt_failed: 'Ferrofin no adoptó los datos copiados. Tu Jellyfin funciona de nuevo.',
     ids_mismatch: 'En Ferrofin faltan demasiados usuarios o títulos que FriendFlix conoce. Tu Jellyfin funciona de nuevo.',
