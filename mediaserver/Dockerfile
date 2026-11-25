@@ -45,14 +45,14 @@ ADD --checksum=sha256:bbe71e4f414259e06a10cde72c29a2bd78d41b2bb2f6f8463b1806797f
   https://github.com/intel/compute-runtime/releases/download/${NEO_LEGACY_VER}/intel-opencl-icd-legacy1_${NEO_LEGACY_VER}_amd64.deb /
 
 # arm64: Jellyfin installs no Intel runtime there (it adds Rockchip's libmali instead, not taken over here). Nothing to mount.
-# (Ferrofin v1.5.1 publishes amd64 only, so today this stage is never used.)
+# (Ferrofin v1.5.2 publishes amd64 only, so today this stage is never used.)
 FROM scratch AS intel-opencl-arm64
 
 # hadolint ignore=DL3006
 FROM intel-opencl-${TARGETARCH} AS intel-opencl
 
-# --- the image: Ferrofin v1.5.1, pinned by digest (the multi-arch index; bump tag + digest together) ---
-FROM ghcr.io/mangoleaf/ferrofin:v1.5.1@sha256:5980a3c29c0bab564793f4fcf786e737b91a9eba26e9fb1d6f1c203ccb56580a
+# --- the image: Ferrofin v1.5.2, pinned by digest (the multi-arch index; bump tag + digest together) ---
+FROM ghcr.io/mangoleaf/ferrofin:v1.5.2@sha256:c00fe34634d7f886888c027cd0552d990a4c9cd918b45c2fce96d5963aca26d5
 ARG TARGETARCH
 # the image commit (CI: the newest commit that changed this image's inputs, .github/images.json; `dev` locally): only in the
 # revision label below, not as an ENV (the managed media server's env stays as Ferrofin sets it)
@@ -111,13 +111,13 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 # image's own title, description and licence, not the AGPL of the other images; revision = the image commit, created = its
 # commit time). GPL-3.0-only is the licence of the Ferrofin server; the other parts keep theirs (NOTICE).
 LABEL org.opencontainers.image.title="FriendFlix media server (Ferrofin)" \
-  org.opencontainers.image.description="Ferrofin v1.5.1 with FriendFlix's numbered changes (0001: Intel OpenCL runtime; 0003: healthcheck; 0004: no web client, API only; 0005: state directories for any user). Trial." \
+  org.opencontainers.image.description="Ferrofin v1.5.2 with FriendFlix's numbered changes (0001: Intel OpenCL runtime; 0003: healthcheck; 0004: no web client, API only; 0005: state directories for any user). Trial." \
   org.opencontainers.image.source="https://github.com/LetsManu/friendflix" \
   org.opencontainers.image.documentation="https://github.com/LetsManu/friendflix/blob/main/mediaserver/README.md" \
   org.opencontainers.image.licenses="GPL-3.0-only" \
   org.opencontainers.image.revision="${FF_IMAGE_COMMIT}" \
-  org.opencontainers.image.base.name="ghcr.io/mangoleaf/ferrofin:v1.5.1" \
-  org.opencontainers.image.base.digest="sha256:5980a3c29c0bab564793f4fcf786e737b91a9eba26e9fb1d6f1c203ccb56580a" \
-  io.github.letsmanu.friendflix.mediaserver.ferrofin="v1.5.1" \
+  org.opencontainers.image.base.name="ghcr.io/mangoleaf/ferrofin:v1.5.2" \
+  org.opencontainers.image.base.digest="sha256:c00fe34634d7f886888c027cd0552d990a4c9cd918b45c2fce96d5963aca26d5" \
+  io.github.letsmanu.friendflix.mediaserver.ferrofin="v1.5.2" \
   io.github.letsmanu.friendflix.mediaserver.changes="0001,0003,0004,0005"
 ENTRYPOINT ["ferrofin-server"]

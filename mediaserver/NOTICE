@@ -3,8 +3,8 @@ FriendFlix media server image (trial)
 
 This image is the Ferrofin server image
 
-  ghcr.io/mangoleaf/ferrofin:v1.5.1
-  sha256:5980a3c29c0bab564793f4fcf786e737b91a9eba26e9fb1d6f1c203ccb56580a
+  ghcr.io/mangoleaf/ferrofin:v1.5.2
+  sha256:c00fe34634d7f886888c027cd0552d990a4c9cd918b45c2fce96d5963aca26d5
 
 with the numbered changes listed in mediaserver/README.md of https://github.com/LetsManu/friendflix
 (built from mediaserver/Dockerfile there). Each change is also offered to the Ferrofin project.
@@ -12,12 +12,13 @@ with the numbered changes listed in mediaserver/README.md of https://github.com/
 Ferrofin
   A Rust re-implementation of the Jellyfin server API. Copyright its authors.
   Licence: GNU General Public License v3.0 only (GPL-3.0-only).
-  Source: https://github.com/mangoleaf/ferrofin, tag v1.5.1. This image does not change Ferrofin's source code: the
+  Source: https://github.com/mangoleaf/ferrofin, tag v1.5.2. This image does not change Ferrofin's source code: the
   ferrofin-server binary is the one in the image above, built by the Ferrofin project from that tag.
 
 Also in the base image (unchanged, licences as shipped by their projects)
-  jellyfin-ffmpeg8 (GPL-3.0, /usr/lib/jellyfin-ffmpeg), Debian trixie packages (each under
-  /usr/share/doc/<package>/copyright), and jellyfin-web (GPL-2.0): change 0004 removes it from the image's file system
+  jellyfin-ffmpeg8 (GPL-3.0, /usr/lib/jellyfin-ffmpeg), 7zip (LGPL-2.1+ with the unRAR restriction) and Debian's non-free
+  7zip-rar (its RAR decoder, unRAR licence; Ferrofin runs 7z as a separate program for RAR comic covers), Debian trixie
+  packages (each under /usr/share/doc/<package>/copyright), and jellyfin-web (GPL-2.0): change 0004 removes it from the image's file system
   (/usr/share/ferrofin/web), but its files are still in the base image's layer.
 
 Added by FriendFlix, change 0001 (Intel OpenCL runtime, amd64 only)

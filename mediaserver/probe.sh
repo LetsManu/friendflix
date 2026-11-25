@@ -28,7 +28,7 @@ set -euo pipefail
 
 DEFAULT_IMAGE="ghcr.io/letsmanu/friendflix-mediaserver:nightly"
 # the release our image is built on (mediaserver/Dockerfile); CI checks that this line matches the Dockerfile
-UPSTREAM_IMAGE="ghcr.io/mangoleaf/ferrofin:v1.5.1@sha256:5980a3c29c0bab564793f4fcf786e737b91a9eba26e9fb1d6f1c203ccb56580a"
+UPSTREAM_IMAGE="ghcr.io/mangoleaf/ferrofin:v1.5.2@sha256:c00fe34634d7f886888c027cd0552d990a4c9cd918b45c2fce96d5963aca26d5"
 RENDER_NODE="${RENDER_NODE:-/dev/dri/renderD128}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
