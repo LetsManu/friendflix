@@ -54,10 +54,11 @@ export const FINAL_COPY_MS = 2 * 3600_000;
 /** free space on the Docker data root against the size of the copy (spec: ≥ copy size × 1.2) */
 export const SPACE_FACTOR = 1.2;
 /**
- * The Jellyfin versions (major.minor, inclusive) whose database the pinned Ferrofin adopts: Ferrofin follows Jellyfin 10.11, which
- * upgrades a 10.10 database and nothing older. To confirm against Ferrofin's release notes on every pin change (NAS checklist).
+ * The oldest Jellyfin (major.minor) whose database the pinned Ferrofin adopts: Ferrofin follows Jellyfin 10.11, which upgrades a 10.10
+ * database and nothing older. Every newer version is let through (owner, 2026-11-25): a database the pinned Ferrofin cannot open fails
+ * the move at `adopt` or `health` before the switch, the copy is dropped and the old Jellyfin started again, its own data never written.
  */
-export const ADOPTS: { from: [number, number]; to: [number, number] } = { from: [10, 10], to: [10, 11] };
+export const ADOPTS_FROM: [number, number] = [10, 10];
 const ADJUSTED_RE = /^[a-z]{1,20}\.xml:[A-Za-z]{1,40}$/;
 /** undecidable source starts (several containers on its /config, a running sibling) after which a settle ends with source_mismatch */
 export const UNDECIDABLE_TRIES = 3;
@@ -78,12 +79,12 @@ function majorMinor(v: string | null): [number, number] | null {
   return m ? [Number(m[1]), Number(m[2])] : null;
 }
 
-/** whether the pinned Ferrofin adopts this Jellyfin version; an unknown version is not checked */
+/** whether the move may try this Jellyfin version: 10.10 or newer; an unknown version is not checked */
 export function adoptable(version: string | null): boolean {
   const v = majorMinor(version);
   if (!v) return true;
   const n = (x: [number, number]): number => x[0] * 10_000 + x[1];
-  return n(v) >= n(ADOPTS.from) && n(v) <= n(ADOPTS.to);
+  return n(v) >= n(ADOPTS_FROM);
 }
 
 const sameSource = (a: RecordedSource, b: RecordedSource): boolean => a.serverId === b.serverId && a.config.type === b.config.type && a.config.source === b.config.source;

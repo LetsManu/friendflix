@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { EngineError, type Engine } from '../src/mediaserver/engine.js';
 import { MediaService } from '../src/mediaserver/service.js';
+import { adoptable } from '../src/mediaserver/move.js';
 import { Supervisor } from '../src/mediaserver/supervise.js';
 import { mediaStatusView } from '../src/mediaserver/status.js';
 import type { DesiredSpec, Folder, MediaOp, MoveState, RecordedSource } from '../src/mediaserver/types.js';
@@ -144,6 +145,13 @@ describe('the move', () => {
     expect(w.helperCalls.filter((c) => c.verb === 'migrate-copy').map((c) => c.args[1])).toEqual(['1', '1']);
   });
 
+  it('adoptable: Jellyfin 10.10 and every newer version, an unknown version unchecked', () => {
+    for (const v of ['10.10.0', '10.11.3', '10.11.3ubu2404-ls45', 'v10.10.7', '10.12.0', '12.4.0', '12.4']) expect(adoptable(v), v).toBe(true);
+    for (const v of ['10.9.11', '10.8.13', '9.0.0', 'v10.9.0']) expect(adoptable(v), v).toBe(false);
+    expect(adoptable(null)).toBe(true);
+    expect(adoptable('latest')).toBe(true);
+  });
+
   describe('codes before anything is stopped', () => {
     const cases: Array<[string, (w: W) => void | MigrateOp]> = [
       ['no_space', (w) => { w.data.free = 5_900_000; }],
@@ -151,7 +159,6 @@ describe('the move', () => {
       ['source_mismatch', (w) => ({ ...w.op, serverId: OTHER })],
       ['source_missing', (w) => ({ ...w.op, source: 'e'.repeat(64) })],
       ['source_version', (w) => { (w.src.raw!.Config as Obj).Image = 'jellyfin/jellyfin:10.9.11'; w.src.body.Image = 'jellyfin/jellyfin:10.9.11'; }],
-      ['source_version', (w) => { (w.src.raw!.Config as Obj).Image = 'jellyfin/jellyfin:10.12.0'; w.src.body.Image = 'jellyfin/jellyfin:10.12.0'; }],
       ['uid_mismatch', (w) => { w.volumes.set(N.data('ferrofin'), { labels: { 'friendflix.managed': 'mediaserver-data', 'friendflix.project': PROJECT }, options: {} }); w.data.owner = 1200; }],
       ['verify_failed', (w) => { w.cfg.verify = false; }],
       ['pull_failed', (w) => { w.cfg.pull = async () => { throw new EngineError(500, 'pull_failed'); }; }],
