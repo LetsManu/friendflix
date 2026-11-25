@@ -20,7 +20,7 @@ export interface MediaDeps {
   updater: Updater;
   facts(): Promise<EngineFacts>;
   helper: typeof runHelper;
-  /** the updater's stdout: the one place the base code goes */
+  /** the updater's stdout: where the base code goes, and why a move's copy failed (MediaJobs.helper) */
   print(line: string): void;
   now(): number;
   repo: string;

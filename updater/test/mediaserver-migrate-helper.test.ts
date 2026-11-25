@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FFMPEG_DIR } from '../src/mediaserver/template.js';
-import { adjustXml, checkAdopted, copySource, identifySource, main, scanSource } from '../src/mediaHelper.js';
+import { adjustXml, checkAdopted, copyFailDetail, copySource, identifySource, main, scanSource } from '../src/mediaHelper.js';
 
 let root: string;
 let src: string;
@@ -406,5 +406,27 @@ describe('check data and the verbs', () => {
       expect(await main(['migrate-copy', 'bulk', '0', 'official', other])).toBe(2);
       expect(out).toHaveBeenCalledWith('{"error":"uid_mismatch"}\n');
     } finally { out.mockRestore(); }
+  });
+});
+
+describe('copyFailDetail', () => {
+  const err = (code: string, syscall: string, path?: string) => Object.assign(new Error('x'), { code, syscall, ...(path === undefined ? {} : { path }) });
+  it('names the error, the call and the path inside /source or /data', () => {
+    expect(copyFailDetail(err('EACCES', 'open', '/source/data/metadata/library/ab/poster.jpg'))).toBe('EACCES open source:data/metadata/library/ab/poster.jpg');
+    expect(copyFailDetail(err('EACCES', 'rename', '/data/data/.ff-part'))).toBe('EACCES rename data:data/.ff-part');
+    expect(copyFailDetail(err('EIO', 'read', '/source'))).toBe('EIO read source:');
+  });
+  it('leaves any other path out, and control characters and length are bounded', () => {
+    expect(copyFailDetail(err('ENOENT', 'stat', '/srv/elsewhere/x'))).toBe('ENOENT stat');
+    expect(copyFailDetail(err('EACCES', 'open', '/source/a\nb\u0007c'))).toBe('EACCES open source:a?b?c');
+    expect(copyFailDetail(err('EACCES', 'open', `/source/${'x'.repeat(400)}`))).toHaveLength(200);
+    expect(copyFailDetail(new TypeError('boom'))).toBe('TypeError');
+    expect(copyFailDetail(undefined)).toBe('unknown');
+  });
+  it('a failed copy answers helper_failed with its detail', async () => {
+    jellyfin('official');
+    rmSync(dst, { recursive: true });
+    writeFileSync(dst, 'a file where the data volume belongs');
+    await expect(copySource(src, dst, { pass: 'bulk', trickplay: false, layout: 'official' })).rejects.toMatchObject({ code: 'helper_failed', detail: expect.stringMatching(/^E[A-Z]+ /) });
   });
 });

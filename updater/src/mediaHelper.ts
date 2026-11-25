@@ -18,11 +18,29 @@ import { BACKUP_ID_RE, KINDS, type Kind } from './mediaserver/types.js';
 
 /**
  * The helper program run inside short-lived helper containers (`node updater/dist/mediaHelper.js <verb> …`). It answers with one
- * JSON line on stdout: codes, names and numbers only, never a path below the base and never an error message.
+ * JSON line on stdout: codes, names and numbers only, never a path below the base and never an error message. The one exception is a
+ * failed `migrate-copy`: its `detail` (copyFailDetail) names the system call, its error and the path inside /source or /data, so the
+ * updater can log why a move's copy stopped (its job log and stdout; never an answer or an error code).
  */
 
 class HelperError extends Error {
-  constructor(readonly code: string) { super(code); }
+  constructor(readonly code: string, readonly detail?: string) { super(code); }
+}
+
+/**
+ * Why a copy stopped, for the updater's log: `<errno> <syscall> <where>`, where is `source:<rel>` / `data:<rel>` for a path below the
+ * helper's /source or /data (any other path is left out); printable characters only, at most 200.
+ */
+export function copyFailDetail(e: unknown): string {
+  const x = (e ?? {}) as Partial<NodeJS.ErrnoException>;
+  const code = typeof x.code === 'string' ? x.code : e instanceof Error ? e.name : 'unknown';
+  const parts = [code];
+  if (typeof x.syscall === 'string') parts.push(x.syscall);
+  if (typeof x.path === 'string') {
+    const m = /^\/(source|data)(?:\/(.*))?$/s.exec(x.path);
+    if (m) parts.push(`${m[1]}:${m[2] ?? ''}`);
+  }
+  return parts.join(' ').replace(/[^\x20-\x7e\u00a0-\uffff]/g, '?').slice(0, 200);
 }
 
 export interface BaseCheck { exists: boolean; dir: boolean; listable: boolean; looksSystem: boolean }
@@ -737,7 +755,7 @@ export async function copySource(src: string, dst: string, o: { pass: 'bulk' | '
     }
     return { copied, adjusted: final ? adjustConfig(dst) : [] };
   } catch (e) {
-    throw new HelperError((e as NodeJS.ErrnoException).code === 'ENOSPC' ? 'no_space' : 'helper_failed');
+    throw new HelperError((e as NodeJS.ErrnoException).code === 'ENOSPC' ? 'no_space' : 'helper_failed', copyFailDetail(e));
   }
 }
 
@@ -787,7 +805,8 @@ export async function main(args: string[]): Promise<number> {
     process.stdout.write(JSON.stringify(await answer(args)) + '\n');
     return 0;
   } catch (e) {
-    process.stdout.write(JSON.stringify({ error: e instanceof HelperError ? e.code : 'helper_failed' }) + '\n');
+    const detail = e instanceof HelperError ? e.detail : undefined;
+    process.stdout.write(JSON.stringify({ error: e instanceof HelperError ? e.code : 'helper_failed', ...(detail ? { detail } : {}) }) + '\n');
     return 2;
   }
 }

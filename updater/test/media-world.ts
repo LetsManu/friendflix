@@ -166,8 +166,9 @@ export function world(o: { facts?: Partial<EngineFacts>; ops?: Ops; state?: Part
     connect: async (network: string, id: string) => { const c = find(id)!; calls.push(`connect ${network}`); c.networks.push(network); },
   } as unknown as Engine;
 
+  const printed: string[] = [];
   const deps = {
-    engine, updater, repo: 'LetsManu/friendflix', now: () => clock.t, print: () => undefined,
+    engine, updater, repo: 'LetsManu/friendflix', now: () => clock.t, print: (line: string) => { printed.push(line); },
     facts: async () => cfg.facts,
     // the real guard runs on every helper body the jobs build
     helper: async (_e: Engine, req: { body: Obj }, expect: Parameters<typeof assertHelper>[1], limit?: number) => {
@@ -224,7 +225,7 @@ export function world(o: { facts?: Partial<EngineFacts>; ops?: Ops; state?: Part
   }
 
   return {
-    jobs, deps, updater, store, clock, calls, created, removedWith, containers, volumes, images, cfg, helperCalls, verified, existing, find, jellyImage, foreign,
+    jobs, deps, updater, store, clock, calls, created, removedWith, containers, volumes, images, cfg, helperCalls, verified, existing, find, jellyImage, foreign, printed,
     media: (): MediaState => updater.mediaState(),
     /** the engine calls that change something, without helper runs */
     changes: (): string[] => calls.filter((c) => !c.startsWith('helper ')),
