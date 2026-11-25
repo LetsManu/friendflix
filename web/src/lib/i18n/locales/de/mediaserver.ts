@@ -418,7 +418,7 @@ export default {
     source_layout: 'Die Ordner dieses Jellyfin passen zu keinem bekannten Image (offiziell oder linuxserver). So geht kein Umzug.',
     source_outside_base: 'Medienordner deines Jellyfin liegen nicht unter dem Basisordner. Wähle einen Basisordner, unter dem alle liegen.',
     source_nested: 'Dein Jellyfin sieht einen Ordner unter zwei Pfaden oder einen Ordner in einem anderen. So lassen sich seine Pfade nicht übernehmen.',
-    source_version: 'Diese Jellyfin-Version kann Ferrofin nicht übernehmen: es braucht Jellyfin 10.10 oder 10.11.',
+    source_version: 'Diese Jellyfin-Version kann Ferrofin nicht übernehmen: es braucht Jellyfin 10.11.8 oder neuer.',
     no_space: 'Auf dem Server ist nicht genug Platz für die Kopie (mit einem Fünftel Reserve).',
     adopt_failed: 'Ferrofin hat die kopierten Daten nicht übernommen. Dein Jellyfin läuft wieder.',
     ids_mismatch: 'Auf Ferrofin fehlen zu viele Benutzer oder Titel, die FriendFlix kennt. Dein Jellyfin läuft wieder.',

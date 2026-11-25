@@ -54,10 +54,12 @@ export const FINAL_COPY_MS = 2 * 3600_000;
 /** free space on the Docker data root against the size of the copy (spec: ≥ copy size × 1.2) */
 export const SPACE_FACTOR = 1.2;
 /**
- * The Jellyfin versions (major.minor, inclusive) whose database the pinned Ferrofin adopts: Ferrofin follows Jellyfin 10.11, which
- * upgrades a 10.10 database and nothing older. To confirm against Ferrofin's release notes on every pin change (NAS checklist).
+ * The oldest Jellyfin whose database the pinned Ferrofin adopts: Ferrofin v1.5 adopts Jellyfin 10.11.8–10.11.11 and 12.0–12.4 (its
+ * README "Migrating from Jellyfin"; to confirm on every pin change). Every newer version is let through (owner, 2026-11-25): Ferrofin
+ * checks the database's migration set itself and refuses an unknown one, so the move fails at `adopt` or `health` before the switch,
+ * the copy is dropped and the old Jellyfin started again, its own data never written.
  */
-export const ADOPTS: { from: [number, number]; to: [number, number] } = { from: [10, 10], to: [10, 11] };
+export const ADOPTS_FROM: [number, number, number] = [10, 11, 8];
 const ADJUSTED_RE = /^[a-z]{1,20}\.xml:[A-Za-z]{1,40}$/;
 /** undecidable source starts (several containers on its /config, a running sibling) after which a settle ends with source_mismatch */
 export const UNDECIDABLE_TRIES = 3;
@@ -72,18 +74,24 @@ const userOf = (d: { uid: number; gid: number; mediaGid: number | null } | null 
   (d ? { uid: d.uid, gid: d.gid, groups: d.mediaGid ? [d.mediaGid] : [] } : fallback);
 const DEFAULT_USER: User = { uid: 1000, gid: 1000, groups: [] };
 
-/** the numeric prefix of a version (`10.10.3ubu2404-ls45` → 10.10); null = not a version (no check) */
-function majorMinor(v: string | null): [number, number] | null {
-  const m = v === null ? null : /^v?([0-9]{1,4})\.([0-9]{1,4})/.exec(v);
-  return m ? [Number(m[1]), Number(m[2])] : null;
+/** the numeric prefix of a version (`10.11.8ubu2404-ls45` → 10.11.8; a missing patch is null); null = not a version (no check) */
+function versionParts(v: string | null): [number, number, number | null] | null {
+  const m = v === null ? null : /^v?([0-9]{1,4})\.([0-9]{1,4})(?:\.([0-9]{1,4}))?/.exec(v);
+  return m ? [Number(m[1]), Number(m[2]), m[3] === undefined ? null : Number(m[3])] : null;
 }
 
-/** whether the pinned Ferrofin adopts this Jellyfin version; an unknown version is not checked */
+/**
+ * whether the move may try this Jellyfin version: ADOPTS_FROM or newer; an unknown version, or a tag without a patch on the minimum's
+ * own line (`10.11`), is left to Ferrofin's own check
+ */
 export function adoptable(version: string | null): boolean {
-  const v = majorMinor(version);
+  const v = versionParts(version);
   if (!v) return true;
-  const n = (x: [number, number]): number => x[0] * 10_000 + x[1];
-  return n(v) >= n(ADOPTS.from) && n(v) <= n(ADOPTS.to);
+  const [major, minor, patch] = v;
+  const [fMajor, fMinor, fPatch] = ADOPTS_FROM;
+  if (major !== fMajor) return major > fMajor;
+  if (minor !== fMinor) return minor > fMinor;
+  return patch === null || patch >= fPatch;
 }
 
 const sameSource = (a: RecordedSource, b: RecordedSource): boolean => a.serverId === b.serverId && a.config.type === b.config.type && a.config.source === b.config.source;
