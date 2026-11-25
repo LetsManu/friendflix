@@ -20,7 +20,7 @@ server has one surface fewer and does not serve (or keep in memory) the client's
 
 ## What
 
-Found in Ferrofin v1.5.1 (the pinned image's config and its `ferrofin-server` binary; its docs/CONFIG.md):
+Found in Ferrofin v1.5.1, unchanged in v1.5.2 (the pinned image's config and its `ferrofin-server` binary; its docs/CONFIG.md):
 
 - The client is jellyfin-web's built `dist/`, copied to **`/usr/share/ferrofin/web`** (2366 files, about 60 MB unpacked; the
   only content of `/usr/share/ferrofin`).

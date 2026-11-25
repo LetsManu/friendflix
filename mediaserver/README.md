@@ -49,7 +49,7 @@ number; numbers are never reused.
 
 | File | What |
 |---|---|
-| `Dockerfile` | the image: `FROM ghcr.io/mangoleaf/ferrofin:v1.5.1@sha256:5980…`, changes 0001, 0004 and 0005, back to the image's user `ferrofin`, change 0003 (`HEALTHCHECK`), labels (`io.github.letsmanu.friendflix.mediaserver.changes` lists the changes in the image), Ferrofin's entrypoint |
+| `Dockerfile` | the image: `FROM ghcr.io/mangoleaf/ferrofin:v1.5.2@sha256:c00f…`, changes 0001, 0004 and 0005, back to the image's user `ferrofin`, change 0003 (`HEALTHCHECK`), labels (`io.github.letsmanu.friendflix.mediaserver.changes` lists the changes in the image), Ferrofin's entrypoint |
 | `NOTICE` | licences of what is in the image (copied to `/usr/share/doc/friendflix-mediaserver/NOTICE`) |
 | `patches/` | one file per change (`NNNN-*.md`), source patches next to it (`NNNN-*.patch`), and the upstream issue draft |
 | `probe.sh` | does HDR tone mapping with OpenCL work on this host's GPU? Throw-away containers only, Jellyfin is not touched |
@@ -91,7 +91,7 @@ The FriendFlix updater pulls and recreates it only as the managed media server, 
   our own. Check the `trivy-mediaserver` code-scanning category when bumping.
 - **Not reproducible-checked:** exempt from the `reproducible` job
   ([docs/reproducible-builds.md](../docs/reproducible-builds.md#exemption-mediaserver)).
-- **linux/amd64 only:** Ferrofin v1.5.1 publishes no other platform (the Intel runtime is amd64-only anyway).
+- **linux/amd64 only:** Ferrofin v1.5.2 publishes no other platform (the Intel runtime is amd64-only anyway).
 - **Larger image:** the Intel runtime adds about 1.1 GiB installed (the seven debs are about 250 MB to download).
 - **The IGC hashes are trust-on-first-download:** Intel publishes no checksum file for those releases (the compute-runtime
   ones match Intel's `ww*.sum`).
