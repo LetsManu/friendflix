@@ -15,7 +15,7 @@
   import { langLine } from '#lib/langs';
   import { lengthLabel, ratingBadge } from '#lib/hover';
   import { toThumb, type Thumb } from '#lib/rating';
-  import { byType, remainingLabel, type Person } from '#lib/detail/format';
+  import { byType, remainingLabel, seasonLabel, type Person } from '#lib/detail/format';
   import { FRESH_KEYS, LEAVING_BADGE_DAYS } from '#lib/badges';
   import { canGoBack } from '#lib/desk/back';
   import { getMe } from '#lib/offline/manager';
@@ -44,6 +44,9 @@
   import QualityChips from '#lib/QualityChips.svelte';
   import StoryCard from '#lib/detail/StoryCard.svelte';
   import LeavingDialog from '#lib/detail/LeavingDialog.svelte';
+  import RescanDialog from '#lib/detail/RescanDialog.svelte';
+  import { rescanShown } from '#lib/detail/rescan';
+  import { serverCaps } from '#lib/capabilities';
   import DetailTv from '#lib/detail/DetailTv.svelte';
   import DetailDesk from '#lib/detail/DetailDesk.svelte';
   import TvSub, { type TvSubId } from '#lib/detail/TvSub.svelte';
@@ -81,6 +84,8 @@
   let about: About | null | undefined = undefined, aboutSeq = 0, aboutRaf = 0;
   // fresh label, removal date and quality chips (Block 17); admins get "Entfernungsdatum" in the ⋯ menu
   let facts: Facts | null = null, leavingDlg = false;
+  /** admins: *Neu einlesen* of this film / series (⋯ menu) or of one season (beside the season select); null = closed */
+  let rescan: { id: string; name: string; type: 'Movie' | 'Series' | 'Season' } | null = null;
 
   // ---- loading: render from the card's data at once, every request in parallel (only the episode list waits for seasons + next-up) ----
   let loadSeq = 0, epSeq = 0, epKey = '';
@@ -94,7 +99,7 @@
     failed = false; episodes = null; next = null; seasons = []; followed = false; season = ''; epKey = ''; seriesKnown = false;
     about = undefined; synOpen = false;
     aboutSeq++; aboutFor = ''; cancelAnimationFrame(aboutRaf); // a late answer for the previous title must not land on this one
-    facts = null; leavingDlg = false;
+    facts = null; leavingDlg = false; rescan = null;
     extras = []; more = null; people = []; logoFailed = false; heroLoaded = false; heroTried = ''; recOpen = false; castMsg = ''; saveMsg = ''; tab = '';
     clearTimeout(fadeT); fading = false; fadeOut = false; fadeIn = false;
     savedLang(want);
@@ -336,9 +341,15 @@
     ...(item.type !== 'Series' && social && $perms.party ? [{ id: 'party', label: $t('detail.actions.party'), icon: 'users', run: startParty }] : []),
     ...($tvOnline && playTarget ? [{ id: 'tv', label: $t('detail.actions.tv'), icon: 'tv', run: castHere }] : []),
     ...(facts?.admin && (item.type === 'Movie' || item.type === 'Series' || item.type === 'BoxSet') ? [{ id: 'leaving', label: $t('fresh.admin.menu'), icon: 'calendar', run: () => { leavingDlg = true; } }] : []),
+    ...(rescanShown(item.type, facts?.admin, $serverCaps) ? [{ id: 'rescan', label: $t('detail.rescan.menu'), icon: 'refresh', run: () => { if (item) rescan = { id: item.id, name: item.name, type: item.type as 'Movie' | 'Series' | 'Season' }; } }] : []),
     ...(canPreview && !heroPlaying ? [{ id: 'trailer', label: $t('detail.actions.trailer'), icon: 'film', run: () => startHero(true) }] : []),
     ...(item.type !== 'Series' && dlAvail && !phone ? [{ id: 'dl', label: dlState ? $t('detail.actions.downloadState', { state: dlState }) : $t('detail.actions.download'), icon: 'download', run: () => dl?.activate() }] : []),
   ] as MoreAction[]) : [];
+
+  // admins: *Neu einlesen* of one season (its button beside the season select); the series' name keeps the toast unambiguous
+  $: onSeasonRescan = item?.type === 'Series' && rescanShown('Season', facts?.admin, $serverCaps)
+    ? (s: Item) => { if (item) rescan = { id: s.id, name: `${item.name} · ${seasonLabel(s)}`, type: 'Season' }; }
+    : null;
 
   // ---- hero trailer: the still image fades into a muted preview clip (like the billboard) ----
   let hv: HTMLVideoElement, heroEl: HTMLDivElement, heroPlaying = false, hmuted = true, heroT: ReturnType<typeof setTimeout>, heroLoaded = false, heroTried = '';
@@ -504,7 +515,7 @@
   <!-- ================= desktop: cinematic full page (fixed backdrop, left column, tabs with content only) ================= -->
   {#if item}
     <DetailDesk {item} {about} {facts} {people} {extras} {more} {seasons} bind:season {episodes} {next} {qs} {playTarget} {playBase} {playHref} {playLabel} handoffLine={hint ? hintLine : ''} {handoffProgress} playAria={handoffName(phonePlay, hint)}
-      {resumeFrom} {tagline} {overview} {langs} {inList} {titleId} bind:thumb bind:audio={lgA} bind:sub={lgS} {moreActions} {social}
+      {resumeFrom} {tagline} {overview} {langs} {inList} {titleId} bind:thumb bind:audio={lgA} bind:sub={lgS} {moreActions} {social} {onSeasonRescan}
       canTrailer={canPreview && !heroPlaying} playing={heroPlaying} loop={!autoOn} bind:video={hv} bind:loaded={heroLoaded} bind:stage={heroEl}
       {counting} {autoLeft} bind:autoEl onCancelAuto={() => cancelAuto(true)} onMyList={toggleMine} {onThumb} onTrailer={() => startHero(true)}
       onEnded={onHeroEnded} onTimeUpdate={maybeAuto} onPlay={castPlay} onRated={(avg) => item && onRated(item.id, avg)}>
@@ -707,7 +718,7 @@
 
       {#if item.type === 'Series'}
         <div class="tp" id="dv-panel-episodes" role="tabpanel" aria-labelledby="dv-tab-episodes" hidden={panelTab !== 'episodes'}>
-          <Safe name="episodes" key={item.id}><EpisodeList seriesId={item.id} {seasons} bind:season {episodes} {next} {qs} /></Safe>
+          <Safe name="episodes" key={item.id}><EpisodeList seriesId={item.id} {seasons} bind:season {episodes} {next} {qs} onRescan={onSeasonRescan} /></Safe>
         </div>
       {/if}
 
@@ -738,6 +749,10 @@
   {/if}
   {/if}
 </div>
+
+{#if rescan}
+  <RescanDialog id={rescan.id} name={rescan.name} type={rescan.type} on:close={() => (rescan = null)} />
+{/if}
 
 {#if leavingDlg && item}
   <LeavingDialog itemId={item.id} name={item.name} leavesAt={facts?.leaving?.leavesAt ?? ''} note={facts?.leaving?.note ?? ''}

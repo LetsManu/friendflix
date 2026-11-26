@@ -629,6 +629,7 @@ const en: Translation<typeof de> = {
     subtitle: {
       download: '{actor} downloaded subtitles',
     },
+    media: { item_refresh: '{actor} had a title rescanned' },
   },
   banner: {
     label: 'Notes for admins',

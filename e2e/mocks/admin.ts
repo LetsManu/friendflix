@@ -96,6 +96,8 @@ export interface AdminState {
   bannerFails: boolean;
   /** Block 22 library hygiene (/api/admin/hygiene*): rows with every issue, ignored "itemId|code" pairs, scan state */
   hygiene: HygieneMock;
+  /** *Neu einlesen* on the detail page (POST /api/admin/items/:id/refresh): the requests in order; `fail` answers that status instead */
+  itemRefresh: { calls: Array<{ id: string; mode: string }>; fail: number | null };
   /** Block 22 usage (/api/admin/usage*): query strings of the list calls, user ids of detail calls, `since` */
   usageCalls: string[];
   usageDetailCalls: string[];
@@ -696,6 +698,7 @@ export function adminState(): AdminState {
     bannerCalls: 0,
     bannerFails: false,
     hygiene: { supported: true, canRefresh: true, running: false, lastDone: ago(0.2), lastFull: ago(48), items: hygieneItems(), ignored: new Set(), refreshed: [], scans: 0 },
+    itemRefresh: { calls: [], fail: null },
     usageCalls: [],
     usageDetailCalls: [],
     usageSince: leaveDay(-10),
@@ -2018,6 +2021,13 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   if ((mm = p.match(/^\/api\/admin\/hygiene\/([\w-]+)\/refresh$/)) && m === 'POST') {
     if (!st.hygiene.canRefresh) return J({ error: 'unsupported' }, 501);
     st.hygiene.refreshed.push(mm[1]!);
+    return ok();
+  }
+  if ((mm = p.match(/^\/api\/admin\/items\/([0-9a-f]{32})\/refresh$/)) && m === 'POST') {
+    if (st.itemRefresh.fail) return J({ error: st.itemRefresh.fail === 501 ? 'unsupported' : 'refresh_failed' }, st.itemRefresh.fail);
+    if (!['scan', 'missing', 'replace'].includes(body?.mode) || Object.keys(body ?? {}).length !== 1) return J({ error: 'bad_request' }, 400);
+    st.itemRefresh.calls.push({ id: mm[1]!, mode: body.mode });
+    log('media.item_refresh', mm[1]!, { mode: body.mode });
     return ok();
   }
   if (p === '/api/admin/hygiene/scan' && m === 'POST') {

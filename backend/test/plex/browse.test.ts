@@ -189,6 +189,7 @@ describe('Plex browse + user data over the mirror', () => {
       segments: ['intro', 'outro'], trickplay: true, upcoming: false, subtitleSearch: false, webhooks: false, changeFeed: true, planB: false, subtitleExtract: true,
       chapters: false, // no chapter marks in this library (see depth.test.ts)
       playbackPrefetch: false, castHlsSubtitles: false, // POST /api/playback/info starts the Plex transcode
+      itemRefresh: false, // no per-title scan for new files: no *Neu einlesen*
     });
     delete e.fake.items.get('5')!.Marker;
     e.fake.touch(5);

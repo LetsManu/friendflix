@@ -140,6 +140,14 @@ Assistent weitergeht.
   Medienservers einmal gelesen hat (die Prüfung der Image-Signatur kann bis zu 2 Minuten dauern), bleibt die Zeile neutral
   (`not_set_up` / `managed_starting`); die Karte und der Medien-Schritt der Einrichtung zeigen *Medienserver-Status wird gelesen…*
   ohne Auswahl und Aktionen (Angebotsgrund `starting`) und lesen alle 2 Sekunden neu.
+- **Einen Titel neu einlesen (*Neu einlesen*):** Der verwaltete Server hat kein eigenes Dashboard, deshalb machen Admins (im
+  Besitzerprofil) das auf der Detailseite des Titels: *⋯ → Neu einlesen…* für einen Film oder eine ganze Serie, der runde Knopf
+  neben der Staffelauswahl für eine Staffel. Drei Arten wie in Jellyfins eigenem Dialog: *Nach neuen und geänderten Dateien
+  suchen* (neue Folgen, ausgetauschte oder gelöschte Dateien; eine Serie oder Staffel nimmt ihre Folgen mit), *Fehlende Metadaten
+  suchen* (ergänzt Lücken, Vorhandenes bleibt) und *Alle Metadaten und Bilder ersetzen* (fragt vorher; was am Server von Hand
+  geändert wurde, kann verloren gehen). Der Server arbeitet im Hintergrund, der neue Stand ist nach ein paar Minuten zu sehen.
+  Mit einem selbst betriebenen Jellyfin geht es genauso; Plex bietet es nicht. Jede Anfrage steht im Audit-Log
+  (`media.item_refresh`, höchstens 10 pro Minute und Admin).
 
 ## Updates
 

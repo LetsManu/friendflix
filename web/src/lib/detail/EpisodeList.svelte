@@ -28,6 +28,11 @@
   export let qs = '';
   /** list: one row per episode (page, modal); row: a horizontal strip of 16:9 tiles (desktop detail page) */
   export let layout: 'list' | 'row' = 'list';
+  /**
+   * admins (lib/detail/rescan.ts rescanShown): *Neu einlesen* of the selected season, a round button beside the season select (null: none).
+   * It takes no room from the select: in the list it sits left of the right-aligned select, in the row right of it.
+   */
+  export let onRescan: ((season: Item) => void) | null = null;
   /** the audio / subtitle choice carried in the link's query, for the native player */
   const trackOpts = (q: string) => { const p = new URLSearchParams(q); return { audio: p.get('audio') ?? undefined, subtitle: p.get('sub') ?? undefined }; };
 
@@ -38,16 +43,26 @@
   let openComments = new Set<string>(), counts: Record<string, number> = {};
   const toggleComments = (id: string) => { const n = new Set(openComments); if (n.has(id)) n.delete(id); else n.add(id); openComments = n; };
   $: current = (e: Item) => (next ? next.id === e.id : false);
+  $: picked = seasons.find((s) => s.id === season) ?? null;
+  $: rescanLabel = picked ? $t('detail.rescan.seasonA11y', { season: seasonLabel(picked) }) : '';
 </script>
 
 <section class="eps" class:row={layout === 'row'} aria-labelledby="eps-h">
   <div class="seasonbar">
     <h2 id="eps-h" class:sr-only={layout === 'row'}>{$t('detail.episodes.title')}</h2>
     {#if seasons.length}
-      <span class="sel">
-        <label class="sr-only" for="dv-season">{$t('detail.episodes.season')}</label>
-        <select id="dv-season" bind:value={season}>{#each seasons as s (s.id)}<option value={s.id}>{seasonLabel(s)}</option>{/each}</select>
-        <span class="chev" aria-hidden="true"><Icon name="chevron-down" size={16} /></span>
+      <span class="sgrp">
+        {#if onRescan && picked && layout === 'list'}
+          <button type="button" class="rescan" aria-label={rescanLabel} title={rescanLabel} on:click={() => picked && onRescan?.(picked)}><Icon name="refresh" size={18} /></button>
+        {/if}
+        <span class="sel">
+          <label class="sr-only" for="dv-season">{$t('detail.episodes.season')}</label>
+          <select id="dv-season" bind:value={season}>{#each seasons as s (s.id)}<option value={s.id}>{seasonLabel(s)}</option>{/each}</select>
+          <span class="chev" aria-hidden="true"><Icon name="chevron-down" size={16} /></span>
+        </span>
+        {#if onRescan && picked && layout === 'row'}
+          <button type="button" class="rescan" aria-label={rescanLabel} title={rescanLabel} on:click={() => picked && onRescan?.(picked)}><Icon name="refresh" size={18} /></button>
+        {/if}
       </span>
     {/if}
   </div>
@@ -97,7 +112,12 @@
   .eps { margin-top: 2.2rem; }
   .seasonbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .6rem; }
   h2 { margin: 0; font-size: 1.4rem; }
+  .sgrp { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .sel { position: relative; display: inline-block; }
+  /* admins: the season's *Neu einlesen*, a 44 px glass circle like the select's pill */
+  .rescan { flex: none; width: 44px; min-height: 44px; padding: 0; border-radius: 50%; background: var(--fr-solid); border: 1px solid var(--fr-line); color: var(--fg); }
+  .rescan:hover { background: var(--fr-solid); border-color: #fff; }
+  .rescan:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   select { appearance: none; -webkit-appearance: none; background: var(--fr-solid); border: 1px solid var(--fr-line); border-radius: 999px; padding: 0 2.2rem 0 1.1rem; font-weight: 600; cursor: pointer; }
   select:hover { border-color: #fff; }
   .chev { position: absolute; right: .7rem; top: 50%; transform: translateY(-50%); pointer-events: none; }

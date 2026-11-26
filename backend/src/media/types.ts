@@ -126,6 +126,11 @@ export interface MediaCapabilities {
    * honours `hlsSubtitleIndex`. Jellyfin true; Plex false until someone verifies it. Required: every implementation says so.
    */
   castHlsSubtitles: boolean;
+  /**
+   * *Neu einlesen* on the detail page (admin): the server implements itemKind() and refreshItem() for films, series and seasons.
+   * Optional; absent = false (Plex: no per-item scan for new files), and the web hides the entry.
+   */
+  itemRefresh?: boolean;
 }
 
 /** JSON form of the capabilities (sets as arrays), as sent to the web in /api/me and /api/server. */
@@ -133,7 +138,16 @@ export const publicCapabilities = (c: MediaCapabilities) => ({
   segments: SEGMENT_TYPES.filter((s) => c.segments.has(s)),
   trickplay: c.trickplay, upcoming: c.upcoming, subtitleSearch: c.subtitleSearch, webhooks: c.webhooks, changeFeed: c.changeFeed, planB: c.planB,
   subtitleExtract: c.subtitleExtract, chapters: c.chapters ?? false, playbackPrefetch: c.playbackPrefetch ?? true, castHlsSubtitles: c.castHlsSubtitles,
+  itemRefresh: c.itemRefresh ?? false,
 });
+
+/**
+ * How *Neu einlesen* reads a title in again (detail page, admin; the modes of Jellyfin's own refresh dialog):
+ * `scan` new and changed files (new episodes, swapped or removed files), `missing` fill metadata gaps and keep what is there,
+ * `replace` all metadata and images anew. A series or season always takes its episodes along.
+ */
+export type RefreshMode = 'scan' | 'missing' | 'replace';
+export const REFRESH_MODES = ['scan', 'missing', 'replace'] as const satisfies readonly RefreshMode[];
 
 // ---------------------------------------------------------------- DTOs
 
@@ -649,6 +663,15 @@ export interface MediaServer {
   libraryHygiene?(type: 'Movie' | 'Series' | 'Episode', page: { start: number; limit: number; savedSince?: string }): Promise<HygieneFacts[]>;
   /** asks the server to refresh one item's metadata and images (admin key); MediaError(404) for an unknown id */
   refreshMetadata?(id: string): Promise<void>;
+
+  // ---- item rescan (optional, capabilities.itemRefresh): *Neu einlesen* on the detail page. Absent = 501, the web hides the entry.
+  /** the type of one item in any library (admin key, no viewer), FriendFlix vocabulary; null when the server does not know the id */
+  itemKind?(id: string): Promise<string | null>;
+  /**
+   * reads one film, series or season in again in `mode` (admin key); the server works on it in the background (no waiting, no
+   * progress). MediaError(404) for an unknown id; any other failure MediaError(502), its message names no URL or key.
+   */
+  refreshItem?(id: string, mode: RefreshMode): Promise<void>;
 
   // ---- R1 (optional): recommendation index. Absent = no item feature index (capabilities.libraryFeatures false).
   /**

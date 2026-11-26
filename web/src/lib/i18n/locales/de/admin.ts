@@ -531,6 +531,7 @@ export default {
     leaving: { set: '{actor} hat ein Entfernungsdatum gesetzt', clear: '{actor} hat ein Entfernungsdatum entfernt' },
     brand: { update: '{actor} hat das Branding geändert', reset: '{actor} hat das Branding zurückgesetzt', image: '{actor} hat ein Bild fürs Branding hochgeladen' },
     subtitle: { download: '{actor} hat Untertitel heruntergeladen' },
+    media: { item_refresh: '{actor} hat einen Titel neu einlesen lassen' },
   },
   /** Block 22: warning banner for admins (one sentence per issue) */
   banner: {

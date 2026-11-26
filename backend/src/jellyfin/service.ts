@@ -4,7 +4,7 @@ import { decrypt, encrypt } from '../crypto.js';
 import type { KV } from '../kv.js';
 import type {
   ClipTranscode, ExternalSession, IdentityPolicy, ItemDto, ItemMediaTraits, ItemQuery, ItemStreams, ItemTraits, MediaAdmin, MediaTraits, MediaCapabilities, MediaCredentials, MediaServer,
-  MediaEvent, PersonDto, PlaybackDto, PlaybackReport, SegmentType, TrackList,
+  MediaEvent, PersonDto, PlaybackDto, PlaybackReport, RefreshMode, SegmentType, TrackList,
 } from '../media/types.js';
 import type { JfUser } from '../types.js';
 import { JellyfinClient, JellyfinError, libraryOfPath, mediaBrowserHeader, policyFromTemplate } from './client.js';
@@ -71,6 +71,18 @@ export const JELLYFIN_CAPABILITIES: MediaCapabilities = {
   castHlsSubtitles: true, // AirPlay: one WebVTT rendition in the HLS master (SubtitleMethod=Hls)
   libraryFeatures: true, // R1
   requestUsers: 'jellyfin-import',
+  itemRefresh: true, // *Neu einlesen* on the detail page (itemKind + refreshItem)
+};
+
+/**
+ * `POST /Items/{id}/Refresh` per mode, as jellyfin-web's refresh dialog sends it: `Default` refreshes what changed on disk (new episodes,
+ * swapped or removed files), `FullRefresh` asks the providers again, the replace flags drop what is there first. A folder (series, season)
+ * always refreshes its children: `recursive` is what jellyfin-web sends, Jellyfin and Ferrofin take it as given (neither reads it).
+ */
+export const REFRESH_QUERY: Record<RefreshMode, Record<string, string>> = {
+  scan: { recursive: 'true', metadataRefreshMode: 'Default', imageRefreshMode: 'Default', replaceAllMetadata: 'false', replaceAllImages: 'false' },
+  missing: { recursive: 'true', metadataRefreshMode: 'FullRefresh', imageRefreshMode: 'FullRefresh', replaceAllMetadata: 'false', replaceAllImages: 'false' },
+  replace: { recursive: 'true', metadataRefreshMode: 'FullRefresh', imageRefreshMode: 'FullRefresh', replaceAllMetadata: 'true', replaceAllImages: 'true' },
 };
 
 const REPORT_KIND = { start: 'Playing', progress: 'Playing/Progress', stop: 'Playing/Stopped' } as const;
@@ -971,8 +983,26 @@ export class JellyfinService implements MediaServer {
 
   /** Full metadata + image refresh of one item (admin key), keeping what is there; MediaError(404) for an unknown id. */
   async refreshMetadata(id: string): Promise<void> {
-    const p = new URLSearchParams({ metadataRefreshMode: 'FullRefresh', imageRefreshMode: 'FullRefresh', replaceAllMetadata: 'false', replaceAllImages: 'false' });
-    const res = await this.client.adminFetch(`/Items/${encodeURIComponent(id)}/Refresh?${p}`, { method: 'POST' });
+    await this.postRefresh(id, { metadataRefreshMode: 'FullRefresh', imageRefreshMode: 'FullRefresh', replaceAllMetadata: 'false', replaceAllImages: 'false' });
+  }
+
+  /** *Neu einlesen* (detail page, admin): one film, series or season in `mode` (REFRESH_QUERY); the server queues it and answers 204 */
+  async refreshItem(id: string, mode: RefreshMode): Promise<void> {
+    await this.postRefresh(id, REFRESH_QUERY[mode]);
+  }
+
+  /** the type of one item in any library (admin key, no viewer); null for an id the server does not know (or no item id at all) */
+  async itemKind(id: string): Promise<string | null> {
+    const want = nid(id);
+    if (!/^[0-9a-f]{32}$/.test(want)) return null;
+    const i = await this.client.itemById(want);
+    return i && typeof i.Id === 'string' && nid(i.Id) === want && typeof i.Type === 'string' ? i.Type : null;
+  }
+
+  /** `POST /Items/{id}/Refresh` with the admin key: 404 stays 404, anything else not ok is 502 (the message names the status only) */
+  private async postRefresh(id: string, q: Record<string, string>): Promise<void> {
+    const res = await this.client.adminFetch(`/Items/${encodeURIComponent(id)}/Refresh?${new URLSearchParams(q)}`, { method: 'POST' });
+    await res.body?.cancel().catch(() => undefined);
     if (!res.ok) throw new JellyfinError(res.status === 404 ? 404 : 502, `Jellyfin refresh -> ${res.status}`);
   }
 
@@ -1194,7 +1224,7 @@ export class JellyfinService implements MediaServer {
       // Live TV recordings in a library (spec §15.3): scan it, list the libraries with their folders, create one, find an item by its file
       refreshLibrary: async (id) => {
         if (!/^[0-9a-f-]{32,36}$/i.test(id)) return;
-        const res = await client.adminFetch(`/Items/${encodeURIComponent(id)}/Refresh?Recursive=true&MetadataRefreshMode=Default&ImageRefreshMode=Default`, { method: 'POST' });
+        const res = await client.adminFetch(`/Items/${encodeURIComponent(id)}/Refresh?${new URLSearchParams(REFRESH_QUERY.scan)}`, { method: 'POST' });
         await res.body?.cancel().catch(() => undefined);
         if (!res.ok) throw new JellyfinError(res.status, `Jellyfin POST refresh -> ${res.status}`);
       },
