@@ -43,5 +43,5 @@ export const MEDIA_SETUP: Partial<Record<MediaServerKind, MediaSetupProvider>> =
  * The Jellyfin API as the managed media server's move and way back use it (mediaserver/move.ts, stage 2): both are Jellyfin-only by
  * definition (a Jellyfin database moved to Ferrofin and back), so they reach the implementation through this seam, never directly.
  */
-export { JellyfinClient, JellyfinError } from '../jellyfin/client.js';
+export { JellyfinClient, JellyfinError, USER_ID } from '../jellyfin/client.js';
 export { JellyfinService } from '../jellyfin/service.js';

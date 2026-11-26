@@ -3,7 +3,7 @@
 import type { Ctx } from '../ctx.js';
 import { decrypt, encrypt } from '../crypto.js';
 import type { Db } from '../db.js';
-import { USER_ID } from '../jellyfin/client.js';
+import { USER_ID } from '../media/setup.js';
 
 /**
  * The backend's half of managed mode (migration 60, spec "Backend storage"): one row. The admin password and the external server's
