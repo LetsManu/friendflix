@@ -78,6 +78,25 @@ describe('media_managed', () => {
     expect(await readManaged(env.pool)).toMatchObject({ migratedFrom: { name: 'jellyfin', version: null, at: '2026-11-24T10:00:00.000Z' }, move: null, requestsPrev: null });
   });
 
+  it('a move\'s dead links: only media server user ids, each once, at most 1000; none reads as absent', async () => {
+    const move = { phase: 'copying' as const, error: null, jobId: '0123456789abcdef', startedAt: '2026-11-24T09:00:00.000Z', requestsWarning: false };
+    const plain = 'a'.repeat(32), dashed = '0123abcd-0123-4567-89ab-0123456789ab';
+    await writeManaged(env.ctx, { move });
+    await env.pool.query('update media_managed set move = move || $1::jsonb', [JSON.stringify({
+      deadLinks: [plain, 'j1', dashed, 42, null, plain, '../x', 'B'.repeat(32), `${'c'.repeat(32)}\n`, '0123abcd0123-4567-89ab-0123456789ab-', { id: plain }],
+    })]);
+    expect((await readManaged(env.pool)).move!.deadLinks).toEqual([plain, dashed, 'B'.repeat(32)]);
+    // a list that is no list, or holds nothing usable: absent
+    for (const raw of ['"x"', '{}', '["j1"]', '[]']) {
+      await env.pool.query(`update media_managed set move = move || jsonb_build_object('deadLinks', $1::jsonb)`, [raw]);
+      expect((await readManaged(env.pool)).move, raw).toEqual(move);
+    }
+    // bounded
+    const many = Array.from({ length: 1005 }, (_, i) => i.toString(16).padStart(32, '0'));
+    await env.pool.query('update media_managed set move = move || $1::jsonb', [JSON.stringify({ deadLinks: many })]);
+    expect((await readManaged(env.pool)).move!.deadLinks).toEqual(many.slice(0, 1000));
+  });
+
   it('round-trip with encrypted secrets', async () => {
     const pw = 'A'.repeat(43);
     const ek = 'k' + 'ey-' + 'x'.repeat(20);

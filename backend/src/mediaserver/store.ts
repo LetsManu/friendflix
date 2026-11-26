@@ -3,6 +3,7 @@
 import type { Ctx } from '../ctx.js';
 import { decrypt, encrypt } from '../crypto.js';
 import type { Db } from '../db.js';
+import { USER_ID } from '../media/setup.js';
 
 /**
  * The backend's half of managed mode (migration 60, spec "Backend storage"): one row. The admin password and the external server's
@@ -23,8 +24,11 @@ export const libraryPath = (l: Pick<LibraryEntry, 'slug' | 'ffmedia'>): string =
 export type MovePhase = 'copying' | 'nfo' | 'verify' | 'switch' | 'requests' | 'done' | 'failed';
 /** the Jellyfin a move came from (container name and Jellyfin version, never a container or server id) and when it moved */
 export interface MigratedFrom { name: string; version: string | null; at: string }
-/** the id check of a move (`verify`): linked users checked and missing on the new server, item ids sampled and missing */
-export interface IdCheck { users: { total: number; missing: number }; items: { sampled: number; missing: number } }
+/**
+ * the id check of a move (`verify`): linked users checked and missing on the new server, item ids sampled and missing; `users.dead` the
+ * linked users not checked because the old Jellyfin did not know them either (MoveRecord.deadLinks; absent from an older record)
+ */
+export interface IdCheck { users: { total: number; missing: number; dead?: number }; items: { sampled: number; missing: number } }
 /**
  * a switched move whose updater no longer held it as ready when told the switch was made (`updater_aborted`: its move shows aborted, so
  * the new server may be gone and the old Jellyfin started; the way back applies)
@@ -50,14 +54,16 @@ export interface Relink { table: 'users' | 'profiles'; row: string; from: string
  * its abort yet (the tick sends it again until it does); `tries`: the phase's failures retried so far (a server still starting; reset
  * when the phase changes); `rounds`: the `nfo` ticks whose count of libraries with a saver still on did not drop, `nfoLeft` that count at
  * the last tick; `repeat`: a move after a way back (its `verify` repairs the users first), `relinks` what that repair created,
- * `policyPending` the users a repair made whose policy is not written yet; `back`/`backError`: the way back after this move,
+ * `policyPending` the users a repair made whose policy is not written yet; `deadLinks` the linked user ids the Jellyfin FriendFlix used
+ * did not know when the move was started (deleted there: its copy cannot have them; `verify` reports them instead of checking them, the
+ * ids never leave the backend); `back`/`backError`: the way back after this move,
  * `requestsBack` that way back has pointed the request service back, or tried (never again: a retried stop does not repeat it);
  * `failedIn`: the phase a failed move failed in (or was aborted in). Each is absent when unset.
  */
 export interface MoveRecord {
   phase: MovePhase; error: string | null; jobId: string | null; startedAt: string; requestsWarning: boolean;
   errorMeta?: IdCheck | MoveWarning; abortPending?: true; tries?: number; rounds?: number; nfoLeft?: number;
-  repeat?: true; relinks?: Relink[]; policyPending?: string[]; back?: BackStep; backError?: string; requestsBack?: true;
+  repeat?: true; relinks?: Relink[]; policyPending?: string[]; deadLinks?: string[]; back?: BackStep; backError?: string; requestsBack?: true;
   /** a failed move: the phase it failed in (the copy's own step is the updater job's; Admin marks the phase's row) */
   failedIn?: MovePhase;
 }
@@ -87,6 +93,8 @@ const SERVER_USER_RE = /^[0-9a-fA-F-]{32,36}$/;
 const SERVER_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 /** more relinks than linked rows are possible never; a bound for a row written by another build */
 const MAX_RELINKS = 2_000;
+/** the dead links a move keeps at most (MoveRecord.deadLinks); more are checked like any other linked user */
+export const MAX_DEAD_LINKS = 1_000;
 /** a host name or address as the request service stores it: no space, no control character, no path */
 const HOSTNAME_RE = /^[A-Za-z0-9.:[\]_-]{1,253}$/;
 const URL_BASE_RE = /^(\/[A-Za-z0-9._~%-]+){0,10}$/;
@@ -115,8 +123,15 @@ function migratedFrom(raw: unknown): MigratedFrom | null {
 const count = (v: unknown): number | null => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null);
 function idCheck(raw: unknown): IdCheck | null {
   const u = objOf(objOf(raw)?.users), i = objOf(objOf(raw)?.items);
-  const total = count(u?.total), missing = count(u?.missing), sampled = count(i?.sampled), gone = count(i?.missing);
-  return total !== null && missing !== null && sampled !== null && gone !== null ? { users: { total, missing }, items: { sampled, missing: gone } } : null;
+  const total = count(u?.total), missing = count(u?.missing), dead = count(u?.dead), sampled = count(i?.sampled), gone = count(i?.missing);
+  return total !== null && missing !== null && sampled !== null && gone !== null
+    ? { users: { total, missing, ...(dead !== null ? { dead } : {}) }, items: { sampled, missing: gone } } : null;
+}
+/** the stored dead links: media server user ids only (client.ts USER_ID), each once, at most MAX_DEAD_LINKS */
+export function deadLinkIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  // the work bounded too: a row written by another build may hold anything
+  return [...new Set(raw.slice(0, 4 * MAX_DEAD_LINKS).filter((x): x is string => typeof x === 'string' && USER_ID.test(x)))].slice(0, MAX_DEAD_LINKS);
 }
 function relinks(raw: unknown): Relink[] {
   if (!Array.isArray(raw)) return [];
@@ -134,13 +149,14 @@ function moveRecord(raw: unknown): MoveRecord | null {
   const errorMeta = objOf(o.errorMeta)?.warning === 'updater_aborted' ? { warning: 'updater_aborted' as const } : idCheck(o.errorMeta);
   const tries = count(o.tries), rounds = count(o.rounds), nfoLeft = count(o.nfoLeft), links = relinks(o.relinks);
   const policy = Array.isArray(o.policyPending) ? o.policyPending.slice(0, MAX_RELINKS).filter((x): x is string => typeof x === 'string' && SERVER_USER_RE.test(x)) : [];
+  const dead = deadLinkIds(o.deadLinks);
   const back = BACK_STEPS.find((b) => b === o.back), backError = re(o.backError, CODE_RE);
   const failedIn = phase === 'failed' ? MOVE_PHASES.find((p) => p === o.failedIn && p !== 'done' && p !== 'failed') : undefined;
   return {
     phase, error: re(o.error, CODE_RE), jobId: re(o.jobId, JOB_ID_RE), startedAt, requestsWarning: o.requestsWarning === true,
     ...(errorMeta ? { errorMeta } : {}), ...(o.abortPending === true ? { abortPending: true as const } : {}), ...(tries ? { tries } : {}),
     ...(rounds ? { rounds } : {}), ...(nfoLeft !== null ? { nfoLeft } : {}), ...(o.repeat === true ? { repeat: true as const } : {}),
-    ...(links.length ? { relinks: links } : {}), ...(policy.length ? { policyPending: policy } : {}),
+    ...(links.length ? { relinks: links } : {}), ...(policy.length ? { policyPending: policy } : {}), ...(dead.length ? { deadLinks: dead } : {}),
     ...(back ? { back } : {}), ...(back && backError ? { backError } : {}), ...(back && o.requestsBack === true ? { requestsBack: true as const } : {}),
     ...(failedIn ? { failedIn } : {}),
   };

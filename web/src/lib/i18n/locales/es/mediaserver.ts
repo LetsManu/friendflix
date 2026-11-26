@@ -270,6 +270,11 @@ const dict: Translation<typeof de> = {
     failed: 'El traslado no funcionó: {reason} FriendFlix sigue usando tu Jellyfin.',
     idsMismatch: 'De {users} usuarios vinculados faltan {usersMissing}; de {items} títulos comprobados, {itemsMissing}.',
     updaterAborted: 'Sin embargo, el actualizador indica que el traslado se canceló. Comprueba que Ferrofin funciona; si no, vuelve con «Volver a Jellyfin».',
+    deadLinks: {
+      one: '{n} perfil vinculado ya no tenía usuario en Jellyfin (se eliminó allí). No puede reproducir ni allí ni aquí hasta que lo vuelvas a vincular.',
+      many: '{n} perfiles vinculados ya no tenían usuario en Jellyfin (se eliminaron allí). No pueden reproducir ni allí ni aquí hasta que los vuelvas a vincular.',
+      other: '{n} perfiles vinculados ya no tenían usuario en Jellyfin (se eliminaron allí). No pueden reproducir ni allí ni aquí hasta que los vuelvas a vincular.',
+    },
     running: 'El traslado a Ferrofin está en curso.',
     show: 'Ver el progreso',
     lastFailed: 'El último traslado no funcionó: {reason}',

@@ -345,6 +345,10 @@
         <section class="moved" data-testid="media-moved" aria-labelledby="ms-moved-t">
           <h3 id="ms-moved-t">{$t('mediaserver.move.moved', { name: mv.migratedFrom.name, date: fmtDate(mv.migratedFrom.at) })}</h3>
           {#if source}<p class="muted small">{$t(source === 'stopped' ? 'mediaserver.move.oldStopped' : source === 'running' ? 'mediaserver.move.oldRunning' : 'mediaserver.move.oldMissing')}</p>{/if}
+          <!-- linked profiles whose user was deleted in Jellyfin before the move: not on Ferrofin either (backend MoveRecord.deadLinks) -->
+          {#if (mv.state?.deadLinks ?? 0) > 0}
+            <p class="warn" data-testid="media-dead-links"><Icon name="alert" size={18} />{$t('mediaserver.move.deadLinks', { n: mv.state?.deadLinks ?? 0 })}</p>
+          {/if}
           <div class="acts">
             <!-- the old container gone: the stage 1 switch (an address), under its own name -->
             <Button variant="secondary" icon="arrow-left" pending={goingBack || backActive(view) || switching} disabled={running || backActive(view) || moveActive(view)}

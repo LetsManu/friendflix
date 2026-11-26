@@ -272,6 +272,10 @@ export default {
     failed: 'Der Umzug hat nicht geklappt: {reason} FriendFlix nutzt weiter dein Jellyfin.',
     idsMismatch: 'Von {users} verknüpften Benutzern fehlen {usersMissing}, von {items} geprüften Titeln {itemsMissing}.',
     updaterAborted: 'Der Updater meldet den Umzug aber als abgebrochen. Prüfe, ob Ferrofin läuft; sonst geh mit „Zurück zu Jellyfin“ zurück.',
+    deadLinks: {
+      one: '{n} verknüpftes Profil hatte schon in Jellyfin keinen Benutzer mehr (dort gelöscht). Es kann dort wie hier nicht abspielen, bis du es neu verknüpfst.',
+      other: '{n} verknüpfte Profile hatten schon in Jellyfin keinen Benutzer mehr (dort gelöscht). Sie können dort wie hier nicht abspielen, bis du sie neu verknüpfst.',
+    },
     running: 'Der Umzug zu Ferrofin läuft.',
     show: 'Fortschritt ansehen',
     lastFailed: 'Der letzte Umzug hat nicht geklappt: {reason}',

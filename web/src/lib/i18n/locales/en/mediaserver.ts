@@ -270,6 +270,10 @@ const dict: Translation<typeof de> = {
     failed: 'The move did not work: {reason} FriendFlix keeps using your Jellyfin.',
     idsMismatch: 'Of {users} linked users {usersMissing} are missing, of {items} checked titles {itemsMissing}.',
     updaterAborted: 'The updater reports the move as cancelled, though. Check that Ferrofin runs; otherwise go back with “Back to Jellyfin”.',
+    deadLinks: {
+      one: '{n} linked profile no longer had a user in Jellyfin (deleted there). It cannot play there or here until you link it again.',
+      other: '{n} linked profiles no longer had a user in Jellyfin (deleted there). They cannot play there or here until you link them again.',
+    },
     running: 'The move to Ferrofin is running.',
     show: 'Show progress',
     lastFailed: 'The last move did not work: {reason}',

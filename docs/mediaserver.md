@@ -255,7 +255,10 @@ their names.
 4. *Create and start Ferrofin* with the copied data and your media folders read-only at their old paths, *wait until it is ready*
    and until it has taken over the data (`adopt_failed` otherwise).
 5. *Check users and titles:* with the copied API key every linked user must resolve on Ferrofin, and so must at least 98 % of up to
-   200 titles FriendFlix references (`ids_mismatch` otherwise; a few deleted titles may be missing).
+   200 titles FriendFlix references (`ids_mismatch` otherwise; a few deleted titles may be missing). A linked user your Jellyfin
+   itself no longer knew when you started the move (deleted there; FriendFlix asks your Jellyfin before anything is stopped) cannot
+   be on the copy either: it is not counted but reported. The result and the card say how many profiles cannot play until you link
+   them again.
 6. *Switch FriendFlix over:* the media server becomes the managed Ferrofin; your old address and key are kept for the way back.
 7. *Switch the request service over*, when you have set one up (below).
 
@@ -304,9 +307,9 @@ and *Entfernen* is offered again. Until then every switch to an address and *Ent
 | `source_nested` | Jellyfin sees one folder at two paths or one folder inside another. Its paths cannot be taken over; give it separate mounts. |
 | `no_space` | Free space on the Docker data root is less than the copy plus a fifth. Free some or leave out trickplay. |
 | `adopt_failed` | Ferrofin did not take over the copy. Your Jellyfin runs again; look at *Protokoll*. |
-| `ids_mismatch` | Fewer than 98 % of the sampled titles (or a linked user) resolve on Ferrofin. Your Jellyfin runs again; make sure its libraries are scanned, then retry. |
+| `ids_mismatch` | Fewer than 98 % of the sampled titles (or a linked user) resolve on Ferrofin. Your Jellyfin runs again; make sure its libraries are scanned, then retry. Links that were already dead in your Jellyfin (its user deleted there before the move) are not counted; they are reported. |
 | `move_aborted` | You cancelled, or the job stopped. Your Jellyfin runs again. |
-| `jellyfin_unreachable` | Way back: the old Jellyfin does not answer with the saved address and key. FriendFlix stays on Ferrofin. |
+| `jellyfin_unreachable` | Move: your Jellyfin did not answer the look-up of the linked users with the saved address and key; nothing was started. Way back: the old Jellyfin does not answer with the saved address and key. FriendFlix stays on Ferrofin. |
 | `use_way_back` | A moved server whose old Jellyfin container is there leaves only through *Zurück zu Jellyfin*. |
 | `backup_premove` | The backup is from before the move: its users and titles have other ids. Restore one from the move on. |
 

@@ -64,13 +64,16 @@ export interface MoveScanRecord {
 export type MovePhase = 'copying' | 'nfo' | 'verify' | 'switch' | 'requests' | 'done' | 'failed';
 /** the way back as far as it got (`failed`: it changed nothing, its code in `backError`) */
 export type BackStep = 'starting' | 'switched' | 'stopped' | 'done' | 'failed';
-export interface IdCheck { users: { total: number; missing: number }; items: { sampled: number; missing: number } }
+/** `users.dead`: linked users not checked, the old Jellyfin did not know them either (MoveState.deadLinks) */
+export interface IdCheck { users: { total: number; missing: number; dead?: number }; items: { sampled: number; missing: number } }
 /** the move as the backend follows it, with the step and abort flag of the updater's job (routes/adminMediaserver.ts MoveView.state) */
 export interface MoveState {
   phase: MovePhase; error: string | null; jobId: string | null; startedAt: string; errorMeta?: IdCheck | { warning: 'updater_aborted' };
   back?: BackStep; backError?: string; step: MoveJobStep | null; abort: boolean;
   /** a failed move: the phase it failed (or was aborted) in */
   failedIn?: Exclude<MovePhase, 'done' | 'failed'>;
+  /** linked users the old Jellyfin no longer knew when the move started (deleted there): not on the copy either; absent from an older backend */
+  deadLinks?: number;
 }
 /** the Jellyfin a move came from (container name and version) and when */
 export interface MigratedFrom { name: string; version: string | null; at: string }

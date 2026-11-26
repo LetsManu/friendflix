@@ -11,7 +11,7 @@ import { addressOnly } from '../media/address.js';
 import { MediaSetupError } from '../media/types.js';
 import { BACKUP_ID, decodePassphrase, mediaDownload, mediaOp, mediaScan, mediaUpload, parseMediaStatus, startMediaJob, type MediaBackup, type MediaStatus } from '../mediaserver/client.js';
 import { recordApplyFirstRun } from '../mediaserver/firstRun.js';
-import { ACTIVE_PHASES, backUnderWay, freshScan, readScan, scanRunning, startBack, startScan, SWITCHED_PHASES, withMoveLock, type MoveScanRecord } from '../mediaserver/move.js';
+import { ACTIVE_PHASES, backUnderWay, deadLinks, freshScan, readScan, scanRunning, startBack, startScan, SWITCHED_PHASES, withMoveLock, type MoveScanRecord } from '../mediaserver/move.js';
 import { libraryReferences, referenced } from '../mediaserver/references.js';
 import { deleteLibrary, managedKey, MANAGED_URL, publicInfo, renameLibrary } from '../mediaserver/serverApi.js';
 import { adminPassword, claimAdminPassword, externalKey, idsInUse, libraryPath, readManaged, slugFor, writeManaged, type Kind, type LibraryEntry, type ManagedPatch, type MediaManaged, type MigratedFrom, type MoveRecord, type SetupStep } from '../mediaserver/store.js';
@@ -37,11 +37,12 @@ export type OfferReason = 'no_updater' | 'plex' | 'url_pinned' | 'ids_in_use' | 
  * Docker state (`missing` once it is gone); `requestsWarning` the request service does not point at the server FriendFlix uses (a move
  * or a way back could not point it over: the manual step); `scan` the
  * background scan of the chosen Jellyfin (mediaserver/move.ts MoveScanRecord); `state.back` how far the way back got (`backError` its
- * code when it changed nothing); `state.failedIn` the phase a failed move failed in. Not offered while a move or a way back is under way.
+ * code when it changed nothing); `state.failedIn` the phase a failed move failed in; `state.deadLinks` how many linked users the
+ * Jellyfin did not know when the move started (their ids stay in the backend). Not offered while a move or a way back is under way.
  */
 export interface MoveView {
   offered: boolean; reason: OfferReason | null; scan: MoveScanRecord | null;
-  state: (Omit<MoveRecord, 'requestsWarning' | 'abortPending' | 'tries' | 'rounds' | 'repeat' | 'relinks' | 'requestsBack'> & { step: MediaStep | null; abort: boolean }) | null;
+  state: (Omit<MoveRecord, 'requestsWarning' | 'abortPending' | 'tries' | 'rounds' | 'repeat' | 'relinks' | 'requestsBack' | 'deadLinks'> & { step: MediaStep | null; abort: boolean; deadLinks: number }) | null;
   migratedFrom: MigratedFrom | null; sourceState: string | null; requestsWarning: boolean;
   /** a request service is set up in FriendFlix (the move points it at the new server; the sheet names it only then) */
   requests: boolean;
@@ -150,7 +151,7 @@ function moveView(managed: MediaManaged, status: MediaStatus | null, offer: Pick
       phase: rec.phase, error: rec.error, jobId: rec.jobId, startedAt: rec.startedAt, ...(rec.errorMeta ? { errorMeta: rec.errorMeta } : {}),
       ...(rec.back ? { back: rec.back } : {}), ...(rec.backError ? { backError: rec.backError } : {}),
       ...(rec.failedIn ? { failedIn: rec.failedIn } : {}),
-      step: status?.move?.step ?? null, abort: status?.move?.abort === true,
+      step: status?.move?.step ?? null, abort: status?.move?.abort === true, deadLinks: rec.deadLinks?.length ?? 0,
     } : null,
     migratedFrom: managed.migratedFrom, sourceState: status?.source?.state ?? null, requestsWarning: rec?.requestsWarning === true, requests,
   };
@@ -171,8 +172,9 @@ export async function mediaView(ctx: Ctx, read?: UpdaterView): Promise<MediaView
     mode: managed.kind ? 'managed' : 'external',
     offer: { managed: reason === null, reason },
     kinds: { ferrofin: status?.pins.ferrofin === true, jellyfin: status?.pins.jellyfin === true },
-    // the users a repeated move's repair made on the copy are the backend's to carry to the switch, not the page's
-    status, managed: managed.move?.relinks ? { ...managed, move: { ...managed.move, relinks: undefined } } : managed,
+    // the users a repeated move's repair made on the copy are the backend's to carry to the switch, not the page's; the dead links' ids
+    // stay here too (the page gets their count, move.state.deadLinks)
+    status, managed: managed.move?.relinks || managed.move?.deadLinks ? { ...managed, move: { ...managed.move, relinks: undefined, deadLinks: undefined } } : managed,
     external: { url: managed.externalUrl, hasKey: managed.hasExternalKey },
     livetvLibraryPath: ctx.cfg.LIVETV_RECORD_LIBRARY_JF_PATH ?? null,
     move,
@@ -537,11 +539,20 @@ function moveOps(ctx: Ctx) {
   // the user is the one the scan ran as, the GPU the detection's proposal, the time zone the server's; one move at a time
   const move = op({
     body: S.move, reauth: () => true,
-    run: async (b, reply, actor) => {
+    run: async (b, reply, actor, req) => {
       const gate = await moveGate(ctx);
       if ('error' in gate) return reply.code(409).send({ error: gate.error });
       // the admin confirmed what a scan of this very container showed, a short while ago
       if (!(await freshScan(ctx, b.source))) return reply.code(409).send({ error: 'scan_required' });
+      // the linked users this Jellyfin no longer knows (deleted there), asked while it still runs: its copy cannot have them, the move's
+      // check reports them instead (mediaserver/move.ts deadLinks). A lookup that fails otherwise starts nothing
+      const key = ctx.cfg.JELLYFIN_ADMIN_API_KEY;
+      const dead = key ? await deadLinks(ctx, currentJellyfin(ctx)!, key).catch(() => null) : null;
+      if (!dead) {
+        req.log.warn('media move refused: the current Jellyfin did not answer its user lookups');
+        return reply.code(409).send({ error: 'jellyfin_unreachable' });
+      }
+      if (dead.length) req.log.warn({ deadLinks: dead.length }, 'media move: linked users unknown to the current Jellyfin');
       const gpu = await detectedGpu(ctx);
       const user = gate.status?.desired ? { uid: gate.status.desired.uid, gid: gate.status.desired.gid } : MOVE_USER;
       const body = { op: 'migrate', source: b.source, trickplay: b.trickplay, gpu, uid: user.uid, gid: user.gid, tz: containerTz(), serverId: gate.serverId };
@@ -551,7 +562,7 @@ function moveOps(ctx: Ctx) {
       const prev = gate.managed.move;
       const repeat = prev?.back === 'done' || prev?.repeat === true;
       const startedAt = new Date().toISOString();
-      await writeManaged(ctx, { move: { phase: 'copying', error: null, jobId: null, startedAt, requestsWarning: false, ...(repeat ? { repeat } : {}) } });
+      await writeManaged(ctx, { move: { phase: 'copying', error: null, jobId: null, startedAt, requestsWarning: false, ...(repeat ? { repeat } : {}), ...(dead.length ? { deadLinks: dead } : {}) } });
       const r = await startMediaJob(ctx, body, actor, { trickplay: b.trickplay, gpu }, 'mediaserver.move');
       // only this record (its start time), while it still waits for its copy: a tick may have moved it on meanwhile
       const patch = r.ok ? { jobId: 'job' in r ? r.job.id : null } : { phase: 'failed', error: r.error, failedIn: 'copying' };

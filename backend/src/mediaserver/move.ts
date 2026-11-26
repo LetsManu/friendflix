@@ -6,7 +6,7 @@ import type { Ctx } from '../ctx.js';
 import { decrypt, encrypt, randomPassword, randomToken } from '../crypto.js';
 import { inTransaction } from '../db.js';
 import { addressOnly } from '../media/address.js';
-import { JellyfinClient, JellyfinError, JellyfinService } from '../media/setup.js';
+import { JellyfinClient, JellyfinError, JellyfinService, USER_ID } from '../media/setup.js';
 import { MediaSetupError } from '../media/types.js';
 import { kidsPolicy } from '../profiles.js';
 import { effectiveRole } from '../roles.js';
@@ -17,7 +17,7 @@ import { applyRole } from '../users.js';
 import { encodingHw, MEDIA_ERRORS, mediaOp, mediaScan, startMediaJob, type MediaError, type MoveScan } from './client.js';
 import { MANAGED_URL, NFO_PER_CALL, nfoSaversOff, setEncoding, TIMEOUT_MS as SERVER_CALL_MS } from './serverApi.js';
 import {
-  externalKey, readManaged, requestsPrev, writeManaged, type BackStep, type IdCheck, type MediaManaged, type MoveRecord, type MovePhase, type MoveWarning,
+  externalKey, MAX_DEAD_LINKS, readManaged, requestsPrev, writeManaged, type BackStep, type IdCheck, type MediaManaged, type MoveRecord, type MovePhase, type MoveWarning,
   type Relink,
 } from './store.js';
 
@@ -102,6 +102,8 @@ export async function startScan(ctx: Ctx, source: string, serverId: string): Pro
 
 /** the id check as a whole (every user and the item sample); a server that does not answer within it fails the check */
 const VERIFY_DEADLINE_MS = 45_000;
+/** the dead-link lookup before a move (deadLinks) as a whole: the route answers within it (a reverse proxy waits 60 s at most) */
+const DEAD_LINKS_DEADLINE_MS = 20_000;
 /** the newest item references the id check samples, how many it looks up at once, and the share that must resolve (deleted titles) */
 const SAMPLE = 200;
 const PARALLEL = 8;
@@ -228,25 +230,49 @@ const SAMPLE_SQL = `select id from (${ITEM_SOURCES.map((t) => `(select ${t.id} a
     where ${t.id} ~ '^[0-9a-fA-F]{32}$' group by ${t.id} order by at desc, id limit $1)`).join(' union all ')}) r
   group by id order by max(at) desc, id limit $1`;
 
+/** the media server user ids FriendFlix links to (an account's own, a profile's), each once */
+async function linkedUserIds(ctx: Pick<Ctx, 'db'>): Promise<string[]> {
+  return (await ctx.db.query<{ id: string }>(
+    `select jellyfin_user_id as id from users where jellyfin_user_id <> ''
+     union select jellyfin_user_id from profiles where jellyfin_user_id is not null and jellyfin_user_id <> ''`)).rows.map((r) => r.id);
+}
+
+/**
+ * The dead links (MoveRecord.deadLinks): the linked user ids the Jellyfin at `url` (the one FriendFlix uses before a move, with its key)
+ * answers 404 for, its user deleted there. Its copy cannot have them, so `verify` reports them instead of checking them. Only ids shaped
+ * like media server user ids (client.ts USER_ID: the record keeps no other), at most MAX_DEAD_LINKS (any more are checked as usual). Any other failure (no answer, a refused key, 5xx, the deadline) throws: the move is not
+ * started on a guess. Never an id, address or key in what it throws.
+ */
+export async function deadLinks(ctx: Pick<Ctx, 'db' | 'fetchImpl'>, url: string, key: string): Promise<string[]> {
+  const client = new JellyfinClient(url, key, ctx.fetchImpl);
+  const signal = AbortSignal.timeout(DEAD_LINKS_DEADLINE_MS);
+  const dead: string[] = [];
+  await each((await linkedUserIds(ctx)).filter((id) => USER_ID.test(id)), PARALLEL, async (id) => { if (!(await client.userExists(id, signal))) dead.push(id); });
+  return dead.sort().slice(0, MAX_DEAD_LINKS);
+}
+
 /**
  * The id check (`verify`, spec "The move" 8) against the new server with the copied key: every media server user id on `users` and
- * `profiles` must resolve; of the up to 200 newest item ids referenced in ITEM_SOURCES (watch list, watch time, lists, bookmarks, thumbs,
- * ratings, episode reminders, Live TV recordings exported to the library; each id once, by its newest reference) at least 98 % must
- * (deleted titles may be gone). Only ids shaped like media server item ids are sampled. Any lookup that fails otherwise throws (a 5xx
+ * `profiles` must resolve (but the dead links, `dead`: the old Jellyfin did not know them either; counted in `users.dead`, not in
+ * `total`, unless a repeated move's repair relinked one: then its new user is checked); of the up to 200 newest item ids referenced in
+ * ITEM_SOURCES (watch list, watch time, lists, bookmarks, thumbs, ratings, episode reminders, Live TV recordings exported to the library;
+ * each id once, by its newest reference) at least 98 % must (deleted titles may be gone). Only ids shaped like media server item ids are sampled. Any lookup that fails otherwise throws (a 5xx
  * never counts as missing).
  */
-export async function verifyIds(ctx: Pick<Ctx, 'db'>, client: Pick<JellyfinClient, 'userExists' | 'itemById'>, signal?: AbortSignal, relinks: readonly Relink[] = []): Promise<IdCheck> {
+export async function verifyIds(ctx: Pick<Ctx, 'db'>, client: Pick<JellyfinClient, 'userExists' | 'itemById'>, signal?: AbortSignal, relinks: readonly Relink[] = [],
+  dead: readonly string[] = []): Promise<IdCheck> {
   // a user a repeated move's repair created on the copy stands in for the id the row keeps until the switch
   const to = new Map(relinks.map((l) => [l.from, l.to]));
-  const users = (await ctx.db.query<{ id: string }>(
-    `select jellyfin_user_id as id from users where jellyfin_user_id <> ''
-     union select jellyfin_user_id from profiles where jellyfin_user_id is not null and jellyfin_user_id <> ''`)).rows.map((r) => to.get(r.id) ?? r.id);
+  const skip = new Set(dead);
+  const linked = await linkedUserIds(ctx);
+  const unchecked = linked.filter((id) => skip.has(id) && !to.has(id)).length;
+  const users = linked.filter((id) => !skip.has(id) || to.has(id)).map((id) => to.get(id) ?? id);
   const items = (await ctx.db.query<{ id: string }>(SAMPLE_SQL, [SAMPLE])).rows.map((r) => r.id);
   let usersMissing = 0;
   let itemsMissing = 0;
   await each(users, PARALLEL, async (id) => { if (!(await client.userExists(id, signal))) usersMissing++; });
   await each(items, PARALLEL, async (id) => { if (!(await client.itemById(id, signal))) itemsMissing++; });
-  return { users: { total: users.length, missing: usersMissing }, items: { sampled: items.length, missing: itemsMissing } };
+  return { users: { total: users.length, missing: usersMissing, dead: unchecked }, items: { sampled: items.length, missing: itemsMissing } };
 }
 
 const idsPass = (r: IdCheck): boolean => r.users.missing === 0 && (r.items.sampled - r.items.missing) * 100 >= r.items.sampled * RESOLVE_PERCENT;
@@ -512,6 +538,7 @@ async function nfo({ ctx, rec, status }: Phase): Promise<Next> {
 
 /**
  * `verify` (spec "The move" 8): linked users and the item sample resolve on the new server; `ids_mismatch` with the numbers otherwise.
+ * The dead links recorded at the move's start (MoveRecord.deadLinks) are reported, not checked; nothing here repairs them.
  * A repeated move (after a way back) first repairs the users on the copy (repairOn `pending`: the users made on Jellyfin since the way
  * back, every password set again); what it created is kept in the record and checked in place of the row's id, and only the switch
  * writes it to the rows, so a move that fails after it leaves FriendFlix's ids as they were.
@@ -525,7 +552,7 @@ async function verify({ ctx, rec, status }: Phase): Promise<Next> {
     await saveRelinks(ctx, relinks);
   }
   const client = new JellyfinClient(MANAGED_URL, key, ctx.fetchImpl);
-  const r = await verifyIds(ctx, client, AbortSignal.timeout(VERIFY_DEADLINE_MS), relinks);
+  const r = await verifyIds(ctx, client, AbortSignal.timeout(VERIFY_DEADLINE_MS), relinks, rec.deadLinks);
   if (!idsPass(r)) throw new MoveFailed('ids_mismatch', r);
   return 'switch';
 }

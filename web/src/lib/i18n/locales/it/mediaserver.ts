@@ -270,6 +270,11 @@ const dict: Translation<typeof de> = {
     failed: 'Il trasloco non è riuscito: {reason} FriendFlix continua a usare il tuo Jellyfin.',
     idsMismatch: 'Su {users} utenti collegati ne mancano {usersMissing}, su {items} titoli controllati {itemsMissing}.',
     updaterAborted: 'Però l’updater segnala il trasloco come annullato. Controlla che Ferrofin funzioni; altrimenti torna indietro con «Torna a Jellyfin».',
+    deadLinks: {
+      one: '{n} profilo collegato non aveva già più un utente in Jellyfin (eliminato lì). Non può riprodurre né lì né qui finché non lo ricolleghi.',
+      many: '{n} profili collegati non avevano già più un utente in Jellyfin (eliminati lì). Non possono riprodurre né lì né qui finché non li ricolleghi.',
+      other: '{n} profili collegati non avevano già più un utente in Jellyfin (eliminati lì). Non possono riprodurre né lì né qui finché non li ricolleghi.',
+    },
     running: 'Il trasloco su Ferrofin è in corso.',
     show: 'Vedi l’avanzamento',
     lastFailed: 'L’ultimo trasloco non è riuscito: {reason}',
