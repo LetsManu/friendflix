@@ -18,6 +18,7 @@ describe('describeActivity', () => {
     expect(describeActivity({ id: 6, at: '', action: 'preview.clear', target: 'ab'.repeat(16), actor: 'Tester' })).toEqual({ text: 'Tester hat einen Vorschau-Clip gelöscht', icon: 'film' });
     expect(describeActivity({ id: 7, at: '', action: 'preview.regenerate', actor: 'Tester' }).text).toBe('Tester hat einen Vorschau-Clip neu erzeugen lassen');
     expect(describeActivity({ id: 8, at: '', action: 'leaving.set', actor: 'Tester' })).toEqual({ text: 'Tester hat ein Entfernungsdatum gesetzt', icon: 'calendar' });
+    expect(describeActivity({ id: 9, at: '', action: 'media.item_refresh', target: 'cd'.repeat(16), actor: 'Tester', meta: { mode: 'scan', type: 'Series' } })).toEqual({ text: 'Tester hat einen Titel neu einlesen lassen', icon: 'refresh' });
     await setLocale('en');
     expect(describeActivity({ id: 6, at: '', action: 'preview.clear', actor: 'Tester' }).text).toBe('Tester deleted a preview clip');
   });

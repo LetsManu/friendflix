@@ -629,6 +629,7 @@ const tr: Translation<typeof de> = {
     subtitle: {
       download: '{actor} altyazı indirdi',
     },
+    media: { item_refresh: '{actor} bir yapımı yeniden tarattı' },
   },
   banner: {
     label: 'Yöneticiler için uyarılar',

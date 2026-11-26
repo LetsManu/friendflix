@@ -638,6 +638,7 @@ const it: Translation<typeof de> = {
     subtitle: {
       download: '{actor} ha scaricato i sottotitoli',
     },
+    media: { item_refresh: '{actor} ha fatto ripetere la scansione di un titolo' },
   },
   banner: {
     label: 'Avvisi per gli admin',

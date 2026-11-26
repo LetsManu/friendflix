@@ -75,6 +75,8 @@
   export let audio = '';
   export let sub = '';
   export let moreActions: MoreAction[] = [];
+  /** admins: *Neu einlesen* of the selected season, beside the season select (EpisodeList; null: none) */
+  export let onSeasonRescan: ((season: Item) => void) | null = null;
   /** kids profiles: no social entry points */
   export let social = true;
   /** the trailer may be started by hand (a preview exists and none runs) */
@@ -405,7 +407,7 @@
       <div class="tpanel" id="dd-panel-{shown}" role="tabpanel" aria-labelledby="dd-tab-{shown}" tabindex="-1" bind:this={panelEl}>
         {#if shown === 'episodes' && item.type === 'Series'}
           <Safe name="story" key={item.id}><StoryCard seriesId={item.id} /></Safe>
-          <Safe name="episodes" key={item.id}><EpisodeList layout="row" seriesId={item.id} {seasons} bind:season {episodes} {next} {qs} /></Safe>
+          <Safe name="episodes" key={item.id}><EpisodeList layout="row" seriesId={item.id} {seasons} bind:season {episodes} {next} {qs} onRescan={onSeasonRescan} /></Safe>
         {:else if shown === 'more'}
           <Safe name="more" key={item.id}><MoreLikeThis items={more} /></Safe>
         {:else if shown === 'extras'}

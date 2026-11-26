@@ -667,6 +667,7 @@ const pl: Translation<typeof de> = {
     subtitle: {
       download: '{actor} pobrał(a) napisy',
     },
+    media: { item_refresh: '{actor} zlecił(a) ponowne wczytanie tytułu' },
   },
   banner: {
     label: 'Uwagi dla administratorów',

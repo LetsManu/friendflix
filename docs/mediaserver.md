@@ -130,6 +130,13 @@ The wizard's media step offers the same path under the setup session; it ends wh
   until it has read the media server's status once (checking the image signature can take up to 2 minutes), the line stays neutral
   (`not_set_up` / `managed_starting`), the card and the wizard's media step show *Medienserver-Status wird gelesen…* without
   choices or actions (offer reason `starting`) and read again every 2 seconds.
+- **Reading a title in again (*Neu einlesen*):** the managed server has no dashboard of its own, so admins (on the owner profile)
+  do it from the title's detail page: *⋯ → Neu einlesen…* for a film or a whole series, the round button beside the season select
+  for one season. Three modes, as in Jellyfin's own dialog: *Nach neuen und geänderten Dateien suchen* (new episodes, swapped or
+  removed files; a series or season takes its episodes along), *Fehlende Metadaten suchen* (fills gaps, keeps what is there) and
+  *Alle Metadaten und Bilder ersetzen* (asks first; edits made by hand on the server may be lost). The server works on it in the
+  background, so the new state shows after a few minutes. It works the same with Jellyfin you run yourself; Plex does not offer it.
+  Each request is in the audit log (`media.item_refresh`, at most 10 per minute and admin).
 
 ## Updates
 

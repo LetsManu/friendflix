@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
-import { ME, MOVIE, SERIES } from '../mocks/fixtures.js';
+import { hex, ME, MOVIE, SERIES } from '../mocks/fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
 
 /** Block 21 on phones: clamped synopsis, sticky tab bar, horizontally scrolling ratings line, 44 px tabs; phone browse §4: the reworked page. */
@@ -277,5 +277,55 @@ test.describe('phone detail page (phone browse §4)', () => {
       // tabs keep their 44 px touch height
       for (const t of await list.getByRole('tab').all()) expect((await t.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     });
+  });
+});
+
+/** *Neu einlesen* on the phone (admins): the season button beside the select, the series in the "Mehr" sheet, the dialog fits */
+test.describe('detail page (phone): Neu einlesen', () => {
+  const entry = (page: Page, name: string) => page.getByRole('menuitem', { name }).or(page.getByRole('button', { name, exact: true }));
+
+  test('a viewer has no season button and no sheet entry', async ({ page }) => {
+    await page.goto('/item/' + SERIES.id);
+    await expect(page.getByRole('combobox', { name: 'Staffel' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '„Staffel 1“ neu einlesen' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Mehr', exact: true }).tap();
+    await expect(entry(page, 'Merkliste').or(page.getByRole('button', { name: /Gesehen/ })).first()).toBeVisible();
+    await expect(entry(page, 'Neu einlesen…')).toHaveCount(0);
+  });
+
+  test('an admin reads a season in again: 44 px button left of the select, the dialog fits the phone, toast', async ({ page, api }) => {
+    api.asAdmin = true;
+    await page.goto('/item/' + SERIES.id);
+    const select = page.getByRole('combobox', { name: 'Staffel' });
+    const btn = page.getByRole('button', { name: '„Staffel 1“ neu einlesen' });
+    await expect(btn).toBeVisible();
+    const b = (await btn.boundingBox())!, s = (await select.boundingBox())!;
+    expect(b.width).toBeGreaterThanOrEqual(44);
+    expect(b.height).toBeGreaterThanOrEqual(44);
+    expect(b.x + b.width).toBeLessThanOrEqual(s.x); // left of the right-aligned select: the select keeps its place
+    await btn.tap();
+    const dlg = page.getByRole('dialog', { name: 'Neu einlesen' });
+    await expect(dlg).toBeVisible();
+    await expect(dlg).toBeInViewport({ ratio: 1 });
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+    for (const r of await dlg.getByRole('group', { name: 'Was soll passieren?' }).locator('label').all()) expect((await r.boundingBox())!.height).toBeGreaterThanOrEqual(56);
+    await dlg.getByRole('radio', { name: 'Nach neuen und geänderten Dateien suchen' }).check();
+    await dlg.getByRole('button', { name: 'Neu einlesen', exact: true }).tap();
+    await expect(dlg).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('„Bright Valley · Staffel 1“ wird neu eingelesen. Das kann ein paar Minuten dauern.')).toBeVisible();
+    expect(api.admin.itemRefresh.calls).toEqual([{ id: hex(200), mode: 'scan' }]);
+  });
+
+  test('an admin reads the whole series in again from the "Mehr" sheet', async ({ page, api }) => {
+    api.asAdmin = true;
+    await page.goto('/item/' + SERIES.id);
+    await expect(page.getByRole('heading', { level: 1, name: SERIES.name })).toBeVisible();
+    await page.getByRole('button', { name: 'Mehr', exact: true }).tap();
+    await entry(page, 'Neu einlesen…').tap();
+    const dlg = page.getByRole('dialog', { name: 'Neu einlesen' });
+    await expect(dlg).toHaveAccessibleDescription('Gilt für die ganze Serie mit allen Staffeln und Folgen.');
+    await dlg.getByRole('button', { name: 'Neu einlesen', exact: true }).tap();
+    await expect(dlg).toHaveCount(0);
+    expect(api.admin.itemRefresh.calls).toEqual([{ id: SERIES.id, mode: 'scan' }]);
   });
 });

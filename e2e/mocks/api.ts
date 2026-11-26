@@ -584,7 +584,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if ((mm = p.match(/^\/api\/items\/([^/]+)\/(played|thumb)$/))) return J({ ok: true });
     // Block 17 D1 (discovery) defaults = nothing to show; specs that exercise badges / removal dates / quality chips mock them themselves
     if (p === '/api/discover/badges') return J({}); // no `badges` key = an older server: cards keep the client-side "Neue Folgen" / "Neu" hints
-    if (/^\/api\/items\/[^/]+\/facts$/.test(p)) return J({ fresh: null, leaving: null, traits: null });
+    if (/^\/api\/items\/[^/]+\/facts$/.test(p)) return J({ fresh: null, leaving: null, traits: null, ...(st.asAdmin ? { admin: true } : {}) }); // admin: an admin on the owner profile
     // Block 21: detail page "about" (ratings line, Details tab facts, links, collection); default = Jellyfin data only, nothing extra
     if (/^\/api\/items\/[^/]+\/about$/.test(p)) return J({ ratings: [], countries: [], studios: [], tags: [], keywords: [], links: [], collection: null, canRequest: false, sources: ['jellyfin'] });
     if (/^\/api\/items\/[^/]+\/story$/.test(p)) return J({ story: null });

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Locator, Page } from '@playwright/test';
-import { episodes, items, MOVIE, SERIES } from '../mocks/fixtures.js';
+import { episodes, hex, items, MOVIE, SERIES } from '../mocks/fixtures.js';
 import { expect, test } from '../fixtures.js';
 import { openPopout, row } from '../helpers.js';
 import { png } from '../mocks/png.js';
@@ -739,5 +739,130 @@ test.describe('desktop detail glass', () => {
     expect(await mid.evaluate((e) => parseFloat(getComputedStyle(e).transitionDuration))).toBeLessThan(0.001);
     await tabs.getByRole('tab', { name: 'Details' }).click();
     expect(await mid.evaluate((e) => e.getAnimations().length)).toBe(0);
+  });
+});
+
+/** *Neu einlesen* (admins): a whole series from the ⋯ menu, one season beside the season select; never for anyone else */
+test.describe('desktop detail page: Neu einlesen', () => {
+  const SEASON = hex(200); // the mock's only season ("Staffel 1")
+  const toasts = (page: Page) => page.getByRole('region', { name: 'Hinweise' });
+  const menuEntry = (page: Page, name: string) => page.getByRole('menuitem', { name }).or(page.getByRole('button', { name, exact: true }));
+  const seasonButton = (page: Page) => desk(page).getByRole('button', { name: '„Staffel 1“ neu einlesen' });
+  test.use({ allowedConsole: /status of 502/ });
+
+  test('a viewer sees neither the menu entry nor the season button; the select keeps its place once an admin has the button', async ({ page, api }) => {
+    await page.goto('/item/' + SERIES.id);
+    const select = desk(page).getByRole('combobox', { name: 'Staffel' });
+    await expect(select).toBeVisible();
+    const before = (await select.boundingBox())!;
+    await expect(seasonButton(page)).toHaveCount(0);
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+    await expect(menuEntry(page, 'Fehlende Metadaten suchen')).toHaveCount(0);
+    await expect(menuEntry(page, 'Neu einlesen…')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    api.asAdmin = true;
+    await page.reload();
+    await expect(seasonButton(page)).toBeVisible();
+    const after = (await select.boundingBox())!;
+    expect(after.x).toBe(before.x);
+    expect(after.height).toBe(before.height);
+    const b = (await seasonButton(page).boundingBox())!;
+    expect(b.width).toBeGreaterThanOrEqual(44);
+    expect(b.height).toBeGreaterThanOrEqual(44);
+    expect(b.x).toBeGreaterThan(after.x + after.width - 1); // right of the select: nothing in front of it moves
+  });
+
+  test('an admin on a server without the capability (Plex) sees no entry', async ({ page, api }) => {
+    api.asAdmin = true;
+    api.serverCaps = { itemRefresh: false };
+    await page.goto('/item/' + SERIES.id);
+    await expect(desk(page).getByRole('combobox', { name: 'Staffel' })).toBeVisible();
+    await expect(seasonButton(page)).toHaveCount(0);
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+    await expect(menuEntry(page, 'Entfernungsdatum setzen…')).toBeVisible(); // the admin's other entry is there
+    await expect(menuEntry(page, 'Neu einlesen…')).toHaveCount(0);
+  });
+
+  test('an admin reads the whole series in again from the ⋯ menu: a radio group, keyboard, toast, no polling', async ({ page, api }) => {
+    api.asAdmin = true;
+    await page.goto('/item/' + SERIES.id);
+    await expect(desk(page).getByRole('heading', { level: 1 })).toHaveText(SERIES.name);
+    const more = page.getByRole('button', { name: 'Mehr', exact: true });
+    await more.click();
+    await menuEntry(page, 'Neu einlesen…').click();
+    const dlg = page.getByRole('dialog', { name: 'Neu einlesen' });
+    await expect(dlg).toBeVisible();
+    await expect(dlg).toHaveAccessibleDescription('Gilt für die ganze Serie mit allen Staffeln und Folgen.');
+    await expect(dlg.getByText(SERIES.name, { exact: true })).toBeVisible();
+    const group = dlg.getByRole('group', { name: 'Was soll passieren?' });
+    const radios = group.getByRole('radio');
+    await expect(radios).toHaveCount(3);
+    const scan = group.getByRole('radio', { name: 'Nach neuen und geänderten Dateien suchen' });
+    await expect(scan).toBeChecked();
+    await expect(scan).toBeFocused();
+    await expect(scan).toHaveAccessibleDescription('Findet neue, ausgetauschte oder gelöschte Dateien, auch neue Folgen.');
+    await page.keyboard.press('ArrowDown');
+    await expect(group.getByRole('radio', { name: 'Fehlende Metadaten suchen' })).toBeChecked();
+    for (const r of await group.locator('label').all()) expect((await r.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    const go = dlg.getByRole('button', { name: 'Neu einlesen', exact: true });
+    expect((await go.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    const requests: string[] = [];
+    page.on('request', (r) => { if (r.url().includes('/api/admin/items/')) requests.push(`${r.method()} ${new URL(r.url()).pathname}`); });
+    await go.click();
+    await expect(dlg).toHaveCount(0);
+    await expect(toasts(page).getByText('„Bright Valley“ wird neu eingelesen. Das kann ein paar Minuten dauern.')).toBeVisible();
+    expect(api.admin.itemRefresh.calls).toEqual([{ id: SERIES.id, mode: 'missing' }]);
+    await expect(more).toBeFocused();
+    await page.waitForTimeout(1500);
+    expect(requests).toEqual([`POST /api/admin/items/${SERIES.id}/refresh`]); // one request, nothing polls afterwards
+  });
+
+  test('an admin reads one season in again; replacing everything asks first; a refusal stays in the dialog', async ({ page, api }) => {
+    api.asAdmin = true;
+    await page.goto('/item/' + SERIES.id);
+    await seasonButton(page).click();
+    const dlg = page.getByRole('dialog', { name: 'Neu einlesen' });
+    await expect(dlg.getByText('Bright Valley · Staffel 1')).toBeVisible();
+    await expect(dlg).toHaveAccessibleDescription('Gilt für diese Staffel mit allen Folgen.');
+    await dlg.getByRole('radio', { name: 'Alle Metadaten und Bilder ersetzen' }).check();
+    const go = dlg.getByRole('button', { name: 'Neu einlesen', exact: true });
+    await go.click();
+    const ask = page.getByRole('alertdialog', { name: 'Alle Metadaten und Bilder ersetzen?' });
+    await expect(ask).toBeVisible();
+    await expect(ask).toContainText('„Bright Valley · Staffel 1“');
+    await ask.getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(ask).toHaveCount(0);
+    await expect(dlg).toBeVisible();
+    await expect(go).toBeFocused();
+    expect(api.admin.itemRefresh.calls).toEqual([]);
+
+    // the server refuses: the reserved status line says so, the dialog stays and nothing moves
+    api.admin.itemRefresh.fail = 502;
+    const acts = (await go.boundingBox())!;
+    await go.click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Ersetzen' }).click();
+    await expect(dlg.getByRole('alert')).toHaveText('Serverfehler. Bitte später noch einmal versuchen.');
+    expect((await go.boundingBox())!.y).toBe(acts.y);
+
+    api.admin.itemRefresh.fail = null;
+    await go.click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Ersetzen' }).click();
+    await expect(dlg).toHaveCount(0);
+    await expect(toasts(page).getByText('„Bright Valley · Staffel 1“ wird neu eingelesen. Das kann ein paar Minuten dauern.')).toBeVisible();
+    expect(api.admin.itemRefresh.calls).toEqual([{ id: SEASON, mode: 'replace' }]);
+    await expect(seasonButton(page)).toBeFocused();
+  });
+
+  test('Escape closes without a request; a movie offers the entry too', async ({ page, api }) => {
+    api.asAdmin = true;
+    await page.goto('/item/' + MOVIE.id);
+    await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+    await menuEntry(page, 'Neu einlesen…').click();
+    const dlg = page.getByRole('dialog', { name: 'Neu einlesen' });
+    await expect(dlg).toHaveAccessibleDescription('Gilt für diesen Film.');
+    await page.keyboard.press('Escape');
+    await expect(dlg).toHaveCount(0);
+    expect(api.admin.itemRefresh.calls).toEqual([]);
   });
 });
