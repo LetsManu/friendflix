@@ -69,6 +69,7 @@ import { aboutRoutes } from './routes/about.js';
 import { healthRoutes } from './routes/health.js';
 import { systemcheckRoutes } from './routes/systemcheck.js';
 import { hygieneRoutes } from './routes/hygiene.js';
+import { adminItemRoutes } from './routes/adminItems.js';
 import { usageRoutes } from './routes/usage.js';
 import { SettingsError } from './settings/store.js';
 import { hasSetupSession } from './setup/code.js';
@@ -360,6 +361,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   systemcheckRoutes(app, ctx);
   authentikRepairRoutes(app, ctx);
   hygieneRoutes(app, ctx);
+  adminItemRoutes(app, ctx);
   usageRoutes(app, ctx);
   for (const r of extra.register ?? []) await r(app, ctx);
   return app;
