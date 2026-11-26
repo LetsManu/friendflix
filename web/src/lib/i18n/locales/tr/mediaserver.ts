@@ -270,6 +270,10 @@ const dict: Translation<typeof de> = {
     failed: 'Taşıma olmadı: {reason} FriendFlix Jellyfin’ini kullanmaya devam ediyor.',
     idsMismatch: 'Bağlı {users} kullanıcıdan {usersMissing} tanesi, denetlenen {items} başlıktan {itemsMissing} tanesi eksik.',
     updaterAborted: 'Ancak güncelleyici taşımayı iptal edilmiş olarak bildiriyor. Ferrofin’in çalıştığını denetle; çalışmıyorsa “Jellyfin’e dön” ile geri dön.',
+    deadLinks: {
+      one: '{n} bağlı profilin Jellyfin’de zaten kullanıcısı yoktu (orada silinmiş). Yeniden bağlayana kadar ne orada ne burada oynatabilir.',
+      other: '{n} bağlı profilin Jellyfin’de zaten kullanıcısı yoktu (orada silinmiş). Yeniden bağlayana kadar ne orada ne burada oynatabilir.',
+    },
     running: 'Ferrofin’e taşıma sürüyor.',
     show: 'İlerlemeyi göster',
     lastFailed: 'Son taşıma olmadı: {reason}',

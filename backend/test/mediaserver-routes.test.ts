@@ -43,6 +43,10 @@ const fake = {
   scanHold: null as Promise<void> | null,
   /** runs when an op arrives, before it is answered (what the backend recorded by then) */
   onOp: null as ((body: Record<string, any>) => Promise<void>) | null,
+  /** the users the current Jellyfin knows (GET /Users/<id>: 200, else 404); `usersFail` a status for every lookup instead (0: it does not answer) */
+  users: new Set<string>(),
+  usersFail: null as number | null,
+  userCalls: [] as Array<{ origin: string; id: string; token: string | null }>,
 };
 const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const u = new URL(String(input));
@@ -55,6 +59,13 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
     fake.infoCalls.push(u.origin);
     if (!fake.info) throw new TypeError('fetch failed');
     return j(fake.info);
+  }
+  if (u.pathname.startsWith('/Users/')) {
+    const id = u.pathname.slice('/Users/'.length);
+    fake.userCalls.push({ origin: u.origin, id, token: /Token="([^"]*)"/.exec(new Headers(init?.headers).get('authorization') ?? '')?.[1] ?? null });
+    if (fake.usersFail === 0) throw new TypeError('fetch failed');
+    if (fake.usersFail) return new Response(null, { status: fake.usersFail });
+    return fake.users.has(id) ? j({ Id: id, Name: 'x' }) : new Response(null, { status: 404 });
   }
   if (u.pathname !== '/v1/mediaserver') return j({ error: 'not_found' }, 404);
   const body = JSON.parse(String(init?.body)) as Record<string, any>;
@@ -81,7 +92,7 @@ const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise
 
 const ctxPatch = (c: TestEnv['ctx']) => { c.fetchImpl = fetchImpl; c.cfg = { ...c.cfg, UPDATER_URL: 'http://updater:7070', INTERNAL_SECRET: SECRET }; };
 const opBodies = (op: string) => fake.bodies.filter((b) => b.op === op);
-const resetFake = () => { Object.assign(fake, { media: media(), answer: {}, bodies: [], info: { Id: SERVER_ID, StartupWizardCompleted: true }, infoCalls: [], scanHold: null, onOp: null }); };
+const resetFake = () => { Object.assign(fake, { media: media(), answer: {}, bodies: [], info: { Id: SERVER_ID, StartupWizardCompleted: true }, infoCalls: [], scanHold: null, onOp: null, users: new Set<string>(), usersFail: null, userCalls: [] }); };
 const FOLDERS = [{ rel: 'Filme', name: 'Filme', type: 'movies' }, { rel: 'Serien/Neu', name: 'Serien', type: 'tvshows' }];
 const applyBody = (extra: Record<string, unknown> = {}) => ({ kind: 'ferrofin', folders: FOLDERS, uid: 1000, gid: 1000, gpu: 'dri', mediaGid: null, egress: true, ...extra });
 
@@ -573,6 +584,71 @@ describe('admin routes', () => {
       expect(again.statusCode).toBe(409);
       expect(again.json()).toEqual({ error: 'busy' });
       expect(opBodies('migrate')).toHaveLength(1);
+    });
+
+    describe('dead links: linked users the current Jellyfin no longer knows', () => {
+      const A = 'a'.repeat(32), KID = 'ab12'.repeat(8);
+      /** every account linked to A, and a kids profile linked to KID */
+      const linkedWithKid = async () => {
+        await env.pool.query("delete from profiles where name = 'Kind-dead'");
+        await env.pool.query('update users set jellyfin_user_id = $1', [A]);
+        await env.pool.query(`insert into profiles(id, user_id, name, jellyfin_user_id, jellyfin_username)
+          select gen_random_uuid(), id, 'Kind-dead', $1, 'kind' from users where authentik_sub = 'sub-admin'`, [KID]);
+      };
+      const unlink = () => env.pool.query("delete from profiles where name = 'Kind-dead'");
+
+      it('are recorded with the move before anything starts; the view shows their count only', async () => {
+        await linkedWithKid();
+        try {
+          await reauth(admin);
+          fake.users = new Set([A]);
+          await scanned();
+          const r = await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false });
+          expect(r.statusCode).toBe(202);
+          // asked of the Jellyfin FriendFlix uses now, with its key, each linked id once
+          expect(fake.userCalls.map((c) => c.id).sort()).toEqual([A, KID]);
+          expect(fake.userCalls.every((c) => c.origin === 'http://jellyfin:8096' && c.token === 'adminkey')).toBe(true);
+          expect((await readManaged(env.pool)).move).toMatchObject({ phase: 'copying', deadLinks: [KID] });
+          const view = (await req(admin, 'GET', '')).json();
+          expect(view.move.state).toMatchObject({ phase: 'copying', deadLinks: 1 });
+          // the ids never leave the backend
+          expect(JSON.stringify(view)).not.toContain(KID);
+          expect(JSON.stringify(await audits('mediaserver.move'))).not.toContain(KID);
+          // none dead: nothing recorded, the count 0
+          await env.pool.query('delete from media_managed');
+          fake.users = new Set([A, KID]);
+          offset += 3 * 60_000;
+          await reauth(admin);
+          await scanned();
+          expect((await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false })).statusCode).toBe(202);
+          expect((await readManaged(env.pool)).move!.deadLinks).toBeUndefined();
+          expect((await req(admin, 'GET', '')).json().move.state).toMatchObject({ phase: 'copying', deadLinks: 0 });
+        } finally {
+          await unlink();
+        }
+      });
+
+      it('a Jellyfin whose lookups fail otherwise (unreachable, a refused key, 5xx) refuses the move; nothing starts', async () => {
+        await linkedWithKid();
+        try {
+          fake.users = new Set([A]);
+          for (const fail of [0, 401, 503]) {
+            offset += 3 * 60_000;
+            await reauth(admin);
+            fake.usersFail = fail;
+            await scanned();
+            const r = await req(admin, 'POST', '/move', { source: CONTAINER, trickplay: false });
+            expect(r.statusCode, String(fail)).toBe(409);
+            expect(r.json()).toEqual({ error: 'jellyfin_unreachable' });
+            expect(opBodies('migrate')).toEqual([]);
+            expect(opBodies('gpu')).toEqual([]);
+            expect((await readManaged(env.pool)).move).toBeNull();
+            expect(await audits('mediaserver.move')).toEqual([]);
+          }
+        } finally {
+          await unlink();
+        }
+      });
     });
 
     it('defaults without a recorded user or a GPU; 409 busy from the updater marks the move failed', async () => {

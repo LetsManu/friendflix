@@ -276,7 +276,9 @@ ist markiert):
    *warten, bis es bereit ist*, und bis es die Daten übernommen hat (sonst `adopt_failed`).
 5. *Benutzer und Titel prüfen:* Mit dem kopierten API-Schlüssel muss jeder verknüpfte Benutzer auf Ferrofin auflösen, ebenso
    mindestens 98 % von bis zu 200 Titeln, auf die FriendFlix verweist (sonst `ids_mismatch`; ein paar gelöschte Titel dürfen
-   fehlen).
+   fehlen). Ein verknüpfter Benutzer, den schon dein Jellyfin beim Start des Umzugs nicht mehr kannte (dort gelöscht; FriendFlix
+   fragt dein Jellyfin, bevor irgendetwas gestoppt wird), kann auch auf der Kopie nicht sein: Er zählt nicht mit, sondern wird
+   gemeldet. Ergebnis und Karte sagen, wie viele Profile nicht abspielen können, bis du sie neu verknüpfst.
 6. *FriendFlix umstellen:* Der Medienserver wird das verwaltete Ferrofin; deine alte Adresse und der Schlüssel bleiben für den
    Rückweg erhalten.
 7. *Wunsch-Dienst umstellen*, wenn du einen eingerichtet hast (unten).
@@ -331,9 +333,9 @@ Adresse und *Entfernen* mit `use_way_back` abgelehnt.
 | `source_nested` | Jellyfin sieht einen Ordner unter zwei Pfaden oder einen Ordner in einem anderen. Seine Pfade lassen sich nicht übernehmen; gib ihm getrennte Mounts. |
 | `no_space` | Der freie Platz im Docker-Datenverzeichnis ist kleiner als die Kopie plus ein Fünftel. Schaffe Platz oder lass Trickplay weg. |
 | `adopt_failed` | Ferrofin hat die Kopie nicht übernommen. Dein Jellyfin läuft wieder; sieh ins *Protokoll*. |
-| `ids_mismatch` | Weniger als 98 % der geprüften Titel (oder ein verknüpfter Benutzer) lösen auf Ferrofin auf. Dein Jellyfin läuft wieder; stelle sicher, dass seine Bibliotheken gescannt sind, und versuche es erneut. |
+| `ids_mismatch` | Weniger als 98 % der geprüften Titel (oder ein verknüpfter Benutzer) lösen auf Ferrofin auf. Dein Jellyfin läuft wieder; stelle sicher, dass seine Bibliotheken gescannt sind, und versuche es erneut. Verknüpfungen, die schon in deinem Jellyfin tot waren (ihr Benutzer dort vor dem Umzug gelöscht), zählen nicht mit; sie werden gemeldet. |
 | `move_aborted` | Du hast abgebrochen, oder der Auftrag ist gestoppt. Dein Jellyfin läuft wieder. |
-| `jellyfin_unreachable` | Rückweg: Das alte Jellyfin antwortet nicht mit der gespeicherten Adresse und dem Schlüssel. FriendFlix bleibt auf Ferrofin. |
+| `jellyfin_unreachable` | Umzug: Dein Jellyfin hat die Abfrage der verknüpften Benutzer mit der gespeicherten Adresse und dem Schlüssel nicht beantwortet; nichts wurde gestartet. Rückweg: Das alte Jellyfin antwortet nicht mit der gespeicherten Adresse und dem Schlüssel. FriendFlix bleibt auf Ferrofin. |
 | `use_way_back` | Ein umgezogener Server, dessen alter Jellyfin-Container da ist, geht nur mit *Zurück zu Jellyfin* zurück. |
 | `backup_premove` | Die Sicherung ist von vor dem Umzug: Ihre Benutzer und Titel haben andere IDs. Stell eine ab dem Umzug wieder her. |
 

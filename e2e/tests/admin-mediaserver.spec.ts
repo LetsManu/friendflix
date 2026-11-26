@@ -375,10 +375,13 @@ test.describe('admin: Medienserver, the move from Jellyfin (desktop)', () => {
     movedMedia(ms);
     ms.move.requestsWarning = true;
     ms.backRequestsWarning = false;
+    // a profile whose user Jellyfin had deleted before the move
+    ms.move.state = { ...ms.move.state, deadLinks: 1 };
     await page.goto('/admin/settings?tab=media');
     const c = card(page);
     const moved = c.getByTestId('media-moved');
     await expect(moved).toContainText('Umgezogen von „jellyfin“ am 24. November 2026');
+    await expect(moved.getByTestId('media-dead-links')).toHaveText('1 verknüpftes Profil hatte schon in Jellyfin keinen Benutzer mehr (dort gelöscht). Es kann dort wie hier nicht abspielen, bis du es neu verknüpfst.');
     const warn = c.getByTestId('media-requests-warning');
     await expect(warn).toContainText('„mediaserver“');
     await expect(warn).toContainText('8096');

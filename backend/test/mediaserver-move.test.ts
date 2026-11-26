@@ -433,7 +433,7 @@ describe('the move: the backend phases after the copy', () => {
     expect(calls('GET', '/Items')).toHaveLength(200);
     expect(opBodies('migrate-abort')).toEqual([]);
     const client = new JellyfinClient(MANAGED, KEY, fetchImpl);
-    expect(await verifyIds(env.ctx, client)).toEqual({ users: { total: 1, missing: 0 }, items: { sampled: 200, missing: 4 } });
+    expect(await verifyIds(env.ctx, client)).toEqual({ users: { total: 1, missing: 0, dead: 0 }, items: { sampled: 200, missing: 4 } });
   });
 
   it('the item sample draws from every table that holds a media server item id, newest first, each id once', async () => {
@@ -457,9 +457,55 @@ describe('the move: the backend phases after the copy', () => {
     const client = new JellyfinClient(MANAGED, KEY, fetchImpl);
     for (let i = 1; i <= 8; i++) server.items.add(hex(i));
     const r = await verifyIds(env.ctx, client);
-    expect(r.users).toEqual({ total: 1, missing: 0 });
+    expect(r.users).toEqual({ total: 1, missing: 0, dead: 0 });
     expect(r.items).toEqual({ sampled: 8, missing: 0 });
     expect(calls('GET', '/Items').map((c) => c.query.get('ids')).sort()).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map(hex));
+  });
+
+  describe('dead links: linked users the old Jellyfin did not know at the move\'s start', () => {
+    it('are not checked on the copy but reported: verify passes when the copy lacks only them', async () => {
+      await seedUser({ user: hex(0xa1), profile: hex(0xa2) });
+      // the kids profile's user was deleted in Jellyfin before the move: the copy cannot have it
+      server.users = new Set([hex(0xa1)]);
+      library({ SaveLocalMetadata: false, MetadataSavers: [] });
+      await seedMove('verify', { deadLinks: [hex(0xa2)] });
+      expect(await tick()).toBe('switch');
+      expect(calls('GET', `/Users/${hex(0xa2)}`)).toEqual([]);
+      expect(calls('GET', `/Users/${hex(0xa1)}`)).toHaveLength(1);
+      expect(opBodies('migrate-abort')).toEqual([]);
+      const client = new JellyfinClient(MANAGED, KEY, fetchImpl);
+      expect(await verifyIds(env.ctx, client, undefined, [], [hex(0xa2)])).toEqual({ users: { total: 1, missing: 0, dead: 1 }, items: { sampled: 0, missing: 0 } });
+      // the switch leaves the dead link as it was: nothing repairs or relinks it
+      expect(await tick()).toBe('requests');
+      const kid = await env.pool.query<{ id: string }>("select jellyfin_user_id as id from profiles where name = 'Kind'");
+      expect(kid.rows.map((r) => r.id)).toEqual([hex(0xa2)]);
+      expect(calls('POST', '/Users/New')).toEqual([]);
+    });
+
+    it('a user the old Jellyfin had but the copy lacks still fails the move', async () => {
+      await seedUser({ user: hex(0xa1), profile: hex(0xa2) });
+      await seedUser({ user: hex(0xb1) });
+      server.users = new Set([hex(0xa1)]);
+      library({ SaveLocalMetadata: false, MetadataSavers: [] });
+      await seedMove('verify', { deadLinks: [hex(0xa2)] });
+      expect(await tick()).toBe('failed');
+      const m = await readManaged(env.pool);
+      expect(m.move).toMatchObject({ phase: 'failed', error: 'ids_mismatch', failedIn: 'verify', errorMeta: { users: { total: 2, missing: 1, dead: 1 }, items: { sampled: 0, missing: 0 } } });
+      expect(m.move!.deadLinks).toEqual([hex(0xa2)]);
+      expect(opBodies('migrate-abort')).toEqual([{ op: 'migrate-abort' }]);
+      expect(env.ctx.cfg.JELLYFIN_URL).toBe(OLD);
+    });
+
+    it('a dead link a repeated move\'s repair relinked is checked under its new id', async () => {
+      const uid = await seedUser({ user: hex(0xa1), profile: hex(0xa2) });
+      const row = (await env.pool.query<{ id: string }>("select id from profiles where user_id = $1 and name = 'Kind'", [uid])).rows[0]!.id;
+      const relinks = [{ table: 'profiles' as const, row, from: hex(0xa2), to: hex(0xe0a2), name: 'kind' }];
+      server.users = new Set([hex(0xa1)]);
+      const client = new JellyfinClient(MANAGED, KEY, fetchImpl);
+      expect((await verifyIds(env.ctx, client, undefined, relinks, [hex(0xa2)])).users).toEqual({ total: 2, missing: 1, dead: 0 });
+      server.users.add(hex(0xe0a2));
+      expect((await verifyIds(env.ctx, client, undefined, relinks, [hex(0xa2)])).users).toEqual({ total: 2, missing: 0, dead: 0 });
+    });
   });
 
   describe('hardware encoding in the nfo phase (c2)', () => {
@@ -562,7 +608,7 @@ describe('the move: the backend phases after the copy', () => {
       expect(await tick()).toBe('switch');
       expect(calls('GET', '/Items')).toEqual([]);
       const client = new JellyfinClient(MANAGED, KEY, fetchImpl);
-      expect(await verifyIds(env.ctx, client)).toEqual({ users: { total: 2, missing: 0 }, items: { sampled: 0, missing: 0 } });
+      expect(await verifyIds(env.ctx, client)).toEqual({ users: { total: 2, missing: 0, dead: 0 }, items: { sampled: 0, missing: 0 } });
     });
   });
 
@@ -576,7 +622,7 @@ describe('the move: the backend phases after the copy', () => {
       select $1, lpad(to_hex(i), 32, '0'), current_date - 300 - i, 60, 'x' from generate_series(4, 250) i`, [uid]);
     for (let i = 1; i <= 250; i++) server.items.add(hex(i));
     const client = new JellyfinClient(MANAGED, KEY, fetchImpl);
-    expect(await verifyIds(env.ctx, client)).toEqual({ users: { total: 1, missing: 0 }, items: { sampled: 200, missing: 0 } });
+    expect(await verifyIds(env.ctx, client)).toEqual({ users: { total: 1, missing: 0, dead: 0 }, items: { sampled: 200, missing: 0 } });
     expect(calls('GET', '/Items').map((c) => c.query.get('ids')).sort()).toEqual(Array.from({ length: 200 }, (_, i) => hex(i + 1)));
   });
 
@@ -980,7 +1026,7 @@ describe('the move: the backend phases after the copy', () => {
       expect(JSON.stringify(await env.pool.query('select meta from audit_log'))).not.toMatch(/key-|pw-|example\.com/);
       // every linked profile resolves on the Jellyfin in use
       const client = new JellyfinClient(OLD, OLD_KEY, fetchImpl);
-      expect((await verifyIds(env.ctx, client)).users).toEqual({ total: 5, missing: 0 });
+      expect((await verifyIds(env.ctx, client)).users).toEqual({ total: 5, missing: 0, dead: 0 });
       // nothing left for the tick; a second way back has nothing to go back from
       expect(await tick()).toBe('idle');
       expect(await back()).toEqual({ ok: false, error: 'not_moved' });

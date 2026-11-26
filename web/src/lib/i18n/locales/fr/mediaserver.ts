@@ -270,6 +270,11 @@ const dict: Translation<typeof de> = {
     failed: 'Le déménagement n’a pas abouti : {reason} FriendFlix continue d’utiliser votre Jellyfin.',
     idsMismatch: 'Sur {users} utilisateurs liés, {usersMissing} manquent ; sur {items} titres vérifiés, {itemsMissing}.',
     updaterAborted: 'Le service de mise à jour indique pourtant le déménagement comme annulé. Vérifiez que Ferrofin tourne ; sinon revenez avec « Revenir à Jellyfin ».',
+    deadLinks: {
+      one: '{n} profil lié n’avait déjà plus d’utilisateur dans Jellyfin (supprimé là-bas). Il ne peut lire ni là-bas ni ici tant que vous ne le liez pas à nouveau.',
+      many: '{n} profils liés n’avaient déjà plus d’utilisateur dans Jellyfin (supprimés là-bas). Ils ne peuvent lire ni là-bas ni ici tant que vous ne les liez pas à nouveau.',
+      other: '{n} profils liés n’avaient déjà plus d’utilisateur dans Jellyfin (supprimés là-bas). Ils ne peuvent lire ni là-bas ni ici tant que vous ne les liez pas à nouveau.',
+    },
     running: 'Le déménagement vers Ferrofin est en cours.',
     show: 'Voir la progression',
     lastFailed: 'Le dernier déménagement n’a pas abouti : {reason}',

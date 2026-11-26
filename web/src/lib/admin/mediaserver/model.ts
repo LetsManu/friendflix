@@ -325,17 +325,28 @@ export function scanFresh(rec: MoveScanRecord | null | undefined, source: string
   return rec?.state === 'done' && rec.source === source && Boolean(rec.result) && age >= 0 && age <= SCAN_REUSE_MS;
 }
 
-/** the move's outcome as one line: done (with the updater's warning), failed with its reason (an id check with its numbers); null while it runs */
+/** the dead links' warning (linked profiles whose user was already deleted in Jellyfin), '' when there are none */
+export function deadLinksText(st: MoveState | null | undefined): string {
+  const n = st?.deadLinks ?? 0;
+  return n > 0 ? tr('mediaserver.move.deadLinks', { n }) : '';
+}
+
+/**
+ * the move's outcome as one line: done (with the updater's warning), failed with its reason (an id check with its numbers); either
+ * with the dead links' warning; null while it runs
+ */
 export function moveResult(st: MoveState | null | undefined): { ok: boolean; text: string } | null {
   if (st?.phase === 'done') {
     const warn = st.errorMeta && 'warning' in st.errorMeta ? ` ${tr('mediaserver.move.updaterAborted')}` : '';
-    return { ok: true, text: `${tr('mediaserver.move.done')}${warn}` };
+    const dead = deadLinksText(st);
+    return { ok: true, text: `${tr('mediaserver.move.done')}${warn}${dead ? ` ${dead}` : ''}` };
   }
   if (st?.phase !== 'failed') return null;
   if (st.error === 'move_aborted') return { ok: false, text: mediaErrorText('move_aborted') };
   const m = st.errorMeta && 'users' in st.errorMeta ? st.errorMeta : null;
   const ids = m ? ` ${tr('mediaserver.move.idsMismatch', { users: m.users.total, usersMissing: m.users.missing, items: m.items.sampled, itemsMissing: m.items.missing })}` : '';
-  return { ok: false, text: tr('mediaserver.move.failed', { reason: `${mediaErrorText(st.error)}${ids}` }) };
+  const dead = deadLinksText(st);
+  return { ok: false, text: `${tr('mediaserver.move.failed', { reason: `${mediaErrorText(st.error)}${ids}` })}${dead ? ` ${dead}` : ''}` };
 }
 
 /** the old Jellyfin as Docker shows it: stopped (kept for the way back), running, gone (the way back needs an address); null unknown */

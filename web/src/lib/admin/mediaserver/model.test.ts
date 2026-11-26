@@ -12,7 +12,7 @@ import pl from '#lib/i18n/locales/pl/index';
 import tr_ from '#lib/i18n/locales/tr/index';
 import type { MediaManaged, MediaStatus, MediaView, MoveCandidate, MoveScan, MoveState, MoveView } from './api';
 import {
-  ACTION_ORDER, DEFAULT_MANAGED, MOVE_STEPS, TRIAL_KINDS, actionsFor, autoCandidate, backActive, choiceDisabled, codeLogHint, countdown, currentChoice, folderRowsError, idError,
+  ACTION_ORDER, DEFAULT_MANAGED, MOVE_STEPS, TRIAL_KINDS, actionsFor, autoCandidate, backActive, choiceDisabled, codeLogHint, countdown, currentChoice, deadLinksText, folderRowsError, idError,
   initialRows, defaultName, keptLibraries, kindName, livetvOffer, mediaErrorText, migratedFolders, migratedOverlap, wholeBaseMigrated, moveAbortable, moveActive, moveFollow, moveResult, moveSteps, moveSummary, saveErrorText,
   nameTakenRow, passphraseError, pinState, reasonText, scanFresh, setupSteps, sourceLine, statusStarting, versionCmp, backupPremove, moveCopyRemovable, restorable, wayBackOnly,
 } from './model';
@@ -527,6 +527,23 @@ describe('the move from Jellyfin', () => {
     const ids = moveResult(state({ phase: 'failed', error: 'ids_mismatch', errorMeta: { users: { total: 4, missing: 1 }, items: { sampled: 200, missing: 9 } } }))!.text;
     expect(ids).toContain(mediaErrorText('ids_mismatch'));
     expect(ids).toMatch(/4\b[\s\S]*1\b[\s\S]*200[\s\S]*9\b/);
+  });
+
+  it('deadLinksText: the linked profiles Jellyfin had deleted already, by count; in the result line, done or failed', async () => {
+    expect(deadLinksText(null)).toBe('');
+    expect(deadLinksText(state({ phase: 'done' }))).toBe('');
+    expect(deadLinksText(state({ phase: 'done', deadLinks: 0 }))).toBe('');
+    const one = deadLinksText(state({ phase: 'done', deadLinks: 1 }));
+    expect(one).toBe('1 verknüpftes Profil hatte schon in Jellyfin keinen Benutzer mehr (dort gelöscht). Es kann dort wie hier nicht abspielen, bis du es neu verknüpfst.');
+    expect(deadLinksText(state({ phase: 'done', deadLinks: 3 }))).toMatch(/^3 verknüpfte Profile hatten /);
+    expect(moveResult(state({ phase: 'done', deadLinks: 1 }))).toEqual({ ok: true, text: `${tr('mediaserver.move.done')} ${one}` });
+    expect(moveResult(state({ phase: 'done', errorMeta: { warning: 'updater_aborted' }, deadLinks: 1 }))!.text).toBe(`${tr('mediaserver.move.done')} ${tr('mediaserver.move.updaterAborted')} ${one}`);
+    const failed = moveResult(state({ phase: 'failed', error: 'ids_mismatch', deadLinks: 1, errorMeta: { users: { total: 7, missing: 1, dead: 1 }, items: { sampled: 200, missing: 1 } } }))!;
+    expect(failed.ok).toBe(false);
+    expect(failed.text.endsWith(` ${one}`)).toBe(true);
+    expect(moveResult(state({ phase: 'failed', error: 'no_space' }))!.text).not.toContain('verknüpft');
+    await setLocale('en');
+    expect(deadLinksText(state({ phase: 'done', deadLinks: 2 }))).toMatch(/^2 linked profiles /);
   });
 
   it('sourceLine: the old Jellyfin stopped, running or gone', () => {

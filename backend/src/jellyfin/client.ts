@@ -18,7 +18,7 @@ export class JellyfinError extends MediaError {}
 /** a 3xx that would move the request elsewhere (304 Not Modified is an answer, not a redirect) */
 const isRedirect = (status: number) => status >= 300 && status < 400 && status !== 304;
 /** a media server user id: 32 hex digits, or a GUID with dashes */
-const USER_ID = /^([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
+export const USER_ID = /^([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
 
 /** Maps a role template to the Jellyfin UserPolicy fields we manage. */
 export function policyFromTemplate(t: RoleTemplate, folderIds: string[] | null): Record<string, unknown> {

@@ -270,6 +270,12 @@ const dict: Translation<typeof de> = {
     failed: 'Przeprowadzka się nie udała: {reason} FriendFlix nadal używa twojego Jellyfin.',
     idsMismatch: 'Z {users} połączonych użytkowników brakuje {usersMissing}, z {items} sprawdzonych tytułów {itemsMissing}.',
     updaterAborted: 'Updater zgłasza jednak przeprowadzkę jako przerwaną. Sprawdź, czy Ferrofin działa; jeśli nie, wróć przyciskiem „Wróć do Jellyfin”.',
+    deadLinks: {
+      one: '{n} połączony profil nie miał już użytkownika w Jellyfin (został tam usunięty). Nie może odtwarzać ani tam, ani tutaj, dopóki nie połączysz go ponownie.',
+      few: '{n} połączone profile nie miały już użytkownika w Jellyfin (zostały tam usunięte). Nie mogą odtwarzać ani tam, ani tutaj, dopóki nie połączysz ich ponownie.',
+      many: '{n} połączonych profili nie miało już użytkownika w Jellyfin (zostały tam usunięte). Nie mogą odtwarzać ani tam, ani tutaj, dopóki nie połączysz ich ponownie.',
+      other: 'Połączone profile ({n}) nie miały już użytkownika w Jellyfin (zostały tam usunięte). Nie mogą odtwarzać ani tam, ani tutaj, dopóki nie połączysz ich ponownie.',
+    },
     running: 'Przeprowadzka do Ferrofin trwa.',
     show: 'Pokaż postęp',
     lastFailed: 'Ostatnia przeprowadzka się nie udała: {reason}',
